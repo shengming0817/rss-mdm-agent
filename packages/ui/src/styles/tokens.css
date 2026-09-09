@@ -26,7 +26,7 @@
   --color-surface: #ffffff;
   --color-surface-hover: rgba(0, 0, 0, 0.035);
   --color-text: #1c1d21;
-  --color-text-muted: #8a8f98;
+  --color-text-muted: #696e77;
   --color-border: rgba(0, 0, 0, 0.08);
   --color-border-strong: rgba(0, 0, 0, 0.12);
 
@@ -41,7 +41,7 @@
   /* success / warn / danger + tinted bgs */
   --color-success: #3a9d5d;
   --color-success-bg: rgba(58, 157, 93, 0.13);
-  --color-warn: #b07400;
+  --color-warn: #895a00;
   --color-warn-dot: #e0a000;
   --color-warn-bg: rgba(224, 160, 0, 0.1);
   --color-warn-bg-strong: rgba(224, 160, 0, 0.18);

@@ -2,19 +2,19 @@ import { readFileSync, readdirSync } from "node:fs";
 import { resolve, dirname, extname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
-import { parse } from "vue/compiler-sfc";
+import { parse, compileTemplate } from "vue/compiler-sfc";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const read = (file) => readFileSync(resolve(root, file), "utf8");
 function files(dir) {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const path = resolve(dir, entry.name);
     return entry.isDirectory() ? files(path) : [path];
   });
 }
-// Medium: parse every UI import/export and call, not a hand-maintained callsite list.
+// Medium: parse UI and desktop source, including Vue template expressions.
 // The packed consumer test also verifies the downstream exported dependency closure.
 export function checkSource(file, source) {
+  file = file.replaceAll("\\", "/");
   const errors = [];
   if (
     /\b(prNumber|pr_number|repository|PullRequestView|usePrStore|useReviewStore)\b/.test(
@@ -24,13 +24,24 @@ export function checkSource(file, source) {
     errors.push(`${file}: business coupling`);
   if (/\bv-html\s*=|\binnerHTML\b|\bouterHTML\b/.test(source))
     errors.push(`${file}: executable HTML sink`);
-  const scripts =
-    extname(file) === ".vue"
-      ? [
-          parse(source).descriptor.script?.content,
-          parse(source).descriptor.scriptSetup?.content,
-        ].filter(Boolean)
-      : [source];
+  const desktop = file.startsWith("apps/desktop/src/");
+  const sourceDir = desktop ? "apps/desktop/src" : "packages/ui/src";
+  const allowed = desktop
+    ? ["vue", "@rss-mdm-agent/ui", "@rss-mdm-agent/ui/style.css"]
+    : ["vue"];
+  const descriptor = extname(file) === ".vue" ? parse(source).descriptor : null;
+  const scripts = descriptor
+    ? [
+        descriptor.script?.content,
+        descriptor.scriptSetup?.content,
+        descriptor.template &&
+          compileTemplate({
+            source: descriptor.template.content,
+            filename: file,
+            id: "boundary",
+          }).code,
+      ].filter(Boolean)
+    : [source];
   for (const script of scripts) {
     const ast = ts.createSourceFile(
       file + ".ts",
@@ -39,17 +50,17 @@ export function checkSource(file, source) {
       true,
     );
     const checkImport = (name) => {
-      if (name !== "vue" && !name.startsWith("."))
+      if (!allowed.includes(name) && !name.startsWith("."))
         errors.push(`${file}: unexpected dependency ${name}`);
-      if (/(?:^|\/)(api|transport|stores?)(?:\/|$)/.test(name))
+      if (/(?:^|\/)(api|transport|stores?)(?:[./]|$)/.test(name))
         errors.push(`${file}: host dependency ${name}`);
       if (
         name.startsWith(".") &&
-        !resolve(dirname(resolve(root, file)), name).startsWith(
-          resolve(root, "packages/ui/src") + "/",
-        )
+        !resolve(dirname(resolve(root, file)), name)
+          .replaceAll("\\", "/")
+          .startsWith(resolve(root, sourceDir).replaceAll("\\", "/") + "/")
       )
-        errors.push(`${file}: import escapes UI package`);
+        errors.push(`${file}: import escapes presentation source`);
     };
     function visit(node) {
       if (
@@ -68,9 +79,30 @@ export function checkSource(file, source) {
           );
         }
       }
+      const member = ts.isPropertyAccessExpression(node)
+        ? node.name.text
+        : ts.isElementAccessExpression(node) &&
+            node.argumentExpression &&
+            ts.isStringLiteral(node.argumentExpression)
+          ? node.argumentExpression.text
+          : null;
+      if (
+        [
+          "innerHTML",
+          "outerHTML",
+          "insertAdjacentHTML",
+          "parseFromString",
+          "createContextualFragment",
+          "setHTMLUnsafe",
+          "write",
+          "writeln",
+        ].includes(member)
+      )
+        errors.push(`${file}: executable HTML sink ${member}`);
       if (
         ts.isIdentifier(node) &&
         [
+          "DOMParser",
           "fetch",
           "WebSocket",
           "XMLHttpRequest",
@@ -88,21 +120,37 @@ export function checkSource(file, source) {
   }
   return errors;
 }
-export function checkTree() {
-  const errors = files(resolve(root, "packages/ui/src"))
-    .filter((f) => /\.(ts|vue)$/.test(f))
+export function checkTree(treeRoot = root) {
+  const read = (file) => readFileSync(resolve(treeRoot, file), "utf8");
+  const errors = ["packages/ui/src", "apps/desktop/src"]
+    .flatMap((dir) => files(resolve(treeRoot, dir)))
+    .filter(
+      (f) =>
+        /\.(?:[cm]?[jt]sx?|vue)$/.test(f) &&
+        !/\.(?:test|spec)\.[jt]sx?$/.test(f),
+    )
     .flatMap((file) =>
-      checkSource(relative(root, file), readFileSync(file, "utf8")),
+      checkSource(relative(treeRoot, file), readFileSync(file, "utf8")),
     );
   const pkg = JSON.parse(read("packages/ui/package.json"));
   if (
     Object.keys(pkg.dependencies ?? {}).length ||
+    Object.keys(pkg.optionalDependencies ?? {}).length ||
     Object.keys(pkg.peerDependencies ?? {}).join() !== "vue"
   )
     errors.push("UI production dependencies must be Vue only");
+  const desktop = JSON.parse(read("apps/desktop/package.json"));
+  if (
+    Object.keys(desktop.dependencies ?? {})
+      .sort()
+      .join() !== "@rss-mdm-agent/ui,vue" ||
+    Object.keys(desktop.optionalDependencies ?? {}).length ||
+    Object.keys(desktop.peerDependencies ?? {}).length
+  )
+    errors.push("desktop production dependencies must be UI and Vue only");
   const config = JSON.parse(read("apps/desktop/src-tauri/tauri.conf.json"));
   const capabilityFiles = files(
-    resolve(root, "apps/desktop/src-tauri/capabilities"),
+    resolve(treeRoot, "apps/desktop/src-tauri/capabilities"),
   );
   if (capabilityFiles.length !== 1) errors.push("unexpected capabilities");
   for (const file of capabilityFiles) {
@@ -130,7 +178,7 @@ export function checkTree() {
   const cargo = read("apps/desktop/src-tauri/Cargo.toml");
   if (/tauri-plugin|prmonitor|rusqlite|reqwest|tokio|portable-pty/.test(cargo))
     errors.push("unexpected host dependency");
-  for (const file of files(resolve(root, "apps/desktop/src-tauri/src"))) {
+  for (const file of files(resolve(treeRoot, "apps/desktop/src-tauri/src"))) {
     if (
       /tauri::command|invoke_handler|\.plugin\s*\(|\.manage\s*\(|\.setup\s*\(|Command::new|prmonitor_lib/.test(
         readFileSync(file, "utf8"),

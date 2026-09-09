@@ -23,6 +23,7 @@ function run(command, args, cwd = dir) {
     );
 }
 try {
+  run("pnpm", ["--filter", "@rss-mdm-agent/ui", "build"], root);
   run("pnpm", [
     "--dir",
     join(root, "packages/ui"),

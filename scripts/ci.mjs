@@ -1,8 +1,11 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { sourceState } from "./source-state.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url));
+const start = sourceState(root);
 const steps = [
+  ["CI provenance tests", "node", ["--test", "scripts/source-state.test.mjs"]],
   ["frozen dependencies", "pnpm", ["install", "--frozen-lockfile"]],
   ["frontend build", "pnpm", ["build"]],
   ["types", "pnpm", ["typecheck"]],
@@ -39,17 +42,24 @@ for (const [name, command, args] of steps) {
     error: result.error?.message,
   });
 }
-const sha = spawnSync(
-  process.platform === "win32" ? "git" : "/usr/bin/git",
-  ["rev-parse", "HEAD"],
-  { cwd: root, encoding: "utf8" },
-).stdout.trim();
+const end = sourceState(root);
+results.push({
+  name: "committed source provenance",
+  status:
+    start.clean &&
+    end.clean &&
+    start.head === end.head &&
+    start.base === end.base
+      ? 0
+      : 1,
+});
 mkdirSync(new URL("../.local-ci-runs/", import.meta.url), { recursive: true });
 writeFileSync(
   new URL("../.local-ci-runs/latest.json", import.meta.url),
   JSON.stringify(
     {
-      sha,
+      sha: start.head,
+      source: { start, end },
       platform: process.platform,
       arch: process.arch,
       node: process.version,

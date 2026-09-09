@@ -33,7 +33,7 @@ Rust build/test前需先 `pnpm build`，生产资源由Tauri嵌入。Cargo works
 - MessageComposer的modelValue由宿主持有；submit返回去除两端空白的文本，不自行清空。busy/disabled/折叠/空白阻止提交；canCancel独立表示宿主允许取消，disabled阻止取消。取消事件不证明任何任务已经终止。
 - StatusList消费明确label/message/tone，不探测系统、认证或引擎。
 
-`pnpm check:consumer` 将UI包打成归档，在仓外临时workspace离线安装并消费所有公开组件、类型和CSS，检查生产构建及安全文本渲染；退出清理临时目录。首次先完成正常安装，以填充依赖缓存。
+`pnpm check:consumer` 先构建UI包，再打成归档，在仓外临时workspace离线安装并消费所有公开组件、类型和CSS，检查生产构建及安全文本渲染；退出清理临时目录。首次先完成正常安装，以填充依赖缓存。
 
 ## 验收范围
 
@@ -41,4 +41,6 @@ Rust build/test前需先 `pnpm build`，生产资源由Tauri嵌入。Cargo works
 
 原生窗口另做人工或系统辅助功能验收：启动→看到样本标识→切换导航→输入发送→忙碌/取消→分栏→关闭退出。再停止开发服务器，启动发布程序重复验收，记录系统/架构和产物SHA。浏览器测试不代替此门。
 
-C05只承诺实际记录的平台验证；Windows/Linux构建、安装签名、公证、升级、真实执行、模型接线与企业T3均不能由macOS样本推定通过。组件边界守卫是Medium检查，不是抵御任意恶意代码的操作系统沙箱。
+C05只承诺实际记录的平台验证；Windows/Linux构建、安装签名、公证、升级、真实执行、模型接线与企业T3均不能由macOS样本推定通过。边界守卫扫描UI与桌面样本源码、Vue模板表达式及生产依赖，拒绝主机调用、网络能力与HTML注入入口。组件边界守卫是Medium检查，不是抵御任意恶意代码的操作系统沙箱。
+
+本地CI记录起止HEAD、CI_BASE对应merge-base及工作树状态；未提交源码或运行期间HEAD变动使验证失败。diff检查覆盖base到HEAD、暂存区和工作树。

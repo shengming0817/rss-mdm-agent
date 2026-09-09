@@ -3,7 +3,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 const root = fileURLToPath(new URL("../", import.meta.url));
-const git = process.platform === "win32" ? "git" : "/usr/bin/git";
+import { sourceState, git } from "./source-state.mjs";
 const files = [
   ...new Set(
     execFileSync(
@@ -32,6 +32,15 @@ if (
   readFileSync(resolve(root, "packages/ui/LICENSE"), "utf8")
 )
   errors.push("UI MIT license differs from root");
+const { base, head } = sourceState(root);
+execFileSync(git, ["diff", "--check", base, head], {
+  cwd: root,
+  stdio: "inherit",
+});
+execFileSync(git, ["diff", "--cached", "--check"], {
+  cwd: root,
+  stdio: "inherit",
+});
 execFileSync(git, ["diff", "--check"], { cwd: root, stdio: "inherit" });
 if (errors.length) {
   console.error(errors.join("\n"));
