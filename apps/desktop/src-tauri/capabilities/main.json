@@ -1,0 +1,6 @@
+{
+  "identifier": "main",
+  "description": "Local presentation window; no command permissions.",
+  "windows": ["main"],
+  "permissions": []
+}

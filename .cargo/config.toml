@@ -1,0 +1,3 @@
+[build]
+# Keep artifacts in this repository even when a parent directory is a workspace.
+target-dir = "target"

@@ -1,0 +1,27 @@
+{
+  "name": "@rss-mdm-agent/ui",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "files": [
+    "dist",
+    "LICENSE",
+    "NOTICE.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/ui.js"
+    },
+    "./style.css": "./dist/style.css"
+  },
+  "sideEffects": [
+    "**/*.css"
+  ],
+  "peerDependencies": {
+    "vue": "^3.5.38"
+  },
+  "scripts": {
+    "build": "vite build && vue-tsc -p tsconfig.build.json"
+  }
+}

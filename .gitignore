@@ -24,3 +24,5 @@ __pycache__/
 .vscode/
 *.swp
 *.tmp
+
+**/src-tauri/gen/

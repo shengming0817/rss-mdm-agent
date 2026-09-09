@@ -1,0 +1,27 @@
+.rss-ui {
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  box-sizing: border-box;
+}
+.rss-ui *,
+.rss-ui *::before,
+.rss-ui *::after {
+  box-sizing: border-box;
+}
+.rss-ui button,
+.rss-ui textarea {
+  font: inherit;
+  color: inherit;
+}
+.rss-ui button {
+  cursor: pointer;
+}
+.rss-ui button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.rss-ui :focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
