@@ -1,0 +1,26 @@
+# Build and local worktrees
+/target/
+/artifacts/
+/worktrees/
+**/node_modules/
+**/dist/
+
+# Local caches / runtime / secrets
+/.cache/
+/.local-ci-runs/
+/.codex-backups/
+/.codex-tmp/
+/.azconfig/
+/.venv/
+__pycache__/
+*.py[cod]
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.profraw
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.tmp
