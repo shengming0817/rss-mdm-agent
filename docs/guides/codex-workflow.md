@@ -8,7 +8,7 @@ Codex按项目目录加载AGENTS.md；修改指令后在新会话中核对实际
 - AGENTS.md、稳定规则和本说明随Git交付，不固定模型账号、token、MCP凭据、个人绝对路径或机器信任设置。
 - 参考仓没有入库的.codex/config.toml或hooks配置；本仓不新增全权限/自动批准配置。
 - 此工作环境的fix/pr-review共享入口位于本地`.codex/skills/`，正文引用已有RSS技能，按当前目标仓执行；绝对路径入口通过Git本地exclude排除。
-- `.agents/skills`是指向该本地技能目录的发现入口；Codex官方支持该目录及技能目录符号链接。[官方技能说明](https://learn.chatgpt.com/docs/build-skills)
+- 本地技能结构及正文与rss-mdm保持一致，仅将目标仓库名替换为rss-mdm-agent；不额外增加发现目录、链接或配置。
 - 本地入口不随clone分发。另一个环境应在已有共享技能可取得后按实际位置配置；不能提交本机路径或假设父仓存在才能构建产品。
 
 ## 技能使用边界
