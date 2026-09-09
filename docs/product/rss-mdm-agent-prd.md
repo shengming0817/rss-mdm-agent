@@ -17,8 +17,8 @@ Owner repository：rss-mdm-agent。任务容器：[EPIC #2392](https://dev.azure
 | 阶段 | 产品结果 | 完成门 |
 | --- | --- | --- |
 | S0：本次需求基线 | 本 PRD、来源、任务追踪与 EPIC 实施顺序 | 文档内容/链接/追踪一致；不声明软件能力完成 |
-| S1：C01–C20 控制链 | 独立核心、AI/UI 提取、真实 SQLite/协议接缝、测试执行器下人和 AI 共用操作 | 明确标识测试执行；通过本节及第 12 节的组件/接缝证明，不产生真实系统变更 |
-| S2：本机真实执行 | 选定 OS 上的受控原生脚本、一个安装器、用户上下文与服务恢复 | 对应平台、身份、真实产物及取消/故障场景独立验收；后续 PBI |
+| S1：C01–C20 控制链 | 独立核心、AI/UI 提取、真实 SQLite/协议接缝、测试执行器下人和 AI 共用操作 | 明确标识测试执行；不产生受管目标的脚本/软件/配置变更；测试DB、模型进程/网络等基础设施副作用需记录 |
+| S2：本机真实执行 | 选定 OS 上的受控原生脚本、一个安装器、用户上下文与服务恢复 | 先完成本地信任根与授权签发，再验收平台/身份/产物及取消恢复；缺本地authority时仅允许实验室验证，不作为终端用户自助发布 |
 | S3：企业远程接线 | 正式目录分配、设备注册、策略、远程任务、回执、可信升级 | 消费 rss-mdm wire/artifact，完成限定产品 T3；后续 PBI |
 
 S1 中一个“软件项目”和一个“脚本工具”只是目录与控制流程的测试实例，不表示软件已安装或系统已修复。
@@ -85,7 +85,7 @@ Agent wire 的唯一 producer 仍为 rss-mdm；`execution-contract` 是本地执
 | --- | --- | --- |
 | CLI-ID01 | 区分 actor、initiator（human/ai/policy）、批准者、委托、设备与目标用户 | 修改 initiator 不扩大同一 actor 的操作权限；AI 自报主体被拒绝 |
 | CLI-ID02 | AI provider/CLI 账号、OS 登录用户、产品主体和特权服务账号分别记录 | 模型登录成功或本机用户存在不能构造企业授权；运行用户映射可解释 |
-| CLI-ID03 | 本地模式由可信 host 识别调用方，企业模式消费产品身份和设备注册 | 缺真实身份绑定的生产入口拒绝启动/提交；测试主体仅测试装配可用 |
+| CLI-ID03 | 本地模式由经OS管理员初始化的本地authority绑定OS主体、目录、政策及批准签发；企业模式消费产品身份和设备注册 | 信任根/签发者与政策版本保存在受保护服务存储，UI/AI不可铸造；缺真实绑定的生产入口拒绝；测试主体仅测试装配可用 |
 | CLI-ID04 | 委托绑定主体、动作/资源、目标、期限和预算，不能扩大授权者权限 | 越权目标、过期委托、跨用户/设备/tenant 重放在执行前拒绝 |
 
 ### 4.2 软件、脚本与自助目录
@@ -141,12 +141,12 @@ Agent wire 的唯一 producer 仍为 rss-mdm；`execution-contract` 是本地执
 
 | 编号 | 要求 | 验收 |
 | --- | --- | --- |
-| CLI-REC01 | SQLite 是已接纳本地执行/交互/批准的持久 authority | 内存通知只作优化；任务/关键审计持久化失败不产生 runner 调用 |
+| CLI-REC01 | SQLite 是已接纳本地执行/交互/批准的持久 authority，AuditEvent可关联完整裁决 | 稳定事件ID、authority/tenant与device、request/plan/attempt、actor/initiator/approver、action/resource/target、decision/reason、委托/政策/批准版本、时间及evidence引用；准入裁决审计与intent同事务，失败不调用runner；审计读取单独授权，秘密只存引用或脱敏值 |
 | CLI-REC02 | 一次性批准消耗与执行 intent 原子提交 | 两个并发提交只能接受一次；intent不是已产生OS副作用的证明 |
 | CLI-REC03 | intent之后、执行中、结果保存前的崩溃有明确恢复状态 | 非幂等动作不得盲重跑；先核实、保留未知或转人工处理 |
 | CLI-REC04 | 取消请求、超时、进程终止和副作用回滚分别记录 | 取消不保证全进程树终止或系统效果消失；真实平台支持后独立验证 |
 | CLI-REC05 | 离线/时钟回拨/授权撤销有界处理 | 无可靠授权时效依据时不接纳新变更；离线不承诺即时撤销，截止及最大窗口明确 |
-| CLI-REC06 | 本地DB迁移、容量、磁盘满、锁竞争与损坏有可诊断结果 | 真实SQLite故障测试；不能将损坏当空库重建并遗忘已发生执行 |
+| CLI-REC06 | 本地DB迁移、容量、磁盘满、锁竞争与损坏有可诊断结果 | 迁移事务化并可从中断恢复；旧客户端遇到更高schema只读诊断并禁止执行/写入；失败保留原库或隔离副本，禁止自动初始化新authority；真实SQLite故障测试覆盖上述边界 |
 
 ### 4.7 安全与平台
 
@@ -157,7 +157,7 @@ Agent wire 的唯一 producer 仍为 rss-mdm；`execution-contract` 是本地执
 | CLI-SEC03 | 后续特权代理与普通用户AI/UI隔离，批准在执行前复核 | 不将整个Tauri应用提升为root/System；同用户可读token本身不被视为进程隔离 |
 | CLI-SEC04 | 秘密只以受控引用/句柄传递，输出有界并按权限脱敏 | 模型prompt、argv、日志、普通SQLite记录和UI不含长期凭据；AI结果查询也受限 |
 | CLI-SEC05 | 渲染不可信消息和脚本输出时不执行HTML/终端控制副作用 | XSS/恶意链接/输出诱导样本不能铸造操作或批准；保留原始证据访问权限 |
-| CLI-SEC06 | 本机管理员/内核失陷不在普通客户端隔离保证内 | 不宣称防篡改EDR；缓存、凭据、DB与IPC按平台权限保护并记录能力限制 |
+| CLI-SEC06 | 本机管理员/内核失陷不在普通客户端隔离保证内 | S1由C18验证测试DB访问边界、C19声明测试身份/能力限制；实际缓存、凭据、DB与IPC平台权限保护在S2/S3验收，不宣称防篡改EDR |
 | CLI-OS01 | Windows/macOS/Linux 是客户端宿主设计维度 | 各自构建/测试/打包/真实执行状态单列；无证据的组合不得标为支持 |
 | CLI-OS02 | Linux 宿主不自动成为 rss-mdm 受管平台 | Linux注册、systemd、APT/DNF、安装升级与发行版矩阵留后续产品范围与PBI |
 | CLI-OS03 | Windows System、Mac root 与登录用户上下文不同 | 后续执行器按任务指定身份；WinGet CLI/Brew限制见来源，不用提权解决所有兼容问题 |
@@ -165,12 +165,14 @@ Agent wire 的唯一 producer 仍为 rss-mdm；`execution-contract` 是本地执
 
 ## 5. 统一模型和执行边界
 
-最小业务对象：CatalogItem、OperationVariant、ParameterSchema、Conversation、ToolCallProposal、ExecutionRequest、FrozenPlan、ApprovalRecord、ExecutionIntent、Attempt、Evidence、Interaction。
+最小业务对象：CatalogItem、OperationVariant、ParameterSchema、Conversation、ToolCallProposal、ExecutionRequest、FrozenPlan、ApprovalRecord、ExecutionIntent、Attempt、Evidence、Interaction、AuditEvent。
 
 `actor` 表示承担权限的主体，`initiator` 只记录 human/ai/policy 来源，`delegation` 限制代理范围；另存批准者和目标 OS 用户。
 模型账号、OS用户和企业身份不能按相同用户名或email自动合并。
 批准绑定规范计划摘要、目标与身份、产物/参数、授权版本、期限、次数和预算；任何有效范围改变须重新判定。
 纯核心只验证可信输入并输出裁决/消耗意图；真实主体验证、批准签发与原子消耗由指定 adapter/host 完成。
+本地authority由OS管理员在后续服务bootstrap中建立：绑定稳定OS主体标识、允许目录与政策，指定有批准权的主体和签发密钥；密钥/政策/撤销版本位于UI/AI不可写的服务存储。
+普通用户host只能转交经认证的请求，不能自行声明actor、提高政策或签出批准。本地authority与企业tenant命名空间分离，不伪造企业身份；更换信任根使原批准失效，须有独立接线/负测证据。S1只有显式测试authority。
 
 ```mermaid
 flowchart LR
@@ -215,6 +217,7 @@ AI请求与手动请求都不能自行取得可执行capability。运行模式�
 | desktop/apps/client | 自助UI、AI UI、宿主桥接和共同闭环 | 组件契约与宿主adapter，组合根唯一 |
 
 AI工具参数经过MCP/host映射到执行请求，C02不直接嵌入另一份执行状态；该映射在C20验证。
+`execution-admission`就是C07的唯一actor/action/resource/context授权裁决核心；“admission”是包名，“授权”是职责，不另建平行authorization service。C19消费该裁决并强制持久执行准入。
 C10/C11为后续真实执行器准备计划，不强制进入仅接受冻结测试计划的C19/C20；它们的独立交付不等于端侧执行完成。
 C19不重新做Scope/Group/Resource，C20不复制授权；双方调用公共接缝，不能因组件独立而出现执行旁路。
 
@@ -233,7 +236,7 @@ AI引擎适配不等于安全执行器。具体引擎若仍能通过内置shell�
 
 ## 8. 运行、安全与故障边界
 
-S1只在测试装配运行无系统副作用runner：预设结果、等待、取消和故障注入；仍使用真实SQLite验证事务。
+S1测试runner不产生受管目标的脚本/软件/配置副作用：预设结果、等待、取消和故障注入；真实SQLite文件、AI provider进程/网络/账户及测试临时目录等基础设施活动允许且必须记录范围。
 生产入口不能启用测试主体或把test evidence当真实设备结果。S1没有系统helper，不提供任意exec/PTY入口。
 
 后续特权服务通过受保护IPC接收验证后的任务，UI/AI普通权限，执行前复核可信主体、摘要、授权时效和OS前提。
@@ -244,6 +247,7 @@ PowerShell/Bash是原生载荷；Rust提供启动、预算、权限、恢复，J
 安装前后检测、包管理器锁、重启、用户已有软件保护、签名/摘要和缓存替换风险在真实执行器阶段提供证据。
 离线批准仅在明确且可验证的有效期内使用；时钟回拨/撤销状态不明时默认不接纳新变更，不承诺离线即时撤销。
 管理员可配置有界输出/日志/并发/磁盘保留；具体数值由性能与平台实施验证冻结，不在PRD编造容量SLO。
+配置带版本，保存前校验硬上限并原子替换；加载失败使用仍满足当前强制政策的last-known-good，或进入禁止新执行的degraded状态，保留诊断、取消请求和安全恢复能力。配置变化审计记录操作者与前后版本；C19验证该接缝，不从PR配置整体迁入。
 
 ## 9. 与现有后端路线的衔接
 
@@ -285,11 +289,11 @@ PowerShell/Bash是原生载荷；Rust提供启动、预算、权限、恢复，J
 | [C15 #2408](https://dev.azure.com/shengming0923/rss/_workitems/edit/2408) | 自助UI：UI01–04、CAT03–06、INT01–03 | C03/C04/C05 |
 | [C16 #2409](https://dev.azure.com/shengming0923/rss/_workitems/edit/2409) | AI UI：AI01/03/05/06、UI02/04 | C02/C05 |
 | [C17 #2410](https://dev.azure.com/shengming0923/rss/_workitems/edit/2410) | MCP：AI03、CAT03–04、SEC02 | C01/C03 |
-| [C18 #2411](https://dev.azure.com/shengming0923/rss/_workitems/edit/2411) | SQLite：REC01–06、INT02、SEC04 | C04/C08/C09 |
-| [C19 #2412](https://dev.azure.com/shengming0923/rss/_workitems/edit/2412) | 执行组装：ID03、EX01–03/06、SEC01–04、REC01–06 | C06/C07/C08/C09/C18 |
+| [C18 #2411](https://dev.azure.com/shengming0923/rss/_workitems/edit/2411) | SQLite：REC01–06、INT02、SEC04/06的S1测试存储边界 | C04/C08/C09 |
+| [C19 #2412](https://dev.azure.com/shengming0923/rss/_workitems/edit/2412) | 执行组装：ID03、EX01–03/06、SEC01–04/06的S1限制、REC01–06及配置版本接缝 | C06/C07/C08/C09/C18 |
 | [C20 #2413](https://dev.azure.com/shengming0923/rss/_workitems/edit/2413) | 共同闭环：UI/AI/INT、EX01/06、SEC02/05 | C12/C15/C16/C17/C19 |
 
-需求代码缩写均省略共同前缀CLI。OS02–04、真实执行和企业连接属于后续阶段，不因表内模型任务完成而关闭。
+需求代码缩写均省略共同前缀CLI。OS02–04、ID03本地生产authority、SEC06的平台enforcement、真实执行和企业连接属于后续阶段，不因表内模型任务完成而关闭。
 
 依赖只反映真正的产物消费。能力/授权/批准/计划核心接受显式可信输入，安全强制在C19/C20组合与后续平台adapter完成，不能把所有核心人为串行。
 C02工具提案无需消费执行内核；C17通过port可用测试服务验收；C15人用UI不依赖AI，C20不等待C13/C14。
@@ -300,7 +304,7 @@ C18独占SQLite migration；C19不另建表；Cargo/lock/UI package配置与根�
 
 ## 11. 后续平台能力与客户端发布
 
-后续按平台和可验收行为分别登记：进程适配；系统服务/IPC/用户上下文；PS/sh/Bash执行器；MSI/WinGet、PKG/Brew、APT/DNF；缓存下载；Agent注册/通信；签名安装/更新/卸载；企业目录/策略接线。
+后续按平台和可验收行为分别登记：本地authority bootstrap/主体绑定/签发与撤销；进程适配；系统服务/IPC/用户上下文；PS/sh/Bash执行器；MSI/WinGet、PKG/Brew、APT/DNF；缓存下载；Agent注册/通信；签名安装/更新/卸载；企业目录/策略接线。
 这些工作消费本批核心和具体平台产物，不整体等待全部三平台，也不能因为已有UI而跳过执行验证。
 
 Windows/macOS/Linux分别记录OS版本/edition、CPU架构、解释器/安装器版本、执行身份、会话/隐私权限、隔离能力、打包方式和支持阶段。
@@ -324,7 +328,8 @@ prmonitor源码或其跨平台依赖不构成本客户端三平台安装包/更�
 - 从UI、MCP、provider原生工具、本地IPC及深链接尝试旁路；缺能力/强制隔离不可用必须拒绝。
 - 参数注入、路径/PATH/环境劫持、符号链接替换、敏感输出、不可信HTML或工具输出诱导。
 - 批准消耗前后、intent提交后、runner返回前后、结果保存前后重启；重复消息和取消竞争。
-- 用户缺席、窗口关闭、模型退出、会话generation失效、离线、时钟回拨、磁盘满、SQLite锁竞争/损坏。
+- 用户缺席、窗口关闭、模型退出、会话generation失效、离线、时钟回拨、磁盘满、SQLite锁竞争/损坏、迁移中断、旧客户端打开较新schema。
+- 不可关联审计、审计读取越权、无效/越界配置、配置原子替换失败与last-known-good不再满足强制政策。
 
 S1未实现的真实进程/文件/网络/IPC隔离风险在平台门验证，不以测试runner的拒绝性样本冒充系统沙箱证明。
 C20必须证明选定AI宿主自身没有不受控原生工具旁路；做不到时停留在普通会话/测试协议能力，不开放受控操作。
