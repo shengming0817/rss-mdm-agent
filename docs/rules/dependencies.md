@@ -1,0 +1,13 @@
+# 依赖与独立消费
+
+具体crate边界由[PRD第6节](../product/rss-mdm-agent-prd.md#6-独立组件与工程落点)持有。
+核心不依赖UI、模型SDK、数据库、OS或产品业务；adapter单向消费必要契约，组合根连接实际业务。必要基础类型和成熟库依赖允许，不为零依赖复制值类型。
+
+- 本仓独立workspace、工具链、lock与发布周期；同workspace成员可用内部path，禁止以相邻RSS/rss-mdm/prmonitor目录path或patch作为交付前提。
+- 跨仓消费固定版本/hash artifact或明确批准的完整Git revision与lock，不浮动跟踪分支，不把Git消费称为registry发布。
+- Agent wire由rss-mdm先发布，本仓再消费；本地execution-contract不建立第二套远程协议或设备身份权威。
+- AI/UI提取绑定来源commit、文件映射、权利/许可及改写证据，不链接整个prmonitor_lib，不带PR业务和旧不受控权限配置。
+- 独立消费证明隔离workspace、Cargo配置、target和features，核对实际metadata/tree及公共API行为；整仓构建不证明逐crate可独立消费。
+- 如需RSS公共机制，核验实际可用API与依赖闭包；缺口回原owner修复，不在产品仓维护通用机制副本。
+
+工程入口和公共lock变更由单一集成人串行合并；各能力目录按任务owner隔离。
