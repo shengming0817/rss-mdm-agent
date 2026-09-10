@@ -161,3 +161,26 @@ it("split keyboard bounds, dynamic minimum and pointer capture agree with ARIA",
   expect(divider.attributes("aria-valuenow")).toBe("50");
   expect(wrapper.emitted("resize")?.at(-1)).toEqual([0.5]);
 });
+
+it("announces appended messages and status updates through stable live regions", async () => {
+  const stream = mount(MessageStream, { props: { items: [] } });
+  const log = stream.get('[role="log"]');
+  expect(log.attributes("aria-live")).toBe("polite");
+  expect(log.attributes("aria-relevant")).toBe("additions text");
+  expect(log.attributes("aria-label")).toBeTruthy();
+  await stream.setProps({
+    items: [{ id: "m", kind: "assistant", text: "new output" }],
+  });
+  expect(stream.get('[role="log"]').element).toBe(log.element);
+  expect(log.text()).toContain("new output");
+  const status = mount(StatusList, { props: { items: [] } });
+  const live = status.get('[role="status"]');
+  expect(live.attributes("aria-live")).toBe("polite");
+  expect(live.attributes("aria-atomic")).toBe("true");
+  expect(status.find("ul").exists()).toBe(true);
+  await status.setProps({
+    items: [{ id: "s", label: "Sample", message: "Ready", tone: "neutral" }],
+  });
+  expect(status.get('[role="status"]').element).toBe(live.element);
+  expect(live.text()).toContain("Ready");
+});

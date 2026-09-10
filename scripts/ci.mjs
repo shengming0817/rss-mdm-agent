@@ -1,11 +1,16 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { stepResult } from "./ci-result.mjs";
 import { sourceState } from "./source-state.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const start = sourceState(root);
 const steps = [
-  ["CI provenance tests", "node", ["--test", "scripts/source-state.test.mjs"]],
+  [
+    "CI runner tests",
+    "node",
+    ["--test", "scripts/source-state.test.mjs", "scripts/ci-result.test.mjs"],
+  ],
   ["frozen dependencies", "pnpm", ["install", "--frozen-lockfile"]],
   ["frontend build", "pnpm", ["build"]],
   ["types", "pnpm", ["typecheck"]],
@@ -35,12 +40,7 @@ const results = [];
 for (const [name, command, args] of steps) {
   console.log(`\n[ci] ${name}`);
   const result = spawnSync(command, args, { cwd: root, stdio: "inherit" });
-  results.push({
-    name,
-    command: [command, ...args],
-    status: result.status,
-    error: result.error?.message,
-  });
+  results.push(stepResult(name, [command, ...args], result));
 }
 const end = sourceState(root);
 results.push({

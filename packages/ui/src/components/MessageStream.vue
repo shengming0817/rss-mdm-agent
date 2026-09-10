@@ -6,7 +6,13 @@ defineProps<{ items: readonly MessageItem[] }>();
 </script>
 
 <template>
-  <div class="rss-ui stream">
+  <div
+    class="rss-ui stream"
+    role="log"
+    aria-label="消息"
+    aria-live="polite"
+    aria-relevant="additions text"
+  >
     <template v-for="item in items" :key="item.id">
       <details v-if="item.kind === 'reasoning'" class="reasoning">
         <summary>推理过程</summary>
@@ -61,7 +67,7 @@ defineProps<{ items: readonly MessageItem[] }>();
   max-width: 80%;
   padding: var(--space-2) var(--space-4);
   border-radius: var(--space-3);
-  background: var(--color-bg-subtle);
+  background: var(--color-neutral-bg);
   border: 1px solid var(--color-border-strong);
 }
 .user-label {

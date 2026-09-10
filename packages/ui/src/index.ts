@@ -1,5 +1,3 @@
-import "./styles/tokens.css";
-import "./styles/base.css";
 export { default as AppShell } from "./components/AppShell.vue";
 export { default as NavigationList } from "./components/NavigationList.vue";
 export { default as SplitPane } from "./components/SplitPane.vue";

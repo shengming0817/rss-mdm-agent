@@ -3,13 +3,21 @@ import type { StatusItem } from "../types";
 defineProps<{ items: readonly StatusItem[] }>();
 </script>
 <template>
-  <ul class="rss-ui statuses" aria-label="状态">
-    <li v-for="item in items" :key="item.id" :class="item.tone">
-      <span class="dot" aria-hidden="true"></span
-      ><strong>{{ item.label }}</strong
-      ><span>{{ item.message }}</span>
-    </li>
-  </ul>
+  <div
+    class="rss-ui"
+    role="status"
+    aria-label="状态"
+    aria-live="polite"
+    aria-atomic="true"
+  >
+    <ul class="statuses">
+      <li v-for="item in items" :key="item.id" :class="item.tone">
+        <span class="dot" aria-hidden="true"></span
+        ><strong>{{ item.label }}</strong
+        ><span>{{ item.message }}</span>
+      </li>
+    </ul>
+  </div>
 </template>
 <style scoped>
 .statuses {

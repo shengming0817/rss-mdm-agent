@@ -4,7 +4,7 @@ export default defineConfig({
   plugins: [vue()],
   build: {
     lib: {
-      entry: "src/index.ts",
+      entry: "runtime.ts",
       formats: ["es"],
       fileName: "ui",
       cssFileName: "style",

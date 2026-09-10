@@ -70,6 +70,8 @@ test("tree scan covers desktop files and both production manifests", () => {
     for (const path of [
       "packages/ui/src",
       "packages/ui/package.json",
+      "packages/ui/runtime.ts",
+      "Cargo.toml",
       "apps/desktop/src",
       "apps/desktop/package.json",
       "apps/desktop/src-tauri",
@@ -98,6 +100,188 @@ test("tree scan covers desktop files and both production manifests", () => {
         "desktop production dependencies must be UI and Vue only",
       ),
     );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("presentation capabilities reject global aliases, computed access and outbound templates", () => {
+  for (const source of [
+    `globalThis['fetch']('https://example.com')`,
+    `const send = navigator.sendBeacon; send('https://example.com', 'x')`,
+    `const host = window; host['__TAURI_INTERNALS__'].invoke('run')`,
+    `const { fetch: send } = globalThis; send('https://example.com')`,
+    `const key = 'fe' + 'tch'; globalThis[key]('https://example.com')`,
+    `globalThis[\`fetch\`]('https://example.com')`,
+    `new Image().src = 'https://example.com'`,
+    `import network = require('node:http')`,
+    `<template><div v-if="true"><a href="https://example.com">out</a></div></template>`,
+    `const value = {}; const key = 'con' + 'structor'; value[key]('return window')()`,
+    `<template><a href="https://example.com">out</a></template>`,
+    `<template><form action="https://example.com"><button>send</button></form></template>`,
+    `<template><img :src="url" /></template>`,
+    `<template><button @click="window['open'](url)">out</button></template>`,
+    `<template><component :is="tag" v-bind="attrs" /></template>`,
+    `const doc = document; doc.createElement('script')`,
+    `const ctor = value['con' + 'structor']; ctor('return window')()`,
+  ])
+    assert.ok(
+      checkSource(
+        "packages/ui/src/fixture.vue",
+        source.startsWith("<") ? source : `<script setup>${source}</script>`,
+      ).length,
+      source,
+    );
+});
+
+test("each host boundary mutation independently fails the tree scan", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ui-host-boundaries-"));
+  const mutations = [
+    [
+      "apps/desktop/src-tauri/tauri.conf.json",
+      (s) => {
+        const c = JSON.parse(s);
+        c.app.security.csp = "default-src *";
+        return JSON.stringify(c);
+      },
+    ],
+    ...[
+      "object-src 'none'",
+      "frame-src 'none'",
+      "base-uri 'none'",
+      "form-action 'none'",
+    ].map((d) => [
+      "apps/desktop/src-tauri/tauri.conf.json",
+      (s) => s.replaceAll(d, ""),
+    ]),
+    [
+      "apps/desktop/src-tauri/tauri.conf.json",
+      (s) =>
+        s.replaceAll(
+          "connect-src ipc:",
+          "connect-src https://example.com ipc:",
+        ),
+    ],
+    [
+      "apps/desktop/src-tauri/tauri.conf.json",
+      (s) => {
+        const c = JSON.parse(s);
+        c.app.security.devCsp = "default-src *";
+        return JSON.stringify(c);
+      },
+    ],
+    [
+      "apps/desktop/src-tauri/tauri.conf.json",
+      (s) => s.replace('"withGlobalTauri": false', '"withGlobalTauri": true'),
+    ],
+    [
+      "apps/desktop/src-tauri/capabilities/main.json",
+      (s) => s.replace('"permissions": []', '"permissions": ["core:default"]'),
+    ],
+    [
+      "apps/desktop/src-tauri/capabilities/main.json",
+      (s) => s.replace('"windows": ["main"]', '"windows": ["*"]'),
+    ],
+    [
+      "apps/desktop/src-tauri/Cargo.toml",
+      (s) => s.replace("[dependencies]", '[dependencies]\nureq = "3"'),
+    ],
+    [
+      "apps/desktop/src-tauri/src/main.rs",
+      (s) =>
+        s.replace(
+          "tauri::Builder::default()",
+          "tauri::Builder::default().invoke_handler(handler)",
+        ),
+    ],
+    [
+      "apps/desktop/src-tauri/tauri.conf.json",
+      (s) => s.replace('"create": false', '"create": true'),
+    ],
+    [
+      "apps/desktop/src-tauri/tauri.conf.json",
+      (s) => s.replace("ws://127.0.0.1:1420", "ws://*"),
+    ],
+    [
+      "apps/desktop/src-tauri/tauri.conf.json",
+      (s) =>
+        s.replace("default-src 'self'", "default-src 'self'; default-src *"),
+    ],
+    [
+      "apps/desktop/src-tauri/capabilities/main.json",
+      (s) =>
+        s.replace(
+          '"identifier": "main"',
+          '"identifier": "main", "remote": {"urls": ["https://*"]}',
+        ),
+    ],
+    [
+      "apps/desktop/src-tauri/src/main.rs",
+      (s) => s.replace(".on_navigation(navigation::allowed)", ""),
+    ],
+    [
+      "apps/desktop/src-tauri/src/main.rs",
+      (s) =>
+        s.replace(
+          ".on_navigation(navigation::allowed)",
+          ".on_navigation(|_| true)",
+        ),
+    ],
+    [
+      "apps/desktop/src-tauri/src/main.rs",
+      (s) => s.replace("NewWindowResponse::Deny", "NewWindowResponse::Allow"),
+    ],
+    [
+      "apps/desktop/src-tauri/src/main.rs",
+      (s) =>
+        s.replace(
+          "tauri::Builder::default()",
+          "tauri::Builder::default().plugin(plugin)",
+        ),
+    ],
+    [
+      "apps/desktop/src-tauri/src/main.rs",
+      (s) =>
+        s.replace(
+          "tauri::Builder::default()",
+          "tauri::Builder::default().manage(state)",
+        ),
+    ],
+    [
+      "Cargo.toml",
+      (s) => s.replace("features = []", 'features = ["devtools"]'),
+    ],
+  ];
+  try {
+    for (const path of [
+      "packages/ui/src",
+      "packages/ui/package.json",
+      "packages/ui/runtime.ts",
+      "apps/desktop/src",
+      "apps/desktop/package.json",
+      "apps/desktop/src-tauri",
+      "Cargo.toml",
+    ])
+      cpSync(new URL(`../${path}`, import.meta.url), join(dir, path), {
+        recursive: true,
+      });
+    for (const [path, mutate] of mutations) {
+      assert.deepEqual(
+        checkTree(dir),
+        [],
+        "unchanged fixture is valid before each mutation",
+      );
+      const file = join(dir, path);
+      const original = readFileSync(file, "utf8");
+      const changed = mutate(original);
+      assert.notEqual(changed, original, path);
+      writeFileSync(file, changed);
+      try {
+        assert.ok(checkTree(dir).length, `${path}: ${changed}`);
+      } finally {
+        writeFileSync(file, original);
+      }
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

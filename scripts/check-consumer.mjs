@@ -66,12 +66,17 @@ try {
         module: "ESNext",
         moduleResolution: "Bundler",
         strict: true,
-        skipLibCheck: true,
+        skipLibCheck: false,
+        noUncheckedSideEffectImports: true,
         lib: ["ES2022", "DOM"],
-        types: ["vite/client"],
+        types: [],
       },
-      include: ["main.ts", "App.vue"],
+      include: ["main.ts", "App.vue", "styles.d.ts"],
     }),
+  );
+  writeFileSync(
+    join(dir, "styles.d.ts"),
+    'declare module "@rss-mdm-agent/ui/style.css";',
   );
   writeFileSync(
     join(dir, "index.html"),

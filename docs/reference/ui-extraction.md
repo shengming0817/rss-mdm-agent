@@ -23,11 +23,11 @@
 | src/review/ReviewPanel.vue（输入片段） | packages/ui/src/components/MessageComposer.vue | 提取输入、折叠和IME行为；受控草稿与events替代store/API/PR/监听器，补legacy IME Enter处理 |
 | src/StatusBar.vue（展示片段） | packages/ui/src/components/StatusList.vue | 按展示数据重写，无CLI探测、项目筛选、引擎启停或动作 |
 | src/design/tokens.css | packages/ui/src/styles/tokens.css | 保留语义tokens及明暗色；改为组件类作用域，剔除来源业务注释 |
-| src-tauri/src/main.rs、src-tauri/src/lib.rs（Builder入口） | apps/desktop/src-tauri/src/main.rs | 保留Windows GUI标记与Builder运行；无业务模块、command、plugin、setup或状态注册 |
+| src-tauri/src/main.rs、src-tauri/src/lib.rs（Builder入口） | apps/desktop/src-tauri/src/main.rs | 保留Windows GUI标记与Builder运行；新增仅创建受导航约束窗口的setup与启动失败诊断，无业务模块、command、plugin或状态注册 |
 | src-tauri/build.rs | apps/desktop/src-tauri/build.rs | 只保留tauri_build入口；不复制远程Web占位/嵌入逻辑 |
 | src-tauri/tauri.conf.json、capabilities/default.json | apps/desktop/src-tauri/tauri.conf.json、capabilities/main.json | 全新产品身份、窗口、最小权限和CSP；删除deep link、opener和业务资源 |
 | vite.config.ts、src/main.ts | apps/desktop/vite.config.ts、src/main.ts | 固定本地开发端口和Vue挂载；不复制Tauri transport/环境探测与业务初始化 |
-| 无 | apps/desktop/src/App.vue、style.css；packages/ui/src/styles/base.css、index.ts | 唯一固定样本、基础作用域样式及公共导出，本次新建 |
+| 无 | apps/desktop/src/App.vue、style.css；packages/ui/src/styles/base.css、index.ts、packages/ui/runtime.ts | 唯一固定样本、基础作用域样式及公共导出，本次新建 |
 | 无 | apps/desktop/src-tauri/icons/icon.svg、icon.png、icon.ico、icon.icns | 原创R字形标识；由Tauri CLI 2.11.2生成桌面图标，不沿用来源品牌图片 |
 
 没有迁移PR历史、配置或数据库；不保留旧路径alias、Review类型或兼容shim。MIT包NOTICE随tarball分发。
@@ -40,3 +40,11 @@
 - ref: Vue runtime-dom/dist/runtime-dom.esm-bundler.js@3.5.38 — 读取发布包createText/textContent实现，使用文本插值渲染。
 
 接口与复现命令见[开发指南](../guides/desktop-development.md)。每轮原生窗口、独立消费和本地CI结果绑定受测SHA写入PR，不将来源的跨平台能力当作本仓验证。
+
+本轮修复对标：
+- ref: [Tauri WebviewWindowBuilder navigation/new-window](https://github.com/tauri-apps/tauri/blob/tauri-v2.11.2/crates/tauri/src/webview/webview_window.rs) — 使用公开handler，保留产品自己的精确origin策略。
+- ref: [TypeScript noUncheckedSideEffectImports](https://www.typescriptlang.org/tsconfig/noUncheckedSideEffectImports.html) 与 [Vite library CSS](https://vite.dev/guide/build#library-mode) — CSS聚合入口与声明图分离，严格tarball消费拒绝缺失引用。
+- ref: [typescript-eslint static member utility](https://github.com/typescript-eslint/typescript-eslint/blob/main/packages/eslint-plugin/src/util/misc.ts) — 参考静态成员名解析；本仓直接复用已有TypeScript AST/checker，环境值走allowlist，不引入另一套解析依赖。
+- ref: [Win32 MessageBoxW](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-messageboxw) — 无owner窗口的同步错误框，用于Windows GUI启动失败。
+- ref: [Node spawnSync](https://nodejs.org/docs/latest-v24.x/api/child_process.html#child_processspawnsynccommand-args-options) — 分别记录退出码、信号与spawn错误。
+- ref: [WAI-ARIA log](https://www.w3.org/WAI/WCAG21/Techniques/aria/ARIA23) 与 [status](https://www.w3.org/TR/wai-aria/#status) — 消息追加与状态反馈的辅助技术语义。

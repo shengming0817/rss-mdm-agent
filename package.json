@@ -16,7 +16,7 @@
     "typecheck": "vue-tsc --noEmit -p tsconfig.json",
     "check:boundaries": "node --test scripts/boundaries.test.mjs",
     "check:consumer": "node scripts/check-consumer.mjs",
-    "format:check": "prettier --check packages/ui/src packages/ui/tests apps/desktop/src scripts"
+    "format:check": "prettier --check packages/ui/runtime.ts packages/ui/src packages/ui/tests apps/desktop/src scripts"
   },
   "devDependencies": {
     "@types/node": "24.3.0",
