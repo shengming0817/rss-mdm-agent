@@ -8,6 +8,9 @@ Owner repository：rss-mdm-agent。任务容器：[EPIC #2392](https://dev.azure
 本文件定义目标与验收，不代表已经实现、构建、发布或运行验证。具体接口与平台支持矩阵在对应实现中冻结。
 来源及固定证据见[来源索引](../reference/sources.md)。
 
+C05 经用户扩大范围：提取独立 Vue UI 包和可启动的 Tauri 桌面基础壳，采用根级 `apps/`、`packages/`、`crates/` 组织。
+固定样本同时供浏览器和桌面展示，不接入模型、持久化或真实执行。业务页面仍归 C15/C16，执行桥接与共同闭环仍归 C20。
+
 ## 1. 产品定位与完成边界
 
 用户可以不使用 AI 完成已授权的软件和工具操作，也可以让 AI 发现同一目录、建议操作并在委托范围内调用。
@@ -198,7 +201,7 @@ AI请求与手动请求都不能自行取得可执行capability。运行模式�
 
 ## 6. 独立组件与工程落点
 
-以下为实施owner和接口边界建议，不是本次已经存在的包或公共API冻结。
+以下为实施owner和接口边界；仅按对应实现交付实际组件，不预建空crate。根Cargo workspace统一管理宿主和后续 `crates/*` 成员，pnpm workspace管理 `apps/*`、`packages/*`。
 核心不依赖UI、模型SDK、数据库、OS或产品业务。必要基础类型/成熟库依赖允许；不为“零依赖”复制同一任务类型。
 
 | 组件 | 单一责任 | 直接消费 |
@@ -213,8 +216,8 @@ AI请求与手动请求都不能自行取得可执行capability。运行模式�
 | execution-mcp | 工具协议到执行服务port | execution-contract、service-catalog、rmcp |
 | execution-sqlite | journal/交互/批准消耗的原子持久化 | interaction、approval、lifecycle |
 | execution-app | 能力/授权/批准/持久化和runner port的产品组装 | C06–C09、C18；不加载AI引擎 |
-| desktop/packages/ui | 提取的纯展示组件 | Vue/展示依赖，props/events |
-| desktop/apps/client | 自助UI、AI UI、宿主桥接和共同闭环 | 组件契约与宿主adapter，组合根唯一 |
+| packages/ui | 提取的纯展示组件 | Vue/展示依赖，props/events |
+| apps/desktop | C05桌面基础壳与样本；后续自助UI、AI UI、宿主桥接和共同闭环 | 组件契约与宿主adapter，组合根唯一 |
 
 AI工具参数经过MCP/host映射到执行请求，C02不直接嵌入另一份执行状态；该映射在C20验证。
 `execution-admission`就是C07的唯一actor/action/resource/context授权裁决核心；“admission”是包名，“授权”是职责，不另建平行authorization service。C19消费该裁决并强制持久执行准入。
@@ -232,7 +235,7 @@ C19不重新做Scope/Group/Resource，C20不复制授权；双方调用公共接
 
 AI引擎适配不等于安全执行器。具体引擎若仍能通过内置shell、网络或其他工具绕过宿主约束，必须禁用对应工具或提供实际隔离；无法强制时明确不支持受控模式。
 恢复能力按provider/version/process generation描述，不伪装三引擎具有相同跨重启resume。
-来源根目录未发现LICENSE，提取前核对同一权利主体或其它有效授权及第三方NOTICE；不因公开可读就宣称可任意复制或替上游赋许可。
+固定来源根目录未发现LICENSE。C05用户已确认源码为自有项目，允许提取并采用MIT；授权及逐文件改写见来源记录。其它提取仍核对适用权利及第三方NOTICE，不因公开可读就推定许可。
 
 ## 8. 运行、安全与故障边界
 
@@ -276,7 +279,7 @@ PowerShell/Bash是原生载荷；Rust提供启动、预算、权限、恢复，J
 | [C02 #2395](https://dev.azure.com/shengming0923/rss/_workitems/edit/2395) | AI契约：AI01–02、AI06 | 无 |
 | [C03 #2396](https://dev.azure.com/shengming0923/rss/_workitems/edit/2396) | 目录核心：CAT01–06 | 无 |
 | [C04 #2397](https://dev.azure.com/shengming0923/rss/_workitems/edit/2397) | 交互：INT01–03 | 无 |
-| [C05 #2398](https://dev.azure.com/shengming0923/rss/_workitems/edit/2398) | 纯UI提取：UI04、SEC05 | 无 |
+| [C05 #2398](https://dev.azure.com/shengming0923/rss/_workitems/edit/2398) | UI提取与Tauri基础壳：UI04、SEC05 | 无 |
 | [C06 #2399](https://dev.azure.com/shengming0923/rss/_workitems/edit/2399) | 能力：EX02、OS01 | C01 |
 | [C07 #2400](https://dev.azure.com/shengming0923/rss/_workitems/edit/2400) | 授权：ID01–04、CAT04、EX01、SEC01–02 | C01 |
 | [C08 #2401](https://dev.azure.com/shengming0923/rss/_workitems/edit/2401) | 批准：EX03、INT01、REC02/05 | C01 |

@@ -1,7 +1,7 @@
 # 来源与对标
 
 本文件记录需求与源码证据，不作为实现状态或依赖选型批准。查阅日期：2026-09-09 UTC。
-PRD唯一入口为[客户端PRD](../product/rss-mdm-agent-prd.md)。本次仅编写文档，未复制下列代码或安装第三方运行时。
+PRD唯一入口为[客户端PRD](../product/rss-mdm-agent-prd.md)。D00仅编写文档；C05的实际UI/桌面壳提取、权利授权和固定对标见[提取记录](ui-extraction.md)。
 
 ## 固定产品来源
 
@@ -10,7 +10,7 @@ PRD唯一入口为[客户端PRD](../product/rss-mdm-agent-prd.md)。本次仅编
 | 用户确认的客户端方案 | [EPIC #2392](https://dev.azure.com/shengming0923/rss/_workitems/edit/2392)、[D00 #2393](https://dev.azure.com/shengming0923/rss/_workitems/edit/2393) | 人工自助与AI共用受控执行、只提取AI/UI、20项功能与本批文档交付 |
 | rss-mdm-agent原始基线 | `f423420236804a468b7c7fc54fce38f65ea7710c` | 空初始仓；不是已实现Agent |
 | rss-mdm产品基线 | `589211a598d588508375f7e84742cfa0dc7d29ce` | 产品范围、仓库owner、协议producer与T3边界 |
-| prmonitor提取来源 | `4dcc87264ad740da6559824e0a8b04a1c2914d4b` | AI引擎/UI源码参考；不代表新客户端已提取 |
+| prmonitor提取来源 | `4dcc87264ad740da6559824e0a8b04a1c2914d4b` | AI引擎/UI源码参考；实际提取范围以逐文件记录为准 |
 
 服务端[工程目标](https://dev.azure.com/shengming0923/rss/_git/rss-mdm?version=GC589211a598d588508375f7e84742cfa0dc7d29ce&path=/docs/product/project-goals.md)、[产品PRD](https://dev.azure.com/shengming0923/rss/_git/rss-mdm?version=GC589211a598d588508375f7e84742cfa0dc7d29ce&path=/docs/product/rss-mdm-prd.md)、[架构ADR](https://dev.azure.com/shengming0923/rss/_git/rss-mdm?version=GC589211a598d588508375f7e84742cfa0dc7d29ce&path=/docs/architecture/adr/202609072231-001-rust-rss-product-foundation.md)。
 本地服务端仓包含WinMDM历史快照，恢复来源由其reference/README.md持有；历史实现不是本客户端交付证明。

@@ -1,0 +1,14 @@
+import { defineConfig } from "vite";
+import vue from "@vitejs/plugin-vue";
+export default defineConfig({
+  plugins: [vue()],
+  build: {
+    lib: {
+      entry: "runtime.ts",
+      formats: ["es"],
+      fileName: "ui",
+      cssFileName: "style",
+    },
+    rollupOptions: { external: ["vue"] },
+  },
+});
