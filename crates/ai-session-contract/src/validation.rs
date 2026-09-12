@@ -2,7 +2,8 @@ use crate::{
     Command, CommandEnvelope, ContentPart, ContractError, Event, EventEnvelope, Message, Role,
     ToolCallResponse,
 };
-use serde::de::DeserializeOwned;
+use serde::{de::DeserializeOwned, Serialize};
+use std::io::{self, Write};
 
 /// Mandatory host bounds, not values chosen by the model.
 #[derive(Debug, Clone, Copy)]
@@ -66,6 +67,39 @@ fn message(m: &Message, l: &SessionLimits) -> Result<(), ContractError> {
 fn response(r: &ToolCallResponse, l: &SessionLimits) -> Result<(), ContractError> {
     content(&r.content, l)
 }
+// Count compact JSON bytes without allocating a second full payload. This uses
+// serde_json's actual serializer, including escaping and envelope metadata.
+fn encoded_size<T: Serialize>(value: &T, limit: usize) -> Result<(), ContractError> {
+    struct Counter {
+        remaining: usize,
+        exceeded: bool,
+    }
+    impl Write for Counter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            if bytes.len() > self.remaining {
+                self.exceeded = true;
+                return Err(io::Error::other("contract byte limit exceeded"));
+            }
+            self.remaining -= bytes.len();
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            // reason: a counting writer has no buffered data or external sink.
+            Ok(())
+        }
+    }
+    let mut counter = Counter {
+        remaining: limit,
+        exceeded: false,
+    };
+    serde_json::to_writer(&mut counter, value).map_err(|_| {
+        if counter.exceeded {
+            ContractError::Limit
+        } else {
+            ContractError::Encoding
+        }
+    })
+}
 impl EventEnvelope {
     pub fn validate(&self, limits: &SessionLimits) -> Result<(), ContractError> {
         limits.validate()?;
@@ -101,16 +135,12 @@ impl EventEnvelope {
                         _ => {}
                     }
                 }
-                let bytes =
-                    serde_json::to_vec(&proposal.arguments).map_err(|_| ContractError::Encoding)?;
-                if bytes.len() > limits.max_argument_bytes {
-                    return Err(ContractError::Limit);
-                }
-                Ok(())
+                encoded_size(&proposal.arguments, limits.max_argument_bytes)
             }
             Event::ToolCallResponded { response: r } => response(r, limits),
             _ => Ok(()),
-        }
+        }?;
+        encoded_size(self, limits.max_input_bytes)
     }
 }
 impl CommandEnvelope {
@@ -123,6 +153,7 @@ impl CommandEnvelope {
             Command::SendMessage { message: m } => message(m, limits),
             Command::RespondToTool { response: r } => response(r, limits),
             _ => Ok(()),
-        }
+        }?;
+        encoded_size(self, limits.max_input_bytes)
     }
 }

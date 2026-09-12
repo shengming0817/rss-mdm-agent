@@ -279,3 +279,59 @@ fn repeated_tool_argument_keys_are_rejected_at_every_depth() {
         assert!(serde_json::from_str::<ai_session_contract::EventEnvelope>(&bad).is_err());
     }
 }
+
+#[test]
+fn constructed_envelopes_obey_the_same_encoded_size_budget_as_decoders() {
+    let event = decode_event(CANCEL, &limits()).unwrap();
+    let size = serde_json::to_vec(&event).unwrap().len();
+    assert!(event
+        .validate(&SessionLimits {
+            max_input_bytes: size,
+            ..limits()
+        })
+        .is_ok());
+    assert_eq!(
+        event
+            .validate(&SessionLimits {
+                max_input_bytes: size - 1,
+                ..limits()
+            })
+            .unwrap_err(),
+        ai_session_contract::ContractError::Limit
+    );
+    let values: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("fixtures/commands.json")).unwrap();
+    for value in values {
+        let command =
+            ai_session_contract::decode_command(&serde_json::to_vec(&value).unwrap(), &limits())
+                .unwrap();
+        let size = serde_json::to_vec(&command).unwrap().len();
+        assert!(command
+            .validate(&SessionLimits {
+                max_input_bytes: size,
+                ..limits()
+            })
+            .is_ok());
+        assert_eq!(
+            command
+                .validate(&SessionLimits {
+                    max_input_bytes: size - 1,
+                    ..limits()
+                })
+                .unwrap_err(),
+            ai_session_contract::ContractError::Limit
+        );
+    }
+    let mut value = fixtures()[2].clone();
+    value["event"]["text"] = serde_json::json!("\n".repeat(4096));
+    let event: ai_session_contract::EventEnvelope = serde_json::from_value(value).unwrap();
+    assert_eq!(
+        event
+            .validate(&SessionLimits {
+                max_input_bytes: 5000,
+                ..limits()
+            })
+            .unwrap_err(),
+        ai_session_contract::ContractError::Limit
+    );
+}

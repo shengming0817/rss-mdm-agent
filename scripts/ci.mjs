@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { stepResult } from "./ci-result.mjs";
-import { sourceState } from "./source-state.mjs";
+import { sameCommittedSource, sourceState } from "./source-state.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const start = sourceState(root);
 const steps = [
@@ -51,13 +51,7 @@ for (const [name, command, args] of steps) {
 const end = sourceState(root);
 results.push({
   name: "committed source provenance",
-  status:
-    start.clean &&
-    end.clean &&
-    start.head === end.head &&
-    start.base === end.base
-      ? 0
-      : 1,
+  status: sameCommittedSource(start, end) ? 0 : 1,
 });
 mkdirSync(new URL("../.local-ci-runs/", import.meta.url), { recursive: true });
 writeFileSync(

@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
-import { sourceState } from "./source-state.mjs";
+import { sameCommittedSource, sourceState } from "./source-state.mjs";
 
 const names = ["execution-contract", "ai-session-contract"];
 function cargo(args, cwd, env, execute, receipt, capture = false) {
@@ -188,9 +188,14 @@ export function checkContractConsumers(root, execute = spawnSync) {
       publish();
     }
     report.sourceEnd = sourceState(root);
+    const committed = sameCommittedSource(report.source, report.sourceEnd);
+    if (!committed)
+      report.failure ??= {
+        stage: "provenance",
+        code: "uncommitted-or-changed-source",
+      };
     report.status =
-      report.consumers.every((r) => r.passed) &&
-      report.source.head === report.sourceEnd.head
+      report.consumers.every((r) => r.passed) && committed
         ? "passed"
         : "failed";
   } catch {

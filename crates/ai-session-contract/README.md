@@ -4,7 +4,7 @@
 
 ## 消费方式
 
-外部字节经 `decode_event(bytes, limits)` / `decode_command(bytes, limits)`；程序构造的对象使用 `validate(limits)`。`SessionLimits` 显式限制输入、文本总字节、内容分段和工具参数编码大小；无隐式无限配置。
+外部字节经 `decode_event(bytes, limits)` / `decode_command(bytes, limits)`；程序构造的对象使用 `validate(limits)`。`SessionLimits` 显式限制输入、文本总字节、内容分段和工具参数编码大小；无隐式无限配置。两个程序构造的 validate 入口也检查整体 envelope 的紧凑 JSON 编码长度；计数包含转义和 metadata，不分配第二份完整 payload，越界立即失败。
 
 `EventEnvelope` 持有 V1、conversationId、sequence，事件引用稳定 turn/message/tool-call ID。ConversationStarted 内的会话 ID 必须匹配 envelope。sequence 使用 0 起的安全 JSON 整数；顺序、重复事件和状态归并由 host 持有，本库不实现调度器或持久会话状态机。
 

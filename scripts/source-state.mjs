@@ -11,3 +11,14 @@ export function sourceState(
   const changes = run("status", "--porcelain", "--untracked-files=all");
   return { head, baseRef, base, clean: changes === "", changes };
 }
+
+// Canonical verdict for one committed source identity across a verification run.
+export function sameCommittedSource(start, end) {
+  return (
+    start.clean &&
+    end.clean &&
+    start.head === end.head &&
+    start.base === end.base &&
+    start.baseRef === end.baseRef
+  );
+}

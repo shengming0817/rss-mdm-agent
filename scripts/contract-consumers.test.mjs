@@ -58,6 +58,24 @@ function fixture() {
     join(root, ".local-ci-runs/contracts.json"),
     JSON.stringify({ status: "passed", source: { head: "stale-success" } }),
   );
+  writeFileSync(join(root, ".gitignore"), ".local-ci-runs/\n");
+  execFileSync(git, ["add", "crates", ".gitignore"], { cwd: root });
+  execFileSync(
+    git,
+    [
+      "-c",
+      "user.name=Fixture",
+      "-c",
+      "user.email=fixture@example.invalid",
+      "commit",
+      "-qm",
+      "source fixture",
+    ],
+    { cwd: root },
+  );
+  execFileSync(git, ["update-ref", "refs/remotes/origin/develop", "HEAD"], {
+    cwd: root,
+  });
   return root;
 }
 function fakeCargo(root, failure) {
@@ -154,5 +172,42 @@ test("signals and spawn errors are recorded as failures without blocking the oth
     assert.ok(!JSON.stringify(result).includes("untrusted diagnostic"));
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("only clean unchanged source can produce a deliverable consumer PASS", () => {
+  for (const mode of [
+    "clean",
+    "dirty-at-start",
+    "mutation-during-run",
+    "base-drift",
+  ]) {
+    const root = fixture();
+    try {
+      const input = join(
+        root,
+        "crates/execution-contract/examples/execution-consumer.rs",
+      );
+      if (mode === "dirty-at-start")
+        writeFileSync(input, "changed before checking");
+      const fake = fakeCargo(root, (name) => {
+        if (name === names[0] && mode === "mutation-during-run")
+          writeFileSync(input, "changed while checking");
+        if (name === names[0] && mode === "base-drift")
+          execFileSync(
+            git,
+            ["update-ref", "refs/remotes/origin/develop", "HEAD~1"],
+            { cwd: root },
+          );
+        return { status: 0, stdout: "" };
+      });
+      const result = checkContractConsumers(root, fake.execute);
+      assert.deepEqual(fake.attempted, names);
+      assert.equal(result.status, mode === "clean" ? "passed" : "failed", mode);
+      if (mode !== "clean")
+        assert.equal(result.failure.code, "uncommitted-or-changed-source");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   }
 });
