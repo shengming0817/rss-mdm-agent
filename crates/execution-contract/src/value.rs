@@ -1,23 +1,7 @@
+use crate::{ContractError, ErrorKind, Field, Rule};
 use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
-
-/// A syntax error contains no input values or provider diagnostics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum ContractError {
-    #[error("invalid contract encoding")]
-    Encoding,
-    #[error("unsupported contract version")]
-    Version,
-    #[error("invalid contract value")]
-    Value,
-    #[error("contract limit exceeded")]
-    Limit,
-    #[error("invalid execution budget or validity window")]
-    Budget,
-    #[error("inconsistent execution context")]
-    Context,
-}
 
 /// The only accepted local contract version. This is not the Agent wire version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,7 +17,10 @@ impl<'de> Deserialize<'de> for V1 {
         if version.as_u64() == Some(1) {
             Ok(Self)
         } else {
-            Err(D::Error::custom(ContractError::Version))
+            Err(D::Error::custom(
+                ContractError::new(ErrorKind::UnsupportedVersion, Field::Version, Rule::Version)
+                    .for_serde(),
+            ))
         }
     }
 }
@@ -47,7 +34,7 @@ impl JsonSchema for V1 {
 }
 
 macro_rules! identifier {
-    ($name:ident, $doc:literal) => {
+    ($name:ident, $field:ident, $doc:literal) => {
         #[doc = $doc]
         #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, JsonSchema)]
         #[serde(transparent)]
@@ -56,20 +43,28 @@ macro_rules! identifier {
             String,
         );
         impl $name {
+            /// Accept 1–128 ASCII bytes matching `[A-Za-z0-9][A-Za-z0-9._:/-]*`; no normalization or authentication.
+            /// Returns InvalidValue with this identifier field and Identifier rule on failure.
             pub fn new(value: impl Into<String>) -> Result<Self, ContractError> {
                 let value = value.into();
                 if !valid_id(&value) {
-                    return Err(ContractError::Value);
+                    return Err(ContractError::new(
+                        ErrorKind::InvalidValue,
+                        Field::$field,
+                        Rule::Identifier,
+                    ));
                 }
                 Ok(Self(value))
             }
+            /// Borrow the validated representation without normalization, resolution or authority checks.
             pub fn as_str(&self) -> &str {
                 &self.0
             }
         }
         impl<'de> Deserialize<'de> for $name {
             fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-                Self::new(String::deserialize(d)?).map_err(D::Error::custom)
+                Self::new(String::deserialize(d)?)
+                    .map_err(|error| D::Error::custom(error.for_serde()))
             }
         }
     };
@@ -84,26 +79,34 @@ fn valid_id(value: &str) -> bool {
 }
 identifier!(
     Id,
+    Identifier,
     "Opaque local reference identifier; syntax validity is not authenticity."
 );
 identifier!(
     ActorId,
+    Actor,
     "Product actor reference, not an authenticated principal."
 );
 identifier!(
     DeviceId,
+    Device,
     "Device reference, not verified registration evidence."
 );
-identifier!(RequestId, "Local execution request identity.");
-identifier!(PlanId, "Immutable local plan identity.");
-identifier!(AttemptId, "Execution attempt correlation identity.");
-identifier!(EventId, "Audit event correlation identity.");
+identifier!(RequestId, Request, "Local execution request identity.");
+identifier!(PlanId, Plan, "Immutable local plan identity.");
+identifier!(
+    AttemptId,
+    Attempt,
+    "Execution attempt correlation identity."
+);
+identifier!(EventId, Event, "Audit event correlation identity.");
 
 /// Lowercase SHA-256 bytes expressed as hex; a digest alone grants no trust.
 #[derive(Clone, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(transparent)]
 pub struct Digest(#[schemars(length(min = 64, max = 64), pattern("^[0-9a-f]{64}$"))] String);
 impl Digest {
+    /// Accept exactly 64 lowercase ASCII hex digits; returns an InvalidValue/Digest diagnostic otherwise.
     pub fn new(value: impl Into<String>) -> Result<Self, ContractError> {
         let value = value.into();
         if value.len() != 64
@@ -111,10 +114,15 @@ impl Digest {
                 .bytes()
                 .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
         {
-            return Err(ContractError::Value);
+            return Err(ContractError::new(
+                ErrorKind::InvalidValue,
+                Field::Digest,
+                Rule::Digest,
+            ));
         }
         Ok(Self(value))
     }
+    /// Borrow the validated representation without normalization, resolution or authority checks.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -129,6 +137,6 @@ impl fmt::Debug for Digest {
 }
 impl<'de> Deserialize<'de> for Digest {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        Self::new(String::deserialize(d)?).map_err(D::Error::custom)
+        Self::new(String::deserialize(d)?).map_err(|error| D::Error::custom(error.for_serde()))
     }
 }

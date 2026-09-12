@@ -87,7 +87,7 @@ Agent wire 的唯一 producer 仍为 rss-mdm；`execution-contract` 是本地执
 | 编号 | 要求 | 验收 |
 | --- | --- | --- |
 | CLI-ID01 | 区分 actor、initiator（human/ai/policy）、批准者、委托、设备与目标用户 | 修改 initiator 不扩大同一 actor 的操作权限；AI 自报主体被拒绝 |
-| CLI-ID02 | AI provider/CLI 账号、OS 登录用户、产品主体和特权服务账号分别记录 | 模型登录成功或本机用户存在不能构造企业授权；运行用户映射可解释 |
+| CLI-ID02 | AI provider/CLI 账号、OS 登录用户、产品主体和特权服务账号分别记录 | Human 必填来源 OS device/account/session，AI 另带 provider account 与配置 ID/revision；均独立于 actor、target 和 runAs 并参与摘要/审计。模型登录成功或本机用户存在不能构造企业授权；运行用户映射可解释 |
 | CLI-ID03 | 本地模式由经OS管理员初始化的本地authority绑定OS主体、目录、政策及批准签发；企业模式消费产品身份和设备注册 | 信任根/签发者与政策版本保存在受保护服务存储，UI/AI不可铸造；缺真实绑定的生产入口拒绝；测试主体仅测试装配可用 |
 | CLI-ID04 | 委托绑定主体、动作/资源、目标、期限和预算，不能扩大授权者权限 | 越权目标、过期委托、跨用户/设备/tenant 重放在执行前拒绝 |
 
@@ -131,7 +131,7 @@ Agent wire 的唯一 producer 仍为 rss-mdm；`execution-contract` 是本地执
 | --- | --- | --- |
 | CLI-EX01 | 人、AI、策略请求共用能力/授权/批准/执行入口 | 同一主体/委托/计划得到一致裁决，不因来源改变上限 |
 | CLI-EX02 | 能力匹配只消费快照，区分 supported/blocked/unsupported/unknown | 解释器、运行用户、权限或沙箱能力未知时不能自动降级无限制运行 |
-| CLI-EX03 | 计划冻结精确脚本/安装物、参数、目标、身份、约束、期限和版本 | 修改任一授权相关字段使摘要或适用性变化，旧批准不再放行 |
+| CLI-EX03 | 计划冻结精确脚本/安装物、参数、目标、身份、约束、期限和版本 | Windows 环境名拒绝大小写冲突并统一表示；网络端点明确 scheme、规范 DNS/IP host 与非零 port，拒绝 URL 组件和隐式端口。修改任一授权相关字段使摘要或适用性变化，旧批准不再放行 |
 | CLI-EX04 | 原生 PS/sh/Bash 作为产物执行，无需 JS/Rust 字符串包装 | C10 只生成固定解释器/argv/cwd/env 描述；参数不拼接进任意 shell 命令 |
 | CLI-EX05 | 任意脚本的声明和静态分析不证明其只读或安全 | 沙箱/权限约束必须在实际平台强制；特权新脚本需精确授权 |
 | CLI-EX06 | 禁止把收到、排队、进程退出、目标已核实合并成成功 | 无真实进程的测试 runner 只能返回 test evidence，不能形成真实 Applied/Converged |
@@ -219,7 +219,7 @@ AI请求与手动请求都不能自行取得可执行capability。运行模式�
 | packages/ui | 提取的纯展示组件 | Vue/展示依赖，props/events |
 | apps/desktop | C05桌面基础壳与样本；后续自助UI、AI UI、宿主桥接和共同闭环 | 组件契约与宿主adapter，组合根唯一 |
 
-C01/C02 契约的具体 V1 边界、规范编码及独立消费见[契约开发说明](../guides/contracts-development.md)。契约解码和计划冻结只校验数据，不能铸造可信主体、批准或真实执行证据；C02 的 Unknown 能力为明确未证实状态，未知版本/字段/事件不作兼容兜底。
+C01/C02 契约的具体 V1 边界、规范编码及独立消费见[契约开发说明](../guides/contracts-development.md)。公共契约文档覆盖字段/单位/方向/信任边界并由编译守卫检查；错误用静态 kind/field/rule 区分配置、输入上限与语义失败，不回显输入。契约解码和计划冻结只校验数据，不能铸造可信主体、批准或真实执行证据；C02 的 Unknown 能力为明确未证实状态，未知版本/字段/事件不作兼容兜底。
 
 AI工具参数经过MCP/host映射到执行请求，C02不直接嵌入另一份执行状态；该映射在C20验证。
 `execution-admission`就是C07的唯一actor/action/resource/context授权裁决核心；“admission”是包名，“授权”是职责，不另建平行authorization service。C19消费该裁决并强制持久执行准入。

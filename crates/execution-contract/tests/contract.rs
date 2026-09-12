@@ -157,7 +157,7 @@ fn namespaces_and_initiators_remain_distinct() {
         assert_ne!(freeze(&v).digest(), &digest);
     }
     for initiator in [
-        serde_json::json!({"kind":"ai","provider":"provider-1","conversation":"c-1","toolCall":"tc-1"}),
+        serde_json::json!({"kind":"ai","provider":"provider-1","conversation":"c-1","toolCall":"tc-1","osSession":fixture()["request"]["initiator"]["osSession"],"providerAccount":{"account":"provider-user-1","config":{"id":"config-1","revision":"1"}}}),
         serde_json::json!({"kind":"policy","policy":{"id":"p-1","revision":"1"}}),
     ] {
         let mut v = original.clone();
@@ -341,23 +341,23 @@ fn direct_dto_deserialization_cannot_hide_duplicate_parameter_or_literal_keys() 
 
 #[test]
 fn typed_decode_errors_retain_owned_classification_without_input_values() {
-    use execution_contract::{decode_audit, ContractError};
+    use execution_contract::decode_audit;
     let source = include_str!("fixtures/plan.json");
     for (old, new, expected) in [
         (
             "\"schemaVersion\": 1",
             "\"schemaVersion\": 999",
-            ContractError::Version,
+            execution_contract::ErrorKind::UnsupportedVersion,
         ),
         (
             "\"actor\": \"actor-1\"",
             "\"actor\": \"private invalid actor\"",
-            ContractError::Value,
+            execution_contract::ErrorKind::InvalidValue,
         ),
     ] {
         let bad = source.replacen(old, new, 1);
         let error = decode_plan(bad.as_bytes(), &limits()).unwrap_err();
-        assert_eq!(error, expected);
+        assert_eq!(error.kind(), expected);
         assert!(!error.to_string().contains("private"));
     }
     let bad = include_str!("fixtures/audit.json").replacen(
@@ -366,12 +366,12 @@ fn typed_decode_errors_retain_owned_classification_without_input_values() {
         1,
     );
     assert_eq!(
-        decode_audit(bad.as_bytes(), &limits()).unwrap_err(),
-        ContractError::Version
+        decode_audit(bad.as_bytes(), &limits()).unwrap_err().kind(),
+        execution_contract::ErrorKind::UnsupportedVersion
     );
     assert_eq!(
-        decode_plan(b"{", &limits()).unwrap_err(),
-        ContractError::Encoding
+        decode_plan(b"{", &limits()).unwrap_err().kind(),
+        execution_contract::ErrorKind::Encoding
     );
 }
 #[test]

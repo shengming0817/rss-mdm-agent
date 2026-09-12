@@ -25,10 +25,14 @@ C01 为依照客户端 PRD 新建的本地执行契约，没有从服务端或�
 - ref: Codex sdk/python/src/openai_codex/api.py@c4017a87aacc7558002b7cb510025e967c1d765e — 已读取[消息来源不建立授权](https://github.com/openai/codex/blob/c4017a87aacc7558002b7cb510025e967c1d765e/sdk/python/src/openai_codex/api.py#L625-L632)；C02 不将角色/来源或提案提升为执行权威。
 - ref: MCP docs/specification/2025-06-18/server/tools.mdx@aa8ce049f089f92618340190d4ece141f663310d — 已读取[工具注解的信任边界](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/aa8ce049f089f92618340190d4ece141f663310d/docs/specification/2025-06-18/server/tools.mdx#L185-L195)，参数和注解不产生产品批准。
 
+- ref: rust-url url/src/host.rs@d6ea13c5f8e7e6e627f6390161b3e185bda5e5ce — 已读取 [Host 解析与 IDNA/IP 规范化源码](https://github.com/servo/rust-url/blob/d6ea13c5f8e7e6e627f6390161b3e185bda5e5ce/url/src/host.rs)。正常依赖 `url =2.5.8`；本契约要求独立 scheme/host/port，在主机解析前拒绝 URL 组件/zone/通配符，解析后执行 DNS label 边界校验；不引入网络调用或自己实现 IDNA。
+- ref: Rust library/std/src/process.rs@1.96.0 — 已读取 [Command::env 的平台语义](https://github.com/rust-lang/rust/blob/1.96.0/library/std/src/process.rs)，Windows 环境名不区分大小写。契约限 ASCII 名称并在 freeze 前拒绝冲突，再规范为大写；Unix 保留原大小写，runner 仅消费 frozen 值。
+- ref: serde_json src/error.rs@de8500740cdcabffb9734f503e4889def823cf10 — 已读取 [Error::custom 的类型擦除](https://github.com/serde-rs/json/blob/de8500740cdcabffb9734f503e4889def823cf10/src/error.rs)。两契约各自拥有静态 kind/field/rule；仅跨 serde 恢复库内闭合诊断，不分析或公开用户/provider 错误正文，不增第三个 common crate。
+
 ## 权利与验证边界
 
 目标 Rust 源码和 fixtures 为参考后重新设计，按本仓 MIT 交付。prmonitor 固定树缺少 LICENSE/NOTICE；已有用户自有项目 MIT 授权记录见 [C05 来源记录](ui-extraction.md)，但本次不将 C05 文件清单当作 C02 复制清单。
 
-未复制 prmonitor 或 ACP/Codex/MCP 源码、生成 schema、示例数据和版权正文；无需为不存在的源码复制添加第三方 NOTICE。serde、serde_json、schemars、thiserror、sha2、canonicalizer 和测试用 jsonschema 通过 Cargo 发布包正常消费，版本/校验和由 Cargo.lock 持有，许可证随原包保留。若后续复制源码，应单独核对对应固定版本权利并记录范围。
+未复制 prmonitor 或 ACP/Codex/MCP 源码、生成 schema、示例数据和版权正文；无需为不存在的源码复制添加第三方 NOTICE。serde、serde_json、schemars、thiserror、sha2、url、canonicalizer 和测试用 jsonschema 通过 Cargo 发布包正常消费，版本/校验和由 Cargo.lock 持有，许可证随原包保留。若后续复制源码，应单独核对对应固定版本权利并记录范围。
 
 本次证据是类型/预算/编码/能力匹配及隔离源码 consumer 的 T1。没有真实 provider、SQLite、OS runner 或企业 identity 的 T2/T3 证明；结果和源码 SHA 在 PR 与本地 CI 输出关联，不把规划或来源能力写作已实现状态。

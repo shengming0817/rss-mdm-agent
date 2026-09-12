@@ -7,10 +7,18 @@
   },
   "requestId": "request-1",
   "planId": "plan-1",
-  "planDigest": "fe72eaf7ca6f6063bd57e2faecfd1fdc3b16911d752ac70463f99ecb325192c2",
+  "planDigest": "a61d955676c7ab7fec31d3178c87c26386492387fe48137ec451c047fe8b1ec2",
   "actor": "actor-1",
   "initiator": {
-    "kind": "human"
+    "kind": "human",
+    "osSession": {
+      "device": "origin-device",
+      "account": {
+        "platform": "linux",
+        "subject": "uid:1000"
+      },
+      "session": "login-1"
+    }
   },
   "approver": null,
   "operation": {

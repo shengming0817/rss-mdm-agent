@@ -1,4 +1,6 @@
-use ai_session_contract::{decode_event, Event, SessionLimits, TurnOutcome};
+use ai_session_contract::{
+    decode_event, ErrorKind, Event, Field, Rule, SessionLimits, TurnOutcome,
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bytes = std::fs::read(
@@ -38,6 +40,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     assert!(cancelled && tail && interrupted);
+    let invalid = decode_event(
+        b"{}",
+        &SessionLimits {
+            max_text_bytes: 0,
+            ..limits
+        },
+    )
+    .unwrap_err();
+    assert_eq!(
+        (invalid.kind(), invalid.field(), invalid.rule()),
+        (
+            ErrorKind::InvalidConfiguration,
+            Field::TextBytes,
+            Rule::NonZero
+        )
+    );
     println!("ai-session-contract: independent consumer distinguished cancellation, tail data and confirmed interruption; no engine invoked");
     Ok(())
 }

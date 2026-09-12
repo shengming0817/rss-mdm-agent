@@ -25,11 +25,15 @@ EngineCapabilities 的续接、中断、工具控制分别采用具体枚举。�
 
 EngineConfigRef 只存 id/revision，不含密钥、原始配置或权限覆盖。原始 provider 协议由对应 adapter 转换；本契约不保留任意 provider payload。未知 V1 字段、版本、事件、内容或终态变体均拒绝，不吞掉事件后继续声称成功。
 
+`ContractError` 返回闭合的 `kind / field / rule`，不附带输入值、动态参数键或原始错误链。InvalidConfiguration 指明哪个 host 上限为零；LimitExceeded 区分整体输入、累计文本、内容数量、参数编码/深度/节点；InvalidValue 区分空内容、非法标识和消息方向；InconsistentContext 指明关联错误。UnsupportedVersion 与 Encoding 分别表示不支持版本和 JSON/结构拒绝。两个 decoder 与两个程序构造 validate 入口使用同一语义诊断，调试和序列化输出同样不包含正文。
+
 ## 验证与 schema
 
 - `cargo test -p ai-session-contract --locked`
 - `cargo run -p ai-session-contract --example ai-session-consumer --locked -- crates/ai-session-contract/tests/fixtures/events.json`
 - `cargo run -p ai-session-contract --example ai-session-schema --locked`
+
+公共类型、字段、变体和入口均由 rustdoc 描述方向、单位、约束及信任边界；`#![deny(missing_docs)]` 在普通编译和 CI 中阻止文档遗漏。
 
 固定 Draft 2020-12 schema 从 Rust 类型派生，golden 与真实解码/编码同时验证。schema 描述结构，文本预算、消息方向和关联一致性由纯 Rust 校验负责。events.json 包含彼此独立的协议案例和替代终态，不是可原样重放的单条会话日志；consumer 从中验证取消、尾部数据及中断的区别。
 

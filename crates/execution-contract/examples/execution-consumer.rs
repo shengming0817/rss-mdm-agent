@@ -1,4 +1,7 @@
-use execution_contract::{decode_plan, Digest, FrozenPlan, PlanLimits};
+use execution_contract::{
+    decode_plan, Digest, EnvironmentKey, ErrorKind, Field, FrozenPlan, Initiator,
+    NetworkDestination, NetworkHost, NetworkScheme, PlanLimits,
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
@@ -21,6 +24,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_ne!(
         FrozenPlan::freeze(changed, &limits)?.digest(),
         plan.digest()
+    );
+    assert!(
+        matches!(&plan.spec().request.initiator, Initiator::Human { os_session } if os_session.device.as_str() == "origin-device")
+    );
+    let endpoint = NetworkDestination {
+        scheme: NetworkScheme::Https,
+        host: NetworkHost::new("BÜCHER.Example.")?,
+        port: std::num::NonZeroU16::new(443).unwrap(),
+    };
+    assert_eq!(endpoint.host.as_str(), "xn--bcher-kva.example");
+    let invalid = EnvironmentKey::new("BAD=NAME").unwrap_err();
+    assert_eq!(
+        (invalid.kind(), invalid.field()),
+        (ErrorKind::InvalidValue, Field::Environment)
     );
     println!("execution-contract: independent consumer verified plan digest and budget binding; no runner invoked");
     Ok(())

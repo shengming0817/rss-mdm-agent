@@ -10,7 +10,15 @@
     },
     "actor": "actor-1",
     "initiator": {
-      "kind": "human"
+      "kind": "human",
+      "osSession": {
+        "device": "origin-device",
+        "account": {
+          "platform": "linux",
+          "subject": "uid:1000"
+        },
+        "session": "login-1"
+      }
     },
     "delegation": {
       "id": "delegation-1",

@@ -273,8 +273,8 @@ fn repeated_tool_argument_keys_are_rejected_at_every_depth() {
             serde_json::to_string(&fixtures()[3]["event"]["proposal"]["arguments"]).unwrap();
         let bad = source.replace(&original, arguments);
         assert_eq!(
-            decode_event(bad.as_bytes(), &limits()).unwrap_err(),
-            ai_session_contract::ContractError::Encoding
+            decode_event(bad.as_bytes(), &limits()).unwrap_err().kind(),
+            ai_session_contract::ErrorKind::Encoding
         );
         assert!(serde_json::from_str::<ai_session_contract::EventEnvelope>(&bad).is_err());
     }
@@ -296,8 +296,9 @@ fn constructed_envelopes_obey_the_same_encoded_size_budget_as_decoders() {
                 max_input_bytes: size - 1,
                 ..limits()
             })
-            .unwrap_err(),
-        ai_session_contract::ContractError::Limit
+            .unwrap_err()
+            .kind(),
+        ai_session_contract::ErrorKind::LimitExceeded
     );
     let values: Vec<serde_json::Value> =
         serde_json::from_str(include_str!("fixtures/commands.json")).unwrap();
@@ -318,8 +319,9 @@ fn constructed_envelopes_obey_the_same_encoded_size_budget_as_decoders() {
                     max_input_bytes: size - 1,
                     ..limits()
                 })
-                .unwrap_err(),
-            ai_session_contract::ContractError::Limit
+                .unwrap_err()
+                .kind(),
+            ai_session_contract::ErrorKind::LimitExceeded
         );
     }
     let mut value = fixtures()[2].clone();
@@ -331,7 +333,8 @@ fn constructed_envelopes_obey_the_same_encoded_size_budget_as_decoders() {
                 max_input_bytes: 5000,
                 ..limits()
             })
-            .unwrap_err(),
-        ai_session_contract::ContractError::Limit
+            .unwrap_err()
+            .kind(),
+        ai_session_contract::ErrorKind::LimitExceeded
     );
 }

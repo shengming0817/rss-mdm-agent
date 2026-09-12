@@ -7,6 +7,7 @@
 ```sh
 cargo test -p execution-contract -p ai-session-contract --locked
 cargo clippy -p execution-contract -p ai-session-contract --all-targets --locked -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc -p execution-contract -p ai-session-contract --no-deps --locked
 node --test scripts/boundaries.test.mjs
 node scripts/check-contract-consumers.mjs
 ```
@@ -21,6 +22,6 @@ consumer 脚本复用两个 crate 的真实公共 API example 与 fixture，各�
 
 ## Schema 与交付
 
-两个 schema example 从 Rust 声明输出 Draft 2020-12。只有有意改变当前契约时才更新对应 golden，并审阅真实编码与负向校验；schema 不替代动态预算或可信身份验证。
+两个 crate 均启用 `deny(missing_docs)`，普通编译即检查公共 API 文档；rustdoc 检查同时验证链接/格式。两个 schema example 从 Rust 声明输出 Draft 2020-12。只有有意改变当前契约时才更新对应 golden，并审阅真实编码与负向校验；schema 不替代动态预算或可信身份验证。
 
 全部修改提交后执行本仓 `make ci CI_BASE=origin/develop`。入口收集所有失败并记录受测源码，统一修复后复验；不运行 RSS 父仓 CI 替代，也不新增远端 CI。来源映射与设计差异见[契约来源记录](../reference/contracts-extraction.md)。
