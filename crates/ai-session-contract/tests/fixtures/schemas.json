@@ -1,0 +1,983 @@
+{
+  "command": {
+    "$defs": {
+      "AiSessionV1": {
+        "const": 1,
+        "type": "integer"
+      },
+      "Command": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "sendMessage",
+                "type": "string"
+              },
+              "message": {
+                "$ref": "#/$defs/Message"
+              }
+            },
+            "required": [
+              "kind",
+              "message"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "cancel",
+                "type": "string"
+              },
+              "turnId": {
+                "$ref": "#/$defs/TurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turnId"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "binding": {
+                "$ref": "#/$defs/ResumeBinding"
+              },
+              "kind": {
+                "const": "resume",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "binding"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "respondToTool",
+                "type": "string"
+              },
+              "response": {
+                "$ref": "#/$defs/ToolCallResponse"
+              }
+            },
+            "required": [
+              "kind",
+              "response"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ContentPart": {
+        "description": "Untrusted text; consumers render inert text and apply their own disclosure policy.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "text",
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "text"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ConversationId": {
+        "description": "Conversation identity independent of any repository.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
+        "type": "string"
+      },
+      "EngineConfigRef": {
+        "additionalProperties": false,
+        "description": "Opaque host configuration reference. Never embeds tokens, permissions or raw provider config.",
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/Name"
+          },
+          "revision": {
+            "$ref": "#/$defs/Name"
+          }
+        },
+        "required": [
+          "id",
+          "revision"
+        ],
+        "type": "object"
+      },
+      "EngineIdentity": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "$ref": "#/$defs/Name"
+          },
+          "processGeneration": {
+            "$ref": "#/$defs/Name"
+          },
+          "version": {
+            "$ref": "#/$defs/Name"
+          }
+        },
+        "required": [
+          "name",
+          "version",
+          "processGeneration"
+        ],
+        "type": "object"
+      },
+      "Message": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "items": {
+              "$ref": "#/$defs/ContentPart"
+            },
+            "type": "array"
+          },
+          "id": {
+            "$ref": "#/$defs/MessageId"
+          },
+          "role": {
+            "$ref": "#/$defs/Role"
+          },
+          "turnId": {
+            "$ref": "#/$defs/TurnId"
+          }
+        },
+        "required": [
+          "id",
+          "turnId",
+          "role",
+          "content"
+        ],
+        "type": "object"
+      },
+      "MessageId": {
+        "description": "Stable message identity for streamed updates.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
+        "type": "string"
+      },
+      "Name": {
+        "description": "Opaque provider/tool/config reference, never a principal.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
+        "type": "string"
+      },
+      "ResumeBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "config": {
+            "$ref": "#/$defs/EngineConfigRef"
+          },
+          "engine": {
+            "$ref": "#/$defs/EngineIdentity"
+          }
+        },
+        "required": [
+          "engine",
+          "config"
+        ],
+        "type": "object"
+      },
+      "Role": {
+        "enum": [
+          "user",
+          "assistant",
+          "tool"
+        ],
+        "type": "string"
+      },
+      "ToolCallId": {
+        "description": "Model proposal identity; not an execution task or approval.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
+        "type": "string"
+      },
+      "ToolCallResponse": {
+        "additionalProperties": false,
+        "description": "Model-facing protocol response, never an Execution Evidence or approval record.",
+        "properties": {
+          "content": {
+            "items": {
+              "$ref": "#/$defs/ContentPart"
+            },
+            "type": "array"
+          },
+          "outcome": {
+            "$ref": "#/$defs/ToolResponseOutcome"
+          },
+          "proposalId": {
+            "$ref": "#/$defs/ToolCallId"
+          },
+          "turnId": {
+            "$ref": "#/$defs/TurnId"
+          }
+        },
+        "required": [
+          "proposalId",
+          "turnId",
+          "outcome",
+          "content"
+        ],
+        "type": "object"
+      },
+      "ToolResponseOutcome": {
+        "enum": [
+          "returned",
+          "rejected",
+          "unavailable"
+        ],
+        "type": "string"
+      },
+      "TurnId": {
+        "description": "One model turn identity.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
+        "type": "string"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "command": {
+        "$ref": "#/$defs/Command"
+      },
+      "conversationId": {
+        "$ref": "#/$defs/ConversationId"
+      },
+      "schemaVersion": {
+        "$ref": "#/$defs/AiSessionV1"
+      }
+    },
+    "required": [
+      "schemaVersion",
+      "conversationId",
+      "command"
+    ],
+    "title": "CommandEnvelope",
+    "type": "object"
+  },
+  "event": {
+    "$defs": {
+      "AiSessionV1": {
+        "const": 1,
+        "type": "integer"
+      },
+      "CancelDispatchOutcome": {
+        "description": "Accepted acknowledges dispatch only; it never confirms turn/OS termination.",
+        "enum": [
+          "accepted",
+          "alreadyTerminal",
+          "unsupported"
+        ],
+        "type": "string"
+      },
+      "ContentPart": {
+        "description": "Untrusted text; consumers render inert text and apply their own disclosure policy.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "text",
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "text"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Continuation": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "scope": {
+                "$ref": "#/$defs/ContinuationScope"
+              },
+              "status": {
+                "const": "supported",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "scope"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "status": {
+                "const": "unsupported",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "status": {
+                "const": "unknown",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ContinuationScope": {
+        "enum": [
+          "sameProcess",
+          "acrossProcesses"
+        ],
+        "type": "string"
+      },
+      "Conversation": {
+        "additionalProperties": false,
+        "properties": {
+          "capabilities": {
+            "$ref": "#/$defs/EngineCapabilities"
+          },
+          "config": {
+            "$ref": "#/$defs/EngineConfigRef"
+          },
+          "engine": {
+            "$ref": "#/$defs/EngineIdentity"
+          },
+          "id": {
+            "$ref": "#/$defs/ConversationId"
+          }
+        },
+        "required": [
+          "id",
+          "engine",
+          "config",
+          "capabilities"
+        ],
+        "type": "object"
+      },
+      "ConversationId": {
+        "description": "Conversation identity independent of any repository.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
+        "type": "string"
+      },
+      "EngineCapabilities": {
+        "additionalProperties": false,
+        "description": "Claims attached to a particular engine/version/generation by Conversation.\nA decoded Supported value does not prove native tool isolation. The adapter must\nestablish that independently before the host can enable controlled operations.",
+        "properties": {
+          "continuation": {
+            "$ref": "#/$defs/Continuation"
+          },
+          "interruption": {
+            "$ref": "#/$defs/Interruption"
+          },
+          "toolControl": {
+            "$ref": "#/$defs/ToolControl"
+          }
+        },
+        "required": [
+          "continuation",
+          "interruption",
+          "toolControl"
+        ],
+        "type": "object"
+      },
+      "EngineConfigRef": {
+        "additionalProperties": false,
+        "description": "Opaque host configuration reference. Never embeds tokens, permissions or raw provider config.",
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/Name"
+          },
+          "revision": {
+            "$ref": "#/$defs/Name"
+          }
+        },
+        "required": [
+          "id",
+          "revision"
+        ],
+        "type": "object"
+      },
+      "EngineIdentity": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "$ref": "#/$defs/Name"
+          },
+          "processGeneration": {
+            "$ref": "#/$defs/Name"
+          },
+          "version": {
+            "$ref": "#/$defs/Name"
+          }
+        },
+        "required": [
+          "name",
+          "version",
+          "processGeneration"
+        ],
+        "type": "object"
+      },
+      "Event": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "conversation": {
+                "$ref": "#/$defs/Conversation"
+              },
+              "kind": {
+                "const": "conversationStarted",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "conversation"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "message",
+                "type": "string"
+              },
+              "message": {
+                "$ref": "#/$defs/Message"
+              }
+            },
+            "required": [
+              "kind",
+              "message"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "messageDelta",
+                "type": "string"
+              },
+              "messageId": {
+                "$ref": "#/$defs/MessageId"
+              },
+              "role": {
+                "$ref": "#/$defs/Role"
+              },
+              "text": {
+                "type": "string"
+              },
+              "turnId": {
+                "$ref": "#/$defs/TurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turnId",
+              "messageId",
+              "role",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "toolCallProposed",
+                "type": "string"
+              },
+              "proposal": {
+                "$ref": "#/$defs/ToolCallProposal"
+              }
+            },
+            "required": [
+              "kind",
+              "proposal"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "toolCallResponded",
+                "type": "string"
+              },
+              "response": {
+                "$ref": "#/$defs/ToolCallResponse"
+              }
+            },
+            "required": [
+              "kind",
+              "response"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "turnFinished",
+                "type": "string"
+              },
+              "outcome": {
+                "$ref": "#/$defs/TurnOutcome"
+              },
+              "turnId": {
+                "$ref": "#/$defs/TurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turnId",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "cancelDispatched",
+                "type": "string"
+              },
+              "outcome": {
+                "$ref": "#/$defs/CancelDispatchOutcome"
+              },
+              "turnId": {
+                "$ref": "#/$defs/TurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turnId",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "resumeFinished",
+                "type": "string"
+              },
+              "outcome": {
+                "$ref": "#/$defs/ResumeOutcome"
+              }
+            },
+            "required": [
+              "kind",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Non-terminal protocol error. Lost transport must not fabricate completion/interruption.",
+            "properties": {
+              "code": {
+                "$ref": "#/$defs/StreamErrorCode"
+              },
+              "kind": {
+                "const": "streamError",
+                "type": "string"
+              },
+              "turnId": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/TurnId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "code"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Interruption": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "confirmation": {
+                "$ref": "#/$defs/InterruptionConfirmation"
+              },
+              "status": {
+                "const": "supported",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "confirmation"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "status": {
+                "const": "unsupported",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "status": {
+                "const": "unknown",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "InterruptionConfirmation": {
+        "enum": [
+          "requestOnly",
+          "terminalAcknowledged"
+        ],
+        "type": "string"
+      },
+      "Message": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "items": {
+              "$ref": "#/$defs/ContentPart"
+            },
+            "type": "array"
+          },
+          "id": {
+            "$ref": "#/$defs/MessageId"
+          },
+          "role": {
+            "$ref": "#/$defs/Role"
+          },
+          "turnId": {
+            "$ref": "#/$defs/TurnId"
+          }
+        },
+        "required": [
+          "id",
+          "turnId",
+          "role",
+          "content"
+        ],
+        "type": "object"
+      },
+      "MessageId": {
+        "description": "Stable message identity for streamed updates.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
+        "type": "string"
+      },
+      "Name": {
+        "description": "Opaque provider/tool/config reference, never a principal.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
+        "type": "string"
+      },
+      "ResumeOutcome": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "engine": {
+                "$ref": "#/$defs/EngineIdentity"
+              },
+              "status": {
+                "const": "resumed",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "engine"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "reason": {
+                "$ref": "#/$defs/ResumeUnavailable"
+              },
+              "status": {
+                "const": "unavailable",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "reason"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ResumeUnavailable": {
+        "enum": [
+          "unsupported",
+          "unknownCapability",
+          "staleProcessGeneration",
+          "engineChanged",
+          "configChanged",
+          "missingSession",
+          "engineRejected"
+        ],
+        "type": "string"
+      },
+      "Role": {
+        "enum": [
+          "user",
+          "assistant",
+          "tool"
+        ],
+        "type": "string"
+      },
+      "StreamErrorCode": {
+        "enum": [
+          "protocolUnsupported",
+          "transportLost",
+          "providerFailure",
+          "invalidData",
+          "limitExceeded"
+        ],
+        "type": "string"
+      },
+      "ToolCallId": {
+        "description": "Model proposal identity; not an execution task or approval.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
+        "type": "string"
+      },
+      "ToolCallProposal": {
+        "additionalProperties": false,
+        "description": "A proposal is data, not an instruction to an executor. The host maps it to its\nauthorization service. Even actor/approved keys inside arguments remain untrusted data.",
+        "properties": {
+          "arguments": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "id": {
+            "$ref": "#/$defs/ToolCallId"
+          },
+          "name": {
+            "$ref": "#/$defs/Name"
+          },
+          "turnId": {
+            "$ref": "#/$defs/TurnId"
+          }
+        },
+        "required": [
+          "id",
+          "turnId",
+          "name",
+          "arguments"
+        ],
+        "type": "object"
+      },
+      "ToolCallResponse": {
+        "additionalProperties": false,
+        "description": "Model-facing protocol response, never an Execution Evidence or approval record.",
+        "properties": {
+          "content": {
+            "items": {
+              "$ref": "#/$defs/ContentPart"
+            },
+            "type": "array"
+          },
+          "outcome": {
+            "$ref": "#/$defs/ToolResponseOutcome"
+          },
+          "proposalId": {
+            "$ref": "#/$defs/ToolCallId"
+          },
+          "turnId": {
+            "$ref": "#/$defs/TurnId"
+          }
+        },
+        "required": [
+          "proposalId",
+          "turnId",
+          "outcome",
+          "content"
+        ],
+        "type": "object"
+      },
+      "ToolControl": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "mode": {
+                "$ref": "#/$defs/ToolControlMode"
+              },
+              "status": {
+                "const": "supported",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "mode"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "status": {
+                "const": "unsupported",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "status": {
+                "const": "unknown",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ToolControlMode": {
+        "enum": [
+          "hostMediated",
+          "providerManaged",
+          "disabled"
+        ],
+        "type": "string"
+      },
+      "ToolResponseOutcome": {
+        "enum": [
+          "returned",
+          "rejected",
+          "unavailable"
+        ],
+        "type": "string"
+      },
+      "TurnId": {
+        "description": "One model turn identity.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
+        "type": "string"
+      },
+      "TurnOutcome": {
+        "enum": [
+          "completed",
+          "interrupted",
+          "failed",
+          "refused",
+          "limitReached"
+        ],
+        "type": "string"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "conversationId": {
+        "$ref": "#/$defs/ConversationId"
+      },
+      "event": {
+        "$ref": "#/$defs/Event"
+      },
+      "schemaVersion": {
+        "$ref": "#/$defs/AiSessionV1"
+      },
+      "sequence": {
+        "format": "uint64",
+        "minimum": 0,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "schemaVersion",
+      "conversationId",
+      "sequence",
+      "event"
+    ],
+    "title": "EventEnvelope",
+    "type": "object"
+  }
+}

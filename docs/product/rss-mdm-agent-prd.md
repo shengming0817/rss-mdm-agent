@@ -219,6 +219,8 @@ AI请求与手动请求都不能自行取得可执行capability。运行模式�
 | packages/ui | 提取的纯展示组件 | Vue/展示依赖，props/events |
 | apps/desktop | C05桌面基础壳与样本；后续自助UI、AI UI、宿主桥接和共同闭环 | 组件契约与宿主adapter，组合根唯一 |
 
+C01/C02 契约的具体 V1 边界、规范编码及独立消费见[契约开发说明](../guides/contracts-development.md)。契约解码和计划冻结只校验数据，不能铸造可信主体、批准或真实执行证据；C02 的 Unknown 能力为明确未证实状态，未知版本/字段/事件不作兼容兜底。
+
 AI工具参数经过MCP/host映射到执行请求，C02不直接嵌入另一份执行状态；该映射在C20验证。
 `execution-admission`就是C07的唯一actor/action/resource/context授权裁决核心；“admission”是包名，“授权”是职责，不另建平行authorization service。C19消费该裁决并强制持久执行准入。
 C10/C11为后续真实执行器准备计划，不强制进入仅接受冻结测试计划的C19/C20；它们的独立交付不等于端侧执行完成。

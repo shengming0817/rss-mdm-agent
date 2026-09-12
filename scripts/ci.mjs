@@ -22,6 +22,7 @@ const steps = [
   ["rust fmt", "cargo", ["fmt", "--all", "--", "--check"]],
   ["rust build", "cargo", ["build", "--workspace", "--locked"]],
   ["rust test", "cargo", ["test", "--workspace", "--locked"]],
+  ["contract consumers", "node", ["scripts/check-contract-consumers.mjs"]],
   [
     "rust clippy",
     "cargo",

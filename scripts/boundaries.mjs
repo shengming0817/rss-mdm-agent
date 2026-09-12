@@ -406,7 +406,14 @@ export function checkTree(treeRoot = root) {
         dependencySection = /dependencies/.test(line);
         if (/patch|replace/.test(line))
           errors.push(`${path}: unexpected host dependency override`);
-      } else if (dependencySection) dependencies.push(line);
+      } else if (
+        dependencySection &&
+        (path !== "Cargo.toml" || /^tauri(?:-build)?\s*=/.test(line))
+      ) {
+        // Root workspace dependencies are shared declarations. Only the two
+        // inherited desktop dependencies belong to this presentation boundary.
+        dependencies.push(line);
+      }
     }
     if (
       JSON.stringify(dependencies.toSorted()) !==

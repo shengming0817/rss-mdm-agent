@@ -1,0 +1,1071 @@
+{
+  "audit": {
+    "$defs": {
+      "ActorId": {
+        "description": "Product actor reference, not an authenticated principal.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+        "type": "string"
+      },
+      "AttemptId": {
+        "description": "Execution attempt correlation identity.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+        "type": "string"
+      },
+      "Authority": {
+        "description": "Separate namespaces: none of these serializable references authenticates its issuer.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/Id"
+              },
+              "kind": {
+                "const": "local",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/Id"
+              },
+              "kind": {
+                "const": "enterprise",
+                "type": "string"
+              },
+              "tenant": {
+                "$ref": "#/$defs/Id"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "tenant"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/Id"
+              },
+              "kind": {
+                "const": "test",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Decision": {
+        "enum": [
+          "proposed",
+          "denied",
+          "approvalRequired",
+          "admitted",
+          "observed"
+        ],
+        "type": "string"
+      },
+      "DeviceId": {
+        "description": "Device reference, not verified registration evidence.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+        "type": "string"
+      },
+      "Digest": {
+        "description": "Lowercase SHA-256 bytes expressed as hex; a digest alone grants no trust.",
+        "maxLength": 64,
+        "minLength": 64,
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "EventId": {
+        "description": "Audit event correlation identity.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+        "type": "string"
+      },
+      "EvidenceKind": {
+        "description": "Recorded observation category. None of these references verifies a real-world effect.",
+        "enum": [
+          "testResult",
+          "processExited",
+          "stateObserved"
+        ],
+        "type": "string"
+      },
+      "EvidenceRef": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "$ref": "#/$defs/EvidenceKind"
+          },
+          "reference": {
+            "$ref": "#/$defs/VersionedRef"
+          },
+          "runner": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "required": [
+          "reference",
+          "kind",
+          "runner"
+        ],
+        "type": "object"
+      },
+      "Id": {
+        "description": "Opaque local reference identifier; syntax validity is not authenticity.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+        "type": "string"
+      },
+      "Initiator": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "human",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "conversation": {
+                "$ref": "#/$defs/Id"
+              },
+              "kind": {
+                "const": "ai",
+                "type": "string"
+              },
+              "provider": {
+                "$ref": "#/$defs/Id"
+              },
+              "toolCall": {
+                "$ref": "#/$defs/Id"
+              }
+            },
+            "required": [
+              "kind",
+              "provider",
+              "conversation",
+              "toolCall"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "policy",
+                "type": "string"
+              },
+              "policy": {
+                "$ref": "#/$defs/VersionedRef"
+              }
+            },
+            "required": [
+              "kind",
+              "policy"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "LocalContractV1": {
+        "const": 1,
+        "type": "integer"
+      },
+      "Operation": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "$ref": "#/$defs/Id"
+          },
+          "resource": {
+            "$ref": "#/$defs/VersionedRef"
+          }
+        },
+        "required": [
+          "action",
+          "resource"
+        ],
+        "type": "object"
+      },
+      "OsAccountRef": {
+        "additionalProperties": false,
+        "properties": {
+          "platform": {
+            "$ref": "#/$defs/Platform"
+          },
+          "subject": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "required": [
+          "platform",
+          "subject"
+        ],
+        "type": "object"
+      },
+      "PlanId": {
+        "description": "Immutable local plan identity.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+        "type": "string"
+      },
+      "Platform": {
+        "enum": [
+          "windows",
+          "macos",
+          "linux"
+        ],
+        "type": "string"
+      },
+      "RequestId": {
+        "description": "Local execution request identity.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+        "type": "string"
+      },
+      "Target": {
+        "additionalProperties": false,
+        "properties": {
+          "device": {
+            "$ref": "#/$defs/DeviceId"
+          },
+          "platform": {
+            "$ref": "#/$defs/Platform"
+          },
+          "scope": {
+            "$ref": "#/$defs/TargetScope"
+          }
+        },
+        "required": [
+          "device",
+          "platform",
+          "scope"
+        ],
+        "type": "object"
+      },
+      "TargetScope": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "device",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "account": {
+                "$ref": "#/$defs/OsAccountRef"
+              },
+              "kind": {
+                "const": "user",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "account"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "VersionedRef": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/Id"
+          },
+          "revision": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "required": [
+          "id",
+          "revision"
+        ],
+        "type": "object"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "description": "Audit data only, never an authorization or trusted evidence constructor.\nContains references and a reason code, not parameters, launch arguments or raw output.",
+    "properties": {
+      "actor": {
+        "$ref": "#/$defs/ActorId"
+      },
+      "approval": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/VersionedRef"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "approver": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ActorId"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "attemptId": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/AttemptId"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "authority": {
+        "$ref": "#/$defs/Authority"
+      },
+      "decision": {
+        "$ref": "#/$defs/Decision"
+      },
+      "delegation": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/VersionedRef"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "eventId": {
+        "$ref": "#/$defs/EventId"
+      },
+      "evidence": {
+        "items": {
+          "$ref": "#/$defs/EvidenceRef"
+        },
+        "type": "array"
+      },
+      "initiator": {
+        "$ref": "#/$defs/Initiator"
+      },
+      "occurredAtUnixMs": {
+        "format": "uint64",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "operation": {
+        "$ref": "#/$defs/Operation"
+      },
+      "planDigest": {
+        "$ref": "#/$defs/Digest"
+      },
+      "planId": {
+        "$ref": "#/$defs/PlanId"
+      },
+      "policy": {
+        "$ref": "#/$defs/VersionedRef"
+      },
+      "reason": {
+        "$ref": "#/$defs/Id"
+      },
+      "requestId": {
+        "$ref": "#/$defs/RequestId"
+      },
+      "schemaVersion": {
+        "$ref": "#/$defs/LocalContractV1"
+      },
+      "target": {
+        "$ref": "#/$defs/Target"
+      }
+    },
+    "required": [
+      "schemaVersion",
+      "eventId",
+      "authority",
+      "requestId",
+      "planId",
+      "planDigest",
+      "actor",
+      "initiator",
+      "operation",
+      "target",
+      "decision",
+      "reason",
+      "policy",
+      "occurredAtUnixMs",
+      "evidence"
+    ],
+    "title": "AuditEvent",
+    "type": "object"
+  },
+  "plan": {
+    "$defs": {
+      "ActorId": {
+        "description": "Product actor reference, not an authenticated principal.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+        "type": "string"
+      },
+      "Authority": {
+        "description": "Separate namespaces: none of these serializable references authenticates its issuer.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/Id"
+              },
+              "kind": {
+                "const": "local",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/Id"
+              },
+              "kind": {
+                "const": "enterprise",
+                "type": "string"
+              },
+              "tenant": {
+                "$ref": "#/$defs/Id"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "tenant"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/Id"
+              },
+              "kind": {
+                "const": "test",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Constraints": {
+        "additionalProperties": false,
+        "description": "Required restrictions are declarations; platform enforcement is owned by the runner.",
+        "properties": {
+          "allowChildProcesses": {
+            "type": "boolean"
+          },
+          "network": {
+            "$ref": "#/$defs/NetworkAccess"
+          },
+          "readPaths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "requireSandbox": {
+            "type": "boolean"
+          },
+          "writePaths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "network",
+          "readPaths",
+          "writePaths",
+          "allowChildProcesses",
+          "requireSandbox"
+        ],
+        "type": "object"
+      },
+      "DeviceId": {
+        "description": "Device reference, not verified registration evidence.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+        "type": "string"
+      },
+      "Digest": {
+        "description": "Lowercase SHA-256 bytes expressed as hex; a digest alone grants no trust.",
+        "maxLength": 64,
+        "minLength": 64,
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "ExactArtifactRef": {
+        "additionalProperties": false,
+        "properties": {
+          "resource": {
+            "$ref": "#/$defs/VersionedRef"
+          },
+          "sha256": {
+            "$ref": "#/$defs/Digest"
+          }
+        },
+        "required": [
+          "resource",
+          "sha256"
+        ],
+        "type": "object"
+      },
+      "ExecutionBudget": {
+        "additionalProperties": false,
+        "properties": {
+          "maxAttempts": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxOutputBytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "timeoutMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "timeoutMs",
+          "maxOutputBytes",
+          "maxAttempts"
+        ],
+        "type": "object"
+      },
+      "ExecutionRequest": {
+        "additionalProperties": false,
+        "description": "Intent data. The authority/actor are claims to be authenticated by the host, never credentials.",
+        "properties": {
+          "actor": {
+            "$ref": "#/$defs/ActorId"
+          },
+          "authority": {
+            "$ref": "#/$defs/Authority"
+          },
+          "delegation": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/VersionedRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "initiator": {
+            "$ref": "#/$defs/Initiator"
+          },
+          "operation": {
+            "$ref": "#/$defs/Operation"
+          },
+          "parameters": {
+            "additionalProperties": {
+              "$ref": "#/$defs/InputValue"
+            },
+            "type": "object"
+          },
+          "requestId": {
+            "$ref": "#/$defs/RequestId"
+          },
+          "schemaVersion": {
+            "$ref": "#/$defs/LocalContractV1"
+          },
+          "target": {
+            "$ref": "#/$defs/Target"
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "requestId",
+          "authority",
+          "actor",
+          "initiator",
+          "target",
+          "operation",
+          "parameters"
+        ],
+        "type": "object"
+      },
+      "Id": {
+        "description": "Opaque local reference identifier; syntax validity is not authenticity.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+        "type": "string"
+      },
+      "Initiator": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "human",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "conversation": {
+                "$ref": "#/$defs/Id"
+              },
+              "kind": {
+                "const": "ai",
+                "type": "string"
+              },
+              "provider": {
+                "$ref": "#/$defs/Id"
+              },
+              "toolCall": {
+                "$ref": "#/$defs/Id"
+              }
+            },
+            "required": [
+              "kind",
+              "provider",
+              "conversation",
+              "toolCall"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "policy",
+                "type": "string"
+              },
+              "policy": {
+                "$ref": "#/$defs/VersionedRef"
+              }
+            },
+            "required": [
+              "kind",
+              "policy"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "InputValue": {
+        "description": "Literal values are untrusted data. Long-lived credentials MUST use a versioned secret reference.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "literal",
+                "type": "string"
+              },
+              "value": true
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "secret",
+                "type": "string"
+              },
+              "reference": {
+                "$ref": "#/$defs/VersionedRef"
+              }
+            },
+            "required": [
+              "kind",
+              "reference"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "LaunchSpec": {
+        "additionalProperties": false,
+        "description": "Exact launch description only. No PATH lookup, download or spawning is performed by this crate.",
+        "properties": {
+          "argv": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "artifact": {
+            "$ref": "#/$defs/ExactArtifactRef"
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "env": {
+            "additionalProperties": {
+              "$ref": "#/$defs/InputValue"
+            },
+            "type": "object"
+          },
+          "interpreter": {
+            "$ref": "#/$defs/ExactArtifactRef"
+          }
+        },
+        "required": [
+          "artifact",
+          "interpreter",
+          "argv",
+          "cwd",
+          "env"
+        ],
+        "type": "object"
+      },
+      "LocalContractV1": {
+        "const": 1,
+        "type": "integer"
+      },
+      "NetworkAccess": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "denied",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "destinations": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "const": "allowlist",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "destinations"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Operation": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "$ref": "#/$defs/Id"
+          },
+          "resource": {
+            "$ref": "#/$defs/VersionedRef"
+          }
+        },
+        "required": [
+          "action",
+          "resource"
+        ],
+        "type": "object"
+      },
+      "OsAccountRef": {
+        "additionalProperties": false,
+        "properties": {
+          "platform": {
+            "$ref": "#/$defs/Platform"
+          },
+          "subject": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "required": [
+          "platform",
+          "subject"
+        ],
+        "type": "object"
+      },
+      "PlanId": {
+        "description": "Immutable local plan identity.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+        "type": "string"
+      },
+      "Platform": {
+        "enum": [
+          "windows",
+          "macos",
+          "linux"
+        ],
+        "type": "string"
+      },
+      "RequestId": {
+        "description": "Local execution request identity.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+        "type": "string"
+      },
+      "RunAs": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "account": {
+                "$ref": "#/$defs/OsAccountRef"
+              },
+              "kind": {
+                "const": "user",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "account"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "system",
+                "type": "string"
+              },
+              "platform": {
+                "$ref": "#/$defs/Platform"
+              }
+            },
+            "required": [
+              "kind",
+              "platform"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Target": {
+        "additionalProperties": false,
+        "properties": {
+          "device": {
+            "$ref": "#/$defs/DeviceId"
+          },
+          "platform": {
+            "$ref": "#/$defs/Platform"
+          },
+          "scope": {
+            "$ref": "#/$defs/TargetScope"
+          }
+        },
+        "required": [
+          "device",
+          "platform",
+          "scope"
+        ],
+        "type": "object"
+      },
+      "TargetScope": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "device",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "account": {
+                "$ref": "#/$defs/OsAccountRef"
+              },
+              "kind": {
+                "const": "user",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "account"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ValidityWindow": {
+        "additionalProperties": false,
+        "description": "UTC Unix milliseconds. The host separately validates current time and revocation freshness.",
+        "properties": {
+          "expiresAtUnixMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "notBeforeUnixMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "notBeforeUnixMs",
+          "expiresAtUnixMs"
+        ],
+        "type": "object"
+      },
+      "VersionedRef": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/Id"
+          },
+          "revision": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "required": [
+          "id",
+          "revision"
+        ],
+        "type": "object"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "description": "The sole canonical execution description, including its original request.",
+    "properties": {
+      "budget": {
+        "$ref": "#/$defs/ExecutionBudget"
+      },
+      "constraints": {
+        "$ref": "#/$defs/Constraints"
+      },
+      "launch": {
+        "$ref": "#/$defs/LaunchSpec"
+      },
+      "planId": {
+        "$ref": "#/$defs/PlanId"
+      },
+      "policy": {
+        "$ref": "#/$defs/VersionedRef"
+      },
+      "request": {
+        "$ref": "#/$defs/ExecutionRequest"
+      },
+      "runAs": {
+        "$ref": "#/$defs/RunAs"
+      },
+      "schemaVersion": {
+        "$ref": "#/$defs/LocalContractV1"
+      },
+      "validity": {
+        "$ref": "#/$defs/ValidityWindow"
+      }
+    },
+    "required": [
+      "schemaVersion",
+      "planId",
+      "request",
+      "launch",
+      "runAs",
+      "constraints",
+      "budget",
+      "validity",
+      "policy"
+    ],
+    "title": "PlanSpec",
+    "type": "object"
+  }
+}

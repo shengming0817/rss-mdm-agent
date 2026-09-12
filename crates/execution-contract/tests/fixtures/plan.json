@@ -1,0 +1,109 @@
+{
+  "schemaVersion": 1,
+  "planId": "plan-1",
+  "request": {
+    "schemaVersion": 1,
+    "requestId": "request-1",
+    "authority": {
+      "kind": "test",
+      "id": "test-authority"
+    },
+    "actor": "actor-1",
+    "initiator": {
+      "kind": "human"
+    },
+    "delegation": {
+      "id": "delegation-1",
+      "revision": "1"
+    },
+    "target": {
+      "device": "device-1",
+      "platform": "linux",
+      "scope": {
+        "kind": "user",
+        "account": {
+          "platform": "linux",
+          "subject": "uid:1000"
+        }
+      }
+    },
+    "operation": {
+      "action": "diagnose",
+      "resource": {
+        "id": "network-tool",
+        "revision": "1"
+      }
+    },
+    "parameters": {
+      "host": {
+        "kind": "literal",
+        "value": "example.invalid"
+      },
+      "credential": {
+        "kind": "secret",
+        "reference": {
+          "id": "credential-1",
+          "revision": "1"
+        }
+      }
+    }
+  },
+  "launch": {
+    "artifact": {
+      "resource": {
+        "id": "script-1",
+        "revision": "1"
+      },
+      "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
+    },
+    "interpreter": {
+      "resource": {
+        "id": "test-interpreter",
+        "revision": "1"
+      },
+      "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
+    },
+    "argv": [
+      "--host",
+      "example.invalid"
+    ],
+    "cwd": "/workspace",
+    "env": {
+      "LANG": {
+        "kind": "literal",
+        "value": "C"
+      }
+    }
+  },
+  "runAs": {
+    "kind": "user",
+    "account": {
+      "platform": "linux",
+      "subject": "uid:1000"
+    }
+  },
+  "constraints": {
+    "network": {
+      "kind": "denied"
+    },
+    "readPaths": [
+      "/workspace"
+    ],
+    "writePaths": [],
+    "allowChildProcesses": false,
+    "requireSandbox": true
+  },
+  "budget": {
+    "timeoutMs": 1000,
+    "maxOutputBytes": 4096,
+    "maxAttempts": 1
+  },
+  "validity": {
+    "notBeforeUnixMs": 1000,
+    "expiresAtUnixMs": 2000
+  },
+  "policy": {
+    "id": "policy-1",
+    "revision": "1"
+  }
+}
