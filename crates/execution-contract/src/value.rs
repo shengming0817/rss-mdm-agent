@@ -29,9 +29,11 @@ impl Serialize for V1 {
 }
 impl<'de> Deserialize<'de> for V1 {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        match u8::deserialize(d)? {
-            1 => Ok(Self),
-            _ => Err(D::Error::custom(ContractError::Version)),
+        let version = serde_json::Number::deserialize(d)?;
+        if version.as_u64() == Some(1) {
+            Ok(Self)
+        } else {
+            Err(D::Error::custom(ContractError::Version))
         }
     }
 }

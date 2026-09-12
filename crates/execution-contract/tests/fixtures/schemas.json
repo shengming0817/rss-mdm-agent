@@ -76,14 +76,82 @@
         ]
       },
       "Decision": {
-        "enum": [
-          "proposed",
-          "denied",
-          "approvalRequired",
-          "admitted",
-          "observed"
-        ],
-        "type": "string"
+        "description": "INVARIANT: AUDIT-OBSERVATION-CORRELATION-01 — every observation is tied to one attempt.\nEarlier admission decisions do not invent an execution attempt or evidence.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "proposed",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "denied",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "approvalRequired",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "admitted",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "attemptId": {
+                "$ref": "#/$defs/AttemptId"
+              },
+              "evidence": {
+                "$ref": "#/$defs/EvidenceRefs"
+              },
+              "kind": {
+                "const": "observed",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "attemptId",
+              "evidence"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "DeviceId": {
         "description": "Device reference, not verified registration evidence.",
@@ -134,6 +202,14 @@
           "runner"
         ],
         "type": "object"
+      },
+      "EvidenceRefs": {
+        "description": "Nonempty evidence references. References still require verification by their owner.\nINVARIANT: AUDIT-OBSERVATION-CORRELATION-01 — an observation cannot omit its evidence.",
+        "items": {
+          "$ref": "#/$defs/EvidenceRef"
+        },
+        "minItems": 1,
+        "type": "array"
       },
       "Id": {
         "description": "Opaque local reference identifier; syntax validity is not authenticity.",
@@ -357,16 +433,6 @@
           }
         ]
       },
-      "attemptId": {
-        "anyOf": [
-          {
-            "$ref": "#/$defs/AttemptId"
-          },
-          {
-            "type": "null"
-          }
-        ]
-      },
       "authority": {
         "$ref": "#/$defs/Authority"
       },
@@ -385,12 +451,6 @@
       },
       "eventId": {
         "$ref": "#/$defs/EventId"
-      },
-      "evidence": {
-        "items": {
-          "$ref": "#/$defs/EvidenceRef"
-        },
-        "type": "array"
       },
       "initiator": {
         "$ref": "#/$defs/Initiator"
@@ -439,8 +499,7 @@
       "decision",
       "reason",
       "policy",
-      "occurredAtUnixMs",
-      "evidence"
+      "occurredAtUnixMs"
     ],
     "title": "AuditEvent",
     "type": "object"
@@ -587,20 +646,22 @@
             "minimum": 0,
             "type": "integer"
           },
-          "maxOutputBytes": {
+          "totalOutputBytes": {
+            "description": "Aggregate stdout/stderr/result bytes across all attempts, including discarded output.",
             "format": "uint64",
             "minimum": 0,
             "type": "integer"
           },
-          "timeoutMs": {
+          "totalTimeoutMs": {
+            "description": "Total elapsed wall time from the first attempt start, including retries/backoff/waits.\nPre-execution approval waits are excluded; retries never replenish this budget.",
             "format": "uint64",
             "minimum": 0,
             "type": "integer"
           }
         },
         "required": [
-          "timeoutMs",
-          "maxOutputBytes",
+          "totalTimeoutMs",
+          "totalOutputBytes",
           "maxAttempts"
         ],
         "type": "object"

@@ -43,6 +43,7 @@ pub struct ToolCallProposal {
     pub id: ToolCallId,
     pub turn_id: TurnId,
     pub name: Name,
+    #[serde(deserialize_with = "crate::arguments::deserialize")]
     pub arguments: serde_json::Map<String, serde_json::Value>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

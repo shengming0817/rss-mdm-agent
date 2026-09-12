@@ -145,8 +145,11 @@ pub struct Constraints {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExecutionBudget {
-    pub timeout_ms: u64,
-    pub max_output_bytes: u64,
+    /// Total elapsed wall time from the first attempt start, including retries/backoff/waits.
+    /// Pre-execution approval waits are excluded; retries never replenish this budget.
+    pub total_timeout_ms: u64,
+    /// Aggregate stdout/stderr/result bytes across all attempts, including discarded output.
+    pub total_output_bytes: u64,
     pub max_attempts: u32,
 }
 /// UTC Unix milliseconds. The host separately validates current time and revocation freshness.

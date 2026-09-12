@@ -94,8 +94,8 @@
     "requireSandbox": true
   },
   "budget": {
-    "timeoutMs": 1000,
-    "maxOutputBytes": 4096,
+    "totalTimeoutMs": 1000,
+    "totalOutputBytes": 4096,
     "maxAttempts": 1
   },
   "validity": {

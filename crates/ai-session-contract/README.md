@@ -10,7 +10,7 @@
 
 Message 是完整消息；MessageDelta 的 text 按相同 messageId 追加，尾部数据不代表完成。内容当前仅支持 Text，消费者以不可信文本渲染。Role 仅为展示/会话角色，不能认证产品用户；SendMessage command 仅允许 User，ToolCallResponse 使用独立 command。
 
-`ToolCallProposal` 仅有 id、turnId、name、arguments。arguments 中的 actor/approved/readOnly 等键都是不可信工具数据；proposal 外添加 actor/approver/authorized 等字段直接拒绝。host/MCP 依据目录 schema 映射到执行服务，不能直连 runner。工具响应 Returned/Rejected/Unavailable 仅表示回送模型的结果，不是 OS 执行证明。Debug 和错误不含原始正文或参数。
+`ToolCallProposal` 仅有 id、turnId、name、arguments。arguments 中的 actor/approved/readOnly 等键都是不可信工具数据；proposal 外添加 actor/approver/authorized 等字段直接拒绝。arguments 顶层、嵌套对象和数组中的对象递归拒绝重复键，直接 DTO 反序列化同样受此约束。host/MCP 依据目录 schema 映射到执行服务，不能直连 runner。工具响应 Returned/Rejected/Unavailable 仅表示回送模型的结果，不是 OS 执行证明。Debug 和错误不含原始正文或参数。
 
 ## 取消、恢复和能力
 

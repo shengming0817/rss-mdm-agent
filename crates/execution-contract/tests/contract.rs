@@ -37,7 +37,7 @@ fn duplicate_parameters_and_untrusted_fields_are_rejected() {
 fn budgets_and_numbers_cannot_be_silently_truncated() {
     let source = include_str!("fixtures/plan.json");
     for input in [
-        source.replace("\"timeoutMs\": 1000", "\"timeoutMs\": 60001"),
+        source.replace("\"totalTimeoutMs\": 1000", "\"totalTimeoutMs\": 60001"),
         source.replace("\"maxAttempts\": 1", "\"maxAttempts\": 0"),
         source.replace(
             "\"value\": \"example.invalid\"",
@@ -261,7 +261,7 @@ fn bounds_cover_bytes_strings_depth_collections_nodes_and_budget() {
     };
     assert!(decode_plan(bytes, &exact).is_ok());
     let mut plan = decode_plan(bytes, &l).unwrap();
-    plan.budget.timeout_ms = 60001;
+    plan.budget.total_timeout_ms = 60001;
     assert!(FrozenPlan::freeze(plan, &l).is_err());
 }
 #[test]
@@ -337,4 +337,77 @@ fn direct_dto_deserialization_cannot_hide_duplicate_parameter_or_literal_keys() 
     ] {
         assert!(serde_json::from_str::<execution_contract::PlanSpec>(&bad).is_err());
     }
+}
+
+#[test]
+fn typed_decode_errors_retain_owned_classification_without_input_values() {
+    use execution_contract::{decode_audit, ContractError};
+    let source = include_str!("fixtures/plan.json");
+    for (old, new, expected) in [
+        (
+            "\"schemaVersion\": 1",
+            "\"schemaVersion\": 999",
+            ContractError::Version,
+        ),
+        (
+            "\"actor\": \"actor-1\"",
+            "\"actor\": \"private invalid actor\"",
+            ContractError::Value,
+        ),
+    ] {
+        let bad = source.replacen(old, new, 1);
+        let error = decode_plan(bad.as_bytes(), &limits()).unwrap_err();
+        assert_eq!(error, expected);
+        assert!(!error.to_string().contains("private"));
+    }
+    let bad = include_str!("fixtures/audit.json").replacen(
+        "\"schemaVersion\": 1",
+        "\"schemaVersion\": 999",
+        1,
+    );
+    assert_eq!(
+        decode_audit(bad.as_bytes(), &limits()).unwrap_err(),
+        ContractError::Version
+    );
+    assert_eq!(
+        decode_plan(b"{", &limits()).unwrap_err(),
+        ContractError::Encoding
+    );
+}
+#[test]
+fn observed_audit_requires_attempt_and_evidence() {
+    let source: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/audit.json")).unwrap();
+    let mut no_attempt = source.clone();
+    no_attempt["decision"]["attemptId"] = serde_json::Value::Null;
+    let mut no_evidence = source;
+    no_evidence["decision"]["evidence"] = serde_json::json!([]);
+    for invalid in [no_attempt, no_evidence] {
+        assert!(execution_contract::decode_audit(
+            &serde_json::to_vec(&invalid).unwrap(),
+            &limits()
+        )
+        .is_err());
+    }
+}
+
+#[test]
+fn additional_attempts_do_not_multiply_total_plan_budgets() {
+    let mut value = fixture();
+    value["budget"]["maxAttempts"] = 3.into();
+    let accepted = freeze(&value);
+    assert_eq!(accepted.spec().budget.total_timeout_ms, 1000);
+    assert_eq!(accepted.spec().budget.total_output_bytes, 4096);
+    for (field, over) in [("totalTimeoutMs", 60001u64), ("totalOutputBytes", 65537)] {
+        let mut bad = value.clone();
+        bad["budget"][field] = over.into();
+        assert!(decode_plan(&serde_json::to_vec(&bad).unwrap(), &limits()).is_err());
+    }
+    let mut legacy = value;
+    legacy["budget"]
+        .as_object_mut()
+        .unwrap()
+        .remove("totalTimeoutMs");
+    legacy["budget"]["timeoutMs"] = 1000.into();
+    assert!(decode_plan(&serde_json::to_vec(&legacy).unwrap(), &limits()).is_err());
 }

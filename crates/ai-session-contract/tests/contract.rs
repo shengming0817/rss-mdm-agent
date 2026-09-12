@@ -260,3 +260,22 @@ fn bounded_inputs_and_user_command_roles_are_enforced() {
     bad["command"]["message"]["role"] = "assistant".into();
     assert!(ai_session_contract::decode_command(&serde_json::to_vec(&bad).unwrap(), &l).is_err());
 }
+
+#[test]
+fn repeated_tool_argument_keys_are_rejected_at_every_depth() {
+    let source = serde_json::to_string(&fixtures()[3]).unwrap();
+    for arguments in [
+        r#"{"approved":false,"approved":true}"#,
+        r#"{"nested":{"target":"a","target":"b"}}"#,
+        r#"{"array":[{"x":1,"x":2}]}"#,
+    ] {
+        let original =
+            serde_json::to_string(&fixtures()[3]["event"]["proposal"]["arguments"]).unwrap();
+        let bad = source.replace(&original, arguments);
+        assert_eq!(
+            decode_event(bad.as_bytes(), &limits()).unwrap_err(),
+            ai_session_contract::ContractError::Encoding
+        );
+        assert!(serde_json::from_str::<ai_session_contract::EventEnvelope>(&bad).is_err());
+    }
+}

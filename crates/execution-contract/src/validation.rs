@@ -163,10 +163,10 @@ pub(crate) fn decode_value(bytes: &[u8], limits: &PlanLimits) -> Result<Value, C
 
 pub(crate) fn validate_plan(p: &PlanSpec, l: &PlanLimits) -> Result<(), ContractError> {
     l.validate()?;
-    if p.budget.timeout_ms == 0
-        || p.budget.timeout_ms > l.max_timeout_ms
-        || p.budget.max_output_bytes == 0
-        || p.budget.max_output_bytes > l.max_output_bytes
+    if p.budget.total_timeout_ms == 0
+        || p.budget.total_timeout_ms > l.max_timeout_ms
+        || p.budget.total_output_bytes == 0
+        || p.budget.total_output_bytes > l.max_output_bytes
         || p.budget.max_attempts == 0
         || p.budget.max_attempts > l.max_attempts
         || p.validity.not_before_unix_ms >= p.validity.expires_at_unix_ms
@@ -251,4 +251,22 @@ where
         }
     }
     d.deserialize_map(MapVisitor(std::marker::PhantomData))
+}
+
+/// Serde erases custom error types. Recover only our exact, owned constructor
+/// messages after from_value (which has no source line suffix), never provider
+/// strings or arbitrary prefixes. Structural serde errors remain Encoding.
+pub(crate) fn typed_value<T: serde::de::DeserializeOwned>(
+    value: Value,
+) -> Result<T, ContractError> {
+    serde_json::from_value(value).map_err(|error| {
+        let message = error.to_string();
+        if message == ContractError::Version.to_string() {
+            ContractError::Version
+        } else if message == ContractError::Value.to_string() {
+            ContractError::Value
+        } else {
+            ContractError::Encoding
+        }
+    })
 }

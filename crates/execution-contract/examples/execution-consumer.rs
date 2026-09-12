@@ -17,7 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let plan = FrozenPlan::freeze(decode_plan(&bytes, &limits)?, &limits)?;
     assert!(plan.matches_digest(&Digest::new(expected.trim())?));
     let mut changed = plan.spec().clone();
-    changed.budget.timeout_ms += 1;
+    changed.budget.total_timeout_ms += 1;
     assert_ne!(
         FrozenPlan::freeze(changed, &limits)?.digest(),
         plan.digest()

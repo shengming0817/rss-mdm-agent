@@ -3,6 +3,7 @@
 //! Only the current local V1 encoding is accepted. The host/adapter owns provider
 //! conversion, capability verification, I/O and all stateful execution decisions.
 #![forbid(unsafe_code)]
+mod arguments;
 mod capability;
 mod model;
 mod validation;

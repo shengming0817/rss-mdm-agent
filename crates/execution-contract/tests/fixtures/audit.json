@@ -7,8 +7,7 @@
   },
   "requestId": "request-1",
   "planId": "plan-1",
-  "planDigest": "e6ededabe11f5a2abd52a397caa139efa2e29561fc8c0ffab432b58165b9f30a",
-  "attemptId": "attempt-1",
+  "planDigest": "fe72eaf7ca6f6063bd57e2faecfd1fdc3b16911d752ac70463f99ecb325192c2",
   "actor": "actor-1",
   "initiator": {
     "kind": "human"
@@ -32,7 +31,20 @@
       }
     }
   },
-  "decision": "observed",
+  "decision": {
+    "kind": "observed",
+    "attemptId": "attempt-1",
+    "evidence": [
+      {
+        "reference": {
+          "id": "evidence-1",
+          "revision": "1"
+        },
+        "kind": "testResult",
+        "runner": "fixture-runner"
+      }
+    ]
+  },
   "reason": "test-runner-result",
   "delegation": {
     "id": "delegation-1",
@@ -43,15 +55,5 @@
     "revision": "1"
   },
   "approval": null,
-  "occurredAtUnixMs": 1500,
-  "evidence": [
-    {
-      "reference": {
-        "id": "evidence-1",
-        "revision": "1"
-      },
-      "kind": "testResult",
-      "runner": "fixture-runner"
-    }
-  ]
+  "occurredAtUnixMs": 1500
 }

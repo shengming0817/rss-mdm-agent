@@ -9,7 +9,12 @@ const steps = [
   [
     "CI runner tests",
     "node",
-    ["--test", "scripts/source-state.test.mjs", "scripts/ci-result.test.mjs"],
+    [
+      "--test",
+      "scripts/source-state.test.mjs",
+      "scripts/ci-result.test.mjs",
+      "scripts/contract-consumers.test.mjs",
+    ],
   ],
   ["frozen dependencies", "pnpm", ["install", "--frozen-lockfile"]],
   ["frontend build", "pnpm", ["build"]],

@@ -76,7 +76,7 @@ impl fmt::Debug for FrozenPlan {
 /// Bounded strict decoding plus semantic validation. The result is still untrusted plan data.
 pub fn decode_plan(bytes: &[u8], limits: &PlanLimits) -> Result<PlanSpec, ContractError> {
     let value = decode_value(bytes, limits)?;
-    let spec: PlanSpec = serde_json::from_value(value).map_err(|_| ContractError::Encoding)?;
+    let spec: PlanSpec = crate::validation::typed_value(value)?;
     validate_plan(&spec, limits)?;
     Ok(spec)
 }
