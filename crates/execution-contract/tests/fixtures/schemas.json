@@ -1,0 +1,1485 @@
+{
+  "audit": {
+    "$defs": {
+      "ActorId": {
+        "description": "Product actor reference, not an authenticated principal.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+        "type": "string"
+      },
+      "AttemptId": {
+        "description": "Execution attempt correlation identity.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+        "type": "string"
+      },
+      "Authority": {
+        "description": "Separate namespaces: none of these serializable references authenticates its issuer.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "Local authority namespace, established and verified by a later trusted host.",
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/Id",
+                "description": "Authority reference in this variant namespace; no proof of issuer authenticity."
+              },
+              "kind": {
+                "const": "local",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Enterprise authority with an explicit tenant; verified by the product identity owner.",
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/Id",
+                "description": "Authority reference in this variant namespace; no proof of issuer authenticity."
+              },
+              "kind": {
+                "const": "enterprise",
+                "type": "string"
+              },
+              "tenant": {
+                "$ref": "#/$defs/Id",
+                "description": "Explicit enterprise tenant reference; local/test authority never fabricates a tenant."
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "tenant"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Explicit test-only authority; cannot issue production or real-platform evidence.",
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/Id",
+                "description": "Authority reference in this variant namespace; no proof of issuer authenticity."
+              },
+              "kind": {
+                "const": "test",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Decision": {
+        "description": "INVARIANT: AUDIT-OBSERVATION-CORRELATION-01 — every observation is tied to one attempt.\nEarlier admission decisions do not invent an execution attempt or evidence.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "Request or plan proposal, before execution admission.",
+            "properties": {
+              "kind": {
+                "const": "proposed",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Permission/admission denied; no execution proof is implied.",
+            "properties": {
+              "kind": {
+                "const": "denied",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "A separate approval is needed before admission.",
+            "properties": {
+              "kind": {
+                "const": "approvalRequired",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Recorded admission decision, not an executable permit.",
+            "properties": {
+              "kind": {
+                "const": "admitted",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Observation with a mandatory attempt identity and nonempty evidence references.",
+            "properties": {
+              "attemptId": {
+                "$ref": "#/$defs/AttemptId",
+                "description": "Concrete execution attempt associated with this observation."
+              },
+              "evidence": {
+                "$ref": "#/$defs/EvidenceRefs",
+                "description": "Nonempty observation references tied to the same concrete attempt; still require verification."
+              },
+              "kind": {
+                "const": "observed",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "attemptId",
+              "evidence"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "DeviceId": {
+        "description": "Device reference, not verified registration evidence.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+        "type": "string"
+      },
+      "Digest": {
+        "description": "Lowercase SHA-256 bytes expressed as hex; a digest alone grants no trust.",
+        "maxLength": 64,
+        "minLength": 64,
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "EventId": {
+        "description": "Audit event correlation identity.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+        "type": "string"
+      },
+      "EvidenceKind": {
+        "description": "Recorded observation category. None of these references verifies a real-world effect.",
+        "oneOf": [
+          {
+            "const": "testResult",
+            "description": "Fixture/test result only; cannot assert a real process or device effect.",
+            "type": "string"
+          },
+          {
+            "const": "processExited",
+            "description": "Reference to a process-exit observation; does not prove the target state converged.",
+            "type": "string"
+          },
+          {
+            "const": "stateObserved",
+            "description": "Reference to an independently observed target state; still requires evidence verification.",
+            "type": "string"
+          }
+        ]
+      },
+      "EvidenceRef": {
+        "additionalProperties": false,
+        "description": "Versioned observation reference and runner provenance; the referenced fact remains unverified.",
+        "properties": {
+          "kind": {
+            "$ref": "#/$defs/EvidenceKind",
+            "description": "Recorded observation category; a category label does not prove an external fact."
+          },
+          "reference": {
+            "$ref": "#/$defs/VersionedRef",
+            "description": "Exact versioned reference. Authenticity and access are checked by its owner."
+          },
+          "runner": {
+            "$ref": "#/$defs/Id",
+            "description": "Runner reference whose evidence is being recorded, including an explicit fixture runner in tests."
+          }
+        },
+        "required": [
+          "reference",
+          "kind",
+          "runner"
+        ],
+        "type": "object"
+      },
+      "EvidenceRefs": {
+        "description": "Nonempty evidence references. References still require verification by their owner.\nINVARIANT: AUDIT-OBSERVATION-CORRELATION-01 — an observation cannot omit its evidence.",
+        "items": {
+          "$ref": "#/$defs/EvidenceRef"
+        },
+        "minItems": 1,
+        "type": "array"
+      },
+      "Id": {
+        "description": "Opaque local reference identifier; syntax validity is not authenticity.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+        "type": "string"
+      },
+      "Initiator": {
+        "description": "Request origin and account provenance; never grants the product actor additional authority.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "Human origin with explicit OS login provenance.",
+            "properties": {
+              "kind": {
+                "const": "human",
+                "type": "string"
+              },
+              "osSession": {
+                "$ref": "#/$defs/OsSessionRef",
+                "description": "Originating OS account/session reference, separate from requested run-as identity."
+              }
+            },
+            "required": [
+              "kind",
+              "osSession"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "AI origin with separate OS and provider/CLI account references.",
+            "properties": {
+              "conversation": {
+                "$ref": "#/$defs/Id",
+                "description": "Originating AI conversation reference in the provider namespace."
+              },
+              "kind": {
+                "const": "ai",
+                "type": "string"
+              },
+              "osSession": {
+                "$ref": "#/$defs/OsSessionRef",
+                "description": "Originating OS account/session reference, separate from requested run-as identity."
+              },
+              "provider": {
+                "$ref": "#/$defs/Id",
+                "description": "Provider/CLI namespace of the recorded AI account; not product authentication."
+              },
+              "providerAccount": {
+                "$ref": "#/$defs/ProviderAccountRef",
+                "description": "Explicit provider account and configuration references at initiation."
+              },
+              "toolCall": {
+                "$ref": "#/$defs/Id",
+                "description": "Originating tool-call reference; cannot act as a product approval."
+              }
+            },
+            "required": [
+              "kind",
+              "provider",
+              "osSession",
+              "providerAccount",
+              "conversation",
+              "toolCall"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Policy origin without an interactive OS/provider login; authority still comes from the actor context.",
+            "properties": {
+              "kind": {
+                "const": "policy",
+                "type": "string"
+              },
+              "policy": {
+                "$ref": "#/$defs/VersionedRef",
+                "description": "Exact policy revision associated with this request or audit decision."
+              }
+            },
+            "required": [
+              "kind",
+              "policy"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "LocalContractV1": {
+        "const": 1,
+        "type": "integer"
+      },
+      "Operation": {
+        "additionalProperties": false,
+        "description": "Action and exact resource identity submitted to the authorization owner.",
+        "properties": {
+          "action": {
+            "$ref": "#/$defs/Id",
+            "description": "Stable operation identifier owned by the catalog/authorization policy."
+          },
+          "resource": {
+            "$ref": "#/$defs/VersionedRef",
+            "description": "Exact resource ID and revision; no latest-version lookup is performed here."
+          }
+        },
+        "required": [
+          "action",
+          "resource"
+        ],
+        "type": "object"
+      },
+      "OsAccountRef": {
+        "additionalProperties": false,
+        "description": "Opaque account reference in an OS namespace, independent of product or provider identity.",
+        "properties": {
+          "platform": {
+            "$ref": "#/$defs/Platform",
+            "description": "OS namespace of this reference or target; does not assert platform support."
+          },
+          "subject": {
+            "$ref": "#/$defs/Id",
+            "description": "Opaque stable OS account reference, such as a SID/UID reference, not an authentication credential."
+          }
+        },
+        "required": [
+          "platform",
+          "subject"
+        ],
+        "type": "object"
+      },
+      "OsSessionRef": {
+        "additionalProperties": false,
+        "description": "Claimed OS login provenance at the request origin, separate from target and run-as identity.",
+        "properties": {
+          "account": {
+            "$ref": "#/$defs/OsAccountRef",
+            "description": "Login account at the origin; never implicitly equated to the product actor."
+          },
+          "device": {
+            "$ref": "#/$defs/DeviceId",
+            "description": "Origin device reference; it does not establish registration or target authority."
+          },
+          "session": {
+            "$ref": "#/$defs/Id",
+            "description": "Origin OS login/session reference, including an explicit test reference in fixtures."
+          }
+        },
+        "required": [
+          "device",
+          "account",
+          "session"
+        ],
+        "type": "object"
+      },
+      "PlanId": {
+        "description": "Immutable local plan identity.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+        "type": "string"
+      },
+      "Platform": {
+        "description": "Target OS semantics for validation; an enum value is not a platform support claim.",
+        "oneOf": [
+          {
+            "const": "windows",
+            "description": "Windows target/account namespace.",
+            "type": "string"
+          },
+          {
+            "const": "macos",
+            "description": "macOS target/account namespace.",
+            "type": "string"
+          },
+          {
+            "const": "linux",
+            "description": "Linux host/account design namespace; not a claim of MDM-managed Linux support.",
+            "type": "string"
+          }
+        ]
+      },
+      "ProviderAccountRef": {
+        "additionalProperties": false,
+        "description": "Non-secret provider/CLI account provenance. Neither field proves product authentication.",
+        "properties": {
+          "account": {
+            "$ref": "#/$defs/Id",
+            "description": "Opaque account reference scoped by Initiator's provider, not a token or email credential."
+          },
+          "config": {
+            "$ref": "#/$defs/VersionedRef",
+            "description": "Exact configuration revision used by the originating AI session."
+          }
+        },
+        "required": [
+          "account",
+          "config"
+        ],
+        "type": "object"
+      },
+      "RequestId": {
+        "description": "Local execution request identity.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+        "type": "string"
+      },
+      "Target": {
+        "additionalProperties": false,
+        "description": "Explicit device, platform and scope bound into the plan digest.",
+        "properties": {
+          "device": {
+            "$ref": "#/$defs/DeviceId",
+            "description": "Explicit device reference in the containing authority/context; not registration evidence."
+          },
+          "platform": {
+            "$ref": "#/$defs/Platform",
+            "description": "OS namespace of this reference or target; does not assert platform support."
+          },
+          "scope": {
+            "$ref": "#/$defs/TargetScope",
+            "description": "Device-wide or explicit-user scope as defined by this type."
+          }
+        },
+        "required": [
+          "device",
+          "platform",
+          "scope"
+        ],
+        "type": "object"
+      },
+      "TargetScope": {
+        "description": "Device-wide or explicit-user scope of the requested operation.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "Operation targets the device as a whole.",
+            "properties": {
+              "kind": {
+                "const": "device",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Operation targets an explicit OS user on the device.",
+            "properties": {
+              "account": {
+                "$ref": "#/$defs/OsAccountRef",
+                "description": "Explicit account reference; never implicitly mapped to a product actor by name or email."
+              },
+              "kind": {
+                "const": "user",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "account"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "VersionedRef": {
+        "additionalProperties": false,
+        "description": "Exact resource/configuration reference. Resolution and authenticity belong to the owner.",
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/Id",
+            "description": "Opaque reference identity; the revision must be supplied separately."
+          },
+          "revision": {
+            "$ref": "#/$defs/Id",
+            "description": "Exact immutable revision reference; does not resolve or follow a moving alias."
+          }
+        },
+        "required": [
+          "id",
+          "revision"
+        ],
+        "type": "object"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "description": "Audit data only, never an authorization or trusted evidence constructor.\nContains references and a reason code, not parameters, launch arguments or raw output.",
+    "properties": {
+      "actor": {
+        "$ref": "#/$defs/ActorId",
+        "description": "Claimed product actor reference; OS/provider login does not establish this identity."
+      },
+      "approval": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/VersionedRef"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Exact approval-record reference, if applicable; validity/consumption are checked externally."
+      },
+      "approver": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ActorId"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Referenced approving product actor, if applicable; not a trusted approval by itself."
+      },
+      "authority": {
+        "$ref": "#/$defs/Authority",
+        "description": "Claimed authority namespace; a deserialized reference is not an authenticated issuer."
+      },
+      "decision": {
+        "$ref": "#/$defs/Decision",
+        "description": "Recorded decision/observation shape; recording Admitted cannot issue a permit."
+      },
+      "delegation": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/VersionedRef"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Exact delegation reference when acting through delegation; absence grants no authority."
+      },
+      "eventId": {
+        "$ref": "#/$defs/EventId",
+        "description": "Stable audit event identity used for correlation and deduplication by the journal."
+      },
+      "initiator": {
+        "$ref": "#/$defs/Initiator",
+        "description": "Origin and account provenance only; authority must be independently verified."
+      },
+      "occurredAtUnixMs": {
+        "description": "Recorded event instant as UTC Unix milliseconds; supplied by the owner clock.",
+        "format": "uint64",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "operation": {
+        "$ref": "#/$defs/Operation",
+        "description": "Action and exact resource reference whose permission must be decided by the owner."
+      },
+      "planDigest": {
+        "$ref": "#/$defs/Digest",
+        "description": "Digest of the exact frozen plan observed by this record, not a signature or permit."
+      },
+      "planId": {
+        "$ref": "#/$defs/PlanId",
+        "description": "Immutable local plan identity, also bound into its digest."
+      },
+      "policy": {
+        "$ref": "#/$defs/VersionedRef",
+        "description": "Exact policy revision associated with this request or audit decision."
+      },
+      "reason": {
+        "$ref": "#/$defs/Id",
+        "description": "Safe reason-code identifier; do not put user text, payload or credentials here."
+      },
+      "requestId": {
+        "$ref": "#/$defs/RequestId",
+        "description": "Stable local request correlation identity."
+      },
+      "schemaVersion": {
+        "$ref": "#/$defs/LocalContractV1",
+        "description": "Required current V1 discriminator; absent or unsupported versions are rejected."
+      },
+      "target": {
+        "$ref": "#/$defs/Target",
+        "description": "Explicit device/platform/user target; it is independent from the originating account."
+      }
+    },
+    "required": [
+      "schemaVersion",
+      "eventId",
+      "authority",
+      "requestId",
+      "planId",
+      "planDigest",
+      "actor",
+      "initiator",
+      "operation",
+      "target",
+      "decision",
+      "reason",
+      "policy",
+      "occurredAtUnixMs"
+    ],
+    "title": "AuditEvent",
+    "type": "object"
+  },
+  "plan": {
+    "$defs": {
+      "ActorId": {
+        "description": "Product actor reference, not an authenticated principal.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+        "type": "string"
+      },
+      "Authority": {
+        "description": "Separate namespaces: none of these serializable references authenticates its issuer.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "Local authority namespace, established and verified by a later trusted host.",
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/Id",
+                "description": "Authority reference in this variant namespace; no proof of issuer authenticity."
+              },
+              "kind": {
+                "const": "local",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Enterprise authority with an explicit tenant; verified by the product identity owner.",
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/Id",
+                "description": "Authority reference in this variant namespace; no proof of issuer authenticity."
+              },
+              "kind": {
+                "const": "enterprise",
+                "type": "string"
+              },
+              "tenant": {
+                "$ref": "#/$defs/Id",
+                "description": "Explicit enterprise tenant reference; local/test authority never fabricates a tenant."
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "tenant"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Explicit test-only authority; cannot issue production or real-platform evidence.",
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/Id",
+                "description": "Authority reference in this variant namespace; no proof of issuer authenticity."
+              },
+              "kind": {
+                "const": "test",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Constraints": {
+        "additionalProperties": false,
+        "description": "Required restrictions are declarations; platform enforcement is owned by the runner.",
+        "properties": {
+          "allowChildProcesses": {
+            "description": "Whether child processes are permitted by the plan; the runner must enforce this value.",
+            "type": "boolean"
+          },
+          "network": {
+            "$ref": "#/$defs/NetworkAccess",
+            "description": "Required network destinations/protocol restrictions, not proof that isolation is available."
+          },
+          "readPaths": {
+            "description": "Absolute read-access declarations; actual resolution/enforcement belongs to the runner.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "requireSandbox": {
+            "description": "Whether sandbox enforcement is mandatory; missing support must not silently downgrade it.",
+            "type": "boolean"
+          },
+          "writePaths": {
+            "description": "Absolute write-access declarations; no filesystem access is performed during validation.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "network",
+          "readPaths",
+          "writePaths",
+          "allowChildProcesses",
+          "requireSandbox"
+        ],
+        "type": "object"
+      },
+      "DeviceId": {
+        "description": "Device reference, not verified registration evidence.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+        "type": "string"
+      },
+      "Digest": {
+        "description": "Lowercase SHA-256 bytes expressed as hex; a digest alone grants no trust.",
+        "maxLength": 64,
+        "minLength": 64,
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "ExactArtifactRef": {
+        "additionalProperties": false,
+        "description": "Resource revision and exact SHA-256 content identity; does not itself verify downloaded bytes.",
+        "properties": {
+          "resource": {
+            "$ref": "#/$defs/VersionedRef",
+            "description": "Exact resource ID and revision; no latest-version lookup is performed here."
+          },
+          "sha256": {
+            "$ref": "#/$defs/Digest",
+            "description": "Expected content SHA-256. The adapter must verify the actual bytes before use."
+          }
+        },
+        "required": [
+          "resource",
+          "sha256"
+        ],
+        "type": "object"
+      },
+      "ExecutionBudget": {
+        "additionalProperties": false,
+        "description": "Cumulative allowances for the entire plan, never replenished by retries.",
+        "properties": {
+          "maxAttempts": {
+            "description": "Maximum attempts for the whole plan; retries never multiply time/output budgets.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "totalOutputBytes": {
+            "description": "Aggregate stdout/stderr/result bytes across all attempts, including discarded output.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "totalTimeoutMs": {
+            "description": "Total elapsed wall time from the first attempt start, including retries/backoff/waits.\nPre-execution approval waits are excluded; retries never replenish this budget.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "totalTimeoutMs",
+          "totalOutputBytes",
+          "maxAttempts"
+        ],
+        "type": "object"
+      },
+      "ExecutionRequest": {
+        "additionalProperties": false,
+        "description": "Intent data. The authority/actor are claims to be authenticated by the host, never credentials.",
+        "properties": {
+          "actor": {
+            "$ref": "#/$defs/ActorId",
+            "description": "Claimed product actor reference; OS/provider login does not establish this identity."
+          },
+          "authority": {
+            "$ref": "#/$defs/Authority",
+            "description": "Claimed authority namespace; a deserialized reference is not an authenticated issuer."
+          },
+          "delegation": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/VersionedRef"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Exact delegation reference when acting through delegation; absence grants no authority."
+          },
+          "initiator": {
+            "$ref": "#/$defs/Initiator",
+            "description": "Origin and account provenance only; authority must be independently verified."
+          },
+          "operation": {
+            "$ref": "#/$defs/Operation",
+            "description": "Action and exact resource reference whose permission must be decided by the owner."
+          },
+          "parameters": {
+            "additionalProperties": {
+              "$ref": "#/$defs/InputValue"
+            },
+            "description": "Untrusted parameter values or versioned secret references; the catalog owns parameter semantics.",
+            "type": "object"
+          },
+          "requestId": {
+            "$ref": "#/$defs/RequestId",
+            "description": "Stable local request correlation identity."
+          },
+          "schemaVersion": {
+            "$ref": "#/$defs/LocalContractV1",
+            "description": "Required current V1 discriminator; absent or unsupported versions are rejected."
+          },
+          "target": {
+            "$ref": "#/$defs/Target",
+            "description": "Explicit device/platform/user target; it is independent from the originating account."
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "requestId",
+          "authority",
+          "actor",
+          "initiator",
+          "target",
+          "operation",
+          "parameters"
+        ],
+        "type": "object"
+      },
+      "Id": {
+        "description": "Opaque local reference identifier; syntax validity is not authenticity.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+        "type": "string"
+      },
+      "Initiator": {
+        "description": "Request origin and account provenance; never grants the product actor additional authority.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "Human origin with explicit OS login provenance.",
+            "properties": {
+              "kind": {
+                "const": "human",
+                "type": "string"
+              },
+              "osSession": {
+                "$ref": "#/$defs/OsSessionRef",
+                "description": "Originating OS account/session reference, separate from requested run-as identity."
+              }
+            },
+            "required": [
+              "kind",
+              "osSession"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "AI origin with separate OS and provider/CLI account references.",
+            "properties": {
+              "conversation": {
+                "$ref": "#/$defs/Id",
+                "description": "Originating AI conversation reference in the provider namespace."
+              },
+              "kind": {
+                "const": "ai",
+                "type": "string"
+              },
+              "osSession": {
+                "$ref": "#/$defs/OsSessionRef",
+                "description": "Originating OS account/session reference, separate from requested run-as identity."
+              },
+              "provider": {
+                "$ref": "#/$defs/Id",
+                "description": "Provider/CLI namespace of the recorded AI account; not product authentication."
+              },
+              "providerAccount": {
+                "$ref": "#/$defs/ProviderAccountRef",
+                "description": "Explicit provider account and configuration references at initiation."
+              },
+              "toolCall": {
+                "$ref": "#/$defs/Id",
+                "description": "Originating tool-call reference; cannot act as a product approval."
+              }
+            },
+            "required": [
+              "kind",
+              "provider",
+              "osSession",
+              "providerAccount",
+              "conversation",
+              "toolCall"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Policy origin without an interactive OS/provider login; authority still comes from the actor context.",
+            "properties": {
+              "kind": {
+                "const": "policy",
+                "type": "string"
+              },
+              "policy": {
+                "$ref": "#/$defs/VersionedRef",
+                "description": "Exact policy revision associated with this request or audit decision."
+              }
+            },
+            "required": [
+              "kind",
+              "policy"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "InputValue": {
+        "description": "Literal values are untrusted data. Long-lived credentials MUST use a versioned secret reference.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "Untrusted JSON parameter data; environment literals are additionally restricted to NUL-free strings.",
+            "properties": {
+              "kind": {
+                "const": "literal",
+                "type": "string"
+              },
+              "value": {
+                "description": "Untrusted literal data; long-lived credentials must be passed as controlled references."
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Exact secret reference resolved under owner authorization; never embeds credential bytes.",
+            "properties": {
+              "kind": {
+                "const": "secret",
+                "type": "string"
+              },
+              "reference": {
+                "$ref": "#/$defs/VersionedRef",
+                "description": "Exact versioned reference. Authenticity and access are checked by its owner."
+              }
+            },
+            "required": [
+              "kind",
+              "reference"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "LaunchSpec": {
+        "additionalProperties": false,
+        "description": "Exact launch description only. No PATH lookup, download or spawning is performed by this crate.",
+        "properties": {
+          "argv": {
+            "description": "Ordered, NUL-free argument strings, never a shell command assembled by this crate.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "artifact": {
+            "$ref": "#/$defs/ExactArtifactRef",
+            "description": "Exact script/installer/test artifact chosen for this plan."
+          },
+          "cwd": {
+            "description": "Absolute working-directory declaration; platform adapters must resolve and verify real paths.",
+            "type": "string"
+          },
+          "env": {
+            "additionalProperties": false,
+            "description": "Explicit environment only; Windows names are normalized after collision rejection.",
+            "patternProperties": {
+              "^[A-Za-z_][A-Za-z0-9_]*$": {
+                "$ref": "#/$defs/InputValue"
+              }
+            },
+            "type": "object"
+          },
+          "interpreter": {
+            "$ref": "#/$defs/ExactArtifactRef",
+            "description": "Exact interpreter artifact; the runner must not substitute PATH or a newer version."
+          }
+        },
+        "required": [
+          "artifact",
+          "interpreter",
+          "argv",
+          "cwd",
+          "env"
+        ],
+        "type": "object"
+      },
+      "LocalContractV1": {
+        "const": 1,
+        "type": "integer"
+      },
+      "NetworkAccess": {
+        "description": "Required network restrictions. Unknown or unenforceable restrictions must be rejected by the runner.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "Network access must be denied by the runner.",
+            "properties": {
+              "kind": {
+                "const": "denied",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Only the explicitly enumerated endpoints/protocols are permitted.",
+            "properties": {
+              "destinations": {
+                "description": "Nonempty exact endpoint list; duplicate normalized destinations are rejected.",
+                "items": {
+                  "$ref": "#/$defs/NetworkDestination"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "const": "allowlist",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "destinations"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "NetworkDestination": {
+        "additionalProperties": false,
+        "description": "One exact allowed endpoint. Scheme and port are mandatory; no default-port inference.",
+        "properties": {
+          "host": {
+            "$ref": "#/$defs/NetworkHost",
+            "description": "Canonical DNS/IPv4/bracketed-IPv6 host, without URL components."
+          },
+          "port": {
+            "description": "Explicit nonzero destination port in 1..=65535.",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "scheme": {
+            "$ref": "#/$defs/NetworkScheme",
+            "description": "Protocol the runner must enforce; HTTPS cannot be silently treated as unrestricted TCP."
+          }
+        },
+        "required": [
+          "scheme",
+          "host",
+          "port"
+        ],
+        "type": "object"
+      },
+      "NetworkHost": {
+        "description": "Canonical DNS name or IP literal; cannot contain URL syntax, userinfo or a zone identifier.\nDNS uses lowercase IDNA ASCII without a trailing root dot; IPv6 uses compressed brackets.",
+        "maxLength": 1024,
+        "minLength": 1,
+        "type": "string"
+      },
+      "NetworkScheme": {
+        "description": "Required network protocol. A runner that cannot enforce the scheme must reject the plan.",
+        "oneOf": [
+          {
+            "const": "http",
+            "description": "Plain HTTP to the explicitly specified endpoint; no implicit port.",
+            "type": "string"
+          },
+          {
+            "const": "https",
+            "description": "HTTPS with TLS to the explicitly specified endpoint; no implicit port.",
+            "type": "string"
+          },
+          {
+            "const": "tcp",
+            "description": "TCP without an application-protocol assertion.",
+            "type": "string"
+          },
+          {
+            "const": "udp",
+            "description": "UDP without an application-protocol assertion.",
+            "type": "string"
+          }
+        ]
+      },
+      "Operation": {
+        "additionalProperties": false,
+        "description": "Action and exact resource identity submitted to the authorization owner.",
+        "properties": {
+          "action": {
+            "$ref": "#/$defs/Id",
+            "description": "Stable operation identifier owned by the catalog/authorization policy."
+          },
+          "resource": {
+            "$ref": "#/$defs/VersionedRef",
+            "description": "Exact resource ID and revision; no latest-version lookup is performed here."
+          }
+        },
+        "required": [
+          "action",
+          "resource"
+        ],
+        "type": "object"
+      },
+      "OsAccountRef": {
+        "additionalProperties": false,
+        "description": "Opaque account reference in an OS namespace, independent of product or provider identity.",
+        "properties": {
+          "platform": {
+            "$ref": "#/$defs/Platform",
+            "description": "OS namespace of this reference or target; does not assert platform support."
+          },
+          "subject": {
+            "$ref": "#/$defs/Id",
+            "description": "Opaque stable OS account reference, such as a SID/UID reference, not an authentication credential."
+          }
+        },
+        "required": [
+          "platform",
+          "subject"
+        ],
+        "type": "object"
+      },
+      "OsSessionRef": {
+        "additionalProperties": false,
+        "description": "Claimed OS login provenance at the request origin, separate from target and run-as identity.",
+        "properties": {
+          "account": {
+            "$ref": "#/$defs/OsAccountRef",
+            "description": "Login account at the origin; never implicitly equated to the product actor."
+          },
+          "device": {
+            "$ref": "#/$defs/DeviceId",
+            "description": "Origin device reference; it does not establish registration or target authority."
+          },
+          "session": {
+            "$ref": "#/$defs/Id",
+            "description": "Origin OS login/session reference, including an explicit test reference in fixtures."
+          }
+        },
+        "required": [
+          "device",
+          "account",
+          "session"
+        ],
+        "type": "object"
+      },
+      "PlanId": {
+        "description": "Immutable local plan identity.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+        "type": "string"
+      },
+      "Platform": {
+        "description": "Target OS semantics for validation; an enum value is not a platform support claim.",
+        "oneOf": [
+          {
+            "const": "windows",
+            "description": "Windows target/account namespace.",
+            "type": "string"
+          },
+          {
+            "const": "macos",
+            "description": "macOS target/account namespace.",
+            "type": "string"
+          },
+          {
+            "const": "linux",
+            "description": "Linux host/account design namespace; not a claim of MDM-managed Linux support.",
+            "type": "string"
+          }
+        ]
+      },
+      "ProviderAccountRef": {
+        "additionalProperties": false,
+        "description": "Non-secret provider/CLI account provenance. Neither field proves product authentication.",
+        "properties": {
+          "account": {
+            "$ref": "#/$defs/Id",
+            "description": "Opaque account reference scoped by Initiator's provider, not a token or email credential."
+          },
+          "config": {
+            "$ref": "#/$defs/VersionedRef",
+            "description": "Exact configuration revision used by the originating AI session."
+          }
+        },
+        "required": [
+          "account",
+          "config"
+        ],
+        "type": "object"
+      },
+      "RequestId": {
+        "description": "Local execution request identity.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+        "type": "string"
+      },
+      "RunAs": {
+        "description": "Requested execution identity; authorization and actual identity switching are external.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "Run under the explicitly referenced target OS account.",
+            "properties": {
+              "account": {
+                "$ref": "#/$defs/OsAccountRef",
+                "description": "Explicit account reference; never implicitly mapped to a product actor by name or email."
+              },
+              "kind": {
+                "const": "user",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "account"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Request the target platform system identity; this declaration does not grant elevation.",
+            "properties": {
+              "kind": {
+                "const": "system",
+                "type": "string"
+              },
+              "platform": {
+                "$ref": "#/$defs/Platform",
+                "description": "OS namespace of this reference or target; does not assert platform support."
+              }
+            },
+            "required": [
+              "kind",
+              "platform"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Target": {
+        "additionalProperties": false,
+        "description": "Explicit device, platform and scope bound into the plan digest.",
+        "properties": {
+          "device": {
+            "$ref": "#/$defs/DeviceId",
+            "description": "Explicit device reference in the containing authority/context; not registration evidence."
+          },
+          "platform": {
+            "$ref": "#/$defs/Platform",
+            "description": "OS namespace of this reference or target; does not assert platform support."
+          },
+          "scope": {
+            "$ref": "#/$defs/TargetScope",
+            "description": "Device-wide or explicit-user scope as defined by this type."
+          }
+        },
+        "required": [
+          "device",
+          "platform",
+          "scope"
+        ],
+        "type": "object"
+      },
+      "TargetScope": {
+        "description": "Device-wide or explicit-user scope of the requested operation.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "Operation targets the device as a whole.",
+            "properties": {
+              "kind": {
+                "const": "device",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Operation targets an explicit OS user on the device.",
+            "properties": {
+              "account": {
+                "$ref": "#/$defs/OsAccountRef",
+                "description": "Explicit account reference; never implicitly mapped to a product actor by name or email."
+              },
+              "kind": {
+                "const": "user",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "account"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ValidityWindow": {
+        "additionalProperties": false,
+        "description": "UTC Unix milliseconds. The host separately validates current time and revocation freshness.",
+        "properties": {
+          "expiresAtUnixMs": {
+            "description": "Exclusive validity deadline as UTC Unix milliseconds, strictly after the start.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "notBeforeUnixMs": {
+            "description": "Earliest validity instant as UTC Unix milliseconds; no system clock is consulted here.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "notBeforeUnixMs",
+          "expiresAtUnixMs"
+        ],
+        "type": "object"
+      },
+      "VersionedRef": {
+        "additionalProperties": false,
+        "description": "Exact resource/configuration reference. Resolution and authenticity belong to the owner.",
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/Id",
+            "description": "Opaque reference identity; the revision must be supplied separately."
+          },
+          "revision": {
+            "$ref": "#/$defs/Id",
+            "description": "Exact immutable revision reference; does not resolve or follow a moving alias."
+          }
+        },
+        "required": [
+          "id",
+          "revision"
+        ],
+        "type": "object"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "description": "The sole canonical execution description, including its original request.",
+    "properties": {
+      "budget": {
+        "$ref": "#/$defs/ExecutionBudget",
+        "description": "Plan-wide resource allowances checked against separately supplied host limits."
+      },
+      "constraints": {
+        "$ref": "#/$defs/Constraints",
+        "description": "Mandatory execution restrictions bound into the digest."
+      },
+      "launch": {
+        "$ref": "#/$defs/LaunchSpec",
+        "description": "Resolved launch description, including exact artifacts and ordered process inputs."
+      },
+      "planId": {
+        "$ref": "#/$defs/PlanId",
+        "description": "Immutable local plan identity, also bound into its digest."
+      },
+      "policy": {
+        "$ref": "#/$defs/VersionedRef",
+        "description": "Exact policy revision associated with this request or audit decision."
+      },
+      "request": {
+        "$ref": "#/$defs/ExecutionRequest",
+        "description": "Original operation intent, retained once as part of the canonical plan."
+      },
+      "runAs": {
+        "$ref": "#/$defs/RunAs",
+        "description": "Requested target execution identity, separate from actor and originating login."
+      },
+      "schemaVersion": {
+        "$ref": "#/$defs/LocalContractV1",
+        "description": "Required current V1 discriminator; absent or unsupported versions are rejected."
+      },
+      "validity": {
+        "$ref": "#/$defs/ValidityWindow",
+        "description": "Bounded validity window; current time and revocation freshness are checked externally."
+      }
+    },
+    "required": [
+      "schemaVersion",
+      "planId",
+      "request",
+      "launch",
+      "runAs",
+      "constraints",
+      "budget",
+      "validity",
+      "policy"
+    ],
+    "title": "PlanSpec",
+    "type": "object"
+  }
+}

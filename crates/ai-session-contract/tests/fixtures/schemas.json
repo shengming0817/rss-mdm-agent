@@ -1,0 +1,1249 @@
+{
+  "command": {
+    "$defs": {
+      "AiSessionV1": {
+        "const": 1,
+        "type": "integer"
+      },
+      "Command": {
+        "description": "Host-to-engine requests; these commands do not invoke an execution runner or issue approval.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "Submit user-channel content; other roles are rejected on this command.",
+            "properties": {
+              "kind": {
+                "const": "sendMessage",
+                "type": "string"
+              },
+              "message": {
+                "$ref": "#/$defs/Message",
+                "description": "Complete message content for this turn; untrusted regardless of source role."
+              }
+            },
+            "required": [
+              "kind",
+              "message"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Request cancellation of the identified model turn.",
+            "properties": {
+              "kind": {
+                "const": "cancel",
+                "type": "string"
+              },
+              "turnId": {
+                "$ref": "#/$defs/TurnId",
+                "description": "Stable model-turn correlation, separate from execution request/attempt identities."
+              }
+            },
+            "required": [
+              "kind",
+              "turnId"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Request continuation using an exact engine/configuration binding.",
+            "properties": {
+              "binding": {
+                "$ref": "#/$defs/ResumeBinding",
+                "description": "Exact engine/configuration binding to use for the continuation request."
+              },
+              "kind": {
+                "const": "resume",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "binding"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Return a host tool response to the model.",
+            "properties": {
+              "kind": {
+                "const": "respondToTool",
+                "type": "string"
+              },
+              "response": {
+                "$ref": "#/$defs/ToolCallResponse",
+                "description": "Model-facing tool response, not a trusted execution receipt."
+              }
+            },
+            "required": [
+              "kind",
+              "response"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ContentPart": {
+        "description": "Untrusted text; consumers render inert text and apply their own disclosure policy.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "Inert untrusted text; HTML/terminal escape execution is a consumer concern.",
+            "properties": {
+              "kind": {
+                "const": "text",
+                "type": "string"
+              },
+              "text": {
+                "description": "Untrusted text content; render as data and never execute embedded markup.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "text"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ConversationId": {
+        "description": "Conversation identity independent of any repository.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
+        "type": "string"
+      },
+      "EngineConfigRef": {
+        "additionalProperties": false,
+        "description": "Opaque host configuration reference. Never embeds tokens, permissions or raw provider config.",
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/Name",
+            "description": "Opaque host configuration identity, not configuration contents."
+          },
+          "revision": {
+            "$ref": "#/$defs/Name",
+            "description": "Exact host configuration revision used for the conversation."
+          }
+        },
+        "required": [
+          "id",
+          "revision"
+        ],
+        "type": "object"
+      },
+      "EngineIdentity": {
+        "additionalProperties": false,
+        "description": "Exact engine version and process generation associated with a capability or resume claim.",
+        "properties": {
+          "name": {
+            "$ref": "#/$defs/Name",
+            "description": "Provider/engine name used with the exact version to interpret capabilities."
+          },
+          "processGeneration": {
+            "$ref": "#/$defs/Name",
+            "description": "Opaque identity for the engine process generation; stale generations may not resume."
+          },
+          "version": {
+            "$ref": "#/$defs/Name",
+            "description": "Exact adapter-observed engine version; no implicit upgrade or fallback."
+          }
+        },
+        "required": [
+          "name",
+          "version",
+          "processGeneration"
+        ],
+        "type": "object"
+      },
+      "Message": {
+        "additionalProperties": false,
+        "description": "Complete untrusted message belonging to one model turn.",
+        "properties": {
+          "content": {
+            "description": "Untrusted text parts; consumers apply disclosure policy and render inert text.",
+            "items": {
+              "$ref": "#/$defs/ContentPart"
+            },
+            "type": "array"
+          },
+          "id": {
+            "$ref": "#/$defs/MessageId",
+            "description": "Stable message identity shared by snapshots and deltas."
+          },
+          "role": {
+            "$ref": "#/$defs/Role",
+            "description": "Conversation role only; never a trusted product user or authority."
+          },
+          "turnId": {
+            "$ref": "#/$defs/TurnId",
+            "description": "Stable model-turn correlation, separate from execution request/attempt identities."
+          }
+        },
+        "required": [
+          "id",
+          "turnId",
+          "role",
+          "content"
+        ],
+        "type": "object"
+      },
+      "MessageId": {
+        "description": "Stable message identity for streamed updates.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
+        "type": "string"
+      },
+      "Name": {
+        "description": "Opaque provider/tool/config reference, never a principal.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
+        "type": "string"
+      },
+      "ResumeBinding": {
+        "additionalProperties": false,
+        "description": "Candidate engine/configuration binding for a saved conversation; no credentials are embedded.",
+        "properties": {
+          "config": {
+            "$ref": "#/$defs/EngineConfigRef",
+            "description": "Opaque host configuration ID/revision; contains no secrets or permission overrides."
+          },
+          "engine": {
+            "$ref": "#/$defs/EngineIdentity",
+            "description": "Exact engine/version/generation binding; claims require adapter-side verification."
+          }
+        },
+        "required": [
+          "engine",
+          "config"
+        ],
+        "type": "object"
+      },
+      "Role": {
+        "description": "Conversation role only; does not authenticate a product actor.",
+        "oneOf": [
+          {
+            "const": "user",
+            "description": "User-channel content; a role label does not authenticate its author.",
+            "type": "string"
+          },
+          {
+            "const": "assistant",
+            "description": "Model-generated untrusted content.",
+            "type": "string"
+          },
+          {
+            "const": "tool",
+            "description": "Untrusted tool-channel content, not execution evidence.",
+            "type": "string"
+          }
+        ]
+      },
+      "ToolCallId": {
+        "description": "Model proposal identity; not an execution task or approval.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
+        "type": "string"
+      },
+      "ToolCallResponse": {
+        "additionalProperties": false,
+        "description": "Model-facing protocol response, never an Execution Evidence or approval record.",
+        "properties": {
+          "content": {
+            "description": "Untrusted text parts; consumers apply disclosure policy and render inert text.",
+            "items": {
+              "$ref": "#/$defs/ContentPart"
+            },
+            "type": "array"
+          },
+          "outcome": {
+            "$ref": "#/$defs/ToolResponseOutcome",
+            "description": "The specific protocol outcome defined by the containing event or response."
+          },
+          "proposalId": {
+            "$ref": "#/$defs/ToolCallId",
+            "description": "Tool proposal being answered; does not identify an execution approval."
+          },
+          "turnId": {
+            "$ref": "#/$defs/TurnId",
+            "description": "Stable model-turn correlation, separate from execution request/attempt identities."
+          }
+        },
+        "required": [
+          "proposalId",
+          "turnId",
+          "outcome",
+          "content"
+        ],
+        "type": "object"
+      },
+      "ToolResponseOutcome": {
+        "description": "Protocol disposition of a tool response, independent of execution success.",
+        "oneOf": [
+          {
+            "const": "returned",
+            "description": "A result was returned to the model; not proof that an operation succeeded.",
+            "type": "string"
+          },
+          {
+            "const": "rejected",
+            "description": "The host rejected the proposal.",
+            "type": "string"
+          },
+          {
+            "const": "unavailable",
+            "description": "The host/tool could not provide a response or operation.",
+            "type": "string"
+          }
+        ]
+      },
+      "TurnId": {
+        "description": "One model turn identity.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
+        "type": "string"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "description": "Versioned request associated with one conversation; validate before dispatch.",
+    "properties": {
+      "command": {
+        "$ref": "#/$defs/Command",
+        "description": "Closed host request payload; it confers no product execution authority."
+      },
+      "conversationId": {
+        "$ref": "#/$defs/ConversationId",
+        "description": "Stable conversation correlation; unrelated to an execution task identity."
+      },
+      "schemaVersion": {
+        "$ref": "#/$defs/AiSessionV1",
+        "description": "Required current V1 discriminator; absent or unsupported versions are rejected."
+      }
+    },
+    "required": [
+      "schemaVersion",
+      "conversationId",
+      "command"
+    ],
+    "title": "CommandEnvelope",
+    "type": "object"
+  },
+  "event": {
+    "$defs": {
+      "AiSessionV1": {
+        "const": 1,
+        "type": "integer"
+      },
+      "CancelDispatchOutcome": {
+        "description": "Accepted acknowledges dispatch only; it never confirms turn/OS termination.",
+        "oneOf": [
+          {
+            "const": "accepted",
+            "description": "Cancellation request was dispatched; more stream events may still follow.",
+            "type": "string"
+          },
+          {
+            "const": "alreadyTerminal",
+            "description": "The addressed turn was already terminal when cancellation was handled.",
+            "type": "string"
+          },
+          {
+            "const": "unsupported",
+            "description": "The engine cannot perform this cancellation request.",
+            "type": "string"
+          }
+        ]
+      },
+      "ContentPart": {
+        "description": "Untrusted text; consumers render inert text and apply their own disclosure policy.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "Inert untrusted text; HTML/terminal escape execution is a consumer concern.",
+            "properties": {
+              "kind": {
+                "const": "text",
+                "type": "string"
+              },
+              "text": {
+                "description": "Untrusted text content; render as data and never execute embedded markup.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "text"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Continuation": {
+        "description": "Continuation capability: a supported scope, explicitly unsupported, or not established.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "The adapter claims the specified continuation scope.",
+            "properties": {
+              "scope": {
+                "$ref": "#/$defs/ContinuationScope",
+                "description": "Engine-process lifetime across which continuation is claimed to work."
+              },
+              "status": {
+                "const": "supported",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "scope"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Continuation is explicitly unavailable.",
+            "properties": {
+              "status": {
+                "const": "unsupported",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Continuation support has not been established; cannot satisfy a requirement.",
+            "properties": {
+              "status": {
+                "const": "unknown",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ContinuationScope": {
+        "description": "Process lifetime across which the adapter claims conversation continuation is possible.",
+        "oneOf": [
+          {
+            "const": "sameProcess",
+            "description": "Continuation requires the same engine process generation.",
+            "type": "string"
+          },
+          {
+            "const": "acrossProcesses",
+            "description": "Continuation may be requested across generations for the same engine/config revision.",
+            "type": "string"
+          }
+        ]
+      },
+      "Conversation": {
+        "additionalProperties": false,
+        "description": "Conversation identity and the exact engine/configuration capability snapshot that describes it.",
+        "properties": {
+          "capabilities": {
+            "$ref": "#/$defs/EngineCapabilities",
+            "description": "Capabilities claimed for this exact engine/configuration, not trusted execution evidence."
+          },
+          "config": {
+            "$ref": "#/$defs/EngineConfigRef",
+            "description": "Opaque host configuration ID/revision; contains no secrets or permission overrides."
+          },
+          "engine": {
+            "$ref": "#/$defs/EngineIdentity",
+            "description": "Exact engine/version/generation binding; claims require adapter-side verification."
+          },
+          "id": {
+            "$ref": "#/$defs/ConversationId",
+            "description": "Conversation identity, also carried by event/command envelopes."
+          }
+        },
+        "required": [
+          "id",
+          "engine",
+          "config",
+          "capabilities"
+        ],
+        "type": "object"
+      },
+      "ConversationId": {
+        "description": "Conversation identity independent of any repository.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
+        "type": "string"
+      },
+      "EngineCapabilities": {
+        "additionalProperties": false,
+        "description": "Claims attached to a particular engine/version/generation by Conversation.\nA decoded Supported value does not prove native tool isolation. The adapter must\nestablish that independently before the host can enable controlled operations.",
+        "properties": {
+          "continuation": {
+            "$ref": "#/$defs/Continuation",
+            "description": "Claimed continuation scope for the containing conversation binding."
+          },
+          "interruption": {
+            "$ref": "#/$defs/Interruption",
+            "description": "Claimed cancellation acknowledgment strength for the containing conversation."
+          },
+          "toolControl": {
+            "$ref": "#/$defs/ToolControl",
+            "description": "Claimed tool mediation mode; the host independently verifies that no native bypass exists."
+          }
+        },
+        "required": [
+          "continuation",
+          "interruption",
+          "toolControl"
+        ],
+        "type": "object"
+      },
+      "EngineConfigRef": {
+        "additionalProperties": false,
+        "description": "Opaque host configuration reference. Never embeds tokens, permissions or raw provider config.",
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/Name",
+            "description": "Opaque host configuration identity, not configuration contents."
+          },
+          "revision": {
+            "$ref": "#/$defs/Name",
+            "description": "Exact host configuration revision used for the conversation."
+          }
+        },
+        "required": [
+          "id",
+          "revision"
+        ],
+        "type": "object"
+      },
+      "EngineIdentity": {
+        "additionalProperties": false,
+        "description": "Exact engine version and process generation associated with a capability or resume claim.",
+        "properties": {
+          "name": {
+            "$ref": "#/$defs/Name",
+            "description": "Provider/engine name used with the exact version to interpret capabilities."
+          },
+          "processGeneration": {
+            "$ref": "#/$defs/Name",
+            "description": "Opaque identity for the engine process generation; stale generations may not resume."
+          },
+          "version": {
+            "$ref": "#/$defs/Name",
+            "description": "Exact adapter-observed engine version; no implicit upgrade or fallback."
+          }
+        },
+        "required": [
+          "name",
+          "version",
+          "processGeneration"
+        ],
+        "type": "object"
+      },
+      "Event": {
+        "description": "Closed V1 stream events. Unknown variants are rejected, not treated as completion.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "A conversation and its exact capability binding were established.",
+            "properties": {
+              "conversation": {
+                "$ref": "#/$defs/Conversation",
+                "description": "Conversation snapshot; its ID must match the envelope conversation ID."
+              },
+              "kind": {
+                "const": "conversationStarted",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "conversation"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "A complete message snapshot.",
+            "properties": {
+              "kind": {
+                "const": "message",
+                "type": "string"
+              },
+              "message": {
+                "$ref": "#/$defs/Message",
+                "description": "Complete message content for this turn; untrusted regardless of source role."
+              }
+            },
+            "required": [
+              "kind",
+              "message"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Append-only text delta correlated by turn/message IDs.",
+            "properties": {
+              "kind": {
+                "const": "messageDelta",
+                "type": "string"
+              },
+              "messageId": {
+                "$ref": "#/$defs/MessageId",
+                "description": "Stable message identity used to append deltas to the same message."
+              },
+              "role": {
+                "$ref": "#/$defs/Role",
+                "description": "Conversation role only; never a trusted product user or authority."
+              },
+              "text": {
+                "description": "Untrusted text fragment. Consumers append by message ID and must not execute markup.",
+                "type": "string"
+              },
+              "turnId": {
+                "$ref": "#/$defs/TurnId",
+                "description": "Stable model-turn correlation, separate from execution request/attempt identities."
+              }
+            },
+            "required": [
+              "kind",
+              "turnId",
+              "messageId",
+              "role",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "An untrusted model tool request awaiting host handling.",
+            "properties": {
+              "kind": {
+                "const": "toolCallProposed",
+                "type": "string"
+              },
+              "proposal": {
+                "$ref": "#/$defs/ToolCallProposal",
+                "description": "Model tool proposal only; the host must separately authorize any execution mapping."
+              }
+            },
+            "required": [
+              "kind",
+              "proposal"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "A protocol response to a model proposal, without execution authority.",
+            "properties": {
+              "kind": {
+                "const": "toolCallResponded",
+                "type": "string"
+              },
+              "response": {
+                "$ref": "#/$defs/ToolCallResponse",
+                "description": "Model-facing tool response, not a trusted execution receipt."
+              }
+            },
+            "required": [
+              "kind",
+              "response"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Explicit model-turn terminal outcome.",
+            "properties": {
+              "kind": {
+                "const": "turnFinished",
+                "type": "string"
+              },
+              "outcome": {
+                "$ref": "#/$defs/TurnOutcome",
+                "description": "The specific protocol outcome defined by the containing event or response."
+              },
+              "turnId": {
+                "$ref": "#/$defs/TurnId",
+                "description": "Stable model-turn correlation, separate from execution request/attempt identities."
+              }
+            },
+            "required": [
+              "kind",
+              "turnId",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Cancellation dispatch acknowledgment, not a terminal event.",
+            "properties": {
+              "kind": {
+                "const": "cancelDispatched",
+                "type": "string"
+              },
+              "outcome": {
+                "$ref": "#/$defs/CancelDispatchOutcome",
+                "description": "The specific protocol outcome defined by the containing event or response."
+              },
+              "turnId": {
+                "$ref": "#/$defs/TurnId",
+                "description": "Stable model-turn correlation, separate from execution request/attempt identities."
+              }
+            },
+            "required": [
+              "kind",
+              "turnId",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Provider result of an attempted continuation.",
+            "properties": {
+              "kind": {
+                "const": "resumeFinished",
+                "type": "string"
+              },
+              "outcome": {
+                "$ref": "#/$defs/ResumeOutcome",
+                "description": "The specific protocol outcome defined by the containing event or response."
+              }
+            },
+            "required": [
+              "kind",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Non-terminal protocol error. Lost transport must not fabricate completion/interruption.",
+            "properties": {
+              "code": {
+                "$ref": "#/$defs/StreamErrorCode",
+                "description": "Closed, value-free protocol error classification."
+              },
+              "kind": {
+                "const": "streamError",
+                "type": "string"
+              },
+              "turnId": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/TurnId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Stable model-turn correlation, separate from execution request/attempt identities."
+              }
+            },
+            "required": [
+              "kind",
+              "code"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Interruption": {
+        "description": "Interruption capability; a dispatch acknowledgment alone is not confirmed termination.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "The adapter claims this cancellation acknowledgment strength.",
+            "properties": {
+              "confirmation": {
+                "$ref": "#/$defs/InterruptionConfirmation",
+                "description": "Protocol acknowledgment strength; request acceptance is weaker than a terminal acknowledgment."
+              },
+              "status": {
+                "const": "supported",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "confirmation"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Interruption is explicitly unavailable.",
+            "properties": {
+              "status": {
+                "const": "unsupported",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Interruption support has not been established.",
+            "properties": {
+              "status": {
+                "const": "unknown",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "InterruptionConfirmation": {
+        "description": "What the engine protocol can acknowledge about a cancellation request.",
+        "oneOf": [
+          {
+            "const": "requestOnly",
+            "description": "The protocol can acknowledge dispatch, without a terminal confirmation guarantee.",
+            "type": "string"
+          },
+          {
+            "const": "terminalAcknowledged",
+            "description": "The protocol can explicitly acknowledge an interrupted terminal turn.",
+            "type": "string"
+          }
+        ]
+      },
+      "Message": {
+        "additionalProperties": false,
+        "description": "Complete untrusted message belonging to one model turn.",
+        "properties": {
+          "content": {
+            "description": "Untrusted text parts; consumers apply disclosure policy and render inert text.",
+            "items": {
+              "$ref": "#/$defs/ContentPart"
+            },
+            "type": "array"
+          },
+          "id": {
+            "$ref": "#/$defs/MessageId",
+            "description": "Stable message identity shared by snapshots and deltas."
+          },
+          "role": {
+            "$ref": "#/$defs/Role",
+            "description": "Conversation role only; never a trusted product user or authority."
+          },
+          "turnId": {
+            "$ref": "#/$defs/TurnId",
+            "description": "Stable model-turn correlation, separate from execution request/attempt identities."
+          }
+        },
+        "required": [
+          "id",
+          "turnId",
+          "role",
+          "content"
+        ],
+        "type": "object"
+      },
+      "MessageId": {
+        "description": "Stable message identity for streamed updates.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
+        "type": "string"
+      },
+      "Name": {
+        "description": "Opaque provider/tool/config reference, never a principal.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
+        "type": "string"
+      },
+      "ResumeOutcome": {
+        "description": "Actual provider continuation response, distinct from the pure resume eligibility check.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "The provider confirmed continuation on the returned binding.",
+            "properties": {
+              "engine": {
+                "$ref": "#/$defs/EngineIdentity",
+                "description": "Exact engine/version/generation binding; claims require adapter-side verification."
+              },
+              "status": {
+                "const": "resumed",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "engine"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Continuation did not occur for the stated closed reason.",
+            "properties": {
+              "reason": {
+                "$ref": "#/$defs/ResumeUnavailable",
+                "description": "Closed provider/eligibility failure reason; no raw diagnostic payload."
+              },
+              "status": {
+                "const": "unavailable",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "reason"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ResumeUnavailable": {
+        "description": "Closed reason why requesting or completing continuation is unavailable.",
+        "oneOf": [
+          {
+            "const": "unsupported",
+            "description": "The conversation does not support continuation.",
+            "type": "string"
+          },
+          {
+            "const": "unknownCapability",
+            "description": "Continuation capability has not been established.",
+            "type": "string"
+          },
+          {
+            "const": "staleProcessGeneration",
+            "description": "Same-process continuation was requested on another generation.",
+            "type": "string"
+          },
+          {
+            "const": "engineChanged",
+            "description": "Engine name or version differs from the stored binding.",
+            "type": "string"
+          },
+          {
+            "const": "configChanged",
+            "description": "Host configuration identity/revision differs from the stored binding.",
+            "type": "string"
+          },
+          {
+            "const": "missingSession",
+            "description": "The provider has no matching saved conversation.",
+            "type": "string"
+          },
+          {
+            "const": "engineRejected",
+            "description": "The provider rejected the continuation request.",
+            "type": "string"
+          }
+        ]
+      },
+      "Role": {
+        "description": "Conversation role only; does not authenticate a product actor.",
+        "oneOf": [
+          {
+            "const": "user",
+            "description": "User-channel content; a role label does not authenticate its author.",
+            "type": "string"
+          },
+          {
+            "const": "assistant",
+            "description": "Model-generated untrusted content.",
+            "type": "string"
+          },
+          {
+            "const": "tool",
+            "description": "Untrusted tool-channel content, not execution evidence.",
+            "type": "string"
+          }
+        ]
+      },
+      "StreamErrorCode": {
+        "description": "Value-free stream failure classification; a stream failure is not a terminal turn outcome.",
+        "oneOf": [
+          {
+            "const": "protocolUnsupported",
+            "description": "The adapter cannot interpret or support the observed protocol.",
+            "type": "string"
+          },
+          {
+            "const": "transportLost",
+            "description": "The stream transport was lost; turn termination remains unconfirmed.",
+            "type": "string"
+          },
+          {
+            "const": "providerFailure",
+            "description": "A provider-level failure occurred without exposing its raw diagnostics.",
+            "type": "string"
+          },
+          {
+            "const": "invalidData",
+            "description": "The stream contained invalid contract data.",
+            "type": "string"
+          },
+          {
+            "const": "limitExceeded",
+            "description": "A stream input/output constraint was exceeded.",
+            "type": "string"
+          }
+        ]
+      },
+      "ToolCallId": {
+        "description": "Model proposal identity; not an execution task or approval.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
+        "type": "string"
+      },
+      "ToolCallProposal": {
+        "additionalProperties": false,
+        "description": "A proposal is data, not an instruction to an executor. The host maps it to its\nauthorization service. Even actor/approved keys inside arguments remain untrusted data.",
+        "properties": {
+          "arguments": {
+            "additionalProperties": true,
+            "description": "Untrusted tool data with recursively unique keys; actor/approved keys grant no permission.",
+            "type": "object"
+          },
+          "id": {
+            "$ref": "#/$defs/ToolCallId",
+            "description": "Proposal identity, not an execution task or approval identity."
+          },
+          "name": {
+            "$ref": "#/$defs/Name",
+            "description": "Tool name to resolve through the host catalog; not a command or executable path."
+          },
+          "turnId": {
+            "$ref": "#/$defs/TurnId",
+            "description": "Stable model-turn correlation, separate from execution request/attempt identities."
+          }
+        },
+        "required": [
+          "id",
+          "turnId",
+          "name",
+          "arguments"
+        ],
+        "type": "object"
+      },
+      "ToolCallResponse": {
+        "additionalProperties": false,
+        "description": "Model-facing protocol response, never an Execution Evidence or approval record.",
+        "properties": {
+          "content": {
+            "description": "Untrusted text parts; consumers apply disclosure policy and render inert text.",
+            "items": {
+              "$ref": "#/$defs/ContentPart"
+            },
+            "type": "array"
+          },
+          "outcome": {
+            "$ref": "#/$defs/ToolResponseOutcome",
+            "description": "The specific protocol outcome defined by the containing event or response."
+          },
+          "proposalId": {
+            "$ref": "#/$defs/ToolCallId",
+            "description": "Tool proposal being answered; does not identify an execution approval."
+          },
+          "turnId": {
+            "$ref": "#/$defs/TurnId",
+            "description": "Stable model-turn correlation, separate from execution request/attempt identities."
+          }
+        },
+        "required": [
+          "proposalId",
+          "turnId",
+          "outcome",
+          "content"
+        ],
+        "type": "object"
+      },
+      "ToolControl": {
+        "description": "Tool-control capability; deserialization never verifies the claim or grants execution permission.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "The adapter claims the specified tool-control mode.",
+            "properties": {
+              "mode": {
+                "$ref": "#/$defs/ToolControlMode",
+                "description": "Declared tool mediation mode; no mode value itself proves safety."
+              },
+              "status": {
+                "const": "supported",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "mode"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "This tool-control capability is unavailable.",
+            "properties": {
+              "status": {
+                "const": "unsupported",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Tool mediation has not been established; controlled operation must not be enabled.",
+            "properties": {
+              "status": {
+                "const": "unknown",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ToolControlMode": {
+        "description": "Who mediates model tools. Only independently verified host mediation supports controlled use.",
+        "oneOf": [
+          {
+            "const": "hostMediated",
+            "description": "Tools are claimed to be mediated by the host; actual bypass isolation still needs proof.",
+            "type": "string"
+          },
+          {
+            "const": "providerManaged",
+            "description": "The provider manages tools; cannot satisfy a host-mediation requirement.",
+            "type": "string"
+          },
+          {
+            "const": "disabled",
+            "description": "Tools are disabled for this conversation; ordinary dialogue may remain available.",
+            "type": "string"
+          }
+        ]
+      },
+      "ToolResponseOutcome": {
+        "description": "Protocol disposition of a tool response, independent of execution success.",
+        "oneOf": [
+          {
+            "const": "returned",
+            "description": "A result was returned to the model; not proof that an operation succeeded.",
+            "type": "string"
+          },
+          {
+            "const": "rejected",
+            "description": "The host rejected the proposal.",
+            "type": "string"
+          },
+          {
+            "const": "unavailable",
+            "description": "The host/tool could not provide a response or operation.",
+            "type": "string"
+          }
+        ]
+      },
+      "TurnId": {
+        "description": "One model turn identity.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
+        "type": "string"
+      },
+      "TurnOutcome": {
+        "description": "Explicit terminal model-turn outcome; never proves an OS task or side effect terminated.",
+        "oneOf": [
+          {
+            "const": "completed",
+            "description": "The model turn completed, independently of any execution task.",
+            "type": "string"
+          },
+          {
+            "const": "interrupted",
+            "description": "The engine explicitly acknowledged that this turn was interrupted.",
+            "type": "string"
+          },
+          {
+            "const": "failed",
+            "description": "The model turn failed.",
+            "type": "string"
+          },
+          {
+            "const": "refused",
+            "description": "The engine refused the requested turn.",
+            "type": "string"
+          },
+          {
+            "const": "limitReached",
+            "description": "The engine terminated the turn after a model/protocol limit.",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "description": "Versioned conversation event with a stable sequence and event-specific correlations.",
+    "properties": {
+      "conversationId": {
+        "$ref": "#/$defs/ConversationId",
+        "description": "Stable conversation correlation; unrelated to an execution task identity."
+      },
+      "event": {
+        "$ref": "#/$defs/Event",
+        "description": "Closed event payload; only TurnFinished supplies a terminal outcome."
+      },
+      "schemaVersion": {
+        "$ref": "#/$defs/AiSessionV1",
+        "description": "Required current V1 discriminator; absent or unsupported versions are rejected."
+      },
+      "sequence": {
+        "description": "Zero-based event sequence, limited to the exact safe JSON integer range.",
+        "format": "uint64",
+        "minimum": 0,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "schemaVersion",
+      "conversationId",
+      "sequence",
+      "event"
+    ],
+    "title": "EventEnvelope",
+    "type": "object"
+  }
+}

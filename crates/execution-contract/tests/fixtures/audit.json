@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "eventId": "event-1",
+  "authority": {
+    "kind": "test",
+    "id": "test-authority"
+  },
+  "requestId": "request-1",
+  "planId": "plan-1",
+  "planDigest": "a61d955676c7ab7fec31d3178c87c26386492387fe48137ec451c047fe8b1ec2",
+  "actor": "actor-1",
+  "initiator": {
+    "kind": "human",
+    "osSession": {
+      "device": "origin-device",
+      "account": {
+        "platform": "linux",
+        "subject": "uid:1000"
+      },
+      "session": "login-1"
+    }
+  },
+  "approver": null,
+  "operation": {
+    "action": "diagnose",
+    "resource": {
+      "id": "network-tool",
+      "revision": "1"
+    }
+  },
+  "target": {
+    "device": "device-1",
+    "platform": "linux",
+    "scope": {
+      "kind": "user",
+      "account": {
+        "platform": "linux",
+        "subject": "uid:1000"
+      }
+    }
+  },
+  "decision": {
+    "kind": "observed",
+    "attemptId": "attempt-1",
+    "evidence": [
+      {
+        "reference": {
+          "id": "evidence-1",
+          "revision": "1"
+        },
+        "kind": "testResult",
+        "runner": "fixture-runner"
+      }
+    ]
+  },
+  "reason": "test-runner-result",
+  "delegation": {
+    "id": "delegation-1",
+    "revision": "1"
+  },
+  "policy": {
+    "id": "policy-1",
+    "revision": "1"
+  },
+  "approval": null,
+  "occurredAtUnixMs": 1500
+}

@@ -286,3 +286,39 @@ test("each host boundary mutation independently fails the tree scan", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("root workspace may declare independent core dependencies without changing desktop authority", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ui-workspace-boundaries-"));
+  try {
+    for (const path of [
+      "packages/ui/src",
+      "packages/ui/package.json",
+      "packages/ui/runtime.ts",
+      "Cargo.toml",
+      "apps/desktop/src",
+      "apps/desktop/package.json",
+      "apps/desktop/src-tauri",
+    ])
+      cpSync(new URL(`../${path}`, import.meta.url), join(dir, path), {
+        recursive: true,
+      });
+    const file = join(dir, "Cargo.toml");
+    writeFileSync(
+      file,
+      readFileSync(file, "utf8") + '\nindependent-core = "1"\n',
+    );
+    assert.deepEqual(checkTree(dir), []);
+    writeFileSync(
+      file,
+      readFileSync(file, "utf8").replace(
+        "features = []",
+        'features = ["devtools"]',
+      ),
+    );
+    assert.ok(
+      checkTree(dir).some((e) => e.includes("unexpected host dependency")),
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
