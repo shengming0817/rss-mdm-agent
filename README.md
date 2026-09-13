@@ -3,13 +3,14 @@
 面向 Windows、macOS、Linux 宿主设计的桌面自助服务与人/AI 统一受控执行客户端。
 本仓拥有客户端 UI、AI 引擎适配、本地执行核心与后续 Agent 平台实现；服务端产品与 Agent wire 由 rss-mdm 拥有。
 
-当前包含独立执行/AI 会话契约、Vue UI 包与 Tauri 桌面基础壳，提供无真实执行的固定样本；尚无后台服务或正式安装包。本批 C01–C20 的目标是独立核心、从 prmonitor 提取 AI/UI 和测试执行器闭环；真实平台命令、软件安装、提权、远程管理与 T3 留后续交付。
+当前包含独立执行/AI 会话契约、交互/能力/授权纯核心、Vue UI 包与 Tauri 桌面基础壳，提供无真实执行的固定样本；尚无后台服务或正式安装包。本批 C01–C20 的目标是独立核心、从 prmonitor 提取 AI/UI 和测试执行器闭环；真实平台命令、软件安装、提权、远程管理与 T3 留后续交付。
 
 - [产品 PRD](docs/product/rss-mdm-agent-prd.md)：需求、范围、验收和任务追踪。
 - [协作入口](AGENTS.md)与[Codex工作方式](docs/guides/codex-workflow.md)。
 - [文档导航](docs/README.md)：文档唯一入口。
 - [来源与对标](docs/reference/sources.md)：固定来源和选择边界。
 - [契约开发与独立消费](docs/guides/contracts-development.md)：本地执行摘要与 AI 工具提案。
+- [执行核心与独立消费](docs/guides/execution-cores.md)：确定性交互、能力匹配及精确授权。
 - [客户端 EPIC #2392](https://dev.azure.com/shengming0923/rss/_workitems/edit/2392)：任务状态和最新 `pm:epic-wave` 实施顺序真源。
 
 prmonitor 只提供 AI 引擎与通用 UI 的提取来源，新客户端不包含 PR 业务。

@@ -12,10 +12,16 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
-import { checkContractConsumers } from "./check-contract-consumers.mjs";
+import { checkRustConsumers, rustConsumers } from "./check-rust-consumers.mjs";
 import { git } from "./source-state.mjs";
 
-const names = ["execution-contract", "ai-session-contract"];
+const names = [
+  "execution-contract",
+  "ai-session-contract",
+  "execution-interaction",
+  "execution-capability",
+  "execution-admission",
+];
 function fixture() {
   const root = realpathSync(
     mkdtempSync(join(tmpdir(), "contract-receipt-test-")),
@@ -38,24 +44,18 @@ function fixture() {
   execFileSync(git, ["update-ref", "refs/remotes/origin/develop", "HEAD"], {
     cwd: root,
   });
-  for (const name of names) {
+  for (const spec of rustConsumers) {
+    const { name } = spec;
     const path = join(root, "crates", name);
     mkdirSync(join(path, "examples"), { recursive: true });
     mkdirSync(join(path, "tests/fixtures"), { recursive: true });
-    writeFileSync(
-      join(
-        path,
-        "examples",
-        `${name === "execution-contract" ? "execution" : "ai-session"}-consumer.rs`,
-      ),
-      "fn main() {}\n",
-    );
+    writeFileSync(join(path, "examples", spec.example), "fn main() {}\n");
     for (const file of ["plan.json", "plan.sha256", "events.json"])
       writeFileSync(join(path, "tests/fixtures", file), "fixture");
   }
   mkdirSync(join(root, ".local-ci-runs"));
   writeFileSync(
-    join(root, ".local-ci-runs/contracts.json"),
+    join(root, ".local-ci-runs/rust-consumers.json"),
     JSON.stringify({ status: "passed", source: { head: "stale-success" } }),
   );
   writeFileSync(join(root, ".gitignore"), ".local-ci-runs/\n");
@@ -90,13 +90,21 @@ function fakeCargo(root, failure) {
         stdout: JSON.stringify({
           packages: names.map((name) => ({
             name,
-            dependencies: [{ name: "serde_json", req: "=1.0.151" }],
+            dependencies: [
+              {
+                name: "serde_json",
+                req: "=1.0.151",
+                source: "registry+https://github.com/rust-lang/crates.io-index",
+              },
+            ],
           })),
         }),
       };
     dirs.add(cwd);
     const manifest = readFileSync(join(cwd, "Cargo.toml"), "utf8");
-    const name = names.find((name) => manifest.includes(`${name} =`));
+    const name = names.find((name) =>
+      manifest.includes(`name = "isolated-${name}-consumer"`),
+    );
     if (args[0] === "generate-lockfile")
       writeFileSync(join(cwd, "Cargo.lock"), `lock-${name}`);
     if (args[0] === "metadata")
@@ -112,12 +120,14 @@ function fakeCargo(root, failure) {
               source: null,
               manifest_path: join(cwd, "Cargo.toml"),
             },
-            {
-              name,
-              version: "0.1.0",
-              source: null,
-              manifest_path: join(root, "crates", name, "Cargo.toml"),
-            },
+            ...rustConsumers
+              .find((spec) => spec.name === name)
+              .locals.map((local) => ({
+                name: local,
+                version: "0.1.0",
+                source: null,
+                manifest_path: join(root, "crates", local, "Cargo.toml"),
+              })),
           ],
         }),
       };
@@ -133,15 +143,15 @@ test("consumer failures are aggregated, replace stale PASS, and clean every temp
   const root = fixture();
   try {
     const fake = fakeCargo(root, () => ({ status: 17, signal: null }));
-    const result = checkContractConsumers(root, fake.execute);
+    const result = checkRustConsumers(root, fake.execute);
     assert.equal(result.status, "failed");
     assert.deepEqual(fake.attempted, names);
     const saved = JSON.parse(
-      readFileSync(join(root, ".local-ci-runs/contracts.json"), "utf8"),
+      readFileSync(join(root, ".local-ci-runs/rust-consumers.json"), "utf8"),
     );
     assert.equal(saved.status, "failed");
     assert.notEqual(saved.source.head, "stale-success");
-    assert.equal(saved.consumers.length, 2);
+    assert.equal(saved.consumers.length, 5);
     for (const entry of saved.consumers) {
       assert.equal(entry.passed, false);
       assert.equal(entry.failure.status, 17);
@@ -164,7 +174,7 @@ test("signals and spawn errors are recorded as failures without blocking the oth
             error: { code: "ENOENT", message: "untrusted diagnostic" },
           },
     );
-    const result = checkContractConsumers(root, fake.execute);
+    const result = checkRustConsumers(root, fake.execute);
     assert.deepEqual(fake.attempted, names);
     assert.equal(result.status, "failed");
     assert.equal(result.consumers[0].failure.signal, "SIGTERM");
@@ -201,11 +211,53 @@ test("only clean unchanged source can produce a deliverable consumer PASS", () =
           );
         return { status: 0, stdout: "" };
       });
-      const result = checkContractConsumers(root, fake.execute);
+      const result = checkRustConsumers(root, fake.execute);
       assert.deepEqual(fake.attempted, names);
       assert.equal(result.status, mode === "clean" ? "passed" : "failed", mode);
       if (mode !== "clean")
         assert.equal(result.failure.code, "uncommitted-or-changed-source");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test("consumer inventory covers the five independent crates", () => {
+  assert.deepEqual(
+    rustConsumers.map((spec) => spec.name),
+    names,
+  );
+});
+
+test("unexpected local or git dependencies fail isolation without hiding later consumer results", () => {
+  for (const source of [null, "git+https://example.invalid/forbidden"]) {
+    const root = fixture();
+    try {
+      const fake = fakeCargo(root, () => ({ status: 0, stdout: "" }));
+      const execute = (command, args, options) => {
+        const result = fake.execute(command, args, options);
+        if (args[0] === "metadata" && !args.includes("--no-deps")) {
+          const metadata = JSON.parse(result.stdout);
+          metadata.packages.push({
+            name: "forbidden-owner",
+            version: "0.1.0",
+            source,
+            manifest_path: join(root, "outside", "Cargo.toml"),
+          });
+          result.stdout = JSON.stringify(metadata);
+        }
+        return result;
+      };
+      const report = checkRustConsumers(root, execute);
+      assert.equal(report.status, "failed");
+      assert.equal(report.consumers.length, 5);
+      assert.ok(
+        report.consumers.every(
+          (r) => !r.passed && r.failure.stage === "isolation",
+        ),
+      );
+      assert.equal(fake.attempted.length, 0);
+      for (const dir of fake.dirs) assert.equal(existsSync(dir), false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

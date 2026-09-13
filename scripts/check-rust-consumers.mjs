@@ -15,7 +15,47 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
 import { sameCommittedSource, sourceState } from "./source-state.mjs";
 
-const names = ["execution-contract", "ai-session-contract"];
+// One explicit inventory for real public-API consumers; no runtime plugin discovery.
+export const rustConsumers = [
+  {
+    name: "execution-contract",
+    example: "execution-consumer.rs",
+    locals: ["execution-contract"],
+    registry: ["serde_json"],
+    fixtures: [
+      "crates/execution-contract/tests/fixtures/plan.json",
+      "crates/execution-contract/tests/fixtures/plan.sha256",
+    ],
+  },
+  {
+    name: "ai-session-contract",
+    example: "ai-session-consumer.rs",
+    locals: ["ai-session-contract"],
+    registry: ["serde_json"],
+    fixtures: ["crates/ai-session-contract/tests/fixtures/events.json"],
+  },
+  {
+    name: "execution-interaction",
+    example: "interaction-consumer.rs",
+    locals: ["execution-interaction"],
+    registry: ["serde_json"],
+    fixtures: [],
+  },
+  {
+    name: "execution-capability",
+    example: "capability-consumer.rs",
+    locals: ["execution-capability", "execution-contract"],
+    registry: [],
+    fixtures: ["crates/execution-contract/tests/fixtures/plan.json"],
+  },
+  {
+    name: "execution-admission",
+    example: "admission-consumer.rs",
+    locals: ["execution-admission", "execution-contract"],
+    registry: [],
+    fixtures: ["crates/execution-contract/tests/fixtures/plan.json"],
+  },
+];
 function cargo(args, cwd, env, execute, receipt, capture = false) {
   const command = ["cargo", ...args];
   receipt.command = command;
@@ -36,7 +76,8 @@ function cargo(args, cwd, env, execute, receipt, capture = false) {
   }
   return result.stdout;
 }
-function checkOne(root, name, serdeVersion, execute, receipt) {
+function checkOne(root, spec, owner, execute, receipt) {
+  const { name } = spec;
   let dir;
   try {
     dir = realpathSync(mkdtempSync(join(tmpdir(), `${name}-consumer-`)));
@@ -50,30 +91,32 @@ function checkOne(root, name, serdeVersion, execute, receipt) {
       RUSTC_WORKSPACE_WRAPPER: "",
     };
     mkdirSync(join(dir, "src"));
+    const localDependencies = spec.locals.map(
+      (local) =>
+        `${local} = { path = ${JSON.stringify(join(root, "crates", local))}, default-features = false }`,
+    );
+    const packageMetadata = owner.packages.find((p) => p.name === name);
+    if (!packageMetadata) throw new Error("missing consumer owner");
+    const registryDependencies = spec.registry.map((dependency) => {
+      const version = packageMetadata.dependencies.find(
+        (d) => d.name === dependency && d.source?.startsWith("registry+"),
+      )?.req;
+      if (!version) throw new Error("missing registry dependency");
+      return `${dependency} = ${JSON.stringify(version)}`;
+    });
     writeFileSync(
       join(dir, "Cargo.toml"),
-      `[package]\nname = "isolated-consumer"\nversion = "0.0.0"\nedition = "2021"\n[workspace]\n[dependencies]\n${name} = { path = ${JSON.stringify(crate)}, default-features = false }\nserde_json = ${JSON.stringify(serdeVersion)}\n`,
+      `[package]\nname = "isolated-${name}-consumer"\nversion = "0.0.0"\nedition = "2021"\n[workspace]\n[dependencies]\n${[...localDependencies, ...registryDependencies].join("\n")}\n`,
     );
     copyFileSync(
-      join(
-        crate,
-        `examples/${name === "execution-contract" ? "execution" : "ai-session"}-consumer.rs`,
-      ),
+      join(crate, "examples", spec.example),
       join(dir, "src/main.rs"),
     );
-    const fixture = name === "execution-contract" ? "plan.json" : "events.json";
-    copyFileSync(
-      join(crate, "tests/fixtures", fixture),
-      join(dir, "input.json"),
-    );
-    const args = [join(dir, "input.json")];
-    if (name === "execution-contract") {
-      copyFileSync(
-        join(crate, "tests/fixtures/plan.sha256"),
-        join(dir, "digest.txt"),
-      );
-      args.push(join(dir, "digest.txt"));
-    }
+    const args = spec.fixtures.map((fixture, index) => {
+      const destination = join(dir, `input-${index}`);
+      copyFileSync(join(root, fixture), destination);
+      return destination;
+    });
     cargo(["generate-lockfile", "--offline"], dir, env, execute, receipt);
     receipt.lockSha256 = createHash("sha256")
       .update(readFileSync(join(dir, "Cargo.lock")))
@@ -102,9 +145,12 @@ function checkOne(root, name, serdeVersion, execute, receipt) {
     for (const pkg of metadata.packages) {
       if (
         pkg.source === null &&
-        ![join(dir, "Cargo.toml"), join(crate, "Cargo.toml")].includes(
-          pkg.manifest_path,
-        )
+        ![
+          join(dir, "Cargo.toml"),
+          ...spec.locals.map((local) =>
+            join(root, "crates", local, "Cargo.toml"),
+          ),
+        ].includes(pkg.manifest_path)
       )
         throw new Error("unexpected source dependency");
       if (pkg.source !== null && !pkg.source.startsWith("registry+"))
@@ -138,10 +184,10 @@ function checkOne(root, name, serdeVersion, execute, receipt) {
   }
 }
 // The process seam is injectable for deterministic failure tests, not a product API.
-export function checkContractConsumers(root, execute = spawnSync) {
+export function checkRustConsumers(root, execute = spawnSync) {
   root = realpathSync(root);
   const reportDir = join(root, ".local-ci-runs");
-  const reportPath = join(reportDir, "contracts.json");
+  const reportPath = join(reportDir, "rust-consumers.json");
   mkdirSync(reportDir, { recursive: true });
   // Invalidate prior success even if writing this run's report later fails.
   rmSync(reportPath, { force: true });
@@ -151,7 +197,7 @@ export function checkContractConsumers(root, execute = spawnSync) {
     source: null,
     consumers: [],
   };
-  const temporary = join(reportDir, `contracts-${process.pid}.tmp`);
+  const temporary = join(reportDir, `rust-consumers-${process.pid}.tmp`);
   function publish() {
     try {
       writeFileSync(temporary, JSON.stringify(report, null, 2));
@@ -173,18 +219,10 @@ export function checkContractConsumers(root, execute = spawnSync) {
         true,
       ),
     );
-    for (const name of names) {
-      const receipt = { name, stage: "prepare", passed: false };
+    for (const spec of rustConsumers) {
+      const receipt = { name: spec.name, stage: "prepare", passed: false };
       report.consumers.push(receipt);
-      const version = owner.packages
-        .find((p) => p.name === name)
-        ?.dependencies.find((d) => d.name === "serde_json")?.req;
-      if (!version)
-        receipt.failure = {
-          stage: "prepare",
-          code: "missing-contract-dependency",
-        };
-      else checkOne(root, name, version, execute, receipt);
+      checkOne(root, spec, owner, execute, receipt);
       publish();
     }
     report.sourceEnd = sourceState(root);
@@ -211,9 +249,9 @@ if (
   process.argv[1] &&
   pathToFileURL(resolve(process.argv[1])).href === import.meta.url
 ) {
-  const report = checkContractConsumers(
+  const report = checkRustConsumers(
     fileURLToPath(new URL("../", import.meta.url)),
   );
-  console.log(`Isolated contract consumers: ${report.status}`);
+  console.log(`Isolated rust consumers: ${report.status}`);
   process.exitCode = report.status === "passed" ? 0 : 1;
 }

@@ -1,0 +1,15 @@
+[package]
+name = "execution-capability"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+description = "Pure capability matching for frozen execution plans and explicit snapshots"
+
+[dependencies]
+execution-contract = { path = "../execution-contract" }
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

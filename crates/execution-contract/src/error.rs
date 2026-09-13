@@ -67,6 +67,8 @@ pub enum Field {
     Target,
     /// Target execution account context.
     RunAs,
+    /// Required target user-session context.
+    Session,
     /// Launch working-directory declaration.
     WorkingDirectory,
     /// Launch argument vector.

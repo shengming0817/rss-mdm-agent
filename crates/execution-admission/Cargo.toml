@@ -1,0 +1,15 @@
+[package]
+name = "execution-admission"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+description = "Deterministic typed execution authorization with an explicit trusted host seam"
+
+[dependencies]
+execution-contract = { path = "../execution-contract" }
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

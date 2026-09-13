@@ -219,7 +219,9 @@ AI请求与手动请求都不能自行取得可执行capability。运行模式�
 | packages/ui | 提取的纯展示组件 | Vue/展示依赖，props/events |
 | apps/desktop | C05桌面基础壳与样本；后续自助UI、AI UI、宿主桥接和共同闭环 | 组件契约与宿主adapter，组合根唯一 |
 
-C01/C02 契约的具体 V1 边界、规范编码及独立消费见[契约开发说明](../guides/contracts-development.md)。公共契约文档覆盖字段/单位/方向/信任边界并由编译守卫检查；错误用静态 kind/field/rule 区分配置、输入上限与语义失败，不回显输入。契约解码和计划冻结只校验数据，不能铸造可信主体、批准或真实执行证据；C02 的 Unknown 能力为明确未证实状态，未知版本/字段/事件不作兼容兜底。
+C01/C02 契约的具体 V1 边界、规范编码及独立消费见[契约开发说明](../guides/contracts-development.md)。PlanSpec显式持有必填目标用户会话要求并纳入摘要；不从发起人的OS登录推断。公共契约文档覆盖字段/单位/方向/信任边界并由编译守卫检查；错误用静态 kind/field/rule 区分配置、输入上限与语义失败，不回显输入。契约解码和计划冻结只校验数据，不能铸造可信主体、批准或真实执行证据；C02 的 Unknown 能力为明确未证实状态，未知版本/字段/事件不作兼容兜底。
+
+C04/C06/C07的当前公共接口与独立消费见[执行核心开发说明](../guides/execution-cores.md)：交互只记录回答，能力只匹配快照，授权采用可信宿主接缝和精确Rust规则；不替代后续批准消耗或执行接线。
 
 AI工具参数经过MCP/host映射到执行请求，C02不直接嵌入另一份执行状态；该映射在C20验证。
 `execution-admission`就是C07的唯一actor/action/resource/context授权裁决核心；“admission”是包名，“授权”是职责，不另建平行authorization service。C19消费该裁决并强制持久执行准入。

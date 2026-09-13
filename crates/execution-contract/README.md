@@ -6,7 +6,7 @@
 
 `decode_plan(bytes, limits)` → `PlanSpec` → `FrozenPlan::freeze(spec, limits)` → 只读计划与摘要。
 
-`ExecutionRequest` 是意图，`PlanSpec` 嵌入原请求并且唯一持有解析后的执行描述。`FrozenPlan` 的字段私有且没有 `Deserialize`；存储读取须重新解码、冻结，再用 `matches_digest` 比对原摘要。改变计划需要取得副本并重新冻结。结构校验、摘要匹配都不证明 actor、authority、批准或 Evidence 真实有效；不存在可信主体、批准签发或执行 permit API。
+`ExecutionRequest` 是意图，`PlanSpec` 嵌入原请求并且唯一持有解析后的执行描述。`FrozenPlan` 的字段私有且没有 `Deserialize`；存储读取须重新解码、冻结，再用 `matches_digest` 比对原摘要。改变计划需要取得副本并重新冻结。PlanSpec必填SessionRequirement（notRequired或指定账号的activeUser），与来源登录独立，参与摘要；缺失字段的旧格式直接拒绝，不作默认或兼容读取。结构校验、摘要匹配都不证明 actor、authority、批准或 Evidence 真实有效；不存在可信主体、批准签发或执行 permit API。
 
 所有可反序列化类型都是 DTO；应用接收外部字节使用有界 decoder。直接构造/反序列化 `PlanSpec` 不能绕过 freeze 的语义校验。参数与环境 map、动态 literal 也拒绝重复键。秘密使用带 revision 的 `InputValue::Secret`，host 不得将长期凭据伪装成 literal/argv；运行时解析、访问授权及缓存替换检测属于后续 owner。`Debug` 与公开错误不回显参数、argv 或 provider 输入。
 

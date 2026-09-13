@@ -279,6 +279,14 @@ pub(crate) fn validate_plan(p: &PlanSpec, l: &PlanLimits) -> Result<(), Contract
         ));
     }
     let platform = p.request.target.platform;
+    if matches!(&p.session_requirement, crate::SessionRequirement::ActiveUser { account } if account.platform != platform)
+    {
+        return Err(ContractError::new(
+            ErrorKind::InconsistentContext,
+            Field::Session,
+            Rule::Mismatch,
+        ));
+    }
     let run_platform = match &p.run_as {
         RunAs::User { account } => account.platform,
         RunAs::System { platform } => *platform,

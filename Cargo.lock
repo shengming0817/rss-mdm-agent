@@ -802,6 +802,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "execution-admission"
+version = "0.1.0"
+dependencies = [
+ "execution-contract",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "execution-capability"
+version = "0.1.0"
+dependencies = [
+ "execution-contract",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "execution-contract"
 version = "0.1.0"
 dependencies = [
@@ -813,6 +831,15 @@ dependencies = [
  "sha2",
  "thiserror 2.0.20",
  "url",
+]
+
+[[package]]
+name = "execution-interaction"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

@@ -5,6 +5,8 @@ PRD唯一入口为[客户端PRD](../product/rss-mdm-agent-prd.md)。D00仅编写
 
 C01/C02 的实际契约实现及固定来源映射见[契约来源记录](contracts-extraction.md)。
 
+C04/C06/C07 的独立核心设计及固定Rust对标见[执行核心来源记录](execution-cores.md)。
+
 ## 固定产品来源
 
 | 来源 | 固定身份 | 用途 |
