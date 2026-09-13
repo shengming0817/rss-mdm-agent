@@ -1,4 +1,4 @@
-use crate::{bounded, CatalogError};
+use crate::{bounded, ArgumentRule, CatalogError, DefinitionRule, Limit};
 use execution_contract::{Id, InputValue, VersionedRef};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -70,11 +70,16 @@ pub struct ParameterLimits {
 }
 impl ParameterLimits {
     fn validate(&self) -> Result<(), CatalogError> {
-        if [self.max_bytes, self.max_string_bytes, self.max_parameters].contains(&0) {
-            Err(CatalogError::InvalidLimits)
-        } else {
-            Ok(())
+        for (value, field) in [
+            (self.max_bytes, Limit::Bytes),
+            (self.max_string_bytes, Limit::StringBytes),
+            (self.max_parameters, Limit::Parameters),
+        ] {
+            if value == 0 {
+                return Err(CatalogError::InvalidLimits(field));
+            }
         }
+        Ok(())
     }
 }
 /// One projection for both renderers. The schema is structural; the shared runtime enforces budgets.
@@ -129,77 +134,111 @@ impl ParameterRule {
             Self::SecretReference {} => None,
         }
     }
-    fn accepts(&self, value: &Value) -> bool {
+    fn validate(&self, value: &Value) -> Result<(), ArgumentRule> {
         match self {
             Self::String {
                 min_length,
                 max_length,
                 choices,
                 ..
-            } => value.as_str().is_some_and(|s| {
-                let len = s.chars().count();
-                len >= *min_length as usize
-                    && len <= *max_length as usize
-                    && choices.as_ref().is_none_or(|v| v.iter().any(|x| x == s))
-            }),
+            } => {
+                let value = value.as_str().ok_or(ArgumentRule::Type)?;
+                let length = value.chars().count();
+                if length < *min_length as usize || length > *max_length as usize {
+                    return Err(ArgumentRule::Range);
+                }
+                if choices
+                    .as_ref()
+                    .is_some_and(|xs| !xs.iter().any(|x| x == value))
+                {
+                    return Err(ArgumentRule::Choice);
+                }
+            }
             Self::Integer {
                 minimum,
                 maximum,
                 choices,
                 ..
-            } => integer(value).is_some_and(|v| {
-                v >= *minimum && v <= *maximum && choices.as_ref().is_none_or(|xs| xs.contains(&v))
-            }),
-            Self::Boolean { .. } => value.is_boolean(),
+            } => {
+                if !value.is_number() {
+                    return Err(ArgumentRule::Type);
+                }
+                let value = integer(value).ok_or(ArgumentRule::Range)?;
+                if value < *minimum || value > *maximum {
+                    return Err(ArgumentRule::Range);
+                }
+                if choices.as_ref().is_some_and(|xs| !xs.contains(&value)) {
+                    return Err(ArgumentRule::Choice);
+                }
+            }
+            Self::Boolean { .. } => {
+                if !value.is_boolean() {
+                    return Err(ArgumentRule::Type);
+                }
+            }
             Self::SecretReference {} => {
-                serde_json::from_value::<VersionedRef>(value.clone()).is_ok()
+                serde_json::from_value::<VersionedRef>(value.clone())
+                    .map_err(|_| ArgumentRule::SecretReference)?;
             }
         }
+        Ok(())
     }
 }
+
 pub(crate) fn validate_definitions(fields: &BTreeMap<Id, Parameter>) -> Result<(), CatalogError> {
     for field in fields.values() {
         if field.title.trim().is_empty() {
-            return Err(CatalogError::InvalidDefinition);
+            return Err(CatalogError::InvalidDefinition(
+                DefinitionRule::ParameterTitle,
+            ));
         }
-        let valid = match &field.rule {
+        let (bounds, choices) = match &field.rule {
             ParameterRule::String {
                 min_length,
                 max_length,
                 choices,
                 ..
-            } => {
-                min_length <= max_length
-                    && choices.as_ref().is_none_or(|xs| {
-                        !xs.is_empty()
-                            && xs.iter().collect::<BTreeSet<_>>().len() == xs.len()
-                            && xs.iter().all(|v| field.rule.accepts(&json!(v)))
-                    })
-            }
+            } => (
+                min_length <= max_length,
+                choices.as_ref().is_none_or(|xs| {
+                    !xs.is_empty()
+                        && xs.iter().collect::<BTreeSet<_>>().len() == xs.len()
+                        && xs.iter().all(|v| field.rule.validate(&json!(v)).is_ok())
+                }),
+            ),
             ParameterRule::Integer {
                 minimum,
                 maximum,
                 choices,
                 ..
-            } => {
-                minimum <= maximum
-                    && *minimum >= -MAX_INTEGER
-                    && *maximum <= MAX_INTEGER
-                    && choices.as_ref().is_none_or(|xs| {
-                        !xs.is_empty()
-                            && xs.iter().collect::<BTreeSet<_>>().len() == xs.len()
-                            && xs.iter().all(|v| field.rule.accepts(&json!(v)))
-                    })
-            }
-            _ => true,
+            } => (
+                minimum <= maximum && *minimum >= -MAX_INTEGER && *maximum <= MAX_INTEGER,
+                choices.as_ref().is_none_or(|xs| {
+                    !xs.is_empty()
+                        && xs.iter().collect::<BTreeSet<_>>().len() == xs.len()
+                        && xs.iter().all(|v| field.rule.validate(&json!(v)).is_ok())
+                }),
+            ),
+            ParameterRule::Boolean { .. } | ParameterRule::SecretReference {} => (true, true),
         };
-        if !valid
-            || field
-                .rule
-                .default_value()
-                .is_some_and(|v| field.required || !field.rule.accepts(&v))
+        if !bounds {
+            return Err(CatalogError::InvalidDefinition(
+                DefinitionRule::ParameterBounds,
+            ));
+        }
+        if !choices {
+            return Err(CatalogError::InvalidDefinition(
+                DefinitionRule::ParameterChoices,
+            ));
+        }
+        if field
+            .rule
+            .default_value()
+            .is_some_and(|v| field.required || field.rule.validate(&v).is_err())
         {
-            return Err(CatalogError::InvalidDefinition);
+            return Err(CatalogError::InvalidDefinition(
+                DefinitionRule::ParameterDefault,
+            ));
         }
     }
     Ok(())
@@ -209,12 +248,14 @@ pub(crate) fn projection(
     limits: &ParameterLimits,
 ) -> Result<ParameterProjection, CatalogError> {
     limits.validate()?;
-    if fields.len() > limits.max_parameters
-        || fields
-            .keys()
-            .any(|k| k.as_str().len() > limits.max_string_bytes)
+    if fields.len() > limits.max_parameters {
+        return Err(CatalogError::LimitExceeded(Limit::Parameters));
+    }
+    if fields
+        .keys()
+        .any(|k| k.as_str().len() > limits.max_string_bytes)
     {
-        return Err(CatalogError::LimitExceeded);
+        return Err(CatalogError::LimitExceeded(Limit::StringBytes));
     }
     let mut properties = serde_json::Map::new();
     let mut required = Vec::new();
@@ -279,19 +320,21 @@ pub(crate) fn normalize(
 ) -> Result<BTreeMap<String, InputValue>, CatalogError> {
     limits.validate()?;
     if fields.len() > limits.max_parameters {
-        return Err(CatalogError::LimitExceeded);
+        return Err(CatalogError::LimitExceeded(Limit::Parameters));
     }
     let mut args = value
         .as_object()
         .cloned()
-        .ok_or(CatalogError::InvalidArguments)?;
+        .ok_or(CatalogError::InvalidArguments(ArgumentRule::Object))?;
     if args.len() > limits.max_parameters {
-        return Err(CatalogError::LimitExceeded);
+        return Err(CatalogError::LimitExceeded(Limit::Parameters));
     }
     bounded::encode(&args, limits.max_bytes)?;
     for (key, value) in &args {
         if !fields.keys().any(|k| k.as_str() == key) {
-            return Err(CatalogError::InvalidArguments);
+            return Err(CatalogError::InvalidArguments(
+                ArgumentRule::UnknownParameter,
+            ));
         }
         check_strings(key, value, limits)?;
     }
@@ -303,22 +346,24 @@ pub(crate) fn normalize(
             .or_else(|| field.rule.default_value());
         let Some(mut value) = value else {
             if field.required {
-                return Err(CatalogError::InvalidArguments);
+                return Err(CatalogError::InvalidArguments(ArgumentRule::Required));
             }
             continue;
         };
-        if !field.rule.accepts(&value) {
-            return Err(CatalogError::InvalidArguments);
-        }
+        field
+            .rule
+            .validate(&value)
+            .map_err(CatalogError::InvalidArguments)?;
         if matches!(field.rule, ParameterRule::Integer { .. }) {
-            value = json!(integer(&value).ok_or(CatalogError::InvalidArguments)?);
+            value =
+                json!(integer(&value).ok_or(CatalogError::InvalidArguments(ArgumentRule::Type))?);
         }
         check_strings(key.as_str(), &value, limits)?;
         args.insert(key.as_str().to_owned(), value.clone());
         let input = if matches!(field.rule, ParameterRule::SecretReference {}) {
             InputValue::Secret {
                 reference: serde_json::from_value(value)
-                    .map_err(|_| CatalogError::InvalidArguments)?,
+                    .map_err(|_| CatalogError::InvalidArguments(ArgumentRule::SecretReference))?,
             }
         } else {
             InputValue::Literal { value }
@@ -334,7 +379,7 @@ fn check_strings(key: &str, value: &Value, limits: &ParameterLimits) -> Result<(
             .as_str()
             .is_some_and(|s| s.len() > limits.max_string_bytes)
     {
-        return Err(CatalogError::LimitExceeded);
+        return Err(CatalogError::LimitExceeded(Limit::StringBytes));
     }
     if let Some(object) = value.as_object() {
         for (k, v) in object {
@@ -342,7 +387,7 @@ fn check_strings(key: &str, value: &Value, limits: &ParameterLimits) -> Result<(
                 || v.as_str()
                     .is_some_and(|s| s.len() > limits.max_string_bytes)
             {
-                return Err(CatalogError::LimitExceeded);
+                return Err(CatalogError::LimitExceeded(Limit::StringBytes));
             }
         }
     }

@@ -7,7 +7,7 @@
 - `decode_catalog(bytes, CatalogLimits)` / `FrozenCatalog::freeze(dto, limits)`：严格有界解析、语义检查、规范排序和摘要绑定。冻结只证明内容一致，不能认证发布者。
 - `snapshot()` / `reference()`：只读内容和 `authority + identity{id,revision} + digest`。一个快照只有一个命名空间；企业 tenant 不可省略，local/test 不伪造企业主体。
 - `projection(item, variant, ParameterLimits)`：同时提供表单字段与 AI Draft 2020-12 `input_schema()`，不维护两份约束。`validate(bytes)` 是共同参数入口，输出 `InputValue`。
-- `select(bytes, CatalogLimits, ParameterLimits)`：接受 `catalog / itemId / variantId / arguments`，返回私有字段的 `SelectedOperation`，保留完整资源绑定、参数声明、要求及规范参数。没有 `ExecutionRequest` 快捷转换、可信主体或执行 permit。
+- `select(bytes, CatalogLimits, ParameterLimits)`：接受 `catalog / itemId / variantId / arguments`，返回私有字段的 `SelectedOperation`，保留完整资源绑定、参数声明、要求及规范参数。返回的 SelectionRef 还绑定规范化参数摘要；省略默认值与显式相同默认值等价，修改有效参数使原外部说明不再匹配。没有 `ExecutionRequest` 快捷转换、可信主体或执行 permit。
 - `availability(now_unix_ms)`：解释记录状态；withdrawn 优先，其次 `now >= expiresAt` 为 expired，其余为 listed。listed 仅指这份快照的记录，不表示最新目录、可申请或可执行。到期/下架仍可检查内容。
 - `external_status(target, now, assessment)`：只核对外部展示说明与精确选择、device/platform/user 目标及 UTC 时间窗口的关联。缺失、过期或早于检查时间均为 unknown；关联错误拒绝。只有负向说明，不重做 C06 能力算法、不验证签发者、不生成授权。
 
@@ -29,7 +29,7 @@ V1 SHA-256 输入为域 `rss-mdm-agent/service-catalog/v1\0` 后接 JCS 内容�
 
 字段 key 使用 execution-contract Id；字段 title/description 为纯文本。规则有 string（字符长度、choices、default）、integer（安全范围、choices、default）、boolean（default）、secretReference（仅 id/revision）。choices 是非空无重复集合，默认值必须合法且只能用于 optional 字段。required 缺值失败，显式 null 不视作缺值。
 
-整数限定 ±(2^53−1)，允许数学等价的 3/3.0/30e-1 并规范为 3，不接受字符串数值。解析前检查原数字 token，拒绝因浮点舍入/下溢才成为整数的数值。字符串长度按 Unicode scalar 计数，UTF-8 字节另受宿主预算限制。secretReference 不允许 default/choices/秘密正文；只映射到 `InputValue::Secret`，不解析秘密。未知参数、重复键和不支持的嵌套业务结构拒绝。
+整数限定 ±(2^53−1)，允许数学等价的 3/3.0/30e-1 并规范为 3，不接受字符串数值。解析前检查原数字 token，拒绝因浮点舍入/下溢才成为整数的数值。字符串长度按 Unicode scalar 计数，UTF-8 字节另受宿主预算限制。secretReference 不允许 default/choices/秘密正文；只映射到 `InputValue::Secret`，不解析秘密。未知参数、重复键和不支持的嵌套业务结构拒绝。错误使用闭合 CatalogError 类别与 Limit/DefinitionRule/ArgumentRule 静态坐标，区分各预算、定义和参数规则，不回显字段名或值。
 
 `CatalogLimits` 的 raw/canonical bytes、depth（1..=64，根为1）、nodes（含容器）、string bytes（含 key）、collection items 均显式正值；解析过程中消耗节点/深度/集合预算，先拒绝超总字节输入。typed freeze 先用有界 writer，再经过同一解析路径。
 

@@ -110,12 +110,36 @@ pub struct CatalogItem {
     /// Nonempty unique operation variants.
     pub operations: Vec<OperationVariant>,
 }
+/// Directory-owned format discriminator; independent of execution-contract and Agent wire versions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CatalogSchemaV1;
+impl Serialize for CatalogSchemaV1 {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_u8(1)
+    }
+}
+impl<'de> Deserialize<'de> for CatalogSchemaV1 {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        match u64::deserialize(deserializer)? {
+            1 => Ok(Self),
+            _ => Err(serde::de::Error::custom("unsupported catalog version")),
+        }
+    }
+}
+impl JsonSchema for CatalogSchemaV1 {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "CatalogSchemaV1".into()
+    }
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({"type":"integer","const":1})
+    }
+}
 /// Untrusted catalog document. Use FrozenCatalog to validate and bind canonical content.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CatalogSnapshot {
     /// Only integer 1 is currently supported; independent of execution/Agent wire versions.
-    pub schema_version: execution_contract::V1,
+    pub schema_version: CatalogSchemaV1,
     /// All entries share this namespace. Deserialization does not authenticate it.
     pub authority: Authority,
     /// Opaque catalog ID and immutable revision.
@@ -136,7 +160,7 @@ pub struct CatalogRef {
     /// Computed canonical catalog SHA-256.
     pub digest: Digest,
 }
-/// Locator of an operation in exactly one snapshot; contains no request identity or authority proof.
+/// Exact snapshot, operation and normalized argument identity; contains no authority proof.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SelectionRef {
@@ -146,4 +170,6 @@ pub struct SelectionRef {
     pub item_id: Id,
     /// Explicit operation variant, never a default selector.
     pub variant_id: Id,
+    /// Domain-separated digest of normalized arguments including applied defaults and secret references.
+    pub arguments_digest: Digest,
 }

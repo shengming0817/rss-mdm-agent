@@ -10,7 +10,7 @@ mod model;
 mod parameters;
 pub use bounded::CatalogLimits;
 pub use catalog::*;
-pub use error::CatalogError;
+pub use error::{ArgumentRule, CatalogError, DefinitionRule, Limit};
 pub use model::*;
 pub use parameters::{Parameter, ParameterLimits, ParameterProjection, ParameterRule};
 /// Structural catalog schema generated from the Rust declaration; semantic checks remain mandatory.

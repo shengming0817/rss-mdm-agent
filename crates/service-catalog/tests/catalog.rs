@@ -209,30 +209,42 @@ fn precision_limits_defaults_and_unicode_are_bounded() {
             &pl,
         )
         .unwrap();
-    assert_eq!(p.validate(raw).unwrap_err(), CatalogError::LimitExceeded); // expanded count default
+    assert_eq!(
+        p.validate(raw).unwrap_err(),
+        CatalogError::LimitExceeded(Limit::Bytes)
+    ); // expanded count default
     let mut budget = limits();
     budget.max_bytes = include_bytes!("fixtures/catalog.json").len() - 1;
     assert_eq!(
         decode_catalog(include_bytes!("fixtures/catalog.json"), &budget).unwrap_err(),
-        CatalogError::LimitExceeded
+        CatalogError::LimitExceeded(Limit::Bytes)
     );
-    for modify in [
-        |l: &mut CatalogLimits| l.max_depth = 2,
-        |l: &mut CatalogLimits| l.max_nodes = 2,
-        |l: &mut CatalogLimits| l.max_string_bytes = 2,
-        |l: &mut CatalogLimits| l.max_collection_items = 2,
+    for (modify, coordinate) in [
+        (
+            (|l: &mut CatalogLimits| l.max_depth = 2) as fn(&mut CatalogLimits),
+            Limit::Depth,
+        ),
+        (|l: &mut CatalogLimits| l.max_nodes = 2, Limit::Nodes),
+        (
+            |l: &mut CatalogLimits| l.max_string_bytes = 2,
+            Limit::StringBytes,
+        ),
+        (
+            |l: &mut CatalogLimits| l.max_collection_items = 2,
+            Limit::CollectionItems,
+        ),
     ] {
         let mut l = limits();
         modify(&mut l);
         assert_eq!(
             decode_catalog(include_bytes!("fixtures/catalog.json"), &l).unwrap_err(),
-            CatalogError::LimitExceeded
+            CatalogError::LimitExceeded(coordinate)
         );
     }
     budget.max_depth = 65;
     assert_eq!(
         decode_catalog(b"{}", &budget).unwrap_err(),
-        CatalogError::InvalidLimits
+        CatalogError::InvalidLimits(Limit::Depth)
     );
 }
 #[test]
@@ -349,6 +361,10 @@ fn frozen_schema_and_catalog_golden() {
     );
     let schema = serde_json::to_value(catalog_schema()).unwrap();
     assert!(jsonschema::draft202012::meta::is_valid(&schema));
+    assert!(schema["$defs"].get("CatalogSchemaV1").is_some());
+    assert!(!serde_json::to_string(&schema)
+        .unwrap()
+        .contains("LocalContractV1"));
     assert!(jsonschema::draft202012::is_valid(
         &schema,
         &serde_json::from_slice::<Value>(include_bytes!("fixtures/catalog.json")).unwrap()
@@ -363,5 +379,72 @@ fn frozen_schema_and_catalog_golden() {
             .unwrap()
             .reference(),
         c.reference()
+    );
+}
+
+#[test]
+fn external_annotation_cannot_be_reused_after_parameters_change() {
+    let c = catalog();
+    let original = select(&c, json!({"host":"example.invalid"})).unwrap();
+    let explicit_default = select(&c, json!({"host":"example.invalid","count":3})).unwrap();
+    let changed = select(&c, json!({"host":"other.invalid"})).unwrap();
+    assert_eq!(original.reference(), explicit_default.reference());
+    assert_ne!(original.reference(), changed.reference());
+    let target: execution_contract::Target = serde_json::from_value(
+        json!({"device":"device-1","platform":"windows","scope":{"kind":"device"}}),
+    )
+    .unwrap();
+    let assessment = ExternalAssessment {
+        selection: original.reference().clone(),
+        target: target.clone(),
+        checked_at_unix_ms: 1,
+        expires_at_unix_ms: 100,
+        status: ExternalStatus::Blocked,
+    };
+    assert_eq!(
+        changed
+            .external_status(&target, 10, Some(&assessment))
+            .unwrap_err(),
+        CatalogError::ReferenceMismatch
+    );
+}
+
+#[test]
+fn rounded_directory_numbers_are_definition_errors_not_argument_errors() {
+    let bytes = String::from_utf8(include_bytes!("fixtures/catalog.json").to_vec())
+        .unwrap()
+        .replace("1000", "1000.00000000000000001");
+    assert_eq!(
+        decode_catalog(bytes.as_bytes(), &limits()).unwrap_err(),
+        CatalogError::InvalidShape
+    );
+}
+
+#[test]
+fn safe_diagnostics_distinguish_argument_rules_and_host_budgets() {
+    let c = catalog();
+    for (input, rule) in [
+        (json!({}), ArgumentRule::Required),
+        (json!({"host": 42}), ArgumentRule::Type),
+        (json!({"host":"a"}), ArgumentRule::Range),
+        (
+            json!({"host":"example.invalid","extra":"do-not-echo"}),
+            ArgumentRule::UnknownParameter,
+        ),
+    ] {
+        let error = select(&c, input).unwrap_err();
+        assert_eq!(error, CatalogError::InvalidArguments(rule));
+        assert!(!format!("{error:?} {error}").contains("do-not-echo"));
+    }
+    let mut budget = parameter_limits();
+    budget.max_parameters = 1;
+    assert_eq!(
+        c.projection(
+            &Id::new("diagnostics").unwrap(),
+            &Id::new("network-check").unwrap(),
+            &budget
+        )
+        .unwrap_err(),
+        CatalogError::LimitExceeded(Limit::Parameters)
     );
 }

@@ -1,4 +1,4 @@
-use crate::CatalogError;
+use crate::{ArgumentRule, CatalogError, Limit};
 use serde::{
     de::{DeserializeSeed, MapAccess, SeqAccess, Visitor},
     Serialize,
@@ -22,20 +22,21 @@ pub struct CatalogLimits {
 }
 impl CatalogLimits {
     pub(crate) fn validate(&self) -> Result<(), CatalogError> {
-        if [
-            self.max_bytes,
-            self.max_depth,
-            self.max_nodes,
-            self.max_string_bytes,
-            self.max_collection_items,
-        ]
-        .contains(&0)
-            || self.max_depth > 64
-        {
-            Err(CatalogError::InvalidLimits)
-        } else {
-            Ok(())
+        for (value, field) in [
+            (self.max_bytes, Limit::Bytes),
+            (self.max_depth, Limit::Depth),
+            (self.max_nodes, Limit::Nodes),
+            (self.max_string_bytes, Limit::StringBytes),
+            (self.max_collection_items, Limit::CollectionItems),
+        ] {
+            if value == 0 {
+                return Err(CatalogError::InvalidLimits(field));
+            }
         }
+        if self.max_depth > 64 {
+            return Err(CatalogError::InvalidLimits(Limit::Depth));
+        }
+        Ok(())
     }
 }
 struct State<'a> {
@@ -50,7 +51,7 @@ impl State<'_> {
     }
     fn string<E: serde::de::Error>(&mut self, s: &str) -> Result<(), E> {
         if s.len() > self.limits.max_string_bytes {
-            Err(self.fail(CatalogError::LimitExceeded))
+            Err(self.fail(CatalogError::LimitExceeded(Limit::StringBytes)))
         } else {
             Ok(())
         }
@@ -59,12 +60,21 @@ impl State<'_> {
 struct Seed<'a, 'b> {
     state: &'a mut State<'b>,
     depth: usize,
+    admitted: bool,
 }
 impl<'de> DeserializeSeed<'de> for Seed<'_, '_> {
     type Value = Value;
     fn deserialize<D: serde::Deserializer<'de>>(self, d: D) -> Result<Value, D::Error> {
-        if self.depth > self.state.limits.max_depth || self.state.left == 0 {
-            return Err(self.state.fail(CatalogError::LimitExceeded));
+        if !self.admitted {
+            return Err(self
+                .state
+                .fail(CatalogError::LimitExceeded(Limit::CollectionItems)));
+        }
+        if self.depth > self.state.limits.max_depth {
+            return Err(self.state.fail(CatalogError::LimitExceeded(Limit::Depth)));
+        }
+        if self.state.left == 0 {
+            return Err(self.state.fail(CatalogError::LimitExceeded(Limit::Nodes)));
         }
         self.state.left -= 1;
         d.deserialize_any(self)
@@ -102,13 +112,16 @@ impl<'de> Visitor<'de> for Seed<'_, '_> {
     }
     fn visit_seq<A: SeqAccess<'de>>(self, mut a: A) -> Result<Value, A::Error> {
         let mut result = Vec::new();
-        while let Some(value) = a.next_element_seed(Seed {
-            state: self.state,
-            depth: self.depth + 1,
-        })? {
-            if result.len() == self.state.limits.max_collection_items {
-                return Err(self.state.fail(CatalogError::LimitExceeded));
-            }
+        loop {
+            let admitted = result.len() < self.state.limits.max_collection_items;
+            let Some(value) = a.next_element_seed(Seed {
+                state: self.state,
+                depth: self.depth + 1,
+                admitted,
+            })?
+            else {
+                break;
+            };
             result.push(value);
         }
         Ok(Value::Array(result))
@@ -121,11 +134,14 @@ impl<'de> Visitor<'de> for Seed<'_, '_> {
                 return Err(self.state.fail(CatalogError::DuplicateKey));
             }
             if result.len() == self.state.limits.max_collection_items {
-                return Err(self.state.fail(CatalogError::LimitExceeded));
+                return Err(self
+                    .state
+                    .fail(CatalogError::LimitExceeded(Limit::CollectionItems)));
             }
             let value = a.next_value_seed(Seed {
                 state: self.state,
                 depth: self.depth + 1,
+                admitted: true,
             })?;
             result.insert(key, value);
         }
@@ -135,7 +151,7 @@ impl<'de> Visitor<'de> for Seed<'_, '_> {
 pub(crate) fn decode(bytes: &[u8], limits: &CatalogLimits) -> Result<Value, CatalogError> {
     limits.validate()?;
     if bytes.len() > limits.max_bytes {
-        return Err(CatalogError::LimitExceeded);
+        return Err(CatalogError::LimitExceeded(Limit::Bytes));
     }
     reject_rounded_integers(bytes)?;
     let mut state = State {
@@ -147,6 +163,7 @@ pub(crate) fn decode(bytes: &[u8], limits: &CatalogLimits) -> Result<Value, Cata
     let result = Seed {
         state: &mut state,
         depth: 1,
+        admitted: true,
     }
     .deserialize(&mut decoder);
     let value = result.map_err(|_| state.error.unwrap_or(CatalogError::Malformed))?;
@@ -174,7 +191,8 @@ pub(crate) fn encode(value: &impl Serialize, max: usize) -> Result<Vec<u8>, Cata
         bytes: Vec::new(),
         max,
     };
-    serde_json::to_writer(&mut writer, value).map_err(|_| CatalogError::LimitExceeded)?;
+    serde_json::to_writer(&mut writer, value)
+        .map_err(|_| CatalogError::LimitExceeded(Limit::Bytes))?;
     Ok(writer.bytes)
 }
 
@@ -203,7 +221,7 @@ fn reject_rounded_integers(bytes: &[u8]) -> Result<(), CatalogError> {
                 std::str::from_utf8(&bytes[start..i]).map_err(|_| CatalogError::Malformed)?;
             if let Ok(number) = token.parse::<f64>() {
                 if number.is_finite() && number.fract() == 0.0 && !exact_integral(token) {
-                    return Err(CatalogError::InvalidArguments);
+                    return Err(CatalogError::InvalidArguments(ArgumentRule::RoundedNumber));
                 }
             }
         } else {
@@ -230,4 +248,24 @@ fn exact_integral(token: &str) -> bool {
         .saturating_sub(fractional)
         .saturating_add(trailing as i64)
         >= 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn array_limit_rejects_before_deserializing_the_extra_subtree() {
+        let limits = CatalogLimits {
+            max_bytes: 1024,
+            max_depth: 8,
+            max_nodes: 20,
+            max_string_bytes: 30,
+            max_collection_items: 1,
+        };
+        assert_eq!(
+            decode(br#"[1,{"key":1,"key":2}]"#, &limits).unwrap_err(),
+            CatalogError::LimitExceeded(Limit::CollectionItems)
+        );
+        assert_eq!(decode(b"[1]", &limits).unwrap(), serde_json::json!([1]));
+    }
 }

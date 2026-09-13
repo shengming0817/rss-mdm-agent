@@ -1,6 +1,7 @@
 use crate::{
-    bounded, parameters, CatalogError, CatalogItem, CatalogLimits, CatalogRef, CatalogSnapshot,
-    OperationVariant, ParameterLimits, ParameterProjection, PublicationState, SelectionRef,
+    bounded, parameters, ArgumentRule, CatalogError, CatalogItem, CatalogLimits, CatalogRef,
+    CatalogSnapshot, DefinitionRule, Limit, OperationVariant, ParameterLimits, ParameterProjection,
+    PublicationState, SelectionRef,
 };
 use execution_contract::{Digest, Id, InputValue, Target};
 use serde::{Deserialize, Serialize};
@@ -22,7 +23,10 @@ pub struct FrozenCatalog {
 /// Strict decode and semantic validation, followed by canonical freezing.
 /// Returns safe static errors; never resolves resources, reads a clock or authorizes execution.
 pub fn decode_catalog(bytes: &[u8], limits: &CatalogLimits) -> Result<FrozenCatalog, CatalogError> {
-    let value = bounded::decode(bytes, limits)?;
+    let value = bounded::decode(bytes, limits).map_err(|error| match error {
+        CatalogError::InvalidArguments(ArgumentRule::RoundedNumber) => CatalogError::InvalidShape,
+        other => other,
+    })?;
     if value.get("schemaVersion").and_then(|v| v.as_u64()) != Some(1) {
         return Err(CatalogError::UnsupportedVersion);
     }
@@ -41,7 +45,7 @@ pub fn decode_catalog(bytes: &[u8], limits: &CatalogLimits) -> Result<FrozenCata
     let canonical =
         serde_json_canonicalizer::to_vec(&snapshot).map_err(|_| CatalogError::Encoding)?;
     if canonical.len() > limits.max_bytes {
-        return Err(CatalogError::LimitExceeded);
+        return Err(CatalogError::LimitExceeded(Limit::Bytes));
     }
     let digest = Sha256::new()
         .chain_update(b"rss-mdm-agent/service-catalog/v1\0")
@@ -127,6 +131,15 @@ impl FrozenCatalog {
                 catalog: input.catalog,
                 item_id: input.item_id,
                 variant_id: input.variant_id,
+                arguments_digest: {
+                    let bytes = serde_json_canonicalizer::to_vec(&parameters)
+                        .map_err(|_| CatalogError::Encoding)?;
+                    let digest = Sha256::new()
+                        .chain_update(b"rss-mdm-agent/catalog-arguments/v1\0")
+                        .chain_update(bytes)
+                        .finalize();
+                    Digest::new(format!("{digest:x}")).map_err(|_| CatalogError::Encoding)?
+                },
             },
             operation: operation.clone(),
             parameters,
@@ -148,19 +161,20 @@ fn unique<'a>(values: impl Iterator<Item = &'a Id>) -> bool {
     values.into_iter().all(|v| seen.insert(v))
 }
 fn validate_snapshot(s: &CatalogSnapshot) -> Result<(), CatalogError> {
-    if s.expires_at_unix_ms == 0
-        || s.expires_at_unix_ms > parameters::MAX_INTEGER as u64
-        || !unique(s.items.iter().map(|v| &v.id))
-    {
-        return Err(CatalogError::InvalidDefinition);
+    if s.expires_at_unix_ms == 0 || s.expires_at_unix_ms > parameters::MAX_INTEGER as u64 {
+        return Err(CatalogError::InvalidDefinition(DefinitionRule::TimeWindow));
+    }
+    if !unique(s.items.iter().map(|v| &v.id)) {
+        return Err(CatalogError::InvalidDefinition(
+            DefinitionRule::DuplicateItem,
+        ));
     }
     for item in &s.items {
-        if item.name.trim().is_empty()
-            || item.category.trim().is_empty()
-            || item.operations.is_empty()
-            || !unique(item.operations.iter().map(|v| &v.id))
-        {
-            return Err(CatalogError::InvalidDefinition);
+        if item.name.trim().is_empty() || item.category.trim().is_empty() {
+            return Err(CatalogError::InvalidDefinition(DefinitionRule::Display));
+        }
+        if item.operations.is_empty() || !unique(item.operations.iter().map(|v| &v.id)) {
+            return Err(CatalogError::InvalidDefinition(DefinitionRule::Operations));
         }
         for op in &item.operations {
             parameters::validate_definitions(&op.parameters)?;
@@ -168,7 +182,9 @@ fn validate_snapshot(s: &CatalogSnapshot) -> Result<(), CatalogError> {
                 || !unique(op.requirements.capabilities.iter())
                 || !unique(op.requirements.evidence.iter())
             {
-                return Err(CatalogError::InvalidDefinition);
+                return Err(CatalogError::InvalidDefinition(
+                    DefinitionRule::Requirements,
+                ));
             }
         }
     }
@@ -242,7 +258,7 @@ impl SelectedOperation {
         if a.checked_at_unix_ms >= a.expires_at_unix_ms
             || a.expires_at_unix_ms > parameters::MAX_INTEGER as u64
         {
-            return Err(CatalogError::InvalidDefinition);
+            return Err(CatalogError::InvalidDefinition(DefinitionRule::TimeWindow));
         }
         if now_unix_ms < a.checked_at_unix_ms || now_unix_ms >= a.expires_at_unix_ms {
             return Ok(ExternalStatus::Unknown);
@@ -269,7 +285,7 @@ pub enum ExternalStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExternalAssessment {
-    /// Exact catalog namespace/version/digest/item/operation.
+    /// Exact catalog namespace/version/digest/item/operation and normalized arguments digest.
     pub selection: SelectionRef,
     /// Explicit device/platform/user target, not authentication evidence.
     pub target: Target,
