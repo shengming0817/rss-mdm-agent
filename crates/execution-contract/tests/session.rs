@@ -39,17 +39,32 @@ fn session_requirement_is_required_and_bound_to_the_plan() {
 #[test]
 fn invalid_session_context_is_rejected_by_decode_and_freeze() {
     let mut v = fixture();
-    for session in [
-        json!({"kind":"activeUser","account":{"platform":"windows","subject":"sid-1"}}),
-        json!({"kind":"activeUser","account":{"platform":"linux","subject":""}}),
-        json!({"kind":"unknown"}),
+    use execution_contract::{ErrorKind as K, Field as F, Rule as R};
+    for (session, expected) in [
+        (
+            json!({"kind":"activeUser","account":{"platform":"windows","subject":"sid-1"}}),
+            (K::InconsistentContext, F::Session, R::Mismatch),
+        ),
+        (
+            json!({"kind":"activeUser","account":{"platform":"linux","subject":""}}),
+            (K::InvalidValue, F::Identifier, R::Identifier),
+        ),
+        (
+            json!({"kind":"unknown"}),
+            (K::Encoding, F::Document, R::Syntax),
+        ),
     ] {
         v["sessionRequirement"] = session;
-        assert!(decode(&v).is_err());
+        let error = decode(&v).unwrap_err();
+        assert_eq!((error.kind(), error.field(), error.rule()), expected);
     }
     v["sessionRequirement"] =
         json!({"kind":"activeUser","account":{"platform":"linux","subject":"uid:1000"}});
     let mut p = decode(&v).unwrap();
     p.request.target.platform = execution_contract::Platform::Windows;
-    assert!(FrozenPlan::freeze(p, &limits()).is_err());
+    let error = FrozenPlan::freeze(p, &limits()).unwrap_err();
+    assert_eq!(
+        (error.kind(), error.field(), error.rule()),
+        (K::InconsistentContext, F::Session, R::Mismatch)
+    );
 }

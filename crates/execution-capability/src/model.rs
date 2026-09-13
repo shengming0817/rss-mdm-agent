@@ -1,5 +1,5 @@
 use execution_contract::{
-    DeviceId, Digest, ExactArtifactRef, OsAccountRef, Platform, RunAs, VersionedRef,
+    Authority, DeviceId, Digest, ExactArtifactRef, OsAccountRef, Platform, RunAs, VersionedRef,
 };
 
 /// Availability of a specifically observed capability.
@@ -42,9 +42,11 @@ pub enum Isolation {
     /// Can enforce the required sandbox boundary.
     Sandbox,
 }
-/// Explicit snapshot facts for exactly one device. No system probing is performed.
+/// Explicit snapshot facts for exactly one authority-scoped device. No system probing is performed.
 #[derive(Debug, Clone)]
 pub struct EnvironmentSnapshot {
+    /// Exact authority/tenant namespace containing the device; IDs alone are not globally unique.
+    pub authority: Authority,
     /// Device these facts describe, matched against the frozen target.
     pub device: DeviceId,
     /// Exact observation source/revision for correlation; does not authenticate the source.

@@ -54,6 +54,7 @@ fn inventory<T>(values: Vec<T>) -> Inventory<T> {
 fn snapshot(p: &FrozenPlan) -> EnvironmentSnapshot {
     let s = p.spec();
     EnvironmentSnapshot {
+        authority: s.request.authority.clone(),
         device: s.request.target.device.clone(),
         source: VersionedRef {
             id: Id::new("snapshot").unwrap(),
@@ -149,7 +150,12 @@ fn failures_are_complete_order_stable_and_deterministic() {
     s.interpreters.complete = false;
     assert_eq!(check(&p, &s).status, MatchStatus::Unknown);
     s.device = DeviceId::new("different-device").unwrap();
-    assert_eq!(check(&p, &s).status, MatchStatus::Unknown);
+    let wrong_target = check(&p, &s);
+    assert_eq!(wrong_target.status, MatchStatus::Unknown);
+    assert!(wrong_target
+        .checks
+        .iter()
+        .all(|c| c.status == MatchStatus::Unknown));
 }
 #[test]
 fn malformed_or_over_budget_snapshots_fail_closed() {
@@ -221,4 +227,45 @@ fn exact_identity_and_every_inventory_fail_closed() {
         .entries
         .retain(|e| e.capability != Isolation::NetworkAllowlist);
     assert_eq!(check(&p, &s).status, MatchStatus::Unsupported);
+}
+
+#[test]
+fn identical_device_ids_cannot_replay_snapshots_across_authorities_or_tenants() {
+    let authorities = vec![
+        Authority::Enterprise {
+            id: Id::new("authority").unwrap(),
+            tenant: Id::new("tenant-a").unwrap(),
+        },
+        Authority::Enterprise {
+            id: Id::new("authority").unwrap(),
+            tenant: Id::new("tenant-b").unwrap(),
+        },
+        Authority::Local {
+            id: Id::new("authority").unwrap(),
+        },
+        Authority::Test {
+            id: Id::new("authority").unwrap(),
+        },
+    ];
+    for source in &authorities {
+        let mut spec = plan(Platform::Linux).spec().clone();
+        spec.request.authority = source.clone();
+        let p = FrozenPlan::freeze(spec, &limits()).unwrap();
+        let s = snapshot(&p);
+        assert_eq!(check(&p, &s).status, MatchStatus::Supported);
+        for target in &authorities {
+            if target == source {
+                continue;
+            }
+            let mut other = p.spec().clone();
+            other.request.authority = target.clone();
+            let other = FrozenPlan::freeze(other, &limits()).unwrap();
+            let result = check(&other, &s);
+            assert_eq!(result.status, MatchStatus::Unknown);
+            assert!(result
+                .checks
+                .iter()
+                .all(|c| c.status == MatchStatus::Unknown));
+        }
+    }
 }

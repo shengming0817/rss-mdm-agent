@@ -57,7 +57,8 @@ pub fn match_capabilities(
     validate(&snapshot.user_sessions, Dimension::UserSession)?;
     validate(&snapshot.isolation, Dimension::Isolation)?;
     let spec = plan.spec();
-    let target_matches = snapshot.device == spec.request.target.device;
+    let target_matches = snapshot.authority == spec.request.authority
+        && snapshot.device == spec.request.target.device;
     let mut checks = Vec::new();
     let mut push = |dimension, status| {
         checks.push(CapabilityCheck {

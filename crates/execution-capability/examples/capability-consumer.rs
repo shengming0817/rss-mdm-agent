@@ -27,6 +27,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let plan = FrozenPlan::freeze(decode_plan(&bytes, &limits)?, &limits)?;
     let spec = plan.spec();
     let mut snapshot = EnvironmentSnapshot {
+        authority: spec.request.authority.clone(),
         device: spec.request.target.device.clone(),
         source: VersionedRef {
             id: Id::new("fixed-test-snapshot")?,

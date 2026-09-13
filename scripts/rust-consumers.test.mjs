@@ -191,6 +191,7 @@ test("only clean unchanged source can produce a deliverable consumer PASS", () =
     "dirty-at-start",
     "mutation-during-run",
     "base-drift",
+    "head-drift",
   ]) {
     const root = fixture();
     try {
@@ -203,6 +204,21 @@ test("only clean unchanged source can produce a deliverable consumer PASS", () =
       const fake = fakeCargo(root, (name) => {
         if (name === names[0] && mode === "mutation-during-run")
           writeFileSync(input, "changed while checking");
+        if (name === names[0] && mode === "head-drift")
+          execFileSync(
+            git,
+            [
+              "-c",
+              "user.name=Fixture",
+              "-c",
+              "user.email=fixture@example.invalid",
+              "commit",
+              "--allow-empty",
+              "-qm",
+              "concurrent committed change",
+            ],
+            { cwd: root },
+          );
         if (name === names[0] && mode === "base-drift")
           execFileSync(
             git,
