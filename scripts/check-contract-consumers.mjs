@@ -15,7 +15,26 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
 import { sameCommittedSource, sourceState } from "./source-state.mjs";
 
-const names = ["execution-contract", "ai-session-contract"];
+const consumers = {
+  "execution-contract": {
+    example: "execution",
+    fixture: "plan.json",
+    digest: "plan.sha256",
+    local: ["execution-contract"],
+  },
+  "ai-session-contract": {
+    example: "ai-session",
+    fixture: "events.json",
+    local: ["ai-session-contract"],
+  },
+  "service-catalog": {
+    example: "catalog",
+    fixture: "catalog.json",
+    digest: "catalog.sha256",
+    local: ["service-catalog", "execution-contract"],
+  },
+};
+const names = Object.keys(consumers);
 function cargo(args, cwd, env, execute, receipt, capture = false) {
   const command = ["cargo", ...args];
   receipt.command = command;
@@ -41,6 +60,7 @@ function checkOne(root, name, serdeVersion, execute, receipt) {
   try {
     dir = realpathSync(mkdtempSync(join(tmpdir(), `${name}-consumer-`)));
     const crate = join(root, "crates", name);
+    const profile = consumers[name];
     const env = {
       ...process.env,
       CARGO_TARGET_DIR: join(dir, "target"),
@@ -55,21 +75,18 @@ function checkOne(root, name, serdeVersion, execute, receipt) {
       `[package]\nname = "isolated-consumer"\nversion = "0.0.0"\nedition = "2021"\n[workspace]\n[dependencies]\n${name} = { path = ${JSON.stringify(crate)}, default-features = false }\nserde_json = ${JSON.stringify(serdeVersion)}\n`,
     );
     copyFileSync(
-      join(
-        crate,
-        `examples/${name === "execution-contract" ? "execution" : "ai-session"}-consumer.rs`,
-      ),
+      join(crate, `examples/${profile.example}-consumer.rs`),
       join(dir, "src/main.rs"),
     );
-    const fixture = name === "execution-contract" ? "plan.json" : "events.json";
+    const fixture = profile.fixture;
     copyFileSync(
       join(crate, "tests/fixtures", fixture),
       join(dir, "input.json"),
     );
     const args = [join(dir, "input.json")];
-    if (name === "execution-contract") {
+    if (profile.digest) {
       copyFileSync(
-        join(crate, "tests/fixtures/plan.sha256"),
+        join(crate, "tests/fixtures", profile.digest),
         join(dir, "digest.txt"),
       );
       args.push(join(dir, "digest.txt"));
@@ -102,8 +119,14 @@ function checkOne(root, name, serdeVersion, execute, receipt) {
     for (const pkg of metadata.packages) {
       if (
         pkg.source === null &&
-        ![join(dir, "Cargo.toml"), join(crate, "Cargo.toml")].includes(
-          pkg.manifest_path,
+        !(
+          pkg.name === "isolated-consumer" &&
+          pkg.manifest_path === join(dir, "Cargo.toml")
+        ) &&
+        !profile.local.some(
+          (allowed) =>
+            pkg.name === allowed &&
+            pkg.manifest_path === join(root, "crates", allowed, "Cargo.toml"),
         )
       )
         throw new Error("unexpected source dependency");

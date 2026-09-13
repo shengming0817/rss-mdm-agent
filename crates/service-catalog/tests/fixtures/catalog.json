@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "authority": {"kind":"test","id":"catalog-test"},
+  "identity": {"id":"self-service","revision":"r1"},
+  "expiresAtUnixMs": 1000,
+  "items": [{
+    "id":"diagnostics", "kind":"tool", "name":"Network diagnostics",
+    "description":"Test-only network tool; no operating-system execution.",
+    "category":"support", "aiDiscoverable":true, "distributionHint":"optional",
+    "state":"listed",
+    "operations":[{
+      "id":"network-check", "action":"diagnose",
+      "resource":{
+        "reference":{"id":"network-script","revision":"r1"},
+        "versionDigest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "selector":{"platform":"windows","architecture":"x86_64","key":"powershell"}
+      },
+      "parameters":{
+        "host":{"title":"Host","description":"Diagnostic destination","required":true,"rule":{"type":"string","minLength":3,"maxLength":100}},
+        "count":{"title":"Count","description":"Probe count","required":false,"rule":{"type":"integer","minimum":1,"maximum":5,"default":3}}
+      },
+      "requirements":{"capabilities":["test-runner"],"runAs":"targetUser","interaction":"none","evidence":["test-result"]}
+    }]
+  }]
+}
