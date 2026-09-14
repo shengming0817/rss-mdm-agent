@@ -174,7 +174,7 @@ fn every_parameter_type_uses_the_same_projection_and_runtime() {
     }
 }
 #[test]
-fn precision_limits_defaults_and_unicode_are_bounded() {
+fn precision_limits_and_defaults_are_bounded() {
     let c = catalog();
     let p = c
         .projection(
@@ -311,30 +311,79 @@ fn external_explanations_require_exact_selection_target_and_freshness() {
         target: target.clone(),
         checked_at_unix_ms: 100,
         expires_at_unix_ms: 200,
-        status: ExternalStatus::MissingCapability,
+        display: DisplayStatus {
+            visibility: DisplayDecision::Allowed,
+            requestability: DisplayDecision::Allowed,
+            executability: DisplayDecision::MissingCapability,
+        },
     };
     assert_eq!(
-        selected.external_status(&target, 100, None).unwrap(),
-        ExternalStatus::Unknown
+        selected.display_status(&target, 100, None).unwrap(),
+        DisplayStatus::default()
     );
     assert_eq!(
         selected
-            .external_status(&target, 100, Some(&explanation))
+            .display_status(&target, 100, Some(&explanation))
             .unwrap(),
-        ExternalStatus::MissingCapability
+        explanation.display
     );
     for now in [99, 200] {
         assert_eq!(
             selected
-                .external_status(&target, now, Some(&explanation))
+                .display_status(&target, now, Some(&explanation))
                 .unwrap(),
-            ExternalStatus::Unknown
+            DisplayStatus::default()
         );
     }
+    for decision in [
+        DisplayDecision::Unknown,
+        DisplayDecision::Allowed,
+        DisplayDecision::MissingCapability,
+        DisplayDecision::UnsupportedTarget,
+        DisplayDecision::UnresolvedResource,
+        DisplayDecision::Blocked,
+    ] {
+        explanation.display = DisplayStatus {
+            visibility: decision,
+            requestability: DisplayDecision::Unknown,
+            executability: DisplayDecision::Allowed,
+        };
+        let encoded = serde_json::to_value(&explanation).unwrap();
+        let decoded: ExternalAssessment = serde_json::from_value(encoded.clone()).unwrap();
+        assert_eq!(
+            selected
+                .display_status(&target, 199, Some(&decoded))
+                .unwrap(),
+            explanation.display
+        );
+        let mut invalid = encoded;
+        invalid["display"]["visibility"] = json!("futureDecision");
+        assert!(serde_json::from_value::<ExternalAssessment>(invalid).is_err());
+    }
+    for (checked, expires) in [(100, 100), (200, 100), (100, 9_007_199_254_740_992)] {
+        explanation.checked_at_unix_ms = checked;
+        explanation.expires_at_unix_ms = expires;
+        assert_eq!(
+            selected
+                .display_status(&target, 100, Some(&explanation))
+                .unwrap_err(),
+            CatalogError::InvalidDefinition(DefinitionRule::TimeWindow)
+        );
+    }
+    explanation.checked_at_unix_ms = 100;
+    explanation.expires_at_unix_ms = 200;
+    explanation.target.platform = Platform::Macos;
+    assert_eq!(
+        selected
+            .display_status(&target, 100, Some(&explanation))
+            .unwrap_err(),
+        CatalogError::ReferenceMismatch
+    );
+    explanation.target = target.clone();
     explanation.target.device = DeviceId::new("device-2").unwrap();
     assert_eq!(
         selected
-            .external_status(&target, 100, Some(&explanation))
+            .display_status(&target, 100, Some(&explanation))
             .unwrap_err(),
         CatalogError::ReferenceMismatch
     );
@@ -345,7 +394,7 @@ fn external_explanations_require_exact_selection_target_and_freshness() {
     };
     assert_eq!(
         selected
-            .external_status(&target, 100, Some(&explanation))
+            .display_status(&target, 100, Some(&explanation))
             .unwrap_err(),
         CatalogError::ReferenceMismatch
     );
@@ -399,11 +448,14 @@ fn external_annotation_cannot_be_reused_after_parameters_change() {
         target: target.clone(),
         checked_at_unix_ms: 1,
         expires_at_unix_ms: 100,
-        status: ExternalStatus::Blocked,
+        display: DisplayStatus {
+            executability: DisplayDecision::Blocked,
+            ..DisplayStatus::default()
+        },
     };
     assert_eq!(
         changed
-            .external_status(&target, 10, Some(&assessment))
+            .display_status(&target, 10, Some(&assessment))
             .unwrap_err(),
         CatalogError::ReferenceMismatch
     );
@@ -447,4 +499,113 @@ fn safe_diagnostics_distinguish_argument_rules_and_host_budgets() {
         .unwrap_err(),
         CatalogError::LimitExceeded(Limit::Parameters)
     );
+}
+
+#[test]
+fn unordered_collections_preserve_identity_but_choices_do_not() {
+    let mut base: Value = serde_json::from_slice(include_bytes!("fixtures/catalog.json")).unwrap();
+    let op = &mut base["items"][0]["operations"][0];
+    op["requirements"]["capabilities"] = json!(["a-capability", "z-capability"]);
+    op["requirements"]["evidence"] = json!(["a-evidence", "z-evidence"]);
+    op["parameters"]["host"]["rule"]["choices"] = json!(["example.invalid", "other.invalid"]);
+    let mut second = op.clone();
+    second["id"] = json!("z-operation");
+    base["items"][0]["operations"]
+        .as_array_mut()
+        .unwrap()
+        .push(second);
+    let reference = decode_catalog(&serde_json::to_vec(&base).unwrap(), &limits())
+        .unwrap()
+        .reference();
+    for path in [
+        "/items/0/operations",
+        "/items/0/operations/0/requirements/capabilities",
+        "/items/0/operations/0/requirements/evidence",
+    ] {
+        let mut changed = base.clone();
+        changed
+            .pointer_mut(path)
+            .unwrap()
+            .as_array_mut()
+            .unwrap()
+            .reverse();
+        assert_eq!(
+            reference,
+            decode_catalog(&serde_json::to_vec(&changed).unwrap(), &limits())
+                .unwrap()
+                .reference(),
+            "{path}"
+        );
+    }
+    base["items"][0]["operations"][0]["parameters"]["host"]["rule"]["choices"]
+        .as_array_mut()
+        .unwrap()
+        .reverse();
+    assert_ne!(
+        reference,
+        decode_catalog(&serde_json::to_vec(&base).unwrap(), &limits())
+            .unwrap()
+            .reference()
+    );
+}
+
+#[test]
+fn unicode_scalar_rules_and_utf8_budgets_have_separate_boundaries() {
+    let mut value: Value = serde_json::from_slice(include_bytes!("fixtures/catalog.json")).unwrap();
+    value["items"][0]["operations"][0]["parameters"] = json!({"x":{"title":"Text","description":"","required":true,"rule":{"type":"string","minLength":1,"maxLength":1}}});
+    let c = decode_catalog(&serde_json::to_vec(&value).unwrap(), &limits()).unwrap();
+    for budget in [4, 3] {
+        let pl = ParameterLimits {
+            max_string_bytes: budget,
+            ..parameter_limits()
+        };
+        let projection = c
+            .projection(
+                &Id::new("diagnostics").unwrap(),
+                &Id::new("network-check").unwrap(),
+                &pl,
+            )
+            .unwrap();
+        let args = json!({"x":"😀"});
+        assert!(jsonschema::draft202012::is_valid(
+            projection.input_schema(),
+            &args
+        ));
+        let raw = serde_json::to_vec(&args).unwrap();
+        let result = projection.validate(&raw);
+        let selected = c.select(
+            &serde_json::to_vec(&selection(&c, args)).unwrap(),
+            &limits(),
+            &pl,
+        );
+        if budget == 4 {
+            assert_eq!(&result.unwrap(), selected.unwrap().parameters());
+        } else {
+            assert_eq!(
+                result.unwrap_err(),
+                CatalogError::LimitExceeded(Limit::StringBytes)
+            );
+            assert_eq!(
+                selected.unwrap_err(),
+                CatalogError::LimitExceeded(Limit::StringBytes)
+            );
+        }
+        for text in ["", "éé", "e\u{301}"] {
+            let args = json!({"x":text});
+            assert!(!jsonschema::draft202012::is_valid(
+                projection.input_schema(),
+                &args
+            ));
+            assert_eq!(
+                projection
+                    .validate(&serde_json::to_vec(&args).unwrap())
+                    .unwrap_err(),
+                if text.len() > budget {
+                    CatalogError::LimitExceeded(Limit::StringBytes)
+                } else {
+                    CatalogError::InvalidArguments(ArgumentRule::Range)
+                }
+            );
+        }
+    }
 }

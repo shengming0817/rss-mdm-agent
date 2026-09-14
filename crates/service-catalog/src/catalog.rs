@@ -243,14 +243,14 @@ impl SelectedOperation {
     }
     /// Check association/freshness of an owner-provided display annotation. Does not verify its issuer,
     /// match capabilities, resolve artifacts or grant permission; missing/expired annotations stay unknown.
-    pub fn external_status(
+    pub fn display_status(
         &self,
         target: &Target,
         now_unix_ms: u64,
         assessment: Option<&ExternalAssessment>,
-    ) -> Result<ExternalStatus, CatalogError> {
+    ) -> Result<DisplayStatus, CatalogError> {
         let Some(a) = assessment else {
-            return Ok(ExternalStatus::Unknown);
+            return Ok(DisplayStatus::default());
         };
         if &a.selection != self.reference() || &a.target != target {
             return Err(CatalogError::ReferenceMismatch);
@@ -261,17 +261,32 @@ impl SelectedOperation {
             return Err(CatalogError::InvalidDefinition(DefinitionRule::TimeWindow));
         }
         if now_unix_ms < a.checked_at_unix_ms || now_unix_ms >= a.expires_at_unix_ms {
-            return Ok(ExternalStatus::Unknown);
+            return Ok(DisplayStatus::default());
         }
-        Ok(a.status)
+        Ok(a.display)
     }
 }
-/// Non-authoritative owner-provided display reason. No positive execution state exists.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Independent display axes from the capability/authorization owner, never execution authority.
+/// Hosts must authenticate the source and reauthorize at execution, including for Allowed values.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DisplayStatus {
+    /// Whether this exact choice should be shown to this target.
+    pub visibility: DisplayDecision,
+    /// Whether this target can request this exact choice.
+    pub requestability: DisplayDecision,
+    /// Whether owner preflight currently reports this exact choice as executable.
+    pub executability: DisplayDecision,
+}
+/// Closed owner-provided display decision for one axis; never a permission.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum ExternalStatus {
+pub enum DisplayDecision {
     /// No fresh owner explanation; says nothing about execution readiness.
+    #[default]
     Unknown,
+    /// Owner reports this display axis as allowed; execution still requires reauthorization.
+    Allowed,
     /// Owner reports missing capability; catalog does not compute the match.
     MissingCapability,
     /// Owner reports an unsupported target.
@@ -293,6 +308,6 @@ pub struct ExternalAssessment {
     pub checked_at_unix_ms: u64,
     /// Exclusive annotation expiry, UTC Unix milliseconds.
     pub expires_at_unix_ms: u64,
-    /// Safe explanatory code, never a permission.
-    pub status: ExternalStatus,
+    /// Independent visible/requestable/executable display decisions, never permissions.
+    pub display: DisplayStatus,
 }

@@ -9,7 +9,7 @@
 - `projection(item, variant, ParameterLimits)`：同时提供表单字段与 AI Draft 2020-12 `input_schema()`，不维护两份约束。`validate(bytes)` 是共同参数入口，输出 `InputValue`。
 - `select(bytes, CatalogLimits, ParameterLimits)`：接受 `catalog / itemId / variantId / arguments`，返回私有字段的 `SelectedOperation`，保留完整资源绑定、参数声明、要求及规范参数。返回的 SelectionRef 还绑定规范化参数摘要；省略默认值与显式相同默认值等价，修改有效参数使原外部说明不再匹配。没有 `ExecutionRequest` 快捷转换、可信主体或执行 permit。
 - `availability(now_unix_ms)`：解释记录状态；withdrawn 优先，其次 `now >= expiresAt` 为 expired，其余为 listed。listed 仅指这份快照的记录，不表示最新目录、可申请或可执行。到期/下架仍可检查内容。
-- `external_status(target, now, assessment)`：只核对外部展示说明与精确选择、device/platform/user 目标及 UTC 时间窗口的关联。缺失、过期或早于检查时间均为 unknown；关联错误拒绝。只有负向说明，不重做 C06 能力算法、不验证签发者、不生成授权。
+- `display_status(target, now, assessment)`：只核对外部展示说明与精确选择、device/platform/user 目标及 UTC 时间窗口的关联。缺失、过期或早于检查时间均为 unknown；关联错误拒绝。`DisplayStatus` 独立表达 visibility/requestability/executability，每轴使用闭合 `DisplayDecision`（unknown、allowed 或阻塞原因）。正向展示由能力/授权 owner 产生，不能从 listed 推导；不重做 C06 能力算法、不验证签发者、不生成授权。宿主须验证来源，执行前重新授权。
 
 C07/execution-app 及后续企业接线负责可信主体、当前资源发布态、能力、政策、批准与执行前复核。模型、OS 登录或合法 DTO 不能授予权限。离线缓存可浏览，但无当前可信核验就不能据此接纳新变更。
 
@@ -45,6 +45,8 @@ node --test scripts/contract-consumers.test.mjs
 node scripts/check-contract-consumers.mjs
 ```
 
-`catalog-schema` 输出当前结构 schema；`catalog-golden` 输出目录和 schema 的规范摘要。golden 变更必须有意审阅，不能以重新生成代替漂移调查。独立 consumer 使用真实公共 example 和固定测试目录，不证明后端/OS/模型能力；全量验证按本仓 `make ci`。
+`catalog-schema` 输出当前结构 schema；`catalog-golden` 输出目录和 schema 的规范摘要。golden 变更必须有意审阅，不能以重新生成代替漂移调查。独立 consumer 使用真实公共 example 和固定测试目录，不证明后端/OS/模型能力；全量验证按本仓 `make ci`。workspace `clippy.toml` 固定认知复杂度阈值 15，crate 显式启用 `clippy::cognitive_complexity`，由现有 Clippy 检查落实。
+
+ref: rust-clippy [clippy_lints/src/cognitive_complexity.rs](https://github.com/rust-lang/rust-clippy/blob/master/clippy_lints/src/cognitive_complexity.rs)：restriction lint 必须显式启用，并读取配置阈值。
 
 后端边界及固定来源见[对齐说明](../../docs/guides/202609130000-2396-service-catalog.md)。

@@ -3,6 +3,7 @@
 //! resolution, authority verification, authorization and execution belong to other owners.
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
+#![warn(clippy::cognitive_complexity)]
 mod bounded;
 mod catalog;
 mod error;
