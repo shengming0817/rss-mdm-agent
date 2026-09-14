@@ -21,6 +21,7 @@ const names = [
   "execution-interaction",
   "execution-capability",
   "execution-admission",
+  "service-catalog",
 ];
 function fixture() {
   const root = realpathSync(
@@ -50,7 +51,13 @@ function fixture() {
     mkdirSync(join(path, "examples"), { recursive: true });
     mkdirSync(join(path, "tests/fixtures"), { recursive: true });
     writeFileSync(join(path, "examples", spec.example), "fn main() {}\n");
-    for (const file of ["plan.json", "plan.sha256", "events.json"])
+    for (const file of [
+      "plan.json",
+      "plan.sha256",
+      "events.json",
+      "catalog.json",
+      "catalog.sha256",
+    ])
       writeFileSync(join(path, "tests/fixtures", file), "fixture");
   }
   mkdirSync(join(root, ".local-ci-runs"));
@@ -115,7 +122,7 @@ function fakeCargo(root, failure) {
           target_directory: env.CARGO_TARGET_DIR,
           packages: [
             {
-              name: "isolated-consumer",
+              name: `isolated-${name}-consumer`,
               version: "0.0.0",
               source: null,
               manifest_path: join(cwd, "Cargo.toml"),
@@ -151,7 +158,7 @@ test("consumer failures are aggregated, replace stale PASS, and clean every temp
     );
     assert.equal(saved.status, "failed");
     assert.notEqual(saved.source.head, "stale-success");
-    assert.equal(saved.consumers.length, 5);
+    assert.equal(saved.consumers.length, names.length);
     for (const entry of saved.consumers) {
       assert.equal(entry.passed, false);
       assert.equal(entry.failure.status, 17);
@@ -238,7 +245,7 @@ test("only clean unchanged source can produce a deliverable consumer PASS", () =
   }
 });
 
-test("consumer inventory covers the five independent crates", () => {
+test("consumer inventory covers the six independent crates", () => {
   assert.deepEqual(
     rustConsumers.map((spec) => spec.name),
     names,
@@ -266,7 +273,7 @@ test("unexpected local or git dependencies fail isolation without hiding later c
       };
       const report = checkRustConsumers(root, execute);
       assert.equal(report.status, "failed");
-      assert.equal(report.consumers.length, 5);
+      assert.equal(report.consumers.length, names.length);
       assert.ok(
         report.consumers.every(
           (r) => !r.passed && r.failure.stage === "isolation",
@@ -330,10 +337,58 @@ for (const [mode, code, packageName] of [
         code,
         ...(packageName ? { package: packageName } : {}),
       });
-      assert.equal(saved.consumers.length, 5);
+      assert.equal(saved.consumers.length, names.length);
       assert.equal(saved.consumers[0].cleanup, "removed");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 }
+
+// Retain develop's catalog-owner isolation regression through the unified consumer runner.
+test("catalog permits its canonical value owner but not arbitrary or misnamed local dependencies", () => {
+  for (const [dependency, manifestOwner] of [
+    ["execution-contract", "execution-contract"],
+    ["ai-session-contract", "ai-session-contract"],
+    ["rss-mdm-resource", "rss-mdm-resource"],
+    ["wrong-name", "execution-contract"],
+  ]) {
+    const root = fixture();
+    try {
+      const fake = fakeCargo(root, () => ({ status: 0, stdout: "" }));
+      const execute = (command, args, options) => {
+        const result = fake.execute(command, args, options);
+        if (args[0] === "metadata" && !args.includes("--no-deps")) {
+          const metadata = JSON.parse(result.stdout);
+          if (metadata.packages.some((p) => p.name === "service-catalog")) {
+            const owner = metadata.packages.find(
+              (p) => p.name === "execution-contract",
+            );
+            owner.name = dependency;
+            owner.manifest_path = join(
+              root,
+              "crates",
+              manifestOwner,
+              "Cargo.toml",
+            );
+          }
+          result.stdout = JSON.stringify(metadata);
+        }
+        return result;
+      };
+      const report = checkRustConsumers(root, execute);
+      const catalog = report.consumers.find(
+        (r) => r.name === "service-catalog",
+      );
+      assert.equal(catalog.passed, dependency === "execution-contract");
+      if (!catalog.passed) {
+        assert.equal(catalog.failure.stage, "isolation");
+        assert.equal(catalog.failure.code, "unexpected-local-dependency");
+      }
+      assert.equal(report.consumers.length, names.length);
+      for (const dir of fake.dirs) assert.equal(existsSync(dir), false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+});

@@ -7,9 +7,10 @@ export function sourceState(
   const run = (...args) =>
     execFileSync(git, args, { cwd, encoding: "utf8" }).trim();
   const head = run("rev-parse", "HEAD");
-  const base = run("merge-base", baseRef, head);
+  const baseOid = run("rev-parse", "--verify", `${baseRef}^{commit}`);
+  const base = run("merge-base", baseOid, head);
   const changes = run("status", "--porcelain", "--untracked-files=all");
-  return { head, baseRef, base, clean: changes === "", changes };
+  return { head, baseRef, baseOid, base, clean: changes === "", changes };
 }
 
 // Canonical verdict for one committed source identity across a verification run.
@@ -19,6 +20,8 @@ export function sameCommittedSource(start, end) {
     end.clean &&
     start.head === end.head &&
     start.base === end.base &&
-    start.baseRef === end.baseRef
+    start.baseRef === end.baseRef &&
+    typeof start.baseOid === "string" &&
+    start.baseOid === end.baseOid
   );
 }

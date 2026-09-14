@@ -16,7 +16,7 @@ node --test scripts/rust-consumers.test.mjs scripts/execution-evolution.test.mjs
 node scripts/check-rust-consumers.mjs
 ```
 
-单个crate的示例验证公共API；`check-rust-consumers.mjs`是唯一Rust独立消费入口，一份明确清单覆盖execution-contract、ai-session-contract与三个新核心。每个consumer独立workspace/lock/target，依赖关闭default features，检查metadata及源码依赖边界并实际运行。能力/授权consumer显式依赖execution-contract，不利用其它workspace成员补齐依赖。工具失败逐项收集，旧成功记录先失效，临时目录逐项清理。
+单个crate的示例验证公共API；`check-rust-consumers.mjs`是唯一Rust独立消费入口，消费者范围由该脚本中的明确清单持有。每个consumer独立workspace/lock/target，依赖关闭default features，检查metadata及源码依赖边界并实际运行。能力/授权consumer显式依赖execution-contract，不利用其它workspace成员补齐依赖。工具失败逐项收集，旧成功记录先失效，临时目录逐项清理。
 
 consumer失败在receipt及CLI保留稳定分类：`missing-consumer-owner`、`missing-registry-dependency`、`workspace-isolation-drift`、`target-isolation-drift`、`unexpected-local-dependency`、`non-registry-dependency`、`unexpected-runtime-dependency`；依赖错误附有合法包名，不把原始异常或本地路径复制进诊断字段。Cargo退出/信号仍保留原有结构化结果。
 

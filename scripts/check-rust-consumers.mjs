@@ -55,6 +55,16 @@ export const rustConsumers = [
     registry: [],
     fixtures: ["crates/execution-contract/tests/fixtures/plan.json"],
   },
+  {
+    name: "service-catalog",
+    example: "catalog-consumer.rs",
+    locals: ["service-catalog", "execution-contract"],
+    registry: ["serde_json"],
+    fixtures: [
+      "crates/service-catalog/tests/fixtures/catalog.json",
+      "crates/service-catalog/tests/fixtures/catalog.sha256",
+    ],
+  },
 ];
 function cargo(args, cwd, env, execute, receipt, capture = false) {
   const command = ["cargo", ...args];
@@ -154,12 +164,15 @@ function checkOne(root, spec, owner, execute, receipt) {
     for (const pkg of metadata.packages) {
       if (
         pkg.source === null &&
-        ![
-          join(dir, "Cargo.toml"),
-          ...spec.locals.map((local) =>
-            join(root, "crates", local, "Cargo.toml"),
-          ),
-        ].includes(pkg.manifest_path)
+        !(
+          pkg.name === `isolated-${name}-consumer` &&
+          pkg.manifest_path === join(dir, "Cargo.toml")
+        ) &&
+        !spec.locals.some(
+          (local) =>
+            pkg.name === local &&
+            pkg.manifest_path === join(root, "crates", local, "Cargo.toml"),
+        )
       )
         throw new ConsumerFailure("unexpected-local-dependency", pkg.name);
       if (pkg.source !== null && !pkg.source.startsWith("registry+"))
