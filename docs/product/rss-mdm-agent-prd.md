@@ -208,7 +208,7 @@ AI请求与手动请求都不能自行取得可执行capability。运行模式�
 | --- | --- | --- |
 | execution-contract | 执行值类型与规范摘要 | 必要基础库 |
 | ai-session-contract | 通用会话/工具提案事件 | 必要基础库，不复制执行权威 |
-| service-catalog | 目录项目、参数schema、精确资源引用 | 必要基础库，不链接Resource/Group |
+| service-catalog | 目录项目、参数schema、精确资源引用 | execution-contract必要值类型；不链接Resource/Group |
 | execution-interaction | 等待/回答/取消/过期转换 | 必要基础库，不铸造授权 |
 | execution-capability / admission / approval / lifecycle | 能力、裁决、批准适用性、执行转换 | execution-contract；相互不必链接 |
 | script-plan / software-plan | 原生脚本启动与安装决策描述 | execution-contract；不spawn |
@@ -221,9 +221,7 @@ AI请求与手动请求都不能自行取得可执行capability。运行模式�
 
 C03 的当前实现见[目录核心](../../crates/service-catalog/README.md)与[后端对齐](../guides/202609130000-2396-service-catalog.md)：一个格式与参数规则可显式演进，未知语义拒绝；新增目录内容无需修改核心。选择保留目录/资源摘要、变体、参数和要求；上下架/期限绑定快照，外部展示说明绑定精确选择和目标。核心不计算能力或授权，缺少后续 owner 接线时不能声称执行闭环完成。
 
-C01/C02 契约的具体 V1 边界、规范编码及独立消费见[契约开发说明](../guides/contracts-development.md)。PlanSpec显式持有必填目标用户会话要求并纳入摘要；不从发起人的OS登录推断。公共契约文档覆盖字段/单位/方向/信任边界并由编译守卫检查；错误用静态 kind/field/rule 区分配置、输入上限与语义失败，不回显输入。契约解码和计划冻结只校验数据，不能铸造可信主体、批准或真实执行证据；C02 的 Unknown 能力为明确未证实状态，未知版本/字段/事件不作兼容兜底。
-
-C04/C06/C07的当前公共接口与独立消费见[执行核心开发说明](../guides/execution-cores.md)：交互只记录回答，能力只匹配快照，授权采用可信宿主接缝和精确Rust规则；不替代后续批准消耗或执行接线。
+C01/C02 契约的具体 V1 边界、规范编码及独立消费见[契约开发说明](../guides/contracts-development.md)。公共契约文档覆盖字段/单位/方向/信任边界并由编译守卫检查；错误用静态 kind/field/rule 区分配置、输入上限与语义失败，不回显输入。契约解码和计划冻结只校验数据，不能铸造可信主体、批准或真实执行证据；C02 的 Unknown 能力为明确未证实状态，未知版本/字段/事件不作兼容兜底。
 
 AI工具参数经过MCP/host映射到执行请求，C02不直接嵌入另一份执行状态；该映射在C20验证。
 `execution-admission`就是C07的唯一actor/action/resource/context授权裁决核心；“admission”是包名，“授权”是职责，不另建平行authorization service。C19消费该裁决并强制持久执行准入。
