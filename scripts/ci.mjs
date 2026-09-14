@@ -13,7 +13,8 @@ const steps = [
       "--test",
       "scripts/source-state.test.mjs",
       "scripts/ci-result.test.mjs",
-      "scripts/contract-consumers.test.mjs",
+      "scripts/rust-consumers.test.mjs",
+      "scripts/execution-evolution.test.mjs",
     ],
   ],
   ["frozen dependencies", "pnpm", ["install", "--frozen-lockfile"]],
@@ -27,7 +28,7 @@ const steps = [
   ["rust fmt", "cargo", ["fmt", "--all", "--", "--check"]],
   ["rust build", "cargo", ["build", "--workspace", "--locked"]],
   ["rust test", "cargo", ["test", "--workspace", "--locked"]],
-  ["contract consumers", "node", ["scripts/check-contract-consumers.mjs"]],
+  ["rust consumers", "node", ["scripts/check-rust-consumers.mjs"]],
   [
     "rust clippy",
     "cargo",

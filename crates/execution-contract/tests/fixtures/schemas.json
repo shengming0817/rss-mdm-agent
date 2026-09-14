@@ -1322,6 +1322,44 @@
           }
         ]
       },
+      "SessionRequirement": {
+        "description": "Required target user-session availability, independent of the originating login.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "No active desktop login is required; the explicit run-as identity still applies.",
+            "properties": {
+              "kind": {
+                "const": "notRequired",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Require an active session for this account on the plan's target device.",
+            "properties": {
+              "account": {
+                "$ref": "#/$defs/OsAccountRef",
+                "description": "Exact account whose session is required, not inferred from the initiator."
+              },
+              "kind": {
+                "const": "activeUser",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "account"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "Target": {
         "additionalProperties": false,
         "description": "Explicit device, platform and scope bound into the plan digest.",
@@ -1463,6 +1501,10 @@
         "$ref": "#/$defs/LocalContractV1",
         "description": "Required current V1 discriminator; absent or unsupported versions are rejected."
       },
+      "sessionRequirement": {
+        "$ref": "#/$defs/SessionRequirement",
+        "description": "Mandatory session requirement bound into the plan digest; never inferred or defaulted."
+      },
       "validity": {
         "$ref": "#/$defs/ValidityWindow",
         "description": "Bounded validity window; current time and revocation freshness are checked externally."
@@ -1474,6 +1516,7 @@
       "request",
       "launch",
       "runAs",
+      "sessionRequirement",
       "constraints",
       "budget",
       "validity",

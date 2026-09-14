@@ -41,8 +41,8 @@ V1 SHA-256 输入为域 `rss-mdm-agent/service-catalog/v1\0` 后接 JCS 内容�
 cargo test -p service-catalog --locked
 cargo clippy -p service-catalog --all-targets --locked -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc -p service-catalog --no-deps --locked
-node --test scripts/contract-consumers.test.mjs
-node scripts/check-contract-consumers.mjs
+node --test scripts/rust-consumers.test.mjs
+node scripts/check-rust-consumers.mjs
 ```
 
 `catalog-schema` 输出当前结构 schema；`catalog-golden` 输出目录和 schema 的规范摘要。golden 变更必须有意审阅，不能以重新生成代替漂移调查。独立 consumer 使用真实公共 example 和固定测试目录，不证明后端/OS/模型能力；全量验证按本仓 `make ci`。workspace `clippy.toml` 固定认知复杂度阈值 15，crate 显式启用 `clippy::cognitive_complexity`，由现有 Clippy 检查落实。

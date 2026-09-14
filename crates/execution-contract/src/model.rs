@@ -279,6 +279,19 @@ pub struct ValidityWindow {
     pub expires_at_unix_ms: u64,
 }
 
+/// Required target user-session availability, independent of the originating login.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+pub enum SessionRequirement {
+    /// No active desktop login is required; the explicit run-as identity still applies.
+    NotRequired {},
+    /// Require an active session for this account on the plan's target device.
+    ActiveUser {
+        /// Exact account whose session is required, not inferred from the initiator.
+        account: OsAccountRef,
+    },
+}
+
 /// The sole canonical execution description, including its original request.
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -293,6 +306,8 @@ pub struct PlanSpec {
     pub launch: LaunchSpec,
     /// Requested target execution identity, separate from actor and originating login.
     pub run_as: RunAs,
+    /// Mandatory session requirement bound into the plan digest; never inferred or defaulted.
+    pub session_requirement: SessionRequirement,
     /// Mandatory execution restrictions bound into the digest.
     pub constraints: Constraints,
     /// Plan-wide resource allowances checked against separately supplied host limits.
