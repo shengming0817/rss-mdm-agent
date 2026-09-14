@@ -1,5 +1,7 @@
 use crate::*;
-use execution_contract::{ExecutionBudget, FrozenPlan, Initiator, PlanSpec, ValidityWindow};
+use execution_contract::{
+    Constraints, ExecutionBudget, ExecutionRequest, FrozenPlan, Initiator, PlanSpec, ValidityWindow,
+};
 
 // Only this verifier call can create the runtime trusted context. It has no serde/DTO constructor.
 struct VerifiedContext {
@@ -26,18 +28,60 @@ fn budget_fits(plan: ExecutionBudget, ceiling: ExecutionBudget) -> bool {
         && plan.total_output_bytes <= ceiling.total_output_bytes
         && plan.max_attempts <= ceiling.max_attempts
 }
+// Exhaustive patterns intentionally have no `..`: adding a contract field requires a
+// decision here. Whole-value comparisons below also include future nested fields.
+// ref: Rust Reference, patterns.html#struct-patterns
+fn scope(spec: &PlanSpec) -> impl PartialEq + '_ {
+    let PlanSpec {
+        schema_version: _, // FrozenPlan already validates the sole supported version.
+        plan_id: _,        // Correlation, not authority.
+        request,
+        launch,
+        run_as,
+        session_requirement,
+        constraints,
+        budget: _,   // Intersected independently by decide.
+        validity: _, // Intersected independently by decide.
+        policy: _,   // Exact verified policy checked by decide.
+    } = spec;
+    let ExecutionRequest {
+        schema_version: _, // Validated by FrozenPlan.
+        request_id: _,     // Correlation, not authority.
+        initiator: _,      // Origin is authenticated by AuthorityVerifier.
+        delegation: _,     // Verified and intersected independently by decide.
+        authority,
+        actor,
+        operation,
+        target,
+        parameters,
+    } = request;
+    let Constraints {
+        network,
+        read_paths,
+        write_paths,
+        allow_child_processes,
+        require_sandbox,
+    } = constraints;
+    (
+        authority,
+        actor,
+        operation,
+        target,
+        parameters,
+        launch,
+        run_as,
+        session_requirement,
+        (
+            network,
+            read_paths,
+            write_paths,
+            allow_child_processes,
+            require_sandbox,
+        ),
+    )
+}
 fn same_scope(template: &PlanSpec, plan: &PlanSpec) -> bool {
-    // Compare existing normalized values. No new canonicalizer, wildcard, path inference or
-    // request-ID/initiator-dependent permit logic. Delegation is independently intersected below.
-    template.request.authority == plan.request.authority
-        && template.request.actor == plan.request.actor
-        && template.request.operation == plan.request.operation
-        && template.request.target == plan.request.target
-        && template.request.parameters == plan.request.parameters
-        && template.launch == plan.launch
-        && template.run_as == plan.run_as
-        && template.session_requirement == plan.session_requirement
-        && template.constraints == plan.constraints
+    scope(template) == scope(plan)
 }
 /// Evaluate one frozen plan through the trusted host seam, always returning a closed decision.
 /// Missing verification, invalid rules and bounds fail as Denied, never as an approval request.

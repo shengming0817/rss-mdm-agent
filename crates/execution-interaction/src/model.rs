@@ -174,6 +174,8 @@ pub enum Status {
     },
     /// Deadline elapsed without a committed answer or cancellation.
     Expired {
+        /// Exact bounded command that committed expiry; retained for replay, never consent.
+        command: crate::Command,
         /// Host-observed UTC Unix milliseconds at or after the deadline.
         at_unix_ms: u64,
     },

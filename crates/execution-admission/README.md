@@ -12,6 +12,8 @@ AuthorityFacts是该port的Rust输出，无Deserialize，也没有`decide(plan, 
 
 规则模板复用FrozenPlan中的规范值，不计算第二套摘要。精确比较authority/tenant、actor、动作/资源revision、目标设备/用户、runAs、SessionRequirement、完整launch、参数和constraints。没有目录通配符、路径前缀、参数表达式或约束偏序推理。改变约束也须匹配另一个明确授权范围。
 
+PlanSpec、ExecutionRequest、Constraints 使用不含 `..` 的穷尽解构，明确每个字段是精确scope还是独立验证项；新增字段必须先作授权归属决策才能编译。结构突变测试编译真实生产库，避免仅验证测试自己的字段清单。
+
 模板request/plan相关ID、initiator不参与权限匹配；origin由verifier单独认证，human/AI/policy不能改变actor权限上限。委托引用单独与已验证委托一致性核对；其精确scope、policy、时间和预算再与actor基础权限取交集，委托自身不产生allow。模板里的delegation字段不能替代这个验证。
 
 计划有效期须包含于主体、授权规则和委托窗口，当前可信时间必须落在计划窗口内。时间为UTC Unix ms，结束排他。预算按计划整体的时间、输出和attempts逐维比较；不能拼接多条规则的部分预算，也不能按attempts重新补给。实际累计消耗由生命周期/持久层拥有。

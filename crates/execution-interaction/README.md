@@ -8,6 +8,8 @@ C04（#2397）：独立的一次性交互状态机。输入是有界引用、命
 
 相同命令ID和内容重放返回 Duplicate；相同ID不同内容/命令类型返回 IdempotencyConflict；其它终态后的命令返回 Late，不改变状态。取消仅取消本交互，窗口/AI会话关闭、drop和重开没有任务状态效果。
 
+Expired 持久化实际触发命令（Answer、Cancel或CheckExpiry），恢复后原命令重放仍返回Duplicate，同ID不同内容仍为IdempotencyConflict。过期优先于回答种类校验，终态保存的回答不会被当作同意。Pending为所有命令变体（含其它回答种类）预留终态空间。Command采用闭合标签编码，CheckExpiry为空结构变体；当前未发布的Snapshot直接要求Expired.command，不保留缺字段旧格式读取。
+
 Snapshot 是唯一当前格式；有界 `decode` 和 `restore` 校验版本、等待类型、时间、revision和终态。Pending 为 revision 0，唯一终态为 1。创建或恢复 Pending 时还预留最大合法终态的编码空间，避免建立无法记录回答或过期的等待。结构有效不证明存储真实，持久数据完整性由C18持有。
 
 C18 必须在受保护主体命名空间内对 `(interaction id, expected_revision)` 做条件更新，并在冲突后重新读取、使用当前可信时间重算。T1竞争测试仅证明转换和重读语义，不宣称已实现数据库CAS。调用方负责可靠时间/回拨检测；核心拒绝早于创建或已提交事件的时间，未提交的观察不构成持久时钟水位。

@@ -279,3 +279,61 @@ test("unexpected local or git dependencies fail isolation without hiding later c
     }
   }
 });
+
+for (const [mode, code, packageName] of [
+  ["workspace", "workspace-isolation-drift", undefined],
+  ["target", "target-isolation-drift", undefined],
+  ["owner", "missing-consumer-owner", "execution-contract"],
+  ["registry", "missing-registry-dependency", "serde_json"],
+  ["local", "unexpected-local-dependency", "forbidden-owner"],
+  ["git", "non-registry-dependency", "forbidden-owner"],
+  ["runtime", "unexpected-runtime-dependency", "sqlx"],
+]) {
+  test(`consumer receipt preserves ${mode} failure`, () => {
+    const root = fixture();
+    try {
+      const fake = fakeCargo(root, () => ({ status: 0, stdout: "" }));
+      const execute = (command, args, options) => {
+        const result = fake.execute(command, args, options);
+        if (args[0] !== "metadata") return result;
+        const data = JSON.parse(result.stdout);
+        if (args.includes("--no-deps")) {
+          if (mode === "owner") data.packages = [];
+          if (mode === "registry")
+            for (const p of data.packages) p.dependencies = [];
+        } else {
+          if (mode === "workspace") data.workspace_root = root;
+          if (mode === "target") data.target_directory = join(root, "target");
+          if (["local", "git", "runtime"].includes(mode))
+            data.packages.push({
+              name: packageName,
+              version: "0.1.0",
+              source:
+                mode === "local"
+                  ? null
+                  : mode === "git"
+                    ? "git+https://example.invalid/secret"
+                    : "registry+https://example.invalid",
+              manifest_path: join(root, "private-source", "Cargo.toml"),
+            });
+        }
+        result.stdout = JSON.stringify(data);
+        return result;
+      };
+      checkRustConsumers(root, execute);
+      const saved = JSON.parse(
+        readFileSync(join(root, ".local-ci-runs/rust-consumers.json"), "utf8"),
+      );
+      assert.equal(saved.status, "failed");
+      assert.deepEqual(saved.consumers[0].failure, {
+        stage: ["owner", "registry"].includes(mode) ? "prepare" : "isolation",
+        code,
+        ...(packageName ? { package: packageName } : {}),
+      });
+      assert.equal(saved.consumers.length, 5);
+      assert.equal(saved.consumers[0].cleanup, "removed");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}

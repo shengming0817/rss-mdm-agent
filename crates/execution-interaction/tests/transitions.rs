@@ -106,7 +106,7 @@ fn invalid_answer_does_not_win_and_deadline_has_priority() {
     );
     assert_eq!(i.snapshot().revision, 0);
     assert_eq!(
-        i.evaluate(Command::CheckExpiry, 199).unwrap().outcome,
+        i.evaluate(Command::CheckExpiry {}, 199).unwrap().outcome,
         Outcome::NotDue
     );
     for command in [
@@ -114,7 +114,7 @@ fn invalid_answer_does_not_win_and_deadline_has_priority() {
         Command::Cancel {
             id: reference("cancel"),
         },
-        Command::CheckExpiry,
+        Command::CheckExpiry {},
     ] {
         let result = i.evaluate(command, 200).unwrap();
         assert_eq!(result.outcome, Outcome::Expired);
@@ -124,7 +124,7 @@ fn invalid_answer_does_not_win_and_deadline_has_priority() {
         ));
     }
     assert_eq!(
-        i.evaluate(Command::CheckExpiry, 99).unwrap_err(),
+        i.evaluate(Command::CheckExpiry {}, 99).unwrap_err(),
         InteractionError::Clock
     );
 }
@@ -227,4 +227,149 @@ fn pending_state_reserves_space_for_every_terminal_response() {
         Interaction::open(i.snapshot().spec.clone(), 100, small).is_err(),
         "must not create a wait that cannot record expiry or an answer"
     );
+}
+
+#[test]
+fn expiry_replays_the_committed_command_after_decode() {
+    let commands = [
+        answer("same", Response::Confirmation { accepted: true }),
+        answer("same", Response::PrivacyConsent { accepted: true }),
+        Command::Cancel {
+            id: reference("same"),
+        },
+        Command::CheckExpiry {},
+    ];
+    for first in &commands {
+        let result = confirmation().evaluate(first.clone(), 200).unwrap();
+        assert_eq!(result.outcome, Outcome::Expired);
+        let next = result.transition.unwrap().next;
+        let bytes = serde_json::to_vec(next.snapshot()).unwrap();
+        let restored = Interaction::decode(&bytes, limits()).unwrap();
+        for retry in &commands {
+            let result = restored.evaluate(retry.clone(), 201);
+            if retry == first {
+                let replay = result.unwrap();
+                assert_eq!(replay.outcome, Outcome::Duplicate);
+                assert!(replay.transition.is_none());
+            } else if !matches!(retry, Command::CheckExpiry {})
+                && !matches!(first, Command::CheckExpiry {})
+            {
+                assert_eq!(result.unwrap_err(), InteractionError::IdempotencyConflict);
+            } else {
+                assert_eq!(result.unwrap().outcome, Outcome::Late);
+            }
+        }
+        assert_eq!(
+            restored
+                .evaluate(
+                    Command::Cancel {
+                        id: reference("other")
+                    },
+                    201
+                )
+                .unwrap()
+                .outcome,
+            Outcome::Late
+        );
+    }
+}
+
+#[test]
+fn pending_reserves_exact_largest_expiry_command_even_for_other_response_kinds() {
+    let longest = reference(&"x".repeat(128));
+    let commands = [
+        Response::Confirmation { accepted: false },
+        Response::PrivacyConsent { accepted: false },
+        Response::AdministratorDecision {
+            record: longest.clone(),
+        },
+        Response::ParameterSubmission {
+            submission: longest.clone(),
+        },
+        Response::MaintenanceSelection {
+            selection: longest.clone(),
+        },
+        Response::RestartSelection {
+            selection: longest.clone(),
+        },
+    ]
+    .into_iter()
+    .map(|response| Command::Answer {
+        id: longest.clone(),
+        response,
+    })
+    .chain([
+        Command::Cancel {
+            id: longest.clone(),
+        },
+        Command::CheckExpiry {},
+    ])
+    .collect::<Vec<_>>();
+    let i = confirmation();
+    let largest = commands
+        .iter()
+        .map(|command| {
+            let next = i
+                .evaluate(command.clone(), u64::MAX)
+                .unwrap()
+                .transition
+                .unwrap()
+                .next;
+            serde_json::to_vec(next.snapshot()).unwrap().len()
+        })
+        .max()
+        .unwrap();
+    let exact = Limits {
+        max_snapshot_bytes: largest,
+        ..limits()
+    };
+    let bounded = Interaction::restore(i.snapshot().clone(), exact).unwrap();
+    for command in commands {
+        let next = bounded
+            .evaluate(command.clone(), u64::MAX)
+            .unwrap()
+            .transition
+            .unwrap()
+            .next;
+        let bytes = serde_json::to_vec(next.snapshot()).unwrap();
+        let restored = Interaction::decode(&bytes, exact).unwrap();
+        assert_eq!(
+            restored.evaluate(command, u64::MAX).unwrap().outcome,
+            Outcome::Duplicate
+        );
+    }
+    assert_eq!(
+        Interaction::restore(
+            i.snapshot().clone(),
+            Limits {
+                max_snapshot_bytes: largest - 1,
+                ..limits()
+            }
+        )
+        .unwrap_err(),
+        InteractionError::Limit
+    );
+}
+
+#[test]
+fn expiry_snapshot_requires_a_valid_closed_command() {
+    let next = confirmation()
+        .evaluate(Command::CheckExpiry {}, 200)
+        .unwrap()
+        .transition
+        .unwrap()
+        .next;
+    let original = serde_json::to_value(next.snapshot()).unwrap();
+    for command in [
+        serde_json::json!({"kind":"unknown"}),
+        serde_json::json!({"kind":"cancel", "id":"invalid secret"}),
+        serde_json::json!({"kind":"checkExpiry", "extra":true}),
+    ] {
+        let mut value = original.clone();
+        value["status"]["command"] = command;
+        assert!(Interaction::decode(&serde_json::to_vec(&value).unwrap(), limits()).is_err());
+    }
+    let mut value = original;
+    value["status"].as_object_mut().unwrap().remove("command");
+    assert!(Interaction::decode(&serde_json::to_vec(&value).unwrap(), limits()).is_err());
 }

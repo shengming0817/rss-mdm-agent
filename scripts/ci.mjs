@@ -14,6 +14,7 @@ const steps = [
       "scripts/source-state.test.mjs",
       "scripts/ci-result.test.mjs",
       "scripts/rust-consumers.test.mjs",
+      "scripts/execution-evolution.test.mjs",
     ],
   ],
   ["frozen dependencies", "pnpm", ["install", "--frozen-lockfile"]],

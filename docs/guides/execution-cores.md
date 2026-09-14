@@ -12,11 +12,13 @@ PlanSpec新增必填`sessionRequirement`：`notRequired`或带明确account的`a
 cargo test -p execution-contract -p execution-interaction -p execution-capability -p execution-admission --locked
 cargo clippy -p execution-contract -p execution-interaction -p execution-capability -p execution-admission --all-targets --locked -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc -p execution-contract -p execution-interaction -p execution-capability -p execution-admission --no-deps --locked
-node --test scripts/rust-consumers.test.mjs
+node --test scripts/rust-consumers.test.mjs scripts/execution-evolution.test.mjs
 node scripts/check-rust-consumers.mjs
 ```
 
 单个crate的示例验证公共API；`check-rust-consumers.mjs`是唯一Rust独立消费入口，一份明确清单覆盖execution-contract、ai-session-contract与三个新核心。每个consumer独立workspace/lock/target，依赖关闭default features，检查metadata及源码依赖边界并实际运行。能力/授权consumer显式依赖execution-contract，不利用其它workspace成员补齐依赖。工具失败逐项收集，旧成功记录先失效，临时目录逐项清理。
+
+consumer失败在receipt及CLI保留稳定分类：`missing-consumer-owner`、`missing-registry-dependency`、`workspace-isolation-drift`、`target-isolation-drift`、`unexpected-local-dependency`、`non-registry-dependency`、`unexpected-runtime-dependency`；依赖错误附有合法包名，不把原始异常或本地路径复制进诊断字段。Cargo退出/信号仍保留原有结构化结果。
 
 仅被测crate与清单声明的execution-contract可作为源码依赖，其余来自registry；禁止相邻产品仓、Tauri、数据库与模型provider依赖。源码/配置/锁的实际身份和结果记录于忽略的`.local-ci-runs/rust-consumers.json`。验证开始与结束必须是同一clean committed HEAD/base才可报告交付PASS；编辑期脏树的consumer即使运行成功，总结果仍不可交付。
 

@@ -45,7 +45,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Outcome::Late
     );
     assert_eq!(
-        restored.evaluate(Command::CheckExpiry, 200)?.outcome,
+        restored.evaluate(Command::CheckExpiry {}, 200)?.outcome,
         Outcome::Expired
     );
     println!("execution-interaction: fixed test state only; no authorization, task cancellation or persistent CAS performed");

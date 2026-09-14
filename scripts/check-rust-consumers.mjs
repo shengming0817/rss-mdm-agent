@@ -76,6 +76,14 @@ function cargo(args, cwd, env, execute, receipt, capture = false) {
   }
   return result.stdout;
 }
+// Closed failure codes retain classification without serializing paths or exception text.
+class ConsumerFailure extends Error {
+  constructor(code, packageName) {
+    super(code);
+    this.code = code;
+    this.packageName = packageName;
+  }
+}
 function checkOne(root, spec, owner, execute, receipt) {
   const { name } = spec;
   let dir;
@@ -96,12 +104,14 @@ function checkOne(root, spec, owner, execute, receipt) {
         `${local} = { path = ${JSON.stringify(join(root, "crates", local))}, default-features = false }`,
     );
     const packageMetadata = owner.packages.find((p) => p.name === name);
-    if (!packageMetadata) throw new Error("missing consumer owner");
+    if (!packageMetadata)
+      throw new ConsumerFailure("missing-consumer-owner", name);
     const registryDependencies = spec.registry.map((dependency) => {
       const version = packageMetadata.dependencies.find(
         (d) => d.name === dependency && d.source?.startsWith("registry+"),
       )?.req;
-      if (!version) throw new Error("missing registry dependency");
+      if (!version)
+        throw new ConsumerFailure("missing-registry-dependency", dependency);
       return `${dependency} = ${JSON.stringify(version)}`;
     });
     writeFileSync(
@@ -137,11 +147,10 @@ function checkOne(root, spec, owner, execute, receipt) {
       source: p.source,
     }));
     receipt.stage = "isolation";
-    if (
-      resolve(metadata.workspace_root) !== dir ||
-      resolve(metadata.target_directory) !== env.CARGO_TARGET_DIR
-    )
-      throw new Error("workspace/target isolation failed");
+    if (resolve(metadata.workspace_root) !== dir)
+      throw new ConsumerFailure("workspace-isolation-drift");
+    if (resolve(metadata.target_directory) !== env.CARGO_TARGET_DIR)
+      throw new ConsumerFailure("target-isolation-drift");
     for (const pkg of metadata.packages) {
       if (
         pkg.source === null &&
@@ -152,13 +161,13 @@ function checkOne(root, spec, owner, execute, receipt) {
           ),
         ].includes(pkg.manifest_path)
       )
-        throw new Error("unexpected source dependency");
+        throw new ConsumerFailure("unexpected-local-dependency", pkg.name);
       if (pkg.source !== null && !pkg.source.startsWith("registry+"))
-        throw new Error("non-registry dependency");
+        throw new ConsumerFailure("non-registry-dependency", pkg.name);
       if (
         /tauri|sqlx|sqlite|prmonitor|^ai-(codex|claude|cursor)$/.test(pkg.name)
       )
-        throw new Error("unexpected runtime dependency");
+        throw new ConsumerFailure("unexpected-runtime-dependency", pkg.name);
     }
     receipt.stage = "run";
     cargo(
@@ -169,9 +178,17 @@ function checkOne(root, spec, owner, execute, receipt) {
       receipt,
     );
     receipt.passed = true;
-  } catch {
+  } catch (error) {
     receipt.passed = false;
-    receipt.failure ??= { stage: receipt.stage, code: "consumer-check-failed" };
+    receipt.failure ??= {
+      stage: receipt.stage,
+      code:
+        error instanceof ConsumerFailure ? error.code : "consumer-check-failed",
+      ...(error instanceof ConsumerFailure &&
+      /^[A-Za-z0-9_-]{1,64}$/.test(error.packageName ?? "")
+        ? { package: error.packageName }
+        : {}),
+    };
   } finally {
     try {
       if (dir) rmSync(dir, { recursive: true, force: true });
@@ -253,5 +270,11 @@ if (
     fileURLToPath(new URL("../", import.meta.url)),
   );
   console.log(`Isolated rust consumers: ${report.status}`);
+  for (const receipt of report.consumers.filter((r) => !r.passed)) {
+    const failure = receipt.failure;
+    console.error(
+      `${receipt.name}: ${failure?.stage ?? receipt.stage}: ${failure?.code ?? "cargo-step-failed"}${failure?.package ? ` (${failure.package})` : ""}`,
+    );
+  }
   process.exitCode = report.status === "passed" ? 0 : 1;
 }
