@@ -12,4 +12,4 @@ MatchReport 绑定 plan digest 和 snapshot source/revision，保留稳定顺序
 
 Supported 不是授权、执行许可或真实OS支持证据。host 必须验证快照真实性、新鲜度和探测覆盖；隔离能力表示能强制整项计划约束，不只是存在同名API。runner仍负责实际端点、路径解析、权限和隔离强制，C06不证明这些效果。
 
-验证：`cargo test -p execution-capability --locked`。公共示例 `capability-consumer` 接收固定计划 fixture，仅生成明确的测试快照；完整独立消费见[开发指南](../../docs/guides/execution-cores.md)。
+验证：`cargo test -p execution-capability --locked`。公共示例 `capability-consumer` 接收固定计划 fixture，仅生成明确的测试快照；完整独立消费见[开发指南](../../docs/guides/contracts-development.md)。

@@ -11,7 +11,7 @@
 
 以上源码已在探索阶段按固定revision读取，仅借鉴语义，不复制源码/数据/版权正文；目标实现按本仓MIT交付。实际基础依赖由Cargo.lock持有版本与校验和。C01规范编码仍使用既有owner，未增加第二套摘要算法。
 
-## PR 1017 修复参考（2026-09-14 UTC）
+## 字段演进、幂等与诊断参考
 
 - ref: Rust Reference [struct patterns](https://doc.rust-lang.org/stable/reference/patterns.html#struct-patterns)：生产入口穷尽解构，字段新增触发编译失败；对真实库做字段突变验证，不新增宏或重复契约。
 - ref: Temporal [mutable_state_impl.go](https://github.com/temporalio/temporal/blob/main/service/history/workflow/mutable_state_impl.go)：借鉴持久结果与命令身份绑定的幂等语义；本交互只保存有界命令与终态，不引入工作流服务或新摘要实现。

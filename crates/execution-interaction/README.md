@@ -14,4 +14,4 @@ Snapshot 是唯一当前格式；有界 `decode` 和 `restore` 校验版本、�
 
 C18 必须在受保护主体命名空间内对 `(interaction id, expected_revision)` 做条件更新，并在冲突后重新读取、使用当前可信时间重算。T1竞争测试仅证明转换和重读语义，不宣称已实现数据库CAS。调用方负责可靠时间/回拨检测；核心拒绝早于创建或已提交事件的时间，未提交的观察不构成持久时钟水位。
 
-验证：`cargo test -p execution-interaction --locked`；公共 API 示例为 `cargo run -p execution-interaction --example interaction-consumer --locked`。示例明确为测试状态，不运行后台任务。完整独立消费见[开发指南](../../docs/guides/execution-cores.md)。
+验证：`cargo test -p execution-interaction --locked`；公共 API 示例为 `cargo run -p execution-interaction --example interaction-consumer --locked`。示例明确为测试状态，不运行后台任务。完整独立消费见[开发指南](../../docs/guides/contracts-development.md)。

@@ -24,4 +24,4 @@ PlanSpec、ExecutionRequest、Constraints 使用不含 `..` 的穷尽解构，�
 
 ## 验证
 
-`cargo test -p execution-admission --locked`。公共示例`admission-consumer`只接收测试authority计划并验证allow/approval/deny及载荷替换拒绝，无生产认证或真实执行。完整独立消费见[开发指南](../../docs/guides/execution-cores.md)。
+`cargo test -p execution-admission --locked`。公共示例`admission-consumer`只接收测试authority计划并验证allow/approval/deny及载荷替换拒绝，无生产认证或真实执行。完整独立消费见[开发指南](../../docs/guides/contracts-development.md)。

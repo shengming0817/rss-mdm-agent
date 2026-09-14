@@ -8,7 +8,9 @@
 - [目录与后端对齐](guides/202609130000-2396-service-catalog.md)：精确资源绑定、参数演进与执行 owner 边界。
 - [契约开发](guides/contracts-development.md)：执行/AI 契约、schema 与隔离消费验证。
 - [契约来源与改写](reference/contracts-extraction.md)：C01/C02 的固定对标及参考重写边界。
-- [执行核心开发](guides/execution-cores.md)：交互、能力、授权与独立消费。
+- [交互核心](../crates/execution-interaction/README.md)：回答、取消、过期与恢复。
+- [能力核心](../crates/execution-capability/README.md)：计划要求与环境快照匹配。
+- [授权核心](../crates/execution-admission/README.md)：可信宿主接缝与精确规则。
 - [执行核心来源](reference/execution-cores.md)：固定Rust对标及重写边界。
 - [来源与对标](reference/sources.md)：prmonitor 固定源码证据、服务端产品基线及上游参考。
 
