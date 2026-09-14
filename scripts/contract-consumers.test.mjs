@@ -15,7 +15,7 @@ import { execFileSync } from "node:child_process";
 import { checkContractConsumers } from "./check-contract-consumers.mjs";
 import { git } from "./source-state.mjs";
 
-const names = ["execution-contract", "ai-session-contract"];
+const names = ["execution-contract", "ai-session-contract", "service-catalog"];
 function fixture() {
   const root = realpathSync(
     mkdtempSync(join(tmpdir(), "contract-receipt-test-")),
@@ -46,11 +46,17 @@ function fixture() {
       join(
         path,
         "examples",
-        `${name === "execution-contract" ? "execution" : "ai-session"}-consumer.rs`,
+        `${name === "execution-contract" ? "execution" : name === "service-catalog" ? "catalog" : "ai-session"}-consumer.rs`,
       ),
       "fn main() {}\n",
     );
-    for (const file of ["plan.json", "plan.sha256", "events.json"])
+    for (const file of [
+      "plan.json",
+      "plan.sha256",
+      "events.json",
+      "catalog.json",
+      "catalog.sha256",
+    ])
       writeFileSync(join(path, "tests/fixtures", file), "fixture");
   }
   mkdirSync(join(root, ".local-ci-runs"));
@@ -78,7 +84,7 @@ function fixture() {
   });
   return root;
 }
-function fakeCargo(root, failure) {
+function fakeCargo(root, failure, extraDependency) {
   const attempted = [],
     dirs = new Set();
   function execute(command, args, options) {
@@ -106,6 +112,7 @@ function fakeCargo(root, failure) {
           workspace_root: cwd,
           target_directory: env.CARGO_TARGET_DIR,
           packages: [
+            ...(extraDependency ? [extraDependency(root, name)] : []),
             {
               name: "isolated-consumer",
               version: "0.0.0",
@@ -141,7 +148,7 @@ test("consumer failures are aggregated, replace stale PASS, and clean every temp
     );
     assert.equal(saved.status, "failed");
     assert.notEqual(saved.source.head, "stale-success");
-    assert.equal(saved.consumers.length, 2);
+    assert.equal(saved.consumers.length, 3);
     for (const entry of saved.consumers) {
       assert.equal(entry.passed, false);
       assert.equal(entry.failure.status, 17);
@@ -206,6 +213,42 @@ test("only clean unchanged source can produce a deliverable consumer PASS", () =
       assert.equal(result.status, mode === "clean" ? "passed" : "failed", mode);
       if (mode !== "clean")
         assert.equal(result.failure.code, "uncommitted-or-changed-source");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test("catalog permits its canonical value owner but not arbitrary local dependencies", () => {
+  for (const dependency of [
+    "execution-contract",
+    "ai-session-contract",
+    "rss-mdm-resource",
+  ]) {
+    const root = fixture();
+    try {
+      const fake = fakeCargo(
+        root,
+        () => ({ status: 0, stdout: "" }),
+        (root, name) => ({
+          name: name === "service-catalog" ? dependency : name,
+          version: "0.1.0",
+          source: null,
+          manifest_path: join(
+            root,
+            "crates",
+            name === "service-catalog" ? dependency : name,
+            "Cargo.toml",
+          ),
+        }),
+      );
+      const result = checkContractConsumers(root, fake.execute);
+      const catalog = result.consumers.find(
+        (entry) => entry.name === "service-catalog",
+      );
+      assert.equal(catalog.passed, dependency === "execution-contract");
+      if (dependency !== "execution-contract")
+        assert.equal(catalog.failure.stage, "isolation");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
