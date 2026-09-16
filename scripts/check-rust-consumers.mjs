@@ -56,6 +56,20 @@ export const rustConsumers = [
     fixtures: ["crates/execution-contract/tests/fixtures/plan.json"],
   },
   {
+    name: "execution-approval",
+    example: "approval-consumer.rs",
+    locals: ["execution-approval", "execution-admission", "execution-contract"],
+    registry: [],
+    fixtures: ["crates/execution-contract/tests/fixtures/plan.json"],
+  },
+  {
+    name: "execution-lifecycle",
+    example: "lifecycle-consumer.rs",
+    locals: ["execution-lifecycle", "execution-contract"],
+    registry: ["serde_json"],
+    fixtures: ["crates/execution-contract/tests/fixtures/plan.json"],
+  },
+  {
     name: "service-catalog",
     example: "catalog-consumer.rs",
     locals: ["service-catalog", "execution-contract"],

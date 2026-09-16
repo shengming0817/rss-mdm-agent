@@ -55,7 +55,7 @@ S1 全程使用无系统副作用的测试执行器，界面必须持续显示�
 ### J3：AI 诊断并调用同一个工具
 
 AI 查询可见目录和已授权事实，选择同一工具、相同参数 schema，调用预览/提交接口。
-预授权范围内可自动执行；范围外产生批准请求，拒绝或过期保持不执行。AI 不能回答自己的批准请求。
+人和 AI 共用裁决：Allowed 无需额外批准；仅 ApprovalRequired 产生批准请求；Denied 直接拒绝，批准不能覆盖拒绝。批准拒绝或过期保持不执行，AI 不能回答自己的批准请求。
 AI 的总结引用真实任务/证据，脚本或工具输出不被提升为新的系统指令或授权。
 
 ### J4：新脚本、等待用户与恢复
@@ -145,7 +145,7 @@ Agent wire 的唯一 producer 仍为 rss-mdm；`execution-contract` 是本地执
 | 编号 | 要求 | 验收 |
 | --- | --- | --- |
 | CLI-REC01 | SQLite 是已接纳本地执行/交互/批准的持久 authority，AuditEvent可关联完整裁决 | 稳定事件ID、authority/tenant与device、request/plan/attempt、actor/initiator/approver、action/resource/target、decision/reason、委托/政策/批准版本、时间及evidence引用；准入裁决审计与intent同事务，失败不调用runner；审计读取单独授权，秘密只存引用或脱敏值 |
-| CLI-REC02 | 一次性批准消耗与执行 intent 原子提交 | 两个并发提交只能接受一次；intent不是已产生OS副作用的证明 |
+| CLI-REC02 | 每次新尝试的批准消耗与执行 intent 原子提交 | 必需profile全部满足；同一记录覆盖多个profile只消费一次。同一attempt重放不重复消费，并发CAS只有一个成功；事务失败不扣减，已提交但失败/未派发不自动退还；intent不是已产生OS副作用的证明 |
 | CLI-REC03 | intent之后、执行中、结果保存前的崩溃有明确恢复状态 | 非幂等动作不得盲重跑；先核实、保留未知或转人工处理 |
 | CLI-REC04 | 取消请求、超时、进程终止和副作用回滚分别记录 | 取消不保证全进程树终止或系统效果消失；真实平台支持后独立验证 |
 | CLI-REC05 | 离线/时钟回拨/授权撤销有界处理 | 无可靠授权时效依据时不接纳新变更；离线不承诺即时撤销，截止及最大窗口明确 |
@@ -172,7 +172,8 @@ Agent wire 的唯一 producer 仍为 rss-mdm；`execution-contract` 是本地执
 
 `actor` 表示承担权限的主体，`initiator` 只记录 human/ai/policy 来源，`delegation` 限制代理范围；另存批准者和目标 OS 用户。
 模型账号、OS用户和企业身份不能按相同用户名或email自动合并。
-批准绑定规范计划摘要、目标与身份、产物/参数、授权版本、期限、次数和预算；任何有效范围改变须重新判定。
+批准用既有完整规范计划摘要绑定目标与身份、产物/参数、授权版本和预算，并绑定记录版本、期限与允许尝试次数；不维护第二套可漂移的字段投影。任何有效范围改变须重新判定。
+每次新attempt重新取得C07裁决；只有ApprovalRequired进入C08可信验证接缝。多个必需profile须全部满足，批准可预授多次使用，每次新尝试对每个不同记录消费一次。总时钟与attempt计数从intent原子接纳开始，等待/重试不重置。
 纯核心只验证可信输入并输出裁决/消耗意图；真实主体验证、批准签发与原子消耗由指定 adapter/host 完成。
 本地authority由OS管理员在后续服务bootstrap中建立：绑定稳定OS主体标识、允许目录与政策，指定有批准权的主体和签发密钥；密钥/政策/撤销版本位于UI/AI不可写的服务存储。
 普通用户host只能转交经认证的请求，不能自行声明actor、提高政策或签出批准。本地authority与企业tenant命名空间分离，不伪造企业身份；更换信任根使原批准失效，须有独立接线/负测证据。S1只有显式测试authority。
@@ -210,7 +211,8 @@ AI请求与手动请求都不能自行取得可执行capability。运行模式�
 | ai-session-contract | 通用会话/工具提案事件 | 必要基础库，不复制执行权威 |
 | service-catalog | 目录项目、参数schema、精确资源引用 | execution-contract必要值类型；不链接Resource/Group |
 | execution-interaction | 等待/回答/取消/过期转换 | 必要基础库，不铸造授权 |
-| execution-capability / admission / approval / lifecycle | 能力、裁决、批准适用性、执行转换 | execution-contract；相互不必链接 |
+| execution-capability / admission / lifecycle | 能力、裁决、执行转换 | execution-contract；相互不必链接 |
+| execution-approval | 消费完整C07裁决、验证批准适用性、输出消费意图 | execution-admission、execution-contract |
 | script-plan / software-plan | 原生脚本启动与安装决策描述 | execution-contract；不spawn |
 | ai-codex / ai-claude / ai-cursor | 具体引擎协议/进程会话适配 | ai-session-contract，无PR/执行内核/UI依赖 |
 | execution-mcp | 工具协议到执行服务port | execution-contract、service-catalog、rmcp |
@@ -286,7 +288,7 @@ PowerShell/Bash是原生载荷；Rust提供启动、预算、权限、恢复，J
 | [C05 #2398](https://dev.azure.com/shengming0923/rss/_workitems/edit/2398) | UI提取与Tauri基础壳：UI04、SEC05 | 无 |
 | [C06 #2399](https://dev.azure.com/shengming0923/rss/_workitems/edit/2399) | 能力：EX02、OS01 | C01 |
 | [C07 #2400](https://dev.azure.com/shengming0923/rss/_workitems/edit/2400) | 授权：ID01–04、CAT04、EX01、SEC01–02 | C01 |
-| [C08 #2401](https://dev.azure.com/shengming0923/rss/_workitems/edit/2401) | 批准：EX03、INT01、REC02/05 | C01 |
+| [C08 #2401](https://dev.azure.com/shengming0923/rss/_workitems/edit/2401) | 批准：EX03、INT01、REC02/05 | C01/C07 |
 | [C09 #2402](https://dev.azure.com/shengming0923/rss/_workitems/edit/2402) | 生命周期：EX06、REC03–04 | C01 |
 | [C10 #2403](https://dev.azure.com/shengming0923/rss/_workitems/edit/2403) | 脚本计划：EX04–05、SEC04 | C01 |
 | [C11 #2404](https://dev.azure.com/shengming0923/rss/_workitems/edit/2404) | 软件计划：SW01–04 | C01 |

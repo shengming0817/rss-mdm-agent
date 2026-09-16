@@ -1,4 +1,4 @@
-# C04/C06/C07 执行核心来源
+# 执行核心来源
 
 对应#2397、#2399、#2400；查阅日期2026-09-13 UTC。能力为按本产品PRD重新设计的Rust实现，不复制prmonitor执行/批准方式，不修改来源仓。原产品来源revision继续以[来源索引](sources.md)为准。
 
@@ -16,3 +16,12 @@
 - ref: Rust Reference [struct patterns](https://doc.rust-lang.org/stable/reference/patterns.html#struct-patterns)：生产入口穷尽解构，字段新增触发编译失败；对真实库做字段突变验证，不新增宏或重复契约。
 - ref: Temporal [mutable_state_impl.go](https://github.com/temporalio/temporal/blob/main/service/history/workflow/mutable_state_impl.go)：借鉴持久结果与命令身份绑定的幂等语义；本交互只保存有界命令与终态，不引入工作流服务或新摘要实现。
 - ref: Kubernetes apimachinery [errors.go](https://github.com/kubernetes/apimachinery/blob/master/pkg/api/errors/errors.go)：借鉴稳定Reason和结构化原因；本地consumer保留低基数code与包名，不转存异常字符串。
+
+## C08/C09 批准与生命周期
+
+对应 #2401/#2402，查阅日期 2026-09-16 UTC。按本产品需求重写，不复制上游源码或签发/执行平台：
+
+- ref: jsonwebtoken src/decoding.rs@4c0ae752e9acc108c8e2c4c8ed8128dc66014210 — [解码、签名与 claims 验证分离](https://github.com/Keats/jsonwebtoken/blob/4c0ae752e9acc108c8e2c4c8ed8128dc66014210/src/decoding.rs#L270)。采纳“解码不等于验证”，C08 只通过可信批量 verifier 获取事实；签发者权限、撤销与一致快照由产品 adapter 验证，不引入 JWT 依赖。
+- ref: tokio tokio/src/process/mod.rs@75fef53d0a8590c2d1dbb63672aa7b7d1ef51155 — [请求终止与等待退出](https://github.com/tokio-rs/tokio/blob/75fef53d0a8590c2d1dbb63672aa7b7d1ef51155/tokio/src/process/mod.rs#L1240-L1251)。采纳取消、退出与结果分离；C09 额外要求整次受控活动停止及独立目标核实，不用进程退出证明回滚或安装成功。
+
+C08 直接消费完整 C07 裁决，以 C01 规范摘要绑定全部计划内容；C09 使用一个有界当前快照及派生建议，不建立通用工作流引擎。批准消费与 intent 的 SQLite 原子性留 C18，生产准入/证据/runner 接线留 C19 与平台任务。
