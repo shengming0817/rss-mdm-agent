@@ -118,12 +118,22 @@ pub enum Reason {
     Verification(VerificationError),
     /// Returned facts belong to another authority or policy.
     Context,
-    /// Current time, plan/record validity or freshness is invalid.
-    Validity,
+    /// Plan validity has not begun.
+    PlanNotYetValid,
+    /// Plan validity has expired.
+    PlanExpired,
+    /// Verification snapshot is no longer fresh.
+    StaleVerification,
+    /// Approval record validity has not begun.
+    ApprovalNotYetValid,
+    /// Approval record validity has expired.
+    ApprovalExpired,
     /// Missing, extra, duplicate or incorrectly bound record/profile.
     Record,
-    /// Record is not currently active.
-    Inactive,
+    /// Record was revoked; a new applicable approval is needed.
+    Revoked,
+    /// Current record status cannot be established.
+    StatusUnknown,
     /// No remaining use, or an exhausted revision counter.
     Exhausted,
 }

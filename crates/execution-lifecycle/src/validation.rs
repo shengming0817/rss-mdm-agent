@@ -66,11 +66,18 @@ pub(crate) fn validate(p: &FrozenPlan, s: &Snapshot, limits: Limits) -> Result<(
                 }
             }
             if let Some(t) = &a.termination {
-                if !matches!(
-                    t.observation,
-                    Observation::Exited { .. } | Observation::NeverDispatched
-                ) || (matches!(t.observation, Observation::NeverDispatched)
-                    && a.dispatch == DispatchState::Dispatched)
+                let final_output = match t.observation {
+                    Observation::Exited {
+                        total_output_bytes, ..
+                    }
+                    | Observation::NeverDispatched { total_output_bytes } => total_output_bytes,
+                    _ => return Err(bad()),
+                };
+                if a.output_bytes != final_output {
+                    return Err(bad());
+                }
+                if matches!(t.observation, Observation::NeverDispatched { .. })
+                    && a.dispatch.was_dispatched()
                 {
                     return Err(bad());
                 }

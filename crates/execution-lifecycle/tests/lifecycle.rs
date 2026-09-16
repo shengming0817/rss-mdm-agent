@@ -1,6 +1,189 @@
 use execution_contract::*;
 use execution_lifecycle::*;
 use std::cell::Cell;
+
+#[test]
+fn restored_retry_preserves_accumulated_output_time_and_saturation() {
+    let s = observe(
+        started(),
+        "never-dispatched",
+        1200,
+        Observation::NeverDispatched {
+            total_output_bytes: 3000,
+        },
+    );
+    let v = verifier(Observation::Uncertain);
+    let s = apply(
+        s,
+        "retry",
+        Command::BeginAttempt {
+            attempt_id: aid("a2"),
+            runner: id("test-runner"),
+            mode: ExecutionMode::Test,
+        },
+        1300,
+        &v,
+    );
+    let s = apply(
+        s,
+        "output",
+        Command::Output {
+            attempt_id: aid("a2"),
+            total_bytes: 500,
+        },
+        1400,
+        &v,
+    );
+    for state in [
+        s.clone(),
+        apply(
+            s,
+            "saturated",
+            Command::Output {
+                attempt_id: aid("a2"),
+                total_bytes: u64::MAX,
+            },
+            1500,
+            &v,
+        ),
+    ] {
+        let bytes = serde_json::to_vec(state.snapshot()).unwrap();
+        let restored = Execution::decode(
+            plan(),
+            &bytes,
+            Limits {
+                max_snapshot_bytes: MIN_SNAPSHOT_BYTES,
+            },
+        )
+        .unwrap();
+        assert_eq!(restored.snapshot(), state.snapshot());
+        assert_eq!(restored.snapshot().attempts, 2);
+        assert_eq!(restored.snapshot().first_attempt_at_unix_ms, Some(1100));
+        assert_eq!(restored.snapshot().prior_output_bytes, 3000);
+        assert_eq!(restored.total_output_bytes(), state.total_output_bytes());
+        for time in [1500, 2100] {
+            assert_eq!(restored.directive(time), state.directive(time));
+        }
+    }
+}
+
+#[test]
+fn effect_must_follow_termination_both_live_and_after_restore() {
+    struct OldEffect;
+    impl ObservationVerifier for OldEffect {
+        fn verify(
+            &self,
+            p: &FrozenPlan,
+            a: &AttemptId,
+            e: &EvidenceRef,
+            _: u64,
+        ) -> Result<ObservationFacts, ObservationError> {
+            verifier(Observation::Effect {
+                assessment: EffectAssessment::Satisfied,
+            })
+            .verify(p, a, e, 1200)
+        }
+    }
+    let s = observe(
+        started(),
+        "exit",
+        1300,
+        Observation::Exited {
+            exit_code: 0,
+            total_output_bytes: 0,
+        },
+    );
+    let command = Command::Observe {
+        attempt_id: aid("a1"),
+        evidence: evidence("effect"),
+    };
+    assert_eq!(
+        s.evaluate(event(&s, "effect", command), 1400, &OldEffect)
+            .unwrap_err(),
+        LifecycleError::Transition
+    );
+    let s = observe(
+        s,
+        "effect",
+        1400,
+        Observation::Effect {
+            assessment: EffectAssessment::Satisfied,
+        },
+    );
+    let mut snapshot = s.snapshot().clone();
+    snapshot
+        .attempt
+        .as_mut()
+        .unwrap()
+        .assessment
+        .as_mut()
+        .unwrap()
+        .observed_at_unix_ms = 1200;
+    assert_eq!(
+        Execution::restore(
+            plan(),
+            snapshot,
+            Limits {
+                max_snapshot_bytes: MIN_SNAPSHOT_BYTES
+            }
+        )
+        .unwrap_err(),
+        LifecycleError::Snapshot
+    );
+}
+
+#[test]
+fn validity_and_cancel_stop_causes_are_distinct_and_verifier_errors_survive() {
+    let s = Execution::open(
+        plan(),
+        900,
+        Limits {
+            max_snapshot_bytes: MIN_SNAPSHOT_BYTES,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        s.directive(900).unwrap(),
+        Directive::BudgetExhausted(LimitReason::NotYetValid)
+    );
+    let s = started();
+    assert_eq!(
+        s.directive(10000).unwrap(),
+        Directive::StopRunner(StopReason::Limit(LimitReason::Expired))
+    );
+    let s = apply(
+        s,
+        "cancel",
+        Command::Cancel,
+        1200,
+        &verifier(Observation::Uncertain),
+    );
+    assert_eq!(
+        s.directive(10000).unwrap(),
+        Directive::StopRunner(StopReason::Cancelled)
+    );
+    struct Unavailable;
+    impl ObservationVerifier for Unavailable {
+        fn verify(
+            &self,
+            _: &FrozenPlan,
+            _: &AttemptId,
+            _: &EvidenceRef,
+            _: u64,
+        ) -> Result<ObservationFacts, ObservationError> {
+            Err(ObservationError::Unavailable)
+        }
+    }
+    let command = Command::Observe {
+        attempt_id: aid("a1"),
+        evidence: evidence("missing"),
+    };
+    assert_eq!(
+        s.evaluate(event(&s, "missing", command), 1300, &Unavailable)
+            .unwrap_err(),
+        LifecycleError::ObservationVerification(ObservationError::Unavailable)
+    );
+}
 fn id(s: &str) -> Id {
     Id::new(s).unwrap()
 }
@@ -100,7 +283,10 @@ fn prepared() -> Execution {
         "prepared",
         Command::Prepare,
         1000,
-        &verifier(Observation::Exited { exit_code: 0 }),
+        &verifier(Observation::Exited {
+            exit_code: 0,
+            total_output_bytes: 0,
+        }),
     )
 }
 fn started() -> Execution {
@@ -113,7 +299,10 @@ fn started() -> Execution {
             mode: ExecutionMode::Test,
         },
         1100,
-        &verifier(Observation::Exited { exit_code: 0 }),
+        &verifier(Observation::Exited {
+            exit_code: 0,
+            total_output_bytes: 0,
+        }),
     )
 }
 fn observe(s: Execution, n: &str, t: u64, o: Observation) -> Execution {
@@ -134,7 +323,10 @@ fn exit_zero_needs_verified_target_and_test_evidence_stays_test() {
         started(),
         "exit",
         1200,
-        Observation::Exited { exit_code: 0 },
+        Observation::Exited {
+            exit_code: 0,
+            total_output_bytes: 0,
+        },
     );
     assert_eq!(s.phase(), Phase::ExecutionEnded);
     assert_eq!(s.directive(1200).unwrap(), Directive::VerifyTarget);
@@ -175,7 +367,15 @@ fn no_effect_while_runner_might_live_does_not_allow_retry() {
         .unwrap_err(),
         LifecycleError::Transition
     );
-    let s = observe(s, "exit", 1200, Observation::Exited { exit_code: 1 });
+    let s = observe(
+        s,
+        "exit",
+        1200,
+        Observation::Exited {
+            exit_code: 1,
+            total_output_bytes: 0,
+        },
+    );
     let s = observe(
         s,
         "none",
@@ -203,11 +403,22 @@ fn no_effect_while_runner_might_live_does_not_allow_retry() {
 fn cancellation_and_crash_do_not_claim_termination_or_rollback() {
     let v = verifier(Observation::Uncertain);
     let s = apply(started(), "cancel", Command::Cancel, 1200, &v);
-    assert_eq!(s.directive(1200).unwrap(), Directive::StopRunner);
+    assert_eq!(
+        s.directive(1200).unwrap(),
+        Directive::StopRunner(StopReason::Cancelled)
+    );
     let s = apply(s, "restart", Command::Recover, 1250, &v);
     assert_eq!(s.phase(), Phase::OutcomeUnknown);
     assert!(s.snapshot().cancel_requested);
-    let s = observe(s, "exit", 1300, Observation::Exited { exit_code: 0 });
+    let s = observe(
+        s,
+        "exit",
+        1300,
+        Observation::Exited {
+            exit_code: 0,
+            total_output_bytes: 0,
+        },
+    );
     assert_eq!(s.directive(1300).unwrap(), Directive::VerifyTarget);
     let s = observe(
         s,
@@ -222,7 +433,10 @@ fn cancellation_and_crash_do_not_claim_termination_or_rollback() {
 #[test]
 fn duplicate_stale_and_wrong_attempt_events_do_not_verify_or_rewrite() {
     let s = started();
-    let v = verifier(Observation::Exited { exit_code: 0 });
+    let v = verifier(Observation::Exited {
+        exit_code: 0,
+        total_output_bytes: 0,
+    });
     let e = event(
         &s,
         "exit",
@@ -270,8 +484,19 @@ fn duplicate_stale_and_wrong_attempt_events_do_not_verify_or_rewrite() {
 #[test]
 fn timeout_blocks_attempts_but_accepts_late_exit_and_verification() {
     let s = started();
-    assert_eq!(s.directive(2100).unwrap(), Directive::StopRunner);
-    let s = observe(s, "late-exit", 2500, Observation::Exited { exit_code: 0 });
+    assert_eq!(
+        s.directive(2100).unwrap(),
+        Directive::StopRunner(StopReason::Limit(LimitReason::Timeout))
+    );
+    let s = observe(
+        s,
+        "late-exit",
+        2500,
+        Observation::Exited {
+            exit_code: 0,
+            total_output_bytes: 0,
+        },
+    );
     let s = observe(
         s,
         "late-verified",
@@ -305,7 +530,10 @@ fn restore_rejects_corruption_and_preserves_consumed_budget() {
     )
     .unwrap();
     assert_eq!(restored.snapshot(), s.snapshot());
-    assert_eq!(restored.directive(2100).unwrap(), Directive::StopRunner);
+    assert_eq!(
+        restored.directive(2100).unwrap(),
+        Directive::StopRunner(StopReason::Limit(LimitReason::Timeout))
+    );
     let mut snap = s.snapshot().clone();
     snap.version = 0;
     assert!(Execution::restore(
@@ -320,7 +548,9 @@ fn restore_rejects_corruption_and_preserves_consumed_budget() {
 
 #[test]
 fn retry_keeps_output_and_attempt_budgets_and_rejects_old_attempts() {
-    let v = verifier(Observation::NeverDispatched);
+    let v = verifier(Observation::NeverDispatched {
+        total_output_bytes: 0,
+    });
     let s = apply(
         started(),
         "output",
@@ -331,7 +561,14 @@ fn retry_keeps_output_and_attempt_budgets_and_rejects_old_attempts() {
         1150,
         &v,
     );
-    let s = observe(s, "not-dispatched", 1200, Observation::NeverDispatched);
+    let s = observe(
+        s,
+        "not-dispatched",
+        1200,
+        Observation::NeverDispatched {
+            total_output_bytes: 3000,
+        },
+    );
     assert_eq!(s.directive(1200).unwrap(), Directive::RetryEligible);
     let s = apply(
         s,
@@ -367,7 +604,10 @@ fn retry_keeps_output_and_attempt_budgets_and_rejects_old_attempts() {
         1400,
         &v,
     );
-    assert_eq!(s.directive(1400).unwrap(), Directive::StopRunner);
+    assert_eq!(
+        s.directive(1400).unwrap(),
+        Directive::StopRunner(StopReason::Limit(LimitReason::Output))
+    );
     let decrease = event(
         &s,
         "decrease",
@@ -388,9 +628,14 @@ fn retry_keeps_output_and_attempt_budgets_and_rejects_old_attempts() {
             evidence: evidence("exit2"),
         },
         1500,
-        &v,
+        &verifier(Observation::NeverDispatched {
+            total_output_bytes: 1096,
+        }),
     );
-    assert_eq!(s.directive(1500).unwrap(), Directive::BudgetExhausted);
+    assert_eq!(
+        s.directive(1500).unwrap(),
+        Directive::BudgetExhausted(LimitReason::Output)
+    );
     assert_eq!(s.total_output_bytes(), 4096);
 }
 
@@ -423,7 +668,9 @@ fn cancellation_before_start_and_test_mode_cannot_be_bypassed() {
 
 #[test]
 fn never_dispatched_requires_reconciliation_and_unknown_effects_never_retry() {
-    let v = verifier(Observation::NeverDispatched);
+    let v = verifier(Observation::NeverDispatched {
+        total_output_bytes: 0,
+    });
     let s = apply(
         started(),
         "dispatch",
@@ -441,7 +688,15 @@ fn never_dispatched_requires_reconciliation_and_unknown_effects_never_retry() {
         s.evaluate(event(&s, "absent", cmd), 1200, &v).unwrap_err(),
         LifecycleError::Transition
     );
-    let s = observe(s, "exit", 1300, Observation::Exited { exit_code: 1 });
+    let s = observe(
+        s,
+        "exit",
+        1300,
+        Observation::Exited {
+            exit_code: 1,
+            total_output_bytes: 0,
+        },
+    );
     for assessment in [EffectAssessment::Unknown, EffectAssessment::NotSatisfied] {
         let state = observe(
             s.clone(),
@@ -470,7 +725,10 @@ fn verifier_binding_clock_and_evidence_failures_are_closed() {
                 attempt_id: a.clone(),
                 evidence: e.clone(),
                 observed_at_unix_ms: 1200,
-                observation: Observation::Exited { exit_code: 0 },
+                observation: Observation::Exited {
+                    exit_code: 0,
+                    total_output_bytes: 0,
+                },
             };
             match self.0 {
                 0 => return Err(ObservationError::Untrusted),
@@ -493,7 +751,11 @@ fn verifier_binding_clock_and_evidence_failures_are_closed() {
         assert_eq!(
             s.evaluate(event(&s, "exit", cmd), 1200, &BadFacts(case))
                 .unwrap_err(),
-            LifecycleError::Observation,
+            if case == 0 {
+                LifecycleError::ObservationVerification(ObservationError::Untrusted)
+            } else {
+                LifecycleError::Observation
+            },
             "case {case}"
         );
     }
@@ -508,7 +770,10 @@ fn verifier_binding_clock_and_evidence_failures_are_closed() {
             s.evaluate(
                 event(&s, "exit", cmd),
                 1200,
-                &verifier(Observation::Exited { exit_code: 0 })
+                &verifier(Observation::Exited {
+                    exit_code: 0,
+                    total_output_bytes: 0
+                })
             )
             .unwrap_err(),
             LifecycleError::Observation
@@ -526,7 +791,9 @@ fn verifier_binding_clock_and_evidence_failures_are_closed() {
 
 #[test]
 fn max_attempts_and_saturating_output_never_replenish_budget() {
-    let v = verifier(Observation::NeverDispatched);
+    let v = verifier(Observation::NeverDispatched {
+        total_output_bytes: 0,
+    });
     let mut s = started();
     for n in 1..=3 {
         s = apply(
@@ -553,20 +820,26 @@ fn max_attempts_and_saturating_output_never_replenish_budget() {
             );
         }
     }
-    assert_eq!(s.directive(1140).unwrap(), Directive::BudgetExhausted);
+    assert_eq!(
+        s.directive(1140).unwrap(),
+        Directive::BudgetExhausted(LimitReason::Attempts)
+    );
     assert_eq!(s.snapshot().attempts, 3);
     let s = apply(
-        s,
+        started(),
         "huge-output",
         Command::Output {
-            attempt_id: aid("a3"),
+            attempt_id: aid("a1"),
             total_bytes: u64::MAX,
         },
-        1150,
+        1200,
         &v,
     );
     assert_eq!(s.total_output_bytes(), u64::MAX);
-    assert_eq!(s.directive(1150).unwrap(), Directive::BudgetExhausted);
+    assert_eq!(
+        s.directive(1200).unwrap(),
+        Directive::StopRunner(StopReason::Limit(LimitReason::Output))
+    );
 }
 
 #[test]
@@ -608,6 +881,7 @@ fn strict_snapshot_and_minimum_capacity_preserve_terminal_evidence() {
     let long = "a".repeat(128);
     let v = verifier(Observation::Exited {
         exit_code: i32::MIN,
+        total_output_bytes: 0,
     });
     let s = apply(
         prepared(),
@@ -652,4 +926,141 @@ fn strict_snapshot_and_minimum_capacity_preserve_terminal_evidence() {
     );
     assert_eq!(s.directive(1300).unwrap(), Directive::Done);
     assert!(serde_json::to_vec(s.snapshot()).unwrap().len() < MIN_SNAPSHOT_BYTES);
+}
+
+#[test]
+fn final_output_is_settled_with_termination_before_retry() {
+    let v = verifier(Observation::Uncertain);
+    let s = apply(
+        started(),
+        "partial",
+        Command::Output {
+            attempt_id: aid("a1"),
+            total_bytes: 100,
+        },
+        1150,
+        &v,
+    );
+    let s = observe(
+        s,
+        "exit",
+        1200,
+        Observation::Exited {
+            exit_code: 1,
+            total_output_bytes: 4000,
+        },
+    );
+    assert_eq!(s.total_output_bytes(), 4000);
+    let s = apply(
+        s,
+        "late-partial",
+        Command::Output {
+            attempt_id: aid("a1"),
+            total_bytes: 3000,
+        },
+        1250,
+        &v,
+    );
+    assert_eq!(s.total_output_bytes(), 4000);
+    let s = observe(
+        s,
+        "no-effect",
+        1300,
+        Observation::Effect {
+            assessment: EffectAssessment::NoEffect,
+        },
+    );
+    let s = apply(
+        s,
+        "retry",
+        Command::BeginAttempt {
+            attempt_id: aid("a2"),
+            runner: id("test-runner"),
+            mode: ExecutionMode::Test,
+        },
+        1400,
+        &v,
+    );
+    assert_eq!(s.total_output_bytes(), 4000);
+    let old = event(
+        &s,
+        "late-final",
+        Command::Output {
+            attempt_id: aid("a1"),
+            total_bytes: 4000,
+        },
+    );
+    assert_eq!(
+        s.evaluate(old, 1400, &v).unwrap_err(),
+        LifecycleError::Attempt
+    );
+    let s = apply(
+        s,
+        "next-output",
+        Command::Output {
+            attempt_id: aid("a2"),
+            total_bytes: 96,
+        },
+        1450,
+        &v,
+    );
+    assert_eq!(
+        s.directive(1450).unwrap(),
+        Directive::StopRunner(StopReason::Limit(LimitReason::Output))
+    );
+    let mut corrupt = s.snapshot().clone();
+    corrupt.attempt.as_mut().unwrap().termination = Some(RecordedObservation {
+        evidence: evidence("final"),
+        observed_at_unix_ms: 1450,
+        observation: Observation::Exited {
+            exit_code: 0,
+            total_output_bytes: 95,
+        },
+    });
+    assert!(Execution::restore(
+        plan(),
+        corrupt,
+        Limits {
+            max_snapshot_bytes: MIN_SNAPSHOT_BYTES
+        }
+    )
+    .is_err());
+}
+
+#[test]
+fn recovery_cannot_erase_dispatch_history() {
+    let v = verifier(Observation::Uncertain);
+    let s = apply(
+        started(),
+        "dispatch",
+        Command::Dispatched {
+            attempt_id: aid("a1"),
+        },
+        1150,
+        &v,
+    );
+    for uncertain in [
+        Command::Recover,
+        Command::Observe {
+            attempt_id: aid("a1"),
+            evidence: evidence("uncertain"),
+        },
+    ] {
+        let s = apply(s.clone(), "uncertain", uncertain, 1200, &v);
+        let cmd = Command::Observe {
+            attempt_id: aid("a1"),
+            evidence: evidence("absent"),
+        };
+        assert_eq!(
+            s.evaluate(
+                event(&s, "absent", cmd),
+                1300,
+                &verifier(Observation::NeverDispatched {
+                    total_output_bytes: 0
+                })
+            )
+            .unwrap_err(),
+            LifecycleError::Transition
+        );
+    }
 }

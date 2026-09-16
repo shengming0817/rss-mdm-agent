@@ -17,6 +17,8 @@ ProfileApproval 只是 profile 到批准记录的精确版本引用。可信 App
 
 计划 ID 与 C01 完整规范摘要绑定 actor、initiator、delegation、tenant/device/target、run-as、产物、参数、约束、预算与政策；不再复制这些字段形成第二套批准范围。旧摘要、错误命名空间、过期/撤销/未知状态、漏项与混合记录版本均拒绝。测试 verifier 仅存在于测试/示例，不交付生产签发或加密 adapter。
 
+拒绝原因区分 Revoked、StatusUnknown、计划/批准尚未生效或过期、StaleVerification 和可信端口各失败类别，供宿主选择重新批准、重新验证或诊断；不回显记录正文和外部异常。
+
 ## 消费与后续接线
 
 每次新 attempt 对每个不同批准记录消费一次；同一记录覆盖多个必需 profile 只扣一次。可预授多次使用，所有 profile 必须同时满足。ConsumptionIntent 为私有构造、不可反序列化的候选 CAS，绑定计划、attempt、记录版本、期望已用次数/消费 revision、可信验证 revision 和有效截止时间。重复计算没有写入副作用。

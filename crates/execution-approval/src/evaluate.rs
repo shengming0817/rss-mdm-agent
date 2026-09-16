@@ -1,13 +1,10 @@
 use crate::*;
 use execution_admission::{AdmissionDecision, DecisionOutcome};
-use execution_contract::{AttemptId, FrozenPlan, ValidityWindow, VersionedRef};
+use execution_contract::{AttemptId, FrozenPlan, VersionedRef};
 use std::collections::{BTreeMap, BTreeSet};
 
 fn key(r: &VersionedRef) -> (&str, &str) {
     (r.id.as_str(), r.revision.as_str())
-}
-fn current(w: ValidityWindow, now: u64) -> bool {
-    w.not_before_unix_ms <= now && now < w.expires_at_unix_ms
 }
 /// Sole applicability entry; performs no writes. Allowed/Denied never call the verifier.
 /// Profiles come exclusively from the bound C07 decision, never a caller's subset.
@@ -73,10 +70,14 @@ pub fn evaluate(
     if facts.authority != plan.spec().request.authority || facts.policy != plan.spec().policy {
         return reject(Reason::Context);
     }
-    if !current(plan.spec().validity, facts.now_unix_ms)
-        || facts.now_unix_ms >= facts.fresh_until_unix_ms
-    {
-        return reject(Reason::Validity);
+    if facts.now_unix_ms < plan.spec().validity.not_before_unix_ms {
+        return reject(Reason::PlanNotYetValid);
+    }
+    if facts.now_unix_ms >= plan.spec().validity.expires_at_unix_ms {
+        return reject(Reason::PlanExpired);
+    }
+    if facts.now_unix_ms >= facts.fresh_until_unix_ms {
+        return reject(Reason::StaleVerification);
     }
     if facts.records.len() != requested.len() {
         return reject(Reason::Record);
@@ -102,11 +103,16 @@ pub fn evaluate(
         {
             return reject(Reason::Record);
         }
-        if record.status != ApprovalStatus::Active {
-            return reject(Reason::Inactive);
+        match record.status {
+            ApprovalStatus::Revoked => return reject(Reason::Revoked),
+            ApprovalStatus::Unknown => return reject(Reason::StatusUnknown),
+            ApprovalStatus::Active => {}
         }
-        if !current(record.validity, facts.now_unix_ms) {
-            return reject(Reason::Validity);
+        if facts.now_unix_ms < record.validity.not_before_unix_ms {
+            return reject(Reason::ApprovalNotYetValid);
+        }
+        if facts.now_unix_ms >= record.validity.expires_at_unix_ms {
+            return reject(Reason::ApprovalExpired);
         }
         if record.max_uses == 0
             || record.used >= record.max_uses

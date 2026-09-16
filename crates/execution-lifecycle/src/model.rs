@@ -23,14 +23,27 @@ pub enum Preparation {
 }
 /// Dispatch progress, never proof of process termination.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub enum DispatchState {
     /// Intent accepted; dispatch/spawn not confirmed.
     Starting,
     /// Host submitted the attempt; not proof of any target effect.
     Dispatched,
     /// Restart or uncertain runner outcome requires reconciliation.
-    Unknown,
+    Unknown {
+        /// Sticky dispatch history; uncertainty never erases a confirmed dispatch.
+        dispatched: bool,
+    },
+}
+impl DispatchState {
+    pub(crate) fn was_dispatched(self) -> bool {
+        matches!(self, Self::Dispatched | Self::Unknown { dispatched: true })
+    }
+    pub(crate) fn uncertain(self) -> Self {
+        Self::Unknown {
+            dispatched: self.was_dispatched(),
+        }
+    }
 }
 /// Verified assessment of the whole controlled attempt, not text from tool output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -58,9 +71,14 @@ pub enum Observation {
     Exited {
         /// Observed process/test outcome, not a convergence result.
         exit_code: i32,
+        /// Final byte count for this attempt, including buffered and discarded output.
+        total_output_bytes: u64,
     },
     /// Trusted dispatch reconciliation proves this attempt was never dispatched.
-    NeverDispatched,
+    NeverDispatched {
+        /// Final attempt diagnostic output, including any work before failed dispatch.
+        total_output_bytes: u64,
+    },
     /// Independent verification after termination.
     Effect {
         /// Assessment with an explicit unknown/no-effect distinction.
@@ -94,6 +112,7 @@ pub struct ObservationFacts {
 /// Exited must establish quiescence of the entire controlled attempt, including delegated work;
 /// a shell's exit while child work continues must return Uncertain instead.
 /// NeverDispatched requires authoritative dispatch evidence, not absence of a visible process.
+/// Both terminal observations must settle the final output count, including undelivered bytes.
 /// This port does not protect against a malicious in-process host.
 pub trait ObservationVerifier {
     /// Resolve and verify one exact reference at the supplied reliable receipt time.
@@ -144,7 +163,7 @@ pub struct AttemptSnapshot {
     pub termination: Option<RecordedObservation>,
     /// Independent post-termination target/effect assessment.
     pub assessment: Option<RecordedObservation>,
-    /// Cumulative output observed for this attempt, including discarded bytes.
+    /// Cumulative output including discarded bytes; final and immutable after termination.
     pub output_bytes: u64,
 }
 /// Host commands. They never perform I/O or constitute dispatch permissions.
@@ -186,6 +205,8 @@ pub enum Command {
         evidence: EvidenceRef,
     },
     /// Account monotonic runner output from the trusted host, never UI/AI.
+    /// After termination, late partial counts are acknowledged without reducing the
+    /// settled total; counts above the authenticated final total are rejected.
     Output {
         /// Current attempt only.
         attempt_id: AttemptId,
@@ -267,6 +288,28 @@ pub enum Phase {
     /// Cancelled before any attempt was admitted.
     Cancelled,
 }
+/// Explicit reason a validity or cumulative budget bound prevents work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LimitReason {
+    /// Plan validity has not begun.
+    NotYetValid,
+    /// Plan validity has expired.
+    Expired,
+    /// Total time since first admitted intent is exhausted.
+    Timeout,
+    /// Total output, including discarded bytes, is exhausted.
+    Output,
+    /// Maximum admitted attempts have been used.
+    Attempts,
+}
+/// Cause to retain in the host's stop audit, independently of termination evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopReason {
+    /// A cancellation request was accepted.
+    Cancelled,
+    /// A plan bound prevents further execution.
+    Limit(LimitReason),
+}
 /// Derived next action, never a permit or an automatically invoked operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Directive {
@@ -281,13 +324,13 @@ pub enum Directive {
     /// Query trusted runner/dispatch state before any new action.
     Reconcile,
     /// Request bounded runner termination; no termination or rollback is implied.
-    StopRunner,
+    StopRunner(StopReason),
     /// Independently verify effects after confirmed quiescence.
     VerifyTarget,
     /// No automatic continuation is justified.
     ManualReview,
     /// No new attempt is allowed by time/output/attempt bounds.
-    BudgetExhausted,
+    BudgetExhausted(LimitReason),
     /// No further execution required; inspect the recorded assessment/mode.
     Done,
 }
@@ -328,9 +371,12 @@ pub enum LifecycleError {
     /// Transition is not justified by current facts.
     #[error("invalid lifecycle transition")]
     Transition,
-    /// Evidence authentication, binding, category or freshness failed.
+    /// Evidence binding, category or freshness failed after port verification.
     #[error("invalid lifecycle observation")]
     Observation,
+    /// Trusted port failure, retaining classification without provider text.
+    #[error("lifecycle observation verification failed: {0:?}")]
+    ObservationVerification(ObservationError),
     /// Host tried to reduce cumulative accounting.
     #[error("invalid lifecycle accounting")]
     Accounting,

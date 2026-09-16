@@ -378,6 +378,36 @@ fn separate_records_are_all_or_nothing_and_namespaces_must_match() {
     );
 }
 
+#[test]
+fn rejection_reasons_distinguish_renewal_from_temporary_unavailability() {
+    let p = plan();
+    let d = required(&p);
+    for (case, expected) in [
+        (0, Reason::Revoked),
+        (1, Reason::StatusUnknown),
+        (2, Reason::PlanNotYetValid),
+        (3, Reason::PlanExpired),
+        (4, Reason::StaleVerification),
+        (5, Reason::ApprovalNotYetValid),
+        (6, Reason::ApprovalExpired),
+    ] {
+        let mut v = verifier(&p);
+        match case {
+            0 => v.facts.records[0].status = ApprovalStatus::Revoked,
+            1 => v.facts.records[0].status = ApprovalStatus::Unknown,
+            2 => v.facts.now_unix_ms = 999,
+            3 => v.facts.now_unix_ms = 2000,
+            4 => v.facts.fresh_until_unix_ms = 1500,
+            5 => v.facts.records[0].validity.not_before_unix_ms = 1600,
+            _ => v.facts.records[0].validity.expires_at_unix_ms = 1500,
+        }
+        assert_eq!(
+            check(&p, &d, &bindings(), &v).outcome(),
+            &ApprovalOutcome::Rejected(expected)
+        );
+    }
+}
+
 // A deterministic transaction model, not SQLite/concurrency integration evidence.
 #[test]
 fn consumption_and_attempt_intent_commit_together_and_replay_does_not_charge() {
@@ -411,14 +441,21 @@ fn consumption_and_attempt_intent_commit_together_and_replay_does_not_charge() {
             let Some(attempt) = next.attempt.as_ref() else {
                 return false;
             };
-            if decision.outcome() != &ApprovalOutcome::Satisfied
-                || self.state.snapshot().revision != transition.expected_revision
+            if self.state.snapshot().revision != transition.expected_revision
                 || decision.plan_id() != &next.plan_id
                 || decision.plan_digest() != &next.plan_digest
                 || decision.attempt_id() != &attempt.id
-                || decision.consumptions().len() != 1
+                || fail
             {
                 return false;
+            }
+            match decision.outcome() {
+                ApprovalOutcome::NotRequired if decision.consumptions().is_empty() => {
+                    self.state = transition.next.clone();
+                    return true;
+                }
+                ApprovalOutcome::Satisfied if decision.consumptions().len() == 1 => {}
+                _ => return false,
             }
             let i = &decision.consumptions()[0];
             if i.expected_uses() != self.used
@@ -472,6 +509,29 @@ fn consumption_and_attempt_intent_commit_together_and_replay_does_not_charge() {
         .unwrap()
         .transition
         .unwrap();
+    let mut direct = Store {
+        state: s.clone(),
+        used: 0,
+        revision: 0,
+    };
+    let allowed = check(&p, &decision(&p, vec![RuleEffect::Allow]), &[], &v);
+    let denied = check(&p, &decision(&p, vec![RuleEffect::Deny]), &bindings(), &v);
+    assert!(!direct.commit(&denied, &candidate, 1500, false));
+    assert!(!direct.commit(&allowed, &candidate, 1500, true));
+    assert_eq!(direct.state.snapshot().first_attempt_at_unix_ms, None);
+    assert!(direct.commit(&allowed, &candidate, 1500, false));
+    assert_eq!(direct.used, 0);
+    assert_eq!(direct.state.snapshot().attempts, 1);
+    assert_eq!(
+        direct
+            .state
+            .evaluate(event.clone(), 1600, &NoEvidence)
+            .unwrap()
+            .outcome,
+        lifecycle::EventOutcome::Duplicate
+    );
+    assert!(!direct.commit(&allowed, &candidate, 1600, false));
+    assert_eq!(direct.used, 0);
     let mut store = Store {
         state: s,
         used: 0,

@@ -84,14 +84,23 @@ impl Execution {
             .prior_output_bytes
             .saturating_add(self.snapshot.attempt.as_ref().map_or(0, |a| a.output_bytes))
     }
-    fn exhausted(&self, now: u64) -> bool {
+    fn limit_reason(&self, now: u64) -> Option<LimitReason> {
         let p = self.plan.spec();
         let s = &self.snapshot;
-        now < p.validity.not_before_unix_ms
-            || now >= p.validity.expires_at_unix_ms
-            || self.total_output_bytes() >= p.budget.total_output_bytes
-            || s.first_attempt_at_unix_ms
-                .is_some_and(|start| now.saturating_sub(start) >= p.budget.total_timeout_ms)
+        if now < p.validity.not_before_unix_ms {
+            Some(LimitReason::NotYetValid)
+        } else if now >= p.validity.expires_at_unix_ms {
+            Some(LimitReason::Expired)
+        } else if self.total_output_bytes() >= p.budget.total_output_bytes {
+            Some(LimitReason::Output)
+        } else if s
+            .first_attempt_at_unix_ms
+            .is_some_and(|start| now.saturating_sub(start) >= p.budget.total_timeout_ms)
+        {
+            Some(LimitReason::Timeout)
+        } else {
+            None
+        }
     }
     /// Derive phase from facts without storing parallel status fields.
     pub fn phase(&self) -> Phase {
@@ -111,7 +120,7 @@ impl Execution {
             return Phase::Verified;
         }
         if let Some(t) = &a.termination {
-            return if matches!(t.observation, Observation::NeverDispatched) {
+            return if matches!(t.observation, Observation::NeverDispatched { .. }) {
                 Phase::FailedBeforeDispatch
             } else {
                 Phase::ExecutionEnded
@@ -120,11 +129,13 @@ impl Execution {
         match a.dispatch {
             DispatchState::Starting => Phase::Starting,
             DispatchState::Dispatched => Phase::Running,
-            DispatchState::Unknown => Phase::OutcomeUnknown,
+            DispatchState::Unknown { .. } => Phase::OutcomeUnknown,
         }
     }
     /// Derive bounded recovery/continuation advice at reliable host time.
     /// Expired budgets stop new work but never suppress observation recording.
+    /// Cause priority: cancellation, validity, output, timeout, then attempt count.
+    /// C18/C19 retain the reason and decision time in their audit; this is not termination.
     pub fn directive(&self, now: u64) -> Result<Directive, LifecycleError> {
         if now < self.snapshot.updated_at_unix_ms {
             return Err(LifecycleError::Clock);
@@ -133,8 +144,8 @@ impl Execution {
         let Some(a) = &s.attempt else {
             return Ok(if s.cancel_requested {
                 Directive::Done
-            } else if self.exhausted(now) {
-                Directive::BudgetExhausted
+            } else if let Some(reason) = self.limit_reason(now) {
+                Directive::BudgetExhausted(reason)
             } else {
                 match s.preparation {
                     Preparation::Received => Directive::Prepare,
@@ -144,8 +155,10 @@ impl Execution {
             });
         };
         if a.termination.is_none() {
-            return Ok(if s.cancel_requested || self.exhausted(now) {
-                Directive::StopRunner
+            return Ok(if s.cancel_requested {
+                Directive::StopRunner(StopReason::Cancelled)
+            } else if let Some(reason) = self.limit_reason(now) {
+                Directive::StopRunner(StopReason::Limit(reason))
             } else if a.dispatch == DispatchState::Dispatched {
                 Directive::Wait
             } else {
@@ -160,14 +173,16 @@ impl Execution {
             || (assessment.is_none()
                 && a.termination
                     .as_ref()
-                    .is_some_and(|t| matches!(t.observation, Observation::NeverDispatched)));
+                    .is_some_and(|t| matches!(t.observation, Observation::NeverDispatched { .. })));
         Ok(
             if assessment == Some(EffectAssessment::Satisfied) || (s.cancel_requested && no_effect)
             {
                 Directive::Done
             } else if no_effect {
-                if self.exhausted(now) || s.attempts >= self.plan.spec().budget.max_attempts {
-                    Directive::BudgetExhausted
+                if let Some(reason) = self.limit_reason(now) {
+                    Directive::BudgetExhausted(reason)
+                } else if s.attempts >= self.plan.spec().budget.max_attempts {
+                    Directive::BudgetExhausted(LimitReason::Attempts)
                 } else {
                     Directive::RetryEligible
                 }
@@ -265,7 +280,7 @@ impl Execution {
             Command::Recover => {
                 if let Some(a) = &mut next.attempt {
                     if a.termination.is_none() {
-                        a.dispatch = DispatchState::Unknown;
+                        a.dispatch = a.dispatch.uncertain();
                     }
                 }
             }
@@ -274,10 +289,14 @@ impl Execution {
                 total_bytes,
             } => {
                 let a = current_attempt(&mut next, attempt_id)?;
-                if *total_bytes < a.output_bytes {
+                if (a.termination.is_none() && *total_bytes < a.output_bytes)
+                    || (a.termination.is_some() && *total_bytes > a.output_bytes)
+                {
                     return Err(LifecycleError::Accounting);
                 }
-                a.output_bytes = *total_bytes;
+                if a.termination.is_none() {
+                    a.output_bytes = *total_bytes;
+                }
             }
             Command::Observe {
                 attempt_id,
@@ -286,7 +305,7 @@ impl Execution {
                 let a = current_attempt(&mut next, attempt_id)?;
                 let facts = verifier
                     .verify(&self.plan, attempt_id, evidence, now)
-                    .map_err(|_| LifecycleError::Observation)?;
+                    .map_err(LifecycleError::ObservationVerification)?;
                 if facts.plan_id != s.plan_id
                     || facts.plan_digest != s.plan_digest
                     || &facts.attempt_id != attempt_id
@@ -304,13 +323,20 @@ impl Execution {
                     observation: facts.observation,
                 };
                 match &recorded.observation {
-                    Observation::Exited { .. } | Observation::NeverDispatched => {
+                    Observation::Exited {
+                        total_output_bytes, ..
+                    }
+                    | Observation::NeverDispatched { total_output_bytes } => {
                         if a.termination.is_some()
-                            || (matches!(recorded.observation, Observation::NeverDispatched)
-                                && a.dispatch == DispatchState::Dispatched)
+                            || (matches!(recorded.observation, Observation::NeverDispatched { .. })
+                                && a.dispatch.was_dispatched())
                         {
                             return Err(LifecycleError::Transition);
                         }
+                        if *total_output_bytes < a.output_bytes {
+                            return Err(LifecycleError::Accounting);
+                        }
+                        a.output_bytes = *total_output_bytes;
                         a.termination = Some(recorded);
                     }
                     Observation::Effect { assessment: _ } => {
@@ -335,7 +361,7 @@ impl Execution {
                         if a.termination.is_some() {
                             return Err(LifecycleError::Transition);
                         }
-                        a.dispatch = DispatchState::Unknown;
+                        a.dispatch = a.dispatch.uncertain();
                     }
                 }
             }

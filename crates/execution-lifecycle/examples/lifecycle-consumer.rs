@@ -89,7 +89,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             evidence: evidence("test-exit"),
         },
         time,
-        Observation::Exited { exit_code: 0 },
+        Observation::Exited {
+            exit_code: 0,
+            total_output_bytes: 0,
+        },
     );
     assert_eq!(s.directive(time)?, Directive::VerifyTarget);
     let encoded = serde_json::to_vec(s.snapshot())?;
