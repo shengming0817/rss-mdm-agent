@@ -109,8 +109,8 @@ pub enum ScriptPlanError {
     /// A referenced secret cannot be delivered as an argument or literal stdin.
     #[error("invalid controlled input channel")]
     SecretChannel,
-    /// A shell startup-control variable would add hidden code/options.
-    #[error("shell startup environment is not permitted")]
+    /// A loader/runtime startup-control variable would add hidden code/options.
+    #[error("interpreter startup environment is not permitted")]
     StartupEnvironment,
     /// Independent compiler workload bound.
     #[error("script planning bound exceeded")]
