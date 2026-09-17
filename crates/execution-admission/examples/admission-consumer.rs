@@ -8,7 +8,11 @@ struct TestAuthority {
     effect: RuleEffect,
 }
 impl AuthorityVerifier for TestAuthority {
-    fn verify(&self, plan: &FrozenPlan) -> Result<AuthorityFacts, VerificationError> {
+    fn verify(
+        &self,
+        plan: &FrozenPlan,
+        _: &AttemptId,
+    ) -> Result<AuthorityFacts, VerificationError> {
         if !matches!(plan.spec().request.authority, Authority::Test { .. })
             || !matches!(
                 self.template.spec().request.authority,
@@ -40,6 +44,8 @@ impl AuthorityVerifier for TestAuthority {
                 effect: self.effect.clone(),
             }],
             now_unix_ms: s.validity.not_before_unix_ms,
+            verification_revision: s.policy.clone(),
+            fresh_until_unix_ms: s.validity.expires_at_unix_ms,
         })
     }
 }
@@ -62,7 +68,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let bounds = AdmissionLimits { max_rules: 16 };
     assert_eq!(
-        decide(&plan, &authority, bounds).outcome(),
+        decide(&plan, &AttemptId::new("attempt-1")?, &authority, bounds).outcome(),
         &DecisionOutcome::Allowed
     );
     authority.effect = RuleEffect::ApprovalRequired {
@@ -72,12 +78,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     };
     assert!(matches!(
-        decide(&plan, &authority, bounds).outcome(),
+        decide(&plan, &AttemptId::new("attempt-1")?, &authority, bounds).outcome(),
         DecisionOutcome::ApprovalRequired { .. }
     ));
     authority.effect = RuleEffect::Deny;
     assert_eq!(
-        decide(&plan, &authority, bounds).outcome(),
+        decide(&plan, &AttemptId::new("attempt-1")?, &authority, bounds).outcome(),
         &DecisionOutcome::Denied
     );
     authority.effect = RuleEffect::Allow;
@@ -85,7 +91,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     changed.launch.argv.push("--unapproved".into());
     let changed = FrozenPlan::freeze(changed, &limits)?;
     assert_eq!(
-        decide(&changed, &authority, bounds).outcome(),
+        decide(&changed, &AttemptId::new("attempt-1")?, &authority, bounds).outcome(),
         &DecisionOutcome::Denied
     );
     println!("execution-admission: explicit test authority only; no real identity, approval signing/consumption or execution permit");

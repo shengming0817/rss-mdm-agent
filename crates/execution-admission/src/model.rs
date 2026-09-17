@@ -1,5 +1,5 @@
 use execution_contract::{
-    ActorId, Authority, ExecutionBudget, FrozenPlan, Id, ValidityWindow, VersionedRef,
+    ActorId, AttemptId, Authority, ExecutionBudget, FrozenPlan, Id, ValidityWindow, VersionedRef,
 };
 
 /// Authentication and actor-wide limits delivered by the trusted adapter, not an input DTO.
@@ -62,6 +62,11 @@ pub struct AuthorityFacts {
     pub rules: Vec<Rule>,
     /// Reliable host UTC Unix milliseconds after freshness/rollback checks by the verifier.
     pub now_unix_ms: u64,
+    /// Coherent subject/delegation/policy/revocation snapshot identity.
+    /// Any relevant authority change must advance this revision.
+    pub verification_revision: VersionedRef,
+    /// Exclusive freshness deadline, including offline authorization limits.
+    pub fresh_until_unix_ms: u64,
 }
 /// The only host trust seam. Implementations are part of the product's trusted computing base.
 ///
@@ -72,8 +77,13 @@ pub struct AuthorityFacts {
 /// Implementations must return an error for missing facts. This library supplies no production
 /// identity adapter and cannot protect against an intentionally malicious in-process host.
 pub trait AuthorityVerifier {
-    /// Obtain verified facts for this exact plan. Static failures are always mapped to Denied.
-    fn verify(&self, plan: &FrozenPlan) -> Result<AuthorityFacts, VerificationError>;
+    /// Obtain current facts for this exact plan and new attempt; do not reuse a prior decision.
+    /// Static failures are always mapped to Denied.
+    fn verify(
+        &self,
+        plan: &FrozenPlan,
+        attempt: &AttemptId,
+    ) -> Result<AuthorityFacts, VerificationError>;
 }
 /// Unavailable/invalid trusted input, without provider text or sensitive values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]

@@ -811,6 +811,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "execution-approval"
+version = "0.1.0"
+dependencies = [
+ "execution-admission",
+ "execution-contract",
+ "execution-lifecycle",
+ "serde_json",
+]
+
+[[package]]
 name = "execution-capability"
 version = "0.1.0"
 dependencies = [
@@ -837,6 +847,16 @@ dependencies = [
 name = "execution-interaction"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "execution-lifecycle"
+version = "0.1.0"
+dependencies = [
+ "execution-contract",
  "serde",
  "serde_json",
  "thiserror 2.0.20",

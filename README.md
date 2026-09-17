@@ -10,6 +10,7 @@
 - [文档导航](docs/README.md)：文档唯一入口。
 - [来源与对标](docs/reference/sources.md)：固定来源和选择边界。
 - [自助目录核心](crates/service-catalog/README.md)：人/AI同源参数、精确选择与非授权状态说明。
+- [批准核心](crates/execution-approval/README.md)与[生命周期核心](crates/execution-lifecycle/README.md)：精确批准消费意图、取消/退出/核实与有界恢复。
 - [契约开发与独立消费](docs/guides/contracts-development.md)：本地执行摘要与 AI 工具提案。
 - [客户端 EPIC #2392](https://dev.azure.com/shengming0923/rss/_workitems/edit/2392)：任务状态和最新 `pm:epic-wave` 实施顺序真源。
 

@@ -21,6 +21,8 @@ const names = [
   "execution-interaction",
   "execution-capability",
   "execution-admission",
+  "execution-approval",
+  "execution-lifecycle",
   "service-catalog",
 ];
 function fixture() {
@@ -245,7 +247,7 @@ test("only clean unchanged source can produce a deliverable consumer PASS", () =
   }
 });
 
-test("consumer inventory covers the six independent crates", () => {
+test("consumer inventory covers the eight independent crates", () => {
   assert.deepEqual(
     rustConsumers.map((spec) => spec.name),
     names,

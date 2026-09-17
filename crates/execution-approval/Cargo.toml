@@ -1,0 +1,18 @@
+[package]
+name = "execution-approval"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+execution-contract = { path = "../execution-contract" }
+execution-admission = { path = "../execution-admission" }
+
+[dev-dependencies]
+serde_json.workspace = true
+execution-lifecycle = { path = "../execution-lifecycle" }
+
+[lints.clippy]
+cognitive_complexity = "warn"
