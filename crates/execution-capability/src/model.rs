@@ -1,5 +1,6 @@
 use execution_contract::{
-    Authority, DeviceId, Digest, ExactArtifactRef, OsAccountRef, Platform, RunAs, VersionedRef,
+    Authority, DeviceId, Digest, InterpreterRef, OsAccountRef, Platform, RunAs, TextEncoding,
+    VersionedRef,
 };
 
 /// Availability of a specifically observed capability.
@@ -42,6 +43,14 @@ pub enum Isolation {
     /// Can enforce the required sandbox boundary.
     Sandbox,
 }
+/// Explicit runner stream support; it does not prove actual enforcement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LaunchIoCapability {
+    /// Can resolve authorized input references and enforce their byte limit and encoding.
+    ControlledStdin(TextEncoding),
+    /// Can capture raw bytes and strictly decode this encoding while retaining invalid-byte evidence.
+    CapturedText(TextEncoding),
+}
 /// Explicit snapshot facts for exactly one authority-scoped device. No system probing is performed.
 #[derive(Debug, Clone)]
 pub struct EnvironmentSnapshot {
@@ -54,7 +63,9 @@ pub struct EnvironmentSnapshot {
     /// Observed target platform; None means not established.
     pub platform: Option<Platform>,
     /// Interpreter artifact identities, including exact revision and content digest.
-    pub interpreters: Inventory<ExactArtifactRef>,
+    pub interpreters: Inventory<InterpreterRef>,
+    /// Stream mechanisms/encodings established by the snapshot provider.
+    pub launch_io: Inventory<LaunchIoCapability>,
     /// Available target execution identities; independent of the originating login.
     pub run_as: Inventory<RunAs>,
     /// Active or currently blocked target user sessions, keyed by exact account.
@@ -71,6 +82,14 @@ pub enum Dimension {
     Platform,
     /// Exact interpreter identity.
     Interpreter,
+    /// Required controlled stdin encoding and delivery.
+    StandardInput,
+    /// Required stdout capture/decoding.
+    StandardOutput,
+    /// Required stderr capture/decoding.
+    StandardError,
+    /// Whole I/O inventory, for structural errors.
+    LaunchIo,
     /// Requested execution identity.
     RunAs,
     /// Required active target user session.
@@ -123,7 +142,7 @@ pub struct MatchReport {
 /// Explicit workload limit for inventory validation and matching.
 #[derive(Debug, Clone, Copy)]
 pub struct MatchLimits {
-    /// Maximum total entries across all four inventories; must be nonzero.
+    /// Maximum total entries across all inventories; must be nonzero.
     pub max_entries: usize,
 }
 /// Closed errors; no snapshot values or provider diagnostics are exposed.

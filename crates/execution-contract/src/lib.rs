@@ -7,6 +7,7 @@
 mod audit;
 mod environment;
 mod error;
+mod launch;
 mod model;
 mod network;
 mod plan;
@@ -15,6 +16,7 @@ mod value;
 pub use audit::*;
 pub use environment::EnvironmentKey;
 pub use error::*;
+pub use launch::*;
 pub use model::*;
 pub use network::*;
 pub use plan::{decode_plan, FrozenPlan};

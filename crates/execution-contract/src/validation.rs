@@ -26,6 +26,8 @@ pub struct PlanLimits {
     pub max_timeout_ms: u64,
     /// Maximum output bytes summed across all attempts, including discarded bytes.
     pub max_output_bytes: u64,
+    /// Maximum controlled stdin bytes per materialization; independent of encoded plan size.
+    pub max_stdin_bytes: u64,
     /// Maximum attempts permitted for the complete plan.
     pub max_attempts: u32,
 }
@@ -39,6 +41,7 @@ impl PlanLimits {
             (self.max_collection_items == 0, Field::CollectionItems),
             (self.max_timeout_ms == 0, Field::Timeout),
             (self.max_output_bytes == 0, Field::OutputBytes),
+            (self.max_stdin_bytes == 0, Field::StandardInput),
             (self.max_attempts == 0, Field::Attempts),
         ] {
             if zero {
@@ -312,12 +315,45 @@ pub(crate) fn validate_plan(p: &PlanSpec, l: &PlanLimits) -> Result<(), Contract
     for value in &p.constraints.write_paths {
         path(value, platform, Field::WritePaths)?;
     }
-    if p.launch.argv.iter().any(|a| a.contains('\0')) {
+    if p.launch
+        .argv
+        .iter()
+        .any(|a| matches!(a, crate::LaunchArg::Literal { value } if value.contains('\0')))
+    {
         return Err(ContractError::new(
             ErrorKind::InvalidValue,
             Field::Arguments,
             Rule::Nul,
         ));
+    }
+    if p.launch
+        .argv
+        .iter()
+        .filter(|a| matches!(a, crate::LaunchArg::ArtifactPath {}))
+        .count()
+        != 1
+    {
+        return Err(ContractError::new(
+            ErrorKind::InvalidValue,
+            Field::Arguments,
+            Rule::ArtifactSlot,
+        ));
+    }
+    if let crate::StandardInput::Controlled { max_bytes, .. } = p.launch.stdin {
+        if max_bytes == 0 {
+            return Err(ContractError::new(
+                ErrorKind::InvalidBudget,
+                Field::StandardInput,
+                Rule::NonZero,
+            ));
+        }
+        if max_bytes > l.max_stdin_bytes {
+            return Err(ContractError::new(
+                ErrorKind::InvalidBudget,
+                Field::StandardInput,
+                Rule::BudgetLimit,
+            ));
+        }
     }
     environment(p)?;
     if let NetworkAccess::Allowlist { destinations } = &p.constraints.network {

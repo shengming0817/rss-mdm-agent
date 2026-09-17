@@ -1,7 +1,7 @@
 use crate::*;
 use execution_contract::{
-    Constraints, ExecutionRequest, FrozenPlan, LaunchSpec, NetworkAccess, PlanSpec,
-    SessionRequirement, Target,
+    Constraints, ExecutionRequest, FrozenPlan, LaunchSpec, NetworkAccess, OutputSpec, PlanSpec,
+    SessionRequirement, StandardInput, Target,
 };
 
 fn validate<T: PartialEq>(
@@ -62,6 +62,7 @@ pub fn match_capabilities(
         source,
         platform,
         interpreters,
+        launch_io,
         run_as: identities,
         user_sessions,
         isolation,
@@ -101,6 +102,9 @@ pub fn match_capabilities(
         argv: _,
         cwd: _,
         env: _,
+        artifact_encoding: _, // Exact byte verification belongs to artifact materialization.
+        stdin,
+        output,
     } = launch;
     // Artifact and process inputs are enforced by the runner, not inventory facts.
     let Constraints {
@@ -113,6 +117,7 @@ pub fn match_capabilities(
     // Path contents are enforced by the runner; both confinement mechanisms are mandatory.
     let mut remaining = limits.max_entries;
     let interpreters = checked_inventory(interpreters, Dimension::Interpreter, &mut remaining)?;
+    let launch_io = checked_inventory(launch_io, Dimension::LaunchIo, &mut remaining)?;
     let identities = checked_inventory(identities, Dimension::RunAs, &mut remaining)?;
     let user_sessions = checked_inventory(user_sessions, Dimension::UserSession, &mut remaining)?;
     let isolation = checked_inventory(isolation, Dimension::Isolation, &mut remaining)?;
@@ -138,6 +143,28 @@ pub fn match_capabilities(
         },
     );
     push(Dimension::Interpreter, interpreters(interpreter));
+    match stdin {
+        StandardInput::Closed {} => {}
+        StandardInput::Controlled {
+            reference: _,
+            encoding,
+            max_bytes: _,
+        } => {
+            push(
+                Dimension::StandardInput,
+                launch_io(&LaunchIoCapability::ControlledStdin(*encoding)),
+            );
+        }
+    }
+    let OutputSpec { stdout, stderr } = output;
+    push(
+        Dimension::StandardOutput,
+        launch_io(&LaunchIoCapability::CapturedText(*stdout)),
+    );
+    push(
+        Dimension::StandardError,
+        launch_io(&LaunchIoCapability::CapturedText(*stderr)),
+    );
     push(Dimension::RunAs, identities(run_as));
     match session_requirement {
         SessionRequirement::NotRequired {} => {}

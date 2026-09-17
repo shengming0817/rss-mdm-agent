@@ -1,0 +1,16 @@
+[package]
+name = "script-plan"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+description = "Deterministic native script compilation into the sole frozen execution plan"
+
+[dependencies]
+execution-contract = { path = "../execution-contract" }
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints.clippy]
+cognitive_complexity = "warn"

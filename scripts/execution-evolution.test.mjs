@@ -71,7 +71,9 @@ test("new execution fields require an explicit admission/capability decision", (
         "PlanSpec",
         "ExecutionRequest",
         "Constraints",
-        ...(consumer === "execution-capability" ? ["EnvironmentSnapshot"] : []),
+        ...(consumer === "execution-capability"
+          ? ["EnvironmentSnapshot", "LaunchSpec"]
+          : []),
       ]) {
         const owner =
           type === "EnvironmentSnapshot" ? consumer : "execution-contract";

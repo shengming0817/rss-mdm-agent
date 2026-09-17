@@ -9,6 +9,7 @@ fn limits() -> PlanLimits {
         max_collection_items: 128,
         max_timeout_ms: 60000,
         max_output_bytes: 65536,
+        max_stdin_bytes: 65536,
         max_attempts: 3,
     }
 }

@@ -654,6 +654,26 @@
         "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
         "type": "string"
       },
+      "ArtifactEncoding": {
+        "description": "Expected script byte encoding, checked against exact bytes by the later adapter.\nA declaration never authorizes transcoding, adding a BOM or changing line endings.",
+        "oneOf": [
+          {
+            "const": "utf8",
+            "description": "UTF-8 without a byte-order mark.",
+            "type": "string"
+          },
+          {
+            "const": "utf8Bom",
+            "description": "UTF-8 with the original byte-order mark.",
+            "type": "string"
+          },
+          {
+            "const": "utf16LeBom",
+            "description": "UTF-16 little endian with the original byte-order mark.",
+            "type": "string"
+          }
+        ]
+      },
       "Authority": {
         "description": "Separate namespaces: none of these serializable references authenticates its issuer.",
         "oneOf": [
@@ -1018,14 +1038,71 @@
           }
         ]
       },
+      "InterpreterRef": {
+        "additionalProperties": false,
+        "description": "Exact binary and immutable calling convention. Neither reference proves availability.",
+        "properties": {
+          "artifact": {
+            "$ref": "#/$defs/ExactArtifactRef",
+            "description": "Binary identity; the adapter must verify bytes, without PATH or version fallback."
+          },
+          "profile": {
+            "$ref": "#/$defs/VersionedRef",
+            "description": "Calling convention identity/revision; matched together with the binary."
+          }
+        },
+        "required": [
+          "artifact",
+          "profile"
+        ],
+        "type": "object"
+      },
+      "LaunchArg": {
+        "description": "One argument; artifact materialization is a typed slot, never a magic literal.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "One NUL-free argument, passed without shell interpolation or secret resolution.",
+            "properties": {
+              "kind": {
+                "const": "literal",
+                "type": "string"
+              },
+              "value": {
+                "description": "Non-secret data; not a pre-quoted command fragment.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "The adapter supplies the absolute path of the exact verified launch artifact.\nThe complete argv must contain exactly one such slot.",
+            "properties": {
+              "kind": {
+                "const": "artifactPath",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "LaunchSpec": {
         "additionalProperties": false,
         "description": "Exact launch description only. No PATH lookup, download or spawning is performed by this crate.",
         "properties": {
           "argv": {
-            "description": "Ordered, NUL-free argument strings, never a shell command assembled by this crate.",
+            "description": "Ordered literal arguments and exactly one verified artifact-path slot; never a shell string.",
             "items": {
-              "type": "string"
+              "$ref": "#/$defs/LaunchArg"
             },
             "type": "array"
           },
@@ -1033,13 +1110,17 @@
             "$ref": "#/$defs/ExactArtifactRef",
             "description": "Exact script/installer/test artifact chosen for this plan."
           },
+          "artifactEncoding": {
+            "$ref": "#/$defs/ArtifactEncoding",
+            "description": "Expected original artifact bytes; no transcoding or script wrapping is permitted."
+          },
           "cwd": {
             "description": "Absolute working-directory declaration; platform adapters must resolve and verify real paths.",
             "type": "string"
           },
           "env": {
             "additionalProperties": false,
-            "description": "Explicit environment only; Windows names are normalized after collision rejection.",
+            "description": "Clear inherited environment first, then set only these values. Windows names are normalized after collision rejection.",
             "patternProperties": {
               "^[A-Za-z_][A-Za-z0-9_]*$": {
                 "$ref": "#/$defs/InputValue"
@@ -1048,14 +1129,25 @@
             "type": "object"
           },
           "interpreter": {
-            "$ref": "#/$defs/ExactArtifactRef",
+            "$ref": "#/$defs/InterpreterRef",
             "description": "Exact interpreter artifact; the runner must not substitute PATH or a newer version."
+          },
+          "output": {
+            "$ref": "#/$defs/OutputSpec",
+            "description": "Explicit capture and decoding requirements for both output streams."
+          },
+          "stdin": {
+            "$ref": "#/$defs/StandardInput",
+            "description": "Explicit noninteractive input; never inherited from the host."
           }
         },
         "required": [
           "artifact",
           "interpreter",
           "argv",
+          "artifactEncoding",
+          "stdin",
+          "output",
           "cwd",
           "env"
         ],
@@ -1226,6 +1318,25 @@
         ],
         "type": "object"
       },
+      "OutputSpec": {
+        "additionalProperties": false,
+        "description": "Capture both streams as bytes; no inherited stdout/stderr or terminal.\nAll bytes, including undecodable and discarded bytes, consume the plan's output budget.",
+        "properties": {
+          "stderr": {
+            "$ref": "#/$defs/TextEncoding",
+            "description": "Required stderr interpretation; preserve raw bytes on failure."
+          },
+          "stdout": {
+            "$ref": "#/$defs/TextEncoding",
+            "description": "Required stdout interpretation; preserve raw bytes on failure."
+          }
+        },
+        "required": [
+          "stdout",
+          "stderr"
+        ],
+        "type": "object"
+      },
       "PlanId": {
         "description": "Immutable local plan identity.",
         "maxLength": 128,
@@ -1360,6 +1471,56 @@
           }
         ]
       },
+      "StandardInput": {
+        "description": "Noninteractive stdin only: no inherited handle, terminal, literal body or executable text.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "No input; adapter closes the stream.",
+            "properties": {
+              "kind": {
+                "const": "closed",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Resolve a bounded input under owner authorization; it may contain a secret.",
+            "properties": {
+              "encoding": {
+                "$ref": "#/$defs/TextEncoding",
+                "description": "Required byte encoding of the materialized input."
+              },
+              "kind": {
+                "const": "controlled",
+                "type": "string"
+              },
+              "maxBytes": {
+                "description": "Positive maximum bytes for this input, checked against the independent host ceiling.",
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "reference": {
+                "$ref": "#/$defs/VersionedRef",
+                "description": "Immutable input reference, not input/credential bytes."
+              }
+            },
+            "required": [
+              "kind",
+              "reference",
+              "encoding",
+              "maxBytes"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "Target": {
         "additionalProperties": false,
         "description": "Explicit device, platform and scope bound into the plan digest.",
@@ -1419,6 +1580,21 @@
               "account"
             ],
             "type": "object"
+          }
+        ]
+      },
+      "TextEncoding": {
+        "description": "Explicit standard-stream text encoding; invalid sequences are diagnostic failures.\nOutput evidence retains the original bytes; decoding must not replace invalid bytes.",
+        "oneOf": [
+          {
+            "const": "utf8",
+            "description": "UTF-8 text.",
+            "type": "string"
+          },
+          {
+            "const": "utf16Le",
+            "description": "UTF-16 little endian text.",
+            "type": "string"
           }
         ]
       },

@@ -2,6 +2,8 @@
 
 独立能力：[execution-contract](../../crates/execution-contract/README.md)、[ai-session-contract](../../crates/ai-session-contract/README.md)。两项基础契约互不依赖；[service-catalog](../../crates/service-catalog/README.md)仅单向消费execution-contract值类型。桌面展示壳当前不接线这些契约。
 
+C10 [脚本计划](../../crates/script-plan/README.md)仅消费 C01 并直接返回 FrozenPlan；C11 [软件计划](../../crates/software-plan/README.md)仅复用 C01 值类型，返回非执行性的单步业务决策。两者纳入同一隔离 consumer 清单，没有桌面或生产 runner 接线。
+
 ## 最小检查
 
 执行核心还包括 [C08 批准](../../crates/execution-approval/README.md)与[C09 生命周期](../../crates/execution-lifecycle/README.md)。C08 消费 C07/C01，C09 只消费 C01；各自有真实公共 API example 并纳入独立 consumer 清单。纯核心不交付签发者、数据库或平台执行证据。
@@ -9,6 +11,7 @@
 ```sh
 cargo test -p execution-contract -p ai-session-contract -p service-catalog --locked
 cargo test -p execution-approval -p execution-lifecycle --locked
+cargo test -p script-plan -p software-plan --locked
 cargo clippy -p execution-contract -p ai-session-contract -p service-catalog --all-targets --locked -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc -p execution-contract -p ai-session-contract -p service-catalog --no-deps --locked
 node --test scripts/boundaries.test.mjs

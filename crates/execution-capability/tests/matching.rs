@@ -9,6 +9,7 @@ fn limits() -> PlanLimits {
         max_collection_items: 128,
         max_timeout_ms: 60000,
         max_output_bytes: 65536,
+        max_stdin_bytes: 65536,
         max_attempts: 3,
     }
 }
@@ -62,6 +63,7 @@ fn snapshot(p: &FrozenPlan) -> EnvironmentSnapshot {
         },
         platform: Some(s.request.target.platform),
         interpreters: inventory(vec![s.launch.interpreter.clone()]),
+        launch_io: inventory(vec![LaunchIoCapability::CapturedText(TextEncoding::Utf8)]),
         run_as: inventory(vec![s.run_as.clone()]),
         user_sessions: inventory(match &s.session_requirement {
             SessionRequirement::ActiveUser { account } => vec![account.clone()],
@@ -100,7 +102,11 @@ fn every_platform_and_required_dimension_is_explicit() {
         missing.user_sessions.complete = false;
         assert_eq!(check(&p, &missing).status, MatchStatus::Unknown);
         missing = s.clone();
-        missing.interpreters.entries[0].capability.resource.revision = Id::new("other").unwrap();
+        missing.interpreters.entries[0]
+            .capability
+            .artifact
+            .resource
+            .revision = Id::new("other").unwrap();
         assert_eq!(check(&p, &missing).status, MatchStatus::Unsupported);
         missing.interpreters.complete = false;
         assert_eq!(check(&p, &missing).status, MatchStatus::Unknown);
@@ -199,7 +205,7 @@ fn exact_identity_and_every_inventory_fail_closed() {
         assert_eq!(check(&p, &s).status, MatchStatus::Unknown);
     }
     let mut s = snapshot(&p);
-    s.interpreters.entries[0].capability.sha256 = Digest::new("45".repeat(32)).unwrap();
+    s.interpreters.entries[0].capability.artifact.sha256 = Digest::new("45".repeat(32)).unwrap();
     assert_eq!(check(&p, &s).status, MatchStatus::Unsupported);
     let mut s = snapshot(&p);
     s.platform = Some(Platform::Windows);
@@ -268,4 +274,41 @@ fn identical_device_ids_cannot_replay_snapshots_across_authorities_or_tenants() 
                 .all(|c| c.status == MatchStatus::Unknown));
         }
     }
+}
+
+#[test]
+fn profile_and_each_stream_requirement_need_exact_positive_facts() {
+    let base = plan(Platform::Linux);
+    let mut spec = base.spec().clone();
+    spec.launch.stdin = StandardInput::Controlled {
+        reference: spec.policy.clone(),
+        encoding: TextEncoding::Utf16Le,
+        max_bytes: 64,
+    };
+    spec.launch.output.stderr = TextEncoding::Utf16Le;
+    let p = FrozenPlan::freeze(spec, &limits()).unwrap();
+    let mut s = snapshot(&p);
+    s.launch_io.complete = false;
+    assert_eq!(check(&p, &s).status, MatchStatus::Unknown);
+    s.launch_io.complete = true;
+    assert_eq!(check(&p, &s).status, MatchStatus::Unsupported);
+    s.launch_io = inventory(vec![
+        LaunchIoCapability::ControlledStdin(TextEncoding::Utf16Le),
+        LaunchIoCapability::CapturedText(TextEncoding::Utf8),
+        LaunchIoCapability::CapturedText(TextEncoding::Utf16Le),
+    ]);
+    assert_eq!(check(&p, &s).status, MatchStatus::Supported);
+    for index in 0..3 {
+        let mut other = s.clone();
+        other.launch_io.entries[index].availability = Availability::Blocked;
+        assert_eq!(check(&p, &other).status, MatchStatus::Blocked);
+    }
+    let mut other = s.clone();
+    other.interpreters.entries[0].capability.profile.revision = Id::new("2").unwrap();
+    assert_eq!(check(&p, &other).status, MatchStatus::Unsupported);
+    s.launch_io.entries.push(s.launch_io.entries[0].clone());
+    assert_eq!(
+        match_capabilities(&p, &s, MatchLimits { max_entries: 64 }),
+        Err(MatchError::Duplicate(Dimension::LaunchIo))
+    );
 }

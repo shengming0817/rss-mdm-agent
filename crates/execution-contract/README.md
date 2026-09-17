@@ -10,6 +10,14 @@
 
 所有可反序列化类型都是 DTO；应用接收外部字节使用有界 decoder。直接构造/反序列化 `PlanSpec` 不能绕过 freeze 的语义校验。参数与环境 map、动态 literal 也拒绝重复键。秘密使用带 revision 的 `InputValue::Secret`，host 不得将长期凭据伪装成 literal/argv；运行时解析、访问授权及缓存替换检测属于后续 owner。`Debug` 与公开错误不回显参数、argv 或 provider 输入。
 
+## 启动与 IO
+
+C01 唯一持有 `LaunchSpec`：精确 interpreter artifact 与 profile revision、脚本 artifact/encoding、类型化 argv、cwd/env、stdin 和 stdout/stderr 编码。argv 必须且只能含一个 `ArtifactPath` slot；其余为 Literal，拒绝 NUL。runner 验证并物化精确产物后，只在该位置代入绝对路径，不重新拆分参数。stdin 只能 Closed 或带编码/字节上限的版本引用；`max_stdin_bytes` 与 JSON/输出预算独立且必填。
+
+所有管道由 runner 控制，无 stdin/stdout/stderr 或终端继承；stdout/stderr 保留原始字节并按约定严格解码，解码失败必须显式报告。IO 描述不是能力证明。
+
+当前尚未形成稳定外部交互契约，本次直接修改 V1；旧 argv/interpreter 格式和缺字段输入拒绝，旧 digest/批准不可复用。不提供兼容 reader，也不新增 V2。
+
 ## V1 摘要
 
 摘要为 `SHA-256(b"rss-mdm-agent/execution-plan/v1\0" || JCS(PlanSpec))`，输出小写 64 位 hex。JCS 使用 `serde_json_canonicalizer =0.3.2`；Rust 声明派生唯一序列化形态。冻结对象保存 JCS 规范字节重新解析后的值，执行方不得继续使用冻结前的原始输入。

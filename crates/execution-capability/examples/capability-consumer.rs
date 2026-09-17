@@ -22,6 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         max_collection_items: 128,
         max_timeout_ms: 60000,
         max_output_bytes: 65536,
+        max_stdin_bytes: 65536,
         max_attempts: 3,
     };
     let plan = FrozenPlan::freeze(decode_plan(&bytes, &limits)?, &limits)?;
@@ -35,6 +36,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         platform: Some(spec.request.target.platform),
         interpreters: inventory(vec![spec.launch.interpreter.clone()]),
+        launch_io: inventory(vec![LaunchIoCapability::CapturedText(TextEncoding::Utf8)]),
         run_as: inventory(vec![spec.run_as.clone()]),
         user_sessions: inventory(match &spec.session_requirement {
             SessionRequirement::NotRequired {} => vec![],
