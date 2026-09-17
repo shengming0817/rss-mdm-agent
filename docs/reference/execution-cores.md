@@ -39,3 +39,5 @@ PR #1027 修复对标（2026-09-17 UTC）：沿用上列 Cedar 请求上下文�
 - ref: winget-cli Versions.cpp、PackageVersionSelection.cpp@5b62860167520b1503b3880d5a026809eb07c6f4 — [生态版本规则](https://github.com/microsoft/winget-cli/blob/5b62860167520b1503b3880d5a026809eb07c6f4/src/AppInstallerSharedLib/Versions.cpp#L109-L159)、[版本选择](https://github.com/microsoft/winget-cli/blob/5b62860167520b1503b3880d5a026809eb07c6f4/src/AppInstallerRepositoryCore/PackageVersionSelection.cpp#L13-L117)。版本保留不透明原文，由生态比较器提供绑定操作数的结果；不复制 WinGet 平台实现或用通用 SemVer 代替生态语义。
 
 C01 在 V1 内原地扩充唯一启动结构，C06/C07 与 C08/C09 fixtures 同步迁移；不保留旧 reader/双结构，不增加新协议版本。C10 直接冻结 C01；C11 不接入执行摘要，安装核实决策与 C09 执行生命周期分别保持单一职责。
+
+PR #1029 安全审查修正：参考 [.NET startup hook](https://github.com/dotnet/runtime/blob/main/docs/design/features/host-startup-hook.md) 和 [dyld 环境配置](https://github.com/apple-oss-distributions/dyld/blob/main/dyld/DyldProcessConfig.cpp)，普通环境映射禁止 loader/runtime 启动控制命名空间。此限制防止通过模板或参数环境预加载计划外代码；仍不替代实际 OS sandbox 或解释器依赖验证。

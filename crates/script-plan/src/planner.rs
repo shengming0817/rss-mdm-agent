@@ -125,11 +125,21 @@ fn check_environment(
     profile: ScriptProfile,
     env: &BTreeMap<EnvironmentKey, InputValue>,
 ) -> Result<(), ScriptPlanError> {
-    if profile != ScriptProfile::PowerShell7
-        && env
-            .keys()
-            .any(|k| matches!(k.as_str(), "BASH_ENV" | "ENV" | "SHELLOPTS" | "BASHOPTS"))
-    {
+    let reserved = |key: &EnvironmentKey| {
+        // Reject the whole loader/runtime control namespaces, including case variants.
+        // env is rebuilt by the runner; these variables must not preload unbound code.
+        let key = key.as_str().to_ascii_uppercase();
+        ["LD_", "DYLD_", "DOTNET_", "COMPLUS_", "CORECLR_", "COR_"]
+            .iter()
+            .any(|prefix| key.starts_with(prefix))
+            || matches!(
+                key.as_str(),
+                "GCONV_PATH" | "GLIBC_TUNABLES" | "PSMODULEPATH"
+            )
+            || (profile != ScriptProfile::PowerShell7
+                && matches!(key.as_str(), "BASH_ENV" | "ENV" | "SHELLOPTS" | "BASHOPTS"))
+    };
+    if env.keys().any(reserved) {
         return Err(ScriptPlanError::StartupEnvironment);
     }
     // EnvironmentKey already excludes Bash exported-function names.

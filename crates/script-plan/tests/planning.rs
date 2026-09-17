@@ -224,3 +224,59 @@ fn canonical_validation_and_budget_are_not_bypassed() {
     )
     .is_err());
 }
+
+#[test]
+fn template_and_parameter_environments_cannot_preload_interpreter_code() {
+    for profile in [
+        ScriptProfile::PowerShell7,
+        ScriptProfile::PosixSh,
+        ScriptProfile::Bash,
+    ] {
+        for key in [
+            "LD_PRELOAD",
+            "LD_LIBRARY_PATH",
+            "LD_AUDIT",
+            "DYLD_INSERT_LIBRARIES",
+            "DYLD_FRAMEWORK_PATH",
+            "GCONV_PATH",
+            "GLIBC_TUNABLES",
+            "DOTNET_STARTUP_HOOKS",
+            "DOTNET_ADDITIONAL_DEPS",
+            "COMPlus_ReadyToRun",
+            "CORECLR_PROFILER_PATH",
+            "COR_ENABLE_PROFILING",
+            "PSModulePath",
+        ] {
+            for bound in [false, true] {
+                let mut i = input(profile);
+                let key = EnvironmentKey::new(key).unwrap();
+                if bound {
+                    i.bindings[0].target = ParameterTarget::Environment { key };
+                } else {
+                    i.env.insert(
+                        key,
+                        InputValue::Literal {
+                            value: json!("preload-code"),
+                        },
+                    );
+                }
+                assert_eq!(
+                    compile(i, &limits()).unwrap_err(),
+                    ScriptPlanError::StartupEnvironment,
+                    "{profile:?}, parameter={bound}"
+                );
+            }
+        }
+    }
+    let mut i = input(ScriptProfile::PowerShell7);
+    i.env.insert(
+        EnvironmentKey::new("DotNet_Startup_Hooks").unwrap(),
+        InputValue::Literal {
+            value: json!("preload-code"),
+        },
+    );
+    assert_eq!(
+        compile(i, &limits()).unwrap_err(),
+        ScriptPlanError::StartupEnvironment
+    );
+}

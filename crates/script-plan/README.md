@@ -7,7 +7,7 @@ C10 原生脚本纯计划核心。`compile(ScriptPlanInput, &PlanLimits)` 将已
 - PowerShell 7 使用固定 `native-pwsh7-file@1` profile：`-NoLogo -NoProfile -NonInteractive -File <artifact>`。字符串/安全整数编码为两个独立 argv（`-Name:`、原始值）；冒号使解析器的 pendingParameter 分支优先消费下一项，保留 `-1`、`-flag`、`true` 等字符串。布尔量使用单项 `-Name:$true` / `-Name:$false`。不拼接 `-Command`，不支持 Windows PowerShell 5.1。
 - POSIX sh 使用 `native-posix-sh-file@1`；Bash 使用 `native-bash-file@1` 与 `--noprofile --norc`。只支持 macOS/Linux、无 BOM UTF-8 脚本与位置参数。参数按绑定顺序形成独立 argv，特殊字符原样保存；不生成 shell quoting。
 - 每个输入参数必须且只能绑定一次，允许标量字符串、布尔值及 JSON 安全整数；不展开列表/对象，不复刻 C03 schema、默认值或表达式。PowerShell 命名参数只接受有界 ASCII 标识符，拒绝大小写重复。
-- 秘密只通过环境引用或受控 stdin 引用传入；不允许 argv 秘密或字面 stdin。环境无继承；Unix profile 拒绝 `BASH_ENV`、`ENV`、`SHELLOPTS`、`BASHOPTS`，环境键类型同时排除导出的 Bash 函数语法。
+- 秘密只通过环境引用或受控 stdin 引用传入；不允许 argv 秘密或字面 stdin。环境无继承；Unix profile 拒绝 `BASH_ENV`、`ENV`、`SHELLOPTS`、`BASHOPTS`，环境键类型同时排除导出的 Bash 函数语法。所有 profile 还拒绝 LD_/DYLD_/DOTNET_/COMPLUS_/CORECLR_/COR_ 加载控制命名空间及 GCONV_PATH、GLIBC_TUNABLES、PSModulePath（含大小写变体），模板和参数绑定环境共用同一检查。
 - 输入、输出编码、stdin 上限、runAs、交互 session、网络/路径/子进程限制、总预算和有效期全部进入 C01 摘要。宿主须验证 profile 与精确解释器的关联，验证并安全物化脚本路径；artifact slot 只能替换为该计划产物的绝对路径，不能重新 tokenize。
 
 这些规则不证明脚本安全，也不强制 OS 隔离。环境清理、文件/解释器 hash 验证、编码、原始输出保存、无损失败诊断、管道关闭及预算计量由后续 runner 负责；C06 不支持或未知的能力必须阻止执行。
