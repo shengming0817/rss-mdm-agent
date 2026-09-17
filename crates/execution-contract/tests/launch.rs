@@ -74,3 +74,11 @@ fn launch_rejects_missing_requirements_legacy_argv_and_bad_slot_counts() {
     v["launch"]["stdin"]["maxBytes"] = json!(65537);
     assert!(decode_plan(&serde_json::to_vec(&v).unwrap(), &limits()).is_err());
 }
+
+#[test]
+fn controlled_stdin_debug_never_exposes_the_input_reference() {
+    let mut v = complete();
+    v["launch"]["stdin"]["reference"]["id"] = json!("sensitive-stdin-handle");
+    let plan = freeze(&v);
+    assert!(!format!("{:?}", plan.spec().launch.stdin).contains("sensitive-stdin-handle"));
+}

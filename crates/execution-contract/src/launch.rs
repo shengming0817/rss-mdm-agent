@@ -57,7 +57,7 @@ pub enum TextEncoding {
 }
 
 /// Noninteractive stdin only: no inherited handle, terminal, literal body or executable text.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "kind",
     rename_all = "camelCase",
@@ -76,6 +76,12 @@ pub enum StandardInput {
         /// Positive maximum bytes for this input, checked against the independent host ceiling.
         max_bytes: u64,
     },
+}
+
+impl fmt::Debug for StandardInput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("StandardInput([redacted])")
+    }
 }
 
 /// Capture both streams as bytes; no inherited stdout/stderr or terminal.
