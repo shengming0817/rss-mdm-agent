@@ -124,6 +124,8 @@ pub enum Reason {
     PlanExpired,
     /// Verification snapshot is no longer fresh.
     StaleVerification,
+    /// C07 authorization must be obtained again for this attempt.
+    StaleAdmission,
     /// Approval record validity has not begun.
     ApprovalNotYetValid,
     /// Approval record validity has expired.

@@ -1,12 +1,14 @@
 # execution-admission
 
-C07（#2400）：唯一确定性执行授权核心。`decide(&FrozenPlan, &impl AuthorityVerifier, AdmissionLimits)` 返回不可直接构造/反序列化的 AdmissionDecision，区分 Allowed、Denied、ApprovalRequired；不返回执行permit、不签发批准、不修改计数或journal。
+C07（#2400）：唯一确定性执行授权核心。`decide(&FrozenPlan, &AttemptId, &impl AuthorityVerifier, AdmissionLimits)` 返回不可直接构造/反序列化的 AdmissionDecision，区分 Allowed、Denied、ApprovalRequired；不返回执行permit、不签发批准、不修改计数或journal。
 
 ## 信任入口
 
 `AuthorityVerifier` 是宿主的可信接缝，不是JSON解码器。它必须独立认证actor/authority，验证OS/provider来源绑定、委托签发者当前权限/接受者/范围，读取受保护政策，并验证时钟与撤销新鲜度。缺失或失败返回闭合 VerificationError，核心统一拒绝。
 
 AuthorityFacts是该port的Rust输出，无Deserialize，也没有`decide(plan, facts)`入口。运行时VerifiedContext只能由核心调用verifier创建，字段私有。不能将传入FrozenPlan回显成allow规则；freeze只证明内容规范化。Rust接口不抵抗恶意或被攻陷的同进程宿主，生产身份/进程隔离接线由C19及后续平台负责。本仓示例仅含显式TestAuthority，不提供生产验证器。
+
+每次 decide 都以明确的 attempt 调用 verifier。可信输出必须给出覆盖主体、委托、政策和撤销状态的 verification_revision 与排他 fresh_until；相关权限变化必须推进 revision。非拒绝裁决私有绑定 attempt 和 AdmissionValidity，截止取可信新鲜期与计划截止的较小值。C08 只能继承该 attempt；克隆裁决仍是同一个候选，不能产生新 attempt 授权。C18 在原子接纳时重检当前 revision、可靠时间和历史唯一性；纯核心类型不证明外部事务或 verifier 的真实性。
 
 ## 精确范围与组合
 

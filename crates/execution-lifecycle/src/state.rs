@@ -1,24 +1,6 @@
 use crate::*;
 use execution_contract::{Authority, FrozenPlan};
 
-/// Candidate conditional state write; C18 also commits associated approval consumption.
-#[derive(Debug, Clone)]
-pub struct Transition {
-    /// Expected revision within the protected plan namespace.
-    pub expected_revision: u64,
-    /// Candidate state; authoritative only after commit.
-    pub next: Execution,
-}
-/// Pure evaluation result. Directives never call a runner.
-#[derive(Debug, Clone)]
-pub struct Evaluation {
-    /// Applied candidate, duplicate or stale command.
-    pub outcome: EventOutcome,
-    /// Suggested next action based on current reliable time.
-    pub directive: Directive,
-    /// Optional write; CAS conflicts require reread and reevaluation.
-    pub transition: Option<Transition>,
-}
 /// Validated lifecycle state, not an executable permit.
 /// Restore validates protected journal data; it does not authenticate arbitrary JSON.
 /// ~~~compile_fail

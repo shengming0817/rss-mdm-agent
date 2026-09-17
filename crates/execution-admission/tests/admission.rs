@@ -30,7 +30,7 @@ fn plan() -> FrozenPlan {
 #[derive(Clone)]
 struct TestAuthority(Result<AuthorityFacts, VerificationError>);
 impl AuthorityVerifier for TestAuthority {
-    fn verify(&self, _: &FrozenPlan) -> Result<AuthorityFacts, VerificationError> {
+    fn verify(&self, _: &FrozenPlan, _: &AttemptId) -> Result<AuthorityFacts, VerificationError> {
         self.0.clone()
     }
 }
@@ -58,13 +58,83 @@ fn authority(p: &FrozenPlan) -> TestAuthority {
             effect: RuleEffect::Allow,
         }],
         now_unix_ms: 1500,
+        verification_revision: VersionedRef {
+            id: id("authority-epoch"),
+            revision: id("1"),
+        },
+        fresh_until_unix_ms: 1950,
     }))
 }
 fn decide_for(p: &FrozenPlan, a: &TestAuthority) -> AdmissionDecision {
-    decide(p, a, AdmissionLimits { max_rules: 32 })
+    decide(
+        p,
+        &AttemptId::new("attempt-1").unwrap(),
+        a,
+        AdmissionLimits { max_rules: 32 },
+    )
 }
 fn facts(a: &mut TestAuthority) -> &mut AuthorityFacts {
     a.0.as_mut().unwrap()
+}
+#[test]
+fn each_attempt_obtains_current_authority_and_an_exclusive_deadline() {
+    use std::cell::Cell;
+    struct ChangingAuthority {
+        inner: TestAuthority,
+        calls: Cell<usize>,
+    }
+    impl AuthorityVerifier for ChangingAuthority {
+        fn verify(
+            &self,
+            _: &FrozenPlan,
+            attempt: &AttemptId,
+        ) -> Result<AuthorityFacts, VerificationError> {
+            self.calls.set(self.calls.get() + 1);
+            assert_eq!(attempt.as_str(), format!("attempt-{}", self.calls.get()));
+            if self.calls.get() == 1 {
+                self.inner.0.clone()
+            } else {
+                Err(VerificationError::Revocation)
+            }
+        }
+    }
+    let p = plan();
+    let a = ChangingAuthority {
+        inner: authority(&p),
+        calls: Cell::new(0),
+    };
+    let first = decide(
+        &p,
+        &AttemptId::new("attempt-1").unwrap(),
+        &a,
+        AdmissionLimits { max_rules: 32 },
+    );
+    let second = decide(
+        &p,
+        &AttemptId::new("attempt-2").unwrap(),
+        &a,
+        AdmissionLimits { max_rules: 32 },
+    );
+    assert_eq!(first.outcome(), &DecisionOutcome::Allowed);
+    assert_eq!(second.outcome(), &DecisionOutcome::Denied);
+    assert!(second.validity().is_none());
+    let validity = first.validity().unwrap();
+    assert!(validity.is_current(1949, validity.revision()));
+    assert!(!validity.is_current(1950, validity.revision()));
+    for deadline in [0, 1500, 2500] {
+        let mut a = authority(&p);
+        facts(&mut a).fresh_until_unix_ms = deadline;
+        let d = decide_for(&p, &a);
+        if deadline <= 1500 {
+            assert_eq!(d.reason(), Reason::StaleVerification);
+            assert!(d.validity().is_none());
+        } else {
+            assert_eq!(
+                d.validity().unwrap().valid_until_unix_ms(),
+                p.spec().validity.expires_at_unix_ms
+            );
+        }
+    }
 }
 #[test]
 fn sources_share_actor_permissions_but_have_distinct_plan_bindings() {
@@ -122,7 +192,13 @@ fn unavailable_context_policy_or_time_always_denies() {
     facts(&mut a).policy.revision = id("changed");
     assert_eq!(decide_for(&p, &a).outcome(), &DecisionOutcome::Denied);
     assert_eq!(
-        decide(&p, &a, AdmissionLimits { max_rules: 0 }).outcome(),
+        decide(
+            &p,
+            &AttemptId::new("attempt-1").unwrap(),
+            &a,
+            AdmissionLimits { max_rules: 0 }
+        )
+        .outcome(),
         &DecisionOutcome::Denied
     );
 }
@@ -341,7 +417,13 @@ fn invalid_rules_and_multiple_approval_profiles_are_not_silently_ignored() {
         vec!["allow-1", "r-a", "r-b", "r-c"]
     );
     assert_eq!(
-        decide(&p, &a, AdmissionLimits { max_rules: 1 }).reason(),
+        decide(
+            &p,
+            &AttemptId::new("attempt-1").unwrap(),
+            &a,
+            AdmissionLimits { max_rules: 1 }
+        )
+        .reason(),
         Reason::Limit
     );
 }

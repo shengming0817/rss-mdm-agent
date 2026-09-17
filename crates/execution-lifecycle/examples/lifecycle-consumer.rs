@@ -32,11 +32,24 @@ fn apply(s: Execution, name: &str, command: Command, now: u64, fact: Observation
         expected_revision: s.snapshot().revision,
         command,
     };
-    s.evaluate(event, now, &TestEvidence(fact))
+    let transition = s
+        .evaluate(event, now, &TestEvidence(fact))
         .unwrap()
         .transition
-        .unwrap()
-        .next
+        .unwrap();
+    // In-memory test commit only; C18 must supply atomic authorization/consumption/storage.
+    let mut committed = s;
+    let action = transition
+        .commit(|candidate| {
+            assert_eq!(candidate.expected_revision(), committed.snapshot().revision);
+            committed = candidate.next().clone();
+            Ok::<_, ()>(CommitStatus::Applied)
+        })
+        .unwrap();
+    if let Some(action) = action {
+        action.dispatch(|a| assert_eq!(a.mode(), ExecutionMode::Test));
+    }
+    committed
 }
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bytes = std::fs::read(std::env::args().nth(1).ok_or("test plan path required")?)?;

@@ -1,6 +1,7 @@
 use crate::*;
 use execution_contract::{
-    Constraints, ExecutionBudget, ExecutionRequest, FrozenPlan, Initiator, PlanSpec, ValidityWindow,
+    AttemptId, Constraints, ExecutionBudget, ExecutionRequest, FrozenPlan, Initiator, PlanSpec,
+    ValidityWindow,
 };
 
 // Only this verifier call can create the runtime trusted context. It has no serde/DTO constructor.
@@ -10,9 +11,10 @@ struct VerifiedContext {
 impl VerifiedContext {
     fn obtain(
         plan: &FrozenPlan,
+        attempt: &AttemptId,
         authority: &(impl AuthorityVerifier + ?Sized),
     ) -> Result<Self, VerificationError> {
-        authority.verify(plan).map(|facts| Self { facts })
+        authority.verify(plan, attempt).map(|facts| Self { facts })
     }
 }
 fn current(window: ValidityWindow, now: u64) -> bool {
@@ -88,6 +90,7 @@ fn same_scope(template: &PlanSpec, plan: &PlanSpec) -> bool {
 /// No counters, approval records or execution intents are changed by this call.
 pub fn decide(
     plan: &FrozenPlan,
+    attempt: &AttemptId,
     authority: &(impl AuthorityVerifier + ?Sized),
     limits: AdmissionLimits,
 ) -> AdmissionDecision {
@@ -100,16 +103,21 @@ pub fn decide(
         outcome,
         reason,
         rule_ids,
+        attempt_id: attempt.clone(),
+        validity: None,
     };
     let deny = |reason| result(DecisionOutcome::Denied, reason, vec![]);
     if limits.max_rules == 0 {
         return deny(Reason::Limit);
     }
-    let context = match VerifiedContext::obtain(plan, authority) {
+    let context = match VerifiedContext::obtain(plan, attempt, authority) {
         Ok(context) => context,
         Err(error) => return deny(Reason::Verification(error)),
     };
     let facts = &context.facts;
+    if facts.now_unix_ms >= facts.fresh_until_unix_ms {
+        return deny(Reason::StaleVerification);
+    }
     if facts.rules.len() > limits.max_rules {
         return deny(Reason::Limit);
     }
@@ -183,7 +191,7 @@ pub fn decide(
         (a.id.as_str(), a.revision.as_str()).cmp(&(b.id.as_str(), b.revision.as_str()))
     });
     profiles.dedup();
-    if profiles.is_empty() {
+    let mut decision = if profiles.is_empty() {
         result(DecisionOutcome::Allowed, Reason::RuleAllowed, rule_ids)
     } else {
         result(
@@ -191,5 +199,13 @@ pub fn decide(
             Reason::NeedsApproval,
             rule_ids,
         )
-    }
+    };
+    decision.validity = Some(AdmissionValidity {
+        revision: facts.verification_revision.clone(),
+        verified_at_unix_ms: facts.now_unix_ms,
+        valid_until_unix_ms: facts
+            .fresh_until_unix_ms
+            .min(spec.validity.expires_at_unix_ms),
+    });
+    decision
 }

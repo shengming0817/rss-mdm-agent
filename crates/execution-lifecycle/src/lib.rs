@@ -3,6 +3,8 @@
 #![deny(missing_docs)]
 mod model;
 mod state;
+mod transition;
 mod validation;
 pub use model::*;
 pub use state::*;
+pub use transition::*;

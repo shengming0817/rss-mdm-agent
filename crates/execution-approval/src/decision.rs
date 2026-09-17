@@ -1,4 +1,5 @@
 use crate::{ApprovalOutcome, ProfileApproval};
+use execution_admission::AdmissionValidity;
 use execution_contract::{AttemptId, Digest, PlanId, VersionedRef};
 
 /// Candidate consume-one CAS, committed together with its attempt intent by C18.
@@ -66,8 +67,39 @@ pub struct ApprovalDecision {
     pub(crate) outcome: ApprovalOutcome,
     pub(crate) bindings: Vec<ProfileApproval>,
     pub(crate) consumptions: Vec<ConsumptionIntent>,
+    pub(crate) admission_validity: Option<AdmissionValidity>,
 }
 impl ApprovalDecision {
+    /// Authorization identity inherited from C07, including the no-approval path.
+    pub fn admission_validity(&self) -> Option<&AdmissionValidity> {
+        self.admission_validity.as_ref()
+    }
+    /// Required C18 check within the same transaction as lifecycle/consumption CAS.
+    /// The current authority revision and time must come from the trusted storage host.
+    /// This validates the immutable identity; it does not perform or prove persistence.
+    pub fn valid_for_commit(
+        &self,
+        plan: &execution_contract::FrozenPlan,
+        attempt: &AttemptId,
+        now: u64,
+        authority_revision: &VersionedRef,
+    ) -> bool {
+        self.plan_id == plan.spec().plan_id
+            && &self.plan_digest == plan.digest()
+            && &self.attempt_id == attempt
+            && matches!(
+                self.outcome,
+                ApprovalOutcome::NotRequired | ApprovalOutcome::Satisfied
+            )
+            && self
+                .admission_validity
+                .as_ref()
+                .is_some_and(|v| v.is_current(now, authority_revision))
+            && self
+                .consumptions
+                .iter()
+                .all(|c| now < c.valid_until_unix_ms)
+    }
     /// Exact plan identity evaluated.
     pub fn plan_id(&self) -> &PlanId {
         &self.plan_id

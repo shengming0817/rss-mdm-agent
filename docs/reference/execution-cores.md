@@ -25,3 +25,5 @@
 - ref: tokio tokio/src/process/mod.rs@75fef53d0a8590c2d1dbb63672aa7b7d1ef51155 — [请求终止与等待退出](https://github.com/tokio-rs/tokio/blob/75fef53d0a8590c2d1dbb63672aa7b7d1ef51155/tokio/src/process/mod.rs#L1240-L1251)。采纳取消、退出与结果分离；C09 额外要求整次受控活动停止及独立目标核实，不用进程退出证明回滚或安装成功。
 
 C08 直接消费完整 C07 裁决，以 C01 规范摘要绑定全部计划内容；C09 使用一个有界当前快照及派生建议，不建立通用工作流引擎。批准消费与 intent 的 SQLite 原子性留 C18，生产准入/证据/runner 接线留 C19 与平台任务。
+
+PR #1027 修复对标（2026-09-17 UTC）：沿用上列 Cedar 请求上下文分离，将本产品 attempt 与可信授权快照绑定；参考 [Tokio Sender::send](https://github.com/tokio-rs/tokio/blob/master/tokio/src/sync/oneshot.rs) 的消费所有权和 [SQLx v0.8.6 Transaction::commit](https://github.com/launchbadge/sqlx/blob/v0.8.6/sqlx-core/src/transaction.rs#L107-L113) 的提交成功边界，提供私有、不可复制的首次派发动作。只借鉴机制，不引入依赖；真实持久化结果仍由 C18 可信回调负责。

@@ -1,6 +1,6 @@
 use crate::*;
 use execution_admission::{AdmissionDecision, DecisionOutcome};
-use execution_contract::{AttemptId, FrozenPlan, VersionedRef};
+use execution_contract::{FrozenPlan, VersionedRef};
 use std::collections::{BTreeMap, BTreeSet};
 
 fn key(r: &VersionedRef) -> (&str, &str) {
@@ -12,7 +12,6 @@ fn key(r: &VersionedRef) -> (&str, &str) {
 pub fn evaluate(
     plan: &FrozenPlan,
     admission: &AdmissionDecision,
-    attempt: &AttemptId,
     bindings: &[ProfileApproval],
     verifier: &(impl ApprovalVerifier + ?Sized),
     limits: ApprovalLimits,
@@ -20,7 +19,8 @@ pub fn evaluate(
     let result = |outcome, bindings, consumptions| ApprovalDecision {
         plan_id: plan.spec().plan_id.clone(),
         plan_digest: plan.digest().clone(),
-        attempt_id: attempt.clone(),
+        attempt_id: admission.attempt_id().clone(),
+        admission_validity: admission.validity().cloned(),
         outcome,
         bindings,
         consumptions,
@@ -79,6 +79,12 @@ pub fn evaluate(
     if facts.now_unix_ms >= facts.fresh_until_unix_ms {
         return reject(Reason::StaleVerification);
     }
+    let Some(admission_validity) = admission.validity() else {
+        return reject(Reason::AdmissionDenied);
+    };
+    if !admission_validity.is_current(facts.now_unix_ms, admission_validity.revision()) {
+        return reject(Reason::StaleAdmission);
+    }
     if facts.records.len() != requested.len() {
         return reject(Reason::Record);
     }
@@ -123,13 +129,14 @@ pub fn evaluate(
         consumptions.push(ConsumptionIntent {
             plan_id: plan.spec().plan_id.clone(),
             plan_digest: plan.digest().clone(),
-            attempt_id: attempt.clone(),
+            attempt_id: admission.attempt_id().clone(),
             approval: record.reference.clone(),
             expected_consumption_revision: record.consumption_revision,
             expected_uses: record.used,
             verification_revision: facts.verification_revision.clone(),
             valid_until_unix_ms: facts
                 .fresh_until_unix_ms
+                .min(admission_validity.valid_until_unix_ms())
                 .min(plan.spec().validity.expires_at_unix_ms)
                 .min(record.validity.expires_at_unix_ms),
         });

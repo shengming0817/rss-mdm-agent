@@ -13,3 +13,6 @@ execution-admission = { path = "../execution-admission" }
 [dev-dependencies]
 serde_json.workspace = true
 execution-lifecycle = { path = "../execution-lifecycle" }
+
+[lints.clippy]
+cognitive_complexity = "warn"

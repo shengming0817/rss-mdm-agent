@@ -191,6 +191,11 @@ fn aid(s: &str) -> AttemptId {
     AttemptId::new(s).unwrap()
 }
 fn plan() -> FrozenPlan {
+    plan_for(Authority::Test {
+        id: id("test-authority"),
+    })
+}
+fn plan_for(authority: Authority) -> FrozenPlan {
     let l = PlanLimits {
         max_input_bytes: 65536,
         max_depth: 32,
@@ -206,6 +211,7 @@ fn plan() -> FrozenPlan {
         &l,
     )
     .unwrap();
+    p.request.authority = authority;
     p.budget.max_attempts = 3;
     p.validity.expires_at_unix_ms = 10000;
     FrozenPlan::freeze(p, &l).unwrap()
@@ -267,7 +273,8 @@ fn apply(s: Execution, n: &str, c: Command, t: u64, v: &Verifier) -> Execution {
         .unwrap()
         .transition
         .unwrap()
-        .next
+        .next()
+        .clone()
 }
 fn prepared() -> Execution {
     let s = Execution::open(
@@ -305,6 +312,62 @@ fn started() -> Execution {
         }),
     )
 }
+
+#[test]
+fn first_commit_yields_dispatch_but_replay_and_restore_do_not() {
+    let s = prepared();
+    let v = verifier(Observation::Uncertain);
+    let begin = event(
+        &s,
+        "begin",
+        Command::BeginAttempt {
+            attempt_id: aid("a1"),
+            runner: id("test-runner"),
+            mode: ExecutionMode::Test,
+        },
+    );
+    let candidate = || {
+        s.evaluate(begin.clone(), 1100, &v)
+            .unwrap()
+            .transition
+            .unwrap()
+    };
+    assert_eq!(
+        candidate()
+            .commit(|_| Err::<CommitStatus, _>("failed"))
+            .unwrap_err(),
+        "failed"
+    );
+    assert!(candidate()
+        .commit(|_| Ok::<_, ()>(CommitStatus::AlreadyCommitted))
+        .unwrap()
+        .is_none());
+    let next = candidate().next().clone();
+    let action = candidate()
+        .commit(|_| Ok::<_, ()>(CommitStatus::Applied))
+        .unwrap()
+        .unwrap();
+    let calls = Cell::new(0);
+    action.dispatch(|action| {
+        assert_eq!(action.attempt_id(), &aid("a1"));
+        assert_eq!(action.plan_digest(), plan().digest());
+        assert_eq!(action.runner(), &id("test-runner"));
+        assert_eq!(action.mode(), ExecutionMode::Test);
+        assert_eq!(action.committed_revision(), next.snapshot().revision);
+        calls.set(calls.get() + 1);
+    });
+    assert_eq!(calls.get(), 1);
+    assert!(next.evaluate(begin, 1200, &v).unwrap().transition.is_none());
+    let restored = Execution::restore(
+        plan(),
+        next.snapshot().clone(),
+        Limits {
+            max_snapshot_bytes: MIN_SNAPSHOT_BYTES,
+        },
+    )
+    .unwrap();
+    assert_eq!(restored.directive(1200).unwrap(), Directive::Reconcile);
+}
 fn observe(s: Execution, n: &str, t: u64, o: Observation) -> Execution {
     apply(
         s,
@@ -316,6 +379,191 @@ fn observe(s: Execution, n: &str, t: u64, o: Observation) -> Execution {
         t,
         &verifier(o),
     )
+}
+
+#[test]
+fn terminal_output_cannot_refund_already_accounted_bytes() {
+    let s = apply(
+        started(),
+        "output",
+        Command::Output {
+            attempt_id: aid("a1"),
+            total_bytes: 100,
+        },
+        1200,
+        &verifier(Observation::Uncertain),
+    );
+    let before = s.snapshot().clone();
+    for observation in [
+        Observation::Exited {
+            exit_code: 0,
+            total_output_bytes: 99,
+        },
+        Observation::NeverDispatched {
+            total_output_bytes: 99,
+        },
+    ] {
+        let command = Command::Observe {
+            attempt_id: aid("a1"),
+            evidence: evidence("terminal"),
+        };
+        assert_eq!(
+            s.evaluate(event(&s, "terminal", command), 1300, &verifier(observation))
+                .unwrap_err(),
+            LifecycleError::Accounting
+        );
+        assert_eq!(s.snapshot(), &before);
+        assert_eq!(s.total_output_bytes(), 100);
+    }
+}
+
+// These are synthetic authenticated facts testing core category rules, not OS evidence.
+fn real_started() -> (FrozenPlan, Execution) {
+    let p = plan_for(Authority::Local {
+        id: id("local-authority"),
+    });
+    let v = verifier(Observation::Uncertain);
+    let s = Execution::open(
+        p.clone(),
+        1000,
+        Limits {
+            max_snapshot_bytes: MIN_SNAPSHOT_BYTES,
+        },
+    )
+    .unwrap();
+    let s = apply(s, "prepare", Command::Prepare, 1000, &v);
+    let s = apply(
+        s,
+        "begin",
+        Command::BeginAttempt {
+            attempt_id: aid("a1"),
+            runner: id("test-runner"),
+            mode: ExecutionMode::Real,
+        },
+        1100,
+        &v,
+    );
+    (p, s)
+}
+fn real_observe(
+    s: &Execution,
+    observation: Observation,
+    kind: EvidenceKind,
+    now: u64,
+) -> Result<Evaluation, LifecycleError> {
+    let mut evidence = evidence("real-evidence");
+    evidence.kind = kind;
+    let command = Command::Observe {
+        attempt_id: aid("a1"),
+        evidence,
+    };
+    s.evaluate(
+        event(s, &format!("observe-{now}"), command),
+        now,
+        &verifier(observation),
+    )
+}
+fn real_observations() -> [(Observation, EvidenceKind); 4] {
+    [
+        (
+            Observation::Exited {
+                exit_code: 0,
+                total_output_bytes: 0,
+            },
+            EvidenceKind::ProcessExited,
+        ),
+        (
+            Observation::NeverDispatched {
+                total_output_bytes: 0,
+            },
+            EvidenceKind::StateObserved,
+        ),
+        (
+            Observation::Effect {
+                assessment: EffectAssessment::Satisfied,
+            },
+            EvidenceKind::StateObserved,
+        ),
+        (Observation::Uncertain, EvidenceKind::StateObserved),
+    ]
+}
+fn real_state_for(observation: &Observation) -> (FrozenPlan, Execution) {
+    let (p, s) = real_started();
+    if matches!(observation, Observation::Effect { .. }) {
+        let s = real_observe(
+            &s,
+            Observation::Exited {
+                exit_code: 0,
+                total_output_bytes: 0,
+            },
+            EvidenceKind::ProcessExited,
+            1200,
+        )
+        .unwrap()
+        .transition
+        .unwrap()
+        .next()
+        .clone();
+        (p, s)
+    } else {
+        (p, s)
+    }
+}
+#[test]
+fn real_evidence_categories_are_enforced_for_live_observations() {
+    for (observation, expected) in real_observations() {
+        let (_, s) = real_state_for(&observation);
+        let before = s.snapshot().clone();
+        for kind in [
+            EvidenceKind::TestResult,
+            EvidenceKind::ProcessExited,
+            EvidenceKind::StateObserved,
+        ] {
+            let result = real_observe(&s, observation.clone(), kind, 1300);
+            if kind == expected {
+                assert_eq!(result.unwrap().outcome, EventOutcome::Applied);
+            } else {
+                assert_eq!(result.unwrap_err(), LifecycleError::Observation);
+            }
+            assert_eq!(s.snapshot(), &before);
+        }
+    }
+}
+#[test]
+fn real_recorded_categories_are_revalidated_on_restore() {
+    for (observation, expected) in real_observations().into_iter().take(3) {
+        let (p, s) = real_state_for(&observation);
+        let applied = real_observe(&s, observation.clone(), expected, 1300)
+            .unwrap()
+            .transition
+            .unwrap();
+        for kind in [
+            EvidenceKind::TestResult,
+            EvidenceKind::ProcessExited,
+            EvidenceKind::StateObserved,
+        ] {
+            let mut snapshot = applied.next().snapshot().clone();
+            let attempt = snapshot.attempt.as_mut().unwrap();
+            let recorded = if matches!(observation, Observation::Effect { .. }) {
+                attempt.assessment.as_mut().unwrap()
+            } else {
+                attempt.termination.as_mut().unwrap()
+            };
+            recorded.evidence.kind = kind;
+            let result = Execution::restore(
+                p.clone(),
+                snapshot,
+                Limits {
+                    max_snapshot_bytes: MIN_SNAPSHOT_BYTES,
+                },
+            );
+            if kind == expected {
+                assert!(result.is_ok());
+            } else {
+                assert_eq!(result.unwrap_err(), LifecycleError::Snapshot);
+            }
+        }
+    }
 }
 #[test]
 fn exit_zero_needs_verified_target_and_test_evidence_stays_test() {
@@ -450,7 +698,8 @@ fn duplicate_stale_and_wrong_attempt_events_do_not_verify_or_rewrite() {
         .unwrap()
         .transition
         .unwrap()
-        .next;
+        .next()
+        .clone();
     let replay = s.evaluate(e.clone(), 1300, &v).unwrap();
     assert_eq!(replay.outcome, EventOutcome::Duplicate);
     assert!(replay.transition.is_none());

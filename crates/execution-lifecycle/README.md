@@ -1,12 +1,16 @@
 # execution-lifecycle
 
-C09 是无 I/O 的执行生命周期核心，只依赖 C01 和基础序列化/错误库。它计算状态转换、条件写入和后续建议，不调用 runner、不调度重试、不提供执行权限。SQLite 原子性属于 C18，产品准入与接线属于 C19。
+C09 是无 I/O 的执行生命周期核心，只依赖 C01 和基础序列化/错误库。它计算状态转换、条件写入和后续建议，提供可信提交后的首次派发动作接缝，不调度重试、不自行授予产品执行权限。SQLite 原子性属于 C18，产品准入与接线属于 C19。
 
 ## 单一状态与事件
 
 Execution 保存完整冻结计划和一个有界 Snapshot：准备状态、独立取消标记、首尝试时间、累计预算、当前 attempt、最新事件。phase/directive 由事实推导，不保存另一份成功/重试状态。历史 attempt 与事件唯一性由 C18 journal 持有。
 
 open 建立 Received；evaluate(Event, now, verifier) 产生含 expected_revision 的 Transition。只有条件写入提交成功后候选才是 authority。最新完全相同事件返回 Duplicate；相同 ID 不同内容拒绝；旧 revision 返回 Stale，未来/溢出 revision 拒绝。C18 须保证所有历史事件和 attempt ID 唯一，不能用新 revision 重新提交历史命令。
+
+Transition 为私有构造且不可复制，以 next()/expected_revision() 提供候选读取。commit 消费候选并调用可信持久化回调：首次原子接纳返回 Applied；重放返回 AlreadyCommitted；CAS 冲突、失败和结果不明返回错误。只有 BeginAttempt 的首次成功提交产生不可复制、不可反序列化的 DispatchAction；其 dispatch 消费 self，绑定精确计划、attempt、runner、mode 与提交 revision。其它状态转换不产生动作。C18/C19 回调必须兑现授权重检和原子写入，类型本身不证明外部写入成功。
+
+首次动作只活在内存中：提交后崩溃或丢弃动作，恢复的 Starting 一律 Reconcile；不能从 Snapshot 再造首次动作。宿主派发前仍检查停止/取消与 runner 能力，派发结果不明进入核对，不重试旧动作。
 
 decode/restore 只接受当前格式 version=1，拒绝未知字段/版本、非法绑定、时间/预算/状态组合和超大输入，不提供旧版兼容或失败回退。恢复输入必须来自经过认证的受保护 journal；可反序列化的 Snapshot 本身不是执行许可。显式 Limits 至少保留 16 KiB 快照空间，当前有限字段和 C01 ID 上限使终止/核实记录可在该空间内落地。
 
@@ -30,5 +34,7 @@ cargo run -p execution-lifecycle --example lifecycle-consumer -- crates/executio
 ~~~
 
 测试覆盖取消/恢复、退出码与核实分离、无副作用重试、累计预算、幂等/CAS、错 attempt/证据/时钟、严格恢复与终态空间。独立 consumer 使用显式测试证据，不产生 OS 副作用。
+
+补充矩阵覆盖 Real 模式下 ProcessExited/StateObserved/TestResult 的 live 与已记录证据 restore 交叉拒绝；它只证明核心类别规则，不证明真实 OS 来源。终态最终输出 99 小于已记账 100 时拒绝且快照/revision 不变。Cargo manifest 为全部 targets 启用认知复杂度 lint。
 
 真实时钟回拨/跨重启时长、进程树停止、证据真实性、受保护存储、原子事务和平台执行须由后续 adapter 提供 T2/T3 证据；本核心测试不能代替。来源见[执行核心来源](../../docs/reference/execution-cores.md)。

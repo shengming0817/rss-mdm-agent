@@ -20,6 +20,7 @@ impl AuthorityVerifier for TestPorts {
     fn verify(
         &self,
         plan: &FrozenPlan,
+        _: &AttemptId,
     ) -> Result<AuthorityFacts, execution_admission::VerificationError> {
         if !matches!(plan.spec().request.authority, Authority::Test { .. }) {
             return Err(execution_admission::VerificationError::Subject);
@@ -43,6 +44,8 @@ impl AuthorityVerifier for TestPorts {
                 effect: self.effect.clone(),
             }],
             now_unix_ms: s.validity.not_before_unix_ms,
+            verification_revision: s.policy.clone(),
+            fresh_until_unix_ms: s.validity.expires_at_unix_ms,
         })
     }
 }
@@ -107,20 +110,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         max_profiles: 8,
         max_records: 8,
     };
-    let admission = decide(&plan, &ports, AdmissionLimits { max_rules: 8 });
-    let result = evaluate(&plan, &admission, &attempt, &bindings, &ports, bounds);
+    let admission = decide(&plan, &attempt, &ports, AdmissionLimits { max_rules: 8 });
+    let result = evaluate(&plan, &admission, &bindings, &ports, bounds);
     assert_eq!(result.outcome(), &ApprovalOutcome::Satisfied);
     assert_eq!(result.consumptions().len(), 1);
     assert_eq!(result.consumptions()[0].attempt_id(), &attempt);
     ports.effect = RuleEffect::Allow;
-    let admission = decide(&plan, &ports, AdmissionLimits { max_rules: 8 });
-    let allowed = evaluate(&plan, &admission, &attempt, &[], &ports, bounds);
+    let admission = decide(&plan, &attempt, &ports, AdmissionLimits { max_rules: 8 });
+    let allowed = evaluate(&plan, &admission, &[], &ports, bounds);
     assert_eq!(allowed.outcome(), &ApprovalOutcome::NotRequired);
     assert!(allowed.consumptions().is_empty());
     ports.effect = RuleEffect::Deny;
-    let admission = decide(&plan, &ports, AdmissionLimits { max_rules: 8 });
+    let admission = decide(&plan, &attempt, &ports, AdmissionLimits { max_rules: 8 });
     assert_eq!(
-        evaluate(&plan, &admission, &attempt, &bindings, &ports, bounds).outcome(),
+        evaluate(&plan, &admission, &bindings, &ports, bounds).outcome(),
         &ApprovalOutcome::Rejected(Reason::AdmissionDenied)
     );
     println!("execution-approval: test ports only; applicability is not signing, atomic consumption or execution");
