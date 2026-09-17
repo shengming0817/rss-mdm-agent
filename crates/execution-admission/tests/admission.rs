@@ -13,6 +13,7 @@ fn limits() -> PlanLimits {
         max_collection_items: 128,
         max_timeout_ms: 60000,
         max_output_bytes: 65536,
+        max_stdin_bytes: 65536,
         max_attempts: 3,
     }
 }
@@ -248,13 +249,15 @@ fn no_launch_parameter_identity_or_constraint_substitution_is_allowed() {
     direct.request.delegation = None;
     let p = FrozenPlan::freeze(direct, &limits()).unwrap();
     let a = authority(&p);
-    for case in 0..17 {
+    for case in 0..21 {
         let mut s = p.spec().clone();
         match case {
             0 => s.launch.artifact.resource.revision = id("other"),
             1 => s.launch.artifact.sha256 = Digest::new("34".repeat(32)).unwrap(),
-            2 => s.launch.interpreter.resource.revision = id("other"),
-            3 => s.launch.argv.push("--unsafe".into()),
+            2 => s.launch.interpreter.artifact.resource.revision = id("other"),
+            3 => s.launch.argv.push(execution_contract::LaunchArg::Literal {
+                value: "--unsafe".into(),
+            }),
             4 => s.launch.cwd = "/other".into(),
             5 => {
                 s.launch.env.clear();
@@ -282,7 +285,17 @@ fn no_launch_parameter_identity_or_constraint_substitution_is_allowed() {
                     },
                 }
             }
-            _ => s.constraints.read_paths.clear(),
+            16 => s.constraints.read_paths.clear(),
+            17 => s.launch.interpreter.profile.revision = id("2"),
+            18 => s.launch.output.stdout = TextEncoding::Utf16Le,
+            19 => s.launch.artifact_encoding = ArtifactEncoding::Utf8Bom,
+            _ => {
+                s.launch.stdin = StandardInput::Controlled {
+                    reference: s.policy.clone(),
+                    encoding: TextEncoding::Utf8,
+                    max_bytes: 10,
+                }
+            }
         }
         let altered = FrozenPlan::freeze(s, &limits()).unwrap();
         assert_eq!(

@@ -13,3 +13,5 @@ MatchReport 绑定 plan digest 和 snapshot source/revision，保留稳定顺序
 Supported 不是授权、执行许可或真实OS支持证据。host 必须验证快照真实性、新鲜度和探测覆盖；隔离能力表示能强制整项计划约束，不只是存在同名API。runner仍负责实际端点、路径解析、权限和隔离强制，C06不证明这些效果。
 
 验证：`cargo test -p execution-capability --locked`。公共示例 `capability-consumer` 接收固定计划 fixture，仅生成明确的测试快照；完整独立消费见[开发指南](../../docs/guides/contracts-development.md)。
+
+解释器 inventory 精确匹配 artifact 与 profile revision。`launch_io` 分别声明受控 stdin 编码和捕获文本编码，stdout/stderr 各自检查；缺少正向事实返回 Unknown/Unsupported，不能从解释器名称推断 IO 能力。该匹配不证明实际 runner 已关闭继承、实施输入/输出上限或验证文件编码。

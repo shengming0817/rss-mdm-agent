@@ -12,6 +12,7 @@ fn limits() -> PlanLimits {
         max_collection_items: 128,
         max_timeout_ms: 60000,
         max_output_bytes: 65536,
+        max_stdin_bytes: 65536,
         max_attempts: 3,
     }
 }
@@ -217,7 +218,7 @@ fn semantic_errors_survive_serde_without_disclosing_rejected_values() {
         ),
         (
             "/launch/argv",
-            json!(["private\u{0}argument"]),
+            json!([{"kind":"artifactPath"},{"kind":"literal","value":"private\u{0}argument"}]),
             K::InvalidValue,
             F::Arguments,
             R::Nul,

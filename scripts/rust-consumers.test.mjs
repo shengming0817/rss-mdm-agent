@@ -24,6 +24,8 @@ const names = [
   "execution-approval",
   "execution-lifecycle",
   "service-catalog",
+  "script-plan",
+  "software-plan",
 ];
 function fixture() {
   const root = realpathSync(
@@ -247,7 +249,7 @@ test("only clean unchanged source can produce a deliverable consumer PASS", () =
   }
 });
 
-test("consumer inventory covers the eight independent crates", () => {
+test("consumer inventory covers the ten independent crates", () => {
   assert.deepEqual(
     rustConsumers.map((spec) => spec.name),
     names,

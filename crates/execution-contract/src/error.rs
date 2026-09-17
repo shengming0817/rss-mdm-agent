@@ -73,6 +73,8 @@ pub enum Field {
     WorkingDirectory,
     /// Launch argument vector.
     Arguments,
+    /// Controlled standard-input byte allowance.
+    StandardInput,
     /// Explicit launch environment.
     Environment,
     /// Network allowlist collection.
@@ -123,6 +125,8 @@ pub enum Rule {
     AbsolutePath,
     /// A process argument or JSON key contains a NUL byte.
     Nul,
+    /// Expected exactly one typed artifact path in the argument vector.
+    ArtifactSlot,
     /// Expected a portable ASCII environment variable name.
     EnvironmentName,
     /// Environment literals must be NUL-free strings; secrets remain references.

@@ -2,6 +2,8 @@
 
 独立能力：[execution-contract](../../crates/execution-contract/README.md)、[ai-session-contract](../../crates/ai-session-contract/README.md)。两项基础契约互不依赖；[service-catalog](../../crates/service-catalog/README.md)仅单向消费execution-contract值类型。桌面展示壳当前不接线这些契约。
 
+C10 [脚本计划](../../crates/script-plan/README.md)仅消费 C01 并直接返回 FrozenPlan；C11 [软件计划](../../crates/software-plan/README.md)仅复用 C01 值类型，返回非执行性的单步业务决策。两者纳入同一隔离 consumer 清单，没有桌面或生产 runner 接线。
+
 ## 最小检查
 
 执行核心还包括 [C08 批准](../../crates/execution-approval/README.md)与[C09 生命周期](../../crates/execution-lifecycle/README.md)。C08 消费 C07/C01，C09 只消费 C01；各自有真实公共 API example 并纳入独立 consumer 清单。纯核心不交付签发者、数据库或平台执行证据。
@@ -9,8 +11,9 @@
 ```sh
 cargo test -p execution-contract -p ai-session-contract -p service-catalog --locked
 cargo test -p execution-approval -p execution-lifecycle --locked
-cargo clippy -p execution-contract -p ai-session-contract -p service-catalog --all-targets --locked -- -D warnings
-RUSTDOCFLAGS="-D warnings" cargo doc -p execution-contract -p ai-session-contract -p service-catalog --no-deps --locked
+cargo test -p script-plan -p software-plan --locked
+cargo clippy -p execution-contract -p ai-session-contract -p service-catalog -p script-plan -p software-plan --all-targets --locked -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc -p execution-contract -p ai-session-contract -p service-catalog -p script-plan -p software-plan --no-deps --locked
 node --test scripts/boundaries.test.mjs
 node --test scripts/rust-consumers.test.mjs scripts/execution-evolution.test.mjs
 node scripts/check-rust-consumers.mjs
@@ -28,6 +31,6 @@ consumer receipt 与 CLI 保留prepare/isolation的稳定失败码，分别标�
 
 ## Schema 与交付
 
-三个 crate 均启用 `deny(missing_docs)`，普通编译即检查公共 API 文档；rustdoc 检查同时验证链接/格式。三个 schema example 从 Rust 声明输出 Draft 2020-12。只有有意改变当前契约时才更新对应 golden，并审阅真实编码与负向校验；schema 不替代动态预算或可信身份验证。
+上述 Clippy/rustdoc 命令覆盖的五个 crate 均启用 `deny(missing_docs)`，普通编译即检查公共 API 文档；rustdoc 检查同时验证链接/格式。其中 execution-contract、ai-session-contract、service-catalog 的三个 schema example 从 Rust 声明输出 Draft 2020-12；两个计划核心没有新增 schema。只有有意改变当前契约时才更新对应 golden，并审阅真实编码与负向校验；schema 不替代动态预算或可信身份验证。
 
 全部修改提交后执行本仓 `make ci CI_BASE=origin/develop`。入口收集所有失败并记录受测源码，统一修复后复验；不运行 RSS 父仓 CI 替代，也不新增远端 CI。来源映射与设计差异见[契约来源记录](../reference/contracts-extraction.md)。

@@ -65,15 +65,30 @@
       "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
     },
     "interpreter": {
-      "resource": {
-        "id": "test-interpreter",
-        "revision": "1"
+      "artifact": {
+        "resource": {
+          "id": "test-interpreter",
+          "revision": "1"
+        },
+        "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
       },
-      "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
+      "profile": {
+        "id": "test-file",
+        "revision": "1"
+      }
     },
     "argv": [
-      "--host",
-      "example.invalid"
+      {
+        "kind": "artifactPath"
+      },
+      {
+        "kind": "literal",
+        "value": "--host"
+      },
+      {
+        "kind": "literal",
+        "value": "example.invalid"
+      }
     ],
     "cwd": "/workspace",
     "env": {
@@ -81,6 +96,14 @@
         "kind": "literal",
         "value": "C"
       }
+    },
+    "artifactEncoding": "utf8",
+    "stdin": {
+      "kind": "closed"
+    },
+    "output": {
+      "stdout": "utf8",
+      "stderr": "utf8"
     }
   },
   "runAs": {

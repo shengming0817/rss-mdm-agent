@@ -24,6 +24,7 @@ fn plan() -> FrozenPlan {
         max_collection_items: 128,
         max_timeout_ms: 60000,
         max_output_bytes: 65536,
+        max_stdin_bytes: 65536,
         max_attempts: 3,
     };
     let bytes = include_bytes!("../../execution-contract/tests/fixtures/plan.json");
@@ -294,6 +295,7 @@ fn human_and_ai_share_the_same_approval_outcomes() {
         max_collection_items: 128,
         max_timeout_ms: 60000,
         max_output_bytes: 65536,
+        max_stdin_bytes: 65536,
         max_attempts: 3,
     };
     let ai = FrozenPlan::freeze(spec, &limits).unwrap();
@@ -434,6 +436,7 @@ fn a_decision_for_another_plan_cannot_be_reused_even_if_allowed() {
         max_collection_items: 128,
         max_timeout_ms: 60000,
         max_output_bytes: 65536,
+        max_stdin_bytes: 65536,
         max_attempts: 3,
     };
     let other = FrozenPlan::freeze(spec, &limits).unwrap();

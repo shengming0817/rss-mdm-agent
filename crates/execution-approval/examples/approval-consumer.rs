@@ -92,6 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         max_collection_items: 128,
         max_timeout_ms: 60000,
         max_output_bytes: 65536,
+        max_stdin_bytes: 65536,
         max_attempts: 3,
     };
     let plan = FrozenPlan::freeze(decode_plan(&bytes, &limits)?, &limits)?;

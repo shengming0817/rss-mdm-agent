@@ -13,6 +13,8 @@
 - [授权核心](../crates/execution-admission/README.md)：可信宿主接缝与精确规则。
 - [批准核心](../crates/execution-approval/README.md)：完整裁决、可信验证与按尝试消费。
 - [生命周期核心](../crates/execution-lifecycle/README.md)：有界快照、证据核实与安全重试。
+- [脚本计划核心](../crates/script-plan/README.md)：静态解释器 profile、参数与受控 IO 编译。
+- [软件计划核心](../crates/software-plan/README.md)：精确包身份、变更约束与独立检测决策。
 - [执行核心来源](reference/execution-cores.md)：固定Rust对标及重写边界。
 - [来源与对标](reference/sources.md)：prmonitor 固定源码证据、服务端产品基线及上游参考。
 

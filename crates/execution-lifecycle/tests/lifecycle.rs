@@ -204,6 +204,7 @@ fn plan_for(authority: Authority) -> FrozenPlan {
         max_collection_items: 128,
         max_timeout_ms: 60000,
         max_output_bytes: 65536,
+        max_stdin_bytes: 65536,
         max_attempts: 3,
     };
     let mut p = decode_plan(

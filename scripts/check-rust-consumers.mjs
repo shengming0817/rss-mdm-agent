@@ -79,6 +79,20 @@ export const rustConsumers = [
       "crates/service-catalog/tests/fixtures/catalog.sha256",
     ],
   },
+  {
+    name: "script-plan",
+    example: "script-plan-consumer.rs",
+    locals: ["script-plan", "execution-contract"],
+    registry: ["serde_json"],
+    fixtures: [],
+  },
+  {
+    name: "software-plan",
+    example: "software-plan-consumer.rs",
+    locals: ["software-plan", "execution-contract"],
+    registry: [],
+    fixtures: [],
+  },
 ];
 function cargo(args, cwd, env, execute, receipt, capture = false) {
   const command = ["cargo", ...args];

@@ -1,0 +1,15 @@
+[package]
+name = "software-plan"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+description = "Pure single-step software planning from exact host snapshots"
+
+[dependencies]
+execution-contract = { path = "../execution-contract" }
+thiserror.workspace = true
+
+[lints.clippy]
+cognitive_complexity = "warn"

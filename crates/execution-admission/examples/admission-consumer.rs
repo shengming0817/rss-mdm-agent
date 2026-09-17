@@ -59,6 +59,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         max_collection_items: 128,
         max_timeout_ms: 60000,
         max_output_bytes: 65536,
+        max_stdin_bytes: 65536,
         max_attempts: 3,
     };
     let plan = FrozenPlan::freeze(decode_plan(&bytes, &limits)?, &limits)?;
@@ -88,7 +89,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     authority.effect = RuleEffect::Allow;
     let mut changed = plan.spec().clone();
-    changed.launch.argv.push("--unapproved".into());
+    changed
+        .launch
+        .argv
+        .push(execution_contract::LaunchArg::Literal {
+            value: "--unapproved".into(),
+        });
     let changed = FrozenPlan::freeze(changed, &limits)?;
     assert_eq!(
         decide(&changed, &AttemptId::new("attempt-1")?, &authority, bounds).outcome(),

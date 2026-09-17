@@ -221,13 +221,19 @@ pub struct LaunchSpec {
     /// Exact script/installer/test artifact chosen for this plan.
     pub artifact: ExactArtifactRef,
     /// Exact interpreter artifact; the runner must not substitute PATH or a newer version.
-    pub interpreter: ExactArtifactRef,
-    /// Ordered, NUL-free argument strings, never a shell command assembled by this crate.
-    pub argv: Vec<String>,
+    pub interpreter: crate::InterpreterRef,
+    /// Ordered literal arguments and exactly one verified artifact-path slot; never a shell string.
+    pub argv: Vec<crate::LaunchArg>,
+    /// Expected original artifact bytes; no transcoding or script wrapping is permitted.
+    pub artifact_encoding: crate::ArtifactEncoding,
+    /// Explicit noninteractive input; never inherited from the host.
+    pub stdin: crate::StandardInput,
+    /// Explicit capture and decoding requirements for both output streams.
+    pub output: crate::OutputSpec,
     /// Absolute working-directory declaration; platform adapters must resolve and verify real paths.
     pub cwd: String,
     #[serde(deserialize_with = "crate::validation::unique_map")]
-    /// Explicit environment only; Windows names are normalized after collision rejection.
+    /// Clear inherited environment first, then set only these values. Windows names are normalized after collision rejection.
     pub env: BTreeMap<EnvironmentKey, InputValue>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
