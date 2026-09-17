@@ -292,9 +292,31 @@ pub enum DecisionError {
     /// Workload exceeds the independent bounds.
     #[error("software planning bound exceeded")]
     Bound,
-    /// Cross-target/source/policy/manager or operand inconsistency.
-    #[error("inconsistent software planning snapshot")]
-    Binding,
+    /// Snapshot authority or tenant differs from the intent.
+    #[error("software authority mismatch")]
+    Authority,
+    /// Snapshot device/platform/scope differs from the intent.
+    #[error("software target mismatch")]
+    Target,
+    /// Snapshot policy identity or revision differs from the intent.
+    #[error("software policy mismatch")]
+    Policy,
+    /// Snapshot package/source/manager/architecture/variant differs from the intent.
+    #[error("software package coordinate mismatch")]
+    Package,
+    /// Installer manager differs from the package manager.
+    #[error("software installer manager mismatch")]
+    Manager,
+    /// Target user account and target OS namespaces differ.
+    #[error("software target account platform mismatch")]
+    TargetPlatform,
+    /// A comparison requires both observed and desired present states.
+    #[error("invalid software comparison context")]
+    ComparisonContext,
+    /// Comparison operands or identical-text relation contradict the bound states.
+    #[error("software comparison operand mismatch")]
+    ComparisonOperands,
+
     /// Supported-operation list repeats an entry.
     #[error("duplicate installer capability")]
     Duplicate,

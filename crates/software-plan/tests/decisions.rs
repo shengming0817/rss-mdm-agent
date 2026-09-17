@@ -121,7 +121,10 @@ fn ecosystem_ordering_is_required_bound_and_never_parsed_as_semver() {
     compare(&i, &mut s, VersionRelation::Equal);
     assert!(matches!(outcome(&i, &s), DecisionOutcome::Satisfied { .. }));
     s.comparison.as_mut().unwrap().installed = value("other");
-    assert_eq!(decide(&i, &s, limits()), Err(DecisionError::Binding));
+    assert_eq!(
+        decide(&i, &s, limits()),
+        Err(DecisionError::ComparisonOperands)
+    );
 }
 #[test]
 fn removal_and_uninstall_before_upgrade_obey_ownership_and_dependencies() {
@@ -241,7 +244,18 @@ fn snapshots_cannot_cross_identity_policy_scope_or_source() {
         };
         assert_eq!(
             decide(&i, &s, limits()),
-            Err(DecisionError::Binding),
+            Err([
+                DecisionError::Authority,
+                DecisionError::Target,
+                DecisionError::Target,
+                DecisionError::Policy,
+                DecisionError::Package,
+                DecisionError::Package,
+                DecisionError::Package,
+                DecisionError::Package,
+                DecisionError::Manager,
+                DecisionError::Package
+            ][n]),
             "case {n}"
         );
     }
@@ -253,7 +267,7 @@ fn snapshots_cannot_cross_identity_policy_scope_or_source() {
         },
     };
     s.target = i.target.clone();
-    assert_eq!(decide(&i, &s, limits()), Err(DecisionError::Binding));
+    assert_eq!(decide(&i, &s, limits()), Err(DecisionError::TargetPlatform));
 }
 #[test]
 fn text_work_bounds_duplicate_capabilities_and_evidence_namespaces() {
@@ -311,4 +325,28 @@ fn text_work_bounds_duplicate_capabilities_and_evidence_namespaces() {
         evidence.kind = EvidenceKind::StateObserved;
     }
     assert!(matches!(outcome(&i, &s), DecisionOutcome::Mutate(_)));
+}
+
+#[test]
+fn stale_comparison_context_and_contradictory_equal_text_are_diagnosed() {
+    let (i, mut s) = scenario();
+    let DesiredState::Present { version, .. } = &i.desired else {
+        panic!()
+    };
+    present(
+        &mut s,
+        version.as_str(),
+        Ownership::OrganizationManaged,
+        DependencyUse::Unused,
+    );
+    compare(&i, &mut s, VersionRelation::Newer);
+    assert_eq!(
+        decide(&i, &s, limits()),
+        Err(DecisionError::ComparisonOperands)
+    );
+    s.detection = Detection::Needed(DetectionCause::AfterMutation);
+    assert_eq!(
+        decide(&i, &s, limits()),
+        Err(DecisionError::ComparisonContext)
+    );
 }

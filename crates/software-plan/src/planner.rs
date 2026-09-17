@@ -49,9 +49,8 @@ fn bounds(
     if s.installer.operations.len() > limits.max_capabilities {
         return Err(DecisionError::Bound);
     }
-    let mut seen = [false; 4];
-    for kind in &s.installer.operations {
-        if std::mem::replace(&mut seen[*kind as usize], true) {
+    for (index, kind) in s.installer.operations.iter().enumerate() {
+        if s.installer.operations[..index].contains(kind) {
             return Err(DecisionError::Duplicate);
         }
     }
@@ -63,17 +62,23 @@ fn validate(
     limits: PlanningLimits,
 ) -> Result<(), DecisionError> {
     bounds(i, s, limits)?;
-    if i.authority != s.authority
-        || i.target != s.target
-        || i.policy != s.policy
-        || i.package != s.package
-        || s.installer.manager != i.package.manager
-    {
-        return Err(DecisionError::Binding);
+    for (mismatch, reason) in [
+        (i.authority != s.authority, DecisionError::Authority),
+        (i.target != s.target, DecisionError::Target),
+        (i.policy != s.policy, DecisionError::Policy),
+        (i.package != s.package, DecisionError::Package),
+        (
+            s.installer.manager != i.package.manager,
+            DecisionError::Manager,
+        ),
+    ] {
+        if mismatch {
+            return Err(reason);
+        }
     }
     if let TargetScope::User { account } = &i.target.scope {
         if account.platform != i.target.platform {
-            return Err(DecisionError::Binding);
+            return Err(DecisionError::TargetPlatform);
         }
     }
     match &s.detection {
@@ -95,13 +100,13 @@ fn validate(
             },
         ) = (&s.detection, &i.desired)
         else {
-            return Err(DecisionError::Binding);
+            return Err(DecisionError::ComparisonContext);
         };
         if &c.installed != installed
             || &c.desired != desired
             || (installed == desired && c.relation != VersionRelation::Equal)
         {
-            return Err(DecisionError::Binding);
+            return Err(DecisionError::ComparisonOperands);
         }
     }
     Ok(())

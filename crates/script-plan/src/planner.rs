@@ -34,9 +34,9 @@ fn parameter<'a>(
         return Err(ScriptPlanError::Limit);
     }
     if !used.insert(name.to_owned()) {
-        return Err(ScriptPlanError::Binding);
+        return Err(ScriptPlanError::DuplicateParameter);
     }
-    values.get(name).ok_or(ScriptPlanError::Binding)
+    values.get(name).ok_or(ScriptPlanError::MissingParameter)
 }
 fn named(
     name: &str,
@@ -50,9 +50,11 @@ fn named(
         || name.len() > limits.max_string_bytes
         || name.as_bytes()[0].is_ascii_digit()
         || !name.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_')
-        || !names.insert(name.to_ascii_lowercase())
     {
-        return Err(ScriptPlanError::Binding);
+        return Err(ScriptPlanError::InvalidName);
+    }
+    if !names.insert(name.to_ascii_lowercase()) {
+        return Err(ScriptPlanError::DuplicateName);
     }
     let text = scalar(value, limits)?;
     if matches!(
@@ -189,7 +191,7 @@ pub fn compile(input: ScriptPlanInput, limits: &PlanLimits) -> Result<FrozenPlan
             }
             ParameterTarget::Environment { key } => {
                 if env.contains_key(&key) {
-                    return Err(ScriptPlanError::Binding);
+                    return Err(ScriptPlanError::DestinationConflict);
                 }
                 let value = match value {
                     InputValue::Secret { .. } => value.clone(),
@@ -199,14 +201,14 @@ pub fn compile(input: ScriptPlanInput, limits: &PlanLimits) -> Result<FrozenPlan
                 };
                 env.insert(key, value);
             }
-            _ => return Err(ScriptPlanError::Binding),
+            _ => return Err(ScriptPlanError::UnsupportedTarget),
         }
         if argv.len() > limits.max_collection_items || env.len() > limits.max_collection_items {
             return Err(ScriptPlanError::Limit);
         }
     }
     if used.len() != request.parameters.len() {
-        return Err(ScriptPlanError::Binding);
+        return Err(ScriptPlanError::UnusedParameter);
     }
     check_environment(profile, &env)?;
     Ok(FrozenPlan::freeze(

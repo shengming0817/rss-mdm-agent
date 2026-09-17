@@ -100,9 +100,28 @@ pub enum ScriptPlanError {
     /// Invalid or unsupported profile/platform/encoding combination.
     #[error("unsupported script profile requirement")]
     Profile,
-    /// Missing, repeated, unused or ambiguous parameter/destination binding.
-    #[error("invalid script parameter binding")]
-    Binding,
+    /// A parameter was consumed more than once.
+    #[error("duplicate script parameter binding")]
+    DuplicateParameter,
+    /// A binding names a parameter absent from the request.
+    #[error("missing script parameter")]
+    MissingParameter,
+    /// A PowerShell parameter name is invalid or exceeds its bound.
+    #[error("invalid script parameter name")]
+    InvalidName,
+    /// PowerShell names repeat after case folding.
+    #[error("duplicate script parameter name")]
+    DuplicateName,
+    /// An environment destination is already populated.
+    #[error("conflicting script environment destination")]
+    DestinationConflict,
+    /// The selected profile cannot use this binding target.
+    #[error("unsupported script binding target")]
+    UnsupportedTarget,
+    /// A request parameter has no binding.
+    #[error("unused script parameter")]
+    UnusedParameter,
+
     /// Only normalized string, safe integer and boolean literals are supported.
     #[error("unsupported script parameter type")]
     ParameterType,

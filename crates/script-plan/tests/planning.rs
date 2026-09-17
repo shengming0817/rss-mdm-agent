@@ -104,7 +104,14 @@ fn parameters_cannot_change_their_destination_or_be_silently_ignored() {
         }
         assert_eq!(
             compile(i, &limits()).unwrap_err(),
-            ScriptPlanError::Binding,
+            [
+                ScriptPlanError::UnusedParameter,
+                ScriptPlanError::DuplicateParameter,
+                ScriptPlanError::MissingParameter,
+                ScriptPlanError::InvalidName,
+                ScriptPlanError::UnsupportedTarget,
+                ScriptPlanError::InvalidName
+            ][case],
             "case {case}"
         );
     }
@@ -147,7 +154,10 @@ fn secrets_only_use_controlled_channels_and_conflicts_are_rejected() {
             value: json!("template"),
         },
     );
-    assert_eq!(compile(i, &limits()).unwrap_err(), ScriptPlanError::Binding);
+    assert_eq!(
+        compile(i, &limits()).unwrap_err(),
+        ScriptPlanError::DestinationConflict
+    );
 }
 #[test]
 fn unsupported_values_encodings_platforms_and_startup_environment_fail() {
@@ -279,4 +289,24 @@ fn template_and_parameter_environments_cannot_preload_interpreter_code() {
         compile(i, &limits()).unwrap_err(),
         ScriptPlanError::StartupEnvironment
     );
+}
+
+#[test]
+fn duplicate_powershell_names_have_a_static_diagnostic() {
+    let mut i = input(ScriptProfile::PowerShell7);
+    i.request.parameters.insert(
+        "second".into(),
+        InputValue::Literal {
+            value: json!("private-value"),
+        },
+    );
+    i.bindings.push(ParameterBinding {
+        parameter: "second".into(),
+        target: ParameterTarget::Named {
+            name: "message".into(),
+        },
+    });
+    let error = compile(i, &limits()).unwrap_err();
+    assert_eq!(error, ScriptPlanError::DuplicateName);
+    assert!(!format!("{error:?}{error}").contains("private-value"));
 }

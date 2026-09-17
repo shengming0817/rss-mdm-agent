@@ -25,7 +25,7 @@ pub fn limits() -> PlanningLimits {
 }
 /// Synthetic facts only; never an installer or platform claim.
 pub fn scenario() -> (SoftwareIntent, PlanningSnapshot) {
-    let artifact = ExactArtifactRef {
+    let payload_artifact = ExactArtifactRef {
         resource: reference("test-payload"),
         sha256: Digest::new("ab".repeat(32)).unwrap(),
     };
@@ -48,7 +48,7 @@ pub fn scenario() -> (SoftwareIntent, PlanningSnapshot) {
         },
         desired: DesiredState::Present {
             version: value("2:1.0~rc1+vendor"),
-            artifact: artifact.clone(),
+            artifact: payload_artifact,
         },
     };
     let snapshot = PlanningSnapshot {
@@ -62,7 +62,10 @@ pub fn scenario() -> (SoftwareIntent, PlanningSnapshot) {
         },
         comparison: None,
         installer: InstallerCapabilities {
-            artifact,
+            artifact: ExactArtifactRef {
+                resource: reference("test-installer"),
+                sha256: Digest::new("cd".repeat(32)).unwrap(),
+            },
             manager: intent.package.manager.clone(),
             can_detect: true,
             operations: vec![
@@ -88,29 +91,55 @@ pub fn scenario() -> (SoftwareIntent, PlanningSnapshot) {
     (intent, snapshot)
 }
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let (intent, mut snapshot) = scenario();
+    let (intent, snapshot) = scenario();
     let decision = decide(&intent, &snapshot, limits())?;
+    assert_eq!(decision.snapshot(), &snapshot.revision);
     let DecisionOutcome::Mutate(change) = decision.outcome() else {
         panic!("expected install")
     };
-    assert_eq!(change.kind(), MutationKind::Install);
-    assert_eq!(change.post_detection(), &intent.desired);
-    snapshot.detection = Detection::Needed(DetectionCause::UnknownEffect);
-    assert_eq!(
-        decide(&intent, &snapshot, limits())?.outcome(),
-        &DecisionOutcome::Detect(DetectionCause::UnknownEffect)
-    );
-    let DesiredState::Present { version, .. } = &intent.desired else {
+    let DesiredState::Present {
+        version,
+        artifact: payload,
+    } = &intent.desired
+    else {
         unreachable!()
     };
-    snapshot.detection = Detection::Present {
-        version: version.clone(),
-        ownership: Ownership::UserExisting,
-        dependencies: DependencyUse::Unknown,
-        evidence: evidence(),
+    assert_eq!(change.kind(), MutationKind::Install);
+    assert_eq!(change.installer(), &snapshot.installer.artifact);
+    assert_ne!(change.installer(), payload);
+    assert_eq!(change.post_detection(), &intent.desired);
+
+    let unknown_snapshot = PlanningSnapshot {
+        revision: reference("snapshot-unknown-effect"),
+        detection: Detection::Needed(DetectionCause::UnknownEffect),
+        ..snapshot.clone()
     };
+    let unknown = decide(&intent, &unknown_snapshot, limits())?;
+    assert_eq!(unknown.snapshot(), &unknown_snapshot.revision);
+    assert_ne!(unknown.snapshot(), decision.snapshot());
+    assert_eq!(
+        unknown.outcome(),
+        &DecisionOutcome::Detect(DetectionCause::UnknownEffect)
+    );
+
+    let observed_snapshot = PlanningSnapshot {
+        revision: reference("snapshot-observed-present"),
+        detection: Detection::Present {
+            version: version.clone(),
+            ownership: Ownership::UserExisting,
+            dependencies: DependencyUse::Unknown,
+            evidence: EvidenceRef {
+                reference: reference("test-observed-present"),
+                ..evidence()
+            },
+        },
+        ..unknown_snapshot
+    };
+    let observed = decide(&intent, &observed_snapshot, limits())?;
+    assert_eq!(observed.snapshot(), &observed_snapshot.revision);
+    assert_ne!(observed.snapshot(), unknown.snapshot());
     assert!(matches!(
-        decide(&intent, &snapshot, limits())?.outcome(),
+        observed.outcome(),
         DecisionOutcome::Satisfied {
             ownership: Some(Ownership::UserExisting),
             ..

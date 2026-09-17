@@ -19,6 +19,8 @@ C11 软件安装计划与核实决策纯核心。`decide(&SoftwareIntent, &Plann
 - 自动重启不可协调，始终阻塞；可能请求重启须明确允许。已观察的重启要求返回 RequireRestart，实际重启另行授权，重启后重新检测。
 - 临时资源/包管理器占用、维护窗口和应用占用返回 Wait。每次 Mutate 都携带精确 installer、变更前版本与强制 post_detection 目标，进程退出不构成 Satisfied。
 
+结构诊断区分 authority、target、policy、package、installer manager、用户平台及比较上下文/操作数不一致，均不携带输入值。业务禁止使用 Blocked。每次事实变化需新建不可变 snapshot identity/revision；示例分别保留安装前、未知结果、独立观察的引用，并区分 package payload 与 installer binary。
+
 ## 验证
 
 ```sh
