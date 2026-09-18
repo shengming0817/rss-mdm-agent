@@ -68,7 +68,7 @@ UI 关闭或 AI 会话结束不等于任务取消；重启后从 journal 恢复�
 
 | owner | 拥有 | 消费边界 |
 | --- | --- | --- |
-| rss-mdm-agent | 本 PRD、独立执行核心、AI adapter、客户端 UI、后续本地 journal/runner/安装升级 | 独立 Rust workspace 和桌面 package；本次未创建工程空壳 |
+| rss-mdm-agent | 本 PRD、独立执行核心、AI adapter、客户端 UI、后续本地 journal/runner/安装升级 | 独立 Cargo/pnpm workspace；已存在执行纯核心与桌面展示壳，能力按各 owner 验收 |
 | rss-mdm | Device/Registration、企业 Group/Scope/Policy/Resource、源发布、产品授权、Agent wire producer | 不在客户端复制第二套业务权威；跨仓使用精确版本/hash artifact |
 | rss-identity | 管理主体认证与产品身份交接 | CLI/模型登录、OS 登录不能替代产品身份认证 |
 | prmonitor | 本次 AI/UI 提取的固定来源 | 不链接整个 prmonitor_lib、不迁移 PR 数据；不要求来源仓先重构或删除能力 |
@@ -119,7 +119,7 @@ Agent wire 的唯一 producer 仍为 rss-mdm；`execution-contract` 是本地执
 | 编号 | 要求 | 验收 |
 | --- | --- | --- |
 | CLI-AI01 | 通用 Conversation/Message/ToolCall 契约，无 PR 语义 | 不要求 pr_number/repository；流式输出、中断和错误可独立消费 |
-| CLI-AI02 | Codex、Claude、Cursor 独立适配，共用宿主工具裁决接缝 | 各自固定版本并声明续接/进程 generation/工具控制能力；不以一个引擎证明全部支持 |
+| CLI-AI02 | Codex、Claude、DeepSeek 独立适配，共用宿主工具裁决接缝 | 各自固定版本并声明续接/进程 generation/工具控制能力；不以一个引擎证明全部支持 |
 | CLI-AI03 | AI 通过目录、能力、预览、候选、提交、状态和取消工具工作 | 无“AI 自行批准”工具；MCP adapter 不直接调用 shell/PTY 或 runner |
 | CLI-AI04 | 受控模式禁止继承来源项目自动批准/全权限旁路 | 任意原生工具、直接 shell、本地 IPC 或其他入口可绕过时，受控模式不可用 |
 | CLI-AI05 | AI 输出、工具元数据和终端输出都视作不可信数据 | 工具输出中的指令/自报安全等级/自报完成不能创建授权或执行回执 |
@@ -202,19 +202,22 @@ AI请求与手动请求都不能自行取得可执行capability。运行模式�
 
 ## 6. 独立组件与工程落点
 
-以下为实施owner和接口边界；仅按对应实现交付实际组件，不预建空crate。根Cargo workspace统一管理宿主和后续 `crates/*` 成员，pnpm workspace管理 `apps/*`、`packages/*`。
+以下为实施owner和接口边界；仅按对应实现交付实际组件，不预建空crate。根Cargo workspace统一管理宿主和后续 `crates/*` 成员，pnpm workspace 管理 `apps/*`、`packages/*`、`packages/ai-adapters/*`。
 核心不依赖UI、模型SDK、数据库、OS或产品业务。必要基础类型/成熟库依赖允许；不为“零依赖”复制同一任务类型。
 
 | 组件 | 单一责任 | 直接消费 |
 | --- | --- | --- |
 | execution-contract | 执行值类型与规范摘要 | 必要基础库 |
-| ai-session-contract | 通用会话/工具提案事件 | 必要基础库，不复制执行权威 |
+| packages/ai-contract / ai-session-contract | A01 单一产品 schema、TS ports 与生成 Rust 绑定 | 公共契约，不复制执行权威 |
+| packages/ai-store-sqlite | A02 AI 命令账本、事件/交互、必要 delivery | A01 ports；独立 SQLite schema |
+| packages/ai-host / apps/ai-host | A03 TS 会话协调、运行恢复、Node 生命周期 | A01/A02，不恢复 Rust AI Host |
+| packages/ai-access / ai-client / ai-ui-bridge | A04 ACP–A2UI 接入与 renderer 接缝 | A01、官方协议，不拥有聊天页面 |
 | service-catalog | 目录项目、参数schema、精确资源引用 | execution-contract必要值类型；不链接Resource/Group |
 | execution-interaction | 等待/回答/取消/过期转换 | 必要基础库，不铸造授权 |
 | execution-capability / admission / lifecycle | 能力、裁决、执行转换 | execution-contract；相互不必链接 |
 | execution-approval | 消费完整C07裁决、验证批准适用性、输出消费意图 | execution-admission、execution-contract |
 | script-plan / software-plan | 原生脚本启动与安装决策描述 | execution-contract；不spawn |
-| ai-codex / ai-claude / ai-cursor | 具体引擎协议/进程会话适配 | ai-session-contract，无PR/执行内核/UI依赖 |
+| packages/ai-adapters/codex / claude / deepseek | Node/TS 原生引擎适配，分别拥有 SDK/进程 | A01 ProviderAgentPort，无 PR/执行内核/UI 依赖 |
 | execution-mcp | 工具协议到执行服务port | execution-contract、service-catalog、rmcp |
 | execution-sqlite | journal/交互/批准消耗的原子持久化 | interaction、approval、lifecycle |
 | execution-app | 能力/授权/批准/持久化和runner port的产品组装 | C06–C09、C18；不加载AI引擎 |
@@ -223,7 +226,11 @@ AI请求与手动请求都不能自行取得可执行capability。运行模式�
 
 C03 的当前实现见[目录核心](../../crates/service-catalog/README.md)与[后端对齐](../guides/202609130000-2396-service-catalog.md)：一个格式与参数规则可显式演进，未知语义拒绝；新增目录内容无需修改核心。选择保留目录/资源摘要、变体、参数和要求；上下架/期限绑定快照，外部展示说明绑定精确选择和目标。核心不计算能力或授权，缺少后续 owner 接线时不能声称执行闭环完成。
 
-C01/C02 契约的具体 V1 边界、规范编码及独立消费见[契约开发说明](../guides/contracts-development.md)。公共契约文档覆盖字段/单位/方向/信任边界并由编译守卫检查；错误用静态 kind/field/rule 区分配置、输入上限与语义失败，不回显输入。契约解码和计划冻结只校验数据，不能铸造可信主体、批准或真实执行证据；C02 的 Unknown 能力为明确未证实状态，未知版本/字段/事件不作兼容兜底。
+C01 执行契约保持自身版本与 Rust owner；A01 将 C02 完整替换为 AI Runtime V2，单一 JSON Schema 生成两端绑定，TS 拥有 Provider/Host/SessionStore ports。契约、安全解码与隔离消费见[契约开发说明](../guides/contracts-development.md)及 [AI Runtime 契约](../../packages/ai-contract/README.md)。数据校验和角色声明不产生可信主体、批准或执行证据。V1 不兼容，无历史命令导入、alias 或双写。历史 C02 交付由 Git/PR 保留。
+
+范围基线 `ai-runtime-20260918`：北向 ACP + A2UI，不使用 AG-UI；原生引擎拥有模型上下文，TS AI Host 拥有产品会话、命令接纳及展示/交互投影，Rust 执行服务拥有业务执行权威。TS 不直接写 Rust 批准、intent 或结果表。当前 A01 仅提供公共契约、fake Host 和 conformance，不表示 A02/A03/真实 provider 已实现。
+
+durable accepted 和稳定 cursor 只能在事务提交后确认；命令账本兼任 inbox 与 provider 派发意图，事件日志用于回放，只有可靠跨服务请求/结果使用 delivery。取消派发不证明终止，未知派发先核实；generation 和 config/账号版本阻止旧回调更新新运行。ACP prompt 保持最终响应，receipt/cursor/attach 由协商扩展表达。A2UI surface/action 与会话/运行/交互/revision 精确关联，无 A2UI 时降级到标准文本、工具状态和权限交互。具体可靠性基线由 A01 公共契约持有。
 
 AI工具参数经过MCP/host映射到执行请求，C02不直接嵌入另一份执行状态；该映射在C20验证。
 `execution-admission`就是C07的唯一actor/action/resource/context授权裁决核心；“admission”是包名，“授权”是职责，不另建平行authorization service。C19消费该裁决并强制持久执行准入。
@@ -292,23 +299,30 @@ PowerShell/Bash是原生载荷；Rust提供启动、预算、权限、恢复，J
 | [C09 #2402](https://dev.azure.com/shengming0923/rss/_workitems/edit/2402) | 生命周期：EX06、REC03–04 | C01 |
 | [C10 #2403](https://dev.azure.com/shengming0923/rss/_workitems/edit/2403) | 脚本计划：EX04–05、SEC04 | C01 |
 | [C11 #2404](https://dev.azure.com/shengming0923/rss/_workitems/edit/2404) | 软件计划：SW01–04 | C01 |
-| [C12 #2405](https://dev.azure.com/shengming0923/rss/_workitems/edit/2405) | Codex提取：AI01–06 | C02 |
-| [C13 #2406](https://dev.azure.com/shengming0923/rss/_workitems/edit/2406) | Claude提取：AI01–06 | C02 |
-| [C14 #2407](https://dev.azure.com/shengming0923/rss/_workitems/edit/2407) | Cursor提取：AI01–06 | C02 |
+| [C12 #2405](https://dev.azure.com/shengming0923/rss/_workitems/edit/2405) | Codex app-server TS适配：AI01–06 | A01 |
+| [C13 #2406](https://dev.azure.com/shengming0923/rss/_workitems/edit/2406) | Claude Agent SDK TS适配：AI01–06 | A01 |
+| [C14 #2407](https://dev.azure.com/shengming0923/rss/_workitems/edit/2407) | Cursor 范围已取消；不计完成，不作为前置 | — |
 | [C15 #2408](https://dev.azure.com/shengming0923/rss/_workitems/edit/2408) | 自助UI：UI01–04、CAT03–06、INT01–03 | C03/C04/C05 |
-| [C16 #2409](https://dev.azure.com/shengming0923/rss/_workitems/edit/2409) | AI UI：AI01/03/05/06、UI02/04 | C02/C05 |
+| [C16 #2409](https://dev.azure.com/shengming0923/rss/_workitems/edit/2409) | AI UI：AI01/03/05/06、UI02/04 | C05/A04 |
 | [C17 #2410](https://dev.azure.com/shengming0923/rss/_workitems/edit/2410) | MCP：AI03、CAT03–04、SEC02 | C01/C03 |
 | [C18 #2411](https://dev.azure.com/shengming0923/rss/_workitems/edit/2411) | SQLite：REC01–06、INT02、SEC04/06的S1测试存储边界 | C04/C08/C09 |
 | [C19 #2412](https://dev.azure.com/shengming0923/rss/_workitems/edit/2412) | 执行组装：ID03、EX01–03/06、SEC01–04/06的S1限制、REC01–06及配置版本接缝 | C06/C07/C08/C09/C18 |
 | [C20 #2413](https://dev.azure.com/shengming0923/rss/_workitems/edit/2413) | 共同闭环：UI/AI/INT、EX01/06、SEC02/05 | C12/C15/C16/C17/C19 |
 
+| [A01 #2439](https://dev.azure.com/shengming0923/rss/_workitems/edit/2439) | AI Runtime V2、公共 ports/fixtures 与架构基线 | C02 |
+| [A02 #2440](https://dev.azure.com/shengming0923/rss/_workitems/edit/2440) | TS AI SQLite 与可靠交付 | A01 |
+| [A03 #2441](https://dev.azure.com/shengming0923/rss/_workitems/edit/2441) | TS AI Host 与恢复、Node 生命周期 | A01/A02 |
+| [A04 #2442](https://dev.azure.com/shengming0923/rss/_workitems/edit/2442) | ACP–A2UI 接入和客户端基础包 | A01 |
+| [A05 #2443](https://dev.azure.com/shengming0923/rss/_workitems/edit/2443) | DeepSeek Harness TS 原生适配 | A01 |
+| [A06 #2444](https://dev.azure.com/shengming0923/rss/_workitems/edit/2444) | 三引擎公共能力和故障恢复验收 | 各 adapter、Host/Store 与接入实际产物 |
+
 需求代码缩写均省略共同前缀CLI。OS02–04、ID03本地生产authority、SEC06的平台enforcement、真实执行和企业连接属于后续阶段，不因表内模型任务完成而关闭。
 
 依赖只反映真正的产物消费。能力/授权/批准/计划核心接受显式可信输入，安全强制在C19/C20组合与后续平台adapter完成，不能把所有核心人为串行。
-C02工具提案无需消费执行内核；C17通过port可用测试服务验收；C15人用UI不依赖AI，C20不等待C13/C14。
-共享生成类型由各契约owner维护，AI公共注册/选择在C20组合，C12–14仅改各自provider目录。
+C02工具提案无需消费执行内核；C17通过port可用测试服务验收；C15人用UI不依赖AI，C20 先以 Codex 完成产品闭环，不等待 Claude/DeepSeek；A06 汇合三引擎。
+AI 产品 schema 变更回 A01 协调；C12/C13/A05 只改各自 provider 目录，A03 持有公共运行支撑，C20 唯一拥有最终桌面装配。公共 workspace/lock/工程入口每个 wave 串行集成，不等待 C20 才建立基础工程。
 C05组件、C15自助页面、C16对话页面分别独占目录；交互核心不拥有Vue组件，host将C04结果映射到UI。
-C18独占SQLite migration；C19不另建表；Cargo/lock/UI package配置与根入口由单一集成人串行合并。
+C18 独占 Rust 执行 SQLite migration，A02 独占 TS AI SQLite migration；C19不另建表；Cargo/lock/UI package配置与根入口由单一集成人串行合并。
 真实开工前复核变更文件、隐式消费和测试数据库/临时目录冲突；无Predecessor不自动代表可同时改同一文件。
 
 ## 11. 后续平台能力与客户端发布
@@ -344,4 +358,4 @@ S1未实现的真实进程/文件/网络/IPC隔离风险在平台门验证，不
 C20必须证明选定AI宿主自身没有不受控原生工具旁路；做不到时停留在普通会话/测试协议能力，不开放受控操作。
 
 每次证据绑定源码SHA、依赖lock、provider版本、配置/运行模式、命令与原始结果及未覆盖项。
-本次空仓文档PR没有Makefile/Cargo/前端工程，使用文档检查而不创建伪CI；功能实施由各自owner建立本仓本地验证入口，完整make ci一次收集失败后集中修复，不跑父仓CI代替，不新增远端CI。
+本仓已有本地 make ci、Cargo/pnpm 工程与独立消费验证；各能力 owner 随实施扩展既有入口。完整 make ci 一次收集失败后集中修复，不跑父仓 CI 代替，不新增远端 CI。

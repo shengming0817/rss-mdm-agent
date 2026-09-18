@@ -1,61 +1,27 @@
-use ai_session_contract::{
-    decode_event, ErrorKind, Event, Field, Rule, SessionLimits, TurnOutcome,
-};
-
+//! Isolated V2 consumer: no Tauri, Node, provider, database or code generation.
+use ai_session_contract::{decode, encode, fingerprint, Limits};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let bytes = std::fs::read(
-        std::env::args()
-            .nth(1)
-            .ok_or("event fixture path required")?,
-    )?;
-    let cases: Vec<serde_json::Value> = serde_json::from_slice(&bytes)?;
-    let limits = SessionLimits {
-        max_input_bytes: 65536,
-        max_text_bytes: 4096,
-        max_content_parts: 32,
-        max_argument_bytes: 8192,
+    let path = std::env::args().nth(1).ok_or("fixture path required")?;
+    let fixtures: serde_json::Value = serde_json::from_slice(&std::fs::read(path)?)?;
+    let limits = Limits {
+        max_bytes: 262144,
+        max_text_bytes: 131072,
+        max_depth: 32,
+        max_nodes: 16384,
     };
-    let mut cancelled = false;
-    let mut tail = false;
-    let mut interrupted = false;
-    // Fixtures include alternative terminal examples. This selects one cancellation trace.
-    for value in cases {
-        let event = decode_event(&serde_json::to_vec(&value)?, &limits)?;
-        match &event.event {
-            Event::CancelDispatched { .. } => {
-                cancelled = true;
-                assert!(event.terminal_outcome().is_none());
-            }
-            Event::MessageDelta { .. } if cancelled => {
-                tail = true;
-                assert!(event.terminal_outcome().is_none());
-            }
-            Event::TurnFinished {
-                outcome: TurnOutcome::Interrupted,
-                ..
-            } => {
-                interrupted = true;
-            }
-            _ => {}
-        }
+    for value in fixtures["valid"]
+        .as_array()
+        .ok_or("valid fixtures required")?
+    {
+        let decoded = decode(&serde_json::to_vec(value)?, &limits)?;
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&encode(&decoded, &limits)?)?,
+            *value
+        );
     }
-    assert!(cancelled && tail && interrupted);
-    let invalid = decode_event(
-        b"{}",
-        &SessionLimits {
-            max_text_bytes: 0,
-            ..limits
-        },
-    )
-    .unwrap_err();
-    assert_eq!(
-        (invalid.kind(), invalid.field(), invalid.rule()),
-        (
-            ErrorKind::InvalidConfiguration,
-            Field::TextBytes,
-            Rule::NonZero
-        )
-    );
-    println!("ai-session-contract: independent consumer distinguished cancellation, tail data and confirmed interruption; no engine invoked");
+    let command: ai_session_contract::Command =
+        serde_json::from_value(fixtures["valid"][0].clone())?;
+    assert_eq!(fingerprint(&command, &limits)?, fixtures["commandHash"]);
+    println!("V2 independent consumer: shared wire golden and command identity passed; no engine invoked");
     Ok(())
 }

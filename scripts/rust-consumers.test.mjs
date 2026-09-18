@@ -10,7 +10,7 @@ import {
   rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { execFileSync } from "node:child_process";
 import { checkRustConsumers, rustConsumers } from "./check-rust-consumers.mjs";
 import { git } from "./source-state.mjs";
@@ -55,6 +55,10 @@ function fixture() {
     mkdirSync(join(path, "examples"), { recursive: true });
     mkdirSync(join(path, "tests/fixtures"), { recursive: true });
     writeFileSync(join(path, "examples", spec.example), "fn main() {}\n");
+    for (const file of spec.fixtures) {
+      mkdirSync(dirname(join(root, file)), { recursive: true });
+      writeFileSync(join(root, file), "fixture");
+    }
     for (const file of [
       "plan.json",
       "plan.sha256",
@@ -70,7 +74,7 @@ function fixture() {
     JSON.stringify({ status: "passed", source: { head: "stale-success" } }),
   );
   writeFileSync(join(root, ".gitignore"), ".local-ci-runs/\n");
-  execFileSync(git, ["add", "crates", ".gitignore"], { cwd: root });
+  execFileSync(git, ["add", "crates", "packages", ".gitignore"], { cwd: root });
   execFileSync(
     git,
     [

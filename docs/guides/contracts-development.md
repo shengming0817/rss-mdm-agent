@@ -31,6 +31,19 @@ consumer receipt 与 CLI 保留prepare/isolation的稳定失败码，分别标�
 
 ## Schema 与交付
 
-上述 Clippy/rustdoc 命令覆盖的五个 crate 均启用 `deny(missing_docs)`，普通编译即检查公共 API 文档；rustdoc 检查同时验证链接/格式。其中 execution-contract、ai-session-contract、service-catalog 的三个 schema example 从 Rust 声明输出 Draft 2020-12；两个计划核心没有新增 schema。只有有意改变当前契约时才更新对应 golden，并审阅真实编码与负向校验；schema 不替代动态预算或可信身份验证。
+上述 Clippy/rustdoc 命令覆盖的五个 crate 均启用 `deny(missing_docs)`，普通编译即检查公共 API 文档；rustdoc 检查同时验证链接/格式。其中 execution-contract、service-catalog 的 schema example 从 Rust 声明输出 Draft 2020-12；AI Runtime V2 改由独立产品 JSON Schema 生成 Rust/TS，旧 AI schema example 已删除；两个计划核心没有新增 schema。只有有意改变当前契约时才更新对应 golden，并审阅真实编码与负向校验；schema 不替代动态预算或可信身份验证。
 
 全部修改提交后执行本仓 `make ci CI_BASE=origin/develop`。入口收集所有失败并记录受测源码，统一修复后复验；不运行 RSS 父仓 CI 替代，也不新增远端 CI。来源映射与设计差异见[契约来源记录](../reference/contracts-extraction.md)。
+
+## AI Runtime V2
+
+[A01 契约包](../../packages/ai-contract/README.md) 持有产品 wire 唯一声明与 TS ports；Rust crate 只承接生成绑定和安全校验。V1 不兼容，不保留转换器或旧 fixtures。共享 fixtures 随 ai-contract/testing 打包，Rust 测试及独立 example 消费同一份。
+
+```sh
+pnpm generate:ai-contract
+pnpm check:ai-contract
+pnpm test:ai-contract
+pnpm check:ai-consumer
+```
+
+生成工具仅在维护时运行；Rust 独立 consumer 不需要 Node 或相邻 package。TS 隔离 tarball consumer 有独立 package/workspace/lock，从打包产物运行 codec、fake Host 与共用 store conformance。测试替身结果不替代真实 SQLite 事务、模型或旁路隔离证据。完整 CI 绑定 clean committed source；本地快速检查允许脏树，但不能称交付证明。

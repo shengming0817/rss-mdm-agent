@@ -1,0 +1,1015 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:rss-mdm-agent:ai-runtime:2",
+  "title": "WireRecord",
+  "description": "Product reliability records only. No record authenticates a caller, grants approval or proves business execution. Standard ACP/A2UI schemas retain their upstream owners.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/Command"
+    },
+    {
+      "$ref": "#/$defs/Receipt"
+    },
+    {
+      "$ref": "#/$defs/CommandRecord"
+    },
+    {
+      "$ref": "#/$defs/Event"
+    },
+    {
+      "$ref": "#/$defs/Session"
+    },
+    {
+      "$ref": "#/$defs/Interaction"
+    },
+    {
+      "$ref": "#/$defs/Delivery"
+    },
+    {
+      "$ref": "#/$defs/SurfaceBinding"
+    },
+    {
+      "$ref": "#/$defs/SurfaceAction"
+    }
+  ],
+  "$defs": {
+    "Id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$"
+    },
+    "Counter": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "Namespace": {
+      "type": "object",
+      "properties": {
+        "tenantId": {
+          "$ref": "#/$defs/Id"
+        },
+        "principalId": {
+          "$ref": "#/$defs/Id"
+        },
+        "authorityId": {
+          "$ref": "#/$defs/Id"
+        },
+        "sessionId": {
+          "$ref": "#/$defs/Id"
+        }
+      },
+      "required": [
+        "tenantId",
+        "principalId",
+        "authorityId",
+        "sessionId"
+      ],
+      "additionalProperties": false
+    },
+    "ConfigRef": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/Id"
+        },
+        "revision": {
+          "$ref": "#/$defs/Id"
+        }
+      },
+      "required": [
+        "id",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    "Binding": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "$ref": "#/$defs/Id"
+        },
+        "providerVersion": {
+          "$ref": "#/$defs/Id"
+        },
+        "adapterVersion": {
+          "$ref": "#/$defs/Id"
+        },
+        "generation": {
+          "$ref": "#/$defs/Id"
+        },
+        "accountRef": {
+          "$ref": "#/$defs/Id"
+        },
+        "nativeSessionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "config": {
+          "$ref": "#/$defs/ConfigRef"
+        },
+        "nativeRunId": {
+          "$ref": "#/$defs/Id"
+        },
+        "nativeRequestId": {
+          "$ref": "#/$defs/Id"
+        }
+      },
+      "required": [
+        "provider",
+        "providerVersion",
+        "adapterVersion",
+        "generation",
+        "accountRef",
+        "nativeSessionId",
+        "config"
+      ],
+      "additionalProperties": false
+    },
+    "CapabilityState": {
+      "type": "string",
+      "enum": [
+        "supported",
+        "unsupported",
+        "unknown"
+      ]
+    },
+    "Capabilities": {
+      "type": "object",
+      "properties": {
+        "continuation": {
+          "type": "string",
+          "enum": [
+            "same_process",
+            "across_processes",
+            "unsupported",
+            "unknown"
+          ]
+        },
+        "cancellation": {
+          "type": "string",
+          "enum": [
+            "request_only",
+            "terminal_acknowledged",
+            "unsupported",
+            "unknown"
+          ]
+        },
+        "tools": {
+          "type": "string",
+          "enum": [
+            "host_mediated",
+            "provider_managed",
+            "disabled",
+            "unknown"
+          ]
+        },
+        "steer": {
+          "$ref": "#/$defs/CapabilityState"
+        },
+        "fork": {
+          "$ref": "#/$defs/CapabilityState"
+        },
+        "subagent": {
+          "$ref": "#/$defs/CapabilityState"
+        },
+        "terminal": {
+          "$ref": "#/$defs/CapabilityState"
+        },
+        "structuredQuestion": {
+          "$ref": "#/$defs/CapabilityState"
+        },
+        "multimodal": {
+          "$ref": "#/$defs/CapabilityState"
+        }
+      },
+      "required": [
+        "continuation",
+        "cancellation",
+        "tools",
+        "steer",
+        "fork",
+        "subagent",
+        "terminal",
+        "structuredQuestion",
+        "multimodal"
+      ],
+      "additionalProperties": false
+    },
+    "CommandState": {
+      "type": "string",
+      "enum": [
+        "accepted",
+        "dispatching",
+        "running",
+        "terminal",
+        "reconciliation_required"
+      ]
+    },
+    "Outcome": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "interrupted",
+        "refused",
+        "limit_reached",
+        "failed"
+      ]
+    },
+    "ErrorCode": {
+      "type": "string",
+      "enum": [
+        "invalid_input",
+        "unsupported_version",
+        "unsupported_capability",
+        "permission_denied",
+        "content_conflict",
+        "revision_conflict",
+        "stale_binding",
+        "expired",
+        "unavailable",
+        "reconciliation_required",
+        "limit_exceeded",
+        "cursor_expired",
+        "session_gone",
+        "already_answered"
+      ]
+    },
+    "Retry": {
+      "type": "string",
+      "enum": [
+        "same_command",
+        "reconcile_first",
+        "never"
+      ]
+    },
+    "Failure": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "retry": {
+          "$ref": "#/$defs/Retry"
+        }
+      },
+      "required": [
+        "code",
+        "retry"
+      ],
+      "additionalProperties": false
+    },
+    "Input": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "prompt"
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 65536
+            },
+            "policy": {
+              "type": "string",
+              "enum": [
+                "queue_next",
+                "steer"
+              ]
+            },
+            "targetRunId": {
+              "$ref": "#/$defs/Id"
+            }
+          },
+          "required": [
+            "type",
+            "text",
+            "policy"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "cancel"
+            },
+            "targetCommandId": {
+              "$ref": "#/$defs/Id"
+            },
+            "generation": {
+              "$ref": "#/$defs/Id"
+            },
+            "nativeRunId": {
+              "$ref": "#/$defs/Id"
+            }
+          },
+          "required": [
+            "type",
+            "targetCommandId",
+            "generation"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "respond"
+            },
+            "interactionId": {
+              "$ref": "#/$defs/Id"
+            },
+            "generation": {
+              "$ref": "#/$defs/Id"
+            },
+            "nativeRunId": {
+              "$ref": "#/$defs/Id"
+            },
+            "answer": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "required": [
+            "type",
+            "interactionId",
+            "generation",
+            "answer"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "Command": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "integer",
+          "const": 2
+        },
+        "kind": {
+          "type": "string",
+          "const": "command"
+        },
+        "sessionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "commandId": {
+          "$ref": "#/$defs/Id"
+        },
+        "expiresAtMs": {
+          "$ref": "#/$defs/Counter"
+        },
+        "input": {
+          "$ref": "#/$defs/Input"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "sessionId",
+        "commandId",
+        "expiresAtMs",
+        "input"
+      ],
+      "additionalProperties": false
+    },
+    "Receipt": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "integer",
+          "const": 2
+        },
+        "kind": {
+          "type": "string",
+          "const": "receipt"
+        },
+        "namespace": {
+          "$ref": "#/$defs/Namespace"
+        },
+        "commandId": {
+          "$ref": "#/$defs/Id"
+        },
+        "contentHash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "acceptedAtMs": {
+          "$ref": "#/$defs/Counter"
+        },
+        "retryUntilMs": {
+          "$ref": "#/$defs/Counter"
+        },
+        "receiptUntilMs": {
+          "$ref": "#/$defs/Counter"
+        },
+        "acceptedRevision": {
+          "$ref": "#/$defs/Counter"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "namespace",
+        "commandId",
+        "contentHash",
+        "acceptedAtMs",
+        "retryUntilMs",
+        "receiptUntilMs",
+        "acceptedRevision"
+      ],
+      "additionalProperties": false
+    },
+    "Dispatch": {
+      "type": "object",
+      "properties": {
+        "generation": {
+          "$ref": "#/$defs/Id"
+        },
+        "nativeSessionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "nativeRunId": {
+          "$ref": "#/$defs/Id"
+        },
+        "nativeRequestId": {
+          "$ref": "#/$defs/Id"
+        },
+        "certainty": {
+          "type": "string",
+          "enum": [
+            "not_sent",
+            "submitted",
+            "unknown"
+          ]
+        }
+      },
+      "required": [
+        "generation",
+        "nativeSessionId",
+        "certainty"
+      ],
+      "additionalProperties": false
+    },
+    "CommandRecord": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "integer",
+          "const": 2
+        },
+        "kind": {
+          "type": "string",
+          "const": "commandRecord"
+        },
+        "command": {
+          "$ref": "#/$defs/Command"
+        },
+        "receipt": {
+          "$ref": "#/$defs/Receipt"
+        },
+        "state": {
+          "$ref": "#/$defs/CommandState"
+        },
+        "dispatch": {
+          "$ref": "#/$defs/Dispatch"
+        },
+        "outcome": {
+          "$ref": "#/$defs/Outcome"
+        },
+        "failure": {
+          "$ref": "#/$defs/Failure"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "command",
+        "receipt",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "EventBody": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "text"
+            },
+            "messageId": {
+              "$ref": "#/$defs/Id"
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 65536
+            }
+          },
+          "required": [
+            "type",
+            "messageId",
+            "text"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "status"
+            },
+            "state": {
+              "$ref": "#/$defs/CommandState"
+            }
+          },
+          "required": [
+            "type",
+            "state"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "terminal"
+            },
+            "outcome": {
+              "$ref": "#/$defs/Outcome"
+            }
+          },
+          "required": [
+            "type",
+            "outcome"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "cancel_dispatched"
+            },
+            "confirmation": {
+              "type": "string",
+              "enum": [
+                "request_only",
+                "already_terminal",
+                "unsupported"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "confirmation"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "tool_proposal"
+            },
+            "proposalId": {
+              "$ref": "#/$defs/Id"
+            },
+            "name": {
+              "$ref": "#/$defs/Id"
+            },
+            "arguments": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "required": [
+            "type",
+            "proposalId",
+            "name",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "tool_result"
+            },
+            "proposalId": {
+              "$ref": "#/$defs/Id"
+            },
+            "disposition": {
+              "type": "string",
+              "enum": [
+                "returned",
+                "rejected",
+                "unavailable"
+              ]
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 65536
+            }
+          },
+          "required": [
+            "type",
+            "proposalId",
+            "disposition",
+            "text"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "interaction"
+            },
+            "interactionId": {
+              "$ref": "#/$defs/Id"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "answered",
+                "expired",
+                "unavailable"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "interactionId",
+            "status"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "error"
+            },
+            "failure": {
+              "$ref": "#/$defs/Failure"
+            }
+          },
+          "required": [
+            "type",
+            "failure"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "Event": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "integer",
+          "const": 2
+        },
+        "kind": {
+          "type": "string",
+          "const": "event"
+        },
+        "namespace": {
+          "$ref": "#/$defs/Namespace"
+        },
+        "eventId": {
+          "$ref": "#/$defs/Id"
+        },
+        "sequence": {
+          "$ref": "#/$defs/Counter"
+        },
+        "commandId": {
+          "$ref": "#/$defs/Id"
+        },
+        "generation": {
+          "$ref": "#/$defs/Id"
+        },
+        "body": {
+          "$ref": "#/$defs/EventBody"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "namespace",
+        "eventId",
+        "sequence",
+        "commandId",
+        "generation",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    "Session": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "integer",
+          "const": 2
+        },
+        "kind": {
+          "type": "string",
+          "const": "session"
+        },
+        "namespace": {
+          "$ref": "#/$defs/Namespace"
+        },
+        "revision": {
+          "$ref": "#/$defs/Counter"
+        },
+        "lastSequence": {
+          "$ref": "#/$defs/Counter"
+        },
+        "binding": {
+          "$ref": "#/$defs/Binding"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/Capabilities"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "active",
+            "retired"
+          ]
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "namespace",
+        "revision",
+        "lastSequence",
+        "binding",
+        "capabilities",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "Interaction": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "integer",
+          "const": 2
+        },
+        "kind": {
+          "type": "string",
+          "const": "interaction"
+        },
+        "namespace": {
+          "$ref": "#/$defs/Namespace"
+        },
+        "interactionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "commandId": {
+          "$ref": "#/$defs/Id"
+        },
+        "generation": {
+          "$ref": "#/$defs/Id"
+        },
+        "nativeRunId": {
+          "$ref": "#/$defs/Id"
+        },
+        "nativeRequestId": {
+          "$ref": "#/$defs/Id"
+        },
+        "expiresAtMs": {
+          "$ref": "#/$defs/Counter"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "answered",
+            "expired",
+            "unavailable"
+          ]
+        },
+        "responseCommandId": {
+          "$ref": "#/$defs/Id"
+        },
+        "callbackLifetime": {
+          "type": "string",
+          "enum": [
+            "generation_bound",
+            "provider_resumable"
+          ]
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "namespace",
+        "interactionId",
+        "commandId",
+        "generation",
+        "nativeRequestId",
+        "expiresAtMs",
+        "status",
+        "callbackLifetime"
+      ],
+      "additionalProperties": false
+    },
+    "Delivery": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "integer",
+          "const": 2
+        },
+        "kind": {
+          "type": "string",
+          "const": "delivery"
+        },
+        "namespace": {
+          "$ref": "#/$defs/Namespace"
+        },
+        "operationId": {
+          "$ref": "#/$defs/Id"
+        },
+        "eventId": {
+          "$ref": "#/$defs/Id"
+        },
+        "target": {
+          "$ref": "#/$defs/Id"
+        },
+        "contentHash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "retry": {
+          "type": "string",
+          "enum": [
+            "receiver_idempotent",
+            "reconcile_first",
+            "never"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "delivered",
+            "reconciliation_required"
+          ]
+        },
+        "attempts": {
+          "$ref": "#/$defs/Counter"
+        },
+        "nextAttemptAtMs": {
+          "$ref": "#/$defs/Counter"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "namespace",
+        "operationId",
+        "eventId",
+        "target",
+        "contentHash",
+        "retry",
+        "status",
+        "attempts",
+        "nextAttemptAtMs"
+      ],
+      "additionalProperties": false
+    },
+    "SurfaceBinding": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "integer",
+          "const": 2
+        },
+        "kind": {
+          "type": "string",
+          "const": "surface"
+        },
+        "namespace": {
+          "$ref": "#/$defs/Namespace"
+        },
+        "generation": {
+          "$ref": "#/$defs/Id"
+        },
+        "nativeRunId": {
+          "$ref": "#/$defs/Id"
+        },
+        "surfaceId": {
+          "$ref": "#/$defs/Id"
+        },
+        "surfaceInstanceId": {
+          "$ref": "#/$defs/Id"
+        },
+        "revision": {
+          "$ref": "#/$defs/Counter"
+        },
+        "interactionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "sourceComponentId": {
+          "$ref": "#/$defs/Id"
+        },
+        "eventName": {
+          "$ref": "#/$defs/Id"
+        },
+        "catalogId": {
+          "$ref": "#/$defs/Id"
+        },
+        "catalogVersion": {
+          "$ref": "#/$defs/Id"
+        },
+        "a2uiVersion": {
+          "type": "string",
+          "const": "v0.9.1"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "namespace",
+        "generation",
+        "nativeRunId",
+        "surfaceId",
+        "surfaceInstanceId",
+        "revision",
+        "interactionId",
+        "sourceComponentId",
+        "eventName",
+        "catalogId",
+        "catalogVersion",
+        "a2uiVersion"
+      ],
+      "additionalProperties": false
+    },
+    "SurfaceAction": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "integer",
+          "const": 2
+        },
+        "kind": {
+          "type": "string",
+          "const": "surfaceAction"
+        },
+        "sessionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "commandId": {
+          "$ref": "#/$defs/Id"
+        },
+        "surfaceInstanceId": {
+          "$ref": "#/$defs/Id"
+        },
+        "surfaceRevision": {
+          "$ref": "#/$defs/Counter"
+        },
+        "interactionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "generation": {
+          "$ref": "#/$defs/Id"
+        },
+        "nativeRunId": {
+          "$ref": "#/$defs/Id"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "sessionId",
+        "commandId",
+        "surfaceInstanceId",
+        "surfaceRevision",
+        "interactionId",
+        "generation",
+        "nativeRunId"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

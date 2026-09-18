@@ -18,7 +18,7 @@
 
 ## 产品与来源
 
-自有执行核心/后台实现使用Rust，桌面UI按PRD选定技术实现。只从prmonitor提取AI引擎与UI，不迁入PR业务或旧全权限/自动批准执行方式。
+执行契约、能力、授权、批准、执行生命周期/存储/服务使用 Rust；AI Host、AI 存储和 provider adapters 使用 Node.js + TypeScript，桌面 UI 使用既定 Vue/Tauri 技术。AI 产品 wire 由独立 JSON Schema 生成 Rust/TS 绑定，禁止双份手写定义。只从prmonitor提取AI引擎与UI，不迁入PR业务或旧全权限/自动批准执行方式。
 服务端身份、Group/Scope/Policy/Resource和Agent wire由rss-mdm拥有；按[依赖规则](docs/rules/dependencies.md)消费，不能复制权威或依赖相邻目录path。
 来源文件、commit及改写边界记录在提取PR；来源规则不自动成为本仓规则。Linux宿主设计不自动扩大MDM受管平台承诺。
 

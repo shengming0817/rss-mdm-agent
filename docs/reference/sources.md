@@ -1,6 +1,6 @@
 # 来源与对标
 
-本文件记录需求与源码证据，不作为实现状态或依赖选型批准。查阅日期：2026-09-09 UTC。
+本文件记录需求与源码证据，不作为实现状态或依赖选型批准。查阅日期：2026-09-18 UTC。
 PRD唯一入口为[客户端PRD](../product/rss-mdm-agent-prd.md)。D00仅编写文档；C05的实际UI/桌面壳提取、权利授权和固定对标见[提取记录](ui-extraction.md)。
 
 C01/C02 的实际契约实现及固定来源映射见[契约来源记录](contracts-extraction.md)。
@@ -31,7 +31,7 @@ C01/C02 的实际契约实现及固定来源映射见[契约来源记录](contra
 | [ReviewStream.vue](https://dev.azure.com/shengming0923/prmonitor/_git/prmonitor?version=GC4dcc87264ad740da6559824e0a8b04a1c2914d4b&path=/src/review/ReviewStream.vue)、[SplitPane.vue](https://dev.azure.com/shengming0923/prmonitor/_git/prmonitor?version=GC4dcc87264ad740da6559824e0a8b04a1c2914d4b&path=/src/SplitPane.vue) | 消息展示、流式交互与布局 | review store/API、PR字段、宿主强耦合 |
 | [types.ts](https://dev.azure.com/shengming0923/prmonitor/_git/prmonitor?version=GC4dcc87264ad740da6559824e0a8b04a1c2914d4b&path=/src/types.ts) | 类型化事件的组织方式 | 不整体复制PullRequest/Workflow等PR契约 |
 
-排除src-tauri/src/pr、src/pr、PR调度/标签/评论/webhook/inbox/outbox业务、PR数据库、remote terminal、messaging及其配置。独立执行SQLite/MCP/交互能力在目标仓按新契约实现，不能借来源已有模块扩大提取范围。
+排除 src-tauri/src/pr、src/pr、PR 调度/标签/评论/webhook 业务、PR 数据库、remote terminal、messaging 及其配置。A02 可参考 inbox/outbox 的事务、内容绑定和故障语义，在 TS AI 模型中重写；不复制 PR schema、历史 migration 或整套 worker。独立执行SQLite/MCP/交互能力在目标仓按新契约实现，不能借来源已有模块扩大提取范围。
 
 ## 直接上游对标
 
@@ -60,3 +60,5 @@ C01/C02 的实际契约实现及固定来源映射见[契约来源记录](contra
 - [Landlock兼容性](https://landlock.io/rust-landlock/landlock/trait.Compatible.html)：区分best-effort和硬要求，产品不能静默放弃必需限制。
 
 这些来源支持设计取舍，不构成Windows/macOS/Linux任何具体版本的本产品支持证明。
+
+AI Runtime `ai-runtime-20260918` 的单一 schema、TS/Rust 职责、固定上游及许可记录见 [A01 来源](ai-runtime.md)。Cursor 历史源码仍是来源记录，#2407 已取消，不构成现行 provider 承诺。
