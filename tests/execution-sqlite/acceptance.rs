@@ -52,12 +52,16 @@ fn first_commit_consumes_all_approvals_once_and_replay_never_reauthorizes_or_dis
     let audit = store
         .audit(&host.scope(), &operation("start"), &host)
         .unwrap();
-    assert_eq!(audit.rule_ids.len(), 2);
+    assert_eq!(audit.admission.as_ref().unwrap().rule_ids.len(), 2);
     assert_eq!(audit.consumptions.len(), 2);
     assert!(audit
         .consumptions
         .iter()
         .all(|c| c.used_before == 0 && c.used_after == 1));
+    assert_audit_event(&host, &audit, &receipt);
+    assert_admission_evidence(&host, &audit);
+    assert_approval_evidence(&host, &audit);
+    assert_audit_wire(&audit);
     host.now.set(5000);
     host.write = false;
     let replay = store
@@ -260,6 +264,8 @@ fn same_record_covering_multiple_profiles_is_consumed_once() {
     assert_eq!(
         store
             .audit(&host.scope(), &operation("start"), &host)
+            .unwrap()
+            .admission
             .unwrap()
             .rule_ids
             .len(),
@@ -610,7 +616,7 @@ fn existing_writer_is_fenced_when_schema_changes_after_open() {
 fn reserved_terminal_receipts_survive_exhausted_normal_capacity() {
     let db = Database::new();
     let mut bounds = limits();
-    bounds.max_receipts = 8;
+    bounds.max_receipts = 9;
     let host = TestHost::new(0);
     let mut store = Store::initialize_test(&db.path, host.scope().authority, bounds).unwrap();
     host.prepare(&mut store);
@@ -623,7 +629,7 @@ fn reserved_terminal_receipts_survive_exhausted_normal_capacity() {
             &host,
         )
         .unwrap();
-    // 4 receipts + 4 terminal reservations exhaust ordinary allocation.
+    // 4 receipts + 5 terminal reservations exhaust ordinary allocation.
     assert_eq!(
         store
             .apply_execution(
@@ -1034,4 +1040,484 @@ fn time_is_rechecked_after_trust_and_answer_verification() {
         result.receipt().occurred_at_unix_ms,
         spec.expires_at_unix_ms
     );
+}
+
+#[test]
+fn rejected_approval_audit_preserves_exact_trusted_and_submitted_evidence() {
+    let db = Database::new();
+    let mut store = db.create();
+    let mut host = TestHost::new(1);
+    host.entries[0].state = ApprovalState::Revoked;
+    host.prepare(&mut store);
+    let result = store
+        .apply_execution(
+            &operation("denied"),
+            &host.scope(),
+            &host.begin(),
+            &host.bindings(),
+            &host,
+        )
+        .unwrap();
+    assert_eq!(result.receipt().outcome, Outcome::Rejected);
+    let audit = store
+        .audit(&host.scope(), &operation("denied"), &host)
+        .unwrap();
+    let trust = audit.trust.as_ref().unwrap();
+    assert_eq!(trust.approval_revision, host.approval);
+    assert_eq!(trust.authorization_revision, host.authorization);
+    assert_eq!(trust.fresh_until_unix_ms, 2000);
+    assert_eq!(
+        audit.submitted_approvals[0].record,
+        host.entries[0].definition.reference
+    );
+    assert_eq!(
+        audit.protected_approvals[0].definition,
+        host.entries[0].definition
+    );
+    assert_eq!(audit.protected_approvals[0].state, ApprovalState::Revoked);
+    assert_eq!(audit.protected_approvals[0].used, 0);
+    assert_eq!(audit.protected_approvals[0].consumption_revision, 0);
+    assert!(audit.consumptions.is_empty());
+    assert_eq!(
+        audit.approval.as_ref().unwrap().outcome,
+        execution_approval::ApprovalOutcome::Rejected(execution_approval::Reason::Revoked)
+    );
+    assert_eq!(
+        audit.admission.as_ref().unwrap().reason,
+        execution_admission::Reason::NeedsApproval
+    );
+    host.approval = reference("new-head");
+    host.entries.clear();
+    store
+        .refresh_trust(&operation("refresh"), &host.scope(), Some(1), &host)
+        .unwrap();
+    drop(store);
+    assert_eq!(
+        db.open()
+            .audit(&host.scope(), &operation("denied"), &host)
+            .unwrap(),
+        audit
+    );
+    assert_eq!(db.count("attempts"), 0);
+}
+
+#[test]
+fn each_endpoint_requires_its_exact_access_and_delivery_consumer() {
+    let db = Database::new();
+    let mut store = db.create();
+    let mut host = TestHost::new(0);
+    host.prepare(&mut store);
+    let spec = spec(&host);
+    store
+        .open_interaction(&operation("interaction"), &host.scope(), &spec, &host)
+        .unwrap();
+    let initial = db.count("receipts");
+    host.denied = vec![Access::ManageTrust];
+    assert_eq!(
+        store
+            .refresh_trust(&operation("blocked-trust"), &host.scope(), Some(1), &host)
+            .unwrap_err(),
+        Error::Denied
+    );
+    host.denied = vec![Access::Create];
+    assert_eq!(
+        store
+            .open_execution(&operation("blocked-open"), &host.plan, &host)
+            .unwrap_err(),
+        Error::Denied
+    );
+    host.denied = vec![Access::Execute];
+    assert_eq!(
+        store
+            .apply_execution(
+                &operation("blocked-execute"),
+                &host.scope(),
+                &host.begin(),
+                &[],
+                &host
+            )
+            .unwrap_err(),
+        Error::Denied
+    );
+    host.denied = vec![Access::RunnerFact];
+    assert_eq!(
+        store
+            .apply_execution(
+                &operation("blocked-runner"),
+                &host.scope(),
+                &event("recover", 1, lifecycle::Command::Recover),
+                &[],
+                &host
+            )
+            .unwrap_err(),
+        Error::Denied
+    );
+    host.denied = vec![Access::Interact];
+    assert_eq!(
+        store
+            .open_interaction(
+                &operation("blocked-interaction"),
+                &host.scope(),
+                &spec,
+                &host
+            )
+            .unwrap_err(),
+        Error::Denied
+    );
+    assert_eq!(
+        store
+            .apply_interaction(
+                &operation("blocked-answer"),
+                &host.scope(),
+                &spec.id,
+                &interaction::Command::CheckExpiry {},
+                &host
+            )
+            .unwrap_err(),
+        Error::Denied
+    );
+    assert_eq!(db.count("receipts"), initial);
+    host.denied = vec![Access::Deliver];
+    let receipt = store
+        .receipt(&host.scope(), &operation("open"), &host)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        store
+            .pull_results(&host.scope(), &id("ui"), 0, 1, &host)
+            .unwrap_err(),
+        Error::Denied
+    );
+    assert_eq!(
+        store
+            .confirm(&host.scope(), &id("ui"), &receipt.event_id, &host)
+            .unwrap_err(),
+        Error::Denied
+    );
+    host.denied.clear();
+    host.consumer = Some(id("authorized"));
+    assert_eq!(
+        store
+            .pull_results(&host.scope(), &id("other"), 0, 1, &host)
+            .unwrap_err(),
+        Error::Denied
+    );
+    assert_eq!(
+        store
+            .confirm(&host.scope(), &id("other"), &receipt.event_id, &host)
+            .unwrap_err(),
+        Error::Denied
+    );
+    assert_eq!(
+        store
+            .pull_results(&host.scope(), &id("authorized"), 0, 1, &host)
+            .unwrap()
+            .len(),
+        1
+    );
+    store
+        .confirm(&host.scope(), &id("authorized"), &receipt.event_id, &host)
+        .unwrap();
+    store
+        .apply_interaction(
+            &operation("check"),
+            &host.scope(),
+            &spec.id,
+            &interaction::Command::CheckExpiry {},
+            &host,
+        )
+        .unwrap();
+    assert!(host
+        .access_calls
+        .borrow()
+        .iter()
+        .any(|(access, consumer, context)| *access == Access::Interact
+            && consumer.is_none()
+            && *context));
+}
+
+#[test]
+fn new_write_needs_only_write_permission_while_replay_needs_only_result_permission() {
+    let db = Database::new();
+    let mut store = db.create();
+    let mut host = TestHost::new(0);
+    host.read = false;
+    let initial = store
+        .refresh_trust(&operation("trust"), &host.scope(), None, &host)
+        .unwrap();
+    assert_eq!(initial.receipt().outcome, Outcome::Changed);
+    assert_eq!(
+        store
+            .refresh_trust(&operation("trust"), &host.scope(), None, &host)
+            .unwrap_err(),
+        Error::Denied
+    );
+    host.read = true;
+    host.write = false;
+    assert!(matches!(
+        store
+            .refresh_trust(&operation("trust"), &host.scope(), None, &host)
+            .unwrap(),
+        CommitOutcome::AlreadyCommitted(_)
+    ));
+    assert_eq!(
+        store
+            .refresh_trust(&operation("new-write"), &host.scope(), Some(1), &host)
+            .unwrap_err(),
+        Error::Denied
+    );
+    assert_eq!(db.count("receipts"), 1);
+}
+
+#[test]
+fn quota_accepts_uncertain_and_manual_review_before_final_evidence() {
+    for assessment in [
+        lifecycle::EffectAssessment::Unknown,
+        lifecycle::EffectAssessment::NotSatisfied,
+    ] {
+        let db = Database::new();
+        let mut bounds = limits();
+        bounds.max_receipts = 9;
+        let mut host = TestHost::new(0);
+        let mut store = Store::initialize_test(&db.path, host.scope().authority, bounds).unwrap();
+        host.prepare(&mut store);
+        store
+            .apply_execution(
+                &operation("start"),
+                &host.scope(),
+                &host.begin(),
+                &[],
+                &host,
+            )
+            .unwrap();
+        let attempt = AttemptId::new("attempt-1").unwrap();
+        let evidence = |name: &str| EvidenceRef {
+            reference: reference(name),
+            kind: EvidenceKind::TestResult,
+            runner: id("test-runner"),
+        };
+        for (name, revision, observation) in [
+            ("uncertain", 2, lifecycle::Observation::Uncertain),
+            (
+                "exit",
+                4,
+                lifecycle::Observation::Exited {
+                    exit_code: 1,
+                    total_output_bytes: 0,
+                },
+            ),
+            ("manual", 5, lifecycle::Observation::Effect { assessment }),
+            (
+                "final",
+                6,
+                lifecycle::Observation::Effect {
+                    assessment: lifecycle::EffectAssessment::NoEffect,
+                },
+            ),
+        ] {
+            host.observation = observation;
+            store
+                .apply_execution(
+                    &operation(name),
+                    &host.scope(),
+                    &event(
+                        name,
+                        revision,
+                        lifecycle::Command::Observe {
+                            attempt_id: attempt.clone(),
+                            evidence: evidence(name),
+                        },
+                    ),
+                    &[],
+                    &host,
+                )
+                .unwrap();
+            if name == "uncertain" {
+                store
+                    .apply_execution(
+                        &operation("cancel"),
+                        &host.scope(),
+                        &event("cancel", 3, lifecycle::Command::Cancel),
+                        &[],
+                        &host,
+                    )
+                    .unwrap();
+            }
+            if name == "manual" {
+                assert_eq!(
+                    store
+                        .execution(&host.scope(), &host)
+                        .unwrap()
+                        .directive(1000)
+                        .unwrap(),
+                    lifecycle::Directive::ManualReview
+                );
+            }
+        }
+        assert_eq!(db.count("receipts"), 9);
+        assert_eq!(
+            store
+                .execution(&host.scope(), &host)
+                .unwrap()
+                .directive(1000)
+                .unwrap(),
+            lifecycle::Directive::Done
+        );
+    }
+}
+
+fn assert_audit_event(host: &TestHost, audit: &AuditRecord, receipt: &Receipt) {
+    let p = host.plan.spec();
+    let event = audit.event.as_ref().unwrap();
+    assert_eq!(event.event_id, receipt.event_id);
+    assert_eq!(event.authority, p.request.authority);
+    assert_eq!(event.request_id, p.request.request_id);
+    assert_eq!(event.plan_id, p.plan_id);
+    assert_eq!(&event.plan_digest, host.plan.digest());
+    assert_eq!(
+        (&event.actor, &event.initiator),
+        (&p.request.actor, &p.request.initiator)
+    );
+    assert_eq!(event.operation, p.request.operation);
+    assert_eq!(event.target, p.request.target);
+    assert_eq!(event.policy, p.policy);
+    assert_eq!(event.delegation, p.request.delegation);
+    assert_eq!(event.decision, Decision::Admitted {});
+    assert_eq!(event.occurred_at_unix_ms, 1000);
+    assert_eq!(audit.attempt_id, Some(AttemptId::new("attempt-1").unwrap()));
+    assert_eq!(audit.reason, AuditReason::AdmissionEvaluated);
+}
+
+fn assert_admission_evidence(host: &TestHost, audit: &AuditRecord) {
+    let p = host.plan.spec();
+    let admission = audit.admission.as_ref().unwrap();
+    assert_eq!(admission.rule_ids, vec![id("profile-0"), id("profile-1")]);
+    assert_eq!(
+        admission.validity,
+        Some(DecisionValidity {
+            revision: host.authorization.clone(),
+            verified_at_unix_ms: 1000,
+            valid_until_unix_ms: 2000
+        })
+    );
+    assert_eq!(admission.plan_id, p.plan_id);
+    assert_eq!(&admission.plan_digest, host.plan.digest());
+    assert_eq!(admission.attempt_id, audit.attempt_id.clone().unwrap());
+    assert_eq!(admission.policy, p.policy);
+    assert_eq!(admission.delegation, p.request.delegation);
+    assert_eq!(admission.reason, execution_admission::Reason::NeedsApproval);
+    assert_eq!(
+        admission.outcome,
+        execution_admission::DecisionOutcome::ApprovalRequired {
+            profiles: host.bindings().iter().map(|b| b.profile.clone()).collect()
+        }
+    );
+}
+
+fn assert_approval_evidence(host: &TestHost, audit: &AuditRecord) {
+    let approval = audit.approval.as_ref().unwrap();
+    assert_eq!(
+        approval.outcome,
+        execution_approval::ApprovalOutcome::Satisfied
+    );
+    assert_eq!(
+        approval.bindings,
+        host.bindings()
+            .iter()
+            .map(ApprovalBindingAudit::from)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        approval.admission_validity,
+        audit.admission.as_ref().unwrap().validity
+    );
+    assert_eq!(approval.pending_consumptions.len(), 2);
+    assert_eq!(audit.submitted_approvals, approval.bindings);
+    for (index, consumption) in audit.consumptions.iter().enumerate() {
+        let d = &host.entries[index].definition;
+        assert_eq!(
+            *consumption,
+            ConsumptionAudit {
+                approval: d.reference.clone(),
+                approver: d.approver.clone(),
+                used_before: 0,
+                used_after: 1,
+                revision_before: 0,
+                revision_after: 1,
+                verification_revision: host.approval.clone()
+            }
+        );
+        assert_eq!(
+            approval.pending_consumptions[index],
+            PendingConsumptionAudit {
+                approval: d.reference.clone(),
+                expected_uses: 0,
+                expected_consumption_revision: 0,
+                verification_revision: host.approval.clone(),
+                valid_until_unix_ms: 2000
+            }
+        );
+    }
+}
+
+fn assert_audit_wire(audit: &AuditRecord) {
+    let json = serde_json::to_value(audit).unwrap();
+    assert_eq!(json["reason"], "admissionEvaluated");
+    assert_eq!(json["admission"]["reason"], "needsApproval");
+    assert_eq!(json["approval"]["outcome"], "satisfied");
+    assert_eq!(serde_json::from_value::<AuditRecord>(json).unwrap(), *audit);
+}
+
+#[test]
+fn denied_audit_does_not_promote_missing_expired_or_unknown_records_to_approval() {
+    for mode in ["missing", "expired", "unknown"] {
+        let db = Database::new();
+        let mut store = db.create();
+        let mut host = TestHost::new(1);
+        if mode == "expired" {
+            host.entries[0].definition.validity.expires_at_unix_ms = 1100;
+        }
+        if mode == "unknown" {
+            host.entries[0].state = ApprovalState::Unknown;
+        }
+        host.prepare(&mut store);
+        host.now.set(1200);
+        let mut bindings = host.bindings();
+        if mode == "missing" {
+            bindings[0].record = reference("not-in-protected-store");
+        }
+        store
+            .apply_execution(
+                &operation("denied"),
+                &host.scope(),
+                &host.begin(),
+                &bindings,
+                &host,
+            )
+            .unwrap();
+        drop(store);
+        let audit = db
+            .open()
+            .audit(&host.scope(), &operation("denied"), &host)
+            .unwrap();
+        assert_eq!(audit.submitted_approvals[0].record, bindings[0].record);
+        assert!(audit.approval.as_ref().unwrap().bindings.is_empty());
+        assert!(audit.consumptions.is_empty());
+        assert_eq!(
+            audit.protected_approvals.len(),
+            usize::from(mode != "missing")
+        );
+        let expected = match mode {
+            "missing" => execution_approval::Reason::Verification(
+                execution_approval::VerificationError::Unavailable,
+            ),
+            "expired" => execution_approval::Reason::ApprovalExpired,
+            _ => execution_approval::Reason::StatusUnknown,
+        };
+        assert_eq!(
+            audit.approval.unwrap().outcome,
+            execution_approval::ApprovalOutcome::Rejected(expected)
+        );
+        assert_eq!(db.count("attempts"), 0);
+    }
 }

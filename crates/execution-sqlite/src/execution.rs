@@ -30,7 +30,7 @@ impl Store {
         let state = Execution::open(plan.clone(), w.now, w.limits.lifecycle)
             .map_err(|_| Error::Configuration)?;
         w.tx.execute(
-            "INSERT INTO executions VALUES(?1,?2,?3,?4,?5,?6,0,15)",
+            "INSERT INTO executions VALUES(?1,?2,?3,?4,?5,?6,0,31)",
             params![
                 scope.key(),
                 plan.spec().request.request_id.as_str(),
@@ -40,7 +40,12 @@ impl Store {
                 w.bounded(state.snapshot())?
             ],
         )?;
-        let audit = plan_audit(&w, plan, Decision::Proposed {}, "ExecutionOpened");
+        let audit = plan_audit(
+            &w,
+            plan,
+            Decision::Proposed {},
+            AuditReason::ExecutionOpened,
+        );
         w.finish(Outcome::Changed, 0, None, audit)
     }
     /// Apply one event through historical deduplication, core evaluation and atomic persistence.
@@ -90,10 +95,17 @@ impl Store {
             "INSERT INTO event_keys VALUES(?1,?2,?3)",
             params![event.id.as_str(), scope.key(), op.as_str()],
         )?;
-        let mut audit = plan_audit(&w, &plan, Decision::Proposed {}, "ExecutionEvent");
+        let mut audit = plan_audit(
+            &w,
+            &plan,
+            Decision::Proposed {},
+            AuditReason::ExecutionEvent,
+        );
         let gate = if let Command::BeginAttempt { attempt_id, .. } = &event.command {
+            audit.attempt_id = Some(attempt_id.clone());
+            audit.submitted_approvals = bindings.iter().map(ApprovalBindingAudit::from).collect();
             let Some(h) = head(&w.tx, scope, w.limits)? else {
-                audit.reason = "TrustUnavailable".into();
+                audit.reason = AuditReason::TrustUnavailable;
                 audit.event.as_mut().expect("plan audit").decision = Decision::Denied {};
                 return w.finish(
                     Outcome::Rejected,
@@ -109,18 +121,20 @@ impl Store {
                 now: w.now,
                 head: &h,
             };
+            audit.trust = Some(TrustAudit {
+                authorization_revision: h.authorization.clone(),
+                approval_revision: h.approval.clone(),
+                fresh_until_unix_ms: h.until,
+            });
+            audit.protected_approvals = approvals.audit_records(bindings)?;
             let gate = host.admit(&plan, attempt_id, bindings, &approvals, w.now)?;
             w.refresh_time(host)?;
             audit.occurred_at(w.now);
-            audit.rule_ids = gate.admission.rule_ids().to_vec();
-            audit.reason = format!(
-                "Admission:{:?};Approval:{:?}",
-                gate.admission.reason(),
-                gate.approval.outcome()
-            );
-            audit.authorization_revision = gate.admission.validity().map(|v| v.revision().clone());
-            audit.attempt_id = Some(attempt_id.clone());
+            audit.reason = AuditReason::AdmissionEvaluated;
+            audit.admission = Some(admission_audit(&gate.admission));
+            audit.approval = Some(approval_audit(&gate.approval));
             if !check_gate(&w, &plan, attempt_id, bindings, &gate, &h) {
+                audit.reason = AuditReason::CommitGateRejected;
                 audit.event.as_mut().expect("plan audit").decision = Decision::Denied {};
                 return w.finish(
                     Outcome::Rejected,
@@ -139,7 +153,7 @@ impl Store {
         let evaluation = match current.evaluate(event.clone(), w.now, host) {
             Ok(value) => value,
             Err(error) => {
-                audit.reason = format!("Lifecycle:{error:?}");
+                audit.reason = AuditReason::LifecycleError(error);
                 audit.event.as_mut().expect("plan audit").decision = Decision::Denied {};
                 return w.finish(Outcome::Rejected, current.snapshot().revision, None, audit);
             }
@@ -174,7 +188,7 @@ impl Store {
         }
         audit.attempt_id = attempt.clone();
         if !matches!(event.command, Command::BeginAttempt { .. }) {
-            audit.reason = format!("Lifecycle:{:?}", evaluation.directive);
+            audit.reason = AuditReason::Lifecycle(evaluation.directive);
         }
         let reserve = terminal_reserve(current.snapshot(), next, reserve, &event.command);
         let changed = w.tx.execute("UPDATE executions SET snapshot=?1,revision=?2,reserve=?3 WHERE scope=?4 AND revision=?5",
@@ -222,15 +236,18 @@ fn terminal_reserve(
     mut reserve: u8,
     command: &Command,
 ) -> u8 {
-    // Four bounded obligations: first cancel, first uncertainty, termination and final assessment.
+    // Five bounded obligations: cancel, uncertainty, termination, initial and final assessment.
     // Repeated reports cannot spend the same reservation twice. New attempts must reserve again.
     if matches!(command, Command::BeginAttempt { .. }) {
-        return 15;
+        return 31;
     }
     if !old.cancel_requested && next.cancel_requested {
         reserve &= !1;
     }
-    if matches!(command, Command::Recover)
+    if next
+        .attempt
+        .as_ref()
+        .is_some_and(|a| matches!(a.dispatch, lifecycle::DispatchState::Unknown { .. }))
         && old
             .attempt
             .as_ref()
@@ -239,6 +256,9 @@ fn terminal_reserve(
         reserve &= !2;
     }
     if let Some(a) = &next.attempt {
+        if a.assessment.is_some() && old.attempt.as_ref().is_some_and(|a| a.assessment.is_none()) {
+            reserve &= !8;
+        }
         if a.termination.is_some()
             && old
                 .attempt
@@ -267,7 +287,7 @@ pub(crate) fn plan_audit(
     w: &Write<'_>,
     plan: &FrozenPlan,
     decision: Decision,
-    reason: &str,
+    reason: AuditReason,
 ) -> AuditRecord {
     let p = plan.spec();
     let mut audit = empty_audit(reason);
@@ -297,5 +317,44 @@ impl AuditRecord {
         if let Some(event) = &mut self.event {
             event.occurred_at_unix_ms = now;
         }
+    }
+}
+
+fn admission_audit(a: &execution_admission::AdmissionDecision) -> AdmissionAudit {
+    AdmissionAudit {
+        plan_id: a.plan_id().clone(),
+        plan_digest: a.plan_digest().clone(),
+        attempt_id: a.attempt_id().clone(),
+        policy: a.policy().clone(),
+        delegation: a.delegation().cloned(),
+        outcome: a.outcome().clone(),
+        reason: a.reason(),
+        rule_ids: a.rule_ids().to_vec(),
+        validity: a.validity().map(DecisionValidity::from),
+    }
+}
+fn approval_audit(p: &execution_approval::ApprovalDecision) -> ApprovalAudit {
+    ApprovalAudit {
+        plan_id: p.plan_id().clone(),
+        plan_digest: p.plan_digest().clone(),
+        attempt_id: p.attempt_id().clone(),
+        outcome: p.outcome().clone(),
+        bindings: p
+            .bindings()
+            .iter()
+            .map(ApprovalBindingAudit::from)
+            .collect(),
+        pending_consumptions: p
+            .consumptions()
+            .iter()
+            .map(|c| PendingConsumptionAudit {
+                approval: c.approval().clone(),
+                expected_uses: c.expected_uses(),
+                expected_consumption_revision: c.expected_consumption_revision(),
+                verification_revision: c.verification_revision().clone(),
+                valid_until_unix_ms: c.valid_until_unix_ms(),
+            })
+            .collect(),
+        admission_validity: p.admission_validity().map(DecisionValidity::from),
     }
 }

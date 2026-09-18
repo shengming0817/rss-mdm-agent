@@ -38,24 +38,31 @@ impl Store {
             return Err(Error::Denied);
         }
         protected_path(path, false)?;
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
+        if std::fs::symlink_metadata(path).is_ok() {
+            return Err(Error::Storage);
         }
-        drop(options.open(path).map_err(|_| Error::Storage)?);
-        let mut conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+        let (staged, mut conn) = staging_connection(path)?;
         conn.execute_batch("PRAGMA journal_mode=WAL;")?;
         configure(&conn, limits)?;
         migrate(&mut conn, &authority)?;
-        protected_path(path, true)?;
-        Ok(Self {
-            conn,
-            limits,
-            authority,
-        })
+        // Publish only a complete standalone file. No WAL frames may be left at the old name.
+        let busy: u32 = conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get(0))?;
+        if busy != 0 {
+            return Err(Error::Busy);
+        }
+        conn.close().map_err(|_| Error::Storage)?;
+        std::fs::File::open(&staged)
+            .and_then(|f| f.sync_all())
+            .map_err(|_| Error::Storage)?;
+        // A hard link is an atomic no-replace publication on the same filesystem.
+        std::fs::hard_link(&staged, path).map_err(|_| Error::Storage)?;
+        sync_parent(path)?;
+        std::fs::remove_file(&staged).map_err(|_| Error::Storage)?;
+        sync_parent(path)?;
+        match Self::open(path, &authority, limits)? {
+            OpenOutcome::Ready(store) => Ok(*store),
+            OpenOutcome::NewerSchema { .. } => Err(Error::Schema),
+        }
     }
     /// Open ONLY an existing database after read-only identity/version inspection.
     /// Failure retains the original file; no fallback path or implicit authority creation.
@@ -97,6 +104,38 @@ impl Store {
             authority: stored,
         })))
     }
+}
+fn staging_connection(final_path: &Path) -> Result<(std::path::PathBuf, Connection), Error> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| Error::Storage)?
+        .as_nanos();
+    let staged = final_path.parent().ok_or(Error::Storage)?.join(format!(
+        ".execution-bootstrap-{}-{nonce}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    drop(options.open(&staged).map_err(|_| Error::Storage)?);
+    let conn = Connection::open_with_flags(&staged, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+    Ok((staged, conn))
+}
+fn sync_parent(path: &Path) -> Result<(), Error> {
+    #[cfg(unix)]
+    std::fs::File::open(path.parent().ok_or(Error::Storage)?)
+        .and_then(|f| f.sync_all())
+        .map_err(|_| Error::Storage)?;
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
 }
 pub(crate) fn ensure_current(
     conn: &Connection,
@@ -256,39 +295,85 @@ mod tests {
         drop(conn);
         std::fs::remove_file(path).unwrap();
     }
+    fn test_limits() -> Limits {
+        Limits {
+            plan: execution_contract::PlanLimits {
+                max_input_bytes: 65_536,
+                max_depth: 32,
+                max_nodes: 4096,
+                max_string_bytes: 4096,
+                max_collection_items: 128,
+                max_timeout_ms: 60_000,
+                max_output_bytes: 65_536,
+                max_stdin_bytes: 65_536,
+                max_attempts: 3,
+            },
+            lifecycle: execution_lifecycle::Limits {
+                max_snapshot_bytes: 16_384,
+            },
+            interaction: execution_interaction::Limits {
+                max_snapshot_bytes: 16_384,
+                max_lifetime_ms: 60_000,
+            },
+            max_approvals: 8,
+            max_record_bytes: 131_072,
+            max_receipts: 1000,
+            max_database_pages: 16_384,
+            max_consumers: 8,
+            max_batch: 64,
+            busy_timeout_ms: 1000,
+        }
+    }
     #[test]
-    fn interrupted_migration_never_publishes_partial_schema_or_version() {
+    fn interrupted_bootstrap_recovers_only_through_public_api() {
         const KEY: &str = "EXECUTION_SQLITE_MIGRATION_TEST";
         if let Some(path) = std::env::var_os(KEY) {
-            let mut conn = Connection::open(path).unwrap();
-            conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;")
-                .unwrap();
-            let tx = conn
-                .transaction_with_behavior(TransactionBehavior::Immediate)
-                .unwrap();
-            apply_schema(&tx, &authority()).unwrap();
-            // Terminate without committing or running Rust/SQLite destructors.
+            let (_, mut conn) = staging_connection(Path::new(&path)).unwrap();
+            let phase = std::env::var("EXECUTION_SQLITE_MIGRATION_PHASE").unwrap();
+            if phase == "created" {
+                std::process::exit(0);
+            }
+            conn.execute_batch("PRAGMA journal_mode=WAL;").unwrap();
+            configure(&conn, test_limits()).unwrap();
+            if phase == "schema" {
+                let tx = conn
+                    .transaction_with_behavior(TransactionBehavior::Immediate)
+                    .unwrap();
+                apply_schema(&tx, &authority()).unwrap();
+                std::process::exit(0);
+            }
+            migrate(&mut conn, &authority()).unwrap();
             std::process::exit(0);
         }
-        let path = temporary("interrupt");
-        assert!(std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "database::tests::interrupted_migration_never_publishes_partial_schema_or_version"
-            ])
-            .env(KEY, &path)
-            .status()
-            .unwrap()
-            .success());
-        let mut conn = Connection::open(&path).unwrap();
-        assert_empty(&conn);
-        migrate(&mut conn, &authority()).unwrap();
-        assert_eq!(
-            conn.pragma_query_value(None, "user_version", |r| r.get::<_, u32>(0))
-                .unwrap(),
-            SCHEMA_VERSION
-        );
-        drop(conn);
-        std::fs::remove_file(path).unwrap();
+        for phase in ["created", "schema", "committed"] {
+            let root = temporary(phase);
+            std::fs::create_dir(&root).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+            }
+            let root = root.canonicalize().unwrap();
+            let path = root.join("authority.db");
+            assert!(std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "database::tests::interrupted_bootstrap_recovers_only_through_public_api"
+                ])
+                .env(KEY, &path)
+                .env("EXECUTION_SQLITE_MIGRATION_PHASE", phase)
+                .status()
+                .unwrap()
+                .success());
+            assert!(!path.exists());
+            // Consumer recovery never opens/migrates/relabels the abandoned staging file.
+            drop(Store::initialize_test(&path, authority(), test_limits()).unwrap());
+            assert!(matches!(
+                Store::open(&path, &authority(), test_limits()).unwrap(),
+                OpenOutcome::Ready(_)
+            ));
+            assert!(std::fs::read_dir(&root).unwrap().count() >= 2);
+            std::fs::remove_dir_all(root).unwrap();
+        }
     }
 }

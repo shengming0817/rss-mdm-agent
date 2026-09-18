@@ -81,7 +81,6 @@ impl Store {
         host: &impl Host,
     ) -> Result<Start<'a>, Error> {
         self.check_scope(scope)?;
-        authorize(host, Access::ReadResult, scope, None)?;
         // Hash normalized intent, not timestamps, verification responses or mutable state.
         let fingerprint = hash(&(scope, kind, content))?;
         let tx = self
@@ -102,6 +101,7 @@ impl Store {
             )
             .optional()?
         {
+            authorize(host, Access::ReadResult, scope, None)?;
             if old_scope != scope.key() || old_hash != fingerprint {
                 return Err(Error::Conflict);
             }
@@ -246,7 +246,7 @@ impl Write<'_> {
             .tx
             .query_row("SELECT count(*) FROM receipts", [], |r| r.get(0))?;
         let reserved: u64 = self.tx.query_row(
-            "SELECT COALESCE((SELECT sum((reserve&1)+((reserve>>1)&1)+((reserve>>2)&1)+((reserve>>3)&1)) FROM executions),0)
+            "SELECT COALESCE((SELECT sum((reserve&1)+((reserve>>1)&1)+((reserve>>2)&1)+((reserve>>3)&1)+((reserve>>4)&1)) FROM executions),0)
              + COALESCE((SELECT sum(reserve) FROM interactions),0)", [], |r| r.get(0))?;
         if used
             .checked_add(reserved)
@@ -319,13 +319,16 @@ impl Write<'_> {
         self.tx.commit().map_err(|_| Error::CommitUnknown)
     }
 }
-pub(crate) fn empty_audit(reason: &str) -> AuditRecord {
+pub(crate) fn empty_audit(reason: AuditReason) -> AuditRecord {
     AuditRecord {
         event: None,
         attempt_id: None,
-        rule_ids: Vec::new(),
-        reason: reason.into(),
-        authorization_revision: None,
+        reason,
+        trust: None,
+        admission: None,
+        approval: None,
+        submitted_approvals: Vec::new(),
+        protected_approvals: Vec::new(),
         consumptions: Vec::new(),
     }
 }

@@ -94,8 +94,12 @@ impl Store {
             approval_revision=excluded.approval_revision,approval_digest=excluded.approval_digest,fresh_until=excluded.fresh_until",
             params![scope.key(), integer(revision)?, w.bounded(&snapshot.authorization_revision)?, w.bounded(&snapshot.approval_revision)?,
                 digest, integer(snapshot.fresh_until_unix_ms)?])?;
-        let mut audit = empty_audit("TrustRefreshed");
-        audit.authorization_revision = Some(snapshot.authorization_revision);
+        let mut audit = empty_audit(AuditReason::TrustRefreshed);
+        audit.trust = Some(TrustAudit {
+            authorization_revision: snapshot.authorization_revision,
+            approval_revision: snapshot.approval_revision,
+            fresh_until_unix_ms: snapshot.fresh_until_unix_ms,
+        });
         w.finish(Outcome::Changed, revision, None, audit)
     }
 }
@@ -203,6 +207,42 @@ pub(crate) struct StoredApprovals<'a> {
     pub head: &'a Head,
 }
 impl StoredApprovals<'_> {
+    pub fn audit_records(
+        &self,
+        bindings: &[ProfileApproval],
+    ) -> Result<Vec<ProtectedApprovalAudit>, Error> {
+        let mut refs: Vec<_> = bindings.iter().map(|b| &b.record).collect();
+        refs.sort_by(|a, b| (&a.id, &a.revision).cmp(&(&b.id, &b.revision)));
+        refs.dedup();
+        let mut result = Vec::new();
+        for reference in refs {
+            let r = match self.record(reference) {
+                Ok(r) => r,
+                Err(Error::NotFound) => continue,
+                Err(e) => return Err(e),
+            };
+            result.push(ProtectedApprovalAudit {
+                definition: ApprovalDefinition {
+                    reference: r.reference,
+                    approver: r.approver,
+                    plan_id: r.plan_id,
+                    plan_digest: r.plan_digest,
+                    profiles: r.profiles,
+                    validity: r.validity,
+                    max_uses: r.max_uses,
+                },
+                state: match r.status {
+                    ApprovalStatus::Active => ApprovalState::Active,
+                    ApprovalStatus::Revoked => ApprovalState::Revoked,
+                    ApprovalStatus::Unknown => ApprovalState::Unknown,
+                },
+                used: r.used,
+                consumption_revision: r.consumption_revision,
+            });
+        }
+        Ok(result)
+    }
+
     pub fn record(&self, reference: &VersionedRef) -> Result<ApprovalRecord, Error> {
         let (bytes, status, used, revision): (Vec<u8>, String, u32, u64) = self.conn.query_row(
             "SELECT a.definition,h.status,u.used,u.revision FROM approvals a

@@ -33,7 +33,12 @@ impl Store {
             "INSERT INTO interactions VALUES(?1,?2,?3,0,1)",
             params![spec.id.as_str(), scope.key(), w.bounded(state.snapshot())?],
         )?;
-        let audit = plan_audit(&w, &plan, Decision::Proposed {}, "InteractionOpened");
+        let audit = plan_audit(
+            &w,
+            &plan,
+            Decision::Proposed {},
+            AuditReason::InteractionOpened,
+        );
         w.finish(Outcome::Changed, 0, None, audit)
     }
     /// Resolve answer/cancel/expiry against the current protected state inside one write transaction.
@@ -76,11 +81,16 @@ impl Store {
                 params![id.as_str(), scope.key(), op.as_str()],
             )?;
         }
-        let mut audit = plan_audit(&w, &plan, Decision::Proposed {}, "InteractionCommand");
+        let mut audit = plan_audit(
+            &w,
+            &plan,
+            Decision::Proposed {},
+            AuditReason::InteractionOpened,
+        );
         let evaluation = match state.evaluate(command.clone(), w.now) {
             Ok(value) => value,
             Err(error) => {
-                audit.reason = format!("Interaction:{error:?}");
+                audit.reason = AuditReason::InteractionError(error);
                 return w.finish(Outcome::Rejected, state.snapshot().revision, None, audit);
             }
         };
@@ -92,7 +102,7 @@ impl Store {
             interaction::Outcome::Late => Outcome::Late,
             interaction::Outcome::NotDue => Outcome::NotDue,
         };
-        audit.reason = format!("Interaction:{:?}", evaluation.outcome);
+        audit.reason = AuditReason::Interaction(evaluation.outcome);
         let revision = if let Some(t) = evaluation.transition {
             let changed = w.tx.execute("UPDATE interactions SET snapshot=?1,revision=?2,reserve=0 WHERE id=?3 AND scope=?4 AND revision=?5",
                 params![w.bounded(t.next.snapshot())?, integer(t.next.snapshot().revision)?, id.as_str(), scope.key(), integer(t.expected_revision)?])?;

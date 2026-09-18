@@ -8,7 +8,7 @@ Store 接收冻结计划、生命周期事件、交互命令与 operationRequest
 
 每个新操作先在事务内查询 operationRequestId。相同 scope/规范化命令返回原 Receipt；同 ID 不同内容或主体冲突。重放只要求当前结果读取权限，不重新申请执行批准、消耗次数或生成派发动作。操作、事件、交互命令与 attempt 历史键保留整个 authority 生命周期，没有删除幂等记录或导入旧库的 API。业务拒绝、Stale、Late、NotDue 等结果也有稳定回执；存储失败与未可信输入返回封闭错误码，不落半份业务结果。
 
-BeginAttempt 在同一事务内读取受保护计划、authority/批准修订和消费计数，通过 Host 获取完整 C07/C08 裁决，再复核可靠时间、精确绑定、版本、有效期、历史唯一键和 CAS。批准消费、Starting intent、状态、审计和结果同时提交。完整规则 ID、每份批准及消费前后计数单独保存在有特权读取权限的 AuditRecord。批准定义按 record/version 不可变；刷新不接受 used/revision，不能恢复次数。
+BeginAttempt 在同一事务内读取受保护计划、authority/批准修订和消费计数，通过 Host 获取完整 C07/C08 裁决，再复核可靠时间、精确绑定、版本、有效期、历史唯一键和 CAS。批准消费、Starting intent、状态、审计和结果同时提交。完整 C07/C08 裁决、规则 ID、profile→record 映射、时效、每份批准及消费前后计数单独保存在有特权读取权限的 AuditRecord。拒绝路径也保留提交引用与受保护记录，二者明确区分；AuditReason 使用闭集枚举和明确的 serde 映射，不持久化 Debug 文本。批准定义按 record/version 不可变；刷新不接受 used/revision，不能恢复次数。
 
 只有生命周期 Transition::commit 的首次成功提交能返回 DispatchAction。它不可复制、不可反序列化且消费一次；提交响应丢失、丢弃动作或重启都不能再造动作。Starting 只证明 intent；恢复给出 Reconcile，显式 Recover 写为 Unknown，绝不从日志重放执行。取消、退出和状态核实仍分别由 C09 表达。
 
@@ -22,11 +22,11 @@ Receipt 同时作为可靠结果，不另建 outbox。pull_results(scope, consum
 
 ## 文件、容量与恢复
 
-initialize_test 仅创建全新文件，要求绝对规范路径和预建私有目录；open 只打开已有库。Unix 检查目录/数据库/WAL/SHM/journal 无组或其他用户权限、拒绝符号链接，文件创建为 0600。WAL + synchronous=FULL + foreign_keys=ON，macOS 同时启用 fullfsync/checkpoint_fullfsync；busy wait 显式有界。没有损坏重建、备用路径或隐式 authority 替换。Windows ACL 与真实 AI/用户进程隔离属于后续平台接线，不由文件 mode 测试代替。
+initialize_test 在同一私有目录的独立临时文件中完成迁移、checkpoint 和关闭，再通过不覆盖 hard link 原子发布全新数据库；中断只留下未发布的隔离文件，显式重试不会读取或接管它。已发布数据库只通过 open 恢复。废弃的 .execution-bootstrap-* 及其 sidecar 由管理员在确认没有初始化任务后清理；当前没有自动清理器。该发布要求所在文件系统支持同目录 hard link。初始化要求绝对规范路径和预建私有目录；open 只打开已有库。Unix 检查目录/数据库/WAL/SHM/journal 无组或其他用户权限、拒绝符号链接，文件创建为 0600。WAL + synchronous=FULL + foreign_keys=ON，macOS 同时启用 fullfsync/checkpoint_fullfsync；busy wait 显式有界。没有损坏重建、备用路径或隐式 authority 替换。Windows ACL 与真实 AI/用户进程隔离属于后续平台接线，不由文件 mode 测试代替。
 
 初始 schema 与 application_id/user_version 同事务提交，无旧 prmonitor 数据库迁移或兼容层。更高版本只返回 NewerSchema 头部诊断，没有业务 Store。已打开连接的每个读/写事务也复核 schema 和 authority，不能在升级后继续使用旧写路径。坏库/不支持版本保留原文件并失败。
 
-Limits 显式约束记录大小、批准集合、批量、消费者数、累计回执和 SQLite page ceiling。新执行保留四个逻辑终态槽（首次取消、首次不确定、终止、最终核实），新交互保留一个；普通操作不能吃掉它们。所有幂等载体保留且随总量有界；达到长期额度需产品处理，当前没有清理、压缩或换根流程。物理磁盘满仍可能使终态落盘失败，逻辑预留不是磁盘预分配。Busy/Capacity/Storage 不触发自动业务重试；CommitUnknown 必须查询或重交同一 operationRequestId，绝不能换 ID 重跑 runner。
+Limits 显式约束记录大小、批准集合、批量、消费者数、累计回执和 SQLite page ceiling。新执行保留五个逻辑终态槽（首次取消、首次不确定、终止、首次核实、最终核实），新交互保留一个；普通操作不能吃掉它们；首次 Unknown/NotSatisfied 可落盘并进入人工核对，最终 Satisfied/NoEffect 仍有独立预留。所有幂等载体保留且随总量有界；达到长期额度需产品处理，当前没有清理、压缩或换根流程。物理磁盘满仍可能使终态落盘失败，逻辑预留不是磁盘预分配。Busy/Capacity/Storage 不触发自动业务重试；CommitUnknown 必须查询或重交同一 operationRequestId，绝不能换 ID 重跑 runner。
 
 ## 验证
 
@@ -35,6 +35,6 @@ cargo test -p execution-sqlite --locked
 cargo run -p execution-sqlite --example execution-sqlite-consumer --locked -- crates/execution-contract/tests/fixtures/plan.json
 ~~~
 
-真实文件测试位于 tests/execution-sqlite：重复/不同 attempt 并发、批准多记录原子回滚、无批准路径的授权版本、回答竞争、回执/确认响应丢失、锁等待、真实 SQLITE_FULL、逻辑终态容量、时钟回拨、不可变定义和不退款、重开/进程退出、迁移失败/中断、新版本诊断与旧连接禁用。macOS 专项用受限子进程实际拒绝读取/写入 DB/WAL/SHM 与目录；仅证明所配测试 sandbox，不证明生产模型进程或 Windows ACL。独立 consumer 校验实际依赖闭包，SQLite 仅在本 adapter 放行。
+真实文件测试位于 tests/execution-sqlite：重复/不同 attempt 并发、批准多记录原子回滚、无批准路径的授权版本、回答竞争、回执/确认响应丢失、锁等待、真实 SQLITE_FULL、逻辑终态容量、时钟回拨、不可变定义和不退款、重开/进程退出、迁移失败，以及文件创建/DDL/commit 后、发布前中断的公共 API 恢复、新版本诊断与旧连接禁用。macOS 专项用受限子进程实际拒绝读取/写入 DB/WAL/SHM 与目录；仅证明所配测试 sandbox，不证明生产模型进程或 Windows ACL。独立 consumer 校验实际依赖闭包，SQLite 仅在本 adapter 放行。
 
 来源、MIT 权利依据与改写映射见[来源记录](../../docs/reference/execution-sqlite.md)。

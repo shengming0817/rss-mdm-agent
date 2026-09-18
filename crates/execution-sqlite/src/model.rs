@@ -133,7 +133,7 @@ impl Limits {
             || self.max_approvals > 128
             || self.max_batch == 0
             || self.max_batch > 4096
-            || self.max_receipts < 8
+            || self.max_receipts < 9
             || self.max_receipts > i64::MAX as u64
             || self.max_database_pages == 0
             || self.max_consumers == 0
@@ -375,20 +375,345 @@ pub struct ConsumptionAudit {
     /// Trusted approval verification/revocation revision.
     pub verification_revision: VersionedRef,
 }
+/// Stable storage reasons; core classifications use explicit serde adapters, never Debug text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub enum AuditReason {
+    /// Current protected trust was refreshed.
+    TrustRefreshed,
+    /// A frozen execution was registered.
+    ExecutionOpened,
+    /// Execution event processing began.
+    ExecutionEvent,
+    /// No protected trust head was available.
+    TrustUnavailable,
+    /// Both decisions were evaluated; inspect their structured projections.
+    AdmissionEvaluated,
+    /// Current transaction checks rejected the evaluated gate.
+    CommitGateRejected,
+    /// Lifecycle rejected the event.
+    LifecycleError(#[serde(with = "LifecycleErrorWire")] execution_lifecycle::LifecycleError),
+    /// Core next-step advice, never execution permission.
+    Lifecycle(#[serde(with = "DirectiveWire")] execution_lifecycle::Directive),
+    /// Interaction was registered.
+    InteractionOpened,
+    /// Interaction rejected the command.
+    InteractionError(
+        #[serde(with = "InteractionErrorWire")] execution_interaction::InteractionError,
+    ),
+    /// Interaction result classification.
+    Interaction(#[serde(with = "InteractionOutcomeWire")] execution_interaction::Outcome),
+}
+/// Serializable evidence of verification time, not a reconstructible authorization.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DecisionValidity {
+    /// Source authorization identity.
+    pub revision: VersionedRef,
+    /// Verification time.
+    pub verified_at_unix_ms: u64,
+    /// Exclusive commit deadline.
+    pub valid_until_unix_ms: u64,
+}
+impl From<&execution_admission::AdmissionValidity> for DecisionValidity {
+    fn from(v: &execution_admission::AdmissionValidity) -> Self {
+        Self {
+            revision: v.revision().clone(),
+            verified_at_unix_ms: v.verified_at_unix_ms(),
+            valid_until_unix_ms: v.valid_until_unix_ms(),
+        }
+    }
+}
+/// Complete C07 decision projection, including claimed identity on denial.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AdmissionAudit {
+    /// Evaluated plan identity.
+    pub plan_id: PlanId,
+    /// Evaluated canonical plan digest.
+    pub plan_digest: Digest,
+    /// Evaluated attempt.
+    pub attempt_id: AttemptId,
+    /// Claimed policy; denial does not authenticate it.
+    pub policy: VersionedRef,
+    /// Claimed delegation; denial does not authenticate it.
+    pub delegation: Option<VersionedRef>,
+    /// Closed C07 outcome.
+    #[serde(with = "AdmissionOutcomeWire")]
+    pub outcome: execution_admission::DecisionOutcome,
+    /// Closed C07 reason.
+    #[serde(with = "AdmissionReasonWire")]
+    pub reason: execution_admission::Reason,
+    /// Exact matching rules.
+    pub rule_ids: Vec<Id>,
+    /// Verified authorization freshness, absent on denial.
+    pub validity: Option<DecisionValidity>,
+}
+/// Profile mapping; the containing audit field distinguishes submitted and verified mappings.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ApprovalBindingAudit {
+    /// Required or claimed profile.
+    pub profile: VersionedRef,
+    /// Exact referenced approval.
+    pub record: VersionedRef,
+}
+impl From<&ProfileApproval> for ApprovalBindingAudit {
+    fn from(b: &ProfileApproval) -> Self {
+        Self {
+            profile: b.profile.clone(),
+            record: b.record.clone(),
+        }
+    }
+}
+/// C08 candidate consumption evidence, not committed usage or permission.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PendingConsumptionAudit {
+    /// Exact record.
+    pub approval: VersionedRef,
+    /// Counter required by the decision.
+    pub expected_uses: u32,
+    /// CAS required by the decision.
+    pub expected_consumption_revision: u64,
+    /// Source trust identity.
+    pub verification_revision: VersionedRef,
+    /// Exclusive decision deadline.
+    pub valid_until_unix_ms: u64,
+}
+/// Complete C08 decision projection. It cannot be converted to ApprovalDecision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ApprovalAudit {
+    /// Evaluated plan.
+    pub plan_id: PlanId,
+    /// Evaluated digest.
+    pub plan_digest: Digest,
+    /// Evaluated attempt.
+    pub attempt_id: AttemptId,
+    /// Closed C08 result and rejection reason.
+    #[serde(with = "ApprovalOutcomeWire")]
+    pub outcome: execution_approval::ApprovalOutcome,
+    /// Verified mappings, empty unless C08 was satisfied.
+    pub bindings: Vec<ApprovalBindingAudit>,
+    /// Candidate consumptions; only AuditRecord.consumptions proves local application.
+    pub pending_consumptions: Vec<PendingConsumptionAudit>,
+    /// Inherited C07 freshness.
+    pub admission_validity: Option<DecisionValidity>,
+}
+/// Protected head used for evaluation, independent of submitted claims.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TrustAudit {
+    /// Current C07 revision.
+    pub authorization_revision: VersionedRef,
+    /// Current C08 revision.
+    pub approval_revision: VersionedRef,
+    /// Exclusive protected snapshot freshness.
+    pub fresh_until_unix_ms: u64,
+}
+/// Record read from protected storage before consumption. Not proof of current applicability.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProtectedApprovalAudit {
+    /// Authenticated immutable definition, including approver.
+    pub definition: ApprovalDefinition,
+    /// Protected disposition, possibly unknown or revoked.
+    pub state: ApprovalState,
+    /// Committed uses before this evaluation.
+    pub used: u32,
+    /// Consumption CAS before this evaluation.
+    pub consumption_revision: u64,
+}
 /// Privileged audit projection, generated only from protected state and pure decisions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AuditRecord {
     /// Existing C01 event, absent for trust-only operations before a plan exists.
     pub event: Option<AuditEvent>,
-    /// Exact attempt, including admission events.
+    /// Exact submitted attempt, including rejected admission.
     pub attempt_id: Option<AttemptId>,
-    /// Complete C07 matching rules.
-    pub rule_ids: Vec<Id>,
-    /// Closed Rust reason names, never submitted text.
-    pub reason: String,
-    /// C07 trusted authority revision, when evaluated.
-    pub authorization_revision: Option<VersionedRef>,
-    /// All consumed records; one row per distinct record.
+    /// Stable closed storage/core classification.
+    pub reason: AuditReason,
+    /// Protected trust head at evaluation, absent if unavailable.
+    pub trust: Option<TrustAudit>,
+    /// Full C07 decision if evaluated.
+    pub admission: Option<AdmissionAudit>,
+    /// Full C08 decision if evaluated.
+    pub approval: Option<ApprovalAudit>,
+    /// Untrusted submitted references, retained even when verification rejects them.
+    pub submitted_approvals: Vec<ApprovalBindingAudit>,
+    /// Distinct records resolved from protected storage, never synthesized from submitted values.
+    pub protected_approvals: Vec<ProtectedApprovalAudit>,
+    /// All applied consumptions, one per distinct record.
     pub consumptions: Vec<ConsumptionAudit>,
+}
+
+// Remote serde derives keep the existing core enums authoritative and exhaustively checked.
+// They serialize audit evidence only; no permission-bearing core object gains Deserialize.
+#[derive(Serialize, Deserialize)]
+#[serde(
+    remote = "execution_admission::DecisionOutcome",
+    tag = "kind",
+    rename_all = "camelCase"
+)]
+enum AdmissionOutcomeWire {
+    Allowed,
+    Denied,
+    ApprovalRequired { profiles: Vec<VersionedRef> },
+}
+#[derive(Serialize, Deserialize)]
+#[serde(
+    remote = "execution_admission::VerificationError",
+    rename_all = "camelCase"
+)]
+enum AdmissionVerificationWire {
+    Subject,
+    Policy,
+    Delegation,
+    Clock,
+    Revocation,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "execution_admission::Reason", rename_all = "camelCase")]
+enum AdmissionReasonWire {
+    StaleVerification,
+    Limit,
+    Verification(
+        #[serde(with = "AdmissionVerificationWire")] execution_admission::VerificationError,
+    ),
+    SubjectMismatch,
+    InvalidPolicy,
+    Validity,
+    Budget,
+    Delegation,
+    NoMatchingRule,
+    ExplicitDeny,
+    RuleAllowed,
+    NeedsApproval,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(
+    remote = "execution_approval::VerificationError",
+    rename_all = "camelCase"
+)]
+enum ApprovalVerificationWire {
+    Signature,
+    Issuer,
+    Unavailable,
+    Clock,
+    Revocation,
+    Policy,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "execution_approval::Reason", rename_all = "camelCase")]
+enum ApprovalReasonWire {
+    Limit,
+    PlanMismatch,
+    AdmissionDenied,
+    Bindings,
+    Verification(#[serde(with = "ApprovalVerificationWire")] execution_approval::VerificationError),
+    Context,
+    PlanNotYetValid,
+    PlanExpired,
+    StaleVerification,
+    StaleAdmission,
+    ApprovalNotYetValid,
+    ApprovalExpired,
+    Record,
+    Revoked,
+    StatusUnknown,
+    Exhausted,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(
+    remote = "execution_approval::ApprovalOutcome",
+    rename_all = "camelCase"
+)]
+enum ApprovalOutcomeWire {
+    NotRequired,
+    Satisfied,
+    Rejected(#[serde(with = "ApprovalReasonWire")] execution_approval::Reason),
+}
+#[derive(Serialize, Deserialize)]
+#[serde(
+    remote = "execution_lifecycle::ObservationError",
+    rename_all = "camelCase"
+)]
+enum ObservationErrorWire {
+    Unavailable,
+    Untrusted,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(
+    remote = "execution_lifecycle::LifecycleError",
+    rename_all = "camelCase"
+)]
+enum LifecycleErrorWire {
+    Configuration,
+    Snapshot,
+    Limit,
+    Clock,
+    Revision,
+    IdempotencyConflict,
+    Attempt,
+    Transition,
+    Observation,
+    ObservationVerification(
+        #[serde(with = "ObservationErrorWire")] execution_lifecycle::ObservationError,
+    ),
+    Accounting,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "execution_lifecycle::LimitReason", rename_all = "camelCase")]
+enum LimitReasonWire {
+    NotYetValid,
+    Expired,
+    Timeout,
+    Output,
+    Attempts,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "execution_lifecycle::StopReason", rename_all = "camelCase")]
+enum StopReasonWire {
+    Cancelled,
+    Limit(#[serde(with = "LimitReasonWire")] execution_lifecycle::LimitReason),
+}
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "execution_lifecycle::Directive", rename_all = "camelCase")]
+enum DirectiveWire {
+    Prepare,
+    Wait,
+    Ready,
+    RetryEligible,
+    Reconcile,
+    StopRunner(#[serde(with = "StopReasonWire")] execution_lifecycle::StopReason),
+    VerifyTarget,
+    ManualReview,
+    BudgetExhausted(#[serde(with = "LimitReasonWire")] execution_lifecycle::LimitReason),
+    Done,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(
+    remote = "execution_interaction::InteractionError",
+    rename_all = "camelCase"
+)]
+enum InteractionErrorWire {
+    Configuration,
+    Limit,
+    Reference,
+    Snapshot,
+    Clock,
+    ResponseKind,
+    IdempotencyConflict,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "execution_interaction::Outcome", rename_all = "camelCase")]
+enum InteractionOutcomeWire {
+    Answered,
+    Cancelled,
+    Expired,
+    Duplicate,
+    Late,
+    NotDue,
 }

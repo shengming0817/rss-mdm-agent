@@ -6,7 +6,7 @@ use execution_lifecycle::{
     self as lifecycle, Observation, ObservationError, ObservationFacts, ObservationVerifier,
 };
 use execution_sqlite::*;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -125,6 +125,9 @@ pub struct TestHost {
     pub authorization: VersionedRef,
     pub approval: VersionedRef,
     pub read: bool,
+    pub denied: Vec<Access>,
+    pub consumer: Option<Id>,
+    pub access_calls: RefCell<Vec<(Access, Option<Id>, bool)>>,
     pub write: bool,
     pub audit: bool,
     pub expire_during_admission: bool,
@@ -157,6 +160,9 @@ impl TestHost {
             authorization: reference("authority-epoch"),
             approval: reference("approval-epoch"),
             read: true,
+            denied: vec![],
+            consumer: None,
+            access_calls: RefCell::new(vec![]),
             write: true,
             audit: true,
             expire_during_admission: false,
@@ -210,6 +216,22 @@ impl TestHost {
 }
 impl Host for TestHost {
     fn authorize(&self, request: AccessRequest<'_>) -> Result<(), Error> {
+        self.access_calls.borrow_mut().push((
+            request.access,
+            request.consumer.cloned(),
+            request.interaction.is_some(),
+        ));
+        if self.denied.contains(&request.access) {
+            return Err(Error::Denied);
+        }
+        if request.access == Access::Deliver
+            && self
+                .consumer
+                .as_ref()
+                .is_some_and(|c| request.consumer != Some(c))
+        {
+            return Err(Error::Denied);
+        }
         if *request.scope != self.scope() {
             return Err(Error::Denied);
         }

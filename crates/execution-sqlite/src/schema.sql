@@ -6,7 +6,7 @@ CREATE TABLE metadata (
 CREATE TABLE executions (
     scope TEXT PRIMARY KEY, request_id TEXT NOT NULL UNIQUE, plan_id TEXT NOT NULL UNIQUE,
     plan BLOB NOT NULL, digest TEXT NOT NULL, snapshot BLOB NOT NULL,
-    revision INTEGER NOT NULL CHECK(revision>=0), reserve INTEGER NOT NULL CHECK(reserve BETWEEN 0 AND 15)
+    revision INTEGER NOT NULL CHECK(revision>=0), reserve INTEGER NOT NULL CHECK(reserve BETWEEN 0 AND 31)
 );
 CREATE TABLE receipts (
     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
