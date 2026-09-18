@@ -64,7 +64,11 @@ fn schema<T: JsonSchema>() -> Arc<serde_json::Map<String, Value>> {
         .into_generator()
         .into_root_schema_for::<T>()
         .to_value();
-    Arc::new(value.as_object().expect("object schema").clone())
+    let mut object = value.as_object().expect("object schema").clone();
+    // Every tool DTO is object-shaped, including tagged enum branches. Schemars
+    // omits the root type for those unions; MCP 2025-11-25 requires it explicitly.
+    object.insert("type".into(), Value::String("object".into()));
+    Arc::new(object)
 }
 fn tool<I: JsonSchema, O: JsonSchema>(
     name: &'static str,

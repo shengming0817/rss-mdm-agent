@@ -121,6 +121,8 @@ async fn discovery_schemas_and_shared_parameter_projection() {
         .iter()
         .all(|t| !t["name"].as_str().unwrap().contains("approve")));
     for tool in tools {
+        assert_eq!(tool["inputSchema"]["type"], "object", "{}", tool["name"]);
+        assert_eq!(tool["outputSchema"]["type"], "object", "{}", tool["name"]);
         jsonschema::draft202012::new(&tool["inputSchema"]).unwrap();
         jsonschema::draft202012::new(&tool["outputSchema"]).unwrap();
     }
