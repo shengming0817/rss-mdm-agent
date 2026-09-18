@@ -83,6 +83,47 @@ describe("self-service controller", () => {
     expect(port.submit.mock.calls[1][0]).toEqual(first);
     expect(c.state.accepted).toBe(true);
   });
+  it("reconciles committed submissions and answers after lost responses", async () => {
+    const { c, port, snapshot } = fixture();
+    await c.refresh();
+    c.select(snapshot.catalog.find((i) => i.itemId === "diagnostics")!);
+    await c.prepare();
+    port.submit.mockImplementationOnce(async (input) => {
+      const task = structuredClone(preview.requests[0]);
+      task.plan = {
+        ...task.plan,
+        requestId: input.requestId,
+        planId: input.planId,
+        digest: input.digest,
+      };
+      snapshot.requests.push(task);
+      throw new Error("committed, response lost");
+    });
+    await c.submit();
+    expect(c.state.uncertain).toBe(true);
+    await c.refresh();
+    expect(c.state.accepted).toBe(true);
+    expect(c.state.uncertain).toBe(false);
+    expect(c.state.error).toBe("");
+    const task = snapshot.requests[0];
+    port.respond.mockImplementationOnce(async () => {
+      task.interactions[0].status = "answered";
+      throw new Error("committed, response lost");
+    });
+    await c.respond(task, task.interactions[0].id, {
+      kind: "confirmation",
+      accepted: true,
+    });
+    expect(c.state.replyUnknown).toBe(true);
+    await c.refresh();
+    expect(c.state.replyUnknown).toBe(false);
+    expect(c.state.error).toBe("");
+    port.snapshot.mockRejectedValueOnce(new Error("unavailable"));
+    await c.refresh();
+    expect(c.state.error).toContain("无法读取");
+    await c.refresh();
+    expect(c.state.error).toBe("");
+  });
   it("uses service validation errors and never falls back to success", async () => {
     const { c, port, snapshot } = fixture();
     await c.refresh();

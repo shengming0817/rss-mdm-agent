@@ -315,3 +315,19 @@ fn unknown_effect_is_preserved_and_snapshot_does_not_cancel() {
         "approval"
     );
 }
+
+#[test]
+fn invalid_first_previews_do_not_consume_session_capacity() {
+    let (mut service, valid) = setup("diagnostics");
+    for n in 0..130 {
+        let mut invalid = valid.clone();
+        invalid.request_id = RequestId::new(format!("invalid-{n}")).unwrap();
+        invalid.fields.clear();
+        assert_eq!(
+            service.preview(invalid, 1000).err().unwrap().code,
+            "catalog"
+        );
+    }
+    let plan = service.preview(valid, 1000).unwrap();
+    assert!(service.submit(submission(&plan), 1000).is_ok());
+}

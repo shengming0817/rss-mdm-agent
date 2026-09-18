@@ -100,21 +100,15 @@ impl FixtureService {
         } else if self.records.len() >= 128 {
             return Err(error("limit", "本次测试会话的请求数量已达上限"));
         }
-        let record = self
-            .records
-            .entry(draft.request_id.clone())
-            .or_insert(RequestRecord {
-                revision: 0,
-                input_digest: String::new(),
-                prepared: None,
-                accepted: false,
-                interactions: Vec::new(),
-                result: None,
-            });
-        // Invalidate even when the new draft fails validation. Never leave an old plan submit-ready.
-        let old = record.prepared.take();
-        record.revision = draft.revision;
-        record.input_digest = input_digest;
+        // Existing revisions lose their old plan even if validation fails. New invalid
+        // requests never enter the bounded record table.
+        let old = if let Some(record) = self.records.get_mut(&draft.request_id) {
+            record.revision = draft.revision;
+            record.input_digest = input_digest.clone();
+            record.prepared.take()
+        } else {
+            None
+        };
         let selected = selection::select(&self.catalog, &draft)?;
         self.requestable(&draft.item_id, now)?;
         let prepared = match old {
@@ -152,10 +146,17 @@ impl FixtureService {
                 }
             }
         };
-        self.records
-            .get_mut(&draft.request_id)
-            .expect("inserted")
-            .prepared = Some(prepared);
+        self.records.insert(
+            draft.request_id.clone(),
+            RequestRecord {
+                revision: draft.revision,
+                input_digest,
+                prepared: Some(prepared),
+                accepted: false,
+                interactions: Vec::new(),
+                result: None,
+            },
+        );
         self.plan_view(self.records.get(&draft.request_id).expect("inserted"))
     }
     pub fn submit(&mut self, input: Submission, now: u64) -> Result<RequestView> {

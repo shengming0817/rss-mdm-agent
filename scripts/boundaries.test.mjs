@@ -259,6 +259,21 @@ test("each host boundary mutation independently fails the tree scan", () => {
       "Cargo.toml",
       (s) => s.replace("features = []", 'features = ["devtools"]'),
     ],
+    ...[
+      'std::net::TcpStream::connect("127.0.0.1:9");',
+      'std::fs::read("local-file");',
+      "std::thread::spawn(|| {});",
+      'use std::{process::Command as Launcher}; Launcher::new("test");',
+      'use std::{net as network}; network::TcpStream::connect("127.0.0.1:9");',
+      'use std as host; host::fs::read("local-file");',
+      'use std::*; fs::read("local-file");',
+      "tauri::async_runtime::spawn(async {});",
+      "app.path().app_data_dir();",
+      'extern "C" { fn system(); }',
+    ].map((capability) => [
+      "apps/desktop/src-tauri/src/self_service/ipc.rs",
+      (source) => source + `\nfn forbidden() { ${capability} }\n`,
+    ]),
   ];
   try {
     for (const path of [

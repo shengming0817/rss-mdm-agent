@@ -530,6 +530,23 @@ export function checkTree(treeRoot = root) {
     errors.push("fixture commands must be covered by the app ACL manifest");
   for (const file of files(resolve(treeRoot, "apps/desktop/src-tauri/src"))) {
     const source = readFileSync(file, "utf8");
+    // Medium structural guard, not a sandbox against malicious source. Ban
+    // capability modules before import aliasing can hide their call sites.
+    if (
+      relative(treeRoot, file)
+        .replaceAll("\\", "/")
+        .includes("/self_service/") &&
+      (/\b(?:fs|net|process|thread|ffi|os|async_runtime)\b/.test(source) ||
+        /\b(?:use|extern\s+crate)\s+(?:std|tauri)\s+(?:as\b)|\buse\s+(?:std|tauri)\s*::\s*\*/.test(
+          source,
+        ) ||
+        /\bextern\s+"|\.\s*(?:path|shell|spawn|spawn_blocking)\s*\(/.test(
+          source,
+        ))
+    )
+      errors.push(
+        `${file}: fixture service cannot access host I/O or background execution`,
+      );
     if (
       /\.plugin\s*\(|Command::new|prmonitor_lib/.test(source) ||
       (relative(treeRoot, file).replaceAll("\\", "/") !== ipcPath &&
