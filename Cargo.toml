@@ -1,5 +1,5 @@
 [workspace]
-members = ["apps/desktop/src-tauri", "crates/execution-contract", "crates/ai-session-contract", "crates/execution-interaction", "crates/execution-capability", "crates/execution-admission", "crates/service-catalog", "crates/execution-approval", "crates/execution-lifecycle", "crates/script-plan", "crates/software-plan"]
+members = ["apps/desktop/src-tauri", "crates/execution-contract", "crates/ai-session-contract", "crates/execution-interaction", "crates/execution-capability", "crates/execution-admission", "crates/service-catalog", "crates/execution-approval", "crates/execution-lifecycle", "crates/script-plan", "crates/software-plan", "crates/execution-sqlite"]
 resolver = "2"
 
 [workspace.package]
@@ -19,3 +19,4 @@ sha2 = "=0.10.9"
 serde_json_canonicalizer = "=0.3.2"
 jsonschema = { version = "=0.33.0", default-features = false }
 url = "=2.5.8"
+rusqlite = { version = "=0.32.1", default-features = false, features = ["bundled"] }

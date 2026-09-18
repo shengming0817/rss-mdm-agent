@@ -3,7 +3,7 @@
 本文件记录需求与源码证据，不作为实现状态或依赖选型批准。查阅日期：2026-09-09 UTC。
 PRD唯一入口为[客户端PRD](../product/rss-mdm-agent-prd.md)。D00仅编写文档；C05的实际UI/桌面壳提取、权利授权和固定对标见[提取记录](ui-extraction.md)。
 
-C01/C02 的实际契约实现及固定来源映射见[契约来源记录](contracts-extraction.md)。
+C01/C02 的实际契约实现及固定来源映射见[契约来源记录](contracts-extraction.md)。C18 的 SQLite 机制参考重写见[执行存储来源](execution-sqlite.md)，不提取 inbox/outbox 的 PR 业务。
 
 ## 固定产品来源
 

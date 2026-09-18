@@ -216,7 +216,7 @@ AI请求与手动请求都不能自行取得可执行capability。运行模式�
 | script-plan / software-plan | 原生脚本启动与安装决策描述 | execution-contract；不spawn |
 | ai-codex / ai-claude / ai-cursor | 具体引擎协议/进程会话适配 | ai-session-contract，无PR/执行内核/UI依赖 |
 | execution-mcp | 工具协议到执行服务port | execution-contract、service-catalog、rmcp |
-| execution-sqlite | journal/交互/批准消耗的原子持久化 | interaction、approval、lifecycle |
+| execution-sqlite | journal/交互/批准消耗的原子持久化 | contract、interaction、admission（完整裁决审计）、approval、lifecycle |
 | execution-app | 能力/授权/批准/持久化和runner port的产品组装 | C06–C09、C18；不加载AI引擎 |
 | packages/ui | 提取的纯展示组件 | Vue/展示依赖，props/events |
 | apps/desktop | C05桌面基础壳与样本；后续自助UI、AI UI、宿主桥接和共同闭环 | 组件契约与宿主adapter，组合根唯一 |
@@ -308,6 +308,8 @@ PowerShell/Bash是原生载荷；Rust提供启动、预算、权限、恢复，J
 C02工具提案无需消费执行内核；C17通过port可用测试服务验收；C15人用UI不依赖AI，C20不等待C13/C14。
 共享生成类型由各契约owner维护，AI公共注册/选择在C20组合，C12–14仅改各自provider目录。
 C05组件、C15自助页面、C16对话页面分别独占目录；交互核心不拥有Vue组件，host将C04结果映射到UI。
+C18 的当前公共入口与 S1 测试存储证据见 [execution-sqlite](../../crates/execution-sqlite/README.md)。回执兼作可靠结果，查询/拉取/确认不派发 runner；只提供显式测试 authority 初始化，真实 ACL/可信身份与平台隔离仍归后续交付。
+
 C18独占SQLite migration；C19不另建表；Cargo/lock/UI package配置与根入口由单一集成人串行合并。
 真实开工前复核变更文件、隐式消费和测试数据库/临时目录冲突；无Predecessor不自动代表可同时改同一文件。
 

@@ -1,0 +1,27 @@
+[package]
+name = "execution-sqlite"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+execution-contract = { path = "../execution-contract" }
+execution-admission = { path = "../execution-admission" }
+execution-approval = { path = "../execution-approval" }
+execution-lifecycle = { path = "../execution-lifecycle" }
+execution-interaction = { path = "../execution-interaction" }
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_json_canonicalizer.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[[test]]
+name = "acceptance"
+path = "../../tests/execution-sqlite/acceptance.rs"
+
+[lints.clippy]
+cognitive_complexity = "warn"

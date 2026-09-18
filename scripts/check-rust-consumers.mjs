@@ -70,6 +70,20 @@ export const rustConsumers = [
     fixtures: ["crates/execution-contract/tests/fixtures/plan.json"],
   },
   {
+    name: "execution-sqlite",
+    example: "execution-sqlite-consumer.rs",
+    locals: [
+      "execution-sqlite",
+      "execution-contract",
+      "execution-interaction",
+      "execution-admission",
+      "execution-approval",
+      "execution-lifecycle",
+    ],
+    registry: [],
+    fixtures: ["crates/execution-contract/tests/fixtures/plan.json"],
+  },
+  {
     name: "service-catalog",
     example: "catalog-consumer.rs",
     locals: ["service-catalog", "execution-contract"],
@@ -206,7 +220,18 @@ function checkOne(root, spec, owner, execute, receipt) {
       if (pkg.source !== null && !pkg.source.startsWith("registry+"))
         throw new ConsumerFailure("non-registry-dependency", pkg.name);
       if (
-        /tauri|sqlx|sqlite|prmonitor|^ai-(codex|claude|cursor)$/.test(pkg.name)
+        /tauri|sqlx|sqlite|prmonitor|^ai-(codex|claude|cursor)$/.test(
+          pkg.name,
+        ) &&
+        !(
+          name === "execution-sqlite" &&
+          [
+            "execution-sqlite",
+            "isolated-execution-sqlite-consumer",
+            "rusqlite",
+            "libsqlite3-sys",
+          ].includes(pkg.name)
+        )
       )
         throw new ConsumerFailure("unexpected-runtime-dependency", pkg.name);
     }
