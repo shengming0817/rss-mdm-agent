@@ -4,7 +4,6 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 mod codec;
-#[allow(missing_docs, clippy::all)]
 mod generated;
 pub use codec::{decode, encode, fingerprint, ContractError, Diagnostic, Limits};
 pub use generated::*;

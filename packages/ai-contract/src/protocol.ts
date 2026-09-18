@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { decode, ContractError, type Limits } from "./codec.js";
+import { decode, boundedJson, type Limits } from "./codec.js";
 import type { Caller, Result } from "./ports.js";
 import type { SurfaceAction, SurfaceBinding } from "./wire.js";
 const actionSchema = JSON.parse(
@@ -40,8 +40,9 @@ export function resolveSurfaceAction(
     error: { code, retry: "never" },
   });
   try {
-    decode(JSON.stringify(binding), limits);
-    decode(JSON.stringify(metadata), limits);
+    binding = decode(boundedJson(binding, limits), limits) as SurfaceBinding;
+    metadata = decode(boundedJson(metadata, limits), limits) as SurfaceAction;
+    standard = JSON.parse(boundedJson(standard, limits));
   } catch {
     return fail("invalid_input");
   }
@@ -79,25 +80,27 @@ export function resolveSurfaceAction(
   // Apply the same product budgets to the answer before returning it to Host.respond.
   try {
     decode(
-      JSON.stringify({
-        schemaVersion: 2,
-        kind: "command",
-        sessionId: metadata.sessionId,
-        commandId: metadata.commandId,
-        expiresAtMs: 0,
-        input: {
-          type: "respond",
-          interactionId: binding.interactionId,
-          generation: binding.generation,
-          nativeRunId: binding.nativeRunId,
-          answer: action.context,
+      boundedJson(
+        {
+          schemaVersion: 2,
+          kind: "command",
+          sessionId: metadata.sessionId,
+          commandId: metadata.commandId,
+          expiresAtMs: 0,
+          input: {
+            type: "respond",
+            interactionId: binding.interactionId,
+            generation: binding.generation,
+            nativeRunId: binding.nativeRunId,
+            answer: action.context,
+          },
         },
-      }),
+        limits,
+      ),
       limits,
     );
-  } catch (error) {
-    if (error instanceof ContractError) return fail("invalid_input");
-    throw error;
+  } catch {
+    return fail("invalid_input");
   }
   return {
     ok: true,

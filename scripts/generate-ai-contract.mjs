@@ -1,4 +1,5 @@
 import { format } from "prettier";
+import ts from "typescript";
 import { readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
@@ -14,19 +15,55 @@ const schemaText = readFileSync(
   "utf8",
 );
 const schema = JSON.parse(schemaText);
+// json-schema-to-typescript inlines $ref siblings with descriptions, duplicating
+// named types. Compile references intact, then attach those schema-owned member
+// docs to the generated TS AST. This is a compiler projection, not another model.
+const tsSchema = structuredClone(schema),
+  memberDocs = new Map();
+function project(node, owner) {
+  if (!node || typeof node !== "object") return;
+  for (const [name, property] of Object.entries(node.properties ?? {})) {
+    if (property.$ref && property.description)
+      memberDocs.set(`${owner}.${name}`, property.description);
+  }
+  if (node.$ref) delete node.description;
+  for (const value of Object.values(node)) project(value, owner);
+}
+for (const [owner, definition] of Object.entries(tsSchema.$defs))
+  project(definition, owner);
+let typescript = await compile(tsSchema, "WireRecord", {
+  format: false,
+  additionalProperties: false,
+  unreachableDefinitions: true,
+  bannerComment: "// @generated from schema/runtime.schema.json. Do not edit.",
+});
+const source = ts.createSourceFile(
+  "wire.ts",
+  typescript,
+  ts.ScriptTarget.Latest,
+  true,
+);
+const edits = [];
+function document(node, owner) {
+  if (ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node))
+    owner = node.name.text;
+  if (ts.isPropertySignature(node)) {
+    const description = memberDocs.get(`${owner}.${node.name.getText(source)}`);
+    if (description)
+      edits.push([
+        node.getStart(source),
+        `/** ${description.replaceAll("*/", "* / ")} */\n`,
+      ]);
+  }
+  ts.forEachChild(node, (child) => document(child, owner));
+}
+document(source, "");
+for (const [offset, text] of edits.sort((a, b) => b[0] - a[0]))
+  typescript = typescript.slice(0, offset) + text + typescript.slice(offset);
 const outputs = new Map();
 outputs.set(
   "packages/ai-contract/src/wire.ts",
-  await format(
-    await compile(schema, "WireRecord", {
-      format: false,
-      additionalProperties: false,
-      unreachableDefinitions: true,
-      bannerComment:
-        "// @generated from schema/runtime.schema.json. Do not edit.",
-    }),
-    { parser: "typescript" },
-  ),
+  await format(typescript, { parser: "typescript" }),
 );
 const rust = spawnSync(
   "cargo",

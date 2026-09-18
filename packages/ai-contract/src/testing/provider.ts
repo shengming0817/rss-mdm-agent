@@ -9,7 +9,8 @@ import type {
   Submission,
 } from "../ports.js";
 import { fixtureSession, fixtureCommand, unwrap } from "./conformance.js";
-import { ok, fail } from "./store.js";
+import { ok, fail, fixtureLimits } from "./store.js";
+import { fingerprint } from "../codec.js";
 /** Scripted provider contract double. Never spawns a process or executes a tool. */
 export class ScriptedProvider implements ProviderAgentPort {
   readonly evidence = "scripted_provider" as const;
@@ -104,43 +105,124 @@ export class ScriptedProvider implements ProviderAgentPort {
     return ok({ processStopped: true });
   }
 }
-/** Minimum lifecycle/submit/cancel contract. The caller supplies an isolated adapter
- * configuration and bounded signal; tool containment is a separate evidence profile. */
+/** A deterministic adapter harness supplies both a submitted request and an ambiguous
+ * dispatch, with no actual terminal observation. Its scripted observation stream ends.
+ * Real process/crash/tool containment evidence remains adapter-owned. */
 export async function runProviderConformance(
-  port: ProviderAgentPort,
+  create: (
+    scenario: "submitted" | "unknown",
+  ) => ProviderAgentPort | Promise<ProviderAgentPort>,
   configuration: ProviderConfiguration,
   budget: Budget,
 ): Promise<void> {
-  const capabilities = unwrap(await port.initialize(configuration, budget));
-  const binding = unwrap(await port.createSession(budget));
-  assert.deepEqual(binding.config, configuration.config);
-  assert.equal(binding.accountRef, configuration.accountRef);
-  const command = fixtureCommand();
-  const submission = await port.submit(binding, command, budget);
-  assert.equal(submission.certainty, "submitted");
-  if (submission.certainty !== "submitted")
-    throw new Error("provider submit failed");
-  const cancellation = {
-    ...command,
-    commandId: "cancel-1",
-    input: {
-      type: "cancel" as const,
-      targetCommandId: command.commandId,
-      generation: submission.binding.generation,
-      nativeRunId: submission.binding.nativeRunId,
-    },
-  };
-  const result = await port.cancel(submission.binding, cancellation, budget);
-  if (
-    capabilities.cancellation === "unsupported" ||
-    capabilities.cancellation === "unknown"
-  )
-    assert.equal(
-      result.ok
-        ? result.value === "unsupported"
-        : result.error.code === "unsupported_capability",
-      true,
-    );
-  else assert.equal(result.ok, true);
-  unwrap(await port.close(budget));
+  for (const scenario of ["submitted", "unknown"] as const) {
+    const port = await create(scenario);
+    let failure: unknown;
+    try {
+      const capabilities = unwrap(await port.initialize(configuration, budget));
+      const binding = unwrap(await port.createSession(budget));
+      assert.deepEqual(binding.config, configuration.config);
+      assert.equal(binding.accountRef, configuration.accountRef);
+      const command = fixtureCommand();
+      const submission = await port.submit(binding, command, budget);
+      assert.equal(submission.certainty, scenario);
+      if (scenario === "unknown") {
+        assert.equal(submission.certainty, "unknown");
+        if (submission.certainty !== "unknown")
+          throw new Error("expected unknown");
+        assert.ok(submission.correlationId);
+        const record: CommandRecord = {
+          schemaVersion: 2,
+          kind: "commandRecord",
+          command,
+          receipt: {
+            schemaVersion: 2,
+            kind: "receipt",
+            namespace: fixtureSession().namespace,
+            commandId: command.commandId,
+            contentHash: fingerprint(command, fixtureLimits),
+            acceptedAtMs: 0,
+            retryUntilMs: 100,
+            receiptUntilMs: 200,
+            acceptedRevision: 1,
+          },
+          state: "reconciliation_required",
+          dispatch: {
+            generation: binding.generation,
+            nativeSessionId: binding.nativeSessionId,
+            certainty: "unknown",
+          },
+        };
+        const reconciled = unwrap(
+          await port.reconcile(binding, record, budget),
+        );
+        assert.equal(reconciled.status, "unknown");
+        assert.equal(reconciled.outcome, undefined);
+        assert.deepEqual(reconciled.binding, binding);
+      } else {
+        if (submission.certainty !== "submitted")
+          throw new Error("expected submission");
+        const cancellation: Command = {
+          ...command,
+          commandId: "cancel-1",
+          input: {
+            type: "cancel",
+            targetCommandId: command.commandId,
+            generation: submission.binding.generation,
+            ...(submission.binding.nativeRunId
+              ? { nativeRunId: submission.binding.nativeRunId }
+              : {}),
+          },
+        };
+        const result = await port.cancel(
+          submission.binding,
+          cancellation,
+          budget,
+        );
+        if (
+          capabilities.cancellation === "unsupported" ||
+          capabilities.cancellation === "unknown"
+        )
+          assert.equal(
+            result.ok
+              ? result.value === "unsupported"
+              : result.error.code === "unsupported_capability",
+            true,
+          );
+        else
+          assert.equal(
+            unwrap(result),
+            "request_only",
+            "a cancel request cannot acknowledge an unobserved terminal",
+          );
+      }
+      for await (const observation of port.observe(
+        submission.certainty === "submitted" ? submission.binding : binding,
+        budget,
+      )) {
+        assert.equal(observation.commandId, command.commandId);
+        assert.equal(observation.binding.generation, binding.generation);
+        assert.equal(
+          observation.type === "event" && observation.body.type === "terminal",
+          false,
+          "fixture has no native terminal",
+        );
+      }
+    } catch (error) {
+      failure = error;
+    } finally {
+      try {
+        const cleanup = { timeoutMs: 1000, signal: AbortSignal.timeout(1000) };
+        assert.equal(unwrap(await port.close(cleanup)).processStopped, true);
+      } catch (error) {
+        failure = failure
+          ? new AggregateError(
+              [failure, error],
+              "provider conformance and cleanup failed",
+            )
+          : error;
+      }
+    }
+    if (failure) throw failure;
+  }
 }

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   MemorySessionStore,
+  seedInteraction,
   runStoreConformance,
   fixtureSession,
   fixtureCommand,
@@ -22,39 +23,9 @@ test("failed acceptance publishes neither inbox nor event; lost receipt returns 
   assert.deepEqual(unwrap(await store.accept(acceptance())), a);
 });
 test("pending callback answer is consumed atomically and is unavailable after loss", async () => {
-  const store = new MemorySessionStore(),
-    s = fixtureSession();
-  unwrap(await store.create(s));
-  unwrap(await store.accept(acceptance()));
-  const current = unwrap(await store.session(s.namespace));
-  const interaction = {
-    schemaVersion: 2,
-    kind: "interaction",
-    namespace: s.namespace,
-    interactionId: "question-1",
-    commandId: "command-1",
-    generation: s.binding.generation,
-    nativeRequestId: "request-1",
-    expiresAtMs: 100,
-    status: "pending",
-    callbackLifetime: "generation_bound",
-  };
-  unwrap(
-    await store.commit({
-      ...emptyCommit(current),
-      interactions: [interaction],
-    }),
-  );
-  const head = unwrap(await store.session(s.namespace));
-  const command = {
-    ...fixtureCommand("answer-1"),
-    input: {
-      type: "respond",
-      interactionId: "question-1",
-      generation: s.binding.generation,
-      answer: { selected: "allow" },
-    },
-  };
+  const store = new MemorySessionStore();
+  const { session: head, answer: command } = await seedInteraction(store);
+  const s = head;
   const input = acceptance(head, command);
   store.failNextCommit = true;
   assert.equal((await store.accept(input)).ok, false);
@@ -85,43 +56,4 @@ test("snapshot retains stable history and fails explicitly at its output bound",
     (await store.snapshot(s.namespace, 1)).error.code,
     "limit_exceeded",
   );
-});
-test("expired or unavailable callbacks never become fresh provider responses", async () => {
-  for (const status of ["pending", "unavailable"]) {
-    const store = new MemorySessionStore(),
-      s = fixtureSession();
-    unwrap(await store.create(s));
-    unwrap(await store.accept(acceptance()));
-    const current = unwrap(await store.session(s.namespace));
-    const row = {
-      schemaVersion: 2,
-      kind: "interaction",
-      namespace: s.namespace,
-      interactionId: "i-1",
-      commandId: "command-1",
-      generation: s.binding.generation,
-      nativeRequestId: "r-1",
-      expiresAtMs: 10,
-      status,
-      callbackLifetime: "generation_bound",
-    };
-    unwrap(
-      await store.commit({ ...emptyCommit(current), interactions: [row] }),
-    );
-    const latest = unwrap(await store.session(s.namespace));
-    const command = {
-      ...fixtureCommand("answer-1"),
-      input: {
-        type: "respond",
-        interactionId: "i-1",
-        generation: s.binding.generation,
-        answer: { choice: "allow" },
-      },
-    };
-    assert.equal(
-      (await store.accept({ ...acceptance(latest, command), nowMs: 11 })).error
-        .code,
-      status === "pending" ? "expired" : "unavailable",
-    );
-  }
 });

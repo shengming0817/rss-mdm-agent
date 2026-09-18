@@ -14,7 +14,15 @@ const configuration = {
 };
 const budget = () => ({ timeoutMs: 1000, signal: AbortSignal.timeout(1000) });
 test("shared provider lifecycle conformance runs without Tauri", () =>
-  runProviderConformance(new ScriptedProvider(), configuration, budget()));
+  runProviderConformance(
+    (scenario) => {
+      const port = new ScriptedProvider();
+      port.submission = scenario;
+      return port;
+    },
+    configuration,
+    budget(),
+  ));
 test("unknown submit and cancel request do not manufacture terminal or tool authority", async () => {
   const port = new ScriptedProvider();
   unwrap(await port.initialize(configuration, budget()));
@@ -49,4 +57,29 @@ test("unknown submit and cancel request do not manufacture terminal or tool auth
     ).ok,
     false,
   );
+});
+
+test("shared provider harness closes failed adapters with a fresh bounded signal", async () => {
+  const primary = new Error("scripted initialization failed");
+  let closed = false;
+  const port = new ScriptedProvider();
+  port.initialize = async () => {
+    throw primary;
+  };
+  port.close = async (cleanup) => {
+    closed = true;
+    assert.equal(cleanup.signal.aborted, false);
+    assert.ok(cleanup.timeoutMs > 0);
+    return { ok: true, value: { processStopped: true } };
+  };
+  const abort = new AbortController();
+  abort.abort();
+  await assert.rejects(
+    runProviderConformance(() => port, configuration, {
+      timeoutMs: 1,
+      signal: abort.signal,
+    }),
+    primary,
+  );
+  assert.equal(closed, true);
 });

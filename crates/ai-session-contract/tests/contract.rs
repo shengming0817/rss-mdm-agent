@@ -68,5 +68,17 @@ fn constructed_data_gets_the_same_limits_and_no_old_version_fallback() {
         }
     )
     .is_err());
+    assert_eq!(
+        encode(
+            &record,
+            &Limits {
+                max_bytes: 0,
+                ..limits()
+            }
+        )
+        .unwrap_err()
+        .code,
+        ai_session_contract::Diagnostic::Configuration
+    );
     assert!(decode(b"\xff", &limits()).is_err());
 }

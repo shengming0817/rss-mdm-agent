@@ -1,46 +1,64 @@
 // @generated from packages/ai-contract/schema/runtime.schema.json. Do not edit.
-#[doc = "`Binding`"]
+#[doc = "Provider context identity. Version, configuration, account and generation bind every capability and callback."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Binding {
+    #[doc = "Opaque account reference; no token, key or account-directory contents."]
     #[serde(rename = "accountRef")]
     pub account_ref: Id,
+    #[doc = "Adapter implementation version used for capability verification."]
     #[serde(rename = "adapterVersion")]
     pub adapter_version: Id,
+    #[doc = "Exact immutable configuration identity and revision."]
     pub config: ConfigRef,
+    #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
     pub generation: Id,
+    #[doc = "Provider-owned request/callback identifier; cannot be rebound after dispatch."]
     #[serde(
         rename = "nativeRequestId",
         skip_serializing_if = "::std::option::Option::is_none"
     )]
     pub native_request_id: ::std::option::Option<Id>,
+    #[doc = "Provider-owned model-turn/run identifier, required when the provider exposes it."]
     #[serde(
         rename = "nativeRunId",
         skip_serializing_if = "::std::option::Option::is_none"
     )]
     pub native_run_id: ::std::option::Option<Id>,
+    #[doc = "Provider-owned context session identifier; history alone cannot recreate it."]
     #[serde(rename = "nativeSessionId")]
     pub native_session_id: Id,
+    #[doc = "Provider adapter identity."]
     pub provider: Id,
+    #[doc = "Pinned native provider implementation version."]
     #[serde(rename = "providerVersion")]
     pub provider_version: Id,
 }
-#[doc = "`Capabilities`"]
+#[doc = "Capabilities established for one exact provider binding, never execution authorization."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Capabilities {
+    #[doc = "request_only confirms sending; terminal_acknowledged requires native terminal evidence; unsupported/unknown cannot promise cancellation."]
     pub cancellation: CapabilitiesCancellation,
+    #[doc = "same_process resumes only a live context; across_processes requires verified provider restoration; unsupported/unknown cannot resume."]
     pub continuation: CapabilitiesContinuation,
+    #[doc = "Whether the provider supports an explicit context fork."]
     pub fork: CapabilityState,
+    #[doc = "Whether provider-specific multimodal input is available through an adapter extension."]
     pub multimodal: CapabilityState,
+    #[doc = "Whether an active native run accepts targeted steering."]
     pub steer: CapabilityState,
+    #[doc = "Whether a native structured callback can be represented and answered."]
     #[serde(rename = "structuredQuestion")]
     pub structured_question: CapabilityState,
+    #[doc = "Whether the provider supports child agents; not execution authorization."]
     pub subagent: CapabilityState,
+    #[doc = "Whether the provider exposes a terminal facility; not the command terminal state."]
     pub terminal: CapabilityState,
+    #[doc = "host_mediated still requires containment evidence; provider_managed is not controlled execution; disabled/unknown cannot enable tools."]
     pub tools: CapabilitiesTools,
 }
-#[doc = "`CapabilitiesCancellation`"]
+#[doc = "request_only confirms sending; terminal_acknowledged requires native terminal evidence; unsupported/unknown cannot promise cancellation."]
 #[derive(
     :: serde :: Deserialize,
     :: serde :: Serialize,
@@ -54,12 +72,16 @@ pub struct Capabilities {
 )]
 pub enum CapabilitiesCancellation {
     #[serde(rename = "request_only")]
+    #[doc = "`RequestOnly` alternative; see the parent type's schema contract."]
     RequestOnly,
     #[serde(rename = "terminal_acknowledged")]
+    #[doc = "`TerminalAcknowledged` alternative; see the parent type's schema contract."]
     TerminalAcknowledged,
     #[serde(rename = "unsupported")]
+    #[doc = "`Unsupported` alternative; see the parent type's schema contract."]
     Unsupported,
     #[serde(rename = "unknown")]
+    #[doc = "`Unknown` alternative; see the parent type's schema contract."]
     Unknown,
 }
 impl ::std::fmt::Display for CapabilitiesCancellation {
@@ -98,7 +120,7 @@ impl ::std::convert::TryFrom<::std::string::String> for CapabilitiesCancellation
         value.parse()
     }
 }
-#[doc = "`CapabilitiesContinuation`"]
+#[doc = "same_process resumes only a live context; across_processes requires verified provider restoration; unsupported/unknown cannot resume."]
 #[derive(
     :: serde :: Deserialize,
     :: serde :: Serialize,
@@ -112,12 +134,16 @@ impl ::std::convert::TryFrom<::std::string::String> for CapabilitiesCancellation
 )]
 pub enum CapabilitiesContinuation {
     #[serde(rename = "same_process")]
+    #[doc = "`SameProcess` alternative; see the parent type's schema contract."]
     SameProcess,
     #[serde(rename = "across_processes")]
+    #[doc = "`AcrossProcesses` alternative; see the parent type's schema contract."]
     AcrossProcesses,
     #[serde(rename = "unsupported")]
+    #[doc = "`Unsupported` alternative; see the parent type's schema contract."]
     Unsupported,
     #[serde(rename = "unknown")]
+    #[doc = "`Unknown` alternative; see the parent type's schema contract."]
     Unknown,
 }
 impl ::std::fmt::Display for CapabilitiesContinuation {
@@ -156,7 +182,7 @@ impl ::std::convert::TryFrom<::std::string::String> for CapabilitiesContinuation
         value.parse()
     }
 }
-#[doc = "`CapabilitiesTools`"]
+#[doc = "host_mediated still requires containment evidence; provider_managed is not controlled execution; disabled/unknown cannot enable tools."]
 #[derive(
     :: serde :: Deserialize,
     :: serde :: Serialize,
@@ -170,12 +196,16 @@ impl ::std::convert::TryFrom<::std::string::String> for CapabilitiesContinuation
 )]
 pub enum CapabilitiesTools {
     #[serde(rename = "host_mediated")]
+    #[doc = "`HostMediated` alternative; see the parent type's schema contract."]
     HostMediated,
     #[serde(rename = "provider_managed")]
+    #[doc = "`ProviderManaged` alternative; see the parent type's schema contract."]
     ProviderManaged,
     #[serde(rename = "disabled")]
+    #[doc = "`Disabled` alternative; see the parent type's schema contract."]
     Disabled,
     #[serde(rename = "unknown")]
+    #[doc = "`Unknown` alternative; see the parent type's schema contract."]
     Unknown,
 }
 impl ::std::fmt::Display for CapabilitiesTools {
@@ -214,7 +244,7 @@ impl ::std::convert::TryFrom<::std::string::String> for CapabilitiesTools {
         value.parse()
     }
 }
-#[doc = "`CapabilityState`"]
+#[doc = "Only supported enables an operation; unknown and unsupported fail closed."]
 #[derive(
     :: serde :: Deserialize,
     :: serde :: Serialize,
@@ -228,10 +258,13 @@ impl ::std::convert::TryFrom<::std::string::String> for CapabilitiesTools {
 )]
 pub enum CapabilityState {
     #[serde(rename = "supported")]
+    #[doc = "`Supported` alternative; see the parent type's schema contract."]
     Supported,
     #[serde(rename = "unsupported")]
+    #[doc = "`Unsupported` alternative; see the parent type's schema contract."]
     Unsupported,
     #[serde(rename = "unknown")]
+    #[doc = "`Unknown` alternative; see the parent type's schema contract."]
     Unknown,
 }
 impl ::std::fmt::Display for CapabilityState {
@@ -268,39 +301,53 @@ impl ::std::convert::TryFrom<::std::string::String> for CapabilityState {
         value.parse()
     }
 }
-#[doc = "`Command`"]
+#[doc = "Client command identity and complete canonical input; trusted namespace is supplied separately."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Command {
+    #[doc = "Client-generated idempotency key; reuse only with identical canonical content."]
     #[serde(rename = "commandId")]
     pub command_id: Id,
+    #[doc = "Inclusive UTC epoch-millisecond deadline; later first acceptance is rejected."]
     #[serde(rename = "expiresAtMs")]
     pub expires_at_ms: Counter,
+    #[doc = "Complete command content included in its canonical fingerprint."]
     pub input: Input,
+    #[doc = "Closed product record discriminator."]
     pub kind: ::std::string::String,
+    #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
     #[serde(rename = "schemaVersion")]
     pub schema_version: i64,
+    #[doc = "Logical session identifier, never reusable after retirement."]
     #[serde(rename = "sessionId")]
     pub session_id: Id,
 }
-#[doc = "`CommandRecord`"]
+#[doc = "Single inbox/dispatch ledger; no second provider queue owns the same command."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct CommandRecord {
+    #[doc = "Immutable original command."]
     pub command: Command,
+    #[doc = "Native correlation persisted before/with dispatch; never reconstructed from UI history."]
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub dispatch: ::std::option::Option<Dispatch>,
+    #[doc = "Closed failure category and retry discipline."]
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub failure: ::std::option::Option<Failure>,
+    #[doc = "Closed product record discriminator."]
     pub kind: ::std::string::String,
+    #[doc = "Definite model-turn result; no implication about business side effects."]
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub outcome: ::std::option::Option<Outcome>,
+    #[doc = "Immutable original committed acceptance fact."]
     pub receipt: Receipt,
+    #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
     #[serde(rename = "schemaVersion")]
     pub schema_version: i64,
+    #[doc = "Explicit command lifecycle state; terminal and reconciliation transitions require matching evidence."]
     pub state: CommandState,
 }
-#[doc = "`CommandState`"]
+#[doc = "accepted persists intent; dispatching persists dispatch intent; running has native confirmation; terminal has a definite outcome; reconciliation_required forbids blind resubmission."]
 #[derive(
     :: serde :: Deserialize,
     :: serde :: Serialize,
@@ -314,14 +361,19 @@ pub struct CommandRecord {
 )]
 pub enum CommandState {
     #[serde(rename = "accepted")]
+    #[doc = "`Accepted` alternative; see the parent type's schema contract."]
     Accepted,
     #[serde(rename = "dispatching")]
+    #[doc = "`Dispatching` alternative; see the parent type's schema contract."]
     Dispatching,
     #[serde(rename = "running")]
+    #[doc = "`Running` alternative; see the parent type's schema contract."]
     Running,
     #[serde(rename = "terminal")]
+    #[doc = "`Terminal` alternative; see the parent type's schema contract."]
     Terminal,
     #[serde(rename = "reconciliation_required")]
+    #[doc = "`ReconciliationRequired` alternative; see the parent type's schema contract."]
     ReconciliationRequired,
 }
 impl ::std::fmt::Display for CommandState {
@@ -362,14 +414,16 @@ impl ::std::convert::TryFrom<::std::string::String> for CommandState {
         value.parse()
     }
 }
-#[doc = "`ConfigRef`"]
+#[doc = "Immutable configuration identity and revision; contains no credentials."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ConfigRef {
+    #[doc = "Configuration identifier; resolve credentials outside the wire."]
     pub id: Id,
+    #[doc = "Immutable configuration revision; changing it invalidates prior capability evidence."]
     pub revision: Id,
 }
-#[doc = "`Counter`"]
+#[doc = "Nonnegative integer in the shared JavaScript safe-integer range."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct Counter(pub i64);
@@ -412,28 +466,39 @@ impl ::std::convert::TryFrom<String> for Counter {
         value.parse()
     }
 }
-#[doc = "`Delivery`"]
+#[doc = "Reliable cross-service outbox record bound to an immutable event and target."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Delivery {
+    #[doc = "Monotonic count of delivery attempts."]
     pub attempts: Counter,
+    #[doc = "SHA-256 of JCS({event, target}), including the full referenced stable event and exact destination."]
     #[serde(rename = "contentHash")]
     pub content_hash: DeliveryContentHash,
+    #[doc = "Stable unique event identifier within the namespace."]
     #[serde(rename = "eventId")]
     pub event_id: Id,
+    #[doc = "Closed product record discriminator."]
     pub kind: ::std::string::String,
+    #[doc = "Trusted storage isolation scope; not copied from model or action content."]
     pub namespace: Namespace,
+    #[doc = "UTC epoch-millisecond earliest eligible retry time."]
     #[serde(rename = "nextAttemptAtMs")]
     pub next_attempt_at_ms: Counter,
+    #[doc = "Stable receiver idempotency key for this delivery; cannot be rebound to another event/target."]
     #[serde(rename = "operationId")]
     pub operation_id: Id,
+    #[doc = "Explicit retry discipline; uncertainty never authorizes blind resubmission."]
     pub retry: DeliveryRetry,
+    #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
     #[serde(rename = "schemaVersion")]
     pub schema_version: i64,
+    #[doc = "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."]
     pub status: DeliveryStatus,
+    #[doc = "Opaque reliable-delivery destination identifier."]
     pub target: Id,
 }
-#[doc = "`DeliveryContentHash`"]
+#[doc = "SHA-256 of JCS({event, target}), including the full referenced stable event and exact destination."]
 #[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[serde(transparent)]
 pub struct DeliveryContentHash(::std::string::String);
@@ -485,7 +550,7 @@ impl<'de> ::serde::Deserialize<'de> for DeliveryContentHash {
             })
     }
 }
-#[doc = "`DeliveryRetry`"]
+#[doc = "Explicit retry discipline; uncertainty never authorizes blind resubmission."]
 #[derive(
     :: serde :: Deserialize,
     :: serde :: Serialize,
@@ -499,10 +564,13 @@ impl<'de> ::serde::Deserialize<'de> for DeliveryContentHash {
 )]
 pub enum DeliveryRetry {
     #[serde(rename = "receiver_idempotent")]
+    #[doc = "`ReceiverIdempotent` alternative; see the parent type's schema contract."]
     ReceiverIdempotent,
     #[serde(rename = "reconcile_first")]
+    #[doc = "`ReconcileFirst` alternative; see the parent type's schema contract."]
     ReconcileFirst,
     #[serde(rename = "never")]
+    #[doc = "`Never` alternative; see the parent type's schema contract."]
     Never,
 }
 impl ::std::fmt::Display for DeliveryRetry {
@@ -539,7 +607,7 @@ impl ::std::convert::TryFrom<::std::string::String> for DeliveryRetry {
         value.parse()
     }
 }
-#[doc = "`DeliveryStatus`"]
+#[doc = "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."]
 #[derive(
     :: serde :: Deserialize,
     :: serde :: Serialize,
@@ -553,10 +621,13 @@ impl ::std::convert::TryFrom<::std::string::String> for DeliveryRetry {
 )]
 pub enum DeliveryStatus {
     #[serde(rename = "pending")]
+    #[doc = "`Pending` alternative; see the parent type's schema contract."]
     Pending,
     #[serde(rename = "delivered")]
+    #[doc = "`Delivered` alternative; see the parent type's schema contract."]
     Delivered,
     #[serde(rename = "reconciliation_required")]
+    #[doc = "`ReconciliationRequired` alternative; see the parent type's schema contract."]
     ReconciliationRequired,
 }
 impl ::std::fmt::Display for DeliveryStatus {
@@ -593,26 +664,31 @@ impl ::std::convert::TryFrom<::std::string::String> for DeliveryStatus {
         value.parse()
     }
 }
-#[doc = "`Dispatch`"]
+#[doc = "Persisted native correlation and certainty; unknown requires reconciliation before any further send."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Dispatch {
+    #[doc = "submitted has native acceptance; unknown requires reconciliation; not_sent has evidence no submission occurred."]
     pub certainty: DispatchCertainty,
+    #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
     pub generation: Id,
+    #[doc = "Provider-owned request/callback identifier; cannot be rebound after dispatch."]
     #[serde(
         rename = "nativeRequestId",
         skip_serializing_if = "::std::option::Option::is_none"
     )]
     pub native_request_id: ::std::option::Option<Id>,
+    #[doc = "Provider-owned model-turn/run identifier, required when the provider exposes it."]
     #[serde(
         rename = "nativeRunId",
         skip_serializing_if = "::std::option::Option::is_none"
     )]
     pub native_run_id: ::std::option::Option<Id>,
+    #[doc = "Provider-owned context session identifier; history alone cannot recreate it."]
     #[serde(rename = "nativeSessionId")]
     pub native_session_id: Id,
 }
-#[doc = "`DispatchCertainty`"]
+#[doc = "submitted has native acceptance; unknown requires reconciliation; not_sent has evidence no submission occurred."]
 #[derive(
     :: serde :: Deserialize,
     :: serde :: Serialize,
@@ -626,10 +702,13 @@ pub struct Dispatch {
 )]
 pub enum DispatchCertainty {
     #[serde(rename = "not_sent")]
+    #[doc = "`NotSent` alternative; see the parent type's schema contract."]
     NotSent,
     #[serde(rename = "submitted")]
+    #[doc = "`Submitted` alternative; see the parent type's schema contract."]
     Submitted,
     #[serde(rename = "unknown")]
+    #[doc = "`Unknown` alternative; see the parent type's schema contract."]
     Unknown,
 }
 impl ::std::fmt::Display for DispatchCertainty {
@@ -666,7 +745,7 @@ impl ::std::convert::TryFrom<::std::string::String> for DispatchCertainty {
         value.parse()
     }
 }
-#[doc = "`ErrorCode`"]
+#[doc = "Closed value-free error category; diagnostics never include model text or credentials."]
 #[derive(
     :: serde :: Deserialize,
     :: serde :: Serialize,
@@ -680,32 +759,46 @@ impl ::std::convert::TryFrom<::std::string::String> for DispatchCertainty {
 )]
 pub enum ErrorCode {
     #[serde(rename = "invalid_input")]
+    #[doc = "`InvalidInput` alternative; see the parent type's schema contract."]
     InvalidInput,
     #[serde(rename = "unsupported_version")]
+    #[doc = "`UnsupportedVersion` alternative; see the parent type's schema contract."]
     UnsupportedVersion,
     #[serde(rename = "unsupported_capability")]
+    #[doc = "`UnsupportedCapability` alternative; see the parent type's schema contract."]
     UnsupportedCapability,
     #[serde(rename = "permission_denied")]
+    #[doc = "`PermissionDenied` alternative; see the parent type's schema contract."]
     PermissionDenied,
     #[serde(rename = "content_conflict")]
+    #[doc = "`ContentConflict` alternative; see the parent type's schema contract."]
     ContentConflict,
     #[serde(rename = "revision_conflict")]
+    #[doc = "`RevisionConflict` alternative; see the parent type's schema contract."]
     RevisionConflict,
     #[serde(rename = "stale_binding")]
+    #[doc = "`StaleBinding` alternative; see the parent type's schema contract."]
     StaleBinding,
     #[serde(rename = "expired")]
+    #[doc = "`Expired` alternative; see the parent type's schema contract."]
     Expired,
     #[serde(rename = "unavailable")]
+    #[doc = "`Unavailable` alternative; see the parent type's schema contract."]
     Unavailable,
     #[serde(rename = "reconciliation_required")]
+    #[doc = "`ReconciliationRequired` alternative; see the parent type's schema contract."]
     ReconciliationRequired,
     #[serde(rename = "limit_exceeded")]
+    #[doc = "`LimitExceeded` alternative; see the parent type's schema contract."]
     LimitExceeded,
     #[serde(rename = "cursor_expired")]
+    #[doc = "`CursorExpired` alternative; see the parent type's schema contract."]
     CursorExpired,
     #[serde(rename = "session_gone")]
+    #[doc = "`SessionGone` alternative; see the parent type's schema contract."]
     SessionGone,
     #[serde(rename = "already_answered")]
+    #[doc = "`AlreadyAnswered` alternative; see the parent type's schema contract."]
     AlreadyAnswered,
 }
 impl ::std::fmt::Display for ErrorCode {
@@ -764,62 +857,100 @@ impl ::std::convert::TryFrom<::std::string::String> for ErrorCode {
         value.parse()
     }
 }
-#[doc = "`Event`"]
+#[doc = "Committed stable event in one namespace; token deltas are excluded from durable ordering."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Event {
+    #[doc = "Stable observation committed before publication."]
     pub body: EventBody,
+    #[doc = "Client-generated idempotency key; reuse only with identical canonical content."]
     #[serde(rename = "commandId")]
     pub command_id: Id,
+    #[doc = "Stable unique event identifier within the namespace."]
     #[serde(rename = "eventId")]
     pub event_id: Id,
+    #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
     pub generation: Id,
+    #[doc = "Closed product record discriminator."]
     pub kind: ::std::string::String,
+    #[doc = "Trusted storage isolation scope; not copied from model or action content."]
     pub namespace: Namespace,
+    #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
     #[serde(rename = "schemaVersion")]
     pub schema_version: i64,
+    #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
     pub sequence: Counter,
 }
-#[doc = "`EventBody`"]
+#[doc = "Stable product observation. Tool proposals and results are untrusted and cannot issue execution authority."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(tag = "type", deny_unknown_fields)]
 pub enum EventBody {
+    #[doc = "text variant; all fields are data, never authentication or execution authority."]
     #[serde(rename = "text")]
     Text {
+        #[doc = "Stable product message correlation identifier."]
         #[serde(rename = "messageId")]
         message_id: Id,
+        #[doc = "Untrusted model/user text subject to the whole-envelope budgets."]
         text: EventBodyText,
     },
+    #[doc = "status variant; all fields are data, never authentication or execution authority."]
     #[serde(rename = "status")]
-    Status { state: CommandState },
+    Status {
+        #[doc = "Explicit command lifecycle state; terminal and reconciliation transitions require matching evidence."]
+        state: CommandState,
+    },
+    #[doc = "terminal variant; all fields are data, never authentication or execution authority."]
     #[serde(rename = "terminal")]
-    Terminal { outcome: Outcome },
+    Terminal {
+        #[doc = "Definite model-turn result; no implication about business side effects."]
+        outcome: Outcome,
+    },
+    #[doc = "cancel_dispatched variant; all fields are data, never authentication or execution authority."]
     #[serde(rename = "cancel_dispatched")]
-    CancelDispatched { confirmation: EventBodyConfirmation },
+    CancelDispatched {
+        #[doc = "Cancellation request transport confirmation only; does not manufacture a model terminal."]
+        confirmation: EventBodyConfirmation,
+    },
+    #[doc = "tool_proposal variant; all fields are data, never authentication or execution authority."]
     #[serde(rename = "tool_proposal")]
     ToolProposal {
+        #[doc = "Untrusted tool JSON arguments, including keys, count toward product budgets."]
         arguments: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+        #[doc = "Provider tool name; not an approved execution action."]
         name: Id,
+        #[doc = "Untrusted tool proposal correlation identifier."]
         #[serde(rename = "proposalId")]
         proposal_id: Id,
     },
+    #[doc = "tool_result variant; all fields are data, never authentication or execution authority."]
     #[serde(rename = "tool_result")]
     ToolResult {
+        #[doc = "Protocol tool-result disposition, not authoritative business execution status."]
         disposition: EventBodyDisposition,
+        #[doc = "Untrusted tool proposal correlation identifier."]
         #[serde(rename = "proposalId")]
         proposal_id: Id,
+        #[doc = "Untrusted model/user text subject to the whole-envelope budgets."]
         text: EventBodyText,
     },
+    #[doc = "interaction variant; all fields are data, never authentication or execution authority."]
     #[serde(rename = "interaction")]
     Interaction {
+        #[doc = "Single-use interaction identity within the namespace."]
         #[serde(rename = "interactionId")]
         interaction_id: Id,
+        #[doc = "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."]
         status: EventBodyStatus,
     },
+    #[doc = "error variant; all fields are data, never authentication or execution authority."]
     #[serde(rename = "error")]
-    Error { failure: Failure },
+    Error {
+        #[doc = "Closed failure category and retry discipline."]
+        failure: Failure,
+    },
 }
-#[doc = "`EventBodyConfirmation`"]
+#[doc = "Cancellation request transport confirmation only; does not manufacture a model terminal."]
 #[derive(
     :: serde :: Deserialize,
     :: serde :: Serialize,
@@ -833,10 +964,13 @@ pub enum EventBody {
 )]
 pub enum EventBodyConfirmation {
     #[serde(rename = "request_only")]
+    #[doc = "`RequestOnly` alternative; see the parent type's schema contract."]
     RequestOnly,
     #[serde(rename = "already_terminal")]
+    #[doc = "`AlreadyTerminal` alternative; see the parent type's schema contract."]
     AlreadyTerminal,
     #[serde(rename = "unsupported")]
+    #[doc = "`Unsupported` alternative; see the parent type's schema contract."]
     Unsupported,
 }
 impl ::std::fmt::Display for EventBodyConfirmation {
@@ -873,7 +1007,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventBodyConfirmation {
         value.parse()
     }
 }
-#[doc = "`EventBodyDisposition`"]
+#[doc = "Protocol tool-result disposition, not authoritative business execution status."]
 #[derive(
     :: serde :: Deserialize,
     :: serde :: Serialize,
@@ -887,10 +1021,13 @@ impl ::std::convert::TryFrom<::std::string::String> for EventBodyConfirmation {
 )]
 pub enum EventBodyDisposition {
     #[serde(rename = "returned")]
+    #[doc = "`Returned` alternative; see the parent type's schema contract."]
     Returned,
     #[serde(rename = "rejected")]
+    #[doc = "`Rejected` alternative; see the parent type's schema contract."]
     Rejected,
     #[serde(rename = "unavailable")]
+    #[doc = "`Unavailable` alternative; see the parent type's schema contract."]
     Unavailable,
 }
 impl ::std::fmt::Display for EventBodyDisposition {
@@ -927,7 +1064,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventBodyDisposition {
         value.parse()
     }
 }
-#[doc = "`EventBodyStatus`"]
+#[doc = "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."]
 #[derive(
     :: serde :: Deserialize,
     :: serde :: Serialize,
@@ -941,12 +1078,16 @@ impl ::std::convert::TryFrom<::std::string::String> for EventBodyDisposition {
 )]
 pub enum EventBodyStatus {
     #[serde(rename = "pending")]
+    #[doc = "`Pending` alternative; see the parent type's schema contract."]
     Pending,
     #[serde(rename = "answered")]
+    #[doc = "`Answered` alternative; see the parent type's schema contract."]
     Answered,
     #[serde(rename = "expired")]
+    #[doc = "`Expired` alternative; see the parent type's schema contract."]
     Expired,
     #[serde(rename = "unavailable")]
+    #[doc = "`Unavailable` alternative; see the parent type's schema contract."]
     Unavailable,
 }
 impl ::std::fmt::Display for EventBodyStatus {
@@ -985,7 +1126,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventBodyStatus {
         value.parse()
     }
 }
-#[doc = "`EventBodyText`"]
+#[doc = "Untrusted model/user text subject to the whole-envelope budgets."]
 #[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[serde(transparent)]
 pub struct EventBodyText(::std::string::String);
@@ -1035,14 +1176,16 @@ impl<'de> ::serde::Deserialize<'de> for EventBodyText {
             })
     }
 }
-#[doc = "`Failure`"]
+#[doc = "Value-free failure and explicit retry discipline."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Failure {
+    #[doc = "Closed diagnostic category without input values."]
     pub code: ErrorCode,
+    #[doc = "Explicit retry discipline; uncertainty never authorizes blind resubmission."]
     pub retry: Retry,
 }
-#[doc = "`Id`"]
+#[doc = "Opaque ASCII correlation identifier (1–128 characters); never an authentication credential."]
 #[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[serde(transparent)]
 pub struct Id(::std::string::String);
@@ -1102,37 +1245,50 @@ impl<'de> ::serde::Deserialize<'de> for Id {
             })
     }
 }
-#[doc = "`Input`"]
+#[doc = "Product command inputs; provider-specific formats remain adapter-owned."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(tag = "type", deny_unknown_fields)]
 pub enum Input {
+    #[doc = "prompt variant; all fields are data, never authentication or execution authority."]
     #[serde(rename = "prompt")]
     Prompt {
+        #[doc = "queue_next serializes later work; steer must match the currently active native run."]
         policy: InputPolicy,
+        #[doc = "Exact active native run required for steer; forbidden for queue_next."]
         #[serde(
             rename = "targetRunId",
             skip_serializing_if = "::std::option::Option::is_none"
         )]
         target_run_id: ::std::option::Option<Id>,
+        #[doc = "Untrusted model/user text subject to the whole-envelope budgets."]
         text: InputText,
     },
+    #[doc = "cancel variant; all fields are data, never authentication or execution authority."]
     #[serde(rename = "cancel")]
     Cancel {
+        #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
         generation: Id,
+        #[doc = "Provider-owned model-turn/run identifier, required when the provider exposes it."]
         #[serde(
             rename = "nativeRunId",
             skip_serializing_if = "::std::option::Option::is_none"
         )]
         native_run_id: ::std::option::Option<Id>,
+        #[doc = "Original accepted command being cancelled."]
         #[serde(rename = "targetCommandId")]
         target_command_id: Id,
     },
+    #[doc = "respond variant; all fields are data, never authentication or execution authority."]
     #[serde(rename = "respond")]
     Respond {
+        #[doc = "Untrusted JSON response data; cannot carry approval authority."]
         answer: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+        #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
         generation: Id,
+        #[doc = "Single-use interaction identity within the namespace."]
         #[serde(rename = "interactionId")]
         interaction_id: Id,
+        #[doc = "Provider-owned model-turn/run identifier, required when the provider exposes it."]
         #[serde(
             rename = "nativeRunId",
             skip_serializing_if = "::std::option::Option::is_none"
@@ -1140,7 +1296,7 @@ pub enum Input {
         native_run_id: ::std::option::Option<Id>,
     },
 }
-#[doc = "`InputPolicy`"]
+#[doc = "queue_next serializes later work; steer must match the currently active native run."]
 #[derive(
     :: serde :: Deserialize,
     :: serde :: Serialize,
@@ -1154,8 +1310,10 @@ pub enum Input {
 )]
 pub enum InputPolicy {
     #[serde(rename = "queue_next")]
+    #[doc = "`QueueNext` alternative; see the parent type's schema contract."]
     QueueNext,
     #[serde(rename = "steer")]
+    #[doc = "`Steer` alternative; see the parent type's schema contract."]
     Steer,
 }
 impl ::std::fmt::Display for InputPolicy {
@@ -1190,7 +1348,7 @@ impl ::std::convert::TryFrom<::std::string::String> for InputPolicy {
         value.parse()
     }
 }
-#[doc = "`InputText`"]
+#[doc = "Untrusted model/user text subject to the whole-envelope budgets."]
 #[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[serde(transparent)]
 pub struct InputText(::std::string::String);
@@ -1240,38 +1398,50 @@ impl<'de> ::serde::Deserialize<'de> for InputText {
             })
     }
 }
-#[doc = "`Interaction`"]
+#[doc = "Single-use provider callback with immutable command/native correlation, expiry and lifetime."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Interaction {
+    #[doc = "generation_bound cannot survive callback loss; provider_resumable requires verified native restoration."]
     #[serde(rename = "callbackLifetime")]
     pub callback_lifetime: InteractionCallbackLifetime,
+    #[doc = "Client-generated idempotency key; reuse only with identical canonical content."]
     #[serde(rename = "commandId")]
     pub command_id: Id,
+    #[doc = "Inclusive UTC epoch-millisecond deadline; later first acceptance is rejected."]
     #[serde(rename = "expiresAtMs")]
     pub expires_at_ms: Counter,
+    #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
     pub generation: Id,
+    #[doc = "Single-use interaction identity within the namespace."]
     #[serde(rename = "interactionId")]
     pub interaction_id: Id,
+    #[doc = "Closed product record discriminator."]
     pub kind: ::std::string::String,
+    #[doc = "Trusted storage isolation scope; not copied from model or action content."]
     pub namespace: Namespace,
+    #[doc = "Provider-owned request/callback identifier; cannot be rebound after dispatch."]
     #[serde(rename = "nativeRequestId")]
     pub native_request_id: Id,
+    #[doc = "Provider-owned model-turn/run identifier, required when the provider exposes it."]
     #[serde(
         rename = "nativeRunId",
         skip_serializing_if = "::std::option::Option::is_none"
     )]
     pub native_run_id: ::std::option::Option<Id>,
+    #[doc = "Accepted response command which atomically consumed the interaction; present only when answered."]
     #[serde(
         rename = "responseCommandId",
         skip_serializing_if = "::std::option::Option::is_none"
     )]
     pub response_command_id: ::std::option::Option<Id>,
+    #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
     #[serde(rename = "schemaVersion")]
     pub schema_version: i64,
+    #[doc = "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."]
     pub status: InteractionStatus,
 }
-#[doc = "`InteractionCallbackLifetime`"]
+#[doc = "generation_bound cannot survive callback loss; provider_resumable requires verified native restoration."]
 #[derive(
     :: serde :: Deserialize,
     :: serde :: Serialize,
@@ -1285,8 +1455,10 @@ pub struct Interaction {
 )]
 pub enum InteractionCallbackLifetime {
     #[serde(rename = "generation_bound")]
+    #[doc = "`GenerationBound` alternative; see the parent type's schema contract."]
     GenerationBound,
     #[serde(rename = "provider_resumable")]
+    #[doc = "`ProviderResumable` alternative; see the parent type's schema contract."]
     ProviderResumable,
 }
 impl ::std::fmt::Display for InteractionCallbackLifetime {
@@ -1321,7 +1493,7 @@ impl ::std::convert::TryFrom<::std::string::String> for InteractionCallbackLifet
         value.parse()
     }
 }
-#[doc = "`InteractionStatus`"]
+#[doc = "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."]
 #[derive(
     :: serde :: Deserialize,
     :: serde :: Serialize,
@@ -1335,12 +1507,16 @@ impl ::std::convert::TryFrom<::std::string::String> for InteractionCallbackLifet
 )]
 pub enum InteractionStatus {
     #[serde(rename = "pending")]
+    #[doc = "`Pending` alternative; see the parent type's schema contract."]
     Pending,
     #[serde(rename = "answered")]
+    #[doc = "`Answered` alternative; see the parent type's schema contract."]
     Answered,
     #[serde(rename = "expired")]
+    #[doc = "`Expired` alternative; see the parent type's schema contract."]
     Expired,
     #[serde(rename = "unavailable")]
+    #[doc = "`Unavailable` alternative; see the parent type's schema contract."]
     Unavailable,
 }
 impl ::std::fmt::Display for InteractionStatus {
@@ -1379,20 +1555,24 @@ impl ::std::convert::TryFrom<::std::string::String> for InteractionStatus {
         value.parse()
     }
 }
-#[doc = "`Namespace`"]
+#[doc = "Trusted tenant/principal/authority/logical-session storage scope supplied by authenticated ingress."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Namespace {
+    #[doc = "Authenticated authority scope."]
     #[serde(rename = "authorityId")]
     pub authority_id: Id,
+    #[doc = "Authenticated principal scope."]
     #[serde(rename = "principalId")]
     pub principal_id: Id,
+    #[doc = "Logical session identifier, never reusable after retirement."]
     #[serde(rename = "sessionId")]
     pub session_id: Id,
+    #[doc = "Authenticated tenant scope."]
     #[serde(rename = "tenantId")]
     pub tenant_id: Id,
 }
-#[doc = "`Outcome`"]
+#[doc = "Definite model-turn outcome; does not establish process exit or business-side-effect completion."]
 #[derive(
     :: serde :: Deserialize,
     :: serde :: Serialize,
@@ -1406,14 +1586,19 @@ pub struct Namespace {
 )]
 pub enum Outcome {
     #[serde(rename = "completed")]
+    #[doc = "`Completed` alternative; see the parent type's schema contract."]
     Completed,
     #[serde(rename = "interrupted")]
+    #[doc = "`Interrupted` alternative; see the parent type's schema contract."]
     Interrupted,
     #[serde(rename = "refused")]
+    #[doc = "`Refused` alternative; see the parent type's schema contract."]
     Refused,
     #[serde(rename = "limit_reached")]
+    #[doc = "`LimitReached` alternative; see the parent type's schema contract."]
     LimitReached,
     #[serde(rename = "failed")]
+    #[doc = "`Failed` alternative; see the parent type's schema contract."]
     Failed,
 }
 impl ::std::fmt::Display for Outcome {
@@ -1454,28 +1639,37 @@ impl ::std::convert::TryFrom<::std::string::String> for Outcome {
         value.parse()
     }
 }
-#[doc = "`Receipt`"]
+#[doc = "Immutable acceptance fact. Only an actual committed store makes it durable; it is not a model terminal."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Receipt {
+    #[doc = "UTC epoch milliseconds at committed acceptance."]
     #[serde(rename = "acceptedAtMs")]
     pub accepted_at_ms: Counter,
+    #[doc = "Session revision which atomically accepted this command."]
     #[serde(rename = "acceptedRevision")]
     pub accepted_revision: Counter,
+    #[doc = "Client-generated idempotency key; reuse only with identical canonical content."]
     #[serde(rename = "commandId")]
     pub command_id: Id,
+    #[doc = "SHA-256 of JCS(command), including every command field; namespace is a separate storage key."]
     #[serde(rename = "contentHash")]
     pub content_hash: ReceiptContentHash,
+    #[doc = "Closed product record discriminator."]
     pub kind: ::std::string::String,
+    #[doc = "Trusted storage isolation scope; not copied from model or action content."]
     pub namespace: Namespace,
+    #[doc = "Inclusive stored-receipt deadline; cannot be shorter than the retry deadline."]
     #[serde(rename = "receiptUntilMs")]
     pub receipt_until_ms: Counter,
+    #[doc = "Inclusive same-command retry deadline, no later than command expiry."]
     #[serde(rename = "retryUntilMs")]
     pub retry_until_ms: Counter,
+    #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
     #[serde(rename = "schemaVersion")]
     pub schema_version: i64,
 }
-#[doc = "`ReceiptContentHash`"]
+#[doc = "SHA-256 of JCS(command), including every command field; namespace is a separate storage key."]
 #[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[serde(transparent)]
 pub struct ReceiptContentHash(::std::string::String);
@@ -1527,7 +1721,7 @@ impl<'de> ::serde::Deserialize<'de> for ReceiptContentHash {
             })
     }
 }
-#[doc = "`Retry`"]
+#[doc = "same_command preserves identity/content; reconcile_first checks the original operation; never forbids retry."]
 #[derive(
     :: serde :: Deserialize,
     :: serde :: Serialize,
@@ -1541,10 +1735,13 @@ impl<'de> ::serde::Deserialize<'de> for ReceiptContentHash {
 )]
 pub enum Retry {
     #[serde(rename = "same_command")]
+    #[doc = "`SameCommand` alternative; see the parent type's schema contract."]
     SameCommand,
     #[serde(rename = "reconcile_first")]
+    #[doc = "`ReconcileFirst` alternative; see the parent type's schema contract."]
     ReconcileFirst,
     #[serde(rename = "never")]
+    #[doc = "`Never` alternative; see the parent type's schema contract."]
     Never,
 }
 impl ::std::fmt::Display for Retry {
@@ -1581,22 +1778,30 @@ impl ::std::convert::TryFrom<::std::string::String> for Retry {
         value.parse()
     }
 }
-#[doc = "`Session`"]
+#[doc = "Logical session state and stable event watermark committed at one revision."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Session {
+    #[doc = "Exact provider incarnation and native context identity."]
     pub binding: Binding,
+    #[doc = "Capabilities bound to this exact provider/configuration/account incarnation."]
     pub capabilities: Capabilities,
+    #[doc = "Closed product record discriminator."]
     pub kind: ::std::string::String,
+    #[doc = "Highest committed stable-event sequence at this session revision."]
     #[serde(rename = "lastSequence")]
     pub last_sequence: Counter,
+    #[doc = "Trusted storage isolation scope; not copied from model or action content."]
     pub namespace: Namespace,
+    #[doc = "Monotonic CAS revision of this product record."]
     pub revision: Counter,
+    #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
     #[serde(rename = "schemaVersion")]
     pub schema_version: i64,
+    #[doc = "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."]
     pub status: SessionStatus,
 }
-#[doc = "`SessionStatus`"]
+#[doc = "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."]
 #[derive(
     :: serde :: Deserialize,
     :: serde :: Serialize,
@@ -1610,8 +1815,10 @@ pub struct Session {
 )]
 pub enum SessionStatus {
     #[serde(rename = "active")]
+    #[doc = "`Active` alternative; see the parent type's schema contract."]
     Active,
     #[serde(rename = "retired")]
+    #[doc = "`Retired` alternative; see the parent type's schema contract."]
     Retired,
 }
 impl ::std::fmt::Display for SessionStatus {
@@ -1646,53 +1853,76 @@ impl ::std::convert::TryFrom<::std::string::String> for SessionStatus {
         value.parse()
     }
 }
-#[doc = "`SurfaceAction`"]
+#[doc = "Product metadata accompanying an unchanged upstream action; association does not grant permission."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct SurfaceAction {
+    #[doc = "Client-generated idempotency key; reuse only with identical canonical content."]
     #[serde(rename = "commandId")]
     pub command_id: Id,
+    #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
     pub generation: Id,
+    #[doc = "Single-use interaction identity within the namespace."]
     #[serde(rename = "interactionId")]
     pub interaction_id: Id,
+    #[doc = "Closed product record discriminator."]
     pub kind: ::std::string::String,
+    #[doc = "Provider-owned model-turn/run identifier, required when the provider exposes it."]
     #[serde(rename = "nativeRunId")]
     pub native_run_id: Id,
+    #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
     #[serde(rename = "schemaVersion")]
     pub schema_version: i64,
+    #[doc = "Logical session identifier, never reusable after retirement."]
     #[serde(rename = "sessionId")]
     pub session_id: Id,
+    #[doc = "Fresh product identity for each surface creation; deletion permanently invalidates old actions."]
     #[serde(rename = "surfaceInstanceId")]
     pub surface_instance_id: Id,
+    #[doc = "Exact current surface revision required to accept this action."]
     #[serde(rename = "surfaceRevision")]
     pub surface_revision: Counter,
 }
-#[doc = "`SurfaceBinding`"]
+#[doc = "Product association for an upstream A2UI surface instance; catalog/renderer retain upstream ownership."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct SurfaceBinding {
+    #[doc = "Exact negotiated upstream A2UI version."]
     #[serde(rename = "a2uiVersion")]
     pub a2ui_version: ::std::string::String,
+    #[doc = "Negotiated upstream catalog identity."]
     #[serde(rename = "catalogId")]
     pub catalog_id: Id,
+    #[doc = "Negotiated fixed catalog version; not a renderer implementation claim."]
     #[serde(rename = "catalogVersion")]
     pub catalog_version: Id,
+    #[doc = "Exact upstream action name associated with this interaction."]
     #[serde(rename = "eventName")]
     pub event_name: Id,
+    #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
     pub generation: Id,
+    #[doc = "Single-use interaction identity within the namespace."]
     #[serde(rename = "interactionId")]
     pub interaction_id: Id,
+    #[doc = "Closed product record discriminator."]
     pub kind: ::std::string::String,
+    #[doc = "Trusted storage isolation scope; not copied from model or action content."]
     pub namespace: Namespace,
+    #[doc = "Provider-owned model-turn/run identifier, required when the provider exposes it."]
     #[serde(rename = "nativeRunId")]
     pub native_run_id: Id,
+    #[doc = "Monotonic CAS revision of this product record."]
     pub revision: Counter,
+    #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
     #[serde(rename = "schemaVersion")]
     pub schema_version: i64,
+    #[doc = "Exact upstream source component allowed to emit this action."]
     #[serde(rename = "sourceComponentId")]
     pub source_component_id: Id,
+    #[doc = "Upstream A2UI surface identifier."]
     #[serde(rename = "surfaceId")]
     pub surface_id: Id,
+    #[doc = "Fresh product identity for each surface creation; deletion permanently invalidates old actions."]
     #[serde(rename = "surfaceInstanceId")]
     pub surface_instance_id: Id,
 }
@@ -1700,14 +1930,23 @@ pub struct SurfaceBinding {
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(untagged)]
 pub enum WireRecord {
+    #[doc = "`Command` alternative; see the parent type's schema contract."]
     Command(Command),
+    #[doc = "`Receipt` alternative; see the parent type's schema contract."]
     Receipt(Receipt),
+    #[doc = "`CommandRecord` alternative; see the parent type's schema contract."]
     CommandRecord(CommandRecord),
+    #[doc = "`Event` alternative; see the parent type's schema contract."]
     Event(Event),
+    #[doc = "`Session` alternative; see the parent type's schema contract."]
     Session(Session),
+    #[doc = "`Interaction` alternative; see the parent type's schema contract."]
     Interaction(Interaction),
+    #[doc = "`Delivery` alternative; see the parent type's schema contract."]
     Delivery(Delivery),
+    #[doc = "`SurfaceBinding` alternative; see the parent type's schema contract."]
     SurfaceBinding(SurfaceBinding),
+    #[doc = "`SurfaceAction` alternative; see the parent type's schema contract."]
     SurfaceAction(SurfaceAction),
 }
 impl ::std::convert::From<Command> for WireRecord {

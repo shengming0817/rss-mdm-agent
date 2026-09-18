@@ -620,5 +620,41 @@
       "code": "encoding"
     }
   ],
-  "commandHash": "273d2bc05c0cb23b02f666dff841b992d7839f7c43352570827c46ab4b6b0de7"
+  "commandHash": "273d2bc05c0cb23b02f666dff841b992d7839f7c43352570827c46ab4b6b0de7",
+  "a2uiServer": [
+    {
+      "version": "v0.9.1",
+      "createSurface": {
+        "surfaceId": "surface-1",
+        "catalogId": "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json"
+      }
+    },
+    {
+      "version": "v0.9.1",
+      "updateComponents": {
+        "surfaceId": "surface-1",
+        "components": [
+          {
+            "id": "root",
+            "component": "Text",
+            "text": "Untrusted display text"
+          }
+        ]
+      }
+    },
+    {
+      "version": "v0.9.1",
+      "updateDataModel": {
+        "surfaceId": "surface-1",
+        "path": "/choice",
+        "value": "pending"
+      }
+    },
+    {
+      "version": "v0.9.1",
+      "deleteSurface": {
+        "surfaceId": "surface-1"
+      }
+    }
+  ]
 }

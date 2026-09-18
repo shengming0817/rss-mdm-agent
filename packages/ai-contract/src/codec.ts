@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import canonicalize from "canonicalize";
 import { visit } from "jsonc-parser";
-import type { WireRecord, Command } from "./wire.js";
+import type { WireRecord, Command, Event } from "./wire.js";
 
 /** Mandatory host bounds. Counts cover the entire envelope, including dynamic JSON. */
 export interface Limits {
@@ -39,24 +39,26 @@ const valid = new Ajv2020({
   allErrors: false,
   validateFormats: false,
 }).compile<WireRecord>(schema);
-const utf8 = new TextEncoder();
-const unicode = (s: string) =>
-  !Array.from(s).some((c) => {
+const byteLength = (s: string) => Buffer.byteLength(s, "utf8");
+const unicode = (s: string) => {
+  for (const c of s) {
     const n = c.codePointAt(0)!;
-    return n >= 0xd800 && n <= 0xdfff;
-  });
-/** Decode strict bounded V2 JSON. Schema validity does not establish authority. */
-export function decode(input: string | Uint8Array, limits: Limits): WireRecord {
-  for (const n of Object.values(limits))
-    if (!Number.isSafeInteger(n) || n < 1)
-      throw new ContractError("configuration");
+    if (n >= 0xd800 && n <= 0xdfff) return false;
+  }
+  return true;
+};
+function checkLimits(limits: Limits): void {
   for (const k of ["maxBytes", "maxTextBytes", "maxDepth", "maxNodes"] as const)
     if (!Number.isSafeInteger(limits[k]) || limits[k] < 1)
       throw new ContractError("configuration");
   if (limits.maxDepth > 64) throw new ContractError("configuration");
+}
+/** Decode strict bounded V2 JSON. Schema validity does not establish authority. */
+export function decode(input: string | Uint8Array, limits: Limits): WireRecord {
+  checkLimits(limits);
   if (
     typeof input === "string"
-      ? utf8.encode(input).length > limits.maxBytes
+      ? byteLength(input) > limits.maxBytes
       : input.byteLength > limits.maxBytes
   )
     throw new ContractError("limit");
@@ -78,7 +80,7 @@ export function decode(input: string | Uint8Array, limits: Limits): WireRecord {
   };
   const text = (value: string) => {
     if (!unicode(value)) throw new ContractError("encoding");
-    textBytes += utf8.encode(value).length;
+    textBytes += byteLength(value);
     if (textBytes > limits.maxTextBytes) throw new ContractError("limit");
   };
   const begin = (keys: Set<string> | null) => {
@@ -180,33 +182,45 @@ function checkContext(value: WireRecord): void {
 function hash(command: Command): string {
   return createHash("sha256").update(canonicalize(command)!).digest("hex");
 }
-/** Validate programmatic data before producing its JCS/SHA-256 identity. */
-export function fingerprint(command: Command, limits: Limits): string {
-  for (const key of [
-    "maxBytes",
-    "maxTextBytes",
-    "maxDepth",
-    "maxNodes",
-  ] as const)
-    if (!Number.isSafeInteger(limits[key]) || limits[key] < 1)
-      throw new ContractError("configuration");
-  if (limits.maxDepth > 64) throw new ContractError("configuration");
+/** Serialize plain constructed JSON under the same budgets, without invoking accessors/toJSON. */
+export function boundedJson(value: unknown, limits: Limits): string {
+  checkLimits(limits);
   let nodes = 0,
+    textBytes = 0,
     bytes = 0;
+  const parts: string[] = [],
+    active = new Set<object>();
+  const emit = (part: string) => {
+    bytes += byteLength(part);
+    if (bytes > limits.maxBytes) throw new ContractError("limit");
+    parts.push(part);
+  };
+  const text = (v: string) => {
+    if (!unicode(v)) throw new ContractError("encoding");
+    textBytes += byteLength(v);
+    if (textBytes > limits.maxTextBytes || byteLength(v) > limits.maxBytes)
+      throw new ContractError("limit");
+    emit(JSON.stringify(v));
+  };
   const walk = (v: unknown, depth: number): void => {
     if (++nodes > limits.maxNodes) throw new ContractError("limit");
-    if (
-      typeof v === "number" &&
-      (!Number.isFinite(v) || (Number.isInteger(v) && !Number.isSafeInteger(v)))
-    )
-      throw new ContractError("number");
     if (typeof v === "string") {
-      if (!unicode(v)) throw new ContractError("encoding");
-      bytes += utf8.encode(v).length;
-    }
-    if (bytes > limits.maxTextBytes) throw new ContractError("limit");
-    if (v === null || ["string", "number", "boolean"].includes(typeof v))
+      text(v);
       return;
+    }
+    if (typeof v === "number") {
+      if (
+        !Number.isFinite(v) ||
+        (Number.isInteger(v) && !Number.isSafeInteger(v))
+      )
+        throw new ContractError("number");
+      emit(JSON.stringify(v));
+      return;
+    }
+    if (v === null || typeof v === "boolean") {
+      emit(JSON.stringify(v));
+      return;
+    }
     if (
       typeof v !== "object" ||
       (!Array.isArray(v) &&
@@ -215,24 +229,58 @@ export function fingerprint(command: Command, limits: Limits): string {
     )
       throw new ContractError("encoding");
     if (depth + 1 > limits.maxDepth) throw new ContractError("limit");
-    for (const key of Object.keys(v)) {
-      if (!Array.isArray(v)) {
-        if (!unicode(key)) throw new ContractError("encoding");
-        bytes += utf8.encode(key).length;
+    if (active.has(v)) throw new ContractError("encoding");
+    active.add(v);
+    const array = Array.isArray(v),
+      keys = Object.keys(v);
+    if (
+      keys.length > limits.maxNodes - nodes ||
+      (array && v.length !== keys.length)
+    )
+      throw new ContractError("limit");
+    emit(array ? "[" : "{");
+    for (const [i, key] of keys.entries()) {
+      if (i) emit(",");
+      if (array) {
+        if (key !== String(i)) throw new ContractError("encoding");
+      } else {
+        text(key);
+        emit(":");
       }
       const property = Object.getOwnPropertyDescriptor(v, key);
       if (!property || !("value" in property))
         throw new ContractError("encoding");
       walk(property.value, depth + 1);
     }
+    emit(array ? "]" : "}");
+    active.delete(v);
   };
   try {
-    walk(command, 0);
-    const checked = decode(JSON.stringify(command), limits);
-    if (checked.kind !== "command") throw new ContractError("schema");
-    return hash(checked);
+    walk(value, 0);
+    return parts.join("");
   } catch (error) {
     if (error instanceof ContractError) throw error;
     throw new ContractError("encoding");
   }
+}
+/** Validate programmatic data before producing its JCS/SHA-256 identity. */
+export function fingerprint(command: Command, limits: Limits): string {
+  const checked = decode(boundedJson(command, limits), limits);
+  if (checked.kind !== "command") throw new ContractError("schema");
+  return hash(checked);
+}
+/** Delivery identity is SHA-256(JCS({event, target})); operationId is the storage key. */
+export function deliveryFingerprint(
+  event: Event,
+  target: string,
+  limits: Limits,
+): string {
+  const checked = decode(boundedJson(event, limits), limits);
+  if (
+    checked.kind !== "event" ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:/+\-]{0,127}$/.test(target)
+  )
+    throw new ContractError("schema");
+  const payload = JSON.parse(boundedJson({ event: checked, target }, limits));
+  return createHash("sha256").update(canonicalize(payload)!).digest("hex");
 }

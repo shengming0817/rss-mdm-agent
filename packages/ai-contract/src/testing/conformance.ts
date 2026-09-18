@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { deliveryFingerprint } from "../codec.js";
+import { fixtureLimits } from "./store.js";
 import type {
   AcceptCommand,
   Caller,
@@ -98,6 +100,7 @@ export function emptyCommit(session: Session): SessionCommit {
 export async function runStoreConformance(
   create: () => Promise<SessionStore> | SessionStore,
 ): Promise<void> {
+  await runStoreBoundaries(create);
   const store = await create(),
     s = fixtureSession(),
     input = acceptance(s);
@@ -191,4 +194,324 @@ export async function runStoreConformance(
     false,
     "retired namespace cannot be resurrected",
   );
+}
+
+/** Prepare a real dispatched callback using only the public store port. */
+export async function seedInteraction(
+  store: SessionStore,
+  status: "pending" | "unavailable" = "pending",
+) {
+  const session = fixtureSession();
+  unwrap(await store.create(session));
+  unwrap(await store.accept(acceptance(session)));
+  const current = unwrap(await store.session(session.namespace));
+  const command = unwrap(await store.command(session.namespace, "command-1"));
+  const interaction: import("../wire.js").Interaction = {
+    schemaVersion: 2,
+    kind: "interaction",
+    namespace: session.namespace,
+    interactionId: "question-1",
+    commandId: "command-1",
+    generation: session.binding.generation,
+    nativeRequestId: "request-1",
+    nativeRunId: "run-1",
+    expiresAtMs: 100,
+    status,
+    callbackLifetime: "generation_bound",
+  };
+  unwrap(
+    await store.commit({
+      ...emptyCommit(current),
+      commands: [
+        {
+          ...command,
+          state: "dispatching",
+          dispatch: {
+            generation: interaction.generation,
+            nativeSessionId: session.binding.nativeSessionId,
+            nativeRunId: interaction.nativeRunId,
+            nativeRequestId: interaction.nativeRequestId,
+            certainty: "submitted",
+          },
+        },
+      ],
+      interactions: [interaction],
+    }),
+  );
+  const answer: Command = {
+    ...fixtureCommand("answer-1"),
+    input: {
+      type: "respond",
+      interactionId: interaction.interactionId,
+      generation: interaction.generation,
+      nativeRunId: interaction.nativeRunId,
+      answer: { choice: "allow" },
+    },
+  };
+  return {
+    session: unwrap(await store.session(session.namespace)),
+    interaction,
+    answer,
+  };
+}
+async function runStoreBoundaries(
+  create: () => Promise<SessionStore> | SessionStore,
+): Promise<void> {
+  const store = await create(),
+    s = fixtureSession();
+  unwrap(await store.create(s));
+  for (const binding of [
+    { ...s.binding, generation: "other" },
+    { ...s.binding, provider: "other" },
+    { ...s.binding, providerVersion: "other" },
+    { ...s.binding, adapterVersion: "other" },
+    { ...s.binding, accountRef: "other" },
+    { ...s.binding, nativeSessionId: "other" },
+    { ...s.binding, config: { ...s.binding.config, revision: "other" } },
+  ])
+    assert.equal(
+      (
+        await store.commit({
+          ...emptyCommit(s),
+          session: { ...s, revision: 1, binding },
+        })
+      ).ok,
+      false,
+    );
+  assert.equal(
+    (
+      await store.commit({
+        ...emptyCommit(s),
+        session: {
+          ...s,
+          revision: 1,
+          capabilities: { ...s.capabilities, tools: "host_mediated" },
+        },
+      })
+    ).ok,
+    false,
+  );
+  const coordinatesStore = await create();
+  unwrap(await coordinatesStore.create(s));
+  const coordinates = { nativeRunId: "run-1", nativeRequestId: "request-1" };
+  assert.equal(
+    (
+      await coordinatesStore.commit({
+        ...emptyCommit(s),
+        session: {
+          ...s,
+          revision: 1,
+          binding: { ...s.binding, ...coordinates },
+        },
+      })
+    ).ok,
+    false,
+  );
+  unwrap(await coordinatesStore.accept(acceptance(s)));
+  const before = unwrap(await coordinatesStore.session(s.namespace));
+  const accepted = unwrap(
+    await coordinatesStore.command(s.namespace, "command-1"),
+  );
+  const running: import("../wire.js").CommandRecord = {
+    ...accepted,
+    state: "dispatching",
+    dispatch: {
+      generation: s.binding.generation,
+      nativeSessionId: s.binding.nativeSessionId,
+      ...coordinates,
+      certainty: "submitted",
+    },
+  };
+  unwrap(
+    await coordinatesStore.commit({
+      ...emptyCommit(before),
+      session: {
+        ...before,
+        revision: before.revision + 1,
+        binding: { ...before.binding, ...coordinates },
+      },
+      commands: [running],
+    }),
+  );
+  const bound = unwrap(await coordinatesStore.session(s.namespace));
+  for (const next of [
+    {},
+    { nativeRunId: "run-1" },
+    { nativeRequestId: "request-1" },
+    { nativeRunId: "other", nativeRequestId: "request-1" },
+    { nativeRunId: "run-1", nativeRequestId: "other" },
+  ])
+    assert.equal(
+      (
+        await coordinatesStore.commit({
+          ...emptyCommit(bound),
+          session: {
+            ...bound,
+            revision: bound.revision + 1,
+            binding: { ...s.binding, ...next },
+          },
+        })
+      ).ok,
+      false,
+    );
+  unwrap(
+    await coordinatesStore.commit({
+      ...emptyCommit(bound),
+      session: { ...bound, revision: bound.revision + 1, binding: s.binding },
+      commands: [{ ...running, state: "terminal", outcome: "completed" }],
+    }),
+  );
+  for (const status of ["pending", "unavailable"] as const) {
+    const callbacks = await create(),
+      seeded = await seedInteraction(callbacks, status);
+    for (const patch of [
+      { commandId: "other" },
+      { nativeRunId: "other" },
+      { nativeRequestId: "other" },
+      { expiresAtMs: 101 },
+      { callbackLifetime: "provider_resumable" as const },
+    ])
+      assert.equal(
+        (
+          await callbacks.commit({
+            ...emptyCommit(seeded.session),
+            interactions: [{ ...seeded.interaction, ...patch }],
+          })
+        ).ok,
+        false,
+      );
+    assert.equal(seeded.answer.input.type, "respond");
+    if (seeded.answer.input.type !== "respond")
+      throw new Error("fixture response required");
+    for (const [command, nowMs, code] of [
+      [seeded.answer, 101, status === "pending" ? "expired" : "unavailable"],
+      [
+        {
+          ...seeded.answer,
+          input: { ...seeded.answer.input, generation: "stale" },
+        },
+        0,
+        status === "pending" ? "stale_binding" : "unavailable",
+      ],
+    ] as const) {
+      const result = await callbacks.accept({
+        ...acceptance(seeded.session, command),
+        nowMs,
+      });
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.equal(result.error.code, code);
+    }
+    if (status === "unavailable") {
+      assert.equal(
+        (
+          await callbacks.commit({
+            ...emptyCommit(seeded.session),
+            interactions: [{ ...seeded.interaction, status: "pending" }],
+          })
+        ).ok,
+        false,
+      );
+      continue;
+    }
+    const input = acceptance(seeded.session, seeded.answer);
+    const receipt = unwrap(await callbacks.accept(input));
+    assert.deepEqual(unwrap(await callbacks.accept(input)), receipt);
+    const head = unwrap(await callbacks.session(seeded.session.namespace));
+    const second = await callbacks.accept(
+      acceptance(head, { ...seeded.answer, commandId: "answer-2" }),
+    );
+    assert.equal(second.ok, false);
+    if (!second.ok) assert.equal(second.error.code, "already_answered");
+    assert.equal(
+      unwrap(await callbacks.snapshot(head.namespace, 1024)).interactions[0]
+        .status,
+      "answered",
+    );
+  }
+  // Stable exclusive cursors over several commands and deliveries.
+  for (let i = 1; i <= 3; i++) {
+    const head = unwrap(await store.session(s.namespace));
+    const input = acceptance(head, fixtureCommand(`page-${i}`));
+    unwrap(await store.accept(input));
+    const next = unwrap(await store.session(s.namespace));
+    const row: import("../wire.js").Delivery = {
+      schemaVersion: 2,
+      kind: "delivery",
+      namespace: s.namespace,
+      operationId: `delivery-${i}`,
+      eventId: input.event.eventId,
+      target: "receiver",
+      contentHash: deliveryFingerprint(input.event, "receiver", fixtureLimits),
+      retry: "receiver_idempotent",
+      status: "pending",
+      attempts: 0,
+      nextAttemptAtMs: 0,
+    };
+    assert.equal(
+      (
+        await store.commit({
+          ...emptyCommit(next),
+          deliveries: [{ ...row, contentHash: "0".repeat(64) }],
+        })
+      ).ok,
+      false,
+    );
+    unwrap(await store.commit({ ...emptyCommit(next), deliveries: [row] }));
+    const latest = unwrap(await store.session(s.namespace));
+    assert.equal(
+      (
+        await store.commit({
+          ...emptyCommit(latest),
+          deliveries: [
+            {
+              ...row,
+              target: "different",
+              contentHash: deliveryFingerprint(
+                input.event,
+                "different",
+                fixtureLimits,
+              ),
+            },
+          ],
+        })
+      ).ok,
+      false,
+    );
+  }
+  const snapshot = unwrap(await store.snapshot(s.namespace, 1024));
+  assert.equal(snapshot.events.at(-1)!.sequence, snapshot.cursor);
+  const over = await store.snapshot(s.namespace, 1);
+  assert.equal(over.ok, false);
+  if (!over.ok) assert.equal(over.error.code, "limit_exceeded");
+  const replay = [];
+  let cursor = 0;
+  for (let i = 0; i < 3; i++) {
+    const page = unwrap(await store.events(s.namespace, cursor, 1));
+    assert.equal(page.length, 1);
+    replay.push(page[0]);
+    cursor = page[0].sequence;
+  }
+  assert.deepEqual(replay, snapshot.events);
+  assert.deepEqual(unwrap(await store.events(s.namespace, cursor, 1)), []);
+  const expired = await store.events(s.namespace, cursor + 1, 1);
+  assert.equal(expired.ok, false);
+  if (!expired.ok) assert.equal(expired.error.code, "cursor_expired");
+  for (const kind of ["recovery", "delivery"] as const) {
+    let after: string | undefined;
+    const keys: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const page =
+        kind === "recovery"
+          ? await store.recovery(1, after)
+          : await store.deliveries(1, 0, after);
+      assert.equal(page.items.length, 1);
+      const row = page.items[0];
+      keys.push(
+        row.kind === "delivery" ? row.operationId : row.command.commandId,
+      );
+      after = page.next;
+      assert.equal(after !== undefined, i < 2);
+    }
+    assert.equal(new Set(keys).size, 3);
+  }
 }

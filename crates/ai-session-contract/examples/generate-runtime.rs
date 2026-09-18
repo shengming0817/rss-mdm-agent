@@ -9,6 +9,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut file: syn::File = syn::parse2(types.to_stream())?;
     let mut debug = Vec::new();
     for item in &mut file.items {
+        // typify does not emit documentation for enum variants. Their parent schema
+        // owns semantics; document each generated serialized alternative here.
+        if let syn::Item::Enum(enumeration) = item {
+            for variant in &mut enumeration.variants {
+                if !variant.attrs.iter().any(|a| a.path().is_ident("doc")) {
+                    let doc = format!(
+                        "`{}` alternative; see the parent type's schema contract.",
+                        variant.ident
+                    );
+                    variant.attrs.push(syn::parse_quote!(#[doc = #doc]));
+                }
+            }
+        }
         let (name, attrs) = match item {
             syn::Item::Struct(s) => (&s.ident, &mut s.attrs),
             syn::Item::Enum(e) => (&e.ident, &mut e.attrs),

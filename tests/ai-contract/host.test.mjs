@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   FakeHost,
+  runHostConformance,
   fixtureCaller,
   fixtureCommand,
   unwrap,
@@ -13,55 +14,8 @@ const options = {
   profile: "conversation",
 };
 const budget = () => ({ timeoutMs: 1000, signal: AbortSignal.timeout(1000) });
-test("fake Host supports queue, replay/live attach and detach without cancellation", async () => {
-  const host = new FakeHost();
-  const session = unwrap(
-    await host.createSession(fixtureCaller, options, budget()),
-  );
-  const command = {
-    ...fixtureCommand(),
-    sessionId: session.namespace.sessionId,
-  };
-  unwrap(await host.submit(fixtureCaller, command, budget()));
-  const snapshot = unwrap(
-    await host.snapshot(fixtureCaller, command.sessionId, budget()),
-  );
-  assert.equal(snapshot.cursor, 1);
-  const control = new AbortController();
-  const stream = host
-    .subscribe(fixtureCaller, command.sessionId, 0, {
-      timeoutMs: 1000,
-      signal: control.signal,
-    })
-    [Symbol.asyncIterator]();
-  assert.equal((await stream.next()).value.event.commandId, command.commandId);
-  const pending = stream.next();
-  unwrap(
-    await host.submit(
-      fixtureCaller,
-      { ...command, commandId: "command-2" },
-      budget(),
-    ),
-  );
-  assert.equal((await pending).value.event.commandId, "command-2");
-  control.abort();
-  await stream.return();
-  assert.equal(
-    unwrap(await host.snapshot(fixtureCaller, command.sessionId, budget()))
-      .commands[0].state,
-    "accepted",
-  );
-  assert.equal(
-    (
-      await host.snapshot(
-        { ...fixtureCaller, tenantId: "different" },
-        command.sessionId,
-        budget(),
-      )
-    ).ok,
-    false,
-  );
-});
+test("shared Host conformance runs against fake acceptance and attach", () =>
+  runHostConformance(() => new FakeHost()));
 test("controlled tools fail closed, unsupported steer and stale cancel do not dispatch", async () => {
   const host = new FakeHost();
   assert.equal(

@@ -175,8 +175,7 @@ static VALIDATOR: LazyLock<jsonschema::Validator> = LazyLock::new(|| {
         serde_json::from_str(include_str!("schema.json")).expect("generated schema JSON");
     jsonschema::validator_for(&schema).expect("generated schema validity")
 });
-/// Decode strict bounded V2 JSON. Does not authenticate or dispatch anything.
-pub fn decode(bytes: &[u8], limits: &Limits) -> Result<WireRecord, ContractError> {
+fn check_limits(limits: &Limits) -> Result<(), ContractError> {
     if [
         limits.max_bytes,
         limits.max_text_bytes,
@@ -188,6 +187,11 @@ pub fn decode(bytes: &[u8], limits: &Limits) -> Result<WireRecord, ContractError
     {
         return Err(error(Diagnostic::Configuration));
     }
+    Ok(())
+}
+/// Decode strict bounded V2 JSON. Does not authenticate or dispatch anything.
+pub fn decode(bytes: &[u8], limits: &Limits) -> Result<WireRecord, ContractError> {
+    check_limits(limits)?;
     if bytes.len() > limits.max_bytes {
         return Err(error(Diagnostic::Limit));
     }
@@ -245,6 +249,7 @@ fn hash(v: &Value) -> Result<String, ContractError> {
     Ok(format!("{:x}", Sha256::digest(bytes)))
 }
 fn bounded_bytes<T: Serialize>(value: &T, limits: &Limits) -> Result<Vec<u8>, ContractError> {
+    check_limits(limits)?;
     struct Bounded {
         bytes: Vec<u8>,
         limit: usize,

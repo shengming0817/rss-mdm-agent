@@ -74,11 +74,12 @@ try {
     join(dir, "consumer.ts"),
     `import assert from 'node:assert/strict';
 import {decode,fingerprint,type HostPort,type ProviderAgentPort,type SessionStore} from '@rss-mdm-agent/ai-contract';
-import {FakeHost,MemorySessionStore,ScriptedProvider,fixtures,fixtureLimits,runStoreConformance,runProviderConformance} from '@rss-mdm-agent/ai-contract/testing';
+import {FakeHost,MemorySessionStore,ScriptedProvider,fixtures,fixtureLimits,runStoreConformance,runProviderConformance,runHostConformance} from '@rss-mdm-agent/ai-contract/testing';
 const host:HostPort=new FakeHost();const provider:ProviderAgentPort=new ScriptedProvider();const store:SessionStore=new MemorySessionStore();
 const value=decode(JSON.stringify(fixtures.valid[0]),fixtureLimits);assert.equal(value.kind,'command');if(value.kind==='command')assert.equal(fingerprint(value,fixtureLimits),fixtures.commandHash);
 await runStoreConformance(()=>new MemorySessionStore());
-await runProviderConformance(provider,{config:{id:'config-1',revision:'1'},accountRef:'account-1',workingDirectory:'.',permissions:'tools_disabled'},{timeoutMs:1000,signal:AbortSignal.timeout(1000)});
+await runProviderConformance(scenario=>{const port=new ScriptedProvider();port.submission=scenario;return port;},{config:{id:'config-1',revision:'1'},accountRef:'account-1',workingDirectory:'.',permissions:'tools_disabled'},{timeoutMs:1000,signal:AbortSignal.timeout(1000)});
+await runHostConformance(()=>new FakeHost());
 assert.equal(host.negotiate({contractVersion:2,acp:1,durableReceipts:false,cursorAttach:false}).ok,true);
 assert.ok(store);console.log('Isolated AI tarball consumer: types, wire, Host and conformance passed');`,
   );

@@ -1,4 +1,11 @@
-import { decode, fingerprint, ContractError } from "../codec.js";
+import canonicalize from "canonicalize";
+import {
+  decode,
+  boundedJson,
+  fingerprint,
+  deliveryFingerprint,
+  ContractError,
+} from "../codec.js";
 import type {
   AcceptCommand,
   Page,
@@ -30,7 +37,14 @@ export const fail = <T = never>(
 const clone = <T>(value: T): T => structuredClone(value);
 export const namespaceKey = (n: Namespace): string =>
   JSON.stringify([n.tenantId, n.principalId, n.authorityId, n.sessionId]);
-const valid = (v: unknown) => decode(JSON.stringify(v), fixtureLimits);
+const valid = (v: unknown) =>
+  decode(boundedJson(v, fixtureLimits), fixtureLimits);
+const same = (a: unknown, b: unknown) => canonicalize(a) === canonicalize(b);
+const sessionIdentity = ({
+  nativeRunId: _run,
+  nativeRequestId: _request,
+  ...identity
+}: Session["binding"]) => identity;
 interface State {
   session: Session;
   commands: Map<Id, CommandRecord>;
@@ -225,6 +239,14 @@ export class MemorySessionStore implements SessionStore {
       batch.session.status !== "active"
     )
       return fail("invalid_input");
+    if (
+      !same(
+        sessionIdentity(batch.session.binding),
+        sessionIdentity(state.session.binding),
+      ) ||
+      !same(batch.session.capabilities, state.session.capabilities)
+    )
+      return fail("stale_binding");
     const copy = clone(state);
     for (const c of batch.commands) {
       if (
@@ -235,7 +257,7 @@ export class MemorySessionStore implements SessionStore {
       const old = copy.commands.get(c.command.commandId);
       if (old) {
         if (
-          JSON.stringify(old.receipt) !== JSON.stringify(c.receipt) ||
+          !same(old.receipt, c.receipt) ||
           fingerprint(old.command, fixtureLimits) !==
             fingerprint(c.command, fixtureLimits)
         )
@@ -258,8 +280,7 @@ export class MemorySessionStore implements SessionStore {
         };
         if (
           !allowed[old.state].includes(c.state) ||
-          (old.state === "terminal" &&
-            JSON.stringify(old) !== JSON.stringify(c))
+          (old.state === "terminal" && !same(old, c))
         )
           return fail("content_conflict");
       } else if (
@@ -268,9 +289,57 @@ export class MemorySessionStore implements SessionStore {
         copy.commands.has(c.command.commandId)
       )
         return fail("invalid_input");
-      if (c.dispatch && c.dispatch.generation !== batch.expectedGeneration)
+      if (
+        c.dispatch &&
+        (c.dispatch.generation !== batch.expectedGeneration ||
+          c.dispatch.nativeSessionId !== state.session.binding.nativeSessionId)
+      )
+        return fail("stale_binding");
+      if (
+        old?.dispatch &&
+        c.dispatch &&
+        ((old.dispatch.nativeRunId !== undefined &&
+          old.dispatch.nativeRunId !== c.dispatch.nativeRunId) ||
+          (old.dispatch.nativeRequestId !== undefined &&
+            old.dispatch.nativeRequestId !== c.dispatch.nativeRequestId))
+      )
         return fail("stale_binding");
       copy.commands.set(c.command.commandId, clone(c));
+    }
+    const oldBinding = state.session.binding,
+      nextBinding = batch.session.binding;
+    const coordinatesMatch = (
+      dispatch: CommandRecord["dispatch"],
+      binding: Session["binding"],
+    ) =>
+      dispatch !== undefined &&
+      dispatch.nativeRunId === binding.nativeRunId &&
+      dispatch.nativeRequestId === binding.nativeRequestId;
+    if (
+      oldBinding.nativeRunId !== nextBinding.nativeRunId ||
+      oldBinding.nativeRequestId !== nextBinding.nativeRequestId
+    ) {
+      const records = [...copy.commands.values()];
+      if (
+        nextBinding.nativeRunId !== undefined ||
+        nextBinding.nativeRequestId !== undefined
+      ) {
+        if (
+          !records.some(
+            (c) =>
+              (c.state === "dispatching" || c.state === "running") &&
+              c.dispatch?.certainty === "submitted" &&
+              coordinatesMatch(c.dispatch, nextBinding),
+          )
+        )
+          return fail("stale_binding");
+      } else {
+        const original = records.filter((c) =>
+          coordinatesMatch(c.dispatch, oldBinding),
+        );
+        if (!original.length || original.some((c) => c.state !== "terminal"))
+          return fail("stale_binding");
+      }
     }
     const ids = new Set(copy.events.map((e) => e.eventId));
     for (const [i, event] of batch.events.entries()) {
@@ -286,26 +355,33 @@ export class MemorySessionStore implements SessionStore {
       copy.events.push(clone(event));
     }
     for (const row of batch.interactions) {
+      const source = copy.commands.get(row.commandId);
       if (
         namespaceKey(row.namespace) !== namespaceKey(batch.namespace) ||
         row.generation !== batch.expectedGeneration ||
-        !copy.commands.has(row.commandId)
+        !source?.dispatch ||
+        source.dispatch.generation !== row.generation ||
+        source.dispatch.nativeRunId !== row.nativeRunId ||
+        source.dispatch.nativeRequestId !== row.nativeRequestId
       )
         return fail("stale_binding");
       const old = copy.interactions.get(row.interactionId);
-      if (
-        old &&
-        old.status !== "pending" &&
-        JSON.stringify(old) !== JSON.stringify(row)
-      )
-        return fail("already_answered");
+      if (old) {
+        const { status: _a, responseCommandId: _b, ...identity } = old;
+        const { status: _c, responseCommandId: _d, ...nextIdentity } = row;
+        if (!same(identity, nextIdentity)) return fail("stale_binding");
+        if (old.status !== "pending" && !same(old, row))
+          return fail("already_answered");
+      } else if (row.status === "answered") return fail("invalid_input");
       if (row.status === "answered") {
         const response = copy.commands.get(row.responseCommandId!);
         if (
           !response ||
           response.command.input.type !== "respond" ||
           response.command.input.interactionId !== row.interactionId ||
-          response.command.input.generation !== row.generation
+          response.command.input.generation !== row.generation ||
+          response.command.input.nativeRunId !== row.nativeRunId ||
+          response.receipt.acceptedAtMs > row.expiresAtMs
         )
           return fail("invalid_input");
       }
@@ -314,7 +390,13 @@ export class MemorySessionStore implements SessionStore {
     for (const row of batch.deliveries) {
       if (
         namespaceKey(row.namespace) !== namespaceKey(batch.namespace) ||
-        !ids.has(row.eventId)
+        !ids.has(row.eventId) ||
+        row.contentHash !==
+          deliveryFingerprint(
+            copy.events.find((e) => e.eventId === row.eventId)!,
+            row.target,
+            fixtureLimits,
+          )
       )
         return fail("invalid_input");
       const old = copy.deliveries.get(row.operationId);
@@ -323,6 +405,8 @@ export class MemorySessionStore implements SessionStore {
         (old.contentHash !== row.contentHash ||
           old.target !== row.target ||
           old.eventId !== row.eventId ||
+          old.retry !== row.retry ||
+          row.attempts < old.attempts ||
           (old.status === "delivered" && row.status !== "delivered"))
       )
         return fail("content_conflict");

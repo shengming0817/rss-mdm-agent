@@ -3,6 +3,7 @@ export { MemorySessionStore, fixtureLimits } from "./store.js";
 export { FakeHost } from "./host.js";
 export {
   runStoreConformance,
+  seedInteraction,
   fixtureCaller,
   fixtureSession,
   fixtureCommand,
@@ -12,3 +13,4 @@ export {
 } from "./conformance.js";
 export { fixtures } from "./fixtures.js";
 export { ScriptedProvider, runProviderConformance } from "./provider.js";
+export { runHostConformance } from "./host-conformance.js";
