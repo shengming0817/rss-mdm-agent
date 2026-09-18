@@ -83,6 +83,39 @@ describe("self-service controller", () => {
     expect(port.submit.mock.calls[1][0]).toEqual(first);
     expect(c.state.accepted).toBe(true);
   });
+  it.each([false, true])(
+    "revises the redacted draft after authoritative rejection (previously lost: %s)",
+    async (lost) => {
+      const { c, port, snapshot } = fixture();
+      await c.refresh();
+      c.select(snapshot.catalog.find((i) => i.itemId === "diagnostics")!);
+      c.change("credential", {
+        kind: "secretReference",
+        id: "canary",
+        revision: "r1",
+      });
+      await c.prepare();
+      const first = port.preview.mock.calls[0][0];
+      if (lost) {
+        port.submit.mockRejectedValueOnce(new Error("response lost"));
+        await c.submit();
+      }
+      port.submit.mockRejectedValueOnce({
+        code: "expired",
+        message: "计划已过期，请重新预览",
+      });
+      await c.submit();
+      expect(c.state.fields.has("credential")).toBe(false);
+      expect(c.state.plan).toBeNull();
+      await c.prepare();
+      if (lost)
+        expect(port.submit.mock.calls[1]).toEqual(port.submit.mock.calls[0]);
+      const next = port.preview.mock.calls[1][0];
+      expect(next.requestId).toBe(first.requestId);
+      expect(next.revision).toBeGreaterThan(first.revision);
+      expect(next.fields).not.toHaveProperty("credential");
+    },
+  );
   it("reconciles committed submissions and answers after lost responses", async () => {
     const { c, port, snapshot } = fixture();
     await c.refresh();

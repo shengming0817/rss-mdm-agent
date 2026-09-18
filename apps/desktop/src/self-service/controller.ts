@@ -181,8 +181,15 @@ export function createController(
     }
   }
   function clearSecrets() {
-    for (const [key, value] of state.fields)
-      if (value.kind === "secretReference") state.fields.delete(key);
+    let redacted = false;
+    for (const [key, value] of state.fields) {
+      if (value.kind === "secretReference") {
+        state.fields.delete(key);
+        redacted = true;
+      }
+    }
+    // Redaction changes the next draft, not the frozen plan used by submit retries.
+    if (redacted) state.revision++;
   }
   async function submit() {
     if (!port || !state.plan || !state.snapshot || state.busy || state.accepted)
