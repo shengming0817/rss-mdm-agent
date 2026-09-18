@@ -20,7 +20,7 @@ use tokio::{
     time::{timeout_at, Instant},
 };
 use tokio_util::{
-    codec::{FramedRead, LinesCodec},
+    codec::{FramedRead, LinesCodec, LinesCodecError},
     sync::CancellationToken,
 };
 
@@ -32,6 +32,7 @@ struct Lease {
 #[derive(Clone)]
 struct RequestLease(Arc<Lease>);
 pub(crate) struct Session {
+    failure: Mutex<Option<ServiceError>>,
     active: Mutex<HashMap<RequestId, Arc<Lease>>>,
     // SDK drops cancelled responses outside Transport::send. Do not allow their ID
     // to be reused by a new request while a late cancelled response is still queued.
@@ -42,6 +43,7 @@ pub(crate) struct Session {
 impl Session {
     pub fn new(limits: &McpLimits, stop: CancellationToken) -> Arc<Self> {
         Arc::new(Self {
+            failure: Mutex::new(None),
             active: Mutex::new(HashMap::new()),
             cancelled: Mutex::new(HashSet::new()),
             slots: Arc::new(Semaphore::new(limits.in_flight)),
@@ -61,6 +63,16 @@ impl Session {
     pub fn close(&self) {
         self.stop.cancel();
         self.active.lock().expect("session lock").clear();
+    }
+    fn fail(&self, error: ServiceError) {
+        self.failure
+            .lock()
+            .expect("session lock")
+            .get_or_insert(error);
+        self.close();
+    }
+    pub fn failure(&self) -> Option<ServiceError> {
+        *self.failure.lock().expect("session lock")
     }
 }
 
@@ -125,7 +137,7 @@ fn write<W: AsyncWrite + Unpin + Send + 'static>(
         let mut bytes = match bytes {
             Ok(bytes) => bytes,
             Err(_) => {
-                session.close();
+                session.fail(ServiceError::Limit);
                 return Err(io_error());
             }
         };
@@ -144,7 +156,7 @@ fn write<W: AsyncWrite + Unpin + Send + 'static>(
         match sent {
             Ok(Ok(())) => Ok(()),
             _ => {
-                session.close();
+                session.fail(ServiceError::Unavailable);
                 Err(io_error())
             }
         }
@@ -185,15 +197,23 @@ where
                 .get_or_insert_with(|| Instant::now() + self.limits.io_timeout);
             let line = match timeout_at(deadline, self.reader.next()).await {
                 Ok(Some(Ok(line))) => line,
-                _ => {
+                Ok(None) => {
                     self.session.close();
+                    return None;
+                }
+                Ok(Some(Err(LinesCodecError::MaxLineLengthExceeded))) => {
+                    self.session.fail(ServiceError::Limit);
+                    return None;
+                }
+                _ => {
+                    self.session.fail(ServiceError::Unavailable);
                     return None;
                 }
             };
             self.deadline = None;
             self.frames += 1;
             if self.frames > self.limits.session_frames {
-                self.session.close();
+                self.session.fail(ServiceError::Limit);
                 return None;
             }
             let raw = match crate::ingress::inspect(
@@ -203,14 +223,14 @@ where
             ) {
                 Ok(raw) => raw,
                 Err(_) => {
-                    self.session.close();
+                    self.session.fail(ServiceError::InvalidInput);
                     return None;
                 }
             };
             let mut message: RxJsonRpcMessage<RoleServer> = match serde_json::from_str(&line) {
                 Ok(m) => m,
                 Err(_) => {
-                    self.session.close();
+                    self.session.fail(ServiceError::InvalidInput);
                     return None;
                 }
             };
@@ -230,7 +250,7 @@ where
                             .expect("session lock")
                             .contains(&r.id)
                     {
-                        self.session.close();
+                        self.session.fail(ServiceError::InvalidInput);
                         return None;
                     }
                     let permit = match self.session.slots.clone().try_acquire_owned() {
@@ -261,21 +281,32 @@ where
                             .extensions_mut()
                             .insert(OriginalArguments(Arc::from(raw)));
                     }
+                    // rmcp traces public request DTOs before dispatch. Business input
+                    // travels only through opaque, non-Debug Extensions above.
+                    *r.request.get_meta_mut() = RequestMetaObject::new();
+                    if let ClientRequest::CallToolRequest(call) = &mut r.request {
+                        call.params.arguments = None;
+                        call.params.input_responses = None;
+                        call.params.request_state = None;
+                    }
                 }
                 JsonRpcMessage::Notification(n) => {
                     // No resources, roots, logging, progress or arbitrary custom notification tasks.
-                    match &n.notification {
-                        ClientNotification::InitializedNotification(_)
-                        | ClientNotification::CancelledNotification(_) => {}
+                    *n.notification.get_meta_mut() = NotificationMetaObject::new();
+                    match &mut n.notification {
+                        ClientNotification::InitializedNotification(_) => {}
+                        ClientNotification::CancelledNotification(cancelled) => {
+                            cancelled.params.reason = None;
+                        }
                         _ => {
-                            self.session.close();
+                            self.session.fail(ServiceError::InvalidInput);
                             return None;
                         }
                     }
                 }
                 // This server does not initiate client requests.
                 _ => {
-                    self.session.close();
+                    self.session.fail(ServiceError::InvalidInput);
                     return None;
                 }
             }
@@ -284,11 +315,17 @@ where
     }
     async fn close(&mut self) -> io::Result<()> {
         self.session.close();
-        timeout_at(Instant::now() + self.limits.io_timeout, async {
+        let result = timeout_at(Instant::now() + self.limits.io_timeout, async {
             self.writer.lock().await.shutdown().await
         })
-        .await
-        .map_err(|_| io_error())?
+        .await;
+        match result {
+            Ok(Ok(())) => Ok(()),
+            _ => {
+                self.session.fail(ServiceError::Unavailable);
+                Err(io_error())
+            }
+        }
     }
 }
 pub(crate) struct BoundedService<S> {
@@ -310,6 +347,20 @@ impl<S: ExecutionServicePort> Service<RoleServer> for BoundedService<S> {
         let id = context.id.clone();
         let cancelled = context.ct.clone();
         let tool = matches!(&request, ClientRequest::CallToolRequest(_));
+        let timeout_error = match &request {
+            ClientRequest::CallToolRequest(call)
+                if matches!(
+                    call.params.name.as_ref(),
+                    "execution_propose"
+                        | "execution_preview"
+                        | "execution_submit"
+                        | "execution_cancel"
+                ) =>
+            {
+                ServiceError::OutcomeUnknown
+            }
+            _ => ServiceError::Unavailable,
+        };
         let outcome = tokio::select! {
             biased;
             _ = self.session.stop.cancelled() => {
@@ -323,7 +374,7 @@ impl<S: ExecutionServicePort> Service<RoleServer> for BoundedService<S> {
             r = tokio::time::timeout(self.handler.limits.request_timeout, Service::handle_request(&self.handler, request, context)) => {
                 match r {
                     Ok(r) => r,
-                    Err(_) if tool => Ok(ServerResult::CallToolResult(crate::server::failure(ServiceError::OutcomeUnknown))),
+                    Err(_) if tool => Ok(ServerResult::CallToolResult(crate::server::failure(timeout_error))),
                     Err(_) => Err(ErrorData::internal_error("request timeout", None)),
                 }
             }

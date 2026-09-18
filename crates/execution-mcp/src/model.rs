@@ -47,9 +47,9 @@ pub enum ServiceError {
 }
 
 /// Exact catalog selection. The arguments retain original numeric tokens until C03 validates them.
-#[derive(Serialize, Deserialize, JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct CatalogInput {
+pub(crate) struct CatalogInput {
     /// Stable business identity, independent of the MCP request ID.
     pub operation_request_id: RequestId,
     /// Exact catalog identity and digest.
@@ -70,7 +70,7 @@ pub struct CatalogInput {
     rename_all_fields = "camelCase",
     deny_unknown_fields
 )]
-pub enum PreviewInput {
+pub(crate) enum PreviewInput {
     /// Catalog parameters still require C03 validation.
     Catalog {
         /// Exact selection.
@@ -92,7 +92,7 @@ pub enum PreviewInput {
     rename_all_fields = "camelCase",
     deny_unknown_fields
 )]
-pub enum ProposeInput {
+pub(crate) enum ProposeInput {
     /// A directory operation using the shared parameter grammar.
     Catalog {
         /// Exact selection.
@@ -184,7 +184,7 @@ pub struct OperationRequest {
 /// Empty arguments for current directory and capability queries.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct Empty {}
+pub(crate) struct Empty {}
 /// Capability projection; an enum is not an execution permit.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]

@@ -64,7 +64,8 @@ Expired、Denied、NotFound、Conflict、Unsupported、Unavailable 等分类由�
 
 工具返回 `{status:"ok",result:...}` 或 `{status:"error",error:{code,catalogReason}}`，
 与各工具 outputSchema 一致。unknown tool/协议形状错误使用 JSON-RPC 错误；无法安全解码的输入关闭连接。
-请求超时返回 outcomeUnknown；这要求调用方核实原 ID，并不声称已执行或未执行。
+目录、能力和状态读取超时返回 unavailable，可重新读取。
+候选、冻结预览、提交和取消可能已持久化，超时返回 outcomeUnknown；调用方使用原 ID 查询或重试，不能据此声称已执行或未执行。
 
 ## 预算、生命周期与日志
 
@@ -79,10 +80,13 @@ McpLimits 为必填宿主配置，没有生产默认值。包含帧/响应字节
 业务 operationRequestId 不受该连接级规则影响。
 会话总帧预算同时约束通知、拒绝请求及取消 ID 隔离记录；耗尽后重连仍使用原业务 ID。
 显式 stop、EOF 和协议失败触发端口等待取消与许可排空；丢弃 serve future 也会取消会话。
+正常 EOF/显式 stop 返回 Ok；协议错误、帧超限和读写失败保留首个静态原因，清理后由 serve 返回 InvalidInput、Limit 或 Unavailable。
 
-rmcp 3.4.0 自身有原始 request/result/notification tracing。**宿主日志 subscriber 必须排除 rmcp 原始 payload 日志**，
-不能直接接受任意 RUST_LOG 环境过滤表达式。库不能覆盖消费方的全局日志策略，也不宣称任意宿主 subscriber 安全。
-示例不安装环境驱动 subscriber，真实进程测试在 RUST_LOG=trace 下检查 stderr 无 payload。
+交给 rmcp 前清除工具 arguments、请求/通知 metadata、取消 reason 和未消费的请求续传字段；
+业务原文只通过不暴露 Debug 内容的私有 Extensions 传递。真实 TRACE subscriber 回归测试验证脚本、秘密引用和 metadata/reason 不进入 SDK 日志。
+rmcp 仍会记录协议关联标识、clientInfo 和授权结果投影。**宿主日志 subscriber 必须过滤这些 rmcp 内容日志**，
+不能直接接受任意 RUST_LOG 环境过滤表达式；服务不得在标识或授权展示投影中放入秘密。
+库不覆盖全局日志策略。真实进程 consumer 的 stderr 检查仅证明该测试 launcher 的输出纪律，不替代带 subscriber 的回归测试。
 stdout 只写 MCP；所有错误和本 crate 的诊断保持静态、脱敏。
 
 ## 三个原生 provider 的交接

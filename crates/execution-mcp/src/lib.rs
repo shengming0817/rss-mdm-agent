@@ -9,7 +9,11 @@ mod port;
 mod server;
 mod transport;
 pub use config::{McpLimits, StdioServiceConfig};
-pub use model::*;
+pub use model::{
+    CancelDisposition, CancelResult, CandidateReceipt, CandidateRequest, CapabilityState,
+    CapabilityView, CatalogCandidate, OperationPhase, OperationRequest, OperationStatus,
+    PlanPreview, PlanRef, PreviewRequest, ScriptDraft, ServiceError, SubmitRequest,
+};
 pub use port::ExecutionServicePort;
 
 use rmcp::ServiceExt;
@@ -18,7 +22,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::sync::CancellationToken;
 
 /// A single host-bound controlled tools service; construct a new instance per connection.
-/// The host owns authentication and must exclude raw rmcp tracing from its log subscriber.
+/// The host owns authentication and protects rmcp metadata/result tracing in its subscriber.
 pub struct ExecutionMcp<S> {
     service: Arc<S>,
     limits: McpLimits,
@@ -41,6 +45,7 @@ impl<S: ExecutionServicePort> ExecutionMcp<S> {
     /// Input errors fail closed. All stream writes and shutdown waits are bounded. Dropping
     /// or stopping this session never cancels an accepted business operation. The service
     /// must retain durable requests independently of this future/process.
+    /// Clean EOF/host stop returns `Ok`; protocol, budget and I/O failures return a static error.
     pub async fn serve<R, W>(
         self,
         reader: R,
@@ -87,6 +92,6 @@ impl<S: ExecutionServicePort> ExecutionMcp<S> {
         .await
         .map_err(|_| ServiceError::Unavailable)?
         .map_err(|_| ServiceError::Unavailable)?;
-        result
+        session.failure().map_or(result, Err)
     }
 }

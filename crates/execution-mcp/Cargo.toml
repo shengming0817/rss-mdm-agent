@@ -23,3 +23,4 @@ futures-util.workspace = true
 jsonschema.workspace = true
 rmcp = { workspace = true, features = ["client"] }
 sha2.workspace = true
+tracing = { version = "=0.1.44", default-features = false, features = ["std"] }

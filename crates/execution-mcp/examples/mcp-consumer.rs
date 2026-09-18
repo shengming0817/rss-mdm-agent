@@ -56,14 +56,22 @@ fn plan_limits() -> PlanLimits {
 }
 #[derive(Default)]
 pub struct TestStore {
-    plans: HashMap<(String, RequestId), FrozenPlan>,
-    candidates: HashMap<(String, RequestId), ExactArtifactRef>,
-    accepted: HashMap<(String, RequestId), OperationStatus>,
-    cancellations: HashSet<(String, RequestId)>,
+    plans: HashMap<(TestNamespace, RequestId), FrozenPlan>,
+    candidates: HashMap<(TestNamespace, RequestId), ExactArtifactRef>,
+    accepted: HashMap<(TestNamespace, RequestId), OperationStatus>,
+    cancellations: HashSet<(TestNamespace, RequestId)>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct TestNamespace {
+    pub authority: String,
+    pub tenant: String,
+    pub actor: String,
+    pub device: String,
+    pub delegation: String,
 }
 pub struct TestService {
     pub store: Arc<Mutex<TestStore>>,
-    pub namespace: String,
+    pub namespace: TestNamespace,
     pub catalog: FrozenCatalog,
     template: PlanSpec,
     pub bound: AtomicBool,
@@ -73,6 +81,8 @@ pub struct TestService {
     pub active_waits: AtomicUsize,
     pub submit_delay_ms: AtomicUsize,
     pub capability_delay_ms: AtomicUsize,
+    pub catalog_delay_ms: AtomicUsize,
+    pub status_delay_ms: AtomicUsize,
 }
 struct WaitGuard<'a>(&'a AtomicUsize);
 impl Drop for WaitGuard<'_> {
@@ -84,7 +94,13 @@ impl TestService {
     pub fn new(catalog: &[u8], plan: &[u8]) -> Self {
         Self {
             store: Arc::new(Mutex::new(TestStore::default())),
-            namespace: "test-authority".into(),
+            namespace: TestNamespace {
+                authority: "test-authority".into(),
+                tenant: "test-tenant".into(),
+                actor: "actor-1".into(),
+                device: "device-1".into(),
+                delegation: "delegation-1".into(),
+            },
             catalog: decode_catalog(catalog, &limits().catalog).unwrap(),
             template: serde_json::from_slice(plan).unwrap(),
             bound: AtomicBool::new(true),
@@ -94,6 +110,8 @@ impl TestService {
             active_waits: AtomicUsize::new(0),
             submit_delay_ms: AtomicUsize::new(0),
             capability_delay_ms: AtomicUsize::new(0),
+            catalog_delay_ms: AtomicUsize::new(0),
+            status_delay_ms: AtomicUsize::new(0),
         }
     }
     fn authorize(&self) -> Result<(), ServiceError> {
@@ -105,7 +123,7 @@ impl TestService {
             Ok(())
         }
     }
-    fn key(&self, id: &RequestId) -> (String, RequestId) {
+    fn key(&self, id: &RequestId) -> (TestNamespace, RequestId) {
         (self.namespace.clone(), id.clone())
     }
     pub fn complete_test_result(&self, id: &str) {
@@ -131,7 +149,7 @@ impl TestService {
         spec.plan_id = PlanId::new(id.as_str()).map_err(|_| ServiceError::InvalidInput)?;
         spec.request.request_id = id.clone();
         spec.request.authority = Authority::Test {
-            id: Id::new(&self.namespace).map_err(|_| ServiceError::Unbound)?,
+            id: Id::new(&self.namespace.authority).map_err(|_| ServiceError::Unbound)?,
         };
         if let Some(selected) = selection {
             if selected.selection.availability(100) != service_catalog::CatalogAvailability::Listed
@@ -182,6 +200,10 @@ impl ExecutionServicePort for TestService {
         _: CancellationToken,
     ) -> Result<FrozenCatalog, ServiceError> {
         self.authorize()?;
+        tokio::time::sleep(Duration::from_millis(
+            self.catalog_delay_ms.load(Ordering::SeqCst) as u64,
+        ))
+        .await;
         if reference.is_some_and(|r| r != self.catalog.reference()) {
             return Err(ServiceError::Expired);
         }
@@ -312,6 +334,10 @@ impl ExecutionServicePort for TestService {
         _: CancellationToken,
     ) -> Result<OperationStatus, ServiceError> {
         self.authorize()?;
+        tokio::time::sleep(Duration::from_millis(
+            self.status_delay_ms.load(Ordering::SeqCst) as u64,
+        ))
+        .await;
         self.store
             .lock()
             .unwrap()

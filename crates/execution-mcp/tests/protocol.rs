@@ -76,12 +76,14 @@ impl Wire {
         result
     }
     async fn close(self) {
+        self.finish().await.unwrap();
+    }
+    async fn finish(self) -> Result<(), ServiceError> {
         self.stop.cancel();
         timeout(Duration::from_secs(3), self.task)
             .await
             .unwrap()
             .unwrap()
-            .unwrap();
     }
 }
 fn call(id: u64, name: &str, args: Value) -> Value {
@@ -316,14 +318,17 @@ async fn bound_namespace_prevents_cross_actor_tenant_device_and_delegation_repla
         json!({"operationRequestId":"same-id","plan":p}),
     )
     .await;
-    for ns in [
-        "other-actor",
-        "other-tenant",
-        "other-device",
-        "other-delegation",
-    ] {
+    for dimension in ["authority", "actor", "tenant", "device", "delegation"] {
         let mut other = TestService::new(CATALOG, PLAN);
-        other.namespace = ns.into();
+        let field = match dimension {
+            "authority" => &mut other.namespace.authority,
+            "actor" => &mut other.namespace.actor,
+            "tenant" => &mut other.namespace.tenant,
+            "device" => &mut other.namespace.device,
+            "delegation" => &mut other.namespace.delegation,
+            _ => unreachable!(),
+        };
+        *field = format!("other-{dimension}");
         other.store = s.store.clone();
         let mut alien = Wire::open(Arc::new(other), limits()).await;
         assert_eq!(
@@ -445,7 +450,7 @@ async fn input_failures_close_without_dispatch_or_raw_error_echo() {
         let mut response = String::new();
         assert_eq!(timeout(Duration::from_secs(2), w.output.read_line(&mut response)).await.unwrap().unwrap(), 0);
         assert_eq!(s.calls.load(Ordering::SeqCst), 0);
-        w.close().await;
+        assert_eq!(w.finish().await, Err(ServiceError::InvalidInput));
     }
 }
 
@@ -502,18 +507,20 @@ async fn response_budget_write_timeout_and_unterminated_input_are_bounded() {
             .unwrap(),
         0
     );
-    w.close().await;
+    assert_eq!(w.finish().await, Err(ServiceError::Limit));
     let mut l = limits();
     l.io_timeout = Duration::from_millis(40);
     let mut w = Wire::open(s.clone(), l).await;
     w.send(json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}))
         .await;
     // Do not read the large response: 1024-byte duplex cannot hold it.
-    timeout(Duration::from_secs(1), &mut w.task)
-        .await
-        .unwrap()
-        .unwrap()
-        .unwrap();
+    assert_eq!(
+        timeout(Duration::from_secs(1), &mut w.task)
+            .await
+            .unwrap()
+            .unwrap(),
+        Err(ServiceError::Unavailable)
+    );
     assert_eq!(s.active_waits.load(Ordering::SeqCst), 0);
 }
 
@@ -628,7 +635,98 @@ async fn session_stop_drops_pending_service_waits_and_frame_budget_is_enforced()
             .unwrap(),
         0
     );
-    w.close().await;
+    assert_eq!(w.finish().await, Err(ServiceError::Limit));
+}
+
+#[tokio::test]
+async fn clean_eof_and_read_timeout_have_distinct_host_results() {
+    let mut w = Wire::open(service(), limits()).await;
+    w.input.shutdown().await.unwrap();
+    assert_eq!(
+        timeout(Duration::from_secs(1), w.task)
+            .await
+            .unwrap()
+            .unwrap(),
+        Ok(())
+    );
+
+    let mut l = limits();
+    l.io_timeout = Duration::from_millis(30);
+    let mut w = Wire::open(service(), l).await;
+    w.input.write_all(b"{\"partial\"").await.unwrap();
+    assert_eq!(
+        timeout(Duration::from_secs(1), w.task)
+            .await
+            .unwrap()
+            .unwrap(),
+        Err(ServiceError::Unavailable)
+    );
+}
+
+#[tokio::test]
+async fn failed_output_writer_returns_a_static_host_error() {
+    struct BrokenWriter;
+    impl tokio::io::AsyncWrite for BrokenWriter {
+        fn poll_write(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+            _: &[u8],
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            std::task::Poll::Ready(Err(std::io::Error::other("private writer diagnostic")))
+        }
+        fn poll_flush(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+        fn poll_shutdown(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+    let input = b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"clientInfo\":{\"name\":\"test\",\"version\":\"1\"}}}\n";
+    let result = timeout(
+        Duration::from_secs(1),
+        ExecutionMcp::new(service(), limits()).unwrap().serve(
+            &input[..],
+            BrokenWriter,
+            CancellationToken::new(),
+        ),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result, Err(ServiceError::Unavailable));
+}
+
+#[tokio::test]
+async fn read_timeouts_do_not_claim_unknown_acceptance() {
+    for name in [
+        "execution_catalog",
+        "execution_capabilities",
+        "execution_status",
+    ] {
+        let s = service();
+        s.catalog_delay_ms.store(200, Ordering::SeqCst);
+        s.capability_delay_ms.store(200, Ordering::SeqCst);
+        s.status_delay_ms.store(200, Ordering::SeqCst);
+        let mut l = limits();
+        l.request_timeout = Duration::from_millis(30);
+        let mut w = Wire::open(s, l).await;
+        let args = if name == "execution_status" {
+            json!({"operationRequestId":"original-id"})
+        } else {
+            json!({})
+        };
+        assert_eq!(
+            error(&w.call(2, name, args).await)["code"],
+            "unavailable",
+            "{name}"
+        );
+        w.close().await;
+    }
 }
 
 #[tokio::test]
@@ -655,4 +753,95 @@ fn provider_config_requires_an_explicit_bounded_launcher() {
         vec!["secret\0value".into()]
     )
     .is_err());
+}
+
+#[tokio::test]
+async fn sdk_tracing_never_receives_raw_tool_arguments_metadata_or_cancel_reason() {
+    use std::sync::Mutex;
+    use tracing::{field::Visit, span, Event, Metadata, Subscriber};
+    #[derive(Clone)]
+    struct Capture(Arc<Mutex<String>>);
+    struct Fields<'a>(&'a mut String);
+    impl Visit for Fields<'_> {
+        fn record_debug(&mut self, _: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+            use std::fmt::Write;
+            writeln!(self.0, "{value:?}").unwrap();
+        }
+    }
+    impl Subscriber for Capture {
+        fn enabled(&self, _: &Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, attrs: &span::Attributes<'_>) -> span::Id {
+            attrs.record(&mut Fields(&mut self.0.lock().unwrap()));
+            span::Id::from_u64(1)
+        }
+        fn record(&self, _: &span::Id, values: &span::Record<'_>) {
+            values.record(&mut Fields(&mut self.0.lock().unwrap()));
+        }
+        fn record_follows_from(&self, _: &span::Id, _: &span::Id) {}
+        fn event(&self, event: &Event<'_>) {
+            event.record(&mut Fields(&mut self.0.lock().unwrap()));
+        }
+        fn enter(&self, _: &span::Id) {}
+        fn exit(&self, _: &span::Id) {}
+    }
+    let logs = Arc::new(Mutex::new(String::new()));
+    // This integration-test binary installs its only subscriber once. Capture TRACE,
+    // including SDK tasks, instead of trusting an unused RUST_LOG environment value.
+    tracing::subscriber::set_global_default(Capture(logs.clone())).unwrap();
+    let s = service();
+    let mut w = Wire::open(s.clone(), limits()).await;
+    let mut request = call(
+        2,
+        "execution_propose",
+        json!({"script":{
+            "operationRequestId":"log-test", "sourceUtf8":"script-log-canary",
+            "interpreter":{"resource":{"id":"test-interpreter","revision":"1"},"sha256":"b".repeat(64)}
+        }}),
+    );
+    request["params"]["_meta"] = json!({"private":"metadata-log-canary"});
+    w.send(request).await;
+    assert_eq!(w.recv().await["result"]["isError"], false);
+    let reply = w.call(3, "execution_preview", json!({"catalog":{"selection":selection(
+        &s, "log-secret", json!({"host":"example.invalid","credential":{"kind":"secret","reference":{"id":"secret-log-canary","revision":"1"}}})
+    )}})).await;
+    assert!(reply["result"].is_object());
+    s.capability_delay_ms.store(1000, Ordering::SeqCst);
+    w.send(call(4, "execution_capabilities", json!({}))).await;
+    timeout(Duration::from_secs(1), async {
+        while s.active_waits.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    w.send(
+        json!({"jsonrpc":"2.0","method":"notifications/cancelled","params":{
+            "requestId":4,"reason":"cancel-log-canary","_meta":{"private":"notification-log-canary"}
+        }}),
+    )
+    .await;
+    timeout(Duration::from_secs(1), async {
+        while s.active_waits.load(Ordering::SeqCst) != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    w.close().await;
+    let captured = logs.lock().unwrap();
+    assert!(
+        captured.contains("received request"),
+        "SDK capture must be active"
+    );
+    for marker in [
+        "script-log-canary",
+        "secret-log-canary",
+        "metadata-log-canary",
+        "cancel-log-canary",
+        "notification-log-canary",
+    ] {
+        assert!(!captured.contains(marker), "SDK leaked {marker}");
+    }
 }
