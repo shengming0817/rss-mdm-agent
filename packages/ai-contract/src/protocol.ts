@@ -40,8 +40,15 @@ export function resolveSurfaceAction(
     error: { code, retry: "never" },
   });
   try {
-    binding = decode(boundedJson(binding, limits), limits) as SurfaceBinding;
-    metadata = decode(boundedJson(metadata, limits), limits) as SurfaceAction;
+    const checkedBinding = decode(boundedJson(binding, limits), limits);
+    const checkedMetadata = decode(boundedJson(metadata, limits), limits);
+    if (
+      checkedBinding.kind !== "surface" ||
+      checkedMetadata.kind !== "surfaceAction"
+    )
+      return fail("invalid_input");
+    binding = checkedBinding;
+    metadata = checkedMetadata;
     standard = JSON.parse(boundedJson(standard, limits));
   } catch {
     return fail("invalid_input");

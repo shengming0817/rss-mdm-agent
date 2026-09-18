@@ -51,6 +51,20 @@ test("official A2UI action binds exact surface/run/revision; payload claims gran
     action,
     fixtureLimits,
   );
+  for (const [binding, metadata] of [
+    [fixtures.valid[0], meta],
+    [surface, fixtures.valid[0]],
+  ])
+    assert.equal(
+      resolveSurfaceAction(
+        fixtureCaller,
+        binding,
+        metadata,
+        action,
+        fixtureLimits,
+      ).error.code,
+      "invalid_input",
+    );
   assert.equal(result.ok, true);
   assert.deepEqual(result.value.answer, action.action.context);
   for (const patch of [
