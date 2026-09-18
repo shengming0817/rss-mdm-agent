@@ -10,5 +10,5 @@ export {
   emptyCommit,
   unwrap,
 } from "./conformance.js";
-export { default as fixtures } from "./fixtures.json" with { type: "json" };
+export { fixtures } from "./fixtures.js";
 export { ScriptedProvider, runProviderConformance } from "./provider.js";
