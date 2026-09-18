@@ -44,6 +44,9 @@ importers:
       '@rss-mdm-agent/ui':
         specifier: workspace:*
         version: link:../../packages/ui
+      '@tauri-apps/api':
+        specifier: 2.11.1
+        version: 2.11.1
       vue:
         specifier: 3.5.38
         version: 3.5.38(typescript@5.6.2)
@@ -391,6 +394,9 @@ packages:
     resolution: {integrity: sha512-at8QVep6S3h5Y6gSbdGU06bRY5WJkf6WUduM9YtvYMbYhB1MOFfUgc6kehitQXzOtMSaT70q7f9ydPhpqu821w==}
     cpu: [x64]
     os: [win32]
+
+  '@tauri-apps/api@2.11.1':
+    resolution: {integrity: sha512-M2FPuYND2m+wh5hfW9ZpSdxMPdEJovPBWwoHJmwUpysTYNHaOkVFN419m/K0LIgjb/7KU2vBgsUepJWugQCvAA==}
 
   '@tauri-apps/cli-darwin-arm64@2.11.2':
     resolution: {integrity: sha512-+4UZzLt+eOAEQCwgd+TqKgyUJMrvx+BgdXLLaqJYmPqzP+nE6YZr/hY6CWLYGQb8jFn99jEkmC6uA3tNvamA1w==}
@@ -1240,6 +1246,8 @@ snapshots:
 
   '@rollup/rollup-win32-x64-msvc@4.63.1':
     optional: true
+
+  '@tauri-apps/api@2.11.1': {}
 
   '@tauri-apps/cli-darwin-arm64@2.11.2':
     optional: true

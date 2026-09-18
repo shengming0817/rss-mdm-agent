@@ -97,7 +97,7 @@ test("tree scan covers desktop files and both production manifests", () => {
     assert.ok(errors.includes("UI production dependencies must be Vue only"));
     assert.ok(
       errors.includes(
-        "desktop production dependencies must be UI and Vue only",
+        "desktop production dependencies must be UI, Vue and pinned Tauri core only",
       ),
     );
   } finally {
@@ -176,11 +176,19 @@ test("each host boundary mutation independently fails the tree scan", () => {
     ],
     [
       "apps/desktop/src-tauri/capabilities/main.json",
-      (s) => s.replace('"permissions": []', '"permissions": ["core:default"]'),
+      (s) => {
+        const c = JSON.parse(s);
+        c.permissions.push("core:default");
+        return JSON.stringify(c);
+      },
     ],
     [
       "apps/desktop/src-tauri/capabilities/main.json",
-      (s) => s.replace('"windows": ["main"]', '"windows": ["*"]'),
+      (s) => {
+        const c = JSON.parse(s);
+        c.windows = ["*"];
+        return JSON.stringify(c);
+      },
     ],
     [
       "apps/desktop/src-tauri/Cargo.toml",
@@ -321,4 +329,23 @@ test("root workspace may declare independent core dependencies without changing 
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("only the narrow native adapter can call literal fixture commands", () => {
+  const file = "apps/desktop/src/self-service/native.ts";
+  for (const source of [
+    `import { invoke } from '@tauri-apps/api/core'; invoke('run_shell')`,
+    `import { invoke } from '@tauri-apps/api/core'; const name = 'self_service_snapshot'; invoke(name)`,
+    `import { invoke as call } from '@tauri-apps/api/core'; call('self_service_snapshot')`,
+    `import { invoke } from '@tauri-apps/api/core'; export const call = invoke`,
+    `import * as native from '@tauri-apps/api/core'; native.invoke('run_shell')`,
+  ])
+    assert.ok(checkSource(file, source).length, source);
+  assert.deepEqual(
+    checkSource(
+      file,
+      `import { invoke } from '@tauri-apps/api/core'; invoke('self_service_snapshot')`,
+    ),
+    [],
+  );
 });

@@ -3,9 +3,17 @@
 
 mod navigation;
 mod startup;
+use rss_mdm_desktop::self_service::ipc::{self, FixtureState};
 
 fn main() -> std::process::ExitCode {
-    let result = tauri::Builder::default()
+    let state = match FixtureState::new() {
+        Ok(state) => state,
+        Err(error) => {
+            eprintln!("{}", error.message);
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+    let result = ipc::register(tauri::Builder::default(), state)
         .setup(|app| {
             tauri::WebviewWindowBuilder::from_config(app, &app.config().app.windows[0])?
                 .on_navigation(navigation::allowed)

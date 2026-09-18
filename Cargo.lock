@@ -2777,6 +2777,12 @@ dependencies = [
 name = "rss-mdm-desktop"
 version = "0.1.0"
 dependencies = [
+ "execution-contract",
+ "execution-interaction",
+ "serde",
+ "serde_json",
+ "service-catalog",
+ "sha2",
  "tauri",
  "tauri-build",
 ]
