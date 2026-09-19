@@ -11,6 +11,7 @@ const configuration = {
   config: { id: "config-1", revision: "1" },
   accountRef: "account-1",
   workingDirectory: ".",
+  namespace: fixtureSession().namespace,
   permissions: "tools_disabled",
 };
 const budget = () => ({ timeoutMs: 25, signal: new AbortController().signal });
@@ -108,4 +109,32 @@ test("provider cannot emit host-owned lifecycle events through the observation p
       budget,
     ),
   );
+});
+
+test("restore rejects a different workspace before resuming the native session", async () => {
+  const previous = fixtureSession();
+  previous.capabilities.continuation = "across_processes";
+  let resumed = 0;
+  const port = {
+    resume: async () => {
+      resumed++;
+      return {
+        ok: true,
+        value: {
+          binding: { ...previous.binding, generation: "cross-directory" },
+          capabilities: previous.capabilities,
+        },
+      };
+    },
+    close: async () => ({ ok: true, value: { processStopped: true } }),
+  };
+  const result = await VerifiedProviderSession.restore(
+    port,
+    previous,
+    { ...configuration, workingDirectory: "/different-workspace" },
+    budget(),
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, "permission_denied");
+  assert.equal(resumed, 0);
 });

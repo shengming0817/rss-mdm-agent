@@ -89,3 +89,14 @@ Interaction 的必填 `category: "question"` 仅允许普通用户追问；权�
 provider 通用 event 使用 `ProviderEventBody` 白名单，只含文本、工具提案/结果、取消观察、错误、surface 和明确终态；内部派发、核实、会话/回调/本地失效事件由 Host/Store 产生。新 attempt 提交时必须再次提供 nowMs 并核对原 deadline，不以先前窗口内的 not_submitted 核实替代当前检查。
 
 `deliveries` 返回到期的 pending 与 reconciliation_required 记录，调用方必须先检查 status/retry；查询不代表领取或允许重发。仅全部 delivered 才允许 retire。`StoreCursor` 是1–2048字符的 opaque continuation，与 wire Id 分离，调用方仅原样回传给同一 adapter。
+
+
+外部复核后的契约收口：ProviderConfiguration 必须由 composition root 提供完整 namespace；准入时复制它并绑定该 provider 实例。`VerifiedProviderSession.reconcile(session, record, budget)` 是唯一恢复凭证入口，实际调用所准入的 port，绑定当前完整 binding、namespace 和原始 CommandRecord。返回的 `VerifiedReconciliation` 通过模块私有 WeakMap 校验，公开 observation 只返回副本；结构转换、JSON 复制或改写原始记录均不能生成有效证据。SessionCommit 只消费这类凭证，不接受原始 Reconciliation。原始 provider 方法仍返回普通观察数据；数据本身不是重试许可。
+
+Binding 新增必填 workspaceId：`workspaceIdentity(workingDirectory)` 对规范化绝对路径计算 SHA-256，restore 必须与原 binding 相同，实际传给 adapter 的路径在外部 await 前规范化固定。它是逻辑目录身份，不是 symlink、挂载或操作系统 containment 证明；平台隔离仍由 adapter/verifier 持有。旧 binding 无此字段直接拒绝。callbackLifetime 只保留 generation_bound；未实现的 provider_resumable 已删除，无兼容分支。
+
+命令 terminal/invalidated 必须在同一提交结束该命令所有 pending Interaction 并使 active SurfaceBinding 失效，同时附带对应稳定事件；缺任一状态或事件则整批拒绝。pending→expired 必须传有效 nowMs，且严格晚于包含端点的 expiresAtMs。rebind 的事件 seed 先经 schema-owned isId 检查；codec、transition 与 adapter 共用该原语。
+
+Rust 生成时将同一 schema 的 const 等价投影为单值 enum，以补足 typify 0.8 对 const 的忽略；Event variant 名由原始判别字段稳定生成。wire schema 仍是唯一来源；Rust 变体匹配与独立 consumer 同时验证 error/invalidated 和 surface create/update/delete 的真实类型。
+
+SessionState 是 adapter 持有的完整持久化状态，包括全部历史 generations。createState 仅创建 revision/sequence 为0的全新会话；Snapshot 是显示读模型，不能拿来重建 persistence state。共享恢复检查涵盖两种调用顺序的并发 rebind/旧代 commit；SQLite adapter 另外以真实重启验证 generation 历史。

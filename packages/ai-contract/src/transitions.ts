@@ -1,8 +1,13 @@
 import { createHash } from "node:crypto";
-import { VerifiedProviderSession } from "./session.js";
+import {
+  VerifiedProviderSession,
+  reconciliationFor,
+  providerIdentity,
+} from "./session.js";
 import canonicalize from "canonicalize";
 import {
   decode,
+  isId,
   boundedJson,
   fingerprint,
   deliveryFingerprint,
@@ -15,6 +20,7 @@ import type {
   SessionCommit,
   Snapshot,
   SessionRebind,
+  Reconciliation,
 } from "./ports.js";
 import type {
   CommandRecord,
@@ -39,24 +45,12 @@ export const fail = <T = never>(
 const clone = <T>(value: T): T => structuredClone(value);
 export const namespaceKey = (n: Namespace): string => {
   const parts = [n?.tenantId, n?.principalId, n?.authorityId, n?.sessionId];
-  if (
-    parts.some(
-      (p) =>
-        typeof p !== "string" ||
-        !/^[A-Za-z0-9][A-Za-z0-9._:/+\-]{0,127}$/.test(p),
-    )
-  )
-    throw new ContractError("context");
+  if (parts.some((part) => !isId(part))) throw new ContractError("context");
   return JSON.stringify(parts);
 };
 const valid = (v: unknown, limits: Limits) =>
   decode(boundedJson(v, limits), limits);
 const same = (a: unknown, b: unknown) => canonicalize(a) === canonicalize(b);
-const sessionIdentity = ({
-  nativeRunId: _run,
-  nativeRequestId: _request,
-  ...identity
-}: Session["binding"]) => identity;
 export interface SessionState {
   session: Session;
   generations: Set<Id>;
@@ -304,8 +298,8 @@ function reduceCommit(
     return fail("invalid_input");
   if (
     !same(
-      sessionIdentity(batch.session.binding),
-      sessionIdentity(state.session.binding),
+      providerIdentity(batch.session.binding),
+      providerIdentity(state.session.binding),
     ) ||
     !same(batch.session.capabilities, state.session.capabilities)
   )
@@ -315,11 +309,15 @@ function reduceCommit(
   const attemptIds = new Set(
     state.events.flatMap((e) => (e.attemptId ? [e.attemptId] : [])),
   );
-  const reconciliations = new Map(
-    (batch.reconciliations ?? []).map((r) => [r.commandId, r]),
-  );
-  if (reconciliations.size !== (batch.reconciliations ?? []).length)
-    return fail("invalid_input");
+  const reconciliations = new Map<Id, Reconciliation>();
+  for (const proof of batch.reconciliations ?? []) {
+    const record = state.commands.get(proof?.commandId);
+    const observation =
+      record && reconciliationFor(proof, state.session, record);
+    if (!observation) return fail("permission_denied");
+    if (reconciliations.has(proof.commandId)) return fail("invalid_input");
+    reconciliations.set(proof.commandId, observation);
+  }
   for (const c of batch.commands) {
     const id = c.command.commandId;
     if (commandIds.has(id)) return fail("invalid_input");
@@ -352,8 +350,8 @@ function reduceCommit(
         isSettled(old) ||
         resolution.attemptId !== old.dispatch.attemptId ||
         !same(
-          sessionIdentity(resolution.binding),
-          sessionIdentity(state.session.binding),
+          providerIdentity(resolution.binding),
+          providerIdentity(state.session.binding),
         ) ||
         resolution.binding.nativeSessionId !== old.dispatch.nativeSessionId ||
         ["nativeRunId", "nativeRequestId"].some((key) => {
@@ -613,7 +611,13 @@ function reduceCommit(
         !same(source.failure, event.body.failure))
     )
       return fail("invalid_input");
-    if (event.body.type === "surface_invalidated") return fail("invalid_input");
+    if (
+      event.body.type === "surface_invalidated" &&
+      (!isSettled(source) ||
+        !commandIds.has(event.commandId) ||
+        (prior && isSettled(prior)))
+    )
+      return fail("invalid_input");
     if (event.body.type === "terminal") {
       const record = copy.commands.get(event.commandId)!;
       if (
@@ -682,6 +686,12 @@ function reduceCommit(
       )
     )
       return fail("content_conflict");
+    if (
+      old?.status === "pending" &&
+      row.status === "expired" &&
+      (!Number.isSafeInteger(batch.nowMs) || batch.nowMs! <= row.expiresAtMs)
+    )
+      return fail("invalid_input");
     if (row.status === "answered") {
       const response = copy.commands.get(row.responseCommandId!);
       if (
@@ -782,7 +792,26 @@ function reduceCommit(
       interaction.status !== "pending"
     )
       return fail("invalid_input");
-    if (row.status === "invalidated") return fail("invalid_input");
+    if (row.status === "invalidated") {
+      const source = copy.commands.get(interaction.commandId);
+      const invalidation = batch.events.filter(
+        (e) =>
+          e.body.type === "surface_invalidated" &&
+          e.body.surfaceInstanceId === row.surfaceInstanceId,
+      );
+      if (
+        !old ||
+        !source ||
+        !isSettled(source) ||
+        invalidation.length !== 1 ||
+        invalidation[0].body.type !== "surface_invalidated" ||
+        invalidation[0].body.revision !== row.revision ||
+        invalidation[0].commandId !== interaction.commandId
+      )
+        return fail("invalid_input");
+      copy.surfaces.set(row.surfaceInstanceId, clone(row));
+      continue;
+    }
     const matching = batch.events.filter(
       (e) =>
         e.body.type === "surface" &&
@@ -821,8 +850,26 @@ function reduceCommit(
       return fail("invalid_input");
   }
   for (const e of batch.events)
-    if (e.body.type === "surface" && !surfaceIds.has(e.body.surfaceInstanceId))
+    if (
+      (e.body.type === "surface" || e.body.type === "surface_invalidated") &&
+      !surfaceIds.has(e.body.surfaceInstanceId)
+    )
       return fail("invalid_input");
+  for (const record of batch.commands) {
+    if (!isSettled(record)) continue;
+    const commandId = record.command.commandId;
+    if (
+      [...copy.interactions.values()].some(
+        (i) => i.commandId === commandId && i.status === "pending",
+      ) ||
+      [...copy.surfaces.values()].some(
+        (surface) =>
+          surface.status === "active" &&
+          copy.interactions.get(surface.interactionId)?.commandId === commandId,
+      )
+    )
+      return fail("invalid_input");
+  }
   // A direct commit must satisfy the same surface fence as accept(), including
   // a deletion or revision change carried by this very batch.
   for (const interaction of batch.interactions) {
@@ -855,6 +902,7 @@ function reduceRebind(
   input: SessionRebind,
   limits: Limits = defaultLimits,
 ): Result<SessionState> {
+  if (!isId(input.eventId)) return fail("invalid_input");
   const checked = checkState(
     state,
     input.expectedRevision,

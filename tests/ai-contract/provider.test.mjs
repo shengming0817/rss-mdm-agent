@@ -12,6 +12,7 @@ const configuration = {
   config: { id: "config-1", revision: "1" },
   accountRef: "account-1",
   workingDirectory: ".",
+  namespace: fixtureSession().namespace,
   permissions: "tools_disabled",
 };
 const budget = () => ({ timeoutMs: 1000, signal: AbortSignal.timeout(1000) });

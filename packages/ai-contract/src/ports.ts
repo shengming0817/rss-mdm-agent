@@ -85,6 +85,7 @@ export interface ToolEndpoint {
   >;
 }
 interface ProviderConfigurationBase {
+  readonly namespace: Namespace;
   readonly provider: Id;
   readonly config: ConfigRef;
   readonly accountRef: Id;
@@ -244,7 +245,7 @@ export interface HostPort extends Closeable {
 /** Atomic batch, checked against both revision and generation. No external await inside a transaction. */
 export interface SessionCommit {
   /** Verified provider reconciliation observations; consumed by the same transition rules. */
-  readonly reconciliations?: readonly Reconciliation[];
+  readonly reconciliations?: readonly import("./session.js").VerifiedReconciliation[];
   /** Required for retry eligibility and local expiry transitions. */
   readonly nowMs?: Counter;
   readonly namespace: Namespace;

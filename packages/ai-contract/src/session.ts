@@ -1,14 +1,37 @@
+import { createHash } from "node:crypto";
+import { resolve } from "node:path";
 import canonicalize from "canonicalize";
 import { withinBudget } from "./budget.js";
 import { boundedJson, decode } from "./codec.js";
-import type { Binding, Capabilities, Session, Failure } from "./wire.js";
+import type {
+  Binding,
+  Capabilities,
+  Session,
+  Failure,
+  Namespace,
+  CommandRecord,
+  Id,
+} from "./wire.js";
 import type {
   Budget,
   ProviderAgentPort,
   ProviderConfiguration,
   Result,
   ToolEndpoint,
+  Reconciliation,
 } from "./ports.js";
+
+/** Logical workspace path identity, never a filesystem containment proof. */
+export function workspaceIdentity(directory: string): string {
+  if (
+    typeof directory !== "string" ||
+    !directory ||
+    directory.length > 32768 ||
+    directory.includes("\0")
+  )
+    throw new TypeError("invalid workspace");
+  return createHash("sha256").update(resolve(directory)).digest("hex");
+}
 
 export type AdmissionResult =
   | { ok: true; value: VerifiedProviderSession }
@@ -25,16 +48,58 @@ const denied = (): Result<never> => ({
 });
 const same = (a: unknown, b: unknown) => canonicalize(a) === canonicalize(b);
 
+/** Stable observer identity; run/request coordinates may advance within it. */
+export const providerIdentity = ({
+  nativeRunId: _run,
+  nativeRequestId: _request,
+  ...identity
+}: Binding) => identity;
+const proofBrand: unique symbol = Symbol("verified reconciliation");
+/** Process-local evidence minted only by an admitted provider call. */
+export interface VerifiedReconciliation {
+  readonly [proofBrand]: true;
+  readonly commandId: Id;
+  readonly observation: Reconciliation;
+}
+const observations = new WeakMap<
+  VerifiedReconciliation,
+  {
+    session: Pick<Session, "namespace" | "binding">;
+    record: CommandRecord;
+    observation: Reconciliation;
+  }
+>();
+/** Internal transition check; structural copies cannot recover the private evidence. */
+export function reconciliationFor(
+  proof: VerifiedReconciliation,
+  session: Session,
+  record: CommandRecord,
+): Reconciliation | undefined {
+  const evidence = observations.get(proof);
+  return evidence &&
+    same(evidence.session, {
+      namespace: session.namespace,
+      binding: session.binding,
+    }) &&
+    same(evidence.record, record)
+    ? structuredClone(evidence.observation)
+    : undefined;
+}
+
 /** Nominal, process-local admission evidence. JSON and structural casts cannot mint it.
  * The injected verifier is trusted code owned by the composition root; its actual
  * platform containment proof remains adapter-owned. */
 export class VerifiedProviderSession {
   readonly #binding: Binding;
+  readonly #namespace: Namespace;
+  readonly #port: ProviderAgentPort;
   readonly #capabilities: Capabilities;
   readonly #tools?: ToolEndpoint;
   readonly #previous?: Pick<Session, "namespace" | "binding">;
   private constructor(
     token: symbol,
+    port: ProviderAgentPort,
+    namespace: Namespace,
     binding: Binding,
     capabilities: Capabilities,
     tools?: ToolEndpoint,
@@ -42,6 +107,8 @@ export class VerifiedProviderSession {
   ) {
     if (token !== authority) throw new TypeError("unverified provider session");
     this.#binding = structuredClone(binding);
+    this.#namespace = structuredClone(namespace);
+    this.#port = port;
     this.#capabilities = structuredClone(capabilities);
     this.#tools = tools;
     this.#previous = previous && structuredClone(previous);
@@ -65,6 +132,112 @@ export class VerifiedProviderSession {
         this.#previous,
       )
     );
+  }
+  /** Reconcile the exact stored attempt through this admitted instance. No caller-supplied observation is accepted. */
+  async reconcile(
+    session: Session,
+    record: CommandRecord,
+    budget: Budget,
+  ): Promise<Result<VerifiedReconciliation>> {
+    try {
+      const head = structuredClone(session),
+        original = structuredClone(record);
+      const limits = {
+        maxBytes: 262144,
+        maxTextBytes: 131072,
+        maxDepth: 32,
+        maxNodes: 16384,
+      };
+      decode(boundedJson(head, limits), limits);
+      decode(boundedJson(original, limits), limits);
+      if (
+        head.status !== "active" ||
+        !original.dispatch ||
+        ["terminal", "invalidated"].includes(original.state) ||
+        !same(head.namespace, this.#namespace) ||
+        !same(original.receipt.namespace, this.#namespace) ||
+        original.command.sessionId !== this.#namespace.sessionId ||
+        !same(
+          providerIdentity(head.binding),
+          providerIdentity(this.#binding),
+        ) ||
+        original.dispatch.observerGeneration !== this.#binding.generation ||
+        original.dispatch.nativeSessionId !== this.#binding.nativeSessionId
+      )
+        return denied();
+      return await withinBudget(
+        () => budget,
+        async (b) => {
+          const response = await this.#port.reconcile(
+            structuredClone(head.binding),
+            structuredClone(original),
+            b,
+          );
+          if (!response.ok) return response;
+          const observed: Reconciliation = JSON.parse(
+            boundedJson(response.value, limits),
+          );
+          const keys = [
+            "attemptId",
+            "binding",
+            "commandId",
+            "status",
+            ...(observed.status === "terminal" ? ["outcome"] : []),
+          ].sort();
+          if (
+            b.signal.aborted ||
+            !same(Object.keys(observed).sort(), keys) ||
+            observed.commandId !== original.command.commandId ||
+            observed.attemptId !== original.dispatch!.attemptId ||
+            !["unknown", "running", "terminal", "not_submitted"].includes(
+              observed.status,
+            ) ||
+            !same(
+              providerIdentity(observed.binding),
+              providerIdentity(head.binding),
+            ) ||
+            (["nativeRunId", "nativeRequestId"] as const).some(
+              (k) =>
+                original.dispatch![k] !== undefined &&
+                observed.binding[k] !== original.dispatch![k],
+            )
+          )
+            return denied();
+          decode(
+            boundedJson({ ...head, binding: observed.binding }, limits),
+            limits,
+          );
+          if (observed.status === "terminal")
+            decode(
+              boundedJson(
+                {
+                  ...original,
+                  state: "terminal",
+                  dispatch: { ...original.dispatch, certainty: "submitted" },
+                  outcome: observed.outcome,
+                },
+                limits,
+              ),
+              limits,
+            );
+          const proof: VerifiedReconciliation = Object.freeze({
+            [proofBrand]: true as const,
+            commandId: observed.commandId,
+            get observation() {
+              return structuredClone(observed);
+            },
+          });
+          observations.set(proof, {
+            session: { namespace: head.namespace, binding: head.binding },
+            record: original,
+            observation: observed,
+          });
+          return { ok: true as const, value: proof };
+        },
+      );
+    } catch {
+      return { ok: false, error: unavailable() };
+    }
   }
   static restore(
     port: ProviderAgentPort,
@@ -97,6 +270,8 @@ export class VerifiedProviderSession {
       const prior = previous && structuredClone(previous);
       const settings = {
         ...configuration,
+        namespace: structuredClone(configuration.namespace),
+        workingDirectory: resolve(configuration.workingDirectory),
         config: structuredClone(configuration.config),
       };
       result = await withinBudget(
@@ -133,6 +308,13 @@ export class VerifiedProviderSession {
     previous?: Session,
   ): Promise<Result<VerifiedProviderSession>> {
     if (budget.signal.aborted) return denied();
+    const workspaceId = workspaceIdentity(configuration.workingDirectory);
+    if (
+      previous &&
+      (previous.binding.workspaceId !== workspaceId ||
+        !same(previous.namespace, configuration.namespace))
+    )
+      return denied();
     const controlled = configuration.permissions === "host_mediated";
     if (
       controlled
@@ -145,6 +327,7 @@ export class VerifiedProviderSession {
       return denied();
     // Snapshot caller-owned identity before any external await. Endpoint/verifier identities
     // are captured separately, so concurrent caller mutation cannot switch the verifier.
+    const namespace = structuredClone(configuration.namespace);
     const config = structuredClone(configuration.config),
       accountRef = configuration.accountRef,
       provider = configuration.provider;
@@ -153,6 +336,7 @@ export class VerifiedProviderSession {
     if (previous && !port.resume) return denied();
     const settings = {
       ...configuration,
+      namespace: structuredClone(namespace),
       config: structuredClone(config),
       accountRef,
     };
@@ -173,12 +357,7 @@ export class VerifiedProviderSession {
           {
             schemaVersion: 2,
             kind: "session",
-            namespace: {
-              tenantId: "verify",
-              principalId: "verify",
-              authorityId: "verify",
-              sessionId: "verify",
-            },
+            namespace,
             revision: 0,
             lastSequence: 0,
             status: "active",
@@ -193,6 +372,7 @@ export class VerifiedProviderSession {
       return denied();
     }
     if (
+      binding.workspaceId !== workspaceId ||
       binding.provider !== provider ||
       !same(binding.config, config) ||
       binding.accountRef !== accountRef ||
@@ -202,6 +382,7 @@ export class VerifiedProviderSession {
     if (previous) {
       const prior = previous.binding;
       if (
+        binding.workspaceId !== prior.workspaceId ||
         binding.generation === prior.generation ||
         binding.provider !== prior.provider ||
         binding.providerVersion !== prior.providerVersion ||
@@ -231,6 +412,8 @@ export class VerifiedProviderSession {
       ok: true,
       value: new VerifiedProviderSession(
         authority,
+        port,
+        namespace,
         binding,
         capabilities,
         tools,

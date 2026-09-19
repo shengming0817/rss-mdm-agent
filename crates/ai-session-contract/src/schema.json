@@ -38,7 +38,7 @@
       "minLength": 1,
       "maxLength": 128,
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
-      "description": "Opaque ASCII correlation identifier (1–128 characters); never an authentication credential."
+      "description": "Opaque ASCII correlation identifier (1\u2013128 characters); never an authentication credential."
     },
     "Counter": {
       "type": "integer",
@@ -132,6 +132,10 @@
         "nativeRequestId": {
           "$ref": "#/$defs/Id",
           "description": "Provider-owned parent prompt/query request identifier; cannot be rebound after dispatch. Callback identities belong to Interaction."
+        },
+        "workspaceId": {
+          "$ref": "#/$defs/Id",
+          "description": "SHA-256 identity of the normalized absolute workspace path. Filesystem containment remains owned by the provider adapter and composition root."
         }
       },
       "required": [
@@ -141,7 +145,8 @@
         "generation",
         "accountRef",
         "nativeSessionId",
-        "config"
+        "config",
+        "workspaceId"
       ],
       "additionalProperties": false,
       "description": "Provider context identity. Version, configuration, account and generation bind every capability and callback."
@@ -254,7 +259,8 @@
         "limit_exceeded",
         "cursor_expired",
         "session_gone",
-        "already_answered"
+        "already_answered",
+        "storage_corrupt"
       ],
       "description": "Closed value-free error category; diagnostics never include model text or credentials."
     },
@@ -2299,10 +2305,9 @@
         "callbackLifetime": {
           "type": "string",
           "enum": [
-            "generation_bound",
-            "provider_resumable"
+            "generation_bound"
           ],
-          "description": "generation_bound cannot survive callback loss; provider_resumable requires verified native restoration."
+          "description": "A live-generation callback. Restore preserves display history but always makes the previous callback unavailable."
         },
         "nativeCallbackId": {
           "$ref": "#/$defs/Id",

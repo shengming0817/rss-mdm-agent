@@ -82,7 +82,8 @@
         "config": {
           "id": "config-1",
           "revision": "1"
-        }
+        },
+        "workspaceId": "fixture-workspace"
       },
       "capabilities": {
         "continuation": "unsupported",

@@ -1,3 +1,6 @@
+import { verifiedReconciliation } from "./recovery.js";
+import type { VerifiedReconciliation } from "../session.js";
+import { workspaceIdentity } from "../session.js";
 import assert from "node:assert/strict";
 import { runRecoveryConformance } from "./recovery.js";
 import {
@@ -39,6 +42,7 @@ export function fixtureSession(): Session {
     lastSequence: 0,
     status: "active",
     binding: {
+      workspaceId: workspaceIdentity("."),
       provider: "fake",
       providerVersion: "fixture-1",
       adapterVersion: "fixture-1",
@@ -222,7 +226,11 @@ async function runStoreScenarios(
     false,
     "unknown cannot return to accepted without proof",
   );
-  const batch = terminalCommit(unknown, record);
+  const batch = terminalCommit(
+    unknown,
+    record,
+    await verifiedReconciliation(unknown, record, "terminal"),
+  );
   for (const mutate of [
     (b: SessionCommit) => ({ ...b, events: [] }),
     (b: SessionCommit) => ({
@@ -435,7 +443,7 @@ async function runStoreBoundaries(
       { nativeCallbackId: "other" },
       { request: { question: "different" } },
       { expiresAtMs: 101 },
-      { callbackLifetime: "provider_resumable" as const },
+      { callbackLifetime: "invalid-lifetime" as "generation_bound" },
     ])
       assert.equal(
         (
@@ -586,6 +594,7 @@ async function runStoreBoundaries(
 export function terminalCommit(
   session: Session,
   record: CommandRecord,
+  reconciliation?: VerifiedReconciliation,
 ): SessionCommit {
   if (!record.dispatch)
     throw new Error("fixture requires a dispatched command");
@@ -603,18 +612,9 @@ export function terminalCommit(
     outcome: "completed",
   };
   const bodies: Event["body"][] = [];
-  const reconciliations =
-    record.state === "reconciliation_required"
-      ? [
-          {
-            commandId: record.command.commandId,
-            attemptId: dispatch.attemptId,
-            binding: session.binding,
-            status: "terminal" as const,
-            outcome: "completed" as const,
-          },
-        ]
-      : [];
+  if (record.state === "reconciliation_required" && !reconciliation)
+    throw new Error("fixture requires verified reconciliation");
+  const reconciliations = reconciliation ? [reconciliation] : [];
   if (reconciliations.length)
     bodies.push({
       type: "reconciled",

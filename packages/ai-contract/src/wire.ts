@@ -251,7 +251,8 @@ export type ErrorCode =
   | "limit_exceeded"
   | "cursor_expired"
   | "session_gone"
-  | "already_answered";
+  | "already_answered"
+  | "storage_corrupt";
 /**
  * same_command preserves identity/content; reconcile_first checks the original operation; never forbids retry.
  */
@@ -1120,6 +1121,8 @@ export interface Binding {
   nativeRunId?: Id;
   /** Provider-owned parent prompt/query request identifier; cannot be rebound after dispatch. Callback identities belong to Interaction. */
   nativeRequestId?: Id;
+  /** SHA-256 identity of the normalized absolute workspace path. Filesystem containment remains owned by the provider adapter and composition root. */
+  workspaceId: Id;
 }
 /**
  * Immutable configuration identity and revision; contains no credentials.
@@ -1194,9 +1197,9 @@ export interface Interaction {
   /** Accepted response command which atomically consumed the interaction; present only when answered. */
   responseCommandId?: Id;
   /**
-   * generation_bound cannot survive callback loss; provider_resumable requires verified native restoration.
+   * A live-generation callback. Restore preserves display history but always makes the previous callback unavailable.
    */
-  callbackLifetime: "generation_bound" | "provider_resumable";
+  callbackLifetime: "generation_bound";
   /** Provider-owned callback identifier, immutable and unique within a session generation; distinct from the parent dispatch request. */
   nativeCallbackId: Id;
   /** Immutable untrusted question payload retained for display; does not restore a lost native callback or grant approval. */

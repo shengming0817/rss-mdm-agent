@@ -2,8 +2,32 @@
 use quote::quote;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::args().nth(1).ok_or("schema path required")?;
-    let schema =
-        serde_json::from_slice::<schemars_codegen::schema::RootSchema>(&std::fs::read(path)?)?;
+    let mut schema: serde_json::Value = serde_json::from_slice(&std::fs::read(path)?)?;
+    // Event tags are nested in body. Derive Rust variant names from those exact
+    // schema discriminators rather than unstable oneOf array positions.
+    if let Some(events) = schema["$defs"]["Event"]["oneOf"].as_array_mut() {
+        for event in events {
+            let properties = &event["properties"]["body"]["properties"];
+            let parts: Vec<String> = ["type", "state", "status", "operation"]
+                .iter()
+                .filter_map(|key| {
+                    let property = &properties[key];
+                    property["const"].as_str().map(str::to_owned).or_else(|| {
+                        property["enum"].as_array().map(|values| {
+                            values
+                                .iter()
+                                .filter_map(serde_json::Value::as_str)
+                                .collect::<Vec<_>>()
+                                .join("_")
+                        })
+                    })
+                })
+                .collect();
+            event["title"] = serde_json::Value::String(format!("Event_{}", parts.join("_")));
+        }
+    }
+    project_constants(&mut schema);
+    let schema = serde_json::from_value::<schemars_codegen::schema::RootSchema>(schema)?;
     let mut types = typify::TypeSpace::default();
     types.add_root_schema(schema)?;
     let mut file: syn::File = syn::parse2(types.to_stream())?;
@@ -63,4 +87,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         quote! { #file #(#debug)* }
     );
     Ok(())
+}
+
+// typify 0.8 deliberately discards const_value (convert.rs). A singleton enum
+// has identical JSON Schema semantics and preserves the discriminator in Rust.
+fn project_constants(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(fields) => {
+            if let Some(constant) = fields.remove("const") {
+                fields.insert("enum".into(), serde_json::Value::Array(vec![constant]));
+            }
+            for child in fields.values_mut() {
+                project_constants(child);
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for child in values {
+                project_constants(child);
+            }
+        }
+        _ => (),
+    }
 }

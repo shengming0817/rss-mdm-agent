@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import canonicalize from "canonicalize";
 import { visit } from "jsonc-parser";
-import type { WireRecord, Command, Event } from "./wire.js";
+import type { WireRecord, Command, Event, Id } from "./wire.js";
 
 /** Mandatory host bounds. Counts cover the entire envelope, including dynamic JSON. */
 export interface Limits {
@@ -34,11 +34,17 @@ const schema = JSON.parse(
     "utf8",
   ),
 );
-const valid = new Ajv2020({
+const validator = new Ajv2020({
   strict: true,
   allErrors: false,
   validateFormats: false,
-}).compile<WireRecord>(schema);
+});
+const valid = validator.compile<WireRecord>(schema);
+const checkId = validator.compile<Id>(schema.$defs.Id);
+/** Validate the schema-owned primitive, including its type and length bounds. */
+export function isId(value: unknown): value is Id {
+  return checkId(value);
+}
 const byteLength = (s: string) => Buffer.byteLength(s, "utf8");
 const unicode = (s: string) => {
   for (const c of s) {
@@ -276,10 +282,7 @@ export function deliveryFingerprint(
   limits: Limits,
 ): string {
   const checked = decode(boundedJson(event, limits), limits);
-  if (
-    checked.kind !== "event" ||
-    !/^[A-Za-z0-9][A-Za-z0-9._:/+\-]{0,127}$/.test(target)
-  )
+  if (checked.kind !== "event" || !isId(target))
     throw new ContractError("schema");
   const payload = JSON.parse(boundedJson({ event: checked, target }, limits));
   return createHash("sha256").update(canonicalize(payload)!).digest("hex");
