@@ -150,11 +150,10 @@ export class ClaudeAdapter implements ProviderAgentPort {
       )
         return fail("stale_binding");
       if (
-        "workingDirectory" in request &&
-        (request.workingDirectory !== config.workingDirectory ||
-          request.permissions !== config.permissions ||
-          request.tools !== config.tools ||
-          request.verifier !== config.verifier)
+        request.workingDirectory !== config.workingDirectory ||
+        request.permissions !== config.permissions ||
+        request.tools !== config.tools ||
+        request.verifier !== config.verifier
       )
         return fail("permission_denied");
       if (

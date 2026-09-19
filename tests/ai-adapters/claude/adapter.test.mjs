@@ -653,3 +653,24 @@ for (const consume of [false, true])
     assert.equal(state.status, consume ? "terminal" : "unknown");
     await h.adapter.close(budget());
   });
+
+test("new and resumed sessions cannot omit configuration identity fields", async () => {
+  const original = harness();
+  const prior = await create(original);
+  await original.adapter.close(budget());
+  for (const operation of ["createSession", "resume"]) {
+    const h = harness(),
+      malformed = { ...configuration };
+    delete malformed.workingDirectory;
+    try {
+      const result =
+        operation === "resume"
+          ? await h.adapter.resume(prior, malformed, budget())
+          : await h.adapter.createSession(malformed, budget());
+      assert.equal(result.ok, false);
+      assert.equal(h.options, undefined, "reject before starting a runtime");
+    } finally {
+      await h.adapter.close(budget());
+    }
+  }
+});
