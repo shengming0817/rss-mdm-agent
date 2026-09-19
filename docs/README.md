@@ -18,6 +18,7 @@
 - [脚本计划核心](../crates/script-plan/README.md)：静态解释器 profile、参数与受控 IO 编译。
 - [软件计划核心](../crates/software-plan/README.md)：精确包身份、变更约束与独立检测决策。
 - [受控 MCP 适配器](../crates/execution-mcp/README.md)：同源目录参数、宿主绑定服务 port、幂等提交与有界 stdio。
+- [执行 SQLite](../crates/execution-sqlite/README.md)与[来源改写](reference/execution-sqlite.md)：原子 journal、交互、批准和结果查询/确认。
 - [执行核心来源](reference/execution-cores.md)：固定Rust对标及重写边界。
 - [来源与对标](reference/sources.md)：prmonitor 固定源码证据、服务端产品基线及上游参考。
 

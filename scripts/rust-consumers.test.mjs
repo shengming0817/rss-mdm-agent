@@ -23,6 +23,7 @@ const names = [
   "execution-admission",
   "execution-approval",
   "execution-lifecycle",
+  "execution-sqlite",
   "service-catalog",
   "script-plan",
   "software-plan",
@@ -396,6 +397,49 @@ test("catalog permits its canonical value owner but not arbitrary or misnamed lo
       }
       assert.equal(report.consumers.length, names.length);
       for (const dir of fake.dirs) assert.equal(existsSync(dir), false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test("only the SQLite adapter permits its exact runtime closure", () => {
+  for (const dependency of [
+    "rusqlite",
+    "libsqlite3-sys",
+    "sqlx-sqlite",
+    "unapproved-sqlite",
+  ]) {
+    const root = fixture();
+    try {
+      const fake = fakeCargo(root, () => ({ status: 0, stdout: "" }));
+      const execute = (command, args, options) => {
+        const result = fake.execute(command, args, options);
+        if (args[0] === "metadata" && !args.includes("--no-deps")) {
+          const metadata = JSON.parse(result.stdout);
+          metadata.packages.push({
+            name: dependency,
+            version: "0.1.0",
+            source: "registry+https://example.invalid",
+            manifest_path: "/registry/Cargo.toml",
+          });
+          result.stdout = JSON.stringify(metadata);
+        }
+        return result;
+      };
+      const report = checkRustConsumers(root, execute);
+      for (const consumer of report.consumers) {
+        const allowed =
+          consumer.name === "execution-sqlite" &&
+          ["rusqlite", "libsqlite3-sys"].includes(dependency);
+        assert.equal(
+          consumer.passed,
+          allowed,
+          consumer.name + ":" + dependency,
+        );
+        if (!allowed)
+          assert.equal(consumer.failure.code, "unexpected-runtime-dependency");
+      }
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

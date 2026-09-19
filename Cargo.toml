@@ -1,5 +1,5 @@
 [workspace]
-members = ["apps/desktop/src-tauri", "crates/execution-contract", "crates/ai-session-contract", "crates/execution-interaction", "crates/execution-capability", "crates/execution-admission", "crates/service-catalog", "crates/execution-approval", "crates/execution-lifecycle", "crates/script-plan", "crates/software-plan", "crates/execution-mcp"]
+members = ["apps/desktop/src-tauri", "crates/execution-contract", "crates/ai-session-contract", "crates/execution-interaction", "crates/execution-capability", "crates/execution-admission", "crates/service-catalog", "crates/execution-approval", "crates/execution-lifecycle", "crates/script-plan", "crates/software-plan", "crates/execution-mcp", "crates/execution-sqlite"]
 resolver = "2"
 
 [workspace.package]
@@ -23,3 +23,4 @@ rmcp = { version = "=3.4.0", default-features = false, features = ["server"] }
 tokio = { version = "=1.53.1", default-features = false, features = ["rt", "macros", "sync", "time", "io-util", "io-std"] }
 tokio-util = { version = "=0.7.19", features = ["codec"] }
 futures-util = "=0.3.34"
+rusqlite = { version = "=0.32.1", default-features = false, features = ["bundled"] }
