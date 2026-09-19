@@ -1,7 +1,7 @@
 use execution_admission::AdmissionDecision;
 use execution_approval::{ApprovalDecision, ApprovalVerifier, ProfileApproval};
 use execution_contract::*;
-use execution_lifecycle::{DispatchAction, ObservationVerifier};
+use execution_lifecycle::DispatchAction;
 use serde::{Deserialize, Serialize};
 
 /// Static failure codes; never include SQL, paths, input payloads or provider text.
@@ -223,7 +223,7 @@ impl ExecutionAccess<'_> {
     }
 }
 /// Value-only admission result; policy/rule/approver details remain in privileged audit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum AdmissionStatus {
     /// This admission committed an attempt, not an execution effect.
@@ -317,7 +317,7 @@ pub struct AdmissionGate {
 /// Implementations are trusted code, not DTO decoders. The store cannot protect against a
 /// malicious in-process Host or local administrator. Calls under a write transaction must be
 /// bounded, non-reentrant and use already verified local facts (no network calls).
-pub trait Host: ObservationVerifier {
+pub trait Host {
     /// Authenticate the actual caller and independently authorize the exact requested scope.
     /// Interact additionally verifies responder rights and answer/reference bindings.
     fn authorize(&self, request: AccessRequest<'_>) -> Result<(), Error>;

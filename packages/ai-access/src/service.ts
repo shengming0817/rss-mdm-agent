@@ -355,7 +355,7 @@ export function createAccessService(options: AccessOptions) {
               continue;
             if (pump.attachmentId) {
               const update: AccessUpdate = {
-                schemaVersion: 2,
+                schemaVersion: 3,
                 kind: "accessUpdate",
                 sessionId: id,
                 attachmentId: pump.attachmentId,
@@ -384,7 +384,7 @@ export function createAccessService(options: AccessOptions) {
             if (pump.attachmentId) {
               try {
                 await peer.connection.client.notify(extension.update, {
-                  schemaVersion: 2,
+                  schemaVersion: 3,
                   kind: "accessUpdate",
                   sessionId: id,
                   attachmentId: pump.attachmentId,
@@ -423,7 +423,7 @@ export function createAccessService(options: AccessOptions) {
         return fail("unavailable");
       if (previous?.attachmentId)
         await peer.connection.client.notify(extension.update, {
-          schemaVersion: 2,
+          schemaVersion: 3,
           kind: "accessUpdate",
           sessionId: id,
           attachmentId: previous.attachmentId,
@@ -476,7 +476,7 @@ export function createAccessService(options: AccessOptions) {
         }
         if (
           !n ||
-          n.contractVersion !== 2 ||
+          n.contractVersion !== 3 ||
           n.acp !== 1 ||
           typeof n.cursorAttach !== "boolean" ||
           typeof n.durableReceipts !== "boolean"
@@ -596,7 +596,7 @@ export function createAccessService(options: AccessOptions) {
         })
         .join("\n");
       const command = parse("command").parse({
-        schemaVersion: 2,
+        schemaVersion: 3,
         kind: "command",
         sessionId: params.sessionId,
         commandId: crypto.randomUUID(),
@@ -630,7 +630,11 @@ export function createAccessService(options: AccessOptions) {
       const s = await session(peer, params.sessionId, signal);
       cancelPermissions(peer.caller, params.sessionId);
       let continuation: string | undefined;
-      const active: string[] = [];
+      const accepted: string[] = [],
+        turns = new Map<
+          string,
+          { commandId: string; policy: "queue_next" | "steer" }
+        >();
       do {
         const page = value(
           await host.snapshotPage(
@@ -640,23 +644,52 @@ export function createAccessService(options: AccessOptions) {
             budget(signal),
           ),
         );
-        for (const record of page.commands)
+        for (const record of page.commands) {
           if (
-            record.command.input.type === "prompt" &&
-            !["terminal", "invalidated", "acknowledged", "cancelled"].includes(
-              record.state,
-            ) &&
-            (!record.dispatch ||
-              record.dispatch.nativeRunId === s.binding.nativeRunId)
+            record.command.input.type !== "prompt" ||
+            record.state === "terminal" ||
+            ["invalidated", "acknowledged", "cancelled"].includes(record.state)
           )
-            active.push(record.command.commandId);
+            continue;
+          const dispatch = record.dispatch;
+          if (!dispatch) {
+            if (record.state === "accepted")
+              accepted.push(record.command.commandId);
+            continue;
+          }
+          if (
+            dispatch.observerGeneration !== s.binding.generation ||
+            dispatch.nativeSessionId !== s.binding.nativeSessionId ||
+            dispatch.nativeThreadId !== s.binding.nativeThreadId ||
+            dispatch.nativeRunId !== s.binding.nativeRunId
+          )
+            continue;
+          const key = JSON.stringify([
+              dispatch.nativeSessionId,
+              dispatch.nativeThreadId ?? null,
+              dispatch.nativeRunId ?? null,
+            ]),
+            current = turns.get(key),
+            candidate = {
+              commandId: record.command.commandId,
+              policy: record.command.input.policy,
+            };
+          if (
+            !current ||
+            (current.policy === "steer" && candidate.policy === "queue_next")
+          )
+            turns.set(key, candidate);
+        }
         continuation = page.next;
       } while (continuation);
-      for (const targetCommandId of active) {
+      for (const targetCommandId of [
+        ...accepted,
+        ...[...turns.values()].map((turn) => turn.commandId),
+      ]) {
         await submit(
           peer,
           {
-            schemaVersion: 2,
+            schemaVersion: 3,
             kind: "command",
             sessionId: params.sessionId,
             commandId: crypto.randomUUID(),
@@ -769,7 +802,7 @@ export function createAccessService(options: AccessOptions) {
         return submit(
           peer,
           {
-            schemaVersion: 2,
+            schemaVersion: 3,
             kind: "command",
             sessionId: metadata.sessionId,
             commandId: metadata.commandId,

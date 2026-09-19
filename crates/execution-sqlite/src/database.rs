@@ -3,7 +3,8 @@ use execution_contract::Authority;
 use rusqlite::{Connection, OpenFlags, TransactionBehavior};
 use std::path::Path;
 
-pub(crate) const SCHEMA_VERSION: u32 = 1;
+// Includes persisted lifecycle records and the journal fingerprint domain, not just DDL.
+pub(crate) const SCHEMA_VERSION: u32 = 2;
 const APPLICATION_ID: u32 = 0x52534558;
 
 // Only internal schema column names are accepted, never caller-provided SQL.
@@ -199,8 +200,8 @@ fn configure(conn: &Connection, limits: Limits) -> Result<(), Error> {
     }
     Ok(())
 }
-// Initial schema is the only released format. Future forward migrations belong here, in the
-// same transaction as their version stamp; no legacy reader or artificial v2 exists.
+// Bootstrap only the current format, including its lifecycle snapshot and fingerprint encoding.
+// Existing versions are rejected by open; no migration or legacy reader is provided.
 // ref: rusqlite src/transaction.rs@499cc7bb986e04cc66e6ed762522f7ea449178d1
 fn migrate(conn: &mut Connection, authority: &Authority) -> Result<(), Error> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;

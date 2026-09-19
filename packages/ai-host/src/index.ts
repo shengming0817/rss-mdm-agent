@@ -83,7 +83,7 @@ const budget = (timeoutMs = 30000): Budget => ({
   signal: new AbortController().signal,
 });
 const baseRecord = (record: CommandRecord) => ({
-  schemaVersion: 2 as const,
+  schemaVersion: 3 as const,
   kind: "commandRecord" as const,
   command: record.command,
   receipt: record.receipt,
@@ -206,7 +206,7 @@ export class SessionHost implements HostPort {
   }
   negotiate(offered: Negotiation): Result<Negotiation> {
     if (this.closed) return fail("unavailable");
-    if (offered.contractVersion !== 2 || offered.acp !== 1)
+    if (offered.contractVersion !== 3 || offered.acp !== 1)
       return fail("unsupported_version");
     if (
       offered.a2ui &&
@@ -378,7 +378,7 @@ export class SessionHost implements HostPort {
         );
       else {
         session = {
-          schemaVersion: 2,
+          schemaVersion: 3,
           kind: "session",
           namespace,
           revision: 0,
@@ -566,10 +566,6 @@ export class SessionHost implements HostPort {
               return fail<Receipt>("unsupported_capability");
           }
         }
-        const event = this.event(session, command.commandId, {
-          type: "status",
-          state: "accepted",
-        });
         if (b.signal.aborted)
           return fail<Receipt>("unavailable", "same_command");
         const receipt = await this.store.accept({
@@ -579,7 +575,7 @@ export class SessionHost implements HostPort {
           expectedGeneration: session.binding.generation,
           nowMs: this.now(),
           retention: { retryWindowMs: 60000, receiptWindowMs: 86400000 },
-          event,
+          eventId: randomUUID(),
         });
         if (receipt.ok)
           await this.publishSince(namespace, session.lastSequence);
@@ -625,11 +621,11 @@ export class SessionHost implements HostPort {
     if (
       body.type === "invalidated" ||
       body.type === "cancelled" ||
-      (body.type === "status" && body.state === "accepted")
+      body.type === "command_accepted"
     )
       attemptId = undefined;
     return {
-      schemaVersion: 2,
+      schemaVersion: 3,
       kind: "event",
       namespace: session.namespace,
       eventId: randomUUID(),
@@ -798,6 +794,9 @@ export class SessionHost implements HostPort {
         originGeneration: session.binding.generation,
         observerGeneration: session.binding.generation,
         nativeSessionId: session.binding.nativeSessionId,
+        ...(session.binding.nativeThreadId
+          ? { nativeThreadId: session.binding.nativeThreadId }
+          : {}),
         certainty: "intent" as const,
         ...(!isOrdinary(record)
           ? {
@@ -993,7 +992,7 @@ export class SessionHost implements HostPort {
         append(observed.body);
       } else if (observed.type === "interaction") {
         const row: Interaction = {
-          schemaVersion: 2,
+          schemaVersion: 3,
           kind: "interaction",
           namespace,
           commandId: record.command.commandId,
@@ -1051,13 +1050,7 @@ export class SessionHost implements HostPort {
               },
             };
         // The transition itself owns retry eligibility, including the original receipt window.
-        if (next.state === "accepted")
-          append(
-            { type: "status", state: "accepted" },
-            record.command.commandId,
-            undefined,
-          );
-        else
+        if (next.state === "invalidated")
           append(
             { type: "invalidated", failure: next.failure },
             record.command.commandId,
@@ -1379,7 +1372,7 @@ export class SessionHost implements HostPort {
               this.accept(
                 namespace,
                 {
-                  schemaVersion: 2,
+                  schemaVersion: 3,
                   kind: "command",
                   sessionId,
                   commandId: randomUUID(),

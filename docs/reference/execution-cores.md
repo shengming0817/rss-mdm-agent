@@ -24,6 +24,8 @@
 - ref: jsonwebtoken src/decoding.rs@4c0ae752e9acc108c8e2c4c8ed8128dc66014210 — [解码、签名与 claims 验证分离](https://github.com/Keats/jsonwebtoken/blob/4c0ae752e9acc108c8e2c4c8ed8128dc66014210/src/decoding.rs#L270)。采纳“解码不等于验证”，C08 只通过可信批量 verifier 获取事实；签发者权限、撤销与一致快照由产品 adapter 验证，不引入 JWT 依赖。
 - ref: tokio tokio/src/process/mod.rs@75fef53d0a8590c2d1dbb63672aa7b7d1ef51155 — [请求终止与等待退出](https://github.com/tokio-rs/tokio/blob/75fef53d0a8590c2d1dbb63672aa7b7d1ef51155/tokio/src/process/mod.rs#L1240-L1251)。采纳取消、退出与结果分离；C09 额外要求整次受控活动停止及独立目标核实，不用进程退出证明回滚或安装成功。
 
+#2434 入口拆分对标（2026-09-19 UTC）：ref: raft-rs src/raw_node.rs@10c6e9db6792b85c81784e44fc278f895d5f0ab0 — [本地提案与消息入口汇入共同状态机](https://github.com/tikv/raft-rs/blob/10c6e9db6792b85c81784e44fc278f895d5f0ab0/src/raw_node.rs#L346-L410)。借鉴分立入口共享状态机制；本实现进一步以 CommandEvent/ObservationEvent 区分输入，验证器只属于观察路径，不复制 Raft 协议或引入依赖。
+
 C08 直接消费完整 C07 裁决，以 C01 规范摘要绑定全部计划内容；C09 使用一个有界当前快照及派生建议，不建立通用工作流引擎。批准消费与 intent 的 SQLite 原子性留 C18，生产准入/证据/runner 接线留 C19 与平台任务。
 
 PR #1027 修复对标（2026-09-17 UTC）：沿用上列 Cedar 请求上下文分离，将本产品 attempt 与可信授权快照绑定；参考 [Tokio Sender::send](https://github.com/tokio-rs/tokio/blob/master/tokio/src/sync/oneshot.rs) 的消费所有权和 [SQLx v0.8.6 Transaction::commit](https://github.com/launchbadge/sqlx/blob/v0.8.6/sqlx-core/src/transaction.rs#L107-L113) 的提交成功边界，提供私有、不可复制的首次派发动作。只借鉴机制，不引入依赖；真实持久化结果仍由 C18 可信回调负责。

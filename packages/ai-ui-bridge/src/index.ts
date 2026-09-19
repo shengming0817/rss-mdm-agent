@@ -1,4 +1,6 @@
 import { RendererError } from "./errors.js";
+export { questions } from "./questions.js";
+export type { Question } from "./questions.js";
 export { RendererError } from "./errors.js";
 export type { RendererErrorCode } from "./errors.js";
 import {
@@ -58,7 +60,7 @@ export const RuntimeSurface = defineComponent({
     error: (_error: RendererError) => true,
     receipt: (_receipt: Receipt) => true,
   },
-  setup(props, { emit, expose }) {
+  setup(props, { emit, expose, slots }) {
     const container = shallowRef<HTMLElement>(),
       error = shallowRef(""),
       stateNote = shallowRef(""),
@@ -198,6 +200,9 @@ export const RuntimeSurface = defineComponent({
               { role: "status", class: "rss-ai-surface-error" },
               error.value,
             )
+          : null,
+        error.value && errorKind.value === "renderer"
+          ? slots.fallback?.()
           : null,
         error.value && (errorKind.value === "renderer" || renderer?.canRetry)
           ? h(

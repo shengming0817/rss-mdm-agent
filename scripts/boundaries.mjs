@@ -33,11 +33,21 @@ export function checkSource(file, source) {
   if (/\bv-html\s*=|\binnerHTML\b|\bouterHTML\b/.test(source))
     errors.push(`${file}: executable HTML sink`);
   const desktop = file.startsWith("apps/desktop/src/");
-  const sourceDir = desktop ? "apps/desktop/src" : "packages/ui/src";
+  const assistant = file.startsWith("apps/desktop/src/assistant/");
+  const feature = /^apps\/desktop\/src\/(assistant|self-service)\//.exec(
+    file,
+  )?.[1];
+  const sourceDir = feature
+    ? `apps/desktop/src/${feature}`
+    : desktop
+      ? "apps/desktop/src"
+      : "packages/ui/src";
   const allowed = desktop
     ? ["vue", "@rss-mdm-agent/ui", "@rss-mdm-agent/ui/style.css"]
     : ["vue"];
   if (file === nativeAdapter) allowed.push("@tauri-apps/api/core");
+  if (assistant)
+    allowed.push("@rss-mdm-agent/ai-client", "@rss-mdm-agent/ai-ui-bridge");
   const descriptor = extname(file) === ".vue" ? parse(source).descriptor : null;
   if (descriptor) {
     const template = descriptor.template?.content ?? "";
@@ -151,7 +161,22 @@ export function checkSource(file, source) {
     if (desktop)
       for (const value of ["Object", "String", "Map", "Date"])
         globals.add(value);
-    if (file === nativeAdapter) globals.add("crypto");
+    if (file === "apps/desktop/src/App.vue") globals.add("crypto");
+    const assistantGlobals = {
+      "apps/desktop/src/assistant/controller.ts": [
+        "Set",
+        "Promise",
+        "AbortController",
+        "setTimeout",
+        "clearTimeout",
+        "setInterval",
+        "clearInterval",
+      ],
+      "apps/desktop/src/assistant/Assistant.vue": ["JSON"],
+      "apps/desktop/src/assistant/ExecutionDetails.vue": ["JSON"],
+      "apps/desktop/src/assistant/QuestionCard.vue": ["JSON"],
+    };
+    for (const value of assistantGlobals[file] ?? []) globals.add(value);
     function staticText(node, seen = new Set()) {
       if (!node || seen.has(node)) return null;
       seen.add(node);
@@ -355,13 +380,14 @@ export function checkTree(treeRoot = root) {
   if (
     Object.keys(desktop.dependencies ?? {})
       .sort()
-      .join() !== "@rss-mdm-agent/ui,@tauri-apps/api,vue" ||
+      .join() !==
+      "@rss-mdm-agent/ai-client,@rss-mdm-agent/ai-ui-bridge,@rss-mdm-agent/ui,@tauri-apps/api,vue" ||
     desktop.dependencies?.["@tauri-apps/api"] !== "2.11.1" ||
     Object.keys(desktop.optionalDependencies ?? {}).length ||
     Object.keys(desktop.peerDependencies ?? {}).length
   )
     errors.push(
-      "desktop production dependencies must be UI, Vue and pinned Tauri core only",
+      "desktop production dependencies must be UI, public AI client/bridge, Vue and pinned Tauri core only",
     );
   const config = JSON.parse(read("apps/desktop/src-tauri/tauri.conf.json"));
   const capabilityFiles = files(

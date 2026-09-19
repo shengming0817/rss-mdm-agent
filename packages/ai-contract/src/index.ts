@@ -1,4 +1,4 @@
-/** V2 product reliability contracts. Data never grants execution authority. */
+/** V3 product reliability contracts. Data never grants execution authority. */
 export type * from "./wire.js";
 export type * from "./ports.js";
 export {
@@ -18,7 +18,11 @@ export {
   selectNegotiation,
 } from "./protocol.js";
 
-export type { AdmissionResult, VerifiedProviderFact } from "./session.js";
+export type {
+  AdmissionResult,
+  ForkAdmissionResult,
+  VerifiedProviderFact,
+} from "./session.js";
 
 export {
   interactionCatalog,
@@ -28,5 +32,6 @@ export {
 } from "./a2ui.js";
 
 export { boundedStream } from "./stream.js";
+export { withinBudget } from "./budget.js";
 
 export { errorCodes } from "./identity.js";

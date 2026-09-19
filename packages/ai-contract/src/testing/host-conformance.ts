@@ -31,7 +31,7 @@ export async function runHostConformance(
 async function runHostScenarios(host: HostPort): Promise<void> {
   unwrap(
     host.negotiate({
-      contractVersion: 2,
+      contractVersion: 3,
       acp: 1,
       durableReceipts: true,
       cursorAttach: true,
@@ -96,9 +96,7 @@ async function runHostScenarios(host: HostPort): Promise<void> {
   assert.ok(
     snapshot.events.some(
       (e) =>
-        e.commandId === command.commandId &&
-        e.body.type === "status" &&
-        e.body.state === "accepted",
+        e.commandId === command.commandId && e.body.type === "command_accepted",
     ),
   );
   assert.equal(snapshot.events.at(-1)!.sequence, snapshot.cursor);

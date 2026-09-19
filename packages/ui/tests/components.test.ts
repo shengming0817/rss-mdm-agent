@@ -10,6 +10,23 @@ import {
 } from "../src";
 
 describe("text-only presentation", () => {
+  it("can block sending while retaining an editable busy-run draft", async () => {
+    const wrapper = mount(MessageComposer, {
+      props: { modelValue: "next round", canSubmit: false },
+    });
+    expect(wrapper.find("textarea").attributes("disabled")).toBeUndefined();
+    await wrapper.find("textarea").setValue("edit during run");
+    expect(wrapper.emitted("update:modelValue")?.[0]).toEqual([
+      "edit during run",
+    ]);
+    await wrapper.find("textarea").trigger("keydown", { key: "Enter" });
+    await wrapper.find("form").trigger("submit");
+    expect(wrapper.emitted("submit")).toBeUndefined();
+    await wrapper.setProps({ canSubmit: true });
+    await wrapper.find("form").trigger("submit");
+    expect(wrapper.emitted("submit")?.[0]).toEqual(["next round"]);
+    wrapper.unmount();
+  });
   it("renders untrusted content as text without actions or links", () => {
     const text =
       "<img src=x onerror=alert(1)><script>alert(1)</script> javascript:alert(1) \x1b]52;c;payload\x07";

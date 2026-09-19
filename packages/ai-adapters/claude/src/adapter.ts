@@ -14,6 +14,7 @@ import {
   boundedJson,
   fingerprint,
   isId,
+  withinBudget,
   type DispatchAttempt,
   type Reconciliation,
   type Binding,
@@ -305,14 +306,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
                       isError: true,
                       content: [{ type: "text", text: "Tool unavailable" }],
                     };
-                  const proposalId = randomUUID(),
-                    budget: Budget = {
-                      timeoutMs: 30000,
-                      signal: AbortSignal.any([
-                        session.abort.signal,
-                        AbortSignal.timeout(30000),
-                      ]),
-                    };
+                  const proposalId = randomUUID();
                   try {
                     const proposal = copy(args);
                     this.emit(turn, {
@@ -320,9 +314,12 @@ export class ClaudeAdapter implements ProviderAgentPort {
                       proposalId,
                       ...proposal,
                     });
-                    const result = await bounded(
-                      tools!.propose(proposal, budget),
-                      budget,
+                    const result = await withinBudget(
+                      () => ({
+                        timeoutMs: 30000,
+                        signal: session.abort.signal,
+                      }),
+                      (budget) => tools!.propose(proposal, budget),
                     );
                     const value = result.ok
                       ? copy(result.value)
@@ -456,7 +453,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
       decode(
         boundedJson(
           {
-            schemaVersion: 2,
+            schemaVersion: 3,
             kind: "event",
             namespace: this.session?.configuration.namespace,
             eventId: "control-attempt",
@@ -526,7 +523,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
     try {
       c = this.checked(command);
       const attemptEvent = {
-        schemaVersion: 2,
+        schemaVersion: 3,
         kind: "event",
         namespace: this.session?.configuration.namespace,
         eventId: "validate-attempt",

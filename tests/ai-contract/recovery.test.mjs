@@ -57,7 +57,7 @@ test("surface mutations cannot leave the stable subscription watermark unchanged
   const store = new MemorySessionStore(),
     seeded = await seedInteraction(store);
   const surface = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "surface",
     namespace: seeded.session.namespace,
     generation: seeded.interaction.generation,

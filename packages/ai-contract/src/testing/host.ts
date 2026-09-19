@@ -29,7 +29,7 @@ import type {
 import { fail, ok, MemorySessionStore, namespaceKey } from "./store.js";
 import canonicalize from "canonicalize";
 import { projectDelta } from "../protocol.js";
-import { VerifiedProviderSession } from "../session.js";
+import { VerifiedProviderSession, providerIdentity } from "../session.js";
 import { ScriptedProvider } from "./provider.js";
 import { withinBudget } from "./budget.js";
 import { decode } from "../codec.js";
@@ -50,7 +50,7 @@ export class FakeHost implements HostPort {
   ) {}
   negotiate(offered: Negotiation): Result<Negotiation> {
     if (this.closed) return fail("unavailable");
-    if (offered.contractVersion !== 2 || offered.acp !== 1)
+    if (offered.contractVersion !== 3 || offered.acp !== 1)
       return fail("unsupported_version");
     if (
       offered.a2ui &&
@@ -90,7 +90,7 @@ export class FakeHost implements HostPort {
       return fail("unavailable");
     }
     const session: Session = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       kind: "session",
       namespace,
       revision: 0,
@@ -175,16 +175,6 @@ export class FakeHost implements HostPort {
         if (!target.ok) return target;
       }
     }
-    const event: Event = {
-      schemaVersion: 2,
-      kind: "event",
-      namespace,
-      eventId: `accepted-${command.commandId}`,
-      sequence: s.lastSequence + 1,
-      commandId: command.commandId,
-      generation: s.binding.generation,
-      body: { type: "status", state: "accepted" },
-    };
     const result = await this.store.accept({
       namespace,
       command,
@@ -192,7 +182,7 @@ export class FakeHost implements HostPort {
       expectedGeneration: s.binding.generation,
       nowMs: this.clock.now(),
       retention: { retryWindowMs: 1000, receiptWindowMs: 2000 },
-      event,
+      eventId: `accepted-${command.commandId}`,
     });
     if (result.ok) this.notify(s.namespace);
     return result;
@@ -286,9 +276,16 @@ export class FakeHost implements HostPort {
       record = row.value;
     if (!record.dispatch) {
       try {
-        await dispatchCommand(this.store, s, commandId, "submitted", {
-          nativeRunId: `run-${commandId}`,
-        });
+        await dispatchCommand(
+          this.store,
+          s,
+          commandId,
+          "submitted",
+          {
+            nativeRunId: `run-${commandId}`,
+          },
+          this.clock.now(),
+        );
       } catch {
         return fail("invalid_input");
       }
@@ -313,7 +310,7 @@ export class FakeHost implements HostPort {
     const events: Event[] = bodies.map(
       (body, index) =>
         ({
-          schemaVersion: 2,
+          schemaVersion: 3,
           kind: "event",
           namespace,
           eventId: `script-${s.lastSequence + index + 1}`,
@@ -333,7 +330,7 @@ export class FakeHost implements HostPort {
         if (row.commandId === commandId && row.status === "pending") {
           interactions.push({ ...row, status: "unavailable" });
           events.push({
-            schemaVersion: 2,
+            schemaVersion: 3,
             kind: "event",
             namespace,
             eventId: `script-${s.lastSequence + events.length + 1}`,
@@ -364,7 +361,7 @@ export class FakeHost implements HostPort {
           };
           surfaces.push(surface);
           events.push({
-            schemaVersion: 2,
+            schemaVersion: 3,
             kind: "event",
             namespace,
             eventId: `script-${s.lastSequence + events.length + 1}`,
@@ -381,7 +378,7 @@ export class FakeHost implements HostPort {
       : [];
     if (terminal)
       events.push({
-        schemaVersion: 2,
+        schemaVersion: 3,
         kind: "event",
         namespace,
         eventId: `script-proof-${s.revision}`,
@@ -406,7 +403,7 @@ export class FakeHost implements HostPort {
       commands: terminal
         ? [
             {
-              schemaVersion: 2,
+              schemaVersion: 3,
               kind: "commandRecord",
               command: record.command,
               receipt: record.receipt,
@@ -437,7 +434,7 @@ export class FakeHost implements HostPort {
     if (!found.ok) return found;
     const s = found.value;
     const interaction: Interaction = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       kind: "interaction",
       category: "question",
       namespace,
@@ -461,7 +458,7 @@ export class FakeHost implements HostPort {
       interactions: [interaction],
       events: [
         {
-          schemaVersion: 2,
+          schemaVersion: 3,
           kind: "event",
           namespace,
           eventId: `question-${interactionId}`,
@@ -495,7 +492,8 @@ export class FakeHost implements HostPort {
     const session = await this.store.session(namespace);
     if (!session.ok) return session;
     if (
-      canonicalize(session.value.binding) !== canonicalize(observation.binding)
+      canonicalize(providerIdentity(session.value.binding)) !==
+      canonicalize(providerIdentity(observation.binding))
     )
       return fail("stale_binding");
     const command = await this.store.command(namespace, observation.commandId);
@@ -509,6 +507,7 @@ export class FakeHost implements HostPort {
       dispatch.attemptId !== observation.attemptId ||
       dispatch.observerGeneration !== observation.binding.generation ||
       dispatch.nativeSessionId !== observation.binding.nativeSessionId ||
+      dispatch.nativeThreadId !== observation.binding.nativeThreadId ||
       dispatch.nativeRunId !== observation.binding.nativeRunId ||
       dispatch.nativeRequestId !== observation.binding.nativeRequestId
     )

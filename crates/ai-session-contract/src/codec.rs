@@ -50,7 +50,7 @@ fn error(code: Diagnostic) -> ContractError {
 }
 fn serde_error<E: serde::de::Error>(code: Diagnostic) -> E {
     E::custom(format!(
-        "ai-v2:{}",
+        "ai-v3:{}",
         serde_json::to_string(&code).expect("closed diagnostic")
     ))
 }
@@ -62,7 +62,7 @@ fn from_serde(e: serde_json::Error) -> ContractError {
         return error(Diagnostic::Number);
     }
     let code = message
-        .strip_prefix("ai-v2:")
+        .strip_prefix("ai-v3:")
         .and_then(|s| serde_json::from_str(s.split(" at line ").next().unwrap_or(s)).ok())
         .unwrap_or(Diagnostic::Encoding);
     error(code)
@@ -194,7 +194,7 @@ fn check_limits(limits: &Limits) -> Result<(), ContractError> {
     }
     Ok(())
 }
-/// Decode strict bounded V2 JSON. Does not authenticate or dispatch anything.
+/// Decode strict bounded V3 JSON. Does not authenticate or dispatch anything.
 pub fn decode(bytes: &[u8], limits: &Limits) -> Result<WireRecord, ContractError> {
     check_limits(limits)?;
     if bytes.len() > limits.max_bytes {
@@ -210,7 +210,7 @@ pub fn decode(bytes: &[u8], limits: &Limits) -> Result<WireRecord, ContractError
     .deserialize(&mut deserializer)
     .map_err(from_serde)?;
     deserializer.end().map_err(from_serde)?;
-    if value.get("schemaVersion").is_some_and(|v| v != 2) {
+    if value.get("schemaVersion").is_some_and(|v| v != 3) {
         return Err(error(Diagnostic::Version));
     }
     if !VALIDATOR.is_valid(&value) {
@@ -221,6 +221,11 @@ pub fn decode(bytes: &[u8], limits: &Limits) -> Result<WireRecord, ContractError
 }
 fn context(v: &Value) -> Result<(), ContractError> {
     let bad = match v["kind"].as_str() {
+        Some("event") if v["body"]["type"] == "command_accepted" => {
+            context(&v["body"]["command"])?;
+            v["commandId"] != v["body"]["command"]["commandId"]
+                || v["namespace"]["sessionId"] != v["body"]["command"]["sessionId"]
+        }
         Some("snapshotPage") => {
             let mut invalid = v["cursor"] != v["session"]["lastSequence"];
             for field in ["events", "commands", "interactions", "surfaces"] {

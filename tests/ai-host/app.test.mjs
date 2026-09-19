@@ -59,7 +59,7 @@ test("local app uses a private ACP socket and a real SDK worker against fixed mo
     const session = await client.createSession(),
       id = session.namespace.sessionId;
     await client.submit({
-      schemaVersion: 2,
+      schemaVersion: 3,
       kind: "command",
       commandId: "native",
       sessionId: id,
@@ -82,7 +82,7 @@ test("local app uses a private ACP socket and a real SDK worker against fixed mo
     await client.initialize();
     const restored = await client.restore(id);
     assert.equal(restored.namespace.sessionId, id);
-    assert.equal(restored.status, "active");
+    assert.equal(restored.sessionStatus, "active");
     assert.notEqual(restored.commands.native.state, "terminal");
     finishReply();
     const deadline = Date.now() + 15000;

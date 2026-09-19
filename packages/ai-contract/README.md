@@ -1,4 +1,4 @@
-# AI Runtime V2 公共契约
+# AI Runtime V3 公共契约
 
 A01 / #2439，范围基线 `ai-runtime-20260918`。本包拥有产品可靠性 schema 和 TypeScript ports；Rust crate `ai-session-contract` 消费生成绑定。AI Host、AI SQLite 和 adapters 使用 Node/TS；Rust 执行授权、批准、intent、审计和结果权威独立。当前交付为契约、确定性测试替身和共用 conformance，不含真实 Host、数据库、模型或工具隔离证明。
 
@@ -6,7 +6,7 @@ A01 / #2439，范围基线 `ai-runtime-20260918`。本包拥有产品可靠性 s
 
 [schema/runtime.schema.json](schema/runtime.schema.json) 是唯一产品 wire 声明。`pnpm generate:ai-contract` 通过 typify 0.8.0 / json-schema-to-typescript 16.0.0 生成 Rust/TS；`pnpm check:ai-contract` 验证生成物和 Rust 内嵌 schema 投影零差异。只使用内部引用、闭合对象、常量标签 oneOf、enum 和边界约束；不使用复杂条件、anyOf 或任意外部 schema 解析。标准 ACP/A2UI 保持上游 owner。
 
-V2 一次替换 C02 的 V1。没有 V1 reader、alias、双写、fallback、转换器或历史数据导入。旧 Message/Proposal 的展示和不可信语义在 V2 Event["body"] 延续；旧命令缺少 commandId、可信 namespace 和派发账本，不可重建派发资格。升级消费者应重新建立会话。#2395 的历史源码、tests 和交付证据由 Git/PR 保存。
+V3 直接替换 V2（以及更早的 C02 V1）。`command_accepted` 稳定事件完整携带不可变 Command；旧 `status/accepted` 删除。`accept` 只接收 `eventId`，由同一事务构造事件并提交命令、receipt 与事件，客户端不再补读快照取得用户输入。没有旧 reader、alias、双写、fallback、转换器或历史导入；旧消费者必须整体更新，旧数据库只读拒绝。历史源码与交付证据由 Git/PR 保留。
 
 生成 DTO 只表达数据。外部字节必须经过 `decode(input, limits)`；不要把直接反序列化/类型断言当作验证。所有字符串（含 member name）累计 UTF-8 预算，容器深度最多64，全部 JSON 整数限定安全范围；拒绝重复键、非有限数、非法 Unicode、未知版本/字段。`ContractError.code` 不含正文或动态字段名。`fingerprint(command, limits)` 对已校验命令做 JCS/SHA-256，包含完整输入、expiresAtMs 和 commandId；可信 namespace 单独加入存储唯一键。键顺序不同不产生内容冲突。
 
@@ -14,7 +14,7 @@ V2 一次替换 C02 的 V1。没有 V1 reader、alias、双写、fallback、转�
 
 `ProviderAgentPort.createSession(configuration, budget)` 原子返回同一 incarnation 的 binding 与 capabilities；其余操作为 submit/cancel/respond/observe/reconcile/close，`resume(binding, configuration, budget)` 是可选接缝，同样原子返回 binding+capabilities，直接替换旧的裸 Binding 返回形状。配置只传显式工作目录、config revision、账号引用、权限选择和宿主 ToolEndpoint，不将秘密写进 wire。ToolEndpoint 返回的是模型工具协议结果，不能签发批准或直连 runner。adapter 自己持有 SDK、进程、模型 transcript 和 native session/run/request ID。
 
-能力分基础会话和受控工具 profile。基础可建立会话、文本多轮、输出/状态/终态和取消；取消能力区分 unsupported/unknown/request_only/terminal_acknowledged。跨进程 resume、steer、fork、子 agent、终端、结构化追问及多模态显式声明；扩展操作由具体 adapter 扩展接口承接，公共 V2 input 只接纳文本、取消和回答，不伪造通用多模态载荷。缺少能力不能请求对应操作。
+能力分基础会话和受控工具 profile。基础可建立会话、文本多轮、输出/状态/终态和取消；取消能力区分 unsupported/unknown/request_only/terminal_acknowledged。跨进程 resume、steer、fork、子 agent、终端、结构化追问及多模态显式声明；扩展操作由 A01 定义的受控 extension port 承接，公共 V3 input 只接纳文本、取消和回答，不伪造通用多模态载荷。缺少能力不能请求对应操作。
 
 能力声明必须绑定 provider/adapter version、config、账号及 generation；Host 在使用观察事件前核对完整 binding 与命令账本的 native run/request 关联。resume 必须核对 provider/config/account，跨 generation 仅在 across_processes 能力与 provider 成功响应后成立。展示历史不恢复模型上下文。`ProviderConfiguration` 是纯数据，权限为 tools_disabled 或 host_mediated；ToolEndpoint 与可信平台 verifier 通过 parent-only ProviderAdmission 参数单独注入，verifier 不跨 worker IPC。Host 通过 `VerifiedProviderSession.open` 或 `VerifiedProviderSession.restore(port, previousSession, configuration, budget)` 消费原子结果并完成验证；恢复显式消费当前配置，核对原 session ID、新 generation 与 across_processes 能力，重新执行 verifier；已打开 runtime 的准入失败会以独立有界预算关闭，调用方仍须处理/重试未完成的关闭。私有构造和运行时 token 阻止同形对象/JSON 冒充 admission；证据固定完整 binding、capabilities 与 endpoint 对象身份，跨 incarnation 使用须重新验证。verifier 是受信代码边界，具体平台/版本的原生工具旁路证明由 adapter 持有；本包不从字符串或模型声明推导该证明。
 
@@ -23,6 +23,8 @@ V2 一次替换 C02 的 V1。没有 V1 reader、alias、双写、fallback、转�
 `SessionStore` 提供 create/session/accept/command/commit/rebind/snapshot/events/surface/recovery/deliveries/retire/pruneRetired/close。所有持久化操作统一返回 Result，分页为 Result<Page<T>>，pruneRetired 为 Result<number>；参数错误返回 invalid_input，后端错误保留 unavailable 和 retry。accept 和 commit 是原子事务接缝；commit 核对 expectedRevision + expectedGeneration、推进 revision、提交稳定事件及必要 delivery，不接纳任意 async 事务回调。普通 commit 不得改变 provider/version、config、account、native session、generation 或 capabilities，运行坐标只能指向已确认 submitted 的活动命令 dispatch，清空须对应命令已 terminal/invalidated 或有明确未提交证据；它不是跨 generation 恢复入口。interaction 的原命令、native run、nativeCallbackId、request、期限和 callbackLifetime 不可重绑。恢复查询和 delivery 查询有页大小与 opaque continuation，不承诺多 worker lease。
 
 ## 可靠性与交互
+
+`withinBudget(factory, operation, lifetime?)` 是共享的有界调用封装：将调用方取消、可选实例关闭和 deadline 传到同一个子 `Budget.signal`，并以 watchdog 约束不响应取消的 port。调用结束时清除计时器、解除父 signal 监听并终止子 signal；调用方 signal 不会被子调用结束所取消。Node 24.14.1 的 composite signal 保留问题通过显式监听释放规避，不把 signal 取消当作进程退出或业务副作用回滚证明。
 
 - namespace = tenant + principal + authority + logical session。相同 commandId/相同规范内容返回原 receipt；内容不同返回 content_conflict，不能覆盖旧记录。receipt 只有真实 store commit 后才能称 durable；测试替身的内存接纳不作此承诺。
 - accepted 只表示持久接纳；dispatching 表示派发意图已保存；running 需要原生确认；terminal 需要明确模型终态：状态投影必须保留原 dispatch，并与同批、同 command/generation、同 outcome 的 terminal Event 一起提交；accepted 或 unknown 不能凭空变成 completed。dispatching/running 结果不明进入 reconciliation_required，只有带原 attempt 的明确 not_submitted 证据且原重试期限内的 queue_next 才能回到 accepted。普通输入 queue_next；steer 必须精确匹配运行及能力。
@@ -37,6 +39,7 @@ V2 一次替换 C02 的 V1。没有 V1 reader、alias、双写、fallback、转�
 ACP 固定官方 SDK 1.4.0 / schema-v1.21.0。标准 session/new、session/prompt、session/update、session/cancel、session/request_permission 保持上游语义；prompt 的最终响应必须有真实 stopReason，不能提前返回 accepted receipt。无 stopReason 的错误走标准错误路径，不制造成功响应。
 
 产品能力在 capabilities.\_meta 的 `rss-mdm-agent.ai-runtime` 下协商 contractVersion=2、durableReceipts、cursorAttach，以及可选 A2UI version/catalogId/catalogVersion。`_rss-mdm-agent/submit`、`/snapshot`、`/attach` 和 `/update` 是扩展方法的完整产品前缀约定（代码中的 extension 常量为准），只有协商后使用；未知 request 按 ACP 返回 method-not-found，未知 notification 按上游规则忽略。A01 只冻结约定和 fixtures；实际 transport/协议 service 归 A04。
+产品能力在 capabilities._meta 的 `rss-mdm-agent.ai-runtime` 下协商 contractVersion=3、durableReceipts、cursorAttach，以及可选 A2UI version/catalogId/catalogVersion。`_rss-mdm-agent/submit`、`/snapshot`、`/attach` 和 `/update` 是扩展方法的完整产品前缀约定（代码中的 extension 常量为准），只有协商后使用；未知 request 按 ACP 返回 method-not-found，未知 notification 按上游规则忽略。A01 只冻结约定和 fixtures；实际 transport/协议 service 归 A04。
 
 A2UI 固定 v0.9.1 snapshot，客户端 action、服务端 surface 生命周期、basic catalog 与 common types schema 原样保留在 [upstream](schema/upstream/a2ui/NOTICE.md)。`SurfaceState` 绑定 session/run、surfaceId、surfaceInstanceId、revision、interaction、component/event、catalog/version。create/update/delete 的上游 payload 不改写；产品扩展携带关联 metadata。一次新建 surface 使用新 instance ID，创建 revision 为0，更新/删除以 session revision/generation CAS 为前提严格递增1，身份字段不可重绑；active→deleted 持久化 tombstone 且不可复活，同时使 pending interaction unavailable。snapshotPage 与事件恢复这些关联和实际内容；完整有界 messages 与 surface 稳定事件同批发布，内容校验由公共 validateSurface 完成，A04 在发布和渲染前消费。
 
@@ -109,3 +112,15 @@ Claude adapter 的合并集成同样使用显式 DispatchAttempt 和完整 Comma
 集成入口：浏览器使用主入口的 codec、wire 与协议；Node Host 从 `@rss-mdm-agent/ai-contract/session` 导入 VerifiedProviderSession/workspaceIdentity，从 `/transitions` 消费持久化状态规则。内存和 SQLite 共用 `/read-views` 的 snapshotPage/listSessions 同水位分页；续页绑定 scope、limit 和不可变视图，30秒失效，重启后返回 cursor_expired，单实例最多128份视图/16MiB保留内容。客户端重新抓取快照后按持久 cursor 接续，分页缓存不授予回调权限。
 
 A03 收口：ProviderAgentPort 仅保留统一 `dispatch`，原生提交确认保持 dispatching，实际运行观察才进入 running。控制命令 acknowledged 和本地 queued_cancelled / cancelled 是闭合终态，不使用模型 Outcome。Capabilities 不再声明 queue；持久 FIFO 属于 Host。`VerifiedProviderFact` 覆盖 dispatch / observe / reconcile，并在当前 revision/generation CAS 时校验原 attempt。`SessionStore.recoverUnavailable` 原子冻结恢复不可用的旧绑定及回调，`Session.status=recovery_required` 由同一列表/快照展示。OS 启动 fence 由 Host 独立 `WorkerLaunchFenceStore` 持有，公共 `SessionStore` 不含 PID/PGID/artifact。详见 [Host](../ai-host/README.md)。
+
+## 原生 thread 与 turn 的多命令绑定（#2405）
+
+Binding 和 DispatchAttempt 增加可选 nativeThreadId；拥有独立 thread 的 provider 必须同时持久化原生 session/thread，不得折叠或互相推导。它属于跨 generation 不可变的 providerIdentity；恢复、reconcile、观察投影和 SQLite 均校验。原生模型只有 session 的 provider 不填写 thread，禁止为 Codex 缺失 thread 的记录伪造兼容值。
+
+同一原生 turn 可以接收一个普通 prompt 和多个 steer，每条命令保留独立 attempt/nativeRequestId。任何未决已派发 prompt（含 unknown）都会阻止下一条普通 prompt；steer 只能定位当前已确认普通 prompt 的活动 run，intent 即携带目标 nativeRunId。输出按实际命令坐标核验，不能把 session.binding 当前 request 当成同 turn 唯一 request。run/request 只有在该 turn 的所有已派发 prompt 结束后才可整体清除；未确认 steer 不因普通 prompt 终态而自动结束，必须核实原 attempt。ACP cancel 按 native session/thread/run 去重，优先选普通 prompt 作为中断目标。
+
+## Provider 扩展与诊断
+
+`ProviderInstance` 明确分成 `agent: ProviderAgentPort`、`extensions.fork?: ProviderForkPort` 和 `diagnostics: ProviderDiagnosticsPort`。正式方法不返回 provider 生成的实验 DTO；history 由 adapter 内部恢复算法持有。diagnostics 只包含封闭种类与丢弃计数，不承接可靠业务事件。
+
+Host 先持有 child instance，再用已经准入的 `parentSession.fork(child, throughTurnId, configuration, budget)` 执行 A01 共同准入。源 namespace/绑定取自名义 parent proof，不接收调用方伪造来源。该操作验证权限域、账号、配置、workspace、新原生身份及 child 的受控工具 verifier；失败消费并关闭 child，保留 unknown 与 cleanupError，绝不重试 native 创建。adapter 的 extension 只返回原生事实，不反向构造或准入子会话。Host/A03 持有创建意图和结果的持久化、未确认实例清理与客户端发布；现有基础 ProviderAgentPort 消费者可继续只消费 agent。

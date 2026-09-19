@@ -14,6 +14,7 @@ execution-approval = { path = "../execution-approval" }
 execution-lifecycle = { path = "../execution-lifecycle" }
 execution-interaction = { path = "../execution-interaction" }
 execution-sqlite = { path = "../execution-sqlite" }
+schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_json_canonicalizer.workspace = true

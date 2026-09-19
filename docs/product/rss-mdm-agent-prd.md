@@ -11,6 +11,8 @@ Owner repository：rss-mdm-agent。任务容器：[EPIC #2392](https://dev.azure
 C05 经用户扩大范围：提取独立 Vue UI 包和可启动的 Tauri 桌面基础壳，采用根级 `apps/`、`packages/`、`crates/` 组织。
 C15 桌面自助页面通过受限 IPC 消费 Rust 内存固定测试服务；浏览器使用同源只读快照。页面不接入模型、持久化或真实执行，旧展示入口直接替换。C15 仅拥有测试服务接缝，C16 拥有会话页面，正式执行桥接与共同闭环仍归 C20；具体启动与验证见[桌面指南](../guides/desktop-development.md)。
 
+C16 在同一应用壳直接增加 AI 助手导航，消费公共 ai-client / ai-ui-bridge。固定 Host 测试装配复用同一 App；普通启动尚未注入真实 AI 服务时显示未连接。执行详情来自 Rust execution-app 的单次授权记录读取，冻结计划摘要及 TypeScript 类型由 Rust 生成，S1 结果持续标识测试。AI wire V3 与 AI SQLite schema v2 直接替换旧版，不迁移或双读；正式端到端装配仍归 C20。页面与故障验收见[助手指南](../guides/assistant-development.md)。
+
 ## 1. 产品定位与完成边界
 
 用户可以不使用 AI 完成已授权的软件和工具操作，也可以让 AI 发现同一目录、建议操作并在委托范围内调用。
@@ -217,7 +219,7 @@ AI请求与手动请求都不能自行取得可执行capability。运行模式�
 | execution-capability / admission / lifecycle | 能力、裁决、执行转换 | execution-contract；相互不必链接 |
 | execution-approval | 消费完整C07裁决、验证批准适用性、输出消费意图 | execution-admission、execution-contract |
 | script-plan / software-plan | 原生脚本启动与安装决策描述 | execution-contract；不spawn |
-| packages/ai-adapters/{codex,claude,deepseek}（Claude 已落地，其余规划） | Node/TS 原生引擎协议与会话适配，分别拥有 SDK/进程 | A01 ProviderAgentPort（替换历史 C02 契约），无 PR/执行内核/UI 依赖 |
+| packages/ai-adapters/{codex,claude,deepseek}（Codex/Claude 已落地，DeepSeek 规划） | Node/TS 原生引擎协议与会话适配，分别拥有 SDK/进程 | A01 ProviderAgentPort（替换历史 C02 契约），无 PR/执行内核/UI 依赖 |
 | execution-mcp | 工具协议到执行服务port | execution-contract、service-catalog、rmcp |
 | execution-sqlite | journal/交互/批准消耗的原子持久化 | contract、interaction、admission（完整裁决审计）、approval、lifecycle |
 | execution-app | 能力/授权/批准/持久化和runner port的产品组装 | C06–C09、C18；不加载AI引擎 |
@@ -230,7 +232,7 @@ AI请求与手动请求都不能自行取得可执行capability。运行模式�
 
 经 2026-09-18 授权，当前 provider 规划为 Codex app-server、Claude Agent SDK、DeepSeek Harness，
 由各自 TypeScript adapter 映射原生会话/事件/权限，消费 [A01 #2439](https://dev.azure.com/shengming0923/rss/_workitems/edit/2439) 契约。
-这里记录范围与 owner，不宣称已实现或通过真实引擎验证；DeepSeek Harness 仍是规划。
+这里记录范围与 owner；DeepSeek Harness 的独立适配边界与组件验证入口见[包说明](../../packages/ai-adapters/deepseek/README.md)，实际证据不替代生产 Host/平台接入验收。
 
 | Provider | 实施 owner | 验证责任 |
 | --- | --- | --- |
@@ -243,9 +245,9 @@ AI请求与手动请求都不能自行取得可执行capability。运行模式�
 
 C03 的当前实现见[目录核心](../../crates/service-catalog/README.md)与[后端对齐](../guides/202609130000-2396-service-catalog.md)：一个格式与参数规则可显式演进，未知语义拒绝；新增目录内容无需修改核心。选择保留目录/资源摘要、变体、参数和要求；上下架/期限绑定快照，外部展示说明绑定精确选择和目标。核心不计算能力或授权，缺少后续 owner 接线时不能声称执行闭环完成。
 
-C01 执行契约保持自身版本与 Rust owner；A01 将 C02 完整替换为 AI Runtime V2，单一 JSON Schema 生成两端绑定，TS 拥有 Provider/Host/SessionStore ports。契约、安全解码与隔离消费见[契约开发说明](../guides/contracts-development.md)及 [AI Runtime 契约](../../packages/ai-contract/README.md)。数据校验和角色声明不产生可信主体、批准或执行证据。V1 不兼容，无历史命令导入、alias 或双写。历史 C02 交付由 Git/PR 保留。
+C01 执行契约保持自身版本与 Rust owner；A01 将 C02 完整替换为 AI Runtime；当前 wire 为 V3，单一 JSON Schema 生成两端绑定，TS 拥有 Provider/Host/SessionStore ports。契约、安全解码与隔离消费见[契约开发说明](../guides/contracts-development.md)及 [AI Runtime 契约](../../packages/ai-contract/README.md)。数据校验和角色声明不产生可信主体、批准或执行证据。V1/V2 不兼容，无历史命令导入、alias 或双写。历史 C02 交付由 Git/PR 保留。
 
-范围基线 `ai-runtime-20260918`：北向 ACP + A2UI，不使用 AG-UI；原生引擎拥有模型上下文，TS AI Host 拥有产品会话、命令接纳及展示/交互投影，Rust 执行服务拥有业务执行权威。TS 不直接写 Rust 批准、intent 或结果表。A01 提供公共契约、fake Host 和 conformance；A04 提供标准 ACP 接入、统一客户端投影及 Vue/Lit renderer 接缝，开发与独立消费见[ACP–A2UI 开发](../guides/ai-access-development.md)。Claude 原生适配器已在独立包落地，见 [SDK adapter](../../packages/ai-adapters/claude/README.md)。A02 的 [AI SQLite adapter](../../packages/ai-store-sqlite/README.md)提供真实事务、独占与恢复存储；A03 的 [AI Host](../../packages/ai-host/README.md)提供持久 FIFO、独立 provider worker、核实恢复及[私有本地运行入口](../../apps/ai-host/README.md)。Host 通过独立 lifecycle fence port 管理 OS 启动记录，所有关闭等待受同一预算约束；恢复失败隔离 runtime，客户端分别显示 attachment 与持久健康状态。Claude 持久目录要求本地私有所有权。运行包由根 manifest 固定 Node 24.14.1 并按版本/平台核对 checksum，实际生命周期验收限定 macOS arm64；最终 Tauri 产品装配仍由 #2413 持有。固定模型 HTTP transport 的真实 SDK 测试与外部模型实测分别记录，不能互相替代。
+范围基线 `ai-runtime-20260918`：北向 ACP + A2UI，不使用 AG-UI；原生引擎拥有模型上下文，TS AI Host 拥有产品会话、命令接纳及展示/交互投影，Rust 执行服务拥有业务执行权威。TS 不直接写 Rust 批准、intent 或结果表。A01 提供公共契约、fake Host 和 conformance；A04 提供标准 ACP 接入、统一客户端投影及 Vue/Lit renderer 接缝，开发与独立消费见[ACP–A2UI 开发](../guides/ai-access-development.md)。Codex/Claude 原生适配器已在独立包落地，见 [app-server adapter](../../packages/ai-adapters/codex/README.md) 与 [SDK adapter](../../packages/ai-adapters/claude/README.md)。Codex 固定0.155.0直接接入原生协议，实现基础对话、恢复、steer；显式终态fork通过 A01 受控扩展及 Host 准入接缝提供，子会话持久化与产品接入归 A03。动态工具与子代理不支持。C12/#2405 尚未完成可信真实模型身份与连续性验收，不能由本地替身通过或本 PR 合并推定完成。真实进程/本地模型传输、真实模型端点、平台受控工具和C20装配分别提供证据。A02 的 [AI SQLite adapter](../../packages/ai-store-sqlite/README.md)提供真实事务、独占与恢复存储；A03 的 [AI Host](../../packages/ai-host/README.md)提供持久 FIFO、独立 provider worker、核实恢复及[私有本地运行入口](../../apps/ai-host/README.md)。Host 通过独立 lifecycle fence port 管理 OS 启动记录，所有关闭等待受同一预算约束；恢复失败隔离 runtime，客户端分别显示 attachment 与持久健康状态。Claude 持久目录要求本地私有所有权。运行包由根 manifest 固定 Node 24.14.1 并按版本/平台核对 checksum，实际生命周期验收限定 macOS arm64；最终 Tauri 产品装配仍由 #2413 持有。固定模型 HTTP transport 的真实 SDK 测试与外部模型实测分别记录，不能互相替代。
 
 durable accepted 和稳定 cursor 只能在事务提交后确认；命令账本兼任 inbox 与 provider 派发意图，事件日志用于回放，只有可靠跨服务请求/结果使用 delivery。取消派发不证明终止，未知派发先核实；generation 和 config/账号版本阻止旧回调更新新运行。ACP prompt 保持最终响应，receipt/cursor/attach 由协商扩展表达。A2UI surface/action 与会话/运行/交互/revision 精确关联，无 A2UI 时降级到标准文本、工具状态和权限交互。能力与 binding 原子建立，受控工具准入必须消费可信 verifier 的当前 incarnation 证据；surface 删除持久化并在回答事务内再校验，终态投影必须有同批匹配事件。Host/Store 提供有界关闭，分页错误遵守统一 Result。同一 turn 可有多个独立 callback，原生 callback ID 与父请求坐标分离；问题内容与 pending 记录原子发布，回答不签发执行批准。客户端保存的选择不能超出 offer；交互展示与 live/snapshot 共用权威期限、callback lifetime 和首答命令身份。到期自动禁用，竞争 loser 不再重试，本地 winner 丢回执仍按原命令恢复。恢复重绑消费重新验证的 provider 证据；原 attempt 与当前 observer 分离，旧回调及 surface 原子失效且留下稳定事件。未知提交只有明确未提交证据才允许原期限内重试，本地失效不伪造模型终态。具体可靠性基线由 A01 公共契约持有。
 
@@ -339,9 +341,11 @@ PowerShell/Bash是原生载荷；Rust提供启动、预算、权限、恢复，J
 C02工具提案无需消费执行内核；C17通过port可用测试服务验收；C15人用UI不依赖AI，C20 先以 Codex 完成产品闭环，不等待 Claude/DeepSeek；A06 汇合三引擎。
 AI 产品 schema 变更回 A01 协调；C12/C13/A05 只改各自 provider 目录，A03 持有公共运行支撑，C20 唯一拥有最终桌面装配。公共 workspace/lock/工程入口每个 wave 串行集成，不等待 C20 才建立基础工程。
 C05组件、C15自助页面、C16对话页面分别独占目录；交互核心不拥有Vue组件，host将C04结果映射到UI。
-C18 的当前公共入口与 S1 测试存储证据见 [execution-sqlite](../../crates/execution-sqlite/README.md)。回执兼作可靠结果，由各 consumer 的持久确认推进投递，乱序确认不能跳过未确认结果；失败/陈旧 runner 事件保留提交的 attempt 与裁决原因。受保护 BLOB 在物化前检查大小，错误区分调用输入、配置及操作/确认/初始化恢复。查询/拉取/确认不派发 runner；只提供显式测试 authority 初始化，真实 ACL/可信身份与平台隔离仍归后续交付。
+C09/C18 分别提供普通命令与可信观察入口，输入类型互斥；普通 Host 无需证据验证器，C19 仅在观察路径装配验证器。两个路径共用幂等、审计和原子提交机制。C18 的当前公共入口与 S1 测试存储证据见 [execution-sqlite](../../crates/execution-sqlite/README.md)。回执兼作可靠结果，由各 consumer 的持久确认推进投递，乱序确认不能跳过未确认结果；失败/陈旧 runner 事件保留提交的 attempt 与裁决原因。受保护 BLOB 在物化前检查大小，错误区分调用输入、配置及操作/确认/初始化恢复。查询/拉取/确认不派发 runner；只提供显式测试 authority 初始化，真实 ACL/可信身份与平台隔离仍归后续交付。
 
 C18 独占 Rust 执行 SQLite migration，A02 独占 TS AI SQLite migration；C19不另建表；Cargo/lock/UI package配置与根入口由单一集成人串行合并。
+
+当前执行存储只接受 C09/C18 的 v2 格式；类型拆分同时提升快照、数据库和指纹域版本。当前无旧数据迁移要求，不提供 v1 reader、升级迁移或升级回归；不支持版本保留原库并拒绝打开。
 
 C19 的当前公共入口与 S1 证据见 [execution-app](../../crates/execution-app/README.md)。应用服务区分原请求重放与显式新尝试，每次新尝试经当前能力/C07/C08及原子提交；仅首次提交释放一次派发。服务 owner 独立于窗口和模型调用，丢失 runner 历史保留 Unknown，不从计划合成成功。配置由可信 host 加载/持久审计，应用验证版本、硬上限、原子替换及 LKG/degraded 接缝；C20 另行承担实际 UI/AI 接线，生产身份和真实 runner 仍归后续阶段。
 

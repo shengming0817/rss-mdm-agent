@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
-export const version = 1;
+export const version = 2;
 export const applicationId = 0x52534149;
 export const scope = "tenant_id, principal_id, authority_id, session_id";
 export const whereScope =

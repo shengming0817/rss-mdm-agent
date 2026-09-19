@@ -65,8 +65,18 @@ export async function verifiedReconciliation(
   record: CommandRecord,
   status: Reconciliation["status"],
   outcome: import("../wire.js").Outcome = "completed",
+  workingDirectory = ".",
+  acknowledgement?: import("../wire.js").Acknowledgement,
 ) {
-  const binding = session.binding;
+  const binding = {
+    ...session.binding,
+    ...(record.dispatch?.nativeRunId
+      ? { nativeRunId: record.dispatch.nativeRunId }
+      : {}),
+    ...(record.dispatch?.nativeRequestId
+      ? { nativeRequestId: record.dispatch.nativeRequestId }
+      : {}),
+  };
   const port = {
     createSession: async () => ({
       ok: true as const,
@@ -80,6 +90,7 @@ export async function verifiedReconciliation(
         binding,
         status,
         ...(status === "terminal" ? { outcome } : {}),
+        ...(status === "acknowledged" ? { acknowledgement } : {}),
       },
     }),
     close: async () => ({ ok: true as const, value: { processStopped: true } }),
@@ -92,7 +103,7 @@ export async function verifiedReconciliation(
         provider: binding.provider,
         config: binding.config,
         accountRef: binding.accountRef,
-        workingDirectory: ".",
+        workingDirectory,
         permissions: "tools_disabled",
       },
       defaultBudget(),
@@ -238,7 +249,7 @@ export async function runRecoveryConformance(
     false,
   );
   const accepted: CommandRecord = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "commandRecord",
     command: rebound.command,
     receipt: rebound.receipt,
@@ -250,7 +261,6 @@ export async function runRecoveryConformance(
       attempt: rebound.dispatch!,
       resolution: "not_submitted",
     },
-    { type: "status", state: "accepted" },
   ]);
   // Reconciliation events retain the attempt even though the next state has none.
   const retry = {
@@ -453,7 +463,7 @@ async function failureAndDelivery(store: SessionStore) {
   let head = unwrap(await store.session(initial.namespace));
   const event = unwrap(await store.events(initial.namespace, 0, 1))[0];
   const delivery: import("../wire.js").Delivery = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "delivery",
     namespace: initial.namespace,
     operationId: "delivery-1",

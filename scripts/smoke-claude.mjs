@@ -26,6 +26,28 @@ const schema = JSON.parse(
     "utf8",
   ),
 ).$defs;
+export function smokeCommand(id, text, expiresAtMs) {
+  return {
+    schemaVersion: schema.Command.properties.schemaVersion.const,
+    kind: "command",
+    sessionId: "smoke-session",
+    commandId: id,
+    expiresAtMs,
+    input: { type: "prompt", text, policy: "queue_next" },
+  };
+}
+export function smokeSession(namespace, binding, capabilities) {
+  return {
+    schemaVersion: schema.Session.properties.schemaVersion.const,
+    kind: "session",
+    namespace,
+    revision: 0,
+    lastSequence: 0,
+    status: "active",
+    binding,
+    capabilities,
+  };
+}
 export function describeFailure(stage, detail = {}) {
   const stages = [
     "open",
@@ -164,14 +186,7 @@ async function main() {
     detail = {};
     const sent = await adapter.dispatch(
       binding,
-      {
-        schemaVersion: 2,
-        kind: "command",
-        sessionId: "smoke-session",
-        commandId: id,
-        expiresAtMs: Date.now() + 120000,
-        input: { type: "prompt", text, policy: "queue_next" },
-      },
+      smokeCommand(id, text, Date.now() + 120000),
       {
         attemptId: `attempt-${id}`,
         originGeneration: binding.generation,
@@ -238,16 +253,7 @@ async function main() {
     detail = {};
     const rebound = await VerifiedProviderSession.restore(
       resumed,
-      {
-        schemaVersion: 2,
-        kind: "session",
-        namespace: configuration.namespace,
-        revision: 0,
-        lastSequence: 0,
-        status: "active",
-        binding: second,
-        capabilities: opened.value.capabilities,
-      },
+      smokeSession(configuration.namespace, second, opened.value.capabilities),
       configuration,
       budget(30000),
     );

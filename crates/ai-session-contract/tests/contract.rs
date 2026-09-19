@@ -9,6 +9,31 @@ fn limits() -> Limits {
         max_nodes: 16384,
     }
 }
+
+#[test]
+fn native_thread_identity_roundtrips_and_rejects_invalid_ids() {
+    let fixtures: Value = serde_json::from_str(FIXTURES).unwrap();
+    for kind in ["session", "commandRecord"] {
+        let mut value = fixtures["valid"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["kind"] == kind && (kind == "session" || row.get("dispatch").is_some()))
+            .unwrap()
+            .clone();
+        let field = if kind == "session" {
+            "binding"
+        } else {
+            "dispatch"
+        };
+        value[field]["nativeThreadId"] = Value::String("native-thread".into());
+        let record = decode(&serde_json::to_vec(&value).unwrap(), &limits()).unwrap();
+        let encoded: Value = serde_json::from_slice(&encode(&record, &limits()).unwrap()).unwrap();
+        assert_eq!(encoded[field]["nativeThreadId"], "native-thread");
+        value[field]["nativeThreadId"] = Value::String("invalid thread".into());
+        assert!(decode(&serde_json::to_vec(&value).unwrap(), &limits()).is_err());
+    }
+}
 #[test]
 fn shared_v2_golden_and_safe_diagnostics() {
     let f: Value = serde_json::from_str(FIXTURES).unwrap();

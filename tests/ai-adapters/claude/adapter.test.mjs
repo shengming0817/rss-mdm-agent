@@ -157,6 +157,9 @@ test("explicit native session and restricted SDK configuration; close proves exi
   assert.equal(h.options.permissionMode, "default");
   assert.equal(h.options.env.ANTHROPIC_API_KEY, "fixture-secret");
   assert.equal(h.options.env.ANTHROPIC_AUTH_TOKEN, undefined);
+  assert.notEqual(h.options.env.PATH, process.env.PATH);
+  if (process.platform !== "win32")
+    assert.equal(h.options.env.PATH, "/usr/bin:/bin");
   assert.equal(unwrap(await h.adapter.close(budget())).processStopped, true);
 });
 test("submit waits for native acceptance; deltas and terminal retain prompt identity", async () => {
@@ -892,3 +895,46 @@ async function acknowledge(provider, binding, command, budget) {
   assert.equal(result.acknowledgement.type, command.input.type);
   return { ok: true, value: result.acknowledgement.confirmation };
 }
+test("duplicate option labels are denied before a provider callback is admitted", async () => {
+  const h = harness(),
+    b = await create(h),
+    c = fixtureCommand();
+  await h.adapter.dispatch(b, c, fixtureAttempt(b, c), budget());
+  const abort = new AbortController();
+  let settled = false;
+  const result = h.options
+    .canUseTool(
+      "AskUserQuestion",
+      {
+        questions: [
+          {
+            question: "Choose?",
+            header: "Choice",
+            multiSelect: false,
+            options: [
+              { label: "A", description: "first" },
+              { label: "A", description: "second" },
+            ],
+          },
+        ],
+      },
+      { requestId: "duplicate-label", toolUseID: "tool", signal: abort.signal },
+    )
+    .then((r) => {
+      settled = true;
+      return r;
+    });
+  try {
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    assert.equal(
+      settled,
+      true,
+      "ambiguous question must be rejected immediately",
+    );
+    assert.equal((await result).behavior, "deny");
+  } finally {
+    abort.abort();
+    await result;
+    await h.adapter.close(budget());
+  }
+});

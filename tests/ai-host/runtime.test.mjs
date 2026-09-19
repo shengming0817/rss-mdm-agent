@@ -108,7 +108,7 @@ async function setup(t, revision = "1", extras = {}) {
   });
   const session = unwrap(await host.createSession(caller, options, budget()));
   const command = (id, text = "hold") => ({
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "command",
     sessionId: session.namespace.sessionId,
     commandId: id,
@@ -301,7 +301,7 @@ test("standard ACP queued input outlives the request budget and executes in FIFO
     await f.host.cancel(
       caller,
       {
-        schemaVersion: 2,
+        schemaVersion: 3,
         kind: "command",
         sessionId: session.namespace.sessionId,
         commandId: "release-long-run",
@@ -716,6 +716,6 @@ test("client restore keeps recovery_required visible on an attached real Host se
   );
   const view = await client.restore(id);
   assert.equal(view.connection, "attached");
-  assert.equal(view.status, "recovery_required");
+  assert.equal(view.sessionStatus, "recovery_required");
   await assert.rejects(client.submit(f.command("unavailable")));
 });

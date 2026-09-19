@@ -7,6 +7,61 @@ fn command(value: &str) -> CommandId {
 }
 
 #[test]
+fn task_details_are_authorized_frozen_and_redacted() {
+    let db = Database::new();
+    let host = TestHost::new();
+    let runner = DeterministicTestRunner::new(id("test-runner"), TestScenario::Wait, 16).unwrap();
+    let p = plan();
+    let r = &p.spec().request.request_id;
+    let mut app = open(&db, host.clone(), runner.clone(), Startup::CreateTest);
+    app.submit(r, &p).unwrap();
+    let details = app.task_details(r).unwrap();
+    assert_eq!(details.status, app.status(r).unwrap());
+    assert_eq!(&details.plan.plan_digest, p.digest());
+    assert_eq!(details.plan.target, p.spec().request.target);
+    assert_eq!(details.plan.run_as, p.spec().run_as);
+    let json = serde_json::to_string(&details).unwrap();
+    for field in [
+        "parameters",
+        "argv",
+        "cwd",
+        "env",
+        "stdin",
+        "initiator",
+        "delegation",
+        "approvalBindings",
+        "readPaths",
+        "writePaths",
+    ] {
+        assert!(!json.contains(&format!("\"{field}\":")), "{field}");
+    }
+    drop(app);
+    let app = open(&db, host.clone(), runner, Startup::OpenTest);
+    assert_eq!(app.task_details(r).unwrap().plan, details.plan);
+    host.state.lock().unwrap().read = false;
+    assert_eq!(app.task_details(r).unwrap_err(), Error::Denied);
+    host.state.lock().unwrap().read = true;
+    host.state.lock().unwrap().accesses = Some(vec![execution_sqlite::Access::ReadAudit]);
+    assert_eq!(app.task_details(r).unwrap_err(), Error::Denied);
+}
+
+#[test]
+fn task_details_recheck_current_binding_after_authorized_record_read() {
+    let db = Database::new();
+    let host = TestHost::new();
+    let runner = DeterministicTestRunner::new(id("test-runner"), TestScenario::Wait, 16).unwrap();
+    let p = plan();
+    let r = &p.spec().request.request_id;
+    let mut app = open(&db, host.clone(), runner, Startup::CreateTest);
+    app.submit(r, &p).unwrap();
+    let changed = host.clone();
+    host.state.lock().unwrap().read_hook = Some(std::sync::Arc::new(move || {
+        changed.state.lock().unwrap().actor = ActorId::new("different-actor").unwrap();
+    }));
+    assert_eq!(app.task_details(r).unwrap_err(), Error::Denied);
+}
+
+#[test]
 fn action_permissions_do_not_require_result_reading() {
     let db = Database::new();
     let host = TestHost::new();
@@ -128,7 +183,7 @@ fn failed_stop_diagnostic_write_still_allows_terminal_fact_writes() {
     let mut app = open(&db, host, runner, Startup::CreateTest);
     app.submit(r, &p).unwrap();
     app.cancel(r).unwrap();
-    db.sql().execute_batch("CREATE TRIGGER fail_stop BEFORE UPDATE OF snapshot ON executions WHEN json_extract(CAST(NEW.snapshot AS TEXT), '$.lastEvent.command.kind')='stopReported' BEGIN SELECT RAISE(ABORT, 'fixture stop write failure'); END;").unwrap();
+    db.sql().execute_batch("CREATE TRIGGER fail_stop BEFORE UPDATE OF snapshot ON executions WHEN json_extract(CAST(NEW.snapshot AS TEXT), '$.lastEvent.event.command.kind')='stopReported' BEGIN SELECT RAISE(ABORT, 'fixture stop write failure'); END;").unwrap();
     assert_eq!(app.reconcile(r).unwrap_err(), Error::Conflict);
     let status = app.status(r).unwrap();
     assert!(status.cancel_requested);
@@ -226,7 +281,7 @@ fn newer_schema_retains_read_only_startup_diagnostic() {
     };
     assert_eq!(
         format!("{error:?}"),
-        "NewerSchema { found: 999, supported: 1 }"
+        "NewerSchema { found: 999, supported: 2 }"
     );
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
     assert_eq!(runner.dispatch_count(), 0);

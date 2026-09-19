@@ -7,12 +7,15 @@
 - [UI与桌面壳提取记录](reference/ui-extraction.md)：固定来源、MIT授权和逐文件映射。
 - [目录与后端对齐](guides/202609130000-2396-service-catalog.md)：精确资源绑定、参数演进与执行 owner 边界。
 - [契约开发](guides/contracts-development.md)：执行/AI 契约、schema 与隔离消费验证。
-- [AI Runtime V2](../packages/ai-contract/README.md)：唯一 schema、三个 ports、可靠性和 ACP–A2UI 约定。
+- [AI Runtime V3](../packages/ai-contract/README.md)：唯一 schema、三个 ports、可靠性和 ACP–A2UI 约定。
+- [AI 助手页面](guides/assistant-development.md)：共享导航、固定 Host 浏览器验收、可信执行详情与版本切换。
 - [ACP–A2UI 开发](guides/ai-access-development.md)：标准协议、公共客户端、Vue/Lit 接缝与真实浏览器独立消费。
 
 - [AI SQLite](../packages/ai-store-sqlite/README.md)与[来源记录](reference/ai-store-sqlite.md)：原子持久化、单 Host 所有权、恢复与独立消费。
+- [DeepSeek Harness adapter](../packages/ai-adapters/deepseek/README.md)与[来源记录](reference/deepseek-harness.md)：静态原生进程、A01 恢复凭证、受控桥与独立消费。
 - [Claude SDK adapter](../packages/ai-adapters/claude/README.md)：原生会话、回调、受控工具与独立消费。
 - [AI Host](../packages/ai-host/README.md)、[本地运行入口](../apps/ai-host/README.md)、[状态与进程设计](architecture/ai-host.md)及[来源](reference/ai-host.md)。
+- [Codex app-server adapter](../packages/ai-adapters/codex/README.md)与[来源记录](reference/codex-adapter.md)：固定原生协议、turn/steer/fork、受控 MCP 与独立消费。
 - [AI Runtime 来源](reference/ai-runtime.md)：固定上游版本、生成链和许可。
 - [契约来源与改写](reference/contracts-extraction.md)：C01/C02 的固定对标及参考重写边界。
 - [交互核心](../crates/execution-interaction/README.md)：回答、取消、过期与恢复。

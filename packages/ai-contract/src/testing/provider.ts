@@ -84,7 +84,8 @@ export class ScriptedProvider implements ProviderAgentPort {
       !this.configuration ||
       canonicalize(binding) !== canonicalize(this.binding) ||
       attempt.observerGeneration !== binding.generation ||
-      attempt.nativeSessionId !== binding.nativeSessionId
+      attempt.nativeSessionId !== binding.nativeSessionId ||
+      attempt.nativeThreadId !== binding.nativeThreadId
     )
       return {
         certainty: "not_sent",
@@ -184,6 +185,9 @@ export async function runProviderConformance(
           originGeneration: binding.generation,
           observerGeneration: binding.generation,
           nativeSessionId: binding.nativeSessionId,
+          ...(binding.nativeThreadId
+            ? { nativeThreadId: binding.nativeThreadId }
+            : {}),
           certainty: "intent",
         };
         const submission = await withinBudget(budget, (b) =>
@@ -196,11 +200,11 @@ export async function runProviderConformance(
             throw new Error("expected unknown");
           assert.ok(submission.correlationId);
           const record: CommandRecord = {
-            schemaVersion: 2,
+            schemaVersion: 3,
             kind: "commandRecord",
             command,
             receipt: {
-              schemaVersion: 2,
+              schemaVersion: 3,
               kind: "receipt",
               namespace: fixtureSession().namespace,
               commandId: command.commandId,
@@ -306,7 +310,7 @@ export async function runProviderConformance(
                     : binding,
                 );
                 const context = {
-                  schemaVersion: 2,
+                  schemaVersion: 3,
                   namespace: fixtureSession().namespace,
                   commandId: command.commandId,
                   generation: observation.binding.generation,

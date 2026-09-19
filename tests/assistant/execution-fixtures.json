@@ -1,0 +1,361 @@
+{
+  "approvalRequired": {
+    "plan": {
+      "access": {
+        "allowChildProcesses": false,
+        "networkDenied": true,
+        "networkDestinationCount": 0,
+        "readPathCount": 1,
+        "requireSandbox": true,
+        "writePathCount": 0
+      },
+      "artifact": {
+        "resource": { "id": "script-1", "revision": "1" },
+        "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
+      },
+      "budget": {
+        "maxAttempts": 1,
+        "totalOutputBytes": 4096,
+        "totalTimeoutMs": 1000
+      },
+      "interpreter": {
+        "artifact": {
+          "resource": { "id": "test-interpreter", "revision": "1" },
+          "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
+        },
+        "profile": { "id": "test-file", "revision": "1" }
+      },
+      "operation": {
+        "action": "diagnose",
+        "resource": { "id": "network-tool", "revision": "1" }
+      },
+      "planDigest": "b3e4d8b7e04694d4a2401818b1bd36790b154932ebf2ecc855ed596766d84537",
+      "planId": "plan-1",
+      "policy": { "id": "policy-1", "revision": "1" },
+      "runAs": {
+        "account": { "platform": "linux", "subject": "uid:1000" },
+        "kind": "user"
+      },
+      "schemaVersion": 1,
+      "sessionRequirement": { "kind": "notRequired" },
+      "target": {
+        "device": "device-1",
+        "platform": "linux",
+        "scope": {
+          "account": { "platform": "linux", "subject": "uid:1000" },
+          "kind": "user"
+        }
+      },
+      "validity": { "expiresAtUnixMs": 2000, "notBeforeUnixMs": 1000 }
+    },
+    "status": {
+      "admission": "approvalRequired",
+      "assessment": null,
+      "attemptId": null,
+      "attempts": 0,
+      "cancelRequested": false,
+      "dispatchCause": null,
+      "evidence": [],
+      "mode": "test",
+      "operationRequestId": "request-1",
+      "phase": "approvalRequired",
+      "planDigest": "b3e4d8b7e04694d4a2401818b1bd36790b154932ebf2ecc855ed596766d84537",
+      "planId": "plan-1",
+      "stopOutcome": null
+    }
+  },
+  "cancelled": {
+    "plan": {
+      "access": {
+        "allowChildProcesses": false,
+        "networkDenied": true,
+        "networkDestinationCount": 0,
+        "readPathCount": 1,
+        "requireSandbox": true,
+        "writePathCount": 0
+      },
+      "artifact": {
+        "resource": { "id": "script-1", "revision": "1" },
+        "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
+      },
+      "budget": {
+        "maxAttempts": 1,
+        "totalOutputBytes": 4096,
+        "totalTimeoutMs": 1000
+      },
+      "interpreter": {
+        "artifact": {
+          "resource": { "id": "test-interpreter", "revision": "1" },
+          "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
+        },
+        "profile": { "id": "test-file", "revision": "1" }
+      },
+      "operation": {
+        "action": "diagnose",
+        "resource": { "id": "network-tool", "revision": "1" }
+      },
+      "planDigest": "b3e4d8b7e04694d4a2401818b1bd36790b154932ebf2ecc855ed596766d84537",
+      "planId": "plan-1",
+      "policy": { "id": "policy-1", "revision": "1" },
+      "runAs": {
+        "account": { "platform": "linux", "subject": "uid:1000" },
+        "kind": "user"
+      },
+      "schemaVersion": 1,
+      "sessionRequirement": { "kind": "notRequired" },
+      "target": {
+        "device": "device-1",
+        "platform": "linux",
+        "scope": {
+          "account": { "platform": "linux", "subject": "uid:1000" },
+          "kind": "user"
+        }
+      },
+      "validity": { "expiresAtUnixMs": 2000, "notBeforeUnixMs": 1000 }
+    },
+    "status": {
+      "admission": "admitted",
+      "assessment": "noEffect",
+      "attemptId": "app-fd5e6aca451fdab554517dcc42aea4609d7c916efc7f7f5102c14914556715fa",
+      "attempts": 1,
+      "cancelRequested": true,
+      "dispatchCause": null,
+      "evidence": [
+        {
+          "kind": "testResult",
+          "reference": {
+            "id": "app-e802e936121407237598511aafb3daf07b23944df5aa385f8887479f1db4aa14",
+            "revision": "1"
+          },
+          "runner": "test-runner"
+        },
+        {
+          "kind": "testResult",
+          "reference": {
+            "id": "app-8f27c224f5750a4d8c110b5fc8fd56107bbcb9947c95e7db606deeb117312286",
+            "revision": "1"
+          },
+          "runner": "test-runner"
+        }
+      ],
+      "mode": "test",
+      "operationRequestId": "request-1",
+      "phase": "cancelled",
+      "planDigest": "b3e4d8b7e04694d4a2401818b1bd36790b154932ebf2ecc855ed596766d84537",
+      "planId": "plan-1",
+      "stopOutcome": "acknowledged"
+    }
+  },
+  "outcomeUnknown": {
+    "plan": {
+      "access": {
+        "allowChildProcesses": false,
+        "networkDenied": true,
+        "networkDestinationCount": 0,
+        "readPathCount": 1,
+        "requireSandbox": true,
+        "writePathCount": 0
+      },
+      "artifact": {
+        "resource": { "id": "script-1", "revision": "1" },
+        "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
+      },
+      "budget": {
+        "maxAttempts": 1,
+        "totalOutputBytes": 4096,
+        "totalTimeoutMs": 1000
+      },
+      "interpreter": {
+        "artifact": {
+          "resource": { "id": "test-interpreter", "revision": "1" },
+          "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
+        },
+        "profile": { "id": "test-file", "revision": "1" }
+      },
+      "operation": {
+        "action": "diagnose",
+        "resource": { "id": "network-tool", "revision": "1" }
+      },
+      "planDigest": "b3e4d8b7e04694d4a2401818b1bd36790b154932ebf2ecc855ed596766d84537",
+      "planId": "plan-1",
+      "policy": { "id": "policy-1", "revision": "1" },
+      "runAs": {
+        "account": { "platform": "linux", "subject": "uid:1000" },
+        "kind": "user"
+      },
+      "schemaVersion": 1,
+      "sessionRequirement": { "kind": "notRequired" },
+      "target": {
+        "device": "device-1",
+        "platform": "linux",
+        "scope": {
+          "account": { "platform": "linux", "subject": "uid:1000" },
+          "kind": "user"
+        }
+      },
+      "validity": { "expiresAtUnixMs": 2000, "notBeforeUnixMs": 1000 }
+    },
+    "status": {
+      "admission": "admitted",
+      "assessment": null,
+      "attemptId": "app-fd5e6aca451fdab554517dcc42aea4609d7c916efc7f7f5102c14914556715fa",
+      "attempts": 1,
+      "cancelRequested": false,
+      "dispatchCause": "deliveryUnknown",
+      "evidence": [],
+      "mode": "test",
+      "operationRequestId": "request-1",
+      "phase": "outcomeUnknown",
+      "planDigest": "b3e4d8b7e04694d4a2401818b1bd36790b154932ebf2ecc855ed596766d84537",
+      "planId": "plan-1",
+      "stopOutcome": null
+    }
+  },
+  "running": {
+    "plan": {
+      "access": {
+        "allowChildProcesses": false,
+        "networkDenied": true,
+        "networkDestinationCount": 0,
+        "readPathCount": 1,
+        "requireSandbox": true,
+        "writePathCount": 0
+      },
+      "artifact": {
+        "resource": { "id": "script-1", "revision": "1" },
+        "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
+      },
+      "budget": {
+        "maxAttempts": 1,
+        "totalOutputBytes": 4096,
+        "totalTimeoutMs": 1000
+      },
+      "interpreter": {
+        "artifact": {
+          "resource": { "id": "test-interpreter", "revision": "1" },
+          "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
+        },
+        "profile": { "id": "test-file", "revision": "1" }
+      },
+      "operation": {
+        "action": "diagnose",
+        "resource": { "id": "network-tool", "revision": "1" }
+      },
+      "planDigest": "b3e4d8b7e04694d4a2401818b1bd36790b154932ebf2ecc855ed596766d84537",
+      "planId": "plan-1",
+      "policy": { "id": "policy-1", "revision": "1" },
+      "runAs": {
+        "account": { "platform": "linux", "subject": "uid:1000" },
+        "kind": "user"
+      },
+      "schemaVersion": 1,
+      "sessionRequirement": { "kind": "notRequired" },
+      "target": {
+        "device": "device-1",
+        "platform": "linux",
+        "scope": {
+          "account": { "platform": "linux", "subject": "uid:1000" },
+          "kind": "user"
+        }
+      },
+      "validity": { "expiresAtUnixMs": 2000, "notBeforeUnixMs": 1000 }
+    },
+    "status": {
+      "admission": "admitted",
+      "assessment": null,
+      "attemptId": "app-fd5e6aca451fdab554517dcc42aea4609d7c916efc7f7f5102c14914556715fa",
+      "attempts": 1,
+      "cancelRequested": false,
+      "dispatchCause": null,
+      "evidence": [],
+      "mode": "test",
+      "operationRequestId": "request-1",
+      "phase": "running",
+      "planDigest": "b3e4d8b7e04694d4a2401818b1bd36790b154932ebf2ecc855ed596766d84537",
+      "planId": "plan-1",
+      "stopOutcome": null
+    }
+  },
+  "testCompleted": {
+    "plan": {
+      "access": {
+        "allowChildProcesses": false,
+        "networkDenied": true,
+        "networkDestinationCount": 0,
+        "readPathCount": 1,
+        "requireSandbox": true,
+        "writePathCount": 0
+      },
+      "artifact": {
+        "resource": { "id": "script-1", "revision": "1" },
+        "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
+      },
+      "budget": {
+        "maxAttempts": 1,
+        "totalOutputBytes": 4096,
+        "totalTimeoutMs": 1000
+      },
+      "interpreter": {
+        "artifact": {
+          "resource": { "id": "test-interpreter", "revision": "1" },
+          "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
+        },
+        "profile": { "id": "test-file", "revision": "1" }
+      },
+      "operation": {
+        "action": "diagnose",
+        "resource": { "id": "network-tool", "revision": "1" }
+      },
+      "planDigest": "b3e4d8b7e04694d4a2401818b1bd36790b154932ebf2ecc855ed596766d84537",
+      "planId": "plan-1",
+      "policy": { "id": "policy-1", "revision": "1" },
+      "runAs": {
+        "account": { "platform": "linux", "subject": "uid:1000" },
+        "kind": "user"
+      },
+      "schemaVersion": 1,
+      "sessionRequirement": { "kind": "notRequired" },
+      "target": {
+        "device": "device-1",
+        "platform": "linux",
+        "scope": {
+          "account": { "platform": "linux", "subject": "uid:1000" },
+          "kind": "user"
+        }
+      },
+      "validity": { "expiresAtUnixMs": 2000, "notBeforeUnixMs": 1000 }
+    },
+    "status": {
+      "admission": "admitted",
+      "assessment": "satisfied",
+      "attemptId": "app-fd5e6aca451fdab554517dcc42aea4609d7c916efc7f7f5102c14914556715fa",
+      "attempts": 1,
+      "cancelRequested": false,
+      "dispatchCause": null,
+      "evidence": [
+        {
+          "kind": "testResult",
+          "reference": {
+            "id": "app-e802e936121407237598511aafb3daf07b23944df5aa385f8887479f1db4aa14",
+            "revision": "1"
+          },
+          "runner": "test-runner"
+        },
+        {
+          "kind": "testResult",
+          "reference": {
+            "id": "app-8f27c224f5750a4d8c110b5fc8fd56107bbcb9947c95e7db606deeb117312286",
+            "revision": "1"
+          },
+          "runner": "test-runner"
+        }
+      ],
+      "mode": "test",
+      "operationRequestId": "request-1",
+      "phase": "testCompleted",
+      "planDigest": "b3e4d8b7e04694d4a2401818b1bd36790b154932ebf2ecc855ed596766d84537",
+      "planId": "plan-1",
+      "stopOutcome": null
+    }
+  }
+}

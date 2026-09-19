@@ -6,9 +6,16 @@ const props = withDefaults(
     disabled?: boolean;
     busy?: boolean;
     canCancel?: boolean;
+    canSubmit?: boolean;
     placeholder?: string;
   }>(),
-  { placeholder: "输入消息…", disabled: false, busy: false, canCancel: false },
+  {
+    placeholder: "输入消息…",
+    disabled: false,
+    busy: false,
+    canCancel: false,
+    canSubmit: true,
+  },
 );
 const emit = defineEmits<{
   "update:modelValue": [text: string];
@@ -18,7 +25,14 @@ const emit = defineEmits<{
 const collapsed = ref(false);
 function submit() {
   const text = props.modelValue.trim();
-  if (!text || props.disabled || props.busy || collapsed.value) return;
+  if (
+    !text ||
+    props.disabled ||
+    props.busy ||
+    !props.canSubmit ||
+    collapsed.value
+  )
+    return;
   emit("submit", text);
 }
 function keydown(event: KeyboardEvent) {
@@ -57,7 +71,9 @@ function input(event: Event) {
       </button>
       <button
         type="submit"
-        :disabled="disabled || busy || collapsed || !modelValue.trim()"
+        :disabled="
+          disabled || busy || !canSubmit || collapsed || !modelValue.trim()
+        "
       >
         发送
       </button>

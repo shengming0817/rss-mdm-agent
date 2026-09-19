@@ -15,6 +15,8 @@ C19 的 Rust 组合根，连接 C06 能力、C07 唯一授权裁决、C08 批准
 
 任务定位携带封闭的 `ExecutionAccess`：执行/取消使用 Execute，核对使用 RunnerFact，交互写入使用 Interact，投递/确认携带精确 consumer，审计使用 ReadAudit；不会附加 ReadResult。普通 `status/interaction` 仍需 ReadResult。内部 RunnerFact/ManageTrust 是可信服务权限，不由调用 DTO 授予。已提交操作的安全回执允许原动作权限或独立 ReadResult 权限读取；只读重放不重新申请执行批准。
 
+普通命令通过 C18 `apply_command` 提交；只有观察路径创建携带当前可信 runner 事实的验证器，调用 `apply_observation`。普通 Host 不持有可选观察槽，观察提交保留当前 revision 对操作身份的绑定。
+
 准入拒绝是持久业务结果：C18 在原回执内生成 `AdmissionStatus`，应用在同一读取事务中恢复生命周期与最近准入投影。首次、重放和重启均返回 Denied/ApprovalRequired，而非瞬时错误后变回 Waiting；批准人、规则与完整裁决仍只在特权审计中。已有 attempt 的事实和新的准入结果分别呈现。
 
 `ExecutionApp` 由服务生命周期持有，调用均同步、有界；UI 窗口或模型调用只拥有请求/响应，不能拥有执行 future。owner 独立调度 `reconcile`，新尝试则使用显式稳定 command ID。S1 没有常驻 OS 服务安装器、通用 worker 框架或任意 exec/PTY 接口。
@@ -57,3 +59,7 @@ cargo run -p execution-app --example execution-app-consumer --locked -- crates/e
 直接读取 kube-rs 固定 revision [`f3619c349faebb4af25df013498af5f2bb85d1f5` 的 `kube-runtime/src/controller/mod.rs`](https://github.com/kube-rs/kube/blob/f3619c349faebb4af25df013498af5f2bb85d1f5/kube-runtime/src/controller/mod.rs)，借鉴显式调谐建议与实际调度分离；本实现无上游源码复制或依赖，不引入 Kubernetes 资源模型、隐式自动重试或 worker。一次性权限与 SQLite 原子性直接消费仓内 C09/C18，无第二份机制。目标新源码沿用本仓 MIT。
 
 本轮分权与诊断设计另读取 [Kubernetes v1.34.0 authorizer/interfaces.go](https://github.com/kubernetes/kubernetes/blob/v1.34.0/staging/src/k8s.io/apiserver/pkg/authorization/authorizer/interfaces.go) 的动作/资源属性、[apimachinery v0.34.0 types.go](https://github.com/kubernetes/apimachinery/blob/v0.34.0/pkg/apis/meta/v1/types.go) 的状态/原因分离，以及 [Axum 0.8.4 extract/state.rs](https://github.com/tokio-rs/axum/blob/axum-v0.8.4/axum/src/extract/state.rs) 的集中上下文与窄状态提取。仅借鉴模式，不复制代码、不新增依赖；Host 私有字段只经一个构造入口初始化。
+
+## 授权任务详情
+
+`task_details(request_id)` 以 ReadResult 一次读取 ExecutionRecord，并再次核对当前 authority/actor/device binding，返回同一记录的 `ExecutionStatus` 和 `FrozenPlanSummary`。`status` 与它共享投影；不需要 ReadAudit，也不暴露 parameters、argv、cwd、env、stdin、路径/网络明细或批准记录。摘要包括原 plan ID/digest、目标、运行身份、精确资源/制品/解释器、策略版本、有效期、预算与访问数量。`scripts/check-execution-bindings.mjs` 从 Rust 的序列化 schema 生成桌面类型，同时用真实 SQLite + DeterministicTestRunner 生成 running、approvalRequired、outcomeUnknown、testCompleted、cancelled 五种 fixture；没有手写并行执行 DTO。

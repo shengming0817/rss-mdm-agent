@@ -95,7 +95,7 @@ for (const signal of ["SIGTERM", "SIGINT"]) {
     await client.initialize();
     const session = await client.createSession();
     await client.submit({
-      schemaVersion: 2,
+      schemaVersion: 3,
       kind: "command",
       commandId: "bundled",
       sessionId: session.namespace.sessionId,

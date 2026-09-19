@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:rss-mdm-agent:ai-runtime:2",
+  "$id": "urn:rss-mdm-agent:ai-runtime:3",
   "title": "WireRecord",
   "description": "Product reliability records only. No record authenticates a caller, grants approval or proves business execution. Standard ACP/A2UI schemas retain their upstream owners.",
   "oneOf": [
@@ -158,6 +158,10 @@
         "workspaceId": {
           "$ref": "#/$defs/Id",
           "description": "SHA-256 identity of the normalized absolute workspace path. Filesystem containment remains owned by the provider adapter and composition root."
+        },
+        "nativeThreadId": {
+          "$ref": "#/$defs/Id",
+          "description": "Provider-owned thread identity within the native session tree; required when the provider exposes distinct threads."
         }
       },
       "required": [
@@ -395,8 +399,8 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 2,
-          "description": "Exact product wire version; V1 is rejected without migration or fallback."
+          "const": 3,
+          "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
         },
         "kind": {
           "type": "string",
@@ -436,8 +440,8 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 2,
-          "description": "Exact product wire version; V1 is rejected without migration or fallback."
+          "const": 3,
+          "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
         },
         "kind": {
           "type": "string",
@@ -495,8 +499,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 2,
-              "description": "Exact product wire version; V1 is rejected without migration or fallback."
+              "const": 3,
+              "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -525,8 +529,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 2,
-              "description": "Exact product wire version; V1 is rejected without migration or fallback."
+              "const": 3,
+              "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -566,8 +570,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 2,
-              "description": "Exact product wire version; V1 is rejected without migration or fallback."
+              "const": 3,
+              "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -607,8 +611,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 2,
-              "description": "Exact product wire version; V1 is rejected without migration or fallback."
+              "const": 3,
+              "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -653,8 +657,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 2,
-              "description": "Exact product wire version; V1 is rejected without migration or fallback."
+              "const": 3,
+              "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -694,8 +698,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 2,
-              "description": "Exact product wire version; V1 is rejected without migration or fallback."
+              "const": 3,
+              "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -735,8 +739,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 2,
-              "description": "Exact product wire version; V1 is rejected without migration or fallback."
+              "const": 3,
+              "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -777,8 +781,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 2,
-              "description": "Exact product wire version; V1 is rejected without migration or fallback."
+              "const": 3,
+              "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -823,8 +827,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 2,
-              "description": "Exact product wire version; V1 is rejected without migration or fallback."
+              "const": 3,
+              "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -882,8 +886,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 2,
-              "description": "Exact product wire version; V1 is rejected without migration or fallback."
+              "const": 3,
+              "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -955,8 +959,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 2,
-              "description": "Exact product wire version; V1 is rejected without migration or fallback."
+              "const": 3,
+              "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -987,19 +991,18 @@
               "type": "object",
               "properties": {
                 "type": {
+                  "const": "command_accepted",
                   "type": "string",
-                  "const": "status",
-                  "description": "Closed variant discriminator."
+                  "description": "Closed event discriminator."
                 },
-                "state": {
-                  "type": "string",
-                  "enum": ["accepted"],
-                  "description": "Closed command lifecycle projection."
+                "command": {
+                  "$ref": "#/$defs/Command",
+                  "description": "Complete immutable original command, committed atomically with its receipt."
                 }
               },
-              "required": ["type", "state"],
+              "required": ["type", "command"],
               "additionalProperties": false,
-              "description": "status variant; all fields are data, never authentication or execution authority."
+              "description": "Immutable command accepted atomically with its receipt; never a model terminal."
             }
           },
           "required": [
@@ -1019,8 +1022,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 2,
-              "description": "Exact product wire version; V1 is rejected without migration or fallback."
+              "const": 3,
+              "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -1088,8 +1091,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 2,
-              "description": "Exact product wire version; V1 is rejected without migration or fallback."
+              "const": 3,
+              "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -1156,8 +1159,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 2,
-              "description": "Exact product wire version; V1 is rejected without migration or fallback."
+              "const": 3,
+              "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -1225,8 +1228,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 2,
-              "description": "Exact product wire version; V1 is rejected without migration or fallback."
+              "const": 3,
+              "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -1302,8 +1305,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 2,
-              "description": "Exact product wire version; V1 is rejected without migration or fallback."
+              "const": 3,
+              "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -1380,8 +1383,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 2,
-              "description": "Exact product wire version; V1 is rejected without migration or fallback."
+              "const": 3,
+              "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -1472,8 +1475,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 2,
-              "description": "Exact product wire version; V1 is rejected without migration or fallback."
+              "const": 3,
+              "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -1554,8 +1557,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 2,
-              "description": "Exact product wire version; V1 is rejected without migration or fallback."
+              "const": 3,
+              "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -1627,8 +1630,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 2,
-              "description": "Exact product wire version; V1 is rejected without migration or fallback."
+              "const": 3,
+              "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -1690,8 +1693,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 2,
-              "description": "Exact product wire version; V1 is rejected without migration or fallback."
+              "const": 3,
+              "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -1753,8 +1756,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 2,
-              "description": "Exact product wire version; V1 is rejected without migration or fallback."
+              "const": 3,
+              "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -1821,8 +1824,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 2,
-              "description": "Exact product wire version; V1 is rejected without migration or fallback."
+              "const": 3,
+              "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -1901,8 +1904,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 2,
-              "description": "Exact product wire version; V1 is rejected without migration or fallback."
+              "const": 3,
+              "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -1969,8 +1972,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 2,
-              "description": "Exact product wire version; V1 is rejected without migration or fallback."
+              "const": 3,
+              "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -2027,8 +2030,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 2,
-              "description": "Exact product wire version; V1 is rejected without migration or fallback."
+              "const": 3,
+              "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -2081,8 +2084,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 2,
-              "description": "Exact product wire version; V1 is rejected without migration or fallback."
+              "const": 3,
+              "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -2149,8 +2152,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 2,
-              "description": "Exact product wire version; V1 is rejected without migration or fallback."
+              "const": 3,
+              "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -2212,8 +2215,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 2,
-              "description": "Exact product wire version; V1 is rejected without migration or fallback."
+              "const": 3,
+              "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -2266,8 +2269,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 2,
-              "description": "Exact product wire version; V1 is rejected without migration or fallback."
+              "const": 3,
+              "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -2345,8 +2348,8 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 2,
-          "description": "Exact product wire version; V1 is rejected without migration or fallback."
+          "const": 3,
+          "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
         },
         "kind": {
           "type": "string",
@@ -2397,8 +2400,8 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 2,
-          "description": "Exact product wire version; V1 is rejected without migration or fallback."
+          "const": 3,
+          "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
         },
         "kind": {
           "type": "string",
@@ -2478,8 +2481,8 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 2,
-          "description": "Exact product wire version; V1 is rejected without migration or fallback."
+          "const": 3,
+          "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
         },
         "kind": {
           "type": "string",
@@ -2547,8 +2550,8 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 2,
-          "description": "Exact product wire version; V1 is rejected without migration or fallback."
+          "const": 3,
+          "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
         },
         "kind": {
           "type": "string",
@@ -2654,6 +2657,10 @@
         "correlationId": {
           "$ref": "#/$defs/Id",
           "description": "Append-once native lookup key returned for ambiguous submission."
+        },
+        "nativeThreadId": {
+          "$ref": "#/$defs/Id",
+          "description": "Provider-owned thread identity within the native session tree; required when the provider exposes distinct threads."
         }
       },
       "required": [
@@ -2671,8 +2678,8 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 2,
-          "description": "Exact product wire version; V1 is rejected without migration or fallback."
+          "const": 3,
+          "description": "Exact product wire version; V1 and V2 are rejected without migration or fallback."
         },
         "kind": {
           "type": "string",
@@ -2785,7 +2792,7 @@
       "type": "object",
       "properties": {
         "schemaVersion": {
-          "const": 2,
+          "const": 3,
           "type": "integer",
           "description": "Exact product contract version; no legacy readers."
         },
@@ -2861,7 +2868,7 @@
       "type": "object",
       "properties": {
         "schemaVersion": {
-          "const": 2,
+          "const": 3,
           "type": "integer",
           "description": "Exact product contract version; no legacy readers."
         },
@@ -2949,7 +2956,7 @@
       "type": "object",
       "properties": {
         "schemaVersion": {
-          "const": 2,
+          "const": 3,
           "type": "integer",
           "description": "Exact product contract version; no legacy readers."
         },
@@ -2974,7 +2981,7 @@
       "type": "object",
       "properties": {
         "schemaVersion": {
-          "const": 2,
+          "const": 3,
           "type": "integer",
           "description": "Exact product contract version; no legacy readers."
         },
@@ -2995,7 +3002,7 @@
       "type": "object",
       "properties": {
         "schemaVersion": {
-          "const": 2,
+          "const": 3,
           "type": "integer",
           "description": "Exact product contract version; no legacy readers."
         },
@@ -3030,7 +3037,7 @@
       "type": "object",
       "properties": {
         "schemaVersion": {
-          "const": 2,
+          "const": 3,
           "type": "integer",
           "description": "Exact product contract version; no legacy readers."
         },
@@ -3055,7 +3062,7 @@
       "type": "object",
       "properties": {
         "schemaVersion": {
-          "const": 2,
+          "const": 3,
           "type": "integer",
           "description": "Exact product contract version; no legacy readers."
         },
@@ -3076,7 +3083,7 @@
       "type": "object",
       "properties": {
         "schemaVersion": {
-          "const": 2,
+          "const": 3,
           "type": "integer",
           "description": "Exact product contract version; no legacy readers."
         },
@@ -3112,7 +3119,7 @@
       "type": "object",
       "properties": {
         "schemaVersion": {
-          "const": 2,
+          "const": 3,
           "type": "integer",
           "description": "Exact product contract version; no legacy readers."
         },
@@ -3147,7 +3154,7 @@
       "type": "object",
       "properties": {
         "schemaVersion": {
-          "const": 2,
+          "const": 3,
           "type": "integer",
           "description": "Exact product contract version; no legacy readers."
         },
@@ -3186,7 +3193,7 @@
         "contractVersion": {
           "description": "Exact product contract version.",
           "type": "integer",
-          "const": 2
+          "const": 3
         },
         "acp": {
           "description": "Exact ACP protocol version.",

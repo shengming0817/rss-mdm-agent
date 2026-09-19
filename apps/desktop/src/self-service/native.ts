@@ -10,6 +10,3 @@ export function nativePort(): SelfServicePort | null {
     respond: (input) => invoke<RequestView>("self_service_respond", { input }),
   };
 }
-export function newIdentity(): string {
-  return crypto.randomUUID();
-}

@@ -103,7 +103,7 @@ function reduceAcceptance(
 ): Result<{ state: SessionState; receipt: import("./wire.js").Receipt }> {
   try {
     valid(input.command, limits);
-    valid(input.event, limits);
+    if (!isId(input.eventId)) return fail("invalid_input");
   } catch {
     return fail("invalid_input");
   }
@@ -144,7 +144,7 @@ function reduceAcceptance(
   );
   if (!check.ok) return check;
   const receipt: import("./wire.js").Receipt = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "receipt",
     namespace: clone(input.namespace),
     commandId: input.command.commandId,
@@ -158,7 +158,7 @@ function reduceAcceptance(
     acceptedRevision: state.session.revision + 1,
   };
   const record: CommandRecord = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "commandRecord",
     command: clone(input.command),
     receipt,
@@ -215,12 +215,21 @@ function reduceAcceptance(
       },
       commands: [record],
       events: [
-        input.event,
+        {
+          schemaVersion: 3,
+          kind: "event",
+          namespace: clone(input.namespace),
+          eventId: input.eventId,
+          sequence: state.session.lastSequence + 1,
+          commandId: input.command.commandId,
+          generation: state.session.binding.generation,
+          body: { type: "command_accepted", command: clone(input.command) },
+        },
         ...interactions.map((row, i) => ({
-          schemaVersion: 2 as const,
+          schemaVersion: 3 as const,
           kind: "event" as const,
           namespace: input.namespace,
-          eventId: eventId(input.event.eventId, `answer-${i}`),
+          eventId: eventId(input.eventId, `answer-${i}`),
           sequence: state.session.lastSequence + 2 + i,
           commandId: row.commandId,
           attemptId: state.commands.get(row.commandId)!.dispatch!.attemptId,
@@ -343,7 +352,8 @@ function reduceCommit(
       return fail("invalid_input");
     if (
       c.dispatch &&
-      c.dispatch.observerGeneration !== batch.expectedGeneration
+      (c.dispatch.observerGeneration !== batch.expectedGeneration ||
+        c.dispatch.nativeThreadId !== state.session.binding.nativeThreadId)
     )
       return fail("stale_binding");
     if (resolution && resolution.status !== "observed") {
@@ -358,6 +368,7 @@ function reduceCommit(
           providerIdentity(state.session.binding),
         ) ||
         resolution.binding.nativeSessionId !== old.dispatch.nativeSessionId ||
+        resolution.binding.nativeThreadId !== old.dispatch.nativeThreadId ||
         ["nativeRunId", "nativeRequestId"].some((key) => {
           const k = key as "nativeRunId" | "nativeRequestId";
           return (
@@ -423,6 +434,8 @@ function reduceCommit(
         return fail("content_conflict");
     }
     if (old?.dispatch && c.dispatch) {
+      if (old.dispatch.nativeThreadId !== c.dispatch.nativeThreadId)
+        return fail("stale_binding");
       for (const key of [
         "attemptId",
         "originGeneration",
@@ -464,6 +477,38 @@ function reduceCommit(
       )
         return fail("invalid_input");
       if (batch.nowMs! > dispatchDeadline(state, c)) return fail("expired");
+      if (
+        c.command.input.type === "prompt" &&
+        c.command.input.policy === "queue_next" &&
+        [...state.commands.values()].some(
+          (record) =>
+            record.command.commandId !== id &&
+            record.command.input.type === "prompt" &&
+            record.dispatch &&
+            !isSettled(record),
+        )
+      )
+        return fail("content_conflict");
+      if (
+        c.command.input.type === "prompt" &&
+        c.command.input.policy === "steer"
+      ) {
+        const target = c.command.input.targetRunId;
+        if (
+          state.session.capabilities.steer !== "supported" ||
+          target !== state.session.binding.nativeRunId ||
+          c.dispatch.nativeRunId !== target ||
+          ![...state.commands.values()].some(
+            (record) =>
+              record.command.input.type === "prompt" &&
+              record.command.input.policy === "queue_next" &&
+              !isSettled(record) &&
+              record.dispatch?.certainty === "submitted" &&
+              record.dispatch.nativeRunId === target,
+          )
+        )
+          return fail("stale_binding");
+      }
       attemptIds.add(c.dispatch.attemptId);
     } else if (old?.dispatch && resolution?.status !== "not_submitted")
       return fail("invalid_input");
@@ -598,11 +643,13 @@ function reduceCommit(
       !["terminal", "invalidated", "acknowledged", "cancelled"].includes(
         c.state,
       ) &&
+      !(c.state === "accepted" && resolution?.status === "not_submitted") &&
       !batch.events.some(
         (e) =>
           e.commandId === id &&
-          e.body.type === "status" &&
-          e.body.state === c.state,
+          (e.body.type === "command_accepted"
+            ? !old && c.state === "accepted" && same(e.body.command, c.command)
+            : e.body.type === "status" && e.body.state === c.state),
       )
     )
       return fail("invalid_input");
@@ -610,6 +657,17 @@ function reduceCommit(
   }
   if ([...providerFacts.keys()].some((id) => !commandIds.has(id)))
     return fail("invalid_input");
+  // Acceptance may queue many prompts, but an unresolved dispatch owns the turn.
+  if (
+    [...copy.commands.values()].filter(
+      (record) =>
+        record.command.input.type === "prompt" &&
+        record.command.input.policy === "queue_next" &&
+        record.dispatch !== undefined &&
+        !isSettled(record),
+    ).length > 1
+  )
+    return fail("content_conflict");
   const oldBinding = state.session.binding,
     nextBinding = batch.session.binding;
   const coordinatesMatch = (
@@ -642,8 +700,14 @@ function reduceCommit(
       )
         return fail("stale_binding");
     } else {
-      const original = records.filter((c) =>
-        coordinatesMatch(c.dispatch, oldBinding),
+      const original = records.filter(
+        (c) =>
+          c.dispatch !== undefined &&
+          c.dispatch.nativeSessionId === oldBinding.nativeSessionId &&
+          c.dispatch.nativeThreadId === oldBinding.nativeThreadId &&
+          (oldBinding.nativeRunId !== undefined
+            ? c.dispatch.nativeRunId === oldBinding.nativeRunId
+            : coordinatesMatch(c.dispatch, oldBinding)),
       );
       if (
         !original.length ||
@@ -686,6 +750,7 @@ function reduceCommit(
       return fail("content_conflict");
     if (
       [
+        "command_accepted",
         "dispatch",
         "reconciled",
         "invalidated",
@@ -694,6 +759,19 @@ function reduceCommit(
         "cancelled",
       ].includes(event.body.type) &&
       !commandIds.has(event.commandId)
+    )
+      return fail("invalid_input");
+    if (
+      event.body.type === "command_accepted" &&
+      (!accepting ||
+        prior ||
+        source.state !== "accepted" ||
+        !same(event.body.command, source.command) ||
+        batch.events.filter(
+          (e) =>
+            e.commandId === event.commandId &&
+            e.body.type === "command_accepted",
+        ).length !== 1)
     )
       return fail("invalid_input");
     if (event.body.type === "status" && event.body.state !== source.state)
@@ -1023,7 +1101,7 @@ function reduceHandoff(
     label: string,
   ) => {
     const event = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       kind: "event",
       namespace: input.namespace,
       eventId: eventId(input.eventId, label),
@@ -1055,7 +1133,7 @@ function reduceHandoff(
         observerGeneration: binding.generation,
       };
       copy.commands.set(id, {
-        schemaVersion: 2,
+        schemaVersion: 3,
         kind: "commandRecord",
         command: c.command,
         receipt: c.receipt,
@@ -1079,7 +1157,7 @@ function reduceHandoff(
         retry: "never" as const,
       };
       copy.commands.set(id, {
-        schemaVersion: 2,
+        schemaVersion: 3,
         kind: "commandRecord",
         command: c.command,
         receipt: c.receipt,
@@ -1163,7 +1241,7 @@ function reduceRetirement(
     lastSequence: copy.session.lastSequence + 1,
   };
   const event: Event = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "event",
     namespace: copy.session.namespace,
     eventId: eventId(

@@ -60,7 +60,7 @@ const store=unwrap(openSqliteStore({path:join(dir,'host.sqlite'),mode:'create'})
 const options:HostOptions={store,launchFences:store,resolve:async(caller,options,namespace)=>({configuration:{namespace,provider:options.provider,config:options.config,accountRef:options.accountRef,workingDirectory:dir,permissions:'tools_disabled'},artifact:new URL('../provider.mjs',import.meta.url).href})};
 const host:HostPort=unwrap(await createHost(options));
 try{const session=unwrap(await host.createSession(caller,{provider:'fake',config:{id:'c',revision:'1'},accountRef:'a',profile:'conversation'},budget()));
-const command:Command={schemaVersion:2,kind:'command',commandId:'prompt',sessionId:session.namespace.sessionId,expiresAtMs:Date.now()+10000,input:{type:'prompt',policy:'queue_next',text:'quick'}};
+const command:Command={schemaVersion:3,kind:'command',commandId:'prompt',sessionId:session.namespace.sessionId,expiresAtMs:Date.now()+10000,input:{type:'prompt',policy:'queue_next',text:'quick'}};
 unwrap(await host.submit(caller,command,budget()));const deadline=Date.now()+5000;let terminal=false;
 while(Date.now()<deadline){if(unwrap(await store.command(session.namespace,'prompt')).state==='terminal'){terminal=true;break;}await new Promise(resolve=>setTimeout(resolve,10));}
 assert.equal(terminal,true);assert.equal(unwrap(await store.launches()).length,1);
