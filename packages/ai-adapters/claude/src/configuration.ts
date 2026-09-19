@@ -1,0 +1,115 @@
+import { readFileSync } from "node:fs";
+import { isAbsolute } from "node:path";
+import type { Options } from "@anthropic-ai/claude-agent-sdk";
+import type {
+  Binding,
+  Budget,
+  Clock,
+  ProviderConfiguration,
+} from "@rss-mdm-agent/ai-contract";
+// The installed package manifests own compatibility identity, including packed consumers.
+const manifest = (url: URL) => JSON.parse(readFileSync(url, "utf8"));
+const adapterPackage = manifest(new URL("../package.json", import.meta.url));
+const sdkPackage = manifest(
+  new URL(
+    "./package.json",
+    import.meta.resolve("@anthropic-ai/claude-agent-sdk"),
+  ),
+);
+const version = (value: unknown): string => {
+  if (typeof value !== "string" || !/^\d+\.\d+\.\d+$/.test(value))
+    throw new Error("invalid package version metadata");
+  return value;
+};
+export const ADAPTER_VERSION = version(adapterPackage.version);
+export const SDK_VERSION = version(sdkPackage.version);
+export const CLI_VERSION = version(sdkPackage.claudeCodeVersion);
+if (
+  adapterPackage.dependencies["@anthropic-ai/claude-agent-sdk"] !== SDK_VERSION
+)
+  throw new Error("SDK package version does not match pinned dependency");
+export const PROVIDER_VERSION = `claude-agent-sdk-${SDK_VERSION}/claude-code-${CLI_VERSION}`;
+export type ClaudeConfiguration = ProviderConfiguration & {
+  readonly provider: "claude";
+};
+/** Secrets come from trusted composition, never a command or serialized binding. */
+export interface ResolvedClaudeConfiguration {
+  configuration: ClaudeConfiguration;
+  configurationDirectory: string;
+  apiUrl: string;
+  credential: { type: "api_key" | "auth_token"; value: string };
+  model?: string;
+}
+export interface ClaudeAdapterOptions {
+  resolveConfiguration(
+    identity: Pick<Binding, "config" | "accountRef">,
+    budget: Budget,
+  ): Promise<ResolvedClaudeConfiguration>;
+  clock?: Clock;
+  callbackTimeoutMs?: number;
+}
+/** No raw SDK option passthrough. Settings, child environment and tool inventory are sealed. */
+export function sdkOptions(resolved: ResolvedClaudeConfiguration): Options {
+  const { configuration: config, credential } = resolved;
+  const url = new URL(resolved.apiUrl);
+  if (
+    url.protocol !== "https:" &&
+    !(
+      url.protocol === "http:" &&
+      ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)
+    )
+  )
+    throw new Error("invalid configuration");
+  if (
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    !credential.value ||
+    !["api_key", "auth_token"].includes(credential.type) ||
+    !isAbsolute(config.workingDirectory) ||
+    !isAbsolute(resolved.configurationDirectory)
+  )
+    throw new Error("invalid configuration");
+  const env: Record<string, string> = {
+    ANTHROPIC_BASE_URL: resolved.apiUrl,
+    CLAUDE_CONFIG_DIR: resolved.configurationDirectory,
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+  };
+  for (const key of ["PATH", "SystemRoot", "WINDIR", "TEMP", "TMP", "TMPDIR"])
+    if (process.env[key]) env[key] = process.env[key]!;
+  env[
+    credential.type === "api_key" ? "ANTHROPIC_API_KEY" : "ANTHROPIC_AUTH_TOKEN"
+  ] = credential.value;
+  return {
+    cwd: config.workingDirectory,
+    env,
+    ...(resolved.model ? { model: resolved.model } : {}),
+    tools: ["AskUserQuestion"],
+    allowedTools: [],
+    permissionMode: "default",
+    allowDangerouslySkipPermissions: false,
+    settingSources: [],
+    settings: {
+      disableBundledSkills: true,
+      skillOverrides: { doctor: "off" },
+      disableSkillShellExecution: true,
+      enableAllProjectMcpServers: false,
+      disableClaudeAiConnectors: true,
+    },
+    skills: [],
+    plugins: [],
+    strictMcpConfig: true,
+    mcpServers: {},
+    agents: {},
+    additionalDirectories: [],
+    includePartialMessages: true,
+    persistSession: true,
+    enableFileCheckpointing: false,
+    maxTurns: 32,
+    stderr: () => {},
+    onElicitation: async () => ({ action: "cancel" }),
+    onUserDialog: async () => ({ behavior: "cancelled" }),
+    supportedDialogKinds: [],
+  };
+}

@@ -75,6 +75,8 @@ try {
     `import assert from 'node:assert/strict';
 import {decode,boundedJson,fingerprint,type HostPort,type ProviderAgentPort,type SessionStore,type ProviderConfiguration,type Subscription,type ProviderInteraction,type ProviderObservation,VerifiedProviderSession} from '@rss-mdm-agent/ai-contract';
 import {FakeHost,MemorySessionStore,ScriptedProvider,fixtures,fixtureLimits,runStoreConformance,runProviderConformance,runHostConformance} from '@rss-mdm-agent/ai-contract/testing';
+// @ts-expect-error Resume must atomically return capabilities with its binding.
+const invalidResume:NonNullable<ProviderAgentPort['resume']>=async()=>({ok:true,value:{} as import('@rss-mdm-agent/ai-contract').Binding});
 // @ts-expect-error Controlled mode cannot omit its verifier and ToolEndpoint.
 const invalidConfiguration:ProviderConfiguration={provider:'fake',config:{id:'c',revision:'1'},accountRef:'a',workingDirectory:'.',permissions:'host_mediated'};
 // @ts-expect-error Admission cannot be built from serialized fields.

@@ -24,6 +24,8 @@ const steps = [
   ["AI access boundaries", "pnpm", ["check:ai-boundaries"]],
   ["AI access browser consumer", "pnpm", ["check:ai-access-consumer"]],
   ["AI packed consumer", "pnpm", ["check:ai-consumer"]],
+  ["Claude SDK adapter", "pnpm", ["test:ai-claude"]],
+  ["Claude packed consumer", "pnpm", ["check:claude-consumer"]],
   ["frontend build", "pnpm", ["build"]],
   ["types", "pnpm", ["typecheck"]],
   ["frontend format", "pnpm", ["format:check"]],
