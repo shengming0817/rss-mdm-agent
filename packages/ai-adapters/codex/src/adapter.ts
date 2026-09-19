@@ -12,6 +12,10 @@ import {
   type Failure,
   type Outcome,
   type ProviderAgentPort,
+  type ProviderInstance,
+  type ProviderForkRequest,
+  type ProviderForkResult,
+  type ProviderDiagnostic,
   type ProviderConfiguration,
   type ProviderObservation,
   type ProviderSessionBinding,
@@ -21,7 +25,6 @@ import {
 } from "@rss-mdm-agent/ai-contract";
 import {
   providerIdentity,
-  VerifiedProviderSession,
   workspaceIdentity,
 } from "@rss-mdm-agent/ai-contract/session";
 import {
@@ -53,38 +56,6 @@ import {
   same,
 } from "./support.js";
 
-export interface CodexDiagnostic {
-  namespace: "codex.native";
-  generation: string;
-  message: NativeMessage;
-}
-export type CodexForkResult =
-  | {
-      certainty: "created";
-      port: CodexAdapterPort;
-      session: VerifiedProviderSession;
-      source: { nativeThreadId: string; throughTurnId: string };
-    }
-  | {
-      certainty: "not_created" | "unknown";
-      error: Failure;
-      correlationId?: string;
-      cleanupError?: Failure;
-      cleanupPort?: CodexAdapterPort;
-    };
-export interface CodexAdapterPort extends ProviderAgentPort {
-  readHistory(
-    binding: Binding,
-    budget: Budget,
-  ): Promise<Result<readonly Turn[]>>;
-  fork(
-    binding: Binding,
-    throughTurnId: string,
-    configuration: CodexConfiguration,
-    budget: Budget,
-  ): Promise<CodexForkResult>;
-  diagnostics(binding: Binding, budget: Budget): AsyncIterable<CodexDiagnostic>;
-}
 interface Attempt {
   command: Command;
   dispatch: DispatchAttempt;
@@ -130,7 +101,7 @@ function validTurn(value: any): asserts value is Turn {
 }
 
 /** One native incarnation. Host owns durable commands, retries and verified recovery. */
-export class CodexAdapter implements CodexAdapterPort {
+export class CodexAdapter implements ProviderAgentPort {
   private started = false;
   private closed = false;
   private failed = false;
@@ -142,20 +113,16 @@ export class CodexAdapter implements CodexAdapterPort {
   private resolved?: ResolvedCodexConfiguration;
   private attempts = new Map<string, Attempt>();
   private observations = new Queue<ProviderObservation>();
-  private nativeEvents = new Queue<CodexDiagnostic>();
+  private nativeEvents = new Queue<ProviderDiagnostic>(true);
   private uncorrelated: NativeMessage[] = [];
   private uncorrelatedBytes = 0;
   private retainedAttemptBytes = 0;
   private completedTurns = new Map<string, Outcome>();
   private creationAttempted = false;
+  private forkSource?: ProviderForkRequest;
   constructor(
     private readonly options: CodexAdapterOptions,
     private readonly runtime: RuntimeFactory,
-    private readonly forkSource?: {
-      binding: Binding;
-      throughTurnId: string;
-      nativeDirectory: string;
-    },
   ) {}
 
   createSession(
@@ -239,11 +206,6 @@ export class CodexAdapter implements CodexAdapterPort {
         })
       )
         return fail("permission_denied");
-      if (
-        this.forkSource &&
-        resolved.nativeDirectory !== this.forkSource.nativeDirectory
-      )
-        return fail("permission_denied");
       this.configuration = config;
       this.resolved = { ...resolved, configuration: config };
       if (this.closed || !live(nextBudget())) return fail("unavailable");
@@ -322,6 +284,18 @@ export class CodexAdapter implements CodexAdapterPort {
           nextBudget(),
         );
       } else if (this.forkSource) {
+        const history = await this.readNativeHistory(
+          this.forkSource.binding.nativeThreadId!,
+          nextBudget(),
+        );
+        if (!history.ok) return history;
+        if (
+          !history.value.some(
+            (turn) =>
+              turn.id === this.forkSource!.throughTurnId && outcome(turn),
+          )
+        )
+          return fail("permission_denied");
         this.creationAttempted = true;
         response = await rpc(
           connection,
@@ -733,7 +707,7 @@ export class CodexAdapter implements CodexAdapterPort {
     entry: Attempt,
     body: Extract<ProviderObservation, { type: "event" }>["body"],
   ): void {
-    // Validate the stable product boundary; native advanced fields belong only to diagnostics.
+    // Validate the stable product boundary; native payloads never enter diagnostics.
     decode(
       boundedJson(
         {
@@ -767,9 +741,15 @@ export class CodexAdapter implements CodexAdapterPort {
     }
     if (this.options.nativeDiagnostics && this.binding && !replay)
       this.nativeEvents.push({
-        namespace: "codex.native",
-        generation: this.binding.generation,
-        message,
+        kind:
+          message.method === "item/agentMessage/delta"
+            ? "text_delta"
+            : message.method === "item/completed"
+              ? "item_completed"
+              : message.method === "turn/completed"
+                ? "turn_completed"
+                : "other",
+        dropped: 0,
       });
     if (!this.binding || this.failed) return;
     const params = message.params as any;
@@ -936,9 +916,10 @@ export class CodexAdapter implements CodexAdapterPort {
   async *diagnostics(
     binding: Binding,
     budget: Budget,
-  ): AsyncIterable<CodexDiagnostic> {
+  ): AsyncIterable<ProviderDiagnostic> {
     if (this.options.nativeDiagnostics && this.owns(binding))
-      yield* this.nativeEvents.read(budget);
+      for await (const record of this.nativeEvents.read(budget))
+        yield { ...record, dropped: this.nativeEvents.dropped };
   }
   async cancel(
     binding: Binding,
@@ -994,6 +975,12 @@ export class CodexAdapter implements CodexAdapterPort {
     budget: Budget,
   ): Promise<Result<readonly Turn[]>> {
     if (!this.ready(binding, budget)) return fail("stale_binding");
+    return this.readNativeHistory(binding.nativeThreadId!, budget);
+  }
+  private async readNativeHistory(
+    threadId: string,
+    budget: Budget,
+  ): Promise<Result<readonly Turn[]>> {
     try {
       const nextBudget = scope(budget),
         turns: Turn[] = [],
@@ -1005,7 +992,7 @@ export class CodexAdapter implements CodexAdapterPort {
           this.connection!,
           "thread/turns/list",
           {
-            threadId: binding.nativeThreadId!,
+            threadId,
             limit: 32,
             itemsView: "full",
             sortDirection: "asc",
@@ -1147,60 +1134,46 @@ export class CodexAdapter implements CodexAdapterPort {
       return fail("unavailable", "reconcile_first");
     }
   }
-  async fork(
-    binding: Binding,
-    throughTurnId: string,
-    configuration: CodexConfiguration,
+  async forkSession(
+    request: ProviderForkRequest,
+    configuration: ProviderConfiguration,
     budget: Budget,
-  ): Promise<CodexForkResult> {
-    const denied: CodexForkResult = {
-      certainty: "not_created",
-      error: { code: "permission_denied", retry: "never" },
-    };
-    if (!this.ready(binding, budget) || !isId(throughTurnId)) return denied;
-    const { sessionId: parentId, ...parentScope } =
-      this.configuration!.namespace;
-    const { sessionId: childId, ...childScope } = configuration.namespace;
-    if (
-      parentId === childId ||
-      !same(parentScope, childScope) ||
-      !same(configuration.config, binding.config) ||
-      configuration.accountRef !== binding.accountRef ||
-      workspaceIdentity(configuration.workingDirectory) !== binding.workspaceId
-    )
-      return denied;
-    const nextBudget = scope(budget),
-      history = await this.readHistory(binding, nextBudget());
-    if (!history.ok) return { certainty: "not_created", error: history.error };
-    if (
-      !history.value.some((turn) => turn.id === throughTurnId && outcome(turn))
-    )
-      return denied;
-    const child = new CodexAdapter(this.options, this.runtime, {
-      binding: copy(binding),
-      throughTurnId,
-      nativeDirectory: this.resolved!.nativeDirectory,
-    });
-    const admitted = await VerifiedProviderSession.open(
-      child,
-      configuration,
-      nextBudget(),
-    );
-    if (admitted.ok)
+  ): Promise<ProviderForkResult> {
+    if (this.started || this.closed || !isId(request.throughTurnId))
       return {
-        certainty: "created",
-        port: child,
-        session: admitted.value,
-        source: { nativeThreadId: binding.nativeThreadId!, throughTurnId },
+        certainty: "not_created",
+        error: { code: "invalid_input", retry: "never" },
       };
-    return {
-      certainty: child.creationAttempted ? "unknown" : "not_created",
-      error: admitted.error,
-      ...(child.creationAttempted ? { correlationId: randomUUID() } : {}),
-      ...(admitted.cleanupError
-        ? { cleanupError: admitted.cleanupError, cleanupPort: child }
-        : {}),
-    };
+    this.forkSource = copy(request);
+    const result = await this.initialize(configuration, budget);
+    return result.ok
+      ? { certainty: "created", value: result.value, source: copy(request) }
+      : {
+          certainty: this.creationAttempted ? "unknown" : "not_created",
+          error: result.error,
+        };
+  }
+  /** Actual object boundaries prevent accidental access to native history/DTOs. */
+  private instance?: ProviderInstance;
+  ports(): ProviderInstance {
+    if (this.instance) return this.instance;
+    const agent: ProviderAgentPort = Object.freeze({
+      createSession: this.createSession.bind(this),
+      submit: this.submit.bind(this),
+      cancel: this.cancel.bind(this),
+      respond: this.respond.bind(this),
+      observe: this.observe.bind(this),
+      reconcile: this.reconcile.bind(this),
+      resume: this.resume.bind(this),
+      close: this.close.bind(this),
+    });
+    return (this.instance = Object.freeze({
+      agent,
+      extensions: Object.freeze({
+        fork: Object.freeze({ forkSession: this.forkSession.bind(this) }),
+      }),
+      diagnostics: Object.freeze({ observe: this.diagnostics.bind(this) }),
+    }));
   }
   async close(budget: Budget): Promise<Result<{ processStopped: boolean }>> {
     this.closed = true;

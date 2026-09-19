@@ -14,7 +14,7 @@ V2 一次替换 C02 的 V1。没有 V1 reader、alias、双写、fallback、转�
 
 `ProviderAgentPort.createSession(configuration, budget)` 原子返回同一 incarnation 的 binding 与 capabilities；其余操作为 submit/cancel/respond/observe/reconcile/close，`resume(binding, configuration, budget)` 是可选接缝，同样原子返回 binding+capabilities，直接替换旧的裸 Binding 返回形状。配置只传显式工作目录、config revision、账号引用、权限选择和宿主 ToolEndpoint，不将秘密写进 wire。ToolEndpoint 返回的是模型工具协议结果，不能签发批准或直连 runner。adapter 自己持有 SDK、进程、模型 transcript 和 native session/run/request ID。
 
-能力分基础会话和受控工具 profile。基础可建立会话、文本多轮、输出/状态/终态和取消；取消能力区分 unsupported/unknown/request_only/terminal_acknowledged。跨进程 resume、steer、fork、子 agent、终端、结构化追问及多模态显式声明；扩展操作由具体 adapter 扩展接口承接，公共 V2 input 只接纳文本、取消和回答，不伪造通用多模态载荷。缺少能力不能请求对应操作。
+能力分基础会话和受控工具 profile。基础可建立会话、文本多轮、输出/状态/终态和取消；取消能力区分 unsupported/unknown/request_only/terminal_acknowledged。跨进程 resume、steer、fork、子 agent、终端、结构化追问及多模态显式声明；扩展操作由 A01 定义的受控 extension port 承接，公共 V2 input 只接纳文本、取消和回答，不伪造通用多模态载荷。缺少能力不能请求对应操作。
 
 能力声明必须绑定 provider/adapter version、config、账号及 generation；Host 在使用观察事件前核对完整 binding 与命令账本的 native run/request 关联。resume 必须核对 provider/config/account，跨 generation 仅在 across_processes 能力与 provider 成功响应后成立。展示历史不恢复模型上下文。`ProviderConfiguration` 是闭合权限联合：tools_disabled 禁止 endpoint/verifier；host_mediated 必须同时提供 ToolEndpoint 与组合根注入的可信平台 verifier。Host 通过 `VerifiedProviderSession.open` 或 `VerifiedProviderSession.restore(port, previousSession, configuration, budget)` 消费原子结果并完成验证；恢复显式消费当前配置，核对原 session ID、新 generation 与 across_processes 能力，重新执行 verifier；已打开 runtime 的准入失败会以独立有界预算关闭，调用方仍须处理/重试未完成的关闭。私有构造和运行时 token 阻止同形对象/JSON 冒充 admission；证据固定完整 binding、capabilities 与 endpoint 对象身份，跨 incarnation 使用须重新验证。verifier 是受信代码边界，具体平台/版本的原生工具旁路证明由 adapter 持有；本包不从字符串或模型声明推导该证明。
 
@@ -115,3 +115,9 @@ Claude adapter 的合并集成同样使用显式 DispatchAttempt 和完整 Comma
 Binding 和 DispatchAttempt 增加可选 nativeThreadId；拥有独立 thread 的 provider 必须同时持久化原生 session/thread，不得折叠或互相推导。它属于跨 generation 不可变的 providerIdentity；恢复、reconcile、观察投影和 SQLite 均校验。原生模型只有 session 的 provider 不填写 thread，禁止为 Codex 缺失 thread 的记录伪造兼容值。
 
 同一原生 turn 可以接收一个普通 prompt 和多个 steer，每条命令保留独立 attempt/nativeRequestId。任何未决已派发 prompt（含 unknown）都会阻止下一条普通 prompt；steer 只能定位当前已确认普通 prompt 的活动 run，intent 即携带目标 nativeRunId。输出按实际命令坐标核验，不能把 session.binding 当前 request 当成同 turn 唯一 request。run/request 只有在该 turn 的所有已派发 prompt 结束后才可整体清除；未确认 steer 不因普通 prompt 终态而自动结束，必须核实原 attempt。ACP cancel 按 native session/thread/run 去重，优先选普通 prompt 作为中断目标。
+
+## Provider 扩展与诊断
+
+`ProviderInstance` 明确分成 `agent: ProviderAgentPort`、`extensions.fork?: ProviderForkPort` 和 `diagnostics: ProviderDiagnosticsPort`。正式方法不返回 provider 生成的实验 DTO；history 由 adapter 内部恢复算法持有。diagnostics 只包含封闭种类与丢弃计数，不承接可靠业务事件。
+
+Host 先持有 child instance，再用已经准入的 `parentSession.fork(child, throughTurnId, configuration, budget)` 执行 A01 共同准入。源 namespace/绑定取自名义 parent proof，不接收调用方伪造来源。该操作验证权限域、账号、配置、workspace、新原生身份及 child 的受控工具 verifier；失败消费并关闭 child，保留 unknown 与 cleanupError，绝不重试 native 创建。adapter 的 extension 只返回原生事实，不反向构造或准入子会话。Host/A03 持有创建意图和结果的持久化、未确认实例清理与客户端发布；现有基础 ProviderAgentPort 消费者可继续只消费 agent。

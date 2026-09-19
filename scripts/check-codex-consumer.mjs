@@ -103,13 +103,20 @@ try {
     `import assert from 'node:assert/strict';
 import {chmodSync,mkdirSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
-import {createCodexAdapter,CODEX_VERSION,type CodexAdapterOptions,type CodexAdapterPort,type ResolvedCodexConfiguration} from '@rss-mdm-agent/ai-adapter-codex';
+import {createCodexAdapter,CODEX_VERSION,type CodexAdapterOptions,type ResolvedCodexConfiguration} from '@rss-mdm-agent/ai-adapter-codex';
 import type {ProviderAgentPort} from '@rss-mdm-agent/ai-contract';
 const project=join(process.cwd(),'project'),native=join(process.cwd(),'native');
 mkdirSync(project);mkdirSync(native,{mode:0o700});chmodSync(native,0o700);
 const configuration={provider:'codex',config:{id:'consumer',revision:'1'},accountRef:'consumer',workingDirectory:project,namespace:{tenantId:'consumer',principalId:'consumer',authorityId:'consumer',sessionId:'consumer-session'},permissions:'tools_disabled'} as const;
 const options:CodexAdapterOptions={resolveConfiguration:async()=>({configuration,nativeDirectory:native,apiUrl:'http://127.0.0.1:9/v1',apiKey:'fixture-only',model:'fixture-model'})};
-const adapter:CodexAdapterPort=createCodexAdapter(options);const port:ProviderAgentPort=adapter;
+const adapter=createCodexAdapter(options);const port:ProviderAgentPort=adapter.agent;
+// @ts-expect-error Native history is not a public provider operation.
+port.readHistory;
+// @ts-expect-error Host admission is not a provider operation.
+port.fork;
+// @ts-expect-error Diagnostics expose no business payload.
+const unsafeDiagnostic: import('@rss-mdm-agent/ai-contract').ProviderDiagnostic = {kind:'other', dropped:0, message:{}};
+void unsafeDiagnostic;
 // @ts-expect-error A Codex resolver cannot claim another provider.
 const wrongProvider:ResolvedCodexConfiguration['configuration']['provider']='claude';
 // @ts-expect-error Native binary and arbitrary app-server options are sealed.

@@ -19,7 +19,7 @@ async function admission(t, resolved, resolveConfiguration) {
   });
   t.after(() => rm(resolved.root, { recursive: true, force: true }));
   return VerifiedProviderSession.open(
-    adapter,
+    adapter.agent,
     resolved.configuration,
     budget(),
   );

@@ -218,8 +218,9 @@ test(
       restored.binding.nativeThreadId,
       admitted.binding.nativeThreadId,
     );
-    const fork = await restoredPort.fork(
-      restored.binding,
+    const child = s.make().ports();
+    const fork = await restored.fork(
+      child,
       history[0].id,
       {
         ...s.configuration,
@@ -228,7 +229,6 @@ test(
       budget(),
     );
     assert.equal(fork.certainty, "created");
-    s.ports.push(fork.port);
     assert.notEqual(
       fork.session.binding.nativeSessionId,
       admitted.binding.nativeSessionId,
@@ -237,7 +237,10 @@ test(
       fork.session.binding.nativeThreadId,
       admitted.binding.nativeThreadId,
     );
-    assert.equal(fork.source.nativeThreadId, admitted.binding.nativeThreadId);
+    assert.equal(
+      fork.source.binding.nativeThreadId,
+      admitted.binding.nativeThreadId,
+    );
     await conversation(restoredPort, restored, "second");
     assert.equal(s.requests.length, 2);
   },

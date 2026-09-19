@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { spawnSync } from "node:child_process";
 import { access, mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
@@ -365,5 +366,39 @@ test(
     );
     assert.equal(result.ok, false);
     assert.equal(s.requests.length, 1);
+  },
+);
+
+test(
+  "fixed app-server never resolves git from the inherited hostile PATH",
+  { timeout: 30000 },
+  async (t) => {
+    const s = await nativeFixture(t);
+    assert.equal(
+      spawnSync("/usr/bin/git", ["init", s.configuration.workingDirectory])
+        .status,
+      0,
+    );
+    const bin = join(s.root, "hostile-bin"),
+      marker = join(s.root, "git-was-executed");
+    await mkdir(bin);
+    await writeFile(
+      join(bin, "git"),
+      `#!/bin/sh\n/usr/bin/touch '${marker}'\nexit 1\n`,
+      { mode: 0o700 },
+    );
+    const original = process.env.PATH;
+    process.env.PATH = `${bin}:${original}`;
+    try {
+      const port = s.make();
+      const admitted = unwrap(
+        await VerifiedProviderSession.open(port, s.configuration, budget()),
+      );
+      await conversation(port, admitted, "hostile-path");
+      await assert.rejects(access(marker));
+    } finally {
+      if (original === undefined) delete process.env.PATH;
+      else process.env.PATH = original;
+    }
   },
 );

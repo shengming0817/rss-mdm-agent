@@ -413,8 +413,9 @@ test("missing native history is unknown and reverse dynamic/approval calls canno
 test("fork preserves actual native identities and verifies the terminal source turn", async (t) => {
   const s = await setup(t);
   s.thread.turns.push(turn("terminal-turn", "old-client"));
-  const result = await s.adapter.fork(
-    s.admitted.binding,
+  const child = createTestAdapter(s.options, s.runtime).ports();
+  const result = await s.admitted.fork(
+    child,
     "terminal-turn",
     {
       ...s.configuration,
@@ -425,8 +426,8 @@ test("fork preserves actual native identities and verifies the terminal source t
   assert.equal(result.certainty, "created");
   assert.equal(result.session.binding.nativeSessionId, "fork-session");
   assert.equal(result.session.binding.nativeThreadId, "fork-thread");
-  assert.equal(result.source.nativeThreadId, "thread-1");
-  await result.port.close(budget());
+  assert.equal(result.source.binding.nativeThreadId, "thread-1");
+  await child.agent.close(budget());
   assert.equal(s.calls.filter((c) => c.method === "turn/start").length, 0);
 });
 
@@ -747,4 +748,104 @@ test("unmatched buffered notifications do not loop during another turn ACK", asy
     observed.some((v) => v.type === "delta"),
     false,
   );
+});
+
+test("diagnostics redact all native payloads and unknown method strings", async (t) => {
+  const s = await setup(t);
+  s.emit("PRIVATE_METHOD_CANARY", {
+    text: "PRIVATE_BODY_CANARY",
+    path: "/secret/path",
+    arguments: { token: "PRIVATE_KEY_CANARY" },
+  });
+  const stream = s.adapter
+    .diagnostics(s.admitted.binding, budget())
+    [Symbol.asyncIterator]();
+  const record = (await stream.next()).value;
+  assert.equal(JSON.stringify(record).includes("PRIVATE_"), false);
+  assert.equal("message" in record, false);
+  assert.equal(record.kind, "other");
+  await stream.return();
+  for (const method of ["constructor", "__proto__", "toString"])
+    s.emit(method, {});
+  const next = s.adapter
+    .diagnostics(s.admitted.binding, budget())
+    [Symbol.asyncIterator]();
+  for (let i = 0; i < 3; i++)
+    assert.equal((await next.next()).value.kind, "other");
+  await next.return();
+});
+
+test("absent and slow diagnostic consumers never terminate a healthy incarnation", async (t) => {
+  const s = await setup(t);
+  for (let i = 0; i < 2048; i++)
+    s.emit("diagnostic-only", { text: "sensitive" });
+  assert.equal(
+    s.calls.some((c) => c.method === "runtime/close"),
+    false,
+  );
+  const stream = s.adapter
+    .diagnostics(s.admitted.binding, budget())
+    [Symbol.asyncIterator]();
+  assert.ok((await stream.next()).value.dropped > 0);
+  for (let i = 0; i < 2048; i++) s.emit("diagnostic-only", {});
+  await stream.return();
+  const result = await s.adapter.submit(
+    s.admitted.binding,
+    fixtureCommand(),
+    s.attempt("command-1"),
+    budget(),
+  );
+  assert.equal(result.certainty, "submitted");
+});
+
+test("Host owns fork admission, child cleanup and the three explicit ports", async (t) => {
+  for (const scenario of [
+    "foreign-tenant",
+    "missing-terminal",
+    "lost-receipt",
+    "rejected-verifier",
+  ]) {
+    const s = await setup(t);
+    s.thread.turns.push(turn("terminal-turn", "old-client"));
+    const child = createTestAdapter(s.options, s.runtime).ports();
+    assert.equal("fork" in child.agent, false);
+    assert.equal("readHistory" in child.agent, false);
+    assert.equal("diagnostics" in child.agent, false);
+    assert.deepEqual(Object.keys(child.diagnostics), ["observe"]);
+    const configuration = {
+      ...s.configuration,
+      namespace: { ...s.configuration.namespace, sessionId: "child" },
+    };
+    if (scenario === "foreign-tenant")
+      configuration.namespace.tenantId = "foreign";
+    if (scenario === "rejected-verifier")
+      configuration.permissions = "host_mediated";
+    if (scenario === "lost-receipt")
+      s.fault((method) => {
+        if (method === "thread/fork") throw new Error("transport lost");
+      });
+    const result = await s.admitted.fork(
+      child,
+      scenario === "missing-terminal" ? "missing" : "terminal-turn",
+      configuration,
+      budget(),
+    );
+    assert.equal(
+      result.certainty,
+      scenario === "lost-receipt" ? "unknown" : "not_created",
+    );
+    assert.equal(result.cleanupError, undefined);
+    assert.equal(
+      s.calls.filter((c) => c.method === "thread/fork").length,
+      scenario === "lost-receipt" ? 1 : 0,
+    );
+    // A retry cannot create a second native child, even after an uncertain outcome.
+    const retry = await s.admitted.fork(
+      child,
+      "terminal-turn",
+      configuration,
+      budget(),
+    );
+    assert.equal(retry.certainty, "not_created");
+  }
 });

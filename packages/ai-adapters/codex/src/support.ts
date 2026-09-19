@@ -69,19 +69,27 @@ export function bounded<T>(work: PromiseLike<T>, budget: Budget): Promise<T> {
     timer = setTimeout(abort, budget.timeoutMs);
   });
 }
-/** One bounded observer; exhausting it stops the incarnation instead of losing stable events. */
+/** Stable observers fail on overflow; diagnostic observers opt into lossy drop counting. */
 export class Queue<T> {
   private items: Array<{ value: T; bytes: number }> = [];
   private bytes = 0;
   private wake?: () => void;
   private ended = false;
   private reading = false;
+  constructor(private readonly lossy = false) {}
+  dropped = 0;
   push(value: T): void {
-    if (this.ended) throw new Error("closed observer");
+    if (this.ended) {
+      if (this.lossy) return;
+      throw new Error("closed observer");
+    }
     const serialized = boundedJson(value, limits),
       bytes = Buffer.byteLength(serialized);
-    if (this.items.length >= 1024 || this.bytes + bytes > 4 * 1024 * 1024)
-      throw new Error("observer limit");
+    if (this.items.length >= 1024 || this.bytes + bytes > 4 * 1024 * 1024) {
+      if (!this.lossy) throw new Error("observer limit");
+      this.dropped = Math.min(Number.MAX_SAFE_INTEGER, this.dropped + 1);
+      return;
+    }
     this.items.push({ value: JSON.parse(serialized), bytes });
     this.bytes += bytes;
     this.wake?.();

@@ -39,7 +39,7 @@ export interface CodexAdapterOptions {
     budget: Budget,
   ): Promise<ResolvedCodexConfiguration>;
   clock?: Clock;
-  /** Explicitly opt in to potentially sensitive native messages; never logs by default. */
+  /** Opt in to bounded, lossy, closed diagnostic metadata; no native payloads. */
   nativeDiagnostics?: boolean;
 }
 export const disabledFeatures = [
@@ -204,7 +204,13 @@ export async function launchSpec(
     CODEX_HOME: resolved.nativeDirectory,
     RSS_CODEX_API_KEY: resolved.apiKey,
   };
-  for (const key of ["PATH", "SystemRoot", "WINDIR", "TEMP", "TMP", "TMPDIR"])
+  // No host search path: native metadata helpers must not select user shims.
+  env.PATH =
+    process.platform === "win32"
+      ? join(resolved.nativeDirectory, "empty-bin")
+      : "/usr/bin:/bin";
+  env.NoDefaultCurrentDirectoryInExePath = "1";
+  for (const key of ["SystemRoot", "WINDIR", "TEMP", "TMP", "TMPDIR"])
     if (process.env[key]) env[key] = process.env[key]!;
   if (bridge) env.RSS_CODEX_MCP_TOKEN = bridge.token;
   const args = ["app-server", "--stdio", "--strict-config"];

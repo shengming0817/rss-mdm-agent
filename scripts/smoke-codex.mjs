@@ -17,10 +17,15 @@ import {
   createCodexAdapter,
 } from "../packages/ai-adapters/codex/dist/index.js";
 import { VerifiedProviderSession } from "../packages/ai-contract/dist/session.js";
+import {
+  startSmokeModelGateway,
+  continuityChallenge,
+} from "./codex-smoke-model.mjs";
 import { sameCommittedSource, sourceState } from "./source-state.mjs";
 
 const allowedStages = [
   "configuration",
+  "backend_identity",
   "open",
   "submit",
   "observe",
@@ -97,7 +102,8 @@ export function loadSmokeConfiguration(args, env) {
     url.search ||
     url.hash ||
     !url.pathname.replace(/\/$/, "").endsWith("/v1") ||
-    (value.mode === "real_model" && (url.protocol !== "https:" || loopback)) ||
+    (value.mode === "real_model" &&
+      url.toString().replace(/\/$/, "") !== "https://api.openai.com/v1") ||
     (value.mode === "local_fixture" && !loopback) ||
     (url.protocol !== "https:" && url.protocol !== "http:")
   )
@@ -158,6 +164,8 @@ async function main() {
   let failure;
   let settings;
   let directory;
+  let gateway;
+  let backendIdentityVerified = false;
   let stage = "configuration";
   let detail = {};
   const results = [];
@@ -165,6 +173,10 @@ async function main() {
   try {
     settings = loadSmokeConfiguration(process.argv.slice(2), process.env);
     configured = true;
+    stage = "backend_identity";
+    if (settings.mode === "real_model")
+      gateway = await startSmokeModelGateway(settings);
+    const challenge = continuityChallenge();
     directory = realpathSync(mkdtempSync(join(tmpdir(), "rss-codex-smoke-")));
     const nativeDirectory = join(directory, "native");
     const workingDirectory = join(directory, "project");
@@ -189,8 +201,8 @@ async function main() {
         resolveConfiguration: async (identity) => ({
           configuration,
           nativeDirectory,
-          apiUrl: settings.apiUrl,
-          apiKey: settings.apiKey,
+          apiUrl: gateway?.apiUrl ?? settings.apiUrl,
+          apiKey: gateway?.apiKey ?? settings.apiKey,
           model: settings.model,
           ...(identity.history
             ? {
@@ -201,7 +213,7 @@ async function main() {
               }
             : {}),
         }),
-      });
+      }).agent;
     const budget = (timeoutMs = 90000) => ({
       timeoutMs,
       signal: AbortSignal.timeout(timeoutMs),
@@ -248,12 +260,13 @@ async function main() {
       detail = { outcome: observations.at(-1)?.body?.outcome };
       assert.equal(detail.outcome, "completed");
       stage = "text";
-      assert.ok(
-        observations.some(
-          (observation) =>
-            observation.body?.type === "text" &&
-            observation.body.text.includes(expected),
-        ),
+      assert.equal(
+        observations
+          .filter((observation) => observation.body?.type === "text")
+          .map((observation) => observation.body.text)
+          .join("")
+          .trim(),
+        expected,
       );
       results.push({
         scenario: id,
@@ -276,15 +289,15 @@ async function main() {
       adapter,
       opened.binding,
       "new-session",
-      "Reply with exactly RSS_CODEX_2405.",
-      "RSS_CODEX_2405",
+      challenge.prompts[0],
+      challenge.expected,
     );
     const second = await run(
       adapter,
       first,
       "same-process",
-      "Reply again with exactly RSS_CODEX_2405.",
-      "RSS_CODEX_2405",
+      challenge.prompts[1],
+      challenge.expected,
     );
     stage = "close";
     assert.equal(
@@ -319,10 +332,15 @@ async function main() {
       resumed,
       restored.binding,
       "cold-resume",
-      "Reply once more with exactly RSS_CODEX_2405.",
-      "RSS_CODEX_2405",
+      challenge.prompts[2],
+      challenge.expected,
     );
     behaviorPassed = true;
+    stage = "backend_identity";
+    if (settings.mode === "real_model") {
+      backendIdentityVerified = await gateway.verify();
+      assert.equal(backendIdentityVerified, true);
+    }
   } catch {
     failure = describeFailure(stage, detail);
     process.exitCode = 1;
@@ -332,10 +350,12 @@ async function main() {
       processesStopped = cleanup.processesStopped;
       if (!processesStopped && !failure) failure = describeFailure("cleanup");
     }
+    await gateway?.close();
     const end = sourceState(root);
     const deliverable =
       configured &&
       behaviorPassed &&
+      (settings.mode === "local_fixture" || backendIdentityVerified) &&
       processesStopped &&
       sameCommittedSource(start, end);
     if (!deliverable) process.exitCode = 1;
@@ -365,7 +385,8 @@ async function main() {
               .digest("hex"),
           }
         : {}),
-      backendIdentityVerified: false,
+      backendIdentityVerified,
+      backendReceipts: gateway?.receipts ?? [],
       source: { start, end },
       lockSha256: createHash("sha256")
         .update(readFileSync(join(root, "pnpm-lock.yaml")))
@@ -382,7 +403,7 @@ async function main() {
       results,
       failure,
       notCovered: [
-        "upstream model/backend identity behind the configured endpoint",
+        ...(backendIdentityVerified ? [] : ["real model/backend identity"]),
         "operating-system containment beyond this platform run",
         "business execution",
         "full product assembly",

@@ -3,7 +3,8 @@ import { createServer } from "node:http";
 import { mkdtemp, mkdir, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createCodexAdapter } from "../../../packages/ai-adapters/codex/dist/index.js";
+import { createTestAdapter } from "../../../packages/ai-adapters/codex/dist/testing.js";
+import { nativeRuntime } from "../../../packages/ai-adapters/codex/dist/runtime.js";
 import { VerifiedProviderSession } from "../../../packages/ai-contract/dist/session.js";
 import {
   unwrap,
@@ -126,7 +127,7 @@ export async function nativeFixture(
     }),
   };
   const make = () => {
-    const port = createCodexAdapter(options);
+    const port = createTestAdapter(options, nativeRuntime);
     ports.push(port);
     return port;
   };

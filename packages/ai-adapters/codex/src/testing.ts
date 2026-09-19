@@ -1,4 +1,4 @@
-import { CodexAdapter, type CodexAdapterPort } from "./adapter.js";
+import { CodexAdapter } from "./adapter.js";
 import type { CodexAdapterOptions } from "./configuration.js";
 import type { RuntimeFactory } from "./runtime.js";
 export type {
@@ -11,6 +11,6 @@ export type {
 export function createTestAdapter(
   options: CodexAdapterOptions,
   runtime: RuntimeFactory,
-): CodexAdapterPort {
+): CodexAdapter {
   return new CodexAdapter(options, runtime);
 }

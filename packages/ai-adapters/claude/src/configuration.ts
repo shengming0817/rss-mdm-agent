@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { isAbsolute } from "node:path";
+import { isAbsolute, join } from "node:path";
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import type {
   Binding,
@@ -76,7 +76,13 @@ export function sdkOptions(resolved: ResolvedClaudeConfiguration): Options {
     CLAUDE_CONFIG_DIR: resolved.configurationDirectory,
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
   };
-  for (const key of ["PATH", "SystemRoot", "WINDIR", "TEMP", "TMP", "TMPDIR"])
+  // No host search path: native metadata helpers must not select user shims.
+  env.PATH =
+    process.platform === "win32"
+      ? join(resolved.configurationDirectory, "empty-bin")
+      : "/usr/bin:/bin";
+  env.NoDefaultCurrentDirectoryInExePath = "1";
+  for (const key of ["SystemRoot", "WINDIR", "TEMP", "TMP", "TMPDIR"])
     if (process.env[key]) env[key] = process.env[key]!;
   env[
     credential.type === "api_key" ? "ANTHROPIC_API_KEY" : "ANTHROPIC_AUTH_TOKEN"

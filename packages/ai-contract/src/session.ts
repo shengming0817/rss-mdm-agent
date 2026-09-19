@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import canonicalize from "canonicalize";
 import { withinBudget } from "./budget.js";
-import { boundedJson, decode } from "./codec.js";
+import { boundedJson, decode, isId } from "./codec.js";
 import type {
   Binding,
   Capabilities,
@@ -19,6 +19,10 @@ import type {
   Result,
   ToolEndpoint,
   Reconciliation,
+  ProviderInstance,
+  ProviderForkPort,
+  ProviderForkRequest,
+  ProviderForkResult,
 } from "./ports.js";
 
 /** Logical workspace path identity, never a filesystem containment proof. */
@@ -36,6 +40,24 @@ export function workspaceIdentity(directory: string): string {
 export type AdmissionResult =
   | { ok: true; value: VerifiedProviderSession }
   | { ok: false; error: Failure; cleanupError?: Failure };
+export type ForkAdmissionResult =
+  | {
+      certainty: "created";
+      session: VerifiedProviderSession;
+      source: ProviderForkRequest;
+    }
+  | {
+      certainty: "not_created" | "unknown";
+      error: Failure;
+      cleanupError?: Failure;
+    };
+interface ForkAdmission {
+  port?: ProviderForkPort;
+  rejection?: Failure;
+  request: ProviderForkRequest;
+  result?: ProviderForkResult;
+  attempted: boolean;
+}
 const usedPorts = new WeakSet<ProviderAgentPort>();
 const unavailable = (): Failure => ({
   code: "unavailable",
@@ -240,6 +262,74 @@ export class VerifiedProviderSession {
       return { ok: false, error: unavailable() };
     }
   }
+  /** Host calls this with its already-owned fresh child; admission and cleanup stay here.
+   * The Host persists the successful child and lineage before publishing it to clients. */
+  async fork(
+    child: ProviderInstance,
+    throughTurnId: Id,
+    configuration: ProviderConfiguration,
+    budget: Budget,
+  ): Promise<ForkAdmissionResult> {
+    const request: ProviderForkRequest = {
+      namespace: structuredClone(this.#namespace),
+      binding: this.binding,
+      throughTurnId,
+    };
+    if (child.agent === this.#port || usedPorts.has(child.agent))
+      return {
+        certainty: "not_created",
+        error: { code: "permission_denied", retry: "never" },
+      };
+    const fork: ForkAdmission = {
+      port: child.extensions.fork,
+      request,
+      attempted: false,
+    };
+    try {
+      const { sessionId: parentId, ...parentScope } = this.#namespace;
+      const { sessionId: childId, ...childScope } = configuration.namespace;
+      if (this.#capabilities.fork !== "supported" || !fork.port)
+        fork.rejection = { code: "unsupported_capability", retry: "never" };
+      else if (
+        !isId(throughTurnId) ||
+        parentId === childId ||
+        !same(parentScope, childScope) ||
+        configuration.provider !== this.#binding.provider ||
+        configuration.accountRef !== this.#binding.accountRef ||
+        !same(configuration.config, this.#binding.config) ||
+        workspaceIdentity(configuration.workingDirectory) !==
+          this.#binding.workspaceId ||
+        (configuration.permissions === "host_mediated"
+          ? "host_mediated"
+          : "disabled") !== this.#capabilities.tools
+      )
+        fork.rejection = { code: "permission_denied", retry: "never" };
+    } catch {
+      fork.rejection = { code: "invalid_input", retry: "never" };
+    }
+    // Rejection also consumes and cleans up the fresh Host-owned child.
+    const admitted = await VerifiedProviderSession.admit(
+      child.agent,
+      configuration,
+      budget,
+      undefined,
+      fork,
+    );
+    if (admitted.ok)
+      return {
+        certainty: "created",
+        session: admitted.value,
+        source: structuredClone(request),
+      };
+    return {
+      certainty:
+        fork.result?.certainty === "not_created" || !fork.attempted
+          ? "not_created"
+          : "unknown",
+      error: admitted.error,
+      ...(admitted.cleanupError ? { cleanupError: admitted.cleanupError } : {}),
+    };
+  }
   static restore(
     port: ProviderAgentPort,
     previous: Session,
@@ -260,6 +350,7 @@ export class VerifiedProviderSession {
     configuration: ProviderConfiguration,
     budget: Budget,
     previous?: Session,
+    fork?: ForkAdmission,
   ): Promise<AdmissionResult> {
     // Each instance belongs to one admission. Refusing a second call never closes
     // the first successful session, including simultaneous calls.
@@ -277,7 +368,7 @@ export class VerifiedProviderSession {
       };
       result = await withinBudget(
         () => budget,
-        (b) => this.initialize(port, settings, b, prior),
+        (b) => this.initialize(port, settings, b, prior, fork),
       );
     } catch {
       result = { ok: false, error: unavailable() };
@@ -307,6 +398,7 @@ export class VerifiedProviderSession {
     configuration: ProviderConfiguration,
     budget: Budget,
     previous?: Session,
+    fork?: ForkAdmission,
   ): Promise<Result<VerifiedProviderSession>> {
     if (budget.signal.aborted) return denied();
     const workspaceId = workspaceIdentity(configuration.workingDirectory);
@@ -341,9 +433,39 @@ export class VerifiedProviderSession {
       config: structuredClone(config),
       accountRef,
     };
-    const initialized = previous
-      ? await port.resume!(structuredClone(previous.binding), settings, budget)
-      : await port.createSession(settings, budget);
+    let initialized;
+    if (fork) {
+      if (fork.rejection) return { ok: false, error: fork.rejection };
+      if (!fork.port) return denied();
+      fork.attempted = true;
+      const result = (fork.result = await fork.port.forkSession(
+        structuredClone(fork.request),
+        settings,
+        budget,
+      ));
+      if (result.certainty !== "created")
+        return { ok: false, error: result.error };
+      if (!same(result.source, fork.request)) return denied();
+      const parent = fork.request.binding,
+        child = result.value.binding;
+      if (
+        child.generation === parent.generation ||
+        child.nativeSessionId === parent.nativeSessionId ||
+        (parent.nativeThreadId !== undefined &&
+          child.nativeThreadId === parent.nativeThreadId) ||
+        child.providerVersion !== parent.providerVersion ||
+        child.adapterVersion !== parent.adapterVersion
+      )
+        return denied();
+      initialized = { ok: true as const, value: result.value };
+    } else
+      initialized = previous
+        ? await port.resume!(
+            structuredClone(previous.binding),
+            settings,
+            budget,
+          )
+        : await port.createSession(settings, budget);
     if (!initialized.ok) return initialized;
     const { binding, capabilities } = structuredClone(initialized.value);
     try {
