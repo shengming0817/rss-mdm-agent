@@ -3,7 +3,7 @@
 面向 Windows、macOS、Linux 宿主设计的桌面自助服务与人/AI 统一受控执行客户端。
 本仓拥有客户端 UI、AI 引擎适配、本地执行核心与后续 Agent 平台实现；服务端产品与 Agent wire 由 rss-mdm 拥有。
 
-当前包含独立自助目录核心、执行/AI 会话契约、Vue UI 包与 Tauri 桌面基础壳，提供无真实执行的固定样本；尚无后台服务或正式安装包。本批 C01–C20 的目标是独立核心、从 prmonitor 提取 AI/UI 和测试执行器闭环；真实平台命令、软件安装、提权、远程管理与 T3 留后续交付。
+当前包含独立自助目录核心、执行/AI 会话契约、Vue UI 包与 Tauri 桌面自助页面，使用受限 IPC 消费 Rust 内存固定测试服务；浏览器仅提供同源只读预览；尚无后台服务或正式安装包。本批 C01–C20 的目标是独立核心、从 prmonitor 提取 AI/UI 和测试执行器闭环；真实平台命令、软件安装、提权、远程管理与 T3 留后续交付。
 
 - [产品 PRD](docs/product/rss-mdm-agent-prd.md)：需求、范围、验收和任务追踪。
 - [协作入口](AGENTS.md)与[Codex工作方式](docs/guides/codex-workflow.md)。

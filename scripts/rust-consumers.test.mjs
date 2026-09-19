@@ -10,7 +10,7 @@ import {
   rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { execFileSync } from "node:child_process";
 import { checkRustConsumers, rustConsumers } from "./check-rust-consumers.mjs";
 import { git } from "./source-state.mjs";
@@ -27,6 +27,7 @@ const names = [
   "service-catalog",
   "script-plan",
   "software-plan",
+  "execution-mcp",
 ];
 function fixture() {
   const root = realpathSync(
@@ -56,6 +57,10 @@ function fixture() {
     mkdirSync(join(path, "examples"), { recursive: true });
     mkdirSync(join(path, "tests/fixtures"), { recursive: true });
     writeFileSync(join(path, "examples", spec.example), "fn main() {}\n");
+    for (const file of spec.fixtures) {
+      mkdirSync(dirname(join(root, file)), { recursive: true });
+      writeFileSync(join(root, file), "fixture");
+    }
     for (const file of [
       "plan.json",
       "plan.sha256",
@@ -71,7 +76,7 @@ function fixture() {
     JSON.stringify({ status: "passed", source: { head: "stale-success" } }),
   );
   writeFileSync(join(root, ".gitignore"), ".local-ci-runs/\n");
-  execFileSync(git, ["add", "crates", ".gitignore"], { cwd: root });
+  execFileSync(git, ["add", "crates", "packages", ".gitignore"], { cwd: root });
   execFileSync(
     git,
     [
@@ -102,13 +107,13 @@ function fakeCargo(root, failure) {
         stdout: JSON.stringify({
           packages: names.map((name) => ({
             name,
-            dependencies: [
-              {
-                name: "serde_json",
-                req: "=1.0.151",
+            dependencies: rustConsumers
+              .find((s) => s.name === name)
+              .registry.map((name) => ({
+                name,
+                req: name === "serde_json" ? "=1.0.151" : "=1.0.0",
                 source: "registry+https://github.com/rust-lang/crates.io-index",
-              },
-            ],
+              })),
           })),
         }),
       };
@@ -250,7 +255,7 @@ test("only clean unchanged source can produce a deliverable consumer PASS", () =
   }
 });
 
-test("consumer inventory covers the eleven independent crates", () => {
+test("consumer inventory covers the independent crates", () => {
   assert.deepEqual(
     rustConsumers.map((spec) => spec.name),
     names,

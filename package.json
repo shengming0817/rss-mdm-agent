@@ -16,13 +16,19 @@
     "typecheck": "vue-tsc --noEmit -p tsconfig.json",
     "check:boundaries": "node --test scripts/boundaries.test.mjs",
     "check:consumer": "node scripts/check-consumer.mjs",
-    "format:check": "prettier --check packages/ui/runtime.ts packages/ui/src packages/ui/tests apps/desktop/src scripts"
+    "format:check": "prettier --check packages/ui/runtime.ts packages/ui/src packages/ui/tests apps/desktop/src scripts packages/ai-contract/src tests/ai-contract",
+    "generate:ai-contract": "node scripts/generate-ai-contract.mjs",
+    "check:ai-contract": "node scripts/generate-ai-contract.mjs --check",
+    "build:ai-contract": "pnpm --filter @rss-mdm-agent/ai-contract build",
+    "test:ai-contract": "pnpm build:ai-contract && node --test tests/ai-contract/*.test.mjs",
+    "check:ai-consumer": "node scripts/check-ai-consumer.mjs"
   },
   "devDependencies": {
     "@types/node": "24.3.0",
     "@vitejs/plugin-vue": "5.2.1",
     "@vue/test-utils": "2.4.11",
     "happy-dom": "20.10.6",
+    "json-schema-to-typescript": "16.0.0",
     "prettier": "3.6.2",
     "typescript": "5.6.2",
     "vite": "6.4.3",

@@ -1,6 +1,6 @@
 # RSS MDM Client / Agent 协作说明
 
-本仓拥有桌面自助、AI引擎适配和客户端受控执行。需求以[产品PRD](docs/product/rss-mdm-agent-prd.md)为准；当前包含需求基线、UI 包与桌面展示样本；不能把样本或规划当作真实执行能力。
+本仓拥有桌面自助、AI引擎适配和客户端受控执行。需求以[产品PRD](docs/product/rss-mdm-agent-prd.md)为准；当前包含需求基线、UI 包、桌面自助页面与内存固定测试服务；不能把样本或规划当作真实执行能力。
 
 - [仓库入口](README.md)与[文档导航](docs/README.md)。
 - 稳定规则：[范围](docs/rules/project-scope.md)、[依赖](docs/rules/dependencies.md)、[验证](docs/rules/verification-scope.md)、[文档维护](docs/rules/documentation.md)。
@@ -18,7 +18,7 @@
 
 ## 产品与来源
 
-自有执行核心/后台实现使用Rust，桌面UI按PRD选定技术实现。只从prmonitor提取AI引擎与UI，不迁入PR业务或旧全权限/自动批准执行方式。
+执行契约、能力、授权、批准、执行生命周期/存储/服务使用 Rust；AI Host、AI 存储和 provider adapters 使用 Node.js + TypeScript，桌面 UI 使用既定 Vue/Tauri 技术。AI 产品 wire 由独立 JSON Schema 生成 Rust/TS 绑定，禁止双份手写定义。只从prmonitor提取AI引擎与UI，不迁入PR业务或旧全权限/自动批准执行方式。
 服务端身份、Group/Scope/Policy/Resource和Agent wire由rss-mdm拥有；按[依赖规则](docs/rules/dependencies.md)消费，不能复制权威或依赖相邻目录path。
 来源文件、commit及改写边界记录在提取PR；来源规则不自动成为本仓规则。Linux宿主设计不自动扩大MDM受管平台承诺。
 

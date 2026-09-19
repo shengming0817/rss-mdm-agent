@@ -18,6 +18,9 @@ const steps = [
     ],
   ],
   ["frozen dependencies", "pnpm", ["install", "--frozen-lockfile"]],
+  ["AI generated contracts", "pnpm", ["check:ai-contract"]],
+  ["AI contract conformance", "pnpm", ["test:ai-contract"]],
+  ["AI packed consumer", "pnpm", ["check:ai-consumer"]],
   ["frontend build", "pnpm", ["build"]],
   ["types", "pnpm", ["typecheck"]],
   ["frontend format", "pnpm", ["format:check"]],
@@ -28,6 +31,7 @@ const steps = [
   ["rust fmt", "cargo", ["fmt", "--all", "--", "--check"]],
   ["rust build", "cargo", ["build", "--workspace", "--locked"]],
   ["rust test", "cargo", ["test", "--workspace", "--locked"]],
+  ["self-service fixtures", "node", ["scripts/check-self-service.mjs"]],
   ["rust consumers", "node", ["scripts/check-rust-consumers.mjs"]],
   [
     "rust clippy",

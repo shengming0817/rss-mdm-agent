@@ -1,9 +1,17 @@
+import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve, dirname, extname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { parse, compileTemplate } from "vue/compiler-sfc";
 
+const fixtureCommands = [
+  "self_service_snapshot",
+  "self_service_preview",
+  "self_service_submit",
+  "self_service_respond",
+];
+const nativeAdapter = "apps/desktop/src/self-service/native.ts";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 function files(dir) {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -29,6 +37,7 @@ export function checkSource(file, source) {
   const allowed = desktop
     ? ["vue", "@rss-mdm-agent/ui", "@rss-mdm-agent/ui/style.css"]
     : ["vue"];
+  if (file === nativeAdapter) allowed.push("@tauri-apps/api/core");
   const descriptor = extname(file) === ".vue" ? parse(source).descriptor : null;
   if (descriptor) {
     const template = descriptor.template?.content ?? "";
@@ -139,6 +148,10 @@ export function checkSource(file, source) {
       "defineEmits",
       "withDefaults",
     ]);
+    if (desktop)
+      for (const value of ["Object", "String", "Map", "Date"])
+        globals.add(value);
+    if (file === nativeAdapter) globals.add("crypto");
     function staticText(node, seen = new Set()) {
       if (!node || seen.has(node)) return null;
       seen.add(node);
@@ -168,7 +181,10 @@ export function checkSource(file, source) {
     const checkImport = (name) => {
       if (!allowed.includes(name) && !name.startsWith("."))
         errors.push(`${file}: unexpected dependency ${name}`);
-      if (/(?:^|\/)(api|transport|stores?)(?:[./]|$)/.test(name))
+      if (
+        /(?:^|\/)(api|transport|stores?)(?:[./]|$)/.test(name) &&
+        !(file === nativeAdapter && name === "@tauri-apps/api/core")
+      )
         errors.push(`${file}: host dependency ${name}`);
       if (
         name.startsWith(".") &&
@@ -213,7 +229,39 @@ export function checkSource(file, source) {
         ts.isStringLiteral(node.moduleSpecifier)
       )
         checkImport(node.moduleSpecifier.text);
+      if (
+        file === nativeAdapter &&
+        ts.isImportDeclaration(node) &&
+        node.moduleSpecifier.text === "@tauri-apps/api/core"
+      ) {
+        const imports = node.importClause?.namedBindings;
+        if (
+          !imports ||
+          !ts.isNamedImports(imports) ||
+          imports.elements.some(
+            (item) =>
+              item.propertyName ||
+              !["invoke", "isTauri"].includes(item.name.text),
+          )
+        )
+          errors.push(`${file}: only direct invoke/isTauri imports allowed`);
+      }
+      if (
+        file === nativeAdapter &&
+        ts.isIdentifier(node) &&
+        node.text === "invoke" &&
+        !ts.isImportSpecifier(node.parent) &&
+        !(ts.isCallExpression(node.parent) && node.parent.expression === node)
+      )
+        errors.push(`${file}: invoke cannot escape the adapter`);
       if (ts.isCallExpression(node)) {
+        if (
+          file === nativeAdapter &&
+          node.expression.getText(ast) === "invoke" &&
+          (!ts.isStringLiteral(node.arguments[0]) ||
+            !fixtureCommands.includes(node.arguments[0].text))
+        )
+          errors.push(`${file}: only literal fixture commands allowed`);
         if (
           node.expression.kind === ts.SyntaxKind.ImportKeyword ||
           node.expression.getText(ast) === "require"
@@ -307,11 +355,14 @@ export function checkTree(treeRoot = root) {
   if (
     Object.keys(desktop.dependencies ?? {})
       .sort()
-      .join() !== "@rss-mdm-agent/ui,vue" ||
+      .join() !== "@rss-mdm-agent/ui,@tauri-apps/api,vue" ||
+    desktop.dependencies?.["@tauri-apps/api"] !== "2.11.1" ||
     Object.keys(desktop.optionalDependencies ?? {}).length ||
     Object.keys(desktop.peerDependencies ?? {}).length
   )
-    errors.push("desktop production dependencies must be UI and Vue only");
+    errors.push(
+      "desktop production dependencies must be UI, Vue and pinned Tauri core only",
+    );
   const config = JSON.parse(read("apps/desktop/src-tauri/tauri.conf.json"));
   const capabilityFiles = files(
     resolve(treeRoot, "apps/desktop/src-tauri/capabilities"),
@@ -321,10 +372,17 @@ export function checkTree(treeRoot = root) {
     const cap = JSON.parse(readFileSync(file, "utf8"));
     if (
       JSON.stringify(cap.windows) !== '["main"]' ||
-      cap.permissions?.length !== 0 ||
+      JSON.stringify(cap.permissions?.toSorted()) !==
+        JSON.stringify(
+          fixtureCommands
+            .map((cmd) => `allow-${cmd.replaceAll("_", "-")}`)
+            .toSorted(),
+        ) ||
       cap.remote
     )
-      errors.push("host capability must be local main with zero permissions");
+      errors.push(
+        "host capability must be local main with only fixture permissions",
+      );
   }
   if (
     JSON.stringify(config.app.security.capabilities) !== '["main"]' ||
@@ -386,7 +444,20 @@ export function checkTree(treeRoot = root) {
   for (const [path, expected] of [
     [
       "apps/desktop/src-tauri/Cargo.toml",
-      ["tauri-build.workspace = true", "tauri.workspace = true"],
+      [
+        "tauri-build.workspace = true",
+        "tauri.workspace = true",
+        "serde.workspace = true",
+        'serde_json = { workspace = true, features = ["raw_value"] }',
+        "sha2.workspace = true",
+        "schemars.workspace = true",
+        'syn = { version = "=2.0.119", features = ["full", "visit"] }',
+        'proc-macro2 = "=1.0.107"',
+        'service-catalog = { path = "../../../crates/service-catalog" }',
+        'execution-contract = { path = "../../../crates/execution-contract" }',
+        'execution-interaction = { path = "../../../crates/execution-interaction" }',
+        'tauri = { workspace = true, features = ["test"] }',
+      ],
     ],
     [
       "Cargo.toml",
@@ -429,13 +500,59 @@ export function checkTree(treeRoot = root) {
     )
   )
     errors.push("host must register navigation and new-window rejection");
-  for (const file of files(resolve(treeRoot, "apps/desktop/src-tauri/src"))) {
-    if (
-      /tauri::command|invoke_handler|\.plugin\s*\(|\.manage\s*\(|Command::new|prmonitor_lib/.test(
+  const ipcPath = "apps/desktop/src-tauri/src/self_service/ipc.rs";
+  const ipc = read(ipcPath);
+  const commands =
+    ipc.match(/commands!\s*\{([\s\S]*?)\}/)?.[1].match(/self_service_\w+/g) ??
+    [];
+  if (
+    JSON.stringify(commands.toSorted()) !==
+      JSON.stringify(fixtureCommands.toSorted()) ||
+    (ipc.match(/\.manage\(/g) ?? []).length !== 1 ||
+    (ipc.match(/\.invoke_handler\(/g) ?? []).length !== 1
+  )
+    errors.push(
+      "fixture service must register exactly its four commands and one state owner",
+    );
+  const build = read("apps/desktop/src-tauri/build.rs");
+  const manifest = build.match(/\.commands\(&\[([\s\S]*?)\]/)?.[1];
+  const declared = [...(manifest ?? "").matchAll(/"(\w+)"/g)].map((m) => m[1]);
+  if (
+    JSON.stringify(declared.toSorted()) !==
+    JSON.stringify(fixtureCommands.toSorted())
+  )
+    errors.push("fixture commands must be covered by the app ACL manifest");
+  const rustSources = Object.fromEntries(
+    files(resolve(treeRoot, "apps/desktop/src-tauri/src"))
+      .filter((file) => file.endsWith(".rs"))
+      .map((file) => [
+        relative(treeRoot, file).replaceAll("\\", "/"),
         readFileSync(file, "utf8"),
-      )
-    )
-      errors.push(`${file}: business or background host registration`);
-  }
+      ]),
+  );
+  errors.push(...checkRustSources(rustSources));
   return errors;
+}
+
+export function checkRustSources(sources) {
+  return JSON.parse(
+    execFileSync(
+      "cargo",
+      [
+        "run",
+        "--quiet",
+        "--locked",
+        "-p",
+        "rss-mdm-desktop",
+        "--example",
+        "rust-boundaries",
+        "--no-default-features",
+      ],
+      {
+        cwd: root,
+        input: JSON.stringify(sources),
+        encoding: "utf8",
+      },
+    ),
+  );
 }

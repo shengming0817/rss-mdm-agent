@@ -9,7 +9,34 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkTree, checkSource } from "./boundaries.mjs";
+import { checkTree, checkSource, checkRustSources } from "./boundaries.mjs";
+
+test("Rust guard distinguishes syntax from harmless words and literal contents", () => {
+  const file = "apps/desktop/src-tauri/src/self_service/example.rs";
+  assert.deepEqual(
+    checkRustSources({
+      [file]: `
+    // No fs, net, process, thread, ffi, os or async_runtime capabilities here.
+    /* nested /* std::fs::read("x") */ comment */
+    fn process() { let net = "std::process::Command::new";
+      let fs = r###"extern \\\"C\\\"; app.shell(); tauri::async_runtime::spawn"###;
+      let _ = (net, fs, b"std::fs", '\\'');
+    }
+  `,
+    }),
+    [],
+  );
+  for (const code of [
+    'use std::{net::{TcpStream as Connection}}; fn run() { Connection::connect("x"); }',
+    'use std::{self as host}; fn run() { host::fs::read("x"); }',
+    'macro_rules! run { () => { std::fs::read("x") }; }',
+    'macro_rules! run { () => { use std as host; host::fs::read("x"); }; }',
+    "macro_rules! run { () => { app.shell(); }; }",
+    'fn run() { /* between tokens */ std /* comment */ :: fs::read("x"); }',
+    "fn unfinished(",
+  ])
+    assert.ok(checkRustSources({ [file]: code }).length, code);
+});
 
 test("UI and desktop satisfy the dependency and permission boundaries", () => {
   assert.deepEqual(checkTree(), []);
@@ -97,7 +124,7 @@ test("tree scan covers desktop files and both production manifests", () => {
     assert.ok(errors.includes("UI production dependencies must be Vue only"));
     assert.ok(
       errors.includes(
-        "desktop production dependencies must be UI and Vue only",
+        "desktop production dependencies must be UI, Vue and pinned Tauri core only",
       ),
     );
   } finally {
@@ -176,11 +203,19 @@ test("each host boundary mutation independently fails the tree scan", () => {
     ],
     [
       "apps/desktop/src-tauri/capabilities/main.json",
-      (s) => s.replace('"permissions": []', '"permissions": ["core:default"]'),
+      (s) => {
+        const c = JSON.parse(s);
+        c.permissions.push("core:default");
+        return JSON.stringify(c);
+      },
     ],
     [
       "apps/desktop/src-tauri/capabilities/main.json",
-      (s) => s.replace('"windows": ["main"]', '"windows": ["*"]'),
+      (s) => {
+        const c = JSON.parse(s);
+        c.windows = ["*"];
+        return JSON.stringify(c);
+      },
     ],
     [
       "apps/desktop/src-tauri/Cargo.toml",
@@ -251,6 +286,21 @@ test("each host boundary mutation independently fails the tree scan", () => {
       "Cargo.toml",
       (s) => s.replace("features = []", 'features = ["devtools"]'),
     ],
+    ...[
+      'std::net::TcpStream::connect("127.0.0.1:9");',
+      'std::fs::read("local-file");',
+      "std::thread::spawn(|| {});",
+      'use std::{process::Command as Launcher}; Launcher::new("test");',
+      'use std::{net as network}; network::TcpStream::connect("127.0.0.1:9");',
+      'use std as host; host::fs::read("local-file");',
+      'use std::*; fs::read("local-file");',
+      "tauri::async_runtime::spawn(async {});",
+      "app.path().app_data_dir();",
+      'extern "C" { fn system(); }',
+    ].map((capability) => [
+      "apps/desktop/src-tauri/src/self_service/ipc.rs",
+      (source) => source + `\nfn forbidden() { ${capability} }\n`,
+    ]),
   ];
   try {
     for (const path of [
@@ -321,4 +371,23 @@ test("root workspace may declare independent core dependencies without changing 
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("only the narrow native adapter can call literal fixture commands", () => {
+  const file = "apps/desktop/src/self-service/native.ts";
+  for (const source of [
+    `import { invoke } from '@tauri-apps/api/core'; invoke('run_shell')`,
+    `import { invoke } from '@tauri-apps/api/core'; const name = 'self_service_snapshot'; invoke(name)`,
+    `import { invoke as call } from '@tauri-apps/api/core'; call('self_service_snapshot')`,
+    `import { invoke } from '@tauri-apps/api/core'; export const call = invoke`,
+    `import * as native from '@tauri-apps/api/core'; native.invoke('run_shell')`,
+  ])
+    assert.ok(checkSource(file, source).length, source);
+  assert.deepEqual(
+    checkSource(
+      file,
+      `import { invoke } from '@tauri-apps/api/core'; invoke('self_service_snapshot')`,
+    ),
+    [],
+  );
 });
