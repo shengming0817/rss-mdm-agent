@@ -1,11 +1,13 @@
+import { createHash } from "node:crypto";
 import { parse as parseToml } from "@iarna/toml";
 import { parse as parseYaml } from "yaml";
 import { constants } from "node:fs";
-import { open, lstat, realpath } from "node:fs/promises";
+import { open, lstat, realpath, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import { readPrivateFile } from "./private-file.js";
 import {
   ConfigurationError,
+  configurationFingerprint,
   endpoint,
   type LocalConfiguration,
 } from "./configuration.js";
@@ -103,9 +105,9 @@ export async function resolveConnection(
     };
   }
   if (local.session.provider === "codex") {
-    const settings = parseToml(
-      (await optional(join(source.directory, "config.toml"))) ?? "",
-    ) as Record<string, any>;
+    const configPath = join(source.directory, "config.toml");
+    const configText = (await optional(configPath)) ?? "";
+    const settings = parseToml(configText) as Record<string, any>;
     const profileName = source.profile ?? settings.profile;
     const profile = profileName ? settings.profiles?.[profileName] : undefined;
     if (profileName && !profile)
@@ -152,6 +154,12 @@ export async function resolveConnection(
         },
       };
     }
+    if (
+      !providerSettings.env_key &&
+      providerSettings.experimental_bearer_token &&
+      (await readUserFile(configPath)) !== configText
+    )
+      throw new ConfigurationError("configuration_invalid");
     const key = text(
       providerSettings.env_key
         ? process.env[text(providerSettings.env_key)]
@@ -165,9 +173,9 @@ export async function resolveConnection(
     };
   }
   if (local.session.provider === "claude") {
-    const settings = JSON.parse(
-      (await optional(join(source.directory, "settings.json"))) ?? "{}",
-    );
+    const settingsPath = join(source.directory, "settings.json");
+    const settingsText = (await optional(settingsPath)) ?? "{}";
+    const settings = JSON.parse(settingsText);
     const env = settings.env ?? {};
     const apiUrl = endpoint(
       env.ANTHROPIC_BASE_URL ??
@@ -186,8 +194,11 @@ export async function resolveConnection(
       ["CLAUDE_CODE_OAUTH_TOKEN", "oauth_token"],
     ] as const) {
       const value = env[name] ?? process.env[name];
-      if (value)
+      if (value) {
+        if (env[name] && (await readUserFile(settingsPath)) !== settingsText)
+          throw new ConfigurationError("configuration_invalid");
         return { model, apiUrl, credential: { type, value: text(value) } };
+      }
     }
     if (process.platform === "darwin")
       return {
@@ -258,4 +269,38 @@ export async function resolveConnection(
       value: text(credentials.refs?.DEEPSEEK_API_KEY),
     },
   };
+}
+
+/** Private per-config lineage survives Host restart. Token refresh for one ChatGPT account
+ * is allowed; endpoint/model/account/credential identity changes require a new revision. */
+export async function bindConnection(
+  local: LocalConfiguration,
+  connection: Connection,
+): Promise<void> {
+  const hash = (value: unknown) =>
+    createHash("sha256").update(JSON.stringify(value)).digest("hex");
+  const key = hash([
+    local.caller.tenantId,
+    local.caller.principalId,
+    local.caller.authorityId,
+    local.session.provider,
+    local.session.accountRef,
+    local.session.config,
+  ]);
+  const identity = hash([
+    configurationFingerprint(local),
+    connection.apiUrl,
+    connection.model ?? null,
+    connection.codex?.type === "chatgpt_tokens"
+      ? ["chatgpt", connection.codex.accountId]
+      : connection.credential,
+  ]);
+  const path = join(dirname(local.databasePath), `connection-${key}.identity`);
+  try {
+    await writeFile(path, identity, { flag: "wx", mode: 0o600 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+  if ((await readPrivateFile(path, 128)) !== identity)
+    throw new ConfigurationError("configuration_invalid");
 }

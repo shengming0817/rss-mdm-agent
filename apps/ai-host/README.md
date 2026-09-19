@@ -50,3 +50,5 @@ URL 允许 HTTPS 或 loopback HTTP，拒绝 URL 中的凭据/query/fragment。Cl
 Host-owned namespace 与 stage operationId 在工具请求前原子写入 AI 库；恢复先核实 Rust 当前事实。AI 本轮完成不终止交付；Host 重启和 provider 不可恢复时仍可处理原交付。MCP 管道断开触发 Host/worker 有界关闭，避免 Rust 宿主死亡后留下可工作的模型进程。
 
 AI wire **4**、SQLite schema **3** 直接替换旧版，拒绝旧库，不迁移、不双读、不做旧字段 fallback。桌面接线和验证边界见[桌面指南](../../docs/guides/desktop-development.md)。
+
+Host 激活时固定连接声明指纹；同一配置 revision 的 endpoint、model、账号或凭据身份变化会被私有 lineage 记录拒绝，必须更新 revision 后重新启动。ChatGPT 同账号令牌刷新不改变身份。配置可以保留普通读取权限，但其中若包含内联 API/OAuth 凭据，该文件必须仅当前用户可读写；显式凭据文件同样要求 0600。原生配置的工具、权限和插件设置不会被继承。

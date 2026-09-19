@@ -67,6 +67,7 @@ const value = <T>(result: Result<T>): T => {
 /** One Host owner's durable outbox. No receiver business state is cached here. */
 export class Deliveries {
   private readonly active = new Map<string, Promise<Result<ToolReply>>>();
+  private recoveryAfter?: string;
   constructor(
     private readonly store: SessionStore,
     private readonly router: DeliveryRouter,
@@ -151,23 +152,39 @@ export class Deliveries {
       return fail("unavailable", "reconcile_first");
     }
   }
-  async recover(budget: Budget): Promise<void> {
+  async recover(budget: Budget): Promise<Result<void>> {
     const deadline = new Deadline(budget);
-    let after: string | undefined;
     try {
-      do {
-        deadline.check();
-        const page = value(await this.store.deliveries(128, this.now(), after));
-        for (const row of page.items) {
-          if (budget.signal.aborted) return;
-          const stored = value(
-            await this.store.delivery(row.namespace, row.operationId),
-          );
-          if (stored?.event.body.type === "delivery_requested")
-            await deadline.wait(() => this.deliver(stored, deadline.budget()));
-        }
-        after = page.next;
-      } while (after);
+      // Advance the page before waiting on receivers. A hung operation cannot monopolize
+      // the next sweep; four concurrent attempts keep transport pressure bounded.
+      const page = value(
+        await deadline.wait(() =>
+          this.store.deliveries(4, this.now(), this.recoveryAfter),
+        ),
+      );
+      this.recoveryAfter = page.next;
+      const results = await Promise.all(
+        page.items.map(async (row) => {
+          try {
+            const stored = value(
+              await deadline.wait(() =>
+                this.store.delivery(row.namespace, row.operationId),
+              ),
+            );
+            return stored?.event.body.type === "delivery_requested"
+              ? await deadline.wait(() =>
+                  this.deliver(stored, deadline.budget()),
+                )
+              : ok(undefined);
+          } catch {
+            return fail("unavailable", "reconcile_first");
+          }
+        }),
+      );
+      const failure = results.find((result) => !result.ok);
+      return failure && !failure.ok ? failure : ok(undefined);
+    } catch {
+      return fail("unavailable", "reconcile_first");
     } finally {
       deadline.dispose();
     }

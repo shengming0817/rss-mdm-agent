@@ -132,6 +132,34 @@ async fn ai_origin_is_host_bound_and_recovery_never_redispatches_unknown_attempt
                 .unwrap()
         )
         .is_err());
+    let valid = json!({"version":1,"namespace":{"tenantId":"s1-test","principalId":"fixture-actor","authorityId":"desktop-fixture","sessionId":"conversation-a"},"operationId":"preview-delivery","provider":"codex","accountRef":"test-account","config":{"id":"local","revision":"r1"}});
+    for pointer in [
+        "/namespace/tenantId",
+        "/namespace/principalId",
+        "/namespace/authorityId",
+        "/provider",
+        "/accountRef",
+        "/config/id",
+        "/config/revision",
+    ] {
+        let mut changed = valid.clone();
+        *changed.pointer_mut(pointer).unwrap() = json!("foreign");
+        assert!(
+            Arc::new(handle.clone())
+                .bind_call(
+                    json!({"com.rss-mdm/ai-origin":changed})
+                        .as_object()
+                        .unwrap()
+                )
+                .is_err(),
+            "{pointer}"
+        );
+    }
+    let mut forged = valid.clone();
+    forged["approved"] = json!(true);
+    assert!(Arc::new(handle.clone())
+        .bind_call(json!({"com.rss-mdm/ai-origin":forged}).as_object().unwrap())
+        .is_err());
     let ai = bound(&handle, "conversation-a", "preview-delivery");
     let catalog = ai.catalog(None, CancellationToken::new()).await.unwrap();
     let selected=catalog.select(&serde_json::to_vec(&json!({"catalog":catalog.reference(),"itemId":"unknown","variantId":"test","arguments":{}})).unwrap(), &service_catalog::CatalogLimits { max_bytes:262144,max_depth:32,max_nodes:16384,max_string_bytes:16384,max_collection_items:128 }, &service_catalog::ParameterLimits { max_bytes:16384,max_string_bytes:4096,max_parameters:32 }).unwrap();

@@ -191,3 +191,52 @@ test("exact operation/content conflict is permanent and a hung receiver has a bo
   );
   assert.equal(conflict.error.code, "content_conflict");
 });
+
+test("hung deliveries cannot starve ready operations or later pages", async (t) => {
+  const f = await setup(t),
+    owner = f.owner();
+  f.router.prepare = (_, p) =>
+    ok({ operationId: p.arguments.operationRequestId, target: "rust" });
+  for (const id of ["a-hung", "b-ready", "c-hung", "d-hung", "e-ready"])
+    await owner.propose(
+      f.session.namespace,
+      f.session.binding.generation,
+      "command-1",
+      {
+        ...proposal,
+        arguments: { ...proposal.arguments, operationRequestId: id },
+      },
+      budget(),
+    );
+  f.advance();
+  f.router.reconcile = async (request) =>
+    request.body.operationId.endsWith("hung")
+      ? new Promise(() => {})
+      : ok({
+          state: "committed",
+          receipt: {
+            receiptRef: `receipt-${request.body.operationId}`,
+            reply: { disposition: "returned", text: "ready" },
+          },
+        });
+  f.router.acknowledge = async () => ok();
+  const recovered = await owner.recover(budget(50));
+  assert.equal(recovered.ok, false);
+  assert.equal(
+    unwrap(await f.store().delivery(f.session.namespace, "b-ready")).delivery
+      .status,
+    "delivered",
+  );
+  assert.equal(
+    unwrap(await f.store().delivery(f.session.namespace, "a-hung")).delivery
+      .status,
+    "reconciliation_required",
+  );
+  assert.equal((await owner.recover(budget(50))).ok, true);
+  assert.equal(
+    unwrap(await f.store().delivery(f.session.namespace, "e-ready")).delivery
+      .status,
+    "delivered",
+  );
+  assert.equal(f.count().send, 5);
+});

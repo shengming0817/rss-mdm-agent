@@ -135,6 +135,18 @@ impl Guard {
     }
 }
 impl<'ast> Visit<'ast> for Guard {
+    fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+        // Test-only mock runtimes do not add capabilities to the production binary.
+        if item.attrs.iter().any(|attribute| {
+            attribute.path().is_ident("cfg")
+                && attribute
+                    .parse_args::<syn::Path>()
+                    .is_ok_and(|path| path.is_ident("test"))
+        }) {
+            return;
+        }
+        visit::visit_item_mod(self, item);
+    }
     fn visit_path(&mut self, path: &'ast syn::Path) {
         self.path(
             &path
@@ -193,7 +205,9 @@ fn main() {
             }
         }
         if guard.forbidden {
-            errors.push(format!("{file}: unexpected host capability; fixture service cannot access host I/O or background execution"));
+            errors.push(format!(
+                "{file}: unexpected host capability outside its composition owner"
+            ));
         }
     }
     println!("{}", serde_json::to_string(&errors).unwrap());

@@ -41,6 +41,13 @@ test("Rust guard distinguishes syntax from harmless words and literal contents",
 test("UI and desktop satisfy the dependency and permission boundaries", () => {
   assert.deepEqual(checkTree(), []);
 });
+test("Rust guard excludes explicit test modules while guarding production IPC assembly", () => {
+  const file = "apps/desktop/src-tauri/src/composition/ipc.rs";
+  const mock = "mod tests { fn check() { builder.manage(state); } }";
+  assert.deepEqual(checkRustSources({ [file]: `#[cfg(test)] ${mock}` }), []);
+  for (const source of [mock, `#[cfg(feature = "test")] ${mock}`])
+    assert.ok(checkRustSources({ [file]: source }).length);
+});
 test("UI boundary rejects prohibited imports and rendering even through alternate syntax", () => {
   for (const source of [
     `import x from '@tauri-apps/api/core'`,

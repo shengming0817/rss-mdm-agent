@@ -6,7 +6,10 @@ import { createHost } from "@rss-mdm-agent/ai-host";
 import { openSqliteStore } from "@rss-mdm-agent/ai-store-sqlite";
 import { createAccessService, ndJsonStream } from "@rss-mdm-agent/ai-access";
 import { connectExecution } from "./execution.js";
-import { readConfiguration } from "./configuration.js";
+import {
+  readConfiguration,
+  configurationFingerprint,
+} from "./configuration.js";
 export type { LocalConfiguration } from "./configuration.js";
 /** A private local ACP endpoint. Disconnecting a socket only detaches that client. */
 export async function startLocalApp(configurationPath: string) {
@@ -43,9 +46,18 @@ export async function startLocalApp(configurationPath: string) {
   const store = opened.value;
   const artifact = new URL("./provider.js", import.meta.url);
   artifact.searchParams.set("configuration", path);
+  artifact.searchParams.set("fingerprint", configurationFingerprint(local));
   const execution =
     local.session.profile === "controlled_tools"
-      ? await connectExecution(process.stdin, process.stdout, local)
+      ? await connectExecution(process.stdin, process.stdout, local).catch(
+          async (error) => {
+            await store.close({
+              timeoutMs: 1000,
+              signal: new AbortController().signal,
+            });
+            throw error;
+          },
+        )
       : undefined;
   const created = await createHost({
     delivery: execution?.router ?? null,

@@ -39,6 +39,10 @@ fn window(app: &tauri::AppHandle, evidence: Arc<Evidence>) -> tauri::Result<()> 
             let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) else {
                 return;
             };
+            eprintln!("Native acceptance: {}", value);
+            if value["step"] == "progress" {
+                return;
+            }
             if value["step"] == "detach" {
                 if events.phase.swap(1, Ordering::AcqRel) != 0 {
                     return;
@@ -103,6 +107,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &root, &artifact,
             ))?);
             window(app.handle(), setup.clone())?;
+            let probe=app.handle().clone();
+            let finished=setup.clone();
+            tauri::async_runtime::spawn(async move {
+                while !finished.finished.load(Ordering::Acquire) {
+                    tokio::time::sleep(Duration::from_secs(10)).await;
+                    if let Some(view)=probe.get_webview_window("main") { let _=view.eval("document.title='RSS_ACCEPTANCE:'+JSON.stringify({step:'progress',sessionRows:document.querySelectorAll('.assistant-sessions li button').length,messages:document.querySelectorAll('.assistant .message').length,facts:document.querySelector('.assistant-facts')?.textContent,alerts:[...document.querySelectorAll('[role=alert]')].map(e=>e.textContent)});"); }
+                }
+            });
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(Duration::from_secs(240)).await;

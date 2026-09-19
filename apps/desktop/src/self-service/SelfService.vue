@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import type { Controller } from "./controller";
 import type { Decision, RequestView } from "./types";
 import ParameterForm from "./ParameterForm.vue";
@@ -51,9 +51,11 @@ function status(value: RequestView["status"]): string {
       return "效果未知";
   }
 }
+const now = ref(Date.now());
 let polling: ReturnType<typeof setInterval>;
 onMounted(() => {
   polling = setInterval(() => {
+    now.value = Date.now();
     if (!s.busy && !s.replying) void c.refresh();
   }, 1500);
   void c.refresh();
@@ -101,7 +103,8 @@ onUnmounted(() => clearInterval(polling));
         </article>
       </div>
       <p class="notice">
-        这是固定测试服务。不会安装软件、运行系统命令或更改设备；退出应用后测试数据清空。
+        这是 S1
+        受控测试服务，不修改设备。关闭窗口或退出不会取消已登记任务；重开后可查询持久状态。
       </p>
     </template>
     <template v-else-if="s.page === 'software' || s.page === 'tools'">
@@ -258,6 +261,7 @@ onUnmounted(() => clearInterval(polling));
           v-if="task"
           :key="task.plan.requestId"
           :task="task"
+          :now="now"
           :item="
             s.snapshot.catalog.find((item) => item.itemId === task?.plan.itemId)
           "

@@ -3,8 +3,11 @@ import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { WorkerFactory } from "@rss-mdm-agent/ai-host/worker";
-import { readConfiguration } from "./configuration.js";
-import { resolveConnection } from "./connection.js";
+import {
+  readConfiguration,
+  configurationFingerprint,
+} from "./configuration.js";
+import { resolveConnection, bindConnection } from "./connection.js";
 /** Activated worker composition; this is the sole credential/SDK loading entry. */
 export const createProvider: WorkerFactory = async ({
   configuration,
@@ -15,6 +18,8 @@ export const createProvider: WorkerFactory = async ({
   if (!path) throw new Error("missing composition input");
   const local = await readConfiguration(path);
   if (
+    configurationFingerprint(local) !==
+      new URL(import.meta.url).searchParams.get("fingerprint") ||
     local.session.provider !== configuration.provider ||
     local.session.accountRef !== configuration.accountRef ||
     local.session.config.id !== configuration.config.id ||
@@ -23,6 +28,7 @@ export const createProvider: WorkerFactory = async ({
   )
     throw new Error("configuration identity changed");
   const connection = await resolveConnection(local);
+  await bindConnection(local, connection);
   const directory = join(
     local.nativeDirectory,
     createHash("sha256")

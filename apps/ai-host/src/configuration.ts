@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readPrivateFile } from "./private-file.js";
 import { isAbsolute } from "node:path";
 import {
@@ -135,4 +136,26 @@ export async function readConfiguration(
   } catch {
     throw new ConfigurationError("configuration_invalid");
   }
+}
+
+/** A declaration change requires a new activation; secret file contents are not exported. */
+export function configurationFingerprint(local: LocalConfiguration): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify([
+        local.databasePath,
+        local.nativeDirectory,
+        local.workingDirectory,
+        local.caller.tenantId,
+        local.caller.principalId,
+        local.caller.authorityId,
+        local.session.provider,
+        local.session.accountRef,
+        local.session.config.id,
+        local.session.config.revision,
+        local.session.profile,
+        Object.entries(local.connection).sort(([a], [b]) => a.localeCompare(b)),
+      ]),
+    )
+    .digest("hex");
 }

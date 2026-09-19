@@ -15,7 +15,6 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    io::AsyncReadExt,
     net::{
         unix::{OwnedReadHalf, OwnedWriteHalf},
         UnixStream,
@@ -123,20 +122,29 @@ impl DesktopRuntime {
         let mcp_stop = CancellationToken::new();
         let mut child = None;
         // Missing AI credentials/artifact never substitute fixture conversations or erase tasks.
-        if let Ok(mut process) = Command::new(artifact.join("bin/rss-ai-host"))
+        let launched = Command::new(artifact.join("bin/rss-ai-host"))
             .arg(configuration)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true)
-            .spawn()
-        {
+            .spawn();
+        if let Err(error) = &launched {
+            eprintln!("AI Host spawn failed: {:?}", error.kind());
+        }
+        if let Ok(mut process) = launched {
             let reader = process.stdout.take().ok_or("MCP stdout unavailable")?;
             let writer = process.stdin.take().ok_or("MCP stdin unavailable")?;
-            let mut diagnostics = process.stderr.take().ok_or("diagnostic pipe unavailable")?;
+            let diagnostics = process.stderr.take().ok_or("diagnostic pipe unavailable")?;
             tokio::spawn(async move {
-                let mut bytes = [0; 4096];
-                while matches!(diagnostics.read(&mut bytes).await, Ok(n) if n > 0) {}
+                let mut lines = FramedRead::new(diagnostics, LinesCodec::new_with_max_length(256));
+                while let Some(line) = lines.next().await {
+                    if let Ok(line) = line {
+                        if let Some(value) = diagnostic(&line) {
+                            eprintln!("{value}");
+                        }
+                    }
+                }
             });
             let limits = McpLimits {
                 frame_bytes: 262144,
@@ -175,13 +183,13 @@ impl DesktopRuntime {
             loop {
                 {
                     let mut child = self.child.lock().await;
-                    if child
+                    if let Some(status) = child
                         .as_mut()
                         .ok_or_else(unavailable)?
                         .try_wait()
                         .map_err(|_| unavailable())?
-                        .is_some()
                     {
+                        eprintln!("AI Host exited: {status}");
                         return Err(unavailable());
                     }
                 }
@@ -274,5 +282,68 @@ impl DesktopRuntime {
         }
         self.mcp_stop.cancel();
         self.execution.close().await;
+    }
+}
+
+// Only product-owned closed diagnostics cross the native stderr boundary.
+fn diagnostic(line: &str) -> Option<String> {
+    if line == "AI Host cleanup incomplete" {
+        return Some(line.into());
+    }
+    let (stage, code) = line.strip_prefix("AI Host ")?.split_once(": ")?;
+    if ![
+        "could not start",
+        "admission",
+        "dispatch",
+        "observe",
+        "recovery",
+        "close",
+    ]
+    .contains(&stage)
+    {
+        return None;
+    }
+    if ![
+        "configuration_file",
+        "configuration_invalid",
+        "authentication_required",
+        "startup_failed",
+        "unavailable",
+        "unsupported_version",
+        "unsupported_capability",
+        "permission_denied",
+        "invalid_input",
+        "stale_binding",
+        "content_conflict",
+        "reconciliation_required",
+        "limit_exceeded",
+        "storage_corrupt",
+        "expired",
+        "cancelled",
+        "timeout",
+    ]
+    .contains(&code)
+    {
+        return None;
+    }
+    Some(format!("AI Host {stage}: {code}"))
+}
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn diagnostics_accept_only_closed_product_codes() {
+        assert_eq!(
+            super::diagnostic("AI Host could not start: authentication_required").as_deref(),
+            Some("AI Host could not start: authentication_required")
+        );
+        assert!(super::diagnostic("AI Host recovery: unavailable").is_some());
+        assert!(super::diagnostic("AI Host cleanup incomplete").is_some());
+        for line in [
+            "native secret-token",
+            "AI Host recovery: secret-token",
+            "AI Host raw: unavailable",
+        ] {
+            assert!(super::diagnostic(line).is_none());
+        }
     }
 }

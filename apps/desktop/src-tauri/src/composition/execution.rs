@@ -407,8 +407,8 @@ impl Owner {
             permission: "权限与批准由 Rust 受控执行服务裁决".into(),
             parameters: item.operations[0]
                 .parameters
-                .iter()
-                .map(|(_, field)| ui::ParameterSummary {
+                .values()
+                .map(|field| ui::ParameterSummary {
                     label: field.title.clone(),
                     state: "已校验；值不回显",
                 })

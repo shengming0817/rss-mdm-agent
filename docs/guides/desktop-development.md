@@ -8,12 +8,10 @@
 
 ```sh
 pnpm install --frozen-lockfile
-pnpm bundle:ai-host       # 要求干净、已提交源码
-pnpm stage:desktop-runtime
-# 开发时显式指定已验证的 artifact 绝对目录；不自动扫描开发产物
-RSS_AI_HOST_RUNTIME=/absolute/verified/ai-host-runtime pnpm dev
-pnpm desktop:build       # macOS arm64 .app，内含固定 Node 与依赖闭包
+pnpm desktop:build       # 干净、已提交源码；自动打包 Node/依赖、stage、构建 .app
 ```
+
+分步诊断可单独执行 `pnpm bundle:ai-host` 和 `pnpm stage:desktop-runtime`；开发启动用 `RSS_AI_HOST_RUNTIME=/absolute/verified/ai-host-runtime pnpm dev`，不自动扫描开发产物。
 
 普通 Cargo/schema 检查使用基础 Tauri 配置，不依赖运行包；发布构建显式合并 `tauri.bundle.conf.json`。打包脚本先校验固定 Node archive、源码与部署 lock、真实 SDK 生命周期，再将通过的当前候选复制到被忽略的 resources 目录。发布应用只从自身资源目录启动 AI Host。缺失或不可用的 AI 不影响 Rust 任务读取，也不会降级为虚构对话。
 
@@ -52,3 +50,5 @@ make ci CI_BASE=origin/develop
 来源：Tauri `crates/tauri/src/app.rs` / `webview/webview_window.rs` @ 2.11.2；runtime-wry `src/lib.rs` @ 2.11.4（最后窗口销毁与 ExitRequested）；rmcp `src/model/meta.rs` @ 3.4.0（request metadata）；MCP TypeScript SDK `client/index.ts` / `shared/stdio.ts` @ 1.30.0。
 
 真实 macOS arm64 桌面验收使用 `pnpm bundle:ai-host && pnpm check:desktop-native`，要求源码已提交且工作树干净。入口构建实际 WebView 并消费固定 runtime，使用现有 Codex 用户登录；结果写入 `.local-ci-runs/desktop-native.json`，绑定源码、lock 和 runtime manifest。每次使用全新私有目录，窗口销毁后重新连接同一后端，再从可信任务详情批准测试计划。该验收不属于无凭证 CI，也不证明真实 OS 效果。
+
+真实验收默认明确选择 `gpt-5.5`，可通过 `CODEX_SMOKE_MODEL` 指定其他已支持直接工具调用的模型；复用已有用户登录，不修改用户配置。需要 code-mode host 的模型不能据此宣称支持当前受控工具模式。

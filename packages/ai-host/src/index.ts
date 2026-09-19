@@ -134,6 +134,7 @@ export class SessionHost implements HostPort {
   private readonly timeout: number;
   private readonly deliveries?: Deliveries;
   private readonly deliveryAbort = new AbortController();
+  private deliveryFailure?: string;
   private constructor(private readonly options: HostOptions) {
     this.now = options.now ?? Date.now;
     this.queueLimit = options.queueLimit ?? 64;
@@ -277,6 +278,13 @@ export class SessionHost implements HostPort {
     this.track(
       this.deliveries
         .recover({ timeoutMs: this.timeout, signal: this.deliveryAbort.signal })
+        .then((result) => {
+          if (result.ok) this.deliveryFailure = undefined;
+          else if (result.error.code !== this.deliveryFailure) {
+            this.deliveryFailure = result.error.code;
+            this.diagnose("recovery", new HostFailure(result.error));
+          }
+        })
         .finally(() => {
           if (this.closing) return;
           const timer = setTimeout(() => {

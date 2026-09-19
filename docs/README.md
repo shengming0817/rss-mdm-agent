@@ -3,11 +3,11 @@
 - [客户端 PRD](product/rss-mdm-agent-prd.md)：客户端需求唯一入口，包含执行等级、传统自助与 AI 交互、责任边界和阶段验收。
 - [稳定规则](rules/README.md)：范围、依赖、验证与文档维护。
 - [Codex工作方式](guides/codex-workflow.md)：项目指令与本地共享技能入口。
-- [桌面开发](guides/desktop-development.md)：启动、构建、组件消费、自助固定测试服务与本地验收。
+- [桌面开发](guides/desktop-development.md)：启动、构建、组件消费、持久化 S1 装配与本地验收。
 - [UI与桌面壳提取记录](reference/ui-extraction.md)：固定来源、MIT授权和逐文件映射。
 - [目录与后端对齐](guides/202609130000-2396-service-catalog.md)：精确资源绑定、参数演进与执行 owner 边界。
 - [契约开发](guides/contracts-development.md)：执行/AI 契约、schema 与隔离消费验证。
-- [AI Runtime V3](../packages/ai-contract/README.md)：唯一 schema、三个 ports、可靠性和 ACP–A2UI 约定。
+- [AI Runtime V4](../packages/ai-contract/README.md)：唯一 schema、三个 ports、可靠性和 ACP–A2UI 约定。
 - [AI 助手页面](guides/assistant-development.md)：共享导航、固定 Host 浏览器验收、可信执行详情与版本切换。
 - [ACP–A2UI 开发](guides/ai-access-development.md)：标准协议、公共客户端、Vue/Lit 接缝与真实浏览器独立消费。
 

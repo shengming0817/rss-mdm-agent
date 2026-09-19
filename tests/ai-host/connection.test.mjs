@@ -157,3 +157,46 @@ test("Claude and DSH read only connection fields from existing settings", async 
   assert.equal(d.model, "d-model");
   assert.equal(JSON.stringify(d).includes("forbidden"), false);
 });
+test("inline credentials require private settings and connection lineage rejects identity drift", async (t) => {
+  const { bindConnection } = await import(
+    "../../apps/ai-host/dist/connection.js"
+  );
+  for (const provider of ["claude", "codex"]) {
+    const f = await setup(t, provider);
+    const filename = provider === "claude" ? "settings.json" : "config.toml";
+    await f.write(
+      filename,
+      provider === "claude"
+        ? JSON.stringify({ env: { ANTHROPIC_API_KEY: "inline-secret" } })
+        : 'model="model"\nmodel_provider="custom"\n[model_providers.custom]\nbase_url="https://models.example.test/v1"\nexperimental_bearer_token="inline-secret"\n',
+    );
+    if (provider === "codex") await f.write("auth.json", "{}");
+    await chmod(join(f.user, filename), 0o644);
+    await assert.rejects(resolveConnection(f.local));
+    await chmod(join(f.user, filename), 0o600);
+    const c = await resolveConnection(f.local);
+    await bindConnection(f.local, c);
+    await bindConnection(f.local, c);
+    for (const changed of [
+      { ...c, apiUrl: "https://different.example.test/v1" },
+      { ...c, model: "other-model" },
+      { ...c, credential: { type: "api_key", value: "other-account" } },
+    ])
+      await assert.rejects(bindConnection(f.local, changed));
+  }
+  const f = await setup(t, "codex");
+  await f.write("config.toml", 'model="chosen"\n');
+  const auth = (token, account) =>
+    JSON.stringify({
+      auth_mode: "chatgpt",
+      tokens: { access_token: token, account_id: account },
+    });
+  await f.write("auth.json", auth("old-token", "same-account"));
+  await bindConnection(f.local, await resolveConnection(f.local));
+  await f.write("auth.json", auth("new-token", "same-account"));
+  await bindConnection(f.local, await resolveConnection(f.local));
+  await f.write("auth.json", auth("new-token", "different-account"));
+  await assert.rejects(
+    bindConnection(f.local, await resolveConnection(f.local)),
+  );
+});

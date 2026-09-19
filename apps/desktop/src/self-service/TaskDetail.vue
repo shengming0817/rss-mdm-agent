@@ -7,6 +7,7 @@ defineProps<{
   task: RequestView;
   item: CatalogItem | undefined;
   disabled: boolean;
+  now: number;
 }>();
 const emit = defineEmits<{
   respond: [interactionId: string, answer: Answer];
@@ -39,7 +40,9 @@ function parameters(id: string) {
         <h3>交互提示</h3>
         <span class="badge">{{
           interaction.status === "pending"
-            ? "等待处理"
+            ? interaction.expiresAtUnixMs <= now
+              ? "按本机时间已过期；服务端在提交时核验"
+              : "等待处理"
             : interaction.status === "answered"
               ? "已回答"
               : interaction.status === "expired"
@@ -48,7 +51,11 @@ function parameters(id: string) {
         }}</span>
       </div>
       <p>{{ interaction.message }}</p>
-      <template v-if="interaction.status === 'pending'">
+      <template
+        v-if="
+          interaction.status === 'pending' && interaction.expiresAtUnixMs > now
+        "
+      >
         <div
           v-if="interaction.kind.kind === 'userConfirmation'"
           class="actions"
