@@ -82,3 +82,32 @@ fn constructed_data_gets_the_same_limits_and_no_old_version_fallback() {
     );
     assert!(decode(b"\xff", &limits()).is_err());
 }
+
+#[test]
+fn event_discriminators_select_the_actual_rust_variant() {
+    let fixtures: Value = serde_json::from_str(FIXTURES).unwrap();
+    for value in fixtures["valid"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|v| v["kind"] == "event")
+    {
+        let event: ai_session_contract::Event = serde_json::from_value(value.clone()).unwrap();
+        match (
+            value["body"]["type"].as_str(),
+            value["body"]["operation"].as_str(),
+        ) {
+            (Some("error"), _) => {
+                assert!(matches!(event, ai_session_contract::Event::Error { .. }))
+            }
+            (Some("invalidated"), _) => assert!(matches!(
+                event,
+                ai_session_contract::Event::Invalidated { .. }
+            )),
+            (Some("surface"), _) => {
+                assert!(matches!(event, ai_session_contract::Event::Surface { .. }))
+            }
+            _ => (),
+        }
+    }
+}

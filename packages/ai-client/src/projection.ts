@@ -2,9 +2,9 @@ import { ClientError } from "./errors.js";
 import {
   validateSurface,
   accessLimits,
-  type CommandState,
+  type CommandRecord,
+  type Failure,
   type Event,
-  type EventBody,
   type Interaction,
   type Outcome,
   type Session,
@@ -38,7 +38,10 @@ export interface SessionView {
   generation: string;
   cursor: number;
   connection: "attached" | "detached" | "resync_required";
-  commands: Record<string, { state: CommandState; outcome?: Outcome }>;
+  commands: Record<
+    string,
+    { state: CommandRecord["state"]; outcome?: Outcome; failure?: Failure }
+  >;
   messages: Record<
     string,
     { commandId: string; text: string; stable: boolean }
@@ -54,7 +57,7 @@ export interface SessionView {
       arguments: Record<string, unknown>;
       status: "pending" | "completed" | "failed";
       result?: Pick<
-        Extract<EventBody, { type: "tool_result" }>,
+        Extract<Event["body"], { type: "tool_result" }>,
         "disposition" | "text"
       >;
     }
@@ -76,14 +79,28 @@ export function emptyView(session: Session, cursor: number): SessionView {
   };
 }
 function event(view: SessionView, e: Event): void {
+  // Session-level events have no command; snapshot metadata owns session identity.
+  if (e.commandId === undefined) return;
   const body = e.body;
   if (body.type === "terminal") {
     view.commands[e.commandId] = { state: "terminal", outcome: body.outcome };
     for (const [key, message] of Object.entries(view.messages))
       if (message.commandId === e.commandId && !message.stable)
         delete view.messages[key];
+  } else if (body.type === "invalidated") {
+    view.commands[e.commandId] = {
+      state: "invalidated",
+      failure: body.failure,
+    };
+    for (const [key, message] of Object.entries(view.messages))
+      if (message.commandId === e.commandId && !message.stable)
+        delete view.messages[key];
   } else if (body.type === "status") {
-    if (view.commands[e.commandId]?.state !== "terminal")
+    if (
+      !["terminal", "invalidated"].includes(
+        view.commands[e.commandId]?.state ?? "",
+      )
+    )
       view.commands[e.commandId] = { state: body.state };
   } else if (body.type === "text") {
     view.messages[messageKey(e.commandId, body.messageId)] = {
@@ -125,12 +142,12 @@ function event(view: SessionView, e: Event): void {
     const prior = view.surfaces[surface.surfaceInstanceId];
     if (
       prior &&
-      (prior.status === "deleted" || surface.revision !== prior.revision + 1)
+      (prior.status !== "active" || surface.revision !== prior.revision + 1)
     )
       throw new ClientError("resync_required");
     view.surfaces[surface.surfaceInstanceId] = surface;
     if (
-      surface.status === "deleted" &&
+      surface.status !== "active" &&
       view.interactions[surface.interactionId]?.status === "pending"
     )
       view.interactions[surface.interactionId].status = "unavailable";
@@ -147,6 +164,7 @@ export function restoreSnapshot(
       view.commands[c.command.commandId] = {
         state: c.state,
         ...(c.outcome ? { outcome: c.outcome } : {}),
+        ...(c.failure ? { failure: c.failure } : {}),
       };
     for (const interaction of page.interactions)
       view.interactions[interaction.interactionId] =
@@ -166,7 +184,9 @@ export function applyUpdate(view: SessionView, item: Subscription): void {
     if (
       item.generation !== view.generation ||
       !view.commands[item.commandId] ||
-      view.commands[item.commandId]?.state === "terminal"
+      ["terminal", "invalidated"].includes(
+        view.commands[item.commandId]?.state ?? "",
+      )
     )
       return;
     const key = messageKey(item.commandId, item.messageId),

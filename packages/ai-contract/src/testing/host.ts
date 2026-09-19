@@ -1,3 +1,4 @@
+import { readSnapshot } from "./snapshot.js";
 import { interactionCatalog } from "../identity.js";
 import type {
   Budget,
@@ -19,7 +20,6 @@ import type {
   SurfaceState,
   Capabilities,
   Namespace,
-  EventBody,
   Interaction,
   SnapshotPage,
   PageQuery,
@@ -33,7 +33,7 @@ import { ScriptedProvider } from "./provider.js";
 import { withinBudget } from "./budget.js";
 import { decode } from "../codec.js";
 import { fixtureLimits } from "./store.js";
-import { emptyCommit } from "./conformance.js";
+import { emptyCommit, dispatchCommand } from "./conformance.js";
 /** Script-driven acceptance/subscription fake with scripted ports only. No process, dispatcher or durable storage. */
 export class FakeHost implements HostPort {
   readonly evidence = "fake_host" as const;
@@ -68,7 +68,9 @@ export class FakeHost implements HostPort {
     if (this.closed || budget.signal.aborted) return fail("unavailable");
     if (options.profile === "controlled_tools")
       return fail("permission_denied");
+    const namespace = { ...caller, sessionId: `fake-session-${++this.next}` };
     const provider = new ScriptedProvider();
+    this.providers.push(provider);
     const admitted = await VerifiedProviderSession.open(
       provider,
       {
@@ -76,12 +78,12 @@ export class FakeHost implements HostPort {
         config: options.config,
         accountRef: options.accountRef,
         workingDirectory: ".",
+        namespace,
         permissions: "tools_disabled",
       },
       budget,
     );
     if (!admitted.ok) return admitted;
-    this.providers.push(provider);
     if (this.closed) {
       await provider.close(budget);
       return fail("unavailable");
@@ -89,7 +91,7 @@ export class FakeHost implements HostPort {
     const session: Session = {
       schemaVersion: 2,
       kind: "session",
-      namespace: { ...caller, sessionId: `fake-session-${++this.next}` },
+      namespace,
       revision: 0,
       lastSequence: 0,
       status: "active",
@@ -289,7 +291,7 @@ export class FakeHost implements HostPort {
     caller: Caller,
     sessionId: string,
     commandId: string,
-    bodies: EventBody[],
+    bodies: Event["body"][],
   ): Promise<Result<void>> {
     const namespace = { ...caller, sessionId };
     const found = await this.store.session(namespace),
@@ -298,39 +300,98 @@ export class FakeHost implements HostPort {
     if (!row.ok) return row;
     const s = found.value,
       record = row.value;
-    const dispatch = record.dispatch ?? {
-      generation: s.binding.generation,
-      nativeSessionId: s.binding.nativeSessionId,
-      nativeRunId: `run-${commandId}`,
-      certainty: "submitted" as const,
-    };
     if (!record.dispatch) {
-      const started = await this.store.commit({
-        ...emptyCommit(s),
-        session: {
-          ...s,
-          revision: s.revision + 1,
-          binding: { ...s.binding, nativeRunId: dispatch.nativeRunId },
-        },
-        commands: [{ ...record, state: "dispatching", dispatch }],
-      });
-      if (!started.ok) return started;
+      try {
+        await dispatchCommand(this.store, s, commandId, "submitted", {
+          nativeRunId: `run-${commandId}`,
+        });
+      } catch {
+        return fail("invalid_input");
+      }
       return this.advance(caller, sessionId, commandId, bodies);
     }
     const terminal = bodies.find(
-      (b): b is Extract<EventBody, { type: "terminal" }> =>
+      (b): b is Extract<Event["body"], { type: "terminal" }> =>
         b.type === "terminal",
     );
-    const events: Event[] = bodies.map((body, index) => ({
-      schemaVersion: 2,
-      kind: "event",
-      namespace,
-      eventId: `script-${s.lastSequence + index + 1}`,
-      sequence: s.lastSequence + index + 1,
-      commandId,
-      generation: s.binding.generation,
-      body,
-    }));
+    if (terminal && bodies.length > 1) {
+      if (bodies.at(-1) !== terminal) return fail("invalid_input");
+      const observed = await this.advance(
+        caller,
+        sessionId,
+        commandId,
+        bodies.slice(0, -1),
+      );
+      return observed.ok
+        ? this.advance(caller, sessionId, commandId, [terminal])
+        : observed;
+    }
+    const events: Event[] = bodies.map(
+      (body, index) =>
+        ({
+          schemaVersion: 2,
+          kind: "event",
+          namespace,
+          eventId: `script-${s.lastSequence + index + 1}`,
+          sequence: s.lastSequence + index + 1,
+          commandId,
+          attemptId: record.dispatch!.attemptId,
+          generation: s.binding.generation,
+          body,
+        }) as Event,
+    );
+    const interactions: Interaction[] = [],
+      surfaces: SurfaceState[] = [];
+    if (terminal) {
+      const snapshot = await readSnapshot(this.store, namespace);
+      if (!snapshot.ok) return snapshot;
+      for (const row of snapshot.value.interactions)
+        if (row.commandId === commandId && row.status === "pending") {
+          interactions.push({ ...row, status: "unavailable" });
+          events.push({
+            schemaVersion: 2,
+            kind: "event",
+            namespace,
+            eventId: `script-${s.lastSequence + events.length + 1}`,
+            sequence: s.lastSequence + events.length + 1,
+            commandId,
+            attemptId: record.dispatch.attemptId,
+            generation: s.binding.generation,
+            body: {
+              type: "interaction",
+              interactionId: row.interactionId,
+              status: "unavailable",
+            },
+          });
+        }
+      for (const row of snapshot.value.surfaces)
+        if (
+          row.status === "active" &&
+          snapshot.value.interactions.some(
+            (i) =>
+              i.interactionId === row.interactionId &&
+              i.commandId === commandId,
+          )
+        ) {
+          const surface: SurfaceState = {
+            ...row,
+            status: "invalidated",
+            revision: row.revision + 1,
+          };
+          surfaces.push(surface);
+          events.push({
+            schemaVersion: 2,
+            kind: "event",
+            namespace,
+            eventId: `script-${s.lastSequence + events.length + 1}`,
+            sequence: s.lastSequence + events.length + 1,
+            commandId,
+            attemptId: record.dispatch.attemptId,
+            generation: s.binding.generation,
+            body: { type: "surface", surface },
+          });
+        }
+    }
     const result = await this.store.commit({
       ...emptyCommit(s),
       session: {
@@ -342,6 +403,8 @@ export class FakeHost implements HostPort {
         ? [{ ...record, state: "terminal", outcome: terminal.outcome }]
         : [],
       events,
+      interactions,
+      surfaces,
     });
     if (result.ok) this.notify(namespace);
     return result;
@@ -388,6 +451,7 @@ export class FakeHost implements HostPort {
           kind: "event",
           namespace,
           eventId: `question-${interactionId}`,
+          attemptId: `attempt-${commandId}`,
           sequence: s.lastSequence + 1,
           commandId,
           generation: s.binding.generation,
@@ -422,6 +486,19 @@ export class FakeHost implements HostPort {
       return fail("stale_binding");
     const command = await this.store.command(namespace, observation.commandId);
     if (!command.ok) return command;
+    const record = command.value,
+      dispatch = record.dispatch;
+    if (
+      !dispatch ||
+      !["dispatching", "running"].includes(record.state) ||
+      dispatch.certainty !== "submitted" ||
+      dispatch.attemptId !== observation.attemptId ||
+      dispatch.observerGeneration !== observation.binding.generation ||
+      dispatch.nativeSessionId !== observation.binding.nativeSessionId ||
+      dispatch.nativeRunId !== observation.binding.nativeRunId ||
+      dispatch.nativeRequestId !== observation.binding.nativeRequestId
+    )
+      return fail("stale_binding");
     for (const wake of this.listeners.get(namespaceKey(namespace)) ?? []) {
       const queue = this.deltaQueues.get(wake)!;
       if (queue.length >= 1024)

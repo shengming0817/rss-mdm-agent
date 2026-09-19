@@ -82,7 +82,8 @@
         "config": {
           "id": "config-1",
           "revision": "1"
-        }
+        },
+        "workspaceId": "fixture-workspace"
       },
       "capabilities": {
         "continuation": "unsupported",
@@ -256,7 +257,8 @@
         "type": "text",
         "messageId": "m-1",
         "text": "你好 <script> inert"
-      }
+      },
+      "attemptId": "attempt-command-1"
     },
     {
       "schemaVersion": 2,
@@ -274,7 +276,8 @@
       "body": {
         "type": "cancel_dispatched",
         "confirmation": "request_only"
-      }
+      },
+      "attemptId": "attempt-command-1"
     },
     {
       "schemaVersion": 2,
@@ -302,7 +305,8 @@
             }
           ]
         }
-      }
+      },
+      "attemptId": "attempt-command-1"
     },
     {
       "schemaVersion": 2,
@@ -320,7 +324,8 @@
       "body": {
         "type": "terminal",
         "outcome": "cancelled"
-      }
+      },
+      "attemptId": "attempt-command-1"
     },
     {
       "schemaVersion": 2,
@@ -417,11 +422,13 @@
       },
       "state": "dispatching",
       "dispatch": {
-        "generation": "generation-1",
         "nativeSessionId": "native-1",
         "nativeRunId": "run-1",
         "nativeRequestId": "request-1",
-        "certainty": "submitted"
+        "certainty": "submitted",
+        "attemptId": "attempt-command-1",
+        "originGeneration": "generation-1",
+        "observerGeneration": "generation-1"
       }
     },
     {
@@ -457,11 +464,13 @@
       },
       "state": "running",
       "dispatch": {
-        "generation": "generation-1",
         "nativeSessionId": "native-1",
         "nativeRunId": "run-1",
         "nativeRequestId": "request-1",
-        "certainty": "submitted"
+        "certainty": "submitted",
+        "attemptId": "attempt-command-1",
+        "originGeneration": "generation-1",
+        "observerGeneration": "generation-1"
       }
     },
     {
@@ -497,11 +506,13 @@
       },
       "state": "reconciliation_required",
       "dispatch": {
-        "generation": "generation-1",
         "nativeSessionId": "native-1",
         "nativeRunId": "run-1",
         "nativeRequestId": "request-1",
-        "certainty": "unknown"
+        "certainty": "unknown",
+        "attemptId": "attempt-command-1",
+        "originGeneration": "generation-1",
+        "observerGeneration": "generation-1"
       }
     },
     {
@@ -536,7 +547,14 @@
         "acceptedRevision": 1
       },
       "state": "terminal",
-      "outcome": "completed"
+      "outcome": "completed",
+      "dispatch": {
+        "attemptId": "attempt-command-1",
+        "originGeneration": "generation-1",
+        "observerGeneration": "generation-1",
+        "nativeSessionId": "native-1",
+        "certainty": "submitted"
+      }
     },
     {
       "schemaVersion": 2,
@@ -554,7 +572,8 @@
       "body": {
         "type": "status",
         "state": "running"
-      }
+      },
+      "attemptId": "attempt-command-1"
     },
     {
       "schemaVersion": 2,
@@ -574,7 +593,8 @@
         "proposalId": "p-1",
         "disposition": "returned",
         "text": "not execution evidence"
-      }
+      },
+      "attemptId": "attempt-command-1"
     },
     {
       "schemaVersion": 2,
@@ -593,175 +613,666 @@
         "type": "interaction",
         "interactionId": "i-1",
         "status": "unavailable"
-      }
+      },
+      "attemptId": "attempt-command-1"
     },
     {
       "schemaVersion": 2,
-      "kind": "snapshotPage",
-      "snapshotId": "snapshot-1",
-      "pageIndex": 0,
-      "session": {
+      "kind": "commandRecord",
+      "command": {
         "schemaVersion": 2,
-        "kind": "session",
+        "kind": "command",
+        "sessionId": "session-1",
+        "commandId": "command-1",
+        "expiresAtMs": 1000,
+        "input": {
+          "type": "prompt",
+          "text": "fixture text",
+          "policy": "queue_next"
+        }
+      },
+      "receipt": {
+        "schemaVersion": 2,
+        "kind": "receipt",
         "namespace": {
           "tenantId": "tenant-1",
           "principalId": "user-1",
           "authorityId": "authority-1",
           "sessionId": "session-1"
         },
-        "revision": 0,
-        "lastSequence": 0,
-        "binding": {
-          "provider": "fake",
-          "providerVersion": "fixture-1",
-          "adapterVersion": "fixture-1",
-          "generation": "generation-1",
-          "accountRef": "account-1",
-          "nativeSessionId": "native-1",
-          "config": {
-            "id": "config-1",
-            "revision": "1"
-          }
-        },
-        "capabilities": {
-          "continuation": "unsupported",
-          "cancellation": "request_only",
-          "tools": "disabled",
-          "steer": "unsupported",
-          "fork": "unsupported",
-          "subagent": "unsupported",
-          "terminal": "unsupported",
-          "structuredQuestion": "unsupported",
-          "multimodal": "unsupported",
-          "queue": "unsupported"
-        },
-        "status": "active"
+        "commandId": "command-1",
+        "contentHash": "273d2bc05c0cb23b02f666dff841b992d7839f7c43352570827c46ab4b6b0de7",
+        "acceptedAtMs": 0,
+        "retryUntilMs": 100,
+        "receiptUntilMs": 200,
+        "acceptedRevision": 1
       },
-      "cursor": 0,
-      "events": [],
-      "commands": [],
-      "interactions": [],
-      "surfaces": []
+      "state": "invalidated",
+      "failure": {
+        "code": "stale_binding",
+        "retry": "never"
+      }
     },
     {
       "schemaVersion": 2,
-      "kind": "sessionPage",
-      "items": [
-        {
+      "kind": "event",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "eventId": "new-event-0",
+      "sequence": 1,
+      "commandId": "command-1",
+      "generation": "generation-1",
+      "body": {
+        "type": "invalidated",
+        "failure": {
+          "code": "stale_binding",
+          "retry": "never"
+        }
+      }
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "event",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "eventId": "new-event-1",
+      "sequence": 1,
+      "commandId": "command-1",
+      "generation": "generation-1",
+      "body": {
+        "type": "dispatch",
+        "attempt": {
+          "attemptId": "attempt-command-1",
+          "originGeneration": "generation-1",
+          "observerGeneration": "generation-1",
+          "nativeSessionId": "native-1",
+          "certainty": "submitted"
+        }
+      },
+      "attemptId": "attempt-command-1"
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "event",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "eventId": "new-event-2",
+      "sequence": 1,
+      "commandId": "command-1",
+      "generation": "generation-1",
+      "body": {
+        "type": "reconciled",
+        "attempt": {
+          "attemptId": "attempt-command-1",
+          "originGeneration": "generation-1",
+          "observerGeneration": "generation-1",
+          "nativeSessionId": "native-1",
+          "certainty": "submitted"
+        },
+        "resolution": "running"
+      },
+      "attemptId": "attempt-command-1"
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "event",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "eventId": "new-event-3",
+      "sequence": 1,
+      "commandId": "command-1",
+      "generation": "generation-1",
+      "body": {
+        "type": "reconciled",
+        "attempt": {
+          "attemptId": "attempt-command-1",
+          "originGeneration": "generation-1",
+          "observerGeneration": "generation-1",
+          "nativeSessionId": "native-1",
+          "certainty": "submitted"
+        },
+        "resolution": "terminal"
+      },
+      "attemptId": "attempt-command-1"
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "event",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "eventId": "new-event-4",
+      "sequence": 1,
+      "commandId": "command-1",
+      "generation": "generation-1",
+      "body": {
+        "type": "reconciled",
+        "attempt": {
+          "attemptId": "attempt-command-1",
+          "originGeneration": "generation-1",
+          "observerGeneration": "generation-1",
+          "nativeSessionId": "native-1",
+          "certainty": "submitted"
+        },
+        "resolution": "not_submitted"
+      },
+      "attemptId": "attempt-command-1"
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "event",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "eventId": "new-event-5",
+      "sequence": 1,
+      "commandId": "command-1",
+      "generation": "generation-1",
+      "body": {
+        "type": "reconciled",
+        "attempt": {
+          "attemptId": "attempt-command-1",
+          "originGeneration": "generation-1",
+          "observerGeneration": "generation-1",
+          "nativeSessionId": "native-1",
+          "certainty": "submitted"
+        },
+        "resolution": "unknown"
+      },
+      "attemptId": "attempt-command-1"
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "event",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "eventId": "new-event-6",
+      "sequence": 1,
+      "generation": "generation-1",
+      "body": {
+        "type": "session_rebound",
+        "previousGeneration": "previous-generation"
+      }
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "event",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "eventId": "new-event-7",
+      "sequence": 1,
+      "commandId": "command-1",
+      "generation": "generation-1",
+      "body": {
+        "type": "surface",
+        "surface": {
           "schemaVersion": 2,
-          "kind": "session",
+          "kind": "surface",
           "namespace": {
             "tenantId": "tenant-1",
             "principalId": "user-1",
             "authorityId": "authority-1",
             "sessionId": "session-1"
           },
-          "revision": 0,
-          "lastSequence": 0,
-          "binding": {
-            "provider": "fake",
-            "providerVersion": "fixture-1",
-            "adapterVersion": "fixture-1",
-            "generation": "generation-1",
-            "accountRef": "account-1",
-            "nativeSessionId": "native-1",
-            "config": {
-              "id": "config-1",
-              "revision": "1"
-            }
-          },
-          "capabilities": {
-            "continuation": "unsupported",
-            "cancellation": "request_only",
-            "tools": "disabled",
-            "steer": "unsupported",
-            "fork": "unsupported",
-            "subagent": "unsupported",
-            "terminal": "unsupported",
-            "structuredQuestion": "unsupported",
-            "multimodal": "unsupported",
-            "queue": "unsupported"
-          },
-          "status": "active"
-        }
-      ]
-    },
-    {
-      "schemaVersion": 2,
-      "kind": "snapshotRequest",
-      "sessionId": "session-1",
-      "query": {
-        "limit": 64
-      }
-    },
-    {
-      "schemaVersion": 2,
-      "kind": "listRequest",
-      "query": {
-        "limit": 64
-      }
-    },
-    {
-      "schemaVersion": 2,
-      "kind": "attachRequest",
-      "sessionId": "session-1",
-      "after": 0,
-      "attachmentId": "attach-1"
-    },
-    {
-      "schemaVersion": 2,
-      "kind": "attachReceipt",
-      "sessionId": "session-1",
-      "after": 0,
-      "attachmentId": "attach-1"
-    },
-    {
-      "schemaVersion": 2,
-      "kind": "detachRequest",
-      "sessionId": "session-1",
-      "attachmentId": "attach-1"
-    },
-    {
-      "schemaVersion": 2,
-      "kind": "resumeRequest",
-      "sessionId": "session-1"
-    },
-    {
-      "schemaVersion": 2,
-      "kind": "accessUpdate",
-      "sessionId": "session-1",
-      "attachmentId": "attach-1",
-      "update": {
-        "type": "resync_required"
-      }
-    },
-    {
-      "schemaVersion": 2,
-      "kind": "actionRequest",
-      "metadata": {
-        "schemaVersion": 2,
-        "kind": "surfaceAction",
-        "sessionId": "session-1",
-        "commandId": "action-1",
-        "surfaceInstanceId": "surface-instance-1",
-        "surfaceRevision": 1,
-        "interactionId": "i-1",
-        "generation": "generation-1",
-        "nativeRunId": "run-1"
-      },
-      "message": {
-        "version": "v0.9.1",
-        "action": {
-          "name": "respond",
+          "generation": "generation-1",
+          "nativeRunId": "run-1",
           "surfaceId": "surface-1",
+          "surfaceInstanceId": "surface-instance-1",
+          "revision": 1,
+          "interactionId": "i-1",
           "sourceComponentId": "button-1",
-          "timestamp": "2026-09-19T00:00:00Z",
-          "context": {
-            "answer": "a"
-          }
+          "eventName": "respond",
+          "catalogId": "urn:rss-mdm-agent:a2ui:interaction",
+          "catalogVersion": "1",
+          "a2uiVersion": "v0.9.1",
+          "status": "invalidated",
+          "messages": [
+            {
+              "version": "v0.9.1",
+              "createSurface": {
+                "surfaceId": "surface-1",
+                "catalogId": "urn:rss-mdm-agent:a2ui:interaction"
+              }
+            },
+            {
+              "version": "v0.9.1",
+              "updateComponents": {
+                "surfaceId": "surface-1",
+                "components": [
+                  {
+                    "id": "root",
+                    "component": "Column",
+                    "children": ["question", "field", "button-1"]
+                  },
+                  {
+                    "id": "question",
+                    "component": "Text",
+                    "text": {
+                      "path": "/question"
+                    }
+                  },
+                  {
+                    "id": "field",
+                    "component": "TextField",
+                    "label": "Answer",
+                    "value": {
+                      "path": "/answer"
+                    }
+                  },
+                  {
+                    "id": "button-1",
+                    "component": "Button",
+                    "child": "label",
+                    "action": {
+                      "event": {
+                        "name": "respond",
+                        "context": {
+                          "answer": {
+                            "path": "/answer"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "id": "label",
+                    "component": "Text",
+                    "text": "Send answer"
+                  }
+                ]
+              }
+            },
+            {
+              "version": "v0.9.1",
+              "updateDataModel": {
+                "surfaceId": "surface-1",
+                "path": "/",
+                "value": {
+                  "question": "Choose an option",
+                  "answer": "pending"
+                }
+              }
+            }
+          ]
         }
       },
-      "expiresAtMs": 100
+      "attemptId": "attempt-command-1"
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "event",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "eventId": "new-event-8",
+      "sequence": 1,
+      "generation": "generation-1",
+      "body": {
+        "type": "session_retired"
+      }
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "event",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "eventId": "new-event-9",
+      "sequence": 1,
+      "commandId": "command-1",
+      "generation": "generation-1",
+      "body": {
+        "type": "surface",
+        "surface": {
+          "schemaVersion": 2,
+          "kind": "surface",
+          "namespace": {
+            "tenantId": "tenant-1",
+            "principalId": "user-1",
+            "authorityId": "authority-1",
+            "sessionId": "session-1"
+          },
+          "generation": "generation-1",
+          "nativeRunId": "run-1",
+          "surfaceId": "surface-1",
+          "surfaceInstanceId": "surface-instance-1",
+          "revision": 0,
+          "interactionId": "i-1",
+          "sourceComponentId": "button-1",
+          "eventName": "respond",
+          "catalogId": "urn:rss-mdm-agent:a2ui:interaction",
+          "catalogVersion": "1",
+          "a2uiVersion": "v0.9.1",
+          "status": "active",
+          "messages": [
+            {
+              "version": "v0.9.1",
+              "createSurface": {
+                "surfaceId": "surface-1",
+                "catalogId": "urn:rss-mdm-agent:a2ui:interaction"
+              }
+            },
+            {
+              "version": "v0.9.1",
+              "updateComponents": {
+                "surfaceId": "surface-1",
+                "components": [
+                  {
+                    "id": "root",
+                    "component": "Column",
+                    "children": ["question", "field", "button-1"]
+                  },
+                  {
+                    "id": "question",
+                    "component": "Text",
+                    "text": {
+                      "path": "/question"
+                    }
+                  },
+                  {
+                    "id": "field",
+                    "component": "TextField",
+                    "label": "Answer",
+                    "value": {
+                      "path": "/answer"
+                    }
+                  },
+                  {
+                    "id": "button-1",
+                    "component": "Button",
+                    "child": "label",
+                    "action": {
+                      "event": {
+                        "name": "respond",
+                        "context": {
+                          "answer": {
+                            "path": "/answer"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "id": "label",
+                    "component": "Text",
+                    "text": "Send answer"
+                  }
+                ]
+              }
+            },
+            {
+              "version": "v0.9.1",
+              "updateDataModel": {
+                "surfaceId": "surface-1",
+                "path": "/",
+                "value": {
+                  "question": "Choose an option",
+                  "answer": "pending"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "attemptId": "attempt-command-1"
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "event",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "eventId": "new-event-10",
+      "sequence": 1,
+      "commandId": "command-1",
+      "generation": "generation-1",
+      "body": {
+        "type": "surface",
+        "surface": {
+          "schemaVersion": 2,
+          "kind": "surface",
+          "namespace": {
+            "tenantId": "tenant-1",
+            "principalId": "user-1",
+            "authorityId": "authority-1",
+            "sessionId": "session-1"
+          },
+          "generation": "generation-1",
+          "nativeRunId": "run-1",
+          "surfaceId": "surface-1",
+          "surfaceInstanceId": "surface-instance-1",
+          "revision": 0,
+          "interactionId": "i-1",
+          "sourceComponentId": "button-1",
+          "eventName": "respond",
+          "catalogId": "urn:rss-mdm-agent:a2ui:interaction",
+          "catalogVersion": "1",
+          "a2uiVersion": "v0.9.1",
+          "status": "active",
+          "messages": [
+            {
+              "version": "v0.9.1",
+              "createSurface": {
+                "surfaceId": "surface-1",
+                "catalogId": "urn:rss-mdm-agent:a2ui:interaction"
+              }
+            },
+            {
+              "version": "v0.9.1",
+              "updateComponents": {
+                "surfaceId": "surface-1",
+                "components": [
+                  {
+                    "id": "root",
+                    "component": "Column",
+                    "children": ["question", "field", "button-1"]
+                  },
+                  {
+                    "id": "question",
+                    "component": "Text",
+                    "text": {
+                      "path": "/question"
+                    }
+                  },
+                  {
+                    "id": "field",
+                    "component": "TextField",
+                    "label": "Answer",
+                    "value": {
+                      "path": "/answer"
+                    }
+                  },
+                  {
+                    "id": "button-1",
+                    "component": "Button",
+                    "child": "label",
+                    "action": {
+                      "event": {
+                        "name": "respond",
+                        "context": {
+                          "answer": {
+                            "path": "/answer"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "id": "label",
+                    "component": "Text",
+                    "text": "Send answer"
+                  }
+                ]
+              }
+            },
+            {
+              "version": "v0.9.1",
+              "updateDataModel": {
+                "surfaceId": "surface-1",
+                "path": "/",
+                "value": {
+                  "question": "Choose an option",
+                  "answer": "pending"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "attemptId": "attempt-command-1"
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "event",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "eventId": "new-event-11",
+      "sequence": 1,
+      "commandId": "command-1",
+      "generation": "generation-1",
+      "body": {
+        "type": "surface",
+        "surface": {
+          "schemaVersion": 2,
+          "kind": "surface",
+          "namespace": {
+            "tenantId": "tenant-1",
+            "principalId": "user-1",
+            "authorityId": "authority-1",
+            "sessionId": "session-1"
+          },
+          "generation": "generation-1",
+          "nativeRunId": "run-1",
+          "surfaceId": "surface-1",
+          "surfaceInstanceId": "surface-instance-1",
+          "revision": 0,
+          "interactionId": "i-1",
+          "sourceComponentId": "button-1",
+          "eventName": "respond",
+          "catalogId": "urn:rss-mdm-agent:a2ui:interaction",
+          "catalogVersion": "1",
+          "a2uiVersion": "v0.9.1",
+          "status": "deleted",
+          "messages": [
+            {
+              "version": "v0.9.1",
+              "createSurface": {
+                "surfaceId": "surface-1",
+                "catalogId": "urn:rss-mdm-agent:a2ui:interaction"
+              }
+            },
+            {
+              "version": "v0.9.1",
+              "updateComponents": {
+                "surfaceId": "surface-1",
+                "components": [
+                  {
+                    "id": "root",
+                    "component": "Column",
+                    "children": ["question", "field", "button-1"]
+                  },
+                  {
+                    "id": "question",
+                    "component": "Text",
+                    "text": {
+                      "path": "/question"
+                    }
+                  },
+                  {
+                    "id": "field",
+                    "component": "TextField",
+                    "label": "Answer",
+                    "value": {
+                      "path": "/answer"
+                    }
+                  },
+                  {
+                    "id": "button-1",
+                    "component": "Button",
+                    "child": "label",
+                    "action": {
+                      "event": {
+                        "name": "respond",
+                        "context": {
+                          "answer": {
+                            "path": "/answer"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "id": "label",
+                    "component": "Text",
+                    "text": "Send answer"
+                  }
+                ]
+              }
+            },
+            {
+              "version": "v0.9.1",
+              "updateDataModel": {
+                "surfaceId": "surface-1",
+                "path": "/",
+                "value": {
+                  "question": "Choose an option",
+                  "answer": "pending"
+                }
+              }
+            },
+            {
+              "version": "v0.9.1",
+              "deleteSurface": {
+                "surfaceId": "surface-1"
+              }
+            }
+          ]
+        }
+      },
+      "attemptId": "attempt-command-1"
     },
     {
       "schemaVersion": 2,
@@ -785,7 +1296,8 @@
         },
         "expiresAtMs": 100,
         "callbackLifetime": "generation_bound"
-      }
+      },
+      "attemptId": "attempt-command-1"
     },
     {
       "schemaVersion": 2,
@@ -805,7 +1317,8 @@
         "interactionId": "question-golden",
         "status": "answered",
         "responseCommandId": "response-golden"
-      }
+      },
+      "attemptId": "attempt-command-1"
     }
   ],
   "invalid": [
@@ -942,28 +1455,53 @@
       "code": "schema"
     },
     {
+      "name": "accepted-with-dispatch",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"commandRecord\",\"command\":{\"schemaVersion\":2,\"kind\":\"command\",\"sessionId\":\"session-1\",\"commandId\":\"command-1\",\"expiresAtMs\":1000,\"input\":{\"type\":\"prompt\",\"text\":\"fixture text\",\"policy\":\"queue_next\"}},\"receipt\":{\"schemaVersion\":2,\"kind\":\"receipt\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"commandId\":\"command-1\",\"contentHash\":\"273d2bc05c0cb23b02f666dff841b992d7839f7c43352570827c46ab4b6b0de7\",\"acceptedAtMs\":0,\"retryUntilMs\":100,\"receiptUntilMs\":200,\"acceptedRevision\":1},\"state\":\"accepted\",\"dispatch\":{\"attemptId\":\"attempt-command-1\",\"originGeneration\":\"generation-1\",\"observerGeneration\":\"generation-1\",\"nativeSessionId\":\"native-1\",\"certainty\":\"submitted\"}}",
+      "code": "schema"
+    },
+    {
+      "name": "invalidated-with-outcome",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"commandRecord\",\"command\":{\"schemaVersion\":2,\"kind\":\"command\",\"sessionId\":\"session-1\",\"commandId\":\"command-1\",\"expiresAtMs\":1000,\"input\":{\"type\":\"prompt\",\"text\":\"fixture text\",\"policy\":\"queue_next\"}},\"receipt\":{\"schemaVersion\":2,\"kind\":\"receipt\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"commandId\":\"command-1\",\"contentHash\":\"273d2bc05c0cb23b02f666dff841b992d7839f7c43352570827c46ab4b6b0de7\",\"acceptedAtMs\":0,\"retryUntilMs\":100,\"receiptUntilMs\":200,\"acceptedRevision\":1},\"state\":\"invalidated\",\"failure\":{\"code\":\"stale_binding\",\"retry\":\"never\"},\"outcome\":\"completed\"}",
+      "code": "schema"
+    },
+    {
+      "name": "terminal-without-attempt",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"commandRecord\",\"command\":{\"schemaVersion\":2,\"kind\":\"command\",\"sessionId\":\"session-1\",\"commandId\":\"command-1\",\"expiresAtMs\":1000,\"input\":{\"type\":\"prompt\",\"text\":\"fixture text\",\"policy\":\"queue_next\"}},\"receipt\":{\"schemaVersion\":2,\"kind\":\"receipt\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"commandId\":\"command-1\",\"contentHash\":\"273d2bc05c0cb23b02f666dff841b992d7839f7c43352570827c46ab4b6b0de7\",\"acceptedAtMs\":0,\"retryUntilMs\":100,\"receiptUntilMs\":200,\"acceptedRevision\":1},\"state\":\"terminal\",\"outcome\":\"completed\"}",
+      "code": "schema"
+    },
+    {
+      "name": "text-missing-attempt",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"event\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"eventId\":\"event-1\",\"sequence\":1,\"commandId\":\"command-1\",\"generation\":\"generation-1\",\"body\":{\"type\":\"text\",\"messageId\":\"m-1\",\"text\":\"\\u4f60\\u597d <script> inert\"}}",
+      "code": "schema"
+    },
+    {
+      "name": "session-event-with-command",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"event\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"eventId\":\"event-1\",\"sequence\":1,\"commandId\":\"command-1\",\"generation\":\"generation-1\",\"body\":{\"type\":\"session_retired\"},\"attemptId\":\"attempt-command-1\"}",
+      "code": "schema"
+    },
+    {
       "name": "snapshot-watermark-mismatch",
-      "raw": "{\"schemaVersion\":2,\"kind\":\"snapshotPage\",\"snapshotId\":\"snapshot-1\",\"pageIndex\":0,\"session\":{\"schemaVersion\":2,\"kind\":\"session\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"revision\":0,\"lastSequence\":0,\"binding\":{\"provider\":\"fake\",\"providerVersion\":\"fixture-1\",\"adapterVersion\":\"fixture-1\",\"generation\":\"generation-1\",\"accountRef\":\"account-1\",\"nativeSessionId\":\"native-1\",\"config\":{\"id\":\"config-1\",\"revision\":\"1\"}},\"capabilities\":{\"continuation\":\"unsupported\",\"cancellation\":\"request_only\",\"tools\":\"disabled\",\"steer\":\"unsupported\",\"fork\":\"unsupported\",\"subagent\":\"unsupported\",\"terminal\":\"unsupported\",\"structuredQuestion\":\"unsupported\",\"multimodal\":\"unsupported\",\"queue\":\"unsupported\"},\"status\":\"active\"},\"cursor\":1,\"events\":[],\"commands\":[],\"interactions\":[],\"surfaces\":[]}",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"snapshotPage\",\"snapshotId\":\"snapshot-1\",\"pageIndex\":0,\"session\":{\"schemaVersion\":2,\"kind\":\"session\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"revision\":0,\"lastSequence\":0,\"binding\":{\"provider\":\"fake\",\"providerVersion\":\"fixture-1\",\"adapterVersion\":\"fixture-1\",\"generation\":\"generation-1\",\"accountRef\":\"account-1\",\"nativeSessionId\":\"native-1\",\"config\":{\"id\":\"config-1\",\"revision\":\"1\"},\"workspaceId\":\"workspace-1\"},\"capabilities\":{\"continuation\":\"unsupported\",\"cancellation\":\"request_only\",\"tools\":\"disabled\",\"steer\":\"unsupported\",\"fork\":\"unsupported\",\"subagent\":\"unsupported\",\"terminal\":\"unsupported\",\"structuredQuestion\":\"unsupported\",\"multimodal\":\"unsupported\",\"queue\":\"unsupported\"},\"status\":\"active\"},\"cursor\":1,\"events\":[],\"commands\":[],\"interactions\":[],\"surfaces\":[]}",
       "code": "context"
     },
     {
       "name": "nested-command-hash-mismatch",
-      "raw": "{\"schemaVersion\":2,\"kind\":\"snapshotPage\",\"snapshotId\":\"snapshot-1\",\"pageIndex\":0,\"session\":{\"schemaVersion\":2,\"kind\":\"session\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"revision\":0,\"lastSequence\":0,\"binding\":{\"provider\":\"fake\",\"providerVersion\":\"fixture-1\",\"adapterVersion\":\"fixture-1\",\"generation\":\"generation-1\",\"accountRef\":\"account-1\",\"nativeSessionId\":\"native-1\",\"config\":{\"id\":\"config-1\",\"revision\":\"1\"}},\"capabilities\":{\"continuation\":\"unsupported\",\"cancellation\":\"request_only\",\"tools\":\"disabled\",\"steer\":\"unsupported\",\"fork\":\"unsupported\",\"subagent\":\"unsupported\",\"terminal\":\"unsupported\",\"structuredQuestion\":\"unsupported\",\"multimodal\":\"unsupported\",\"queue\":\"unsupported\"},\"status\":\"active\"},\"cursor\":0,\"events\":[],\"commands\":[{\"schemaVersion\":2,\"kind\":\"commandRecord\",\"command\":{\"schemaVersion\":2,\"kind\":\"command\",\"sessionId\":\"session-1\",\"commandId\":\"command-1\",\"expiresAtMs\":1000,\"input\":{\"type\":\"prompt\",\"text\":\"fixture text\",\"policy\":\"queue_next\"}},\"receipt\":{\"schemaVersion\":2,\"kind\":\"receipt\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"commandId\":\"command-1\",\"contentHash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"acceptedAtMs\":0,\"retryUntilMs\":100,\"receiptUntilMs\":200,\"acceptedRevision\":1},\"state\":\"accepted\"}],\"interactions\":[],\"surfaces\":[]}",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"snapshotPage\",\"snapshotId\":\"snapshot-1\",\"pageIndex\":0,\"session\":{\"schemaVersion\":2,\"kind\":\"session\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"revision\":0,\"lastSequence\":0,\"binding\":{\"provider\":\"fake\",\"providerVersion\":\"fixture-1\",\"adapterVersion\":\"fixture-1\",\"generation\":\"generation-1\",\"accountRef\":\"account-1\",\"nativeSessionId\":\"native-1\",\"config\":{\"id\":\"config-1\",\"revision\":\"1\"},\"workspaceId\":\"workspace-1\"},\"capabilities\":{\"continuation\":\"unsupported\",\"cancellation\":\"request_only\",\"tools\":\"disabled\",\"steer\":\"unsupported\",\"fork\":\"unsupported\",\"subagent\":\"unsupported\",\"terminal\":\"unsupported\",\"structuredQuestion\":\"unsupported\",\"multimodal\":\"unsupported\",\"queue\":\"unsupported\"},\"status\":\"active\"},\"cursor\":0,\"events\":[],\"commands\":[{\"schemaVersion\":2,\"kind\":\"commandRecord\",\"command\":{\"schemaVersion\":2,\"kind\":\"command\",\"sessionId\":\"session-1\",\"commandId\":\"command-1\",\"expiresAtMs\":1000,\"input\":{\"type\":\"prompt\",\"text\":\"fixture text\",\"policy\":\"queue_next\"}},\"receipt\":{\"schemaVersion\":2,\"kind\":\"receipt\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"commandId\":\"command-1\",\"contentHash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"acceptedAtMs\":0,\"retryUntilMs\":100,\"receiptUntilMs\":200,\"acceptedRevision\":1},\"state\":\"accepted\"}],\"interactions\":[],\"surfaces\":[]}",
       "code": "context"
     },
     {
       "name": "interaction event missing expiresAtMs",
-      "raw": "{\"schemaVersion\":2,\"kind\":\"event\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"eventId\":\"pending-golden\",\"sequence\":1,\"commandId\":\"command-1\",\"generation\":\"generation-1\",\"body\":{\"type\":\"interaction\",\"interactionId\":\"question-golden\",\"status\":\"pending\",\"request\":{\"question\":\"Choose\"},\"callbackLifetime\":\"generation_bound\"}}",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"event\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"eventId\":\"pending-golden\",\"sequence\":1,\"commandId\":\"command-1\",\"generation\":\"generation-1\",\"body\":{\"type\":\"interaction\",\"interactionId\":\"question-golden\",\"status\":\"pending\",\"request\":{\"question\":\"Choose\"},\"callbackLifetime\":\"generation_bound\"},\"attemptId\":\"attempt-command-1\"}",
       "code": "schema"
     },
     {
       "name": "interaction event missing callbackLifetime",
-      "raw": "{\"schemaVersion\":2,\"kind\":\"event\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"eventId\":\"pending-golden\",\"sequence\":1,\"commandId\":\"command-1\",\"generation\":\"generation-1\",\"body\":{\"type\":\"interaction\",\"interactionId\":\"question-golden\",\"status\":\"pending\",\"request\":{\"question\":\"Choose\"},\"expiresAtMs\":100}}",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"event\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"eventId\":\"pending-golden\",\"sequence\":1,\"commandId\":\"command-1\",\"generation\":\"generation-1\",\"body\":{\"type\":\"interaction\",\"interactionId\":\"question-golden\",\"status\":\"pending\",\"request\":{\"question\":\"Choose\"},\"expiresAtMs\":100},\"attemptId\":\"attempt-command-1\"}",
       "code": "schema"
     },
     {
       "name": "interaction event missing responseCommandId",
-      "raw": "{\"schemaVersion\":2,\"kind\":\"event\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"eventId\":\"answered-golden\",\"sequence\":1,\"commandId\":\"command-1\",\"generation\":\"generation-1\",\"body\":{\"type\":\"interaction\",\"interactionId\":\"question-golden\",\"status\":\"answered\"}}",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"event\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"eventId\":\"answered-golden\",\"sequence\":1,\"commandId\":\"command-1\",\"generation\":\"generation-1\",\"body\":{\"type\":\"interaction\",\"interactionId\":\"question-golden\",\"status\":\"answered\"},\"attemptId\":\"attempt-command-1\"}",
       "code": "schema"
     }
   ],

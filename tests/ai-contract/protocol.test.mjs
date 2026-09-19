@@ -248,7 +248,7 @@ test("surface deleted between resolution and response acceptance rejects the act
       surfaceCommit(
         seeded.session,
         { ...surface, revision: 1, status: "deleted" },
-        seeded.interaction.commandId,
+        seeded.interaction,
       ),
     ),
   );

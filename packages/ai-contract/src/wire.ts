@@ -50,6 +50,12 @@ export type Input =
       policy: "queue_next" | "steer";
       /** Exact active native run required for steer; forbidden for queue_next. */
       targetRunId?: Id;
+      targetCommandId?: never;
+      generation?: never;
+      nativeRunId?: never;
+      interactionId?: never;
+      answer?: never;
+      surface?: never;
     }
   | {
       /**
@@ -62,6 +68,12 @@ export type Input =
       generation: Id;
       /** Provider-owned model-turn/run identifier, required when the provider exposes it. */
       nativeRunId?: Id;
+      text?: never;
+      policy?: never;
+      targetRunId?: never;
+      interactionId?: never;
+      answer?: never;
+      surface?: never;
     }
   | {
       /**
@@ -82,16 +94,147 @@ export type Input =
       };
       /** Mandatory for an interaction associated with a surface; cannot bypass deleted/stale state. */
       surface?: SurfaceReference;
+      text?: never;
+      policy?: never;
+      targetRunId?: never;
+      targetCommandId?: never;
     };
 /**
- * accepted persists intent; dispatching persists dispatch intent; running has native confirmation; terminal has a definite outcome; reconciliation_required forbids blind resubmission.
+ * Closed command lifecycle; acceptance is immutable, local invalidation does not assert a model terminal.
  */
-export type CommandState =
-  | "accepted"
-  | "dispatching"
-  | "running"
-  | "terminal"
-  | "reconciliation_required";
+export type CommandRecord =
+  | {
+      /**
+       * Exact product wire version; V1 is rejected without migration or fallback.
+       */
+      schemaVersion: 2;
+      /**
+       * Closed product record discriminator.
+       */
+      kind: "commandRecord";
+      /** Immutable original command. */
+      command: Command;
+      /** Immutable original committed acceptance fact. */
+      receipt: Receipt;
+      /**
+       * Closed command lifecycle projection.
+       */
+      state: "accepted";
+      dispatch?: never;
+      outcome?: never;
+      failure?: never;
+    }
+  | {
+      /**
+       * Exact product wire version; V1 is rejected without migration or fallback.
+       */
+      schemaVersion: 2;
+      /**
+       * Closed product record discriminator.
+       */
+      kind: "commandRecord";
+      /** Immutable original command. */
+      command: Command;
+      /** Immutable original committed acceptance fact. */
+      receipt: Receipt;
+      /**
+       * Closed command lifecycle projection.
+       */
+      state: "dispatching";
+      /** Original attempt and append-once native correlation coordinates. */
+      dispatch: DispatchAttempt;
+      outcome?: never;
+      failure?: never;
+    }
+  | {
+      /**
+       * Exact product wire version; V1 is rejected without migration or fallback.
+       */
+      schemaVersion: 2;
+      /**
+       * Closed product record discriminator.
+       */
+      kind: "commandRecord";
+      /** Immutable original command. */
+      command: Command;
+      /** Immutable original committed acceptance fact. */
+      receipt: Receipt;
+      /**
+       * Closed command lifecycle projection.
+       */
+      state: "running";
+      /** Original attempt and append-once native correlation coordinates. */
+      dispatch: DispatchAttempt;
+      outcome?: never;
+      failure?: never;
+    }
+  | {
+      /**
+       * Exact product wire version; V1 is rejected without migration or fallback.
+       */
+      schemaVersion: 2;
+      /**
+       * Closed product record discriminator.
+       */
+      kind: "commandRecord";
+      /** Immutable original command. */
+      command: Command;
+      /** Immutable original committed acceptance fact. */
+      receipt: Receipt;
+      /**
+       * Closed command lifecycle projection.
+       */
+      state: "terminal";
+      /** Original attempt and append-once native correlation coordinates. */
+      dispatch: DispatchAttempt;
+      /** Explicitly observed model terminal outcome. */
+      outcome: Outcome;
+      failure?: never;
+    }
+  | {
+      /**
+       * Exact product wire version; V1 is rejected without migration or fallback.
+       */
+      schemaVersion: 2;
+      /**
+       * Closed product record discriminator.
+       */
+      kind: "commandRecord";
+      /** Immutable original command. */
+      command: Command;
+      /** Immutable original committed acceptance fact. */
+      receipt: Receipt;
+      /**
+       * Closed command lifecycle projection.
+       */
+      state: "reconciliation_required";
+      /** Original attempt and append-once native correlation coordinates. */
+      dispatch: DispatchAttempt;
+      outcome?: never;
+      failure?: never;
+    }
+  | {
+      /**
+       * Exact product wire version; V1 is rejected without migration or fallback.
+       */
+      schemaVersion: 2;
+      /**
+       * Closed product record discriminator.
+       */
+      kind: "commandRecord";
+      /** Immutable original command. */
+      command: Command;
+      /** Immutable original committed acceptance fact. */
+      receipt: Receipt;
+      /**
+       * Closed command lifecycle projection.
+       */
+      state: "invalidated";
+      /** Local failure without asserting a model terminal. */
+      failure: Failure;
+      dispatch?: never;
+      outcome?: never;
+    };
 /**
  * Definite model-turn outcome; does not establish process exit or business-side-effect completion.
  */
@@ -119,149 +262,619 @@ export type ErrorCode =
   | "limit_exceeded"
   | "cursor_expired"
   | "session_gone"
-  | "already_answered";
+  | "already_answered"
+  | "storage_corrupt";
 /**
  * same_command preserves identity/content; reconcile_first checks the original operation; never forbids retry.
  */
 export type Retry = "same_command" | "reconcile_first" | "never";
 /**
- * Stable product observation. Tool proposals and results are untrusted and cannot issue execution authority.
+ * Closed stable events. Session events have no command, attempt observations name their exact attempt.
  */
-export type EventBody =
+export type Event =
   | {
       /**
-       * Closed variant discriminator.
+       * Exact product wire version; V1 is rejected without migration or fallback.
        */
-      type: "text";
-      /** Stable product message correlation identifier. */
-      messageId: Id;
+      schemaVersion: 2;
       /**
-       * Untrusted model/user text subject to the whole-envelope budgets.
+       * Closed product record discriminator.
        */
-      text: string;
-    }
-  | {
+      kind: "event";
+      /** Trusted storage isolation scope; not copied from model or action content. */
+      namespace: Namespace;
+      /** Stable unique event identifier within the namespace. */
+      eventId: Id;
+      /** Strictly increasing stable-event counter; attach cursors are exclusive. */
+      sequence: Counter;
+      /** Live provider incarnation token; rejects callbacks from previous incarnations. */
+      generation: Id;
+      /** Original command identity within the trusted namespace. */
+      commandId: Id;
       /**
-       * Closed variant discriminator.
+       * text variant; all fields are data, never authentication or execution authority.
        */
-      type: "status";
-      /** Explicit command lifecycle state; terminal and reconciliation transitions require matching evidence. */
-      state: CommandState;
-    }
-  | {
-      /**
-       * Closed variant discriminator.
-       */
-      type: "terminal";
-      /** Definite model-turn result; no implication about business side effects. */
-      outcome: Outcome;
-    }
-  | {
-      /**
-       * Closed variant discriminator.
-       */
-      type: "cancel_dispatched";
-      /**
-       * Cancellation request transport confirmation only; does not manufacture a model terminal.
-       */
-      confirmation: "request_only" | "already_terminal" | "unsupported";
-    }
-  | {
-      /**
-       * Closed variant discriminator.
-       */
-      type: "tool_proposal";
-      /** Untrusted tool proposal correlation identifier. */
-      proposalId: Id;
-      /** Provider tool name; not an approved execution action. */
-      name: Id;
-      /**
-       * Untrusted tool JSON arguments, including keys, count toward product budgets.
-       */
-      arguments: {
-        [k: string]: unknown;
+      body: {
+        /**
+         * Closed variant discriminator.
+         */
+        type: "text";
+        /** Stable product message correlation identifier. */
+        messageId: Id;
+        /**
+         * Untrusted model/user text subject to the whole-envelope budgets.
+         */
+        text: string;
       };
+      /** Stable identity of one dispatch attempt; never reused after positive non-submission proof. */
+      attemptId: Id;
     }
   | {
       /**
-       * Closed variant discriminator.
+       * Exact product wire version; V1 is rejected without migration or fallback.
        */
-      type: "tool_result";
-      /** Untrusted tool proposal correlation identifier. */
-      proposalId: Id;
+      schemaVersion: 2;
       /**
-       * Protocol tool-result disposition, not authoritative business execution status.
+       * Closed product record discriminator.
        */
-      disposition: "returned" | "rejected" | "unavailable";
+      kind: "event";
+      /** Trusted storage isolation scope; not copied from model or action content. */
+      namespace: Namespace;
+      /** Stable unique event identifier within the namespace. */
+      eventId: Id;
+      /** Strictly increasing stable-event counter; attach cursors are exclusive. */
+      sequence: Counter;
+      /** Live provider incarnation token; rejects callbacks from previous incarnations. */
+      generation: Id;
+      /** Original command identity within the trusted namespace. */
+      commandId: Id;
       /**
-       * Untrusted model/user text subject to the whole-envelope budgets.
+       * status variant; all fields are data, never authentication or execution authority.
        */
-      text: string;
+      body: {
+        /**
+         * Closed variant discriminator.
+         */
+        type: "status";
+        /**
+         * Closed command lifecycle projection.
+         */
+        state: "accepted";
+      };
+      attemptId?: never;
     }
   | {
       /**
-       * Closed variant discriminator.
+       * Exact product wire version; V1 is rejected without migration or fallback.
        */
-      type: "interaction";
-      /** Single-use interaction identity within the namespace. */
-      interactionId: Id;
+      schemaVersion: 2;
       /**
-       * First publication of an ordinary user question.
+       * Closed product record discriminator.
        */
-      status: "pending";
-      /** Required for the first pending event and equal to the newly committed Interaction request; forbidden on later lifecycle events. */
-      request: InteractionRequest;
-      /** Inclusive UTC epoch-millisecond deadline; later first acceptance is rejected. */
-      expiresAtMs: Counter;
-      /** generation_bound cannot survive callback loss; provider_resumable requires verified native restoration. */
-      callbackLifetime: CallbackLifetime;
+      kind: "event";
+      /** Trusted storage isolation scope; not copied from model or action content. */
+      namespace: Namespace;
+      /** Stable unique event identifier within the namespace. */
+      eventId: Id;
+      /** Strictly increasing stable-event counter; attach cursors are exclusive. */
+      sequence: Counter;
+      /** Live provider incarnation token; rejects callbacks from previous incarnations. */
+      generation: Id;
+      /** Original command identity within the trusted namespace. */
+      commandId: Id;
+      /**
+       * status variant; all fields are data, never authentication or execution authority.
+       */
+      body: {
+        /**
+         * Closed variant discriminator.
+         */
+        type: "status";
+        /**
+         * Closed command lifecycle projection.
+         */
+        state: "dispatching" | "running" | "reconciliation_required";
+      };
+      /** Stable identity of one dispatch attempt; never reused after positive non-submission proof. */
+      attemptId: Id;
     }
   | {
       /**
-       * Closed variant discriminator.
+       * Exact product wire version; V1 is rejected without migration or fallback.
        */
-      type: "interaction";
-      /** Single-use interaction identity within the namespace. */
-      interactionId: Id;
+      schemaVersion: 2;
       /**
-       * The first accepted response consumed this interaction.
+       * Closed product record discriminator.
        */
-      status: "answered";
-      /** Accepted response command which atomically consumed the interaction; present only when answered. */
-      responseCommandId: Id;
+      kind: "event";
+      /** Trusted storage isolation scope; not copied from model or action content. */
+      namespace: Namespace;
+      /** Stable unique event identifier within the namespace. */
+      eventId: Id;
+      /** Strictly increasing stable-event counter; attach cursors are exclusive. */
+      sequence: Counter;
+      /** Live provider incarnation token; rejects callbacks from previous incarnations. */
+      generation: Id;
+      /** Original command identity within the trusted namespace. */
+      commandId: Id;
+      /**
+       * terminal variant; all fields are data, never authentication or execution authority.
+       */
+      body: {
+        /**
+         * Closed variant discriminator.
+         */
+        type: "terminal";
+        /** Definite model-turn result; no implication about business side effects. */
+        outcome: Outcome;
+      };
+      /** Stable identity of one dispatch attempt; never reused after positive non-submission proof. */
+      attemptId: Id;
     }
   | {
       /**
-       * Closed variant discriminator.
+       * Exact product wire version; V1 is rejected without migration or fallback.
        */
-      type: "interaction";
-      /** Single-use interaction identity within the namespace. */
-      interactionId: Id;
+      schemaVersion: 2;
       /**
-       * Explicit lifecycle state; missing native evidence cannot be inferred from transport loss.
+       * Closed product record discriminator.
        */
-      status: "expired" | "unavailable";
+      kind: "event";
+      /** Trusted storage isolation scope; not copied from model or action content. */
+      namespace: Namespace;
+      /** Stable unique event identifier within the namespace. */
+      eventId: Id;
+      /** Strictly increasing stable-event counter; attach cursors are exclusive. */
+      sequence: Counter;
+      /** Live provider incarnation token; rejects callbacks from previous incarnations. */
+      generation: Id;
+      /** Original command identity within the trusted namespace. */
+      commandId: Id;
+      /**
+       * cancel_dispatched variant; all fields are data, never authentication or execution authority.
+       */
+      body: {
+        /**
+         * Closed variant discriminator.
+         */
+        type: "cancel_dispatched";
+        /**
+         * Cancellation request transport confirmation only; does not manufacture a model terminal.
+         */
+        confirmation: "request_only" | "already_terminal" | "unsupported";
+      };
+      /** Stable identity of one dispatch attempt; never reused after positive non-submission proof. */
+      attemptId: Id;
     }
   | {
       /**
-       * Closed variant discriminator.
+       * Exact product wire version; V1 is rejected without migration or fallback.
        */
-      type: "error";
-      /** Closed failure category and retry discipline. */
-      failure: Failure;
+      schemaVersion: 2;
+      /**
+       * Closed product record discriminator.
+       */
+      kind: "event";
+      /** Trusted storage isolation scope; not copied from model or action content. */
+      namespace: Namespace;
+      /** Stable unique event identifier within the namespace. */
+      eventId: Id;
+      /** Strictly increasing stable-event counter; attach cursors are exclusive. */
+      sequence: Counter;
+      /** Live provider incarnation token; rejects callbacks from previous incarnations. */
+      generation: Id;
+      /** Original command identity within the trusted namespace. */
+      commandId: Id;
+      /**
+       * tool_proposal variant; all fields are data, never authentication or execution authority.
+       */
+      body: {
+        /**
+         * Closed variant discriminator.
+         */
+        type: "tool_proposal";
+        /** Untrusted tool proposal correlation identifier. */
+        proposalId: Id;
+        /** Provider tool name; not an approved execution action. */
+        name: Id;
+        /**
+         * Untrusted tool JSON arguments, including keys, count toward product budgets.
+         */
+        arguments: {
+          [k: string]: unknown;
+        };
+      };
+      /** Stable identity of one dispatch attempt; never reused after positive non-submission proof. */
+      attemptId: Id;
     }
   | {
       /**
-       * Closed variant discriminator.
+       * Exact product wire version; V1 is rejected without migration or fallback.
        */
-      type: "surface";
-      /** Full surface recovery state committed with this event. */
-      surface: SurfaceState;
+      schemaVersion: 2;
+      /**
+       * Closed product record discriminator.
+       */
+      kind: "event";
+      /** Trusted storage isolation scope; not copied from model or action content. */
+      namespace: Namespace;
+      /** Stable unique event identifier within the namespace. */
+      eventId: Id;
+      /** Strictly increasing stable-event counter; attach cursors are exclusive. */
+      sequence: Counter;
+      /** Live provider incarnation token; rejects callbacks from previous incarnations. */
+      generation: Id;
+      /** Original command identity within the trusted namespace. */
+      commandId: Id;
+      /**
+       * tool_result variant; all fields are data, never authentication or execution authority.
+       */
+      body: {
+        /**
+         * Closed variant discriminator.
+         */
+        type: "tool_result";
+        /** Untrusted tool proposal correlation identifier. */
+        proposalId: Id;
+        /**
+         * Protocol tool-result disposition, not authoritative business execution status.
+         */
+        disposition: "returned" | "rejected" | "unavailable";
+        /**
+         * Untrusted model/user text subject to the whole-envelope budgets.
+         */
+        text: string;
+      };
+      /** Stable identity of one dispatch attempt; never reused after positive non-submission proof. */
+      attemptId: Id;
+    }
+  | {
+      /**
+       * Exact product wire version; V1 is rejected without migration or fallback.
+       */
+      schemaVersion: 2;
+      /**
+       * Closed product record discriminator.
+       */
+      kind: "event";
+      /** Trusted storage isolation scope; not copied from model or action content. */
+      namespace: Namespace;
+      /** Stable unique event identifier within the namespace. */
+      eventId: Id;
+      /** Strictly increasing stable-event counter; attach cursors are exclusive. */
+      sequence: Counter;
+      /** Live provider incarnation token; rejects callbacks from previous incarnations. */
+      generation: Id;
+      /** Original command identity within the trusted namespace. */
+      commandId: Id;
+      /**
+       * Initial ordinary question publication; the matching Interaction is committed atomically.
+       */
+      body: {
+        /**
+         * Closed variant discriminator.
+         */
+        type: "interaction";
+        /** Single-use interaction identity within the namespace. */
+        interactionId: Id;
+        /**
+         * First publication of an ordinary user question.
+         */
+        status: "pending";
+        /** Required for the first pending event and equal to the newly committed Interaction request; forbidden on later lifecycle events. */
+        request: InteractionRequest;
+        /** Inclusive UTC epoch-millisecond deadline; later first acceptance is rejected. */
+        expiresAtMs: Counter;
+        /** A live-generation callback. Restore preserves display history but always makes the previous callback unavailable. */
+        callbackLifetime: CallbackLifetime;
+      };
+      /** Stable identity of one dispatch attempt; never reused after positive non-submission proof. */
+      attemptId: Id;
+    }
+  | {
+      /**
+       * Exact product wire version; V1 is rejected without migration or fallback.
+       */
+      schemaVersion: 2;
+      /**
+       * Closed product record discriminator.
+       */
+      kind: "event";
+      /** Trusted storage isolation scope; not copied from model or action content. */
+      namespace: Namespace;
+      /** Stable unique event identifier within the namespace. */
+      eventId: Id;
+      /** Strictly increasing stable-event counter; attach cursors are exclusive. */
+      sequence: Counter;
+      /** Live provider incarnation token; rejects callbacks from previous incarnations. */
+      generation: Id;
+      /** Original command identity within the trusted namespace. */
+      commandId: Id;
+      /**
+       * First accepted response identity, committed atomically with the receipt and Interaction.
+       */
+      body: {
+        /**
+         * Closed variant discriminator.
+         */
+        type: "interaction";
+        /** Single-use interaction identity within the namespace. */
+        interactionId: Id;
+        /**
+         * The first accepted response consumed this interaction.
+         */
+        status: "answered";
+        /** Accepted response command which atomically consumed the interaction; present only when answered. */
+        responseCommandId: Id;
+      };
+      /** Stable identity of one dispatch attempt; never reused after positive non-submission proof. */
+      attemptId: Id;
+    }
+  | {
+      /**
+       * Exact product wire version; V1 is rejected without migration or fallback.
+       */
+      schemaVersion: 2;
+      /**
+       * Closed product record discriminator.
+       */
+      kind: "event";
+      /** Trusted storage isolation scope; not copied from model or action content. */
+      namespace: Namespace;
+      /** Stable unique event identifier within the namespace. */
+      eventId: Id;
+      /** Strictly increasing stable-event counter; attach cursors are exclusive. */
+      sequence: Counter;
+      /** Live provider incarnation token; rejects callbacks from previous incarnations. */
+      generation: Id;
+      /** Original command identity within the trusted namespace. */
+      commandId: Id;
+      /**
+       * Question lifecycle transition; cannot republish or replace its request.
+       */
+      body: {
+        /**
+         * Closed variant discriminator.
+         */
+        type: "interaction";
+        /** Single-use interaction identity within the namespace. */
+        interactionId: Id;
+        /**
+         * Explicit lifecycle state; missing native evidence cannot be inferred from transport loss.
+         */
+        status: "expired" | "unavailable";
+      };
+      /** Stable identity of one dispatch attempt; never reused after positive non-submission proof. */
+      attemptId: Id;
+    }
+  | {
+      /**
+       * Exact product wire version; V1 is rejected without migration or fallback.
+       */
+      schemaVersion: 2;
+      /**
+       * Closed product record discriminator.
+       */
+      kind: "event";
+      /** Trusted storage isolation scope; not copied from model or action content. */
+      namespace: Namespace;
+      /** Stable unique event identifier within the namespace. */
+      eventId: Id;
+      /** Strictly increasing stable-event counter; attach cursors are exclusive. */
+      sequence: Counter;
+      /** Live provider incarnation token; rejects callbacks from previous incarnations. */
+      generation: Id;
+      /** Original command identity within the trusted namespace. */
+      commandId: Id;
+      /**
+       * error variant; all fields are data, never authentication or execution authority.
+       */
+      body: {
+        /**
+         * Closed variant discriminator.
+         */
+        type: "error";
+        /** Local failure without asserting a model terminal. */
+        failure: Failure;
+      };
+      attemptId?: never;
+    }
+  | {
+      /**
+       * Exact product wire version; V1 is rejected without migration or fallback.
+       */
+      schemaVersion: 2;
+      /**
+       * Closed product record discriminator.
+       */
+      kind: "event";
+      /** Trusted storage isolation scope; not copied from model or action content. */
+      namespace: Namespace;
+      /** Stable unique event identifier within the namespace. */
+      eventId: Id;
+      /** Strictly increasing stable-event counter; attach cursors are exclusive. */
+      sequence: Counter;
+      /** Live provider incarnation token; rejects callbacks from previous incarnations. */
+      generation: Id;
+      /** Original command identity within the trusted namespace. */
+      commandId: Id;
+      /**
+       * Stable event data; never execution or authentication authority.
+       */
+      body: {
+        /**
+         * Closed event discriminator.
+         */
+        type: "invalidated";
+        /** Local failure without asserting a model terminal. */
+        failure: Failure;
+      };
+      attemptId?: never;
+    }
+  | {
+      /**
+       * Exact product wire version; V1 is rejected without migration or fallback.
+       */
+      schemaVersion: 2;
+      /**
+       * Closed product record discriminator.
+       */
+      kind: "event";
+      /** Trusted storage isolation scope; not copied from model or action content. */
+      namespace: Namespace;
+      /** Stable unique event identifier within the namespace. */
+      eventId: Id;
+      /** Strictly increasing stable-event counter; attach cursors are exclusive. */
+      sequence: Counter;
+      /** Live provider incarnation token; rejects callbacks from previous incarnations. */
+      generation: Id;
+      /** Original command identity within the trusted namespace. */
+      commandId: Id;
+      /**
+       * Stable event data; never execution or authentication authority.
+       */
+      body: {
+        /**
+         * Closed event discriminator.
+         */
+        type: "dispatch";
+        /** Complete dispatch identity retained for replay and reconciliation. */
+        attempt: DispatchAttempt;
+      };
+      /** Stable identity of one dispatch attempt; never reused after positive non-submission proof. */
+      attemptId: Id;
+    }
+  | {
+      /**
+       * Exact product wire version; V1 is rejected without migration or fallback.
+       */
+      schemaVersion: 2;
+      /**
+       * Closed product record discriminator.
+       */
+      kind: "event";
+      /** Trusted storage isolation scope; not copied from model or action content. */
+      namespace: Namespace;
+      /** Stable unique event identifier within the namespace. */
+      eventId: Id;
+      /** Strictly increasing stable-event counter; attach cursors are exclusive. */
+      sequence: Counter;
+      /** Live provider incarnation token; rejects callbacks from previous incarnations. */
+      generation: Id;
+      /** Original command identity within the trusted namespace. */
+      commandId: Id;
+      /**
+       * Stable event data; never execution or authentication authority.
+       */
+      body: {
+        /**
+         * Closed event discriminator.
+         */
+        type: "reconciled";
+        /** Complete dispatch identity retained for replay and reconciliation. */
+        attempt: DispatchAttempt;
+        /**
+         * Provider observation bound to this attempt and its current observer.
+         */
+        resolution: "running" | "terminal" | "not_submitted" | "unknown";
+      };
+      /** Stable identity of one dispatch attempt; never reused after positive non-submission proof. */
+      attemptId: Id;
+    }
+  | {
+      /**
+       * Exact product wire version; V1 is rejected without migration or fallback.
+       */
+      schemaVersion: 2;
+      /**
+       * Closed product record discriminator.
+       */
+      kind: "event";
+      /** Trusted storage isolation scope; not copied from model or action content. */
+      namespace: Namespace;
+      /** Stable unique event identifier within the namespace. */
+      eventId: Id;
+      /** Strictly increasing stable-event counter; attach cursors are exclusive. */
+      sequence: Counter;
+      /** Live provider incarnation token; rejects callbacks from previous incarnations. */
+      generation: Id;
+      /** Original command identity within the trusted namespace. */
+      commandId: Id;
+      body: {
+        /**
+         * Closed variant discriminator.
+         */
+        type: "surface";
+        /** Full surface recovery state committed with this event. */
+        surface: SurfaceState;
+      };
+      /** Stable identity of one dispatch attempt; never reused after positive non-submission proof. */
+      attemptId: Id;
+    }
+  | {
+      /**
+       * Exact product wire version; V1 is rejected without migration or fallback.
+       */
+      schemaVersion: 2;
+      /**
+       * Closed product record discriminator.
+       */
+      kind: "event";
+      /** Trusted storage isolation scope; not copied from model or action content. */
+      namespace: Namespace;
+      /** Stable unique event identifier within the namespace. */
+      eventId: Id;
+      /** Strictly increasing stable-event counter; attach cursors are exclusive. */
+      sequence: Counter;
+      /** Live provider incarnation token; rejects callbacks from previous incarnations. */
+      generation: Id;
+      /**
+       * Stable event data; never execution or authentication authority.
+       */
+      body: {
+        /**
+         * Closed event discriminator.
+         */
+        type: "session_rebound";
+        /** Prior provider incarnation invalidated by this verified handoff. */
+        previousGeneration: Id;
+      };
+      commandId?: never;
+      attemptId?: never;
+    }
+  | {
+      /**
+       * Exact product wire version; V1 is rejected without migration or fallback.
+       */
+      schemaVersion: 2;
+      /**
+       * Closed product record discriminator.
+       */
+      kind: "event";
+      /** Trusted storage isolation scope; not copied from model or action content. */
+      namespace: Namespace;
+      /** Stable unique event identifier within the namespace. */
+      eventId: Id;
+      /** Strictly increasing stable-event counter; attach cursors are exclusive. */
+      sequence: Counter;
+      /** Live provider incarnation token; rejects callbacks from previous incarnations. */
+      generation: Id;
+      /**
+       * Stable event data; never execution or authentication authority.
+       */
+      body: {
+        /**
+         * Closed event discriminator.
+         */
+        type: "session_retired";
+      };
+      commandId?: never;
+      attemptId?: never;
     };
 /**
- * generation_bound cannot survive callback loss; provider_resumable requires verified native restoration.
+ * A live-generation callback. Restore preserves display history but always makes the previous callback unavailable.
  */
-export type CallbackLifetime = "generation_bound" | "provider_resumable";
+export type CallbackLifetime = "generation_bound";
 /**
  * Only supported enables an operation; unknown and unsupported fail closed.
  */
@@ -274,6 +887,10 @@ export type Subscription =
       type: "event";
       /** Stable Host event. */
       event: Event;
+      generation?: never;
+      commandId?: never;
+      messageId?: never;
+      text?: never;
     }
   | {
       /**
@@ -290,12 +907,18 @@ export type Subscription =
        * Untrusted display text.
        */
       text: string;
+      event?: never;
     }
   | {
       /**
        * Closed variant discriminator.
        */
       type: "resync_required";
+      event?: never;
+      generation?: never;
+      commandId?: never;
+      messageId?: never;
+      text?: never;
     };
 
 /**
@@ -371,36 +994,9 @@ export interface Namespace {
   sessionId: Id;
 }
 /**
- * Single inbox/dispatch ledger; no second provider queue owns the same command.
+ * One active dispatch attempt. Origin identity is immutable; unknown native coordinates may be filled once. Only verified rebind changes observerGeneration.
  */
-export interface CommandRecord {
-  /**
-   * Exact product wire version; V1 is rejected without migration or fallback.
-   */
-  schemaVersion: 2;
-  /**
-   * Closed product record discriminator.
-   */
-  kind: "commandRecord";
-  /** Immutable original command. */
-  command: Command;
-  /** Immutable original committed acceptance fact. */
-  receipt: Receipt;
-  /** Explicit command lifecycle state; terminal and reconciliation transitions require matching evidence. */
-  state: CommandState;
-  /** Native correlation persisted before/with dispatch; never reconstructed from UI history. */
-  dispatch?: Dispatch;
-  /** Definite model-turn result; no implication about business side effects. */
-  outcome?: Outcome;
-  /** Closed failure category and retry discipline. */
-  failure?: Failure;
-}
-/**
- * Persisted native correlation and certainty; unknown requires reconciliation before any further send.
- */
-export interface Dispatch {
-  /** Live provider incarnation token; rejects callbacks from previous incarnations. */
-  generation: Id;
+export interface DispatchAttempt {
   /** Provider-owned context session identifier; history alone cannot recreate it. */
   nativeSessionId: Id;
   /** Provider-owned model-turn/run identifier, required when the provider exposes it. */
@@ -408,9 +1004,17 @@ export interface Dispatch {
   /** Provider-owned parent prompt/query request identifier; cannot be rebound after dispatch. Callback identities belong to Interaction. */
   nativeRequestId?: Id;
   /**
-   * submitted has native acceptance; unknown requires reconciliation; not_sent has evidence no submission occurred.
+   * intent is stored before native submission; submitted has native acceptance; unknown requires reconciliation.
    */
-  certainty: "not_sent" | "submitted" | "unknown";
+  certainty: "intent" | "submitted" | "unknown";
+  /** Stable identity of one dispatch attempt; never reused after positive non-submission proof. */
+  attemptId: Id;
+  /** Immutable provider incarnation that originated this attempt. */
+  originGeneration: Id;
+  /** Current verified provider incarnation permitted to observe this attempt. */
+  observerGeneration: Id;
+  /** Append-once native lookup key returned for ambiguous submission. */
+  correlationId?: Id;
 }
 /**
  * Value-free failure and explicit retry discipline.
@@ -420,31 +1024,6 @@ export interface Failure {
   code: ErrorCode;
   /** Explicit retry discipline; uncertainty never authorizes blind resubmission. */
   retry: Retry;
-}
-/**
- * Committed stable event in one namespace; token deltas are excluded from durable ordering.
- */
-export interface Event {
-  /**
-   * Exact product wire version; V1 is rejected without migration or fallback.
-   */
-  schemaVersion: 2;
-  /**
-   * Closed product record discriminator.
-   */
-  kind: "event";
-  /** Trusted storage isolation scope; not copied from model or action content. */
-  namespace: Namespace;
-  /** Stable unique event identifier within the namespace. */
-  eventId: Id;
-  /** Strictly increasing stable-event counter; attach cursors are exclusive. */
-  sequence: Counter;
-  /** Client-generated idempotency key; reuse only with identical canonical content. */
-  commandId: Id;
-  /** Live provider incarnation token; rejects callbacks from previous incarnations. */
-  generation: Id;
-  /** Stable observation committed before publication. */
-  body: EventBody;
 }
 /**
  * Immutable untrusted provider question payload. Subject to whole-record JSON budgets; never authentication, permission or execution approval.
@@ -491,9 +1070,9 @@ export interface SurfaceState {
    */
   a2uiVersion: "v0.9.1";
   /**
-   * Persisted lifecycle; deleted is a permanent tombstone for this instance.
+   * Deleted is an upstream deletion; invalidated is a product-side loss of action authority. Neither may reactivate.
    */
-  status: "active" | "deleted";
+  status: "active" | "deleted" | "invalidated";
   /**
    * Bounded unchanged upstream messages needed to rebuild this instance; not a second A2UI schema.
    *
@@ -552,6 +1131,8 @@ export interface Binding {
   nativeRunId?: Id;
   /** Provider-owned parent prompt/query request identifier; cannot be rebound after dispatch. Callback identities belong to Interaction. */
   nativeRequestId?: Id;
+  /** SHA-256 identity of the normalized absolute workspace path. Filesystem containment remains owned by the provider adapter and composition root. */
+  workspaceId: Id;
 }
 /**
  * Immutable configuration identity and revision; contains no credentials.
@@ -627,7 +1208,7 @@ export interface Interaction {
   status: "pending" | "answered" | "expired" | "unavailable";
   /** Accepted response command which atomically consumed the interaction; present only when answered. */
   responseCommandId?: Id;
-  /** generation_bound cannot survive callback loss; provider_resumable requires verified native restoration. */
+  /** A live-generation callback. Restore preserves display history but always makes the previous callback unavailable. */
   callbackLifetime: CallbackLifetime;
   /** Provider-owned callback identifier, immutable and unique within a session generation; distinct from the parent dispatch request. */
   nativeCallbackId: Id;

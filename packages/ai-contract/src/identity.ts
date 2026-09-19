@@ -19,4 +19,5 @@ export const errorCodes = Object.freeze([
   "cursor_expired",
   "session_gone",
   "already_answered",
+  "storage_corrupt",
 ] as const);

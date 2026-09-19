@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import canonicalize from "canonicalize";
 import { withinBudget, withCleanup, type BudgetFactory } from "./budget.js";
-import type { Binding, Command, CommandRecord } from "../wire.js";
+import type {
+  Binding,
+  Command,
+  CommandRecord,
+  DispatchAttempt,
+} from "../wire.js";
 import type {
   Budget,
   ProviderAgentPort,
@@ -10,10 +15,11 @@ import type {
   ProviderObservation,
   Result,
   Submission,
+  Reconciliation,
 } from "../ports.js";
 import { fixtureSession, fixtureCommand, unwrap } from "./conformance.js";
 import { ok, fail, fixtureLimits } from "./store.js";
-import { VerifiedProviderSession } from "../session.js";
+import { VerifiedProviderSession, workspaceIdentity } from "../session.js";
 import { boundedJson, decode, fingerprint } from "../codec.js";
 let nextProviderInstance = 0;
 /** Scripted provider contract double. Never spawns a process or executes a tool. */
@@ -26,10 +32,12 @@ export class ScriptedProvider implements ProviderAgentPort {
   dispatched = 0;
   private readonly instance = ++nextProviderInstance;
   private incarnation = 0;
+  private closed = false;
   async createSession(
     configuration: ProviderConfiguration,
     _budget: Budget,
   ): Promise<Result<ProviderSessionBinding>> {
+    if (this.closed || _budget.signal.aborted) return fail("unavailable");
     if (
       configuration.provider !== "fake" ||
       configuration.permissions !== "tools_disabled"
@@ -38,6 +46,7 @@ export class ScriptedProvider implements ProviderAgentPort {
     this.configuration = configuration;
     this.binding = {
       ...fixtureSession().binding,
+      workspaceId: workspaceIdentity(configuration.workingDirectory),
       generation: `generation-${this.instance}-${++this.incarnation}`,
       nativeSessionId: `native-${this.instance}-${this.incarnation}`,
       config: structuredClone(configuration.config),
@@ -48,15 +57,35 @@ export class ScriptedProvider implements ProviderAgentPort {
       capabilities: fixtureSession().capabilities,
     });
   }
+  async resume(
+    binding: Binding,
+    configuration: ProviderConfiguration,
+    budget: Budget,
+  ): Promise<Result<ProviderSessionBinding>> {
+    const opened = await this.createSession(configuration, budget);
+    if (!opened.ok || this.closed || budget.signal.aborted)
+      return fail("unavailable");
+    this.binding = { ...binding, generation: opened.value.binding.generation };
+    return ok({
+      binding: structuredClone(this.binding),
+      capabilities: {
+        ...opened.value.capabilities,
+        continuation: "across_processes",
+      },
+    });
+  }
   async submit(
     binding: Binding,
     command: Command,
+    attempt: DispatchAttempt,
     _budget: Budget,
   ): Promise<Submission> {
     if (
       !this.configuration ||
       canonicalize(binding) !== canonicalize(this.binding) ||
-      command.input.type !== "prompt"
+      command.input.type !== "prompt" ||
+      attempt.observerGeneration !== binding.generation ||
+      attempt.nativeSessionId !== binding.nativeSessionId
     )
       return {
         certainty: "not_sent",
@@ -82,7 +111,7 @@ export class ScriptedProvider implements ProviderAgentPort {
     _command: Command,
     _budget: Budget,
   ): Promise<Result<"request_only">> {
-    return canonicalize(binding) === canonicalize(this.binding)
+    return !this.closed && canonicalize(binding) === canonicalize(this.binding)
       ? ok("request_only")
       : fail("stale_binding");
   }
@@ -97,24 +126,34 @@ export class ScriptedProvider implements ProviderAgentPort {
     binding: Binding,
     budget: Budget,
   ): AsyncIterable<ProviderObservation> {
-    if (canonicalize(binding) !== canonicalize(this.binding)) return;
+    if (this.closed || canonicalize(binding) !== canonicalize(this.binding))
+      return;
     for (const event of this.observations) {
-      if (budget.signal.aborted) return;
+      if (this.closed || budget.signal.aborted) return;
       if (canonicalize(event.binding) === canonicalize(binding))
         yield structuredClone(event);
     }
   }
   async reconcile(
     binding: Binding,
-    _record: CommandRecord,
+    record: CommandRecord,
     _budget: Budget,
-  ): Promise<Result<{ status: "unknown"; binding: Binding }>> {
-    return canonicalize(binding) === canonicalize(this.binding)
-      ? ok({ status: "unknown", binding: structuredClone(binding) })
+  ): Promise<Result<Reconciliation>> {
+    return !this.closed &&
+      record.dispatch &&
+      canonicalize(binding) === canonicalize(this.binding)
+      ? ok({
+          status: "unknown",
+          commandId: record.command.commandId,
+          attemptId: record.dispatch.attemptId,
+          binding: structuredClone(binding),
+        })
       : fail("stale_binding");
   }
   async close(_budget: Budget): Promise<Result<{ processStopped: boolean }>> {
+    this.closed = true;
     this.configuration = undefined;
+    this.observations = [];
     return ok({ processStopped: true });
   }
 }
@@ -132,16 +171,24 @@ export async function runProviderConformance(
     const port = await withinBudget(budget, () => create(scenario));
     await withCleanup(
       async () => {
-        const { binding, capabilities } = unwrap(
+        const admitted = unwrap(
           await withinBudget(budget, (b) =>
             VerifiedProviderSession.open(port, configuration, b),
           ),
         );
+        const { binding, capabilities } = admitted;
         assert.deepEqual(binding.config, configuration.config);
         assert.equal(binding.accountRef, configuration.accountRef);
         const command = fixtureCommand();
+        const attempt: DispatchAttempt = {
+          attemptId: "attempt-command-1",
+          originGeneration: binding.generation,
+          observerGeneration: binding.generation,
+          nativeSessionId: binding.nativeSessionId,
+          certainty: "intent",
+        };
         const submission = await withinBudget(budget, (b) =>
-          port.submit(binding, command, b),
+          port.submit(binding, command, attempt, b),
         );
         assert.equal(submission.certainty, scenario);
         if (scenario === "unknown") {
@@ -166,19 +213,28 @@ export async function runProviderConformance(
             },
             state: "reconciliation_required",
             dispatch: {
-              generation: binding.generation,
-              nativeSessionId: binding.nativeSessionId,
+              ...attempt,
+              correlationId: submission.correlationId,
               certainty: "unknown",
             },
           };
           const reconciled = unwrap(
             await withinBudget(budget, (b) =>
-              port.reconcile(binding, record, b),
+              admitted.reconcile(
+                {
+                  ...fixtureSession(),
+                  namespace: configuration.namespace,
+                  binding,
+                  capabilities,
+                },
+                record,
+                b,
+              ),
             ),
           );
-          assert.equal(reconciled.status, "unknown");
-          assert.equal(reconciled.outcome, undefined);
-          assert.deepEqual(reconciled.binding, binding);
+          assert.equal(reconciled.observation.status, "unknown");
+          assert.equal(reconciled.observation.outcome, undefined);
+          assert.deepEqual(reconciled.observation.binding, binding);
         } else {
           if (submission.certainty !== "submitted")
             throw new Error("expected submission");
@@ -237,6 +293,7 @@ export async function runProviderConformance(
                   boundedJson(item.value, fixtureLimits),
                 );
                 assert.equal(observation.commandId, command.commandId);
+                assert.equal(observation.attemptId, attempt.attemptId);
                 assert.deepEqual(
                   observation.binding,
                   submission.certainty === "submitted"
@@ -276,14 +333,44 @@ export async function runProviderConformance(
                       "request",
                     ],
                   );
-                } else {
-                  assert.equal(
-                    observation.type === "event" &&
-                      observation.body.type === "interaction" &&
-                      String(observation.body.status) === "pending",
-                    false,
-                    "pending callbacks require the dedicated question observation",
+                } else if (
+                  observation.type === "submitted" ||
+                  observation.type === "interaction_unavailable"
+                ) {
+                  decode(
+                    boundedJson(
+                      {
+                        ...context,
+                        kind: "event",
+                        eventId: "native-lifecycle",
+                        sequence: count,
+                        attemptId: observation.attemptId,
+                        body:
+                          observation.type === "submitted"
+                            ? { type: "status", state: "running" }
+                            : {
+                                type: "interaction",
+                                interactionId: observation.interactionId,
+                                status: "unavailable",
+                              },
+                      },
+                      fixtureLimits,
+                    ),
+                    fixtureLimits,
                   );
+                } else {
+                  if (observation.type === "event")
+                    assert.ok(
+                      [
+                        "text",
+                        "terminal",
+                        "tool_proposal",
+                        "tool_result",
+                        "error",
+                        "cancel_dispatched",
+                        "surface",
+                      ].includes(observation.body.type),
+                    );
                   assert.ok(
                     observation.type === "event" ||
                       observation.type === "delta",
@@ -294,6 +381,10 @@ export async function runProviderConformance(
                         ...context,
                         kind: "event",
                         eventId: "fixture-event",
+                        ...(observation.type === "event" &&
+                        observation.body.type === "error"
+                          ? {}
+                          : { attemptId: attempt.attemptId }),
                         sequence: count,
                         body:
                           observation.type === "event"
@@ -331,4 +422,145 @@ export async function runProviderConformance(
       },
     );
   }
+  await lateAdmission(create, configuration, budget);
+}
+
+/** Deferred adapter seam tests both initialization entry points and both sides of close. */
+async function lateAdmission(
+  create: (
+    scenario: "submitted" | "unknown",
+  ) => ProviderAgentPort | Promise<ProviderAgentPort>,
+  configuration: ProviderConfiguration,
+  budget: BudgetFactory,
+) {
+  for (const operation of ["createSession", "resume"] as const)
+    for (const deferStart of [false, true]) {
+      const port = await withinBudget(budget, () => create("unknown"));
+      const initialize = port[operation]?.bind(port);
+      if (!initialize) {
+        unwrap(await port.close(budget()));
+        continue;
+      }
+      let release!: () => void, entered!: () => void, settled!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const started = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const finished = new Promise<void>((resolve) => {
+        settled = resolve;
+      });
+      let late: Result<ProviderSessionBinding> | undefined;
+      const delayed = async (...args: unknown[]) => {
+        try {
+          entered();
+          if (deferStart) await gate;
+          late = await (
+            initialize as (
+              ...input: unknown[]
+            ) => Promise<Result<ProviderSessionBinding>>
+          )(...args);
+          if (!deferStart) await gate;
+          return late;
+        } finally {
+          settled();
+        }
+      };
+      Object.assign(port, { [operation]: delayed });
+      const control = new AbortController();
+      let previous = {
+        ...fixtureSession(),
+        namespace: configuration.namespace,
+      };
+      if (operation === "resume") {
+        const original = await withinBudget(budget, () => create("unknown"));
+        await withCleanup(
+          async () => {
+            const admitted = unwrap(
+              await VerifiedProviderSession.open(
+                original,
+                configuration,
+                budget(),
+              ),
+            );
+            previous = {
+              ...previous,
+              binding: admitted.binding,
+              capabilities: admitted.capabilities,
+            };
+          },
+          async () => {
+            unwrap(await withinBudget(budget, (b) => original.close(b)));
+          },
+        );
+      }
+      await withCleanup(
+        async () => {
+          const admission =
+            operation === "resume"
+              ? VerifiedProviderSession.restore(port, previous, configuration, {
+                  ...budget(),
+                  signal: control.signal,
+                })
+              : VerifiedProviderSession.open(port, configuration, {
+                  ...budget(),
+                  signal: control.signal,
+                });
+          await withinBudget(budget, () => started);
+          control.abort();
+          const result = await withinBudget(budget, () => admission);
+          assert.equal(result.ok, false);
+          if (!result.ok) assert.equal(result.cleanupError, undefined);
+          release();
+          await withinBudget(budget, () => finished);
+          unwrap(await withinBudget(budget, (b) => port.close(b)));
+          assert.equal(
+            (
+              await withinBudget(budget, (b) =>
+                operation === "resume"
+                  ? (initialize as NonNullable<ProviderAgentPort["resume"]>)(
+                      previous.binding,
+                      configuration,
+                      b,
+                    )
+                  : (initialize as ProviderAgentPort["createSession"])(
+                      configuration,
+                      b,
+                    ),
+              )
+            ).ok,
+            false,
+            "closed adapter cannot admit a late creation/resume",
+          );
+          if (late?.ok) {
+            const binding = late.value.binding;
+            assert.equal(
+              (
+                await withinBudget(budget, (b) =>
+                  port.cancel(binding, fixtureCommand(), b),
+                )
+              ).ok,
+              false,
+              "late binding cannot operate after close",
+            );
+            const iterator = port
+              .observe(binding, budget())
+              [Symbol.asyncIterator]();
+            try {
+              assert.equal(
+                (await withinBudget(budget, () => iterator.next())).done,
+                true,
+              );
+            } finally {
+              await withinBudget(budget, () => iterator.return?.());
+            }
+          }
+        },
+        async () => {
+          release();
+          unwrap(await withinBudget(budget, (b) => port.close(b)));
+        },
+      );
+    }
 }

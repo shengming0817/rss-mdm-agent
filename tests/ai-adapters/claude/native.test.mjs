@@ -1,3 +1,9 @@
+import {
+  fixtureAttempt,
+  fixtureDispatchedRecord,
+  fixtureProviderSession,
+  fixtureSession,
+} from "../../../packages/ai-contract/dist/testing/index.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createServer } from "node:http";
@@ -11,7 +17,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createClaudeAdapter } from "../../../packages/ai-adapters/claude/dist/index.js";
-import { VerifiedProviderSession } from "../../../packages/ai-contract/dist/index.js";
+import { VerifiedProviderSession } from "../../../packages/ai-contract/dist/session.js";
 const budget = (ms = 15000) => ({
   timeoutMs: ms,
   signal: AbortSignal.timeout(ms),
@@ -151,6 +157,7 @@ async function fixture(t, replies, controlled = false) {
     config: { id: "native-fixture", revision: "1" },
     accountRef: "fixture-account",
     workingDirectory: cwd,
+    namespace: { ...fixtureSession().namespace, sessionId: "native-fixture" },
     ...(controlled
       ? {
           permissions: "host_mediated",
@@ -208,7 +215,12 @@ async function fixture(t, replies, controlled = false) {
   };
 }
 async function run(adapter, binding, cmd, onQuestion) {
-  const sent = await adapter.submit(binding, cmd, budget());
+  const sent = await adapter.submit(
+    binding,
+    cmd,
+    fixtureAttempt(binding, cmd),
+    budget(),
+  );
   assert.equal(sent.certainty, "submitted");
   const events = [];
   for await (const event of adapter.observe(sent.binding, budget())) {
@@ -245,9 +257,9 @@ test(
     assert.equal(unwrap(await adapter.close(budget())).processStopped, true);
     const resumed = f.create(),
       binding = unwrap(
-        await VerifiedProviderSession.resume(
+        await VerifiedProviderSession.restore(
           resumed,
-          second.binding,
+          fixtureProviderSession(second.binding, f.configuration),
           f.configuration,
           budget(),
         ),
@@ -449,7 +461,12 @@ test(
       await adapter.createSession(f.configuration, budget()),
     );
     const cmd = command("cancel-target");
-    const sent = await adapter.submit(session.binding, cmd, budget());
+    const sent = await adapter.submit(
+      session.binding,
+      cmd,
+      fixtureAttempt(session.binding, cmd),
+      budget(),
+    );
     assert.equal(sent.certainty, "submitted");
     const cancelled = unwrap(
       await adapter.cancel(
@@ -474,7 +491,11 @@ test(
       false,
     );
     const state = unwrap(
-      await adapter.reconcile(sent.binding, { command: cmd }, budget()),
+      await adapter.reconcile(
+        sent.binding,
+        fixtureDispatchedRecord(sent.binding, cmd, f.configuration.namespace),
+        budget(),
+      ),
     );
     assert.equal(state.status, "terminal");
     assert.equal(state.outcome, "cancelled");
@@ -492,7 +513,12 @@ test(
       await adapter.createSession(f.configuration, budget()),
     );
     const cmd = command("http-failure");
-    const sent = await adapter.submit(session.binding, cmd, budget());
+    const sent = await adapter.submit(
+      session.binding,
+      cmd,
+      fixtureAttempt(session.binding, cmd),
+      budget(),
+    );
     assert.equal(sent.certainty, "submitted");
     const events = await Array.fromAsync(
       adapter.observe(sent.binding, budget(3000)),
@@ -502,7 +528,11 @@ test(
       false,
     );
     const state = unwrap(
-      await adapter.reconcile(sent.binding, { command: cmd }, budget()),
+      await adapter.reconcile(
+        sent.binding,
+        fixtureDispatchedRecord(sent.binding, cmd, f.configuration.namespace),
+        budget(),
+      ),
     );
     assert.equal(state.status, "terminal");
     assert.equal(state.outcome, "failed");
@@ -571,9 +601,9 @@ test(
     assert.equal(unwrap(await first.close(budget())).processStopped, true);
     const second = f.create();
     const resumed = unwrap(
-      await VerifiedProviderSession.resume(
+      await VerifiedProviderSession.restore(
         second,
-        finished.binding,
+        fixtureProviderSession(finished.binding, f.configuration),
         f.configuration,
         budget(),
       ),
@@ -602,9 +632,9 @@ test(
     const denied = f.create();
     assert.equal(
       (
-        await VerifiedProviderSession.resume(
+        await VerifiedProviderSession.restore(
           denied,
-          resumed.binding,
+          fixtureProviderSession(resumed.binding, f.configuration),
           f.configuration,
           budget(),
         )
@@ -619,3 +649,64 @@ test(
     );
   },
 );
+
+for (const method of ["createSession", "resume"])
+  test(
+    `real SDK ${method} settling after abort cannot revive a closed process`,
+    { timeout: 30000 },
+    async (t) => {
+      const f = await fixture(t, []);
+      let previous;
+      if (method === "resume") {
+        const first = f.create(),
+          opened = unwrap(await first.createSession(f.configuration, budget()));
+        previous = fixtureProviderSession(opened.binding, f.configuration);
+        assert.equal(unwrap(await first.close(budget())).processStopped, true);
+      }
+      const port = f.create(),
+        initialize = port[method].bind(port);
+      let entered, release, settled;
+      const started = new Promise((r) => (entered = r)),
+        gate = new Promise((r) => (release = r)),
+        finished = new Promise((r) => (settled = r));
+      port[method] = async (...args) => {
+        try {
+          const value = await initialize(...args);
+          entered();
+          await gate;
+          return value;
+        } finally {
+          settled();
+        }
+      };
+      const control = new AbortController();
+      const pending =
+        method === "resume"
+          ? VerifiedProviderSession.restore(port, previous, f.configuration, {
+              ...budget(),
+              signal: control.signal,
+            })
+          : VerifiedProviderSession.open(port, f.configuration, {
+              ...budget(),
+              signal: control.signal,
+            });
+      try {
+        await started;
+        control.abort();
+        const result = await pending;
+        assert.equal(result.ok, false);
+        assert.equal(result.cleanupError, undefined);
+        assert.equal(unwrap(await port.close(budget())).processStopped, true);
+        release();
+        await finished;
+        assert.equal(
+          (await port.createSession(f.configuration, budget())).ok,
+          false,
+        );
+        assert.equal(f.requests.length, 0);
+      } finally {
+        release();
+        await port.close(budget());
+      }
+    },
+  );

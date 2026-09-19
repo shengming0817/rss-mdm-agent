@@ -1,27 +1,20 @@
-import { ReadViews } from "./pages.js";
-import canonicalize from "canonicalize";
-import {
-  decode,
-  boundedJson,
-  fingerprint,
-  deliveryFingerprint,
-  ContractError,
-} from "../codec.js";
+import { ReadViews, readSnapshotPage, readSessionPage } from "../read-views.js";
 import type {
   AcceptCommand,
   Budget,
   Page,
   Result,
   SessionCommit,
+  SessionRebind,
   SessionStore,
   Caller,
   Clock,
 } from "../ports.js";
 import type {
   CommandRecord,
+  Event,
   Counter,
   Delivery,
-  Event,
   Id,
   Namespace,
   Session,
@@ -30,37 +23,24 @@ import type {
   SessionPage,
   PageQuery,
 } from "../wire.js";
-export const fixtureLimits = {
-  maxBytes: 262144,
-  maxTextBytes: 131072,
-  maxDepth: 32,
-  maxNodes: 16384,
-};
-export const ok = <T>(value: T): Result<T> => ({ ok: true, value });
-export const fail = <T = never>(
-  code: import("../wire.js").ErrorCode,
-  retry: import("../wire.js").Retry = "never",
-): Result<T> => ({ ok: false, error: { code, retry } });
-const clone = <T>(value: T): T => structuredClone(value);
-export const namespaceKey = (n: Namespace): string =>
-  JSON.stringify([n.tenantId, n.principalId, n.authorityId, n.sessionId]);
-const valid = (v: unknown) =>
-  decode(boundedJson(v, fixtureLimits), fixtureLimits);
-const same = (a: unknown, b: unknown) => canonicalize(a) === canonicalize(b);
-const sessionIdentity = ({
-  nativeRunId: _run,
-  nativeRequestId: _request,
-  ...identity
-}: Session["binding"]) => identity;
-interface State {
-  session: Session;
-  commands: Map<Id, CommandRecord>;
-  events: Event[];
-  interactions: Map<Id, SnapshotPage["interactions"][number]>;
-  deliveries: Map<Id, Delivery>;
-  surfaces: Map<Id, SnapshotPage["surfaces"][number]>;
-}
-/** Deterministic contract test double. No disk, crash durability, locks, workers or leases. */
+import {
+  acceptCommand,
+  commitSession,
+  createState,
+  rebindSession,
+  retireSession,
+  canPrune,
+  defaultLimits,
+  namespaceKey,
+  ok,
+  fail,
+  isSettled,
+  type SessionState,
+} from "../transitions.js";
+export const fixtureLimits = defaultLimits;
+export { ok, fail, namespaceKey } from "../transitions.js";
+const clone = <T>(v: T): T => structuredClone(v);
+/** Deterministic storage double; production transition rules, no durability claim. */
 export class MemorySessionStore implements SessionStore {
   readonly evidence = "memory_test_double" as const;
   private closed = false;
@@ -71,739 +51,184 @@ export class MemorySessionStore implements SessionStore {
       throw new TypeError("snapshot ttl");
     this.views = new ReadViews(options.clock ?? { now: () => Date.now() }, ttl);
   }
-  private states = new Map<string, State>();
+  private states = new Map<string, SessionState>();
   private retiredIds = new Set<string>();
-  /** Inject a transaction failure before publication, without partially mutating state. */
   failNextCommit = false;
-  /** Inject a transient read failure for pagination error conformance. */
   failNextQuery = false;
-  async create(session: Session): Promise<Result<void>> {
-    if (this.closed) return fail("unavailable");
+  private query<T>(action: () => Result<T>): Result<T> {
     try {
-      valid(session);
+      return action();
     } catch {
       return fail("invalid_input");
     }
-    const key = namespaceKey(session.namespace);
-    if (this.states.has(key) || this.retiredIds.has(key))
-      return fail("content_conflict");
-    if (
-      session.revision !== 0 ||
-      session.lastSequence !== 0 ||
-      session.status !== "active"
-    )
+  }
+  private apply(
+    namespace: Namespace,
+    transition: (s: SessionState) => Result<SessionState>,
+  ): Result<void> {
+    if (this.closed) return fail("unavailable");
+    try {
+      const key = namespaceKey(namespace),
+        before = this.states.get(key);
+      if (!before) return fail("session_gone");
+      const result = transition(before);
+      if (!result.ok) return result;
+      if (this.failNextCommit) {
+        this.failNextCommit = false;
+        return fail("unavailable", "same_command");
+      }
+      this.states.set(key, result.value);
+      return ok(undefined);
+    } catch {
       return fail("invalid_input");
-    this.states.set(key, {
-      session: clone(session),
-      commands: new Map(),
-      events: [],
-      interactions: new Map(),
-      deliveries: new Map(),
-      surfaces: new Map(),
-    });
-    return ok(undefined);
+    }
+  }
+  async create(session: Session): Promise<Result<void>> {
+    if (this.closed) return fail("unavailable");
+    try {
+      const key = namespaceKey(session.namespace);
+      if (this.states.has(key) || this.retiredIds.has(key))
+        return fail("content_conflict");
+      const result = createState(session);
+      if (!result.ok) return result;
+      this.states.set(key, result.value);
+      return ok(undefined);
+    } catch {
+      return fail("invalid_input");
+    }
   }
   async session(namespace: Namespace): Promise<Result<Session>> {
-    if (this.closed) return fail("unavailable");
-    const state = this.states.get(namespaceKey(namespace));
-    return state ? ok(clone(state.session)) : fail("session_gone");
-  }
-  async surface(
-    namespace: Namespace,
-    instanceId: Id,
-  ): Promise<Result<SurfaceState>> {
-    if (this.closed) return fail("unavailable");
-    const state = this.states.get(namespaceKey(namespace));
-    if (!state || state.session.status !== "active")
-      return fail("session_gone");
-    const row = state.surfaces.get(instanceId);
-    return row ? ok(clone(row)) : fail("stale_binding");
-  }
-  async close(_budget: Budget): Promise<Result<void>> {
-    this.closed = true;
-    this.views.clear();
-    return ok(undefined);
+    return this.query(() => {
+      if (this.closed) return fail("unavailable");
+      const state = this.states.get(namespaceKey(namespace));
+      return state ? ok(clone(state.session)) : fail("session_gone");
+    });
   }
   async command(namespace: Namespace, id: Id): Promise<Result<CommandRecord>> {
-    if (this.closed) return fail("unavailable");
-    const state = this.states.get(namespaceKey(namespace));
-    if (!state) return fail("session_gone");
-    const c = state.commands.get(id);
-    return c ? ok(clone(c)) : fail("unavailable");
+    return this.query(() => {
+      if (this.closed) return fail("unavailable");
+      const state = this.states.get(namespaceKey(namespace));
+      if (!state) return fail("session_gone");
+      const row = state.commands.get(id);
+      return row ? ok(clone(row)) : fail("unavailable");
+    });
+  }
+  async surface(namespace: Namespace, id: Id): Promise<Result<SurfaceState>> {
+    return this.query(() => {
+      if (this.closed) return fail("unavailable");
+      const state = this.states.get(namespaceKey(namespace));
+      if (!state || state.session.status !== "active")
+        return fail("session_gone");
+      const row = state.surfaces.get(id);
+      return row ? ok(clone(row)) : fail("stale_binding");
+    });
   }
   async accept(
     input: AcceptCommand,
   ): Promise<Result<import("../wire.js").Receipt>> {
-    if (this.closed) return fail("unavailable");
-    const state = this.states.get(namespaceKey(input.namespace));
-    if (!state) return fail("session_gone");
-    try {
-      valid(input.command);
-      valid(input.event);
-    } catch {
-      return fail("invalid_input");
-    }
-    if (input.command.sessionId !== input.namespace.sessionId)
-      return fail("permission_denied");
-    const digest = fingerprint(input.command, fixtureLimits),
-      prior = state.commands.get(input.command.commandId);
-    if (prior) {
-      if (prior.receipt.contentHash !== digest) return fail("content_conflict");
-      return input.nowMs <= prior.receipt.receiptUntilMs
-        ? ok(clone(prior.receipt))
-        : fail("expired");
-    }
-    if (state.session.status !== "active") return fail("session_gone");
-    if (
-      !Number.isSafeInteger(input.nowMs) ||
-      input.nowMs < 0 ||
-      input.command.expiresAtMs < input.nowMs
-    )
-      return fail("expired");
-    const { retryWindowMs, receiptWindowMs } = input.retention;
-    if (
-      !Number.isSafeInteger(retryWindowMs) ||
-      retryWindowMs < 1 ||
-      !Number.isSafeInteger(receiptWindowMs) ||
-      receiptWindowMs < retryWindowMs ||
-      !Number.isSafeInteger(input.nowMs + receiptWindowMs)
-    )
-      return fail("invalid_input");
-    const check = this.check(
-      state,
-      input.expectedRevision,
-      input.expectedGeneration,
-    );
-    if (!check.ok) return check;
-    const receipt: import("../wire.js").Receipt = {
-      schemaVersion: 2,
-      kind: "receipt",
-      namespace: clone(input.namespace),
-      commandId: input.command.commandId,
-      contentHash: digest,
-      acceptedAtMs: input.nowMs,
-      retryUntilMs: Math.min(
-        input.command.expiresAtMs,
-        input.nowMs + retryWindowMs,
-      ),
-      receiptUntilMs: input.nowMs + receiptWindowMs,
-      acceptedRevision: state.session.revision + 1,
-    };
-    const record: CommandRecord = {
-      schemaVersion: 2,
-      kind: "commandRecord",
-      command: clone(input.command),
-      receipt,
-      state: "accepted",
-    };
-    const interactions: SnapshotPage["interactions"][number][] = [];
-    if (input.command.input.type === "respond") {
-      const request = input.command.input;
-      const interaction = state.interactions.get(request.interactionId);
-      const linked = [...state.surfaces.values()].filter(
-        (row) => row.interactionId === request.interactionId,
-      );
-      if (linked.length || request.surface) {
-        const surface =
-          request.surface && state.surfaces.get(request.surface.instanceId);
-        if (
-          !surface ||
-          surface.interactionId !== request.interactionId ||
-          surface.revision !== request.surface!.revision
-        )
-          return fail("stale_binding");
-        if (surface.status !== "active") return fail("unavailable");
-      }
-      if (!interaction || interaction.status === "unavailable")
-        return fail("unavailable");
-      if (
-        interaction.generation !== request.generation ||
-        request.generation !== input.expectedGeneration ||
-        interaction.nativeRunId !== request.nativeRunId
-      )
-        return fail("stale_binding");
-      if (interaction.status === "answered") return fail("already_answered");
-      if (
-        interaction.status === "expired" ||
-        interaction.expiresAtMs < input.nowMs
-      )
-        return fail("expired");
-      interactions.push({
-        ...interaction,
-        status: "answered",
-        responseCommandId: input.command.commandId,
-      });
-    }
-    const events: Event[] = [input.event];
-    for (const interaction of interactions)
-      events.push({
-        schemaVersion: 2,
-        kind: "event",
-        namespace: input.namespace,
-        eventId: `answered-${interaction.interactionId}`,
-        sequence: input.event.sequence + events.length,
-        commandId: interaction.commandId,
-        generation: interaction.generation,
-        body: {
-          type: "interaction",
-          interactionId: interaction.interactionId,
-          status: "answered",
-          responseCommandId: interaction.responseCommandId!,
-        },
-      });
-    const result = await this.commit({
-      namespace: input.namespace,
-      expectedRevision: input.expectedRevision,
-      expectedGeneration: input.expectedGeneration,
-      session: {
-        ...state.session,
-        revision: state.session.revision + 1,
-        lastSequence: state.session.lastSequence + events.length,
-      },
-      commands: [record],
-      events,
-      interactions,
-      deliveries: [],
-      surfaces: [],
+    let receipt: import("../wire.js").Receipt | undefined;
+    const result = this.apply(input.namespace, (state) => {
+      const accepted = acceptCommand(state, input);
+      if (!accepted.ok) return accepted;
+      receipt = accepted.value.receipt;
+      return ok(accepted.value.state);
     });
-    return result.ok ? ok(clone(receipt)) : result;
-  }
-  private check(state: State, revision: Counter, generation: Id): Result<void> {
-    if (state.session.status !== "active") return fail("session_gone");
-    if (state.session.binding.generation !== generation)
-      return fail("stale_binding");
-    if (state.session.revision !== revision)
-      return fail("revision_conflict", "same_command");
-    return ok(undefined);
+    return result.ok ? ok(receipt!) : result;
   }
   async commit(batch: SessionCommit): Promise<Result<void>> {
-    if (this.closed) return fail("unavailable");
-    const state = this.states.get(namespaceKey(batch.namespace));
-    if (!state) return fail("session_gone");
-    const check = this.check(
-      state,
-      batch.expectedRevision,
-      batch.expectedGeneration,
-    );
-    if (!check.ok) return check;
-    try {
-      for (const row of [
-        batch.session,
-        ...batch.commands,
-        ...batch.events,
-        ...batch.interactions,
-        ...batch.deliveries,
-        ...batch.surfaces,
-      ])
-        valid(row);
-    } catch (error) {
-      if (error instanceof ContractError) return fail("invalid_input");
-      throw error;
-    }
-    if (
-      namespaceKey(batch.session.namespace) !== namespaceKey(batch.namespace) ||
-      batch.session.revision !== state.session.revision + 1 ||
-      batch.session.lastSequence !==
-        state.session.lastSequence + batch.events.length ||
-      batch.session.status !== "active"
-    )
-      return fail("invalid_input");
-    if (
-      !same(
-        sessionIdentity(batch.session.binding),
-        sessionIdentity(state.session.binding),
-      ) ||
-      !same(batch.session.capabilities, state.session.capabilities)
-    )
-      return fail("stale_binding");
-    const copy = clone(state);
-    for (const c of batch.commands) {
-      if (
-        namespaceKey(c.receipt.namespace) !== namespaceKey(batch.namespace) ||
-        c.command.sessionId !== batch.namespace.sessionId
-      )
-        return fail("permission_denied");
-      const old = copy.commands.get(c.command.commandId);
-      if (old) {
-        if (
-          !same(old.receipt, c.receipt) ||
-          fingerprint(old.command, fixtureLimits) !==
-            fingerprint(c.command, fixtureLimits)
-        )
-          return fail("content_conflict");
-        const allowed: Record<string, readonly string[]> = {
-          accepted: ["accepted", "dispatching", "terminal"],
-          dispatching: [
-            "dispatching",
-            "running",
-            "terminal",
-            "reconciliation_required",
-          ],
-          running: ["running", "terminal", "reconciliation_required"],
-          reconciliation_required: [
-            "reconciliation_required",
-            "running",
-            "terminal",
-          ],
-          terminal: ["terminal"],
-        };
-        if (
-          !allowed[old.state].includes(c.state) ||
-          (old.state === "terminal" && !same(old, c))
-        )
-          return fail("content_conflict");
-      } else if (
-        c.state !== "accepted" ||
-        c.receipt.acceptedRevision !== batch.session.revision ||
-        copy.commands.has(c.command.commandId)
-      )
-        return fail("invalid_input");
-      if (
-        c.dispatch &&
-        (c.dispatch.generation !== batch.expectedGeneration ||
-          c.dispatch.nativeSessionId !== state.session.binding.nativeSessionId)
-      )
-        return fail("stale_binding");
-      if (
-        old?.dispatch &&
-        c.dispatch &&
-        ((old.dispatch.nativeRunId !== undefined &&
-          old.dispatch.nativeRunId !== c.dispatch.nativeRunId) ||
-          (old.dispatch.nativeRequestId !== undefined &&
-            old.dispatch.nativeRequestId !== c.dispatch.nativeRequestId))
-      )
-        return fail("stale_binding");
-      if (c.state === "terminal" && old?.state !== "terminal") {
-        if (
-          !old?.dispatch ||
-          !c.dispatch ||
-          !same(old.dispatch, c.dispatch) ||
-          !batch.events.some(
-            (event) =>
-              event.commandId === c.command.commandId &&
-              event.generation === c.dispatch!.generation &&
-              event.body.type === "terminal" &&
-              event.body.outcome === c.outcome,
-          )
-        )
-          return fail("invalid_input");
-      }
-      copy.commands.set(c.command.commandId, clone(c));
-    }
-    const oldBinding = state.session.binding,
-      nextBinding = batch.session.binding;
-    const coordinatesMatch = (
-      dispatch: CommandRecord["dispatch"],
-      binding: Session["binding"],
-    ) =>
-      dispatch !== undefined &&
-      dispatch.nativeRunId === binding.nativeRunId &&
-      dispatch.nativeRequestId === binding.nativeRequestId;
-    if (
-      oldBinding.nativeRunId !== nextBinding.nativeRunId ||
-      oldBinding.nativeRequestId !== nextBinding.nativeRequestId
-    ) {
-      const records = [...copy.commands.values()];
-      if (
-        nextBinding.nativeRunId !== undefined ||
-        nextBinding.nativeRequestId !== undefined
-      ) {
-        if (
-          !records.some(
-            (c) =>
-              (c.state === "dispatching" || c.state === "running") &&
-              c.dispatch?.certainty === "submitted" &&
-              coordinatesMatch(c.dispatch, nextBinding),
-          )
-        )
-          return fail("stale_binding");
-      } else {
-        const original = records.filter((c) =>
-          coordinatesMatch(c.dispatch, oldBinding),
-        );
-        if (!original.length || original.some((c) => c.state !== "terminal"))
-          return fail("stale_binding");
-      }
-    }
-    const ids = new Set(copy.events.map((e) => e.eventId));
-    for (const [i, event] of batch.events.entries()) {
-      if (
-        namespaceKey(event.namespace) !== namespaceKey(batch.namespace) ||
-        event.generation !== batch.expectedGeneration ||
-        event.sequence !== state.session.lastSequence + i + 1 ||
-        ids.has(event.eventId) ||
-        !copy.commands.has(event.commandId)
-      )
-        return fail("invalid_input");
-      if (event.body.type === "terminal") {
-        const record = copy.commands.get(event.commandId)!;
-        if (
-          record.state !== "terminal" ||
-          record.outcome !== event.body.outcome ||
-          !record.dispatch ||
-          !batch.commands.some(
-            (c) => c.command.commandId === event.commandId,
-          ) ||
-          state.commands.get(event.commandId)?.state === "terminal"
-        )
-          return fail("invalid_input");
-      }
-      ids.add(event.eventId);
-      copy.events.push(clone(event));
-    }
-    const interactionIds = new Set<Id>();
-    for (const row of batch.interactions) {
-      if (interactionIds.has(row.interactionId)) return fail("invalid_input");
-      interactionIds.add(row.interactionId);
-      const source = copy.commands.get(row.commandId);
-      if (
-        namespaceKey(row.namespace) !== namespaceKey(batch.namespace) ||
-        row.generation !== batch.expectedGeneration ||
-        !source?.dispatch ||
-        source.dispatch.generation !== row.generation ||
-        source.dispatch.nativeRunId !== row.nativeRunId
-      )
-        return fail("stale_binding");
-      const old = copy.interactions.get(row.interactionId);
-      if (old) {
-        const { status: _a, responseCommandId: _b, ...identity } = old;
-        const { status: _c, responseCommandId: _d, ...nextIdentity } = row;
-        if (!same(identity, nextIdentity)) return fail("stale_binding");
-        if (old.status !== "pending" && !same(old, row))
-          return fail("already_answered");
-      } else {
-        if (
-          row.status !== "pending" ||
-          source.dispatch.certainty !== "submitted" ||
-          !["dispatching", "running"].includes(source.state)
-        )
-          return fail("invalid_input");
-        const pending = batch.events.filter(
-          (event) =>
-            event.body.type === "interaction" &&
-            event.body.interactionId === row.interactionId,
-        );
-        if (
-          pending.length !== 1 ||
-          pending[0].commandId !== row.commandId ||
-          pending[0].generation !== row.generation ||
-          pending[0].body.type !== "interaction" ||
-          pending[0].body.status !== "pending" ||
-          !same(
-            "request" in pending[0].body ? pending[0].body.request : undefined,
-            row.request,
-          )
-        )
-          return fail("invalid_input");
-      }
-      if (
-        [...copy.interactions.values()].some(
-          (other) =>
-            other.interactionId !== row.interactionId &&
-            other.generation === row.generation &&
-            other.nativeCallbackId === row.nativeCallbackId,
-        )
-      )
-        return fail("content_conflict");
-      if (!old || !same(old, row)) {
-        const changes = batch.events.filter(
-          (event) =>
-            event.body.type === "interaction" &&
-            event.body.interactionId === row.interactionId,
-        );
-        if (
-          changes.length !== 1 ||
-          changes[0].body.type !== "interaction" ||
-          changes[0].body.status !== row.status
-        )
-          return fail("invalid_input");
-      }
-      if (row.status === "answered") {
-        const response = copy.commands.get(row.responseCommandId!);
-        if (
-          !response ||
-          response.command.input.type !== "respond" ||
-          response.command.input.interactionId !== row.interactionId ||
-          response.command.input.generation !== row.generation ||
-          response.command.input.nativeRunId !== row.nativeRunId ||
-          response.receipt.acceptedAtMs > row.expiresAtMs
-        )
-          return fail("invalid_input");
-      }
-      copy.interactions.set(row.interactionId, clone(row));
-    }
-    for (const event of batch.events) {
-      if (event.body.type !== "interaction") continue;
-      const body = event.body;
-      const row = copy.interactions.get(body.interactionId);
-      if (
-        !row ||
-        row.commandId !== event.commandId ||
-        row.generation !== event.generation ||
-        row.status !== body.status
-      )
-        return fail("invalid_input");
-      if (body.status === "pending") {
-        if (
-          state.interactions.has(row.interactionId) ||
-          !interactionIds.has(row.interactionId) ||
-          !same(body.request, row.request) ||
-          body.expiresAtMs !== row.expiresAtMs ||
-          body.callbackLifetime !== row.callbackLifetime
-        )
-          return fail("invalid_input");
-      } else if (
-        "request" in body ||
-        (body.status === "answered" &&
-          body.responseCommandId !== row.responseCommandId)
-      )
-        return fail("invalid_input");
-    }
-    for (const row of batch.deliveries) {
-      if (
-        namespaceKey(row.namespace) !== namespaceKey(batch.namespace) ||
-        !ids.has(row.eventId) ||
-        row.contentHash !==
-          deliveryFingerprint(
-            copy.events.find((e) => e.eventId === row.eventId)!,
-            row.target,
-            fixtureLimits,
-          )
-      )
-        return fail("invalid_input");
-      const old = copy.deliveries.get(row.operationId);
-      if (
-        old &&
-        (old.contentHash !== row.contentHash ||
-          old.target !== row.target ||
-          old.eventId !== row.eventId ||
-          old.retry !== row.retry ||
-          row.attempts < old.attempts ||
-          (old.status === "delivered" && row.status !== "delivered"))
-      )
-        return fail("content_conflict");
-      copy.deliveries.set(row.operationId, clone(row));
-    }
-    const surfaceIds = new Set<Id>();
-    for (const row of batch.surfaces) {
-      const interaction = copy.interactions.get(row.interactionId);
-      if (
-        surfaceIds.has(row.surfaceInstanceId) ||
-        namespaceKey(row.namespace) !== namespaceKey(batch.namespace) ||
-        row.generation !== batch.expectedGeneration ||
-        !interaction ||
-        row.generation !== interaction.generation ||
-        row.nativeRunId !== interaction.nativeRunId
-      )
-        return fail("invalid_input");
-      surfaceIds.add(row.surfaceInstanceId);
-      const matching = batch.events.filter(
-        (event) =>
-          event.body.type === "surface" &&
-          event.body.surface.surfaceInstanceId === row.surfaceInstanceId,
-      );
-      if (
-        matching.length !== 1 ||
-        matching[0].commandId !== interaction.commandId ||
-        matching[0].body.type !== "surface" ||
-        !same(matching[0].body.surface, row)
-      )
-        return fail("invalid_input");
-      const old = copy.surfaces.get(row.surfaceInstanceId);
-      if (old) {
-        const { revision: _a, status: _b, messages: _m, ...identity } = old;
-        const { revision: _c, status: _d, messages: _n, ...nextIdentity } = row;
-        if (!same(identity, nextIdentity)) return fail("stale_binding");
-        if (old.status === "deleted" || row.revision !== old.revision + 1)
-          return fail("revision_conflict", "same_command");
-      } else if (
-        row.status !== "active" ||
-        row.revision !== 0 ||
-        interaction.status !== "pending"
-      )
-        return fail("invalid_input");
-      copy.surfaces.set(row.surfaceInstanceId, clone(row));
-      if (row.status === "deleted" && interaction.status === "pending")
-        copy.interactions.set(interaction.interactionId, {
-          ...interaction,
-          status: "unavailable",
-        });
-    }
-    for (const event of batch.events) {
-      if (
-        event.body.type === "surface" &&
-        !surfaceIds.has(event.body.surface.surfaceInstanceId)
-      )
-        return fail("invalid_input");
-    }
-    // A direct commit must satisfy the same surface fence as accept(), including
-    // a deletion or revision change carried by this very batch.
-    for (const interaction of batch.interactions) {
-      if (interaction.status !== "answered") continue;
-      const response = copy.commands.get(interaction.responseCommandId!)!
-        .command.input;
-      if (response.type !== "respond") return fail("invalid_input");
-      const linked = [...copy.surfaces.values()].filter(
-        (row) => row.interactionId === interaction.interactionId,
-      );
-      if (linked.length || response.surface) {
-        const surface =
-          response.surface && copy.surfaces.get(response.surface.instanceId);
-        if (
-          !surface ||
-          surface.status !== "active" ||
-          surface.interactionId !== interaction.interactionId ||
-          surface.revision !== response.surface!.revision
-        )
-          return fail("stale_binding");
-      }
-    }
-    if (this.failNextCommit) {
-      this.failNextCommit = false;
-      return fail("unavailable", "same_command");
-    }
-    copy.session = clone(batch.session);
-    this.states.set(namespaceKey(batch.namespace), copy);
-    return ok(undefined);
+    return this.apply(batch.namespace, (s) => commitSession(s, batch));
+  }
+  async rebind(input: SessionRebind): Promise<Result<Session>> {
+    const result = this.apply(input.namespace, (s) => rebindSession(s, input));
+    return result.ok ? this.session(input.namespace) : result;
   }
   async snapshotPage(
     namespace: Namespace,
     query: PageQuery,
   ): Promise<Result<SnapshotPage>> {
-    if (this.closed) return fail("unavailable");
-    const state = this.states.get(namespaceKey(namespace));
-    if (!state) return fail("session_gone");
-    if (this.failNextQuery) {
-      this.failNextQuery = false;
-      return fail("unavailable", "same_command");
-    }
-    const read = this.views.read(
-      `snapshot:${namespaceKey(namespace)}`,
-      query,
-      () => ({
-        session: state.session,
-        records: [
-          ...state.events,
-          ...state.commands.values(),
-          ...state.interactions.values(),
-          ...state.surfaces.values(),
-        ],
-      }),
-    );
-    if (!read.ok) return read;
-    const { id, offset, index, value } = read.value;
-    if (offset > value.records.length) return fail("cursor_expired");
-    let count = Math.min(query.limit, value.records.length - offset);
-    for (;;) {
-      const records = value.records.slice(offset, offset + count);
-      const page: SnapshotPage = {
-        schemaVersion: 2,
-        kind: "snapshotPage",
-        snapshotId: id,
-        pageIndex: index,
-        session: value.session,
-        cursor: value.session.lastSequence,
-        events: records.filter((r): r is Event => r.kind === "event"),
-        commands: records.filter(
-          (r): r is CommandRecord => r.kind === "commandRecord",
-        ),
-        interactions: records.filter(
-          (r): r is SnapshotPage["interactions"][number] =>
-            r.kind === "interaction",
-        ),
-        surfaces: records.filter(
-          (r): r is SurfaceState => r.kind === "surface",
-        ),
-        ...(offset + count < value.records.length
-          ? { next: this.views.next(id, offset + count, index + 1) }
-          : {}),
-      };
-      try {
-        boundedJson(page, fixtureLimits);
-        this.views.finish(id, !!page.next);
-        return ok(page);
-      } catch {
-        if (count <= 1) {
-          this.views.finish(id, false);
-          return fail("limit_exceeded");
-        }
-        count = Math.floor(count / 2);
+    return this.query(() => {
+      if (this.closed) return fail("unavailable");
+      const state = this.states.get(namespaceKey(namespace));
+      if (!state) return fail("session_gone");
+      if (this.failNextQuery) {
+        this.failNextQuery = false;
+        return fail("unavailable", "same_command");
       }
-    }
+      return readSnapshotPage(
+        this.views,
+        `snapshot:${namespaceKey(namespace)}`,
+        query,
+        () => ({
+          session: state.session,
+          records: [
+            ...state.events,
+            ...state.commands.values(),
+            ...state.interactions.values(),
+            ...state.surfaces.values(),
+          ],
+        }),
+        fixtureLimits,
+      );
+    });
   }
   async listSessions(
     caller: Caller,
     query: PageQuery,
   ): Promise<Result<SessionPage>> {
-    if (this.closed) return fail("unavailable");
-    const scope = JSON.stringify([
-      caller.tenantId,
-      caller.principalId,
-      caller.authorityId,
-    ]);
-    const read = this.views.read(`list:${scope}`, query, () =>
-      [...this.states.values()]
-        .map((s) => s.session)
-        .filter(
-          (s) =>
-            s.status === "active" &&
-            s.namespace.tenantId === caller.tenantId &&
-            s.namespace.principalId === caller.principalId &&
-            s.namespace.authorityId === caller.authorityId,
-        )
-        .sort((a, b) =>
-          a.namespace.sessionId < b.namespace.sessionId
-            ? -1
-            : a.namespace.sessionId > b.namespace.sessionId
-              ? 1
-              : 0,
-        ),
-    );
-    if (!read.ok) return read;
-    const { id, offset, index, value } = read.value;
-    if (offset > value.length) return fail("cursor_expired");
-    let count = Math.min(query.limit, value.length - offset);
-    for (;;) {
-      const page: SessionPage = {
-        schemaVersion: 2,
-        kind: "sessionPage",
-        items: value.slice(offset, offset + count),
-        ...(offset + count < value.length
-          ? { next: this.views.next(id, offset + count, index + 1) }
-          : {}),
-      };
-      try {
-        boundedJson(page, fixtureLimits);
-        this.views.finish(id, !!page.next);
-        return ok(page);
-      } catch {
-        if (count <= 1) {
-          this.views.finish(id, false);
-          return fail("limit_exceeded");
-        }
-        count = Math.floor(count / 2);
-      }
-    }
+    return this.query(() => {
+      if (this.closed) return fail("unavailable");
+      const scope = JSON.stringify([
+        caller.tenantId,
+        caller.principalId,
+        caller.authorityId,
+      ]);
+      namespaceKey({ ...caller, sessionId: "scope-validation" });
+      return readSessionPage(
+        this.views,
+        `list:${scope}`,
+        query,
+        () =>
+          [...this.states.values()]
+            .map((s) => s.session)
+            .filter(
+              (s) =>
+                s.status === "active" &&
+                s.namespace.tenantId === caller.tenantId &&
+                s.namespace.principalId === caller.principalId &&
+                s.namespace.authorityId === caller.authorityId,
+            )
+            .sort((a, b) =>
+              a.namespace.sessionId < b.namespace.sessionId
+                ? -1
+                : a.namespace.sessionId > b.namespace.sessionId
+                  ? 1
+                  : 0,
+            ),
+        fixtureLimits,
+      );
+    });
   }
   async events(
     namespace: Namespace,
     after: Counter,
     limit: number,
   ): Promise<Result<readonly Event[]>> {
-    if (this.closed) return fail("unavailable");
-    const s = this.states.get(namespaceKey(namespace));
-    if (!s) return fail("session_gone");
-    if (
-      !Number.isSafeInteger(after) ||
-      after < 0 ||
-      after > s.session.lastSequence
-    )
-      return fail("cursor_expired");
-    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1024)
-      return fail("invalid_input");
-    return ok(
-      clone(s.events.filter((e) => e.sequence > after).slice(0, limit)),
-    );
+    return this.query(() => {
+      if (this.closed) return fail("unavailable");
+      const s = this.states.get(namespaceKey(namespace));
+      if (!s) return fail("session_gone");
+      if (
+        !Number.isSafeInteger(after) ||
+        after < 0 ||
+        after > s.session.lastSequence
+      )
+        return fail("cursor_expired");
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1024)
+        return fail("invalid_input");
+      return ok(
+        clone(s.events.filter((e) => e.sequence > after).slice(0, limit)),
+      );
+    });
   }
   async recovery(
     limit: number,
@@ -817,7 +242,7 @@ export class MemorySessionStore implements SessionStore {
     return this.page(
       [...this.states.values()]
         .flatMap((s) => [...s.commands.values()])
-        .filter((c) => c.state !== "terminal"),
+        .filter((c) => !isSettled(c)),
       (c) => namespaceKey(c.receipt.namespace) + "/" + c.command.commandId,
       limit,
       after,
@@ -837,7 +262,7 @@ export class MemorySessionStore implements SessionStore {
     return this.page(
       [...this.states.values()]
         .flatMap((s) => [...s.deliveries.values()])
-        .filter((d) => d.status === "pending" && d.nextAttemptAtMs <= nowMs),
+        .filter((d) => d.status !== "delivered" && d.nextAttemptAtMs <= nowMs),
       (d) => namespaceKey(d.namespace) + "/" + d.operationId,
       limit,
       after,
@@ -867,40 +292,29 @@ export class MemorySessionStore implements SessionStore {
       }),
     );
   }
+
   async retire(
     namespace: Namespace,
     revision: Counter,
     generation: Id,
   ): Promise<Result<void>> {
-    if (this.closed) return fail("unavailable");
-    const s = this.states.get(namespaceKey(namespace));
-    if (!s) return fail("session_gone");
-    const check = this.check(s, revision, generation);
-    if (!check.ok) return check;
-    if (
-      [...s.commands.values()].some((c) => c.state !== "terminal") ||
-      [...s.interactions.values()].some((i) => i.status === "pending")
-    )
-      return fail("reconciliation_required", "reconcile_first");
-    s.session = { ...s.session, status: "retired", revision: revision + 1 };
-    return ok(undefined);
+    return this.apply(namespace, (s) => retireSession(s, revision, generation));
   }
   async pruneRetired(nowMs: Counter): Promise<Result<number>> {
     if (this.closed) return fail("unavailable");
+    if (!Number.isSafeInteger(nowMs) || nowMs < 0) return fail("invalid_input");
     let n = 0;
-    for (const [key, s] of this.states) {
-      if (
-        s.session.status === "retired" &&
-        [...s.commands.values()].every(
-          (c) => c.receipt.receiptUntilMs < nowMs,
-        ) &&
-        [...s.deliveries.values()].every((d) => d.status === "delivered")
-      ) {
+    for (const [key, s] of this.states)
+      if (canPrune(s, nowMs)) {
         this.states.delete(key);
         this.retiredIds.add(key);
         n++;
       }
-    }
     return ok(n);
+  }
+  async close(_budget: Budget): Promise<Result<void>> {
+    this.closed = true;
+    this.views.clear();
+    return ok(undefined);
   }
 }

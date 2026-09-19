@@ -218,7 +218,16 @@ export function createAccessService(options: AccessOptions) {
     }
     const event = item.event,
       body = event.body;
-    if (body.type === "terminal") {
+    if (event.commandId === undefined) return;
+    if (body.type === "invalidated") {
+      pump.terminal.add(event.commandId);
+      pump.waiters
+        .get(event.commandId)
+        ?.reject(new RequestError(-32001, body.failure.code));
+      pump.waiters.delete(event.commandId);
+      for (const key of pump.text.keys())
+        if (key.startsWith(`${event.commandId}/`)) pump.text.delete(key);
+    } else if (body.type === "terminal") {
       pump.terminal.add(event.commandId);
       for (const key of pump.text.keys())
         if (key.startsWith(`${event.commandId}/`)) pump.text.delete(key);

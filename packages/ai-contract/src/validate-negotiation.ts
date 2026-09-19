@@ -112,6 +112,11 @@ const schema31 = {
           description:
             "Provider-owned parent prompt/query request identifier; cannot be rebound after dispatch. Callback identities belong to Interaction.",
         },
+        workspaceId: {
+          $ref: "#/$defs/Id",
+          description:
+            "SHA-256 identity of the normalized absolute workspace path. Filesystem containment remains owned by the provider adapter and composition root.",
+        },
       },
       required: [
         "provider",
@@ -121,6 +126,7 @@ const schema31 = {
         "accountRef",
         "nativeSessionId",
         "config",
+        "workspaceId",
       ],
       additionalProperties: false,
       description:
@@ -210,18 +216,6 @@ const schema31 = {
       description:
         "Capabilities established for one exact provider binding, never execution authorization.",
     },
-    CommandState: {
-      type: "string",
-      enum: [
-        "accepted",
-        "dispatching",
-        "running",
-        "terminal",
-        "reconciliation_required",
-      ],
-      description:
-        "accepted persists intent; dispatching persists dispatch intent; running has native confirmation; terminal has a definite outcome; reconciliation_required forbids blind resubmission.",
-    },
     Outcome: {
       type: "string",
       enum: [
@@ -252,6 +246,7 @@ const schema31 = {
         "cursor_expired",
         "session_gone",
         "already_answered",
+        "storage_corrupt",
       ],
       description:
         "Closed value-free error category; diagnostics never include model text or credentials.",
@@ -496,427 +491,1611 @@ const schema31 = {
       description:
         "Immutable acceptance fact. Only an actual committed store makes it durable; it is not a model terminal.",
     },
-    Dispatch: {
-      type: "object",
-      properties: {
-        generation: {
-          $ref: "#/$defs/Id",
-          description:
-            "Live provider incarnation token; rejects callbacks from previous incarnations.",
-        },
-        nativeSessionId: {
-          $ref: "#/$defs/Id",
-          description:
-            "Provider-owned context session identifier; history alone cannot recreate it.",
-        },
-        nativeRunId: {
-          $ref: "#/$defs/Id",
-          description:
-            "Provider-owned model-turn/run identifier, required when the provider exposes it.",
-        },
-        nativeRequestId: {
-          $ref: "#/$defs/Id",
-          description:
-            "Provider-owned parent prompt/query request identifier; cannot be rebound after dispatch. Callback identities belong to Interaction.",
-        },
-        certainty: {
-          type: "string",
-          enum: ["not_sent", "submitted", "unknown"],
-          description:
-            "submitted has native acceptance; unknown requires reconciliation; not_sent has evidence no submission occurred.",
-        },
-      },
-      required: ["generation", "nativeSessionId", "certainty"],
-      additionalProperties: false,
-      description:
-        "Persisted native correlation and certainty; unknown requires reconciliation before any further send.",
-    },
     CommandRecord: {
-      type: "object",
-      properties: {
-        schemaVersion: {
-          type: "integer",
-          const: 2,
-          description:
-            "Exact product wire version; V1 is rejected without migration or fallback.",
-        },
-        kind: {
-          type: "string",
-          const: "commandRecord",
-          description: "Closed product record discriminator.",
-        },
-        command: {
-          $ref: "#/$defs/Command",
-          description: "Immutable original command.",
-        },
-        receipt: {
-          $ref: "#/$defs/Receipt",
-          description: "Immutable original committed acceptance fact.",
-        },
-        state: {
-          $ref: "#/$defs/CommandState",
-          description:
-            "Explicit command lifecycle state; terminal and reconciliation transitions require matching evidence.",
-        },
-        dispatch: {
-          $ref: "#/$defs/Dispatch",
-          description:
-            "Native correlation persisted before/with dispatch; never reconstructed from UI history.",
-        },
-        outcome: {
-          $ref: "#/$defs/Outcome",
-          description:
-            "Definite model-turn result; no implication about business side effects.",
-        },
-        failure: {
-          $ref: "#/$defs/Failure",
-          description: "Closed failure category and retry discipline.",
-        },
-      },
-      required: ["schemaVersion", "kind", "command", "receipt", "state"],
-      additionalProperties: false,
-      description:
-        "Single inbox/dispatch ledger; no second provider queue owns the same command.",
-    },
-    EventBody: {
       oneOf: [
         {
           type: "object",
           properties: {
-            type: {
-              type: "string",
-              const: "text",
-              description: "Closed variant discriminator.",
-            },
-            messageId: {
-              $ref: "#/$defs/Id",
-              description: "Stable product message correlation identifier.",
-            },
-            text: {
-              type: "string",
-              maxLength: 65536,
+            schemaVersion: {
+              type: "integer",
+              const: 2,
               description:
-                "Untrusted model/user text subject to the whole-envelope budgets.",
+                "Exact product wire version; V1 is rejected without migration or fallback.",
             },
-          },
-          required: ["type", "messageId", "text"],
-          additionalProperties: false,
-          description:
-            "text variant; all fields are data, never authentication or execution authority.",
-        },
-        {
-          type: "object",
-          properties: {
-            type: {
+            kind: {
               type: "string",
-              const: "status",
-              description: "Closed variant discriminator.",
+              const: "commandRecord",
+              description: "Closed product record discriminator.",
+            },
+            command: {
+              $ref: "#/$defs/Command",
+              description: "Immutable original command.",
+            },
+            receipt: {
+              $ref: "#/$defs/Receipt",
+              description: "Immutable original committed acceptance fact.",
             },
             state: {
-              $ref: "#/$defs/CommandState",
-              description:
-                "Explicit command lifecycle state; terminal and reconciliation transitions require matching evidence.",
+              type: "string",
+              const: "accepted",
+              description: "Closed command lifecycle projection.",
             },
           },
-          required: ["type", "state"],
+          required: ["schemaVersion", "kind", "command", "receipt", "state"],
           additionalProperties: false,
-          description:
-            "status variant; all fields are data, never authentication or execution authority.",
         },
         {
           type: "object",
           properties: {
-            type: {
+            schemaVersion: {
+              type: "integer",
+              const: 2,
+              description:
+                "Exact product wire version; V1 is rejected without migration or fallback.",
+            },
+            kind: {
               type: "string",
-              const: "terminal",
-              description: "Closed variant discriminator.",
+              const: "commandRecord",
+              description: "Closed product record discriminator.",
             },
-            outcome: {
-              $ref: "#/$defs/Outcome",
-              description:
-                "Definite model-turn result; no implication about business side effects.",
+            command: {
+              $ref: "#/$defs/Command",
+              description: "Immutable original command.",
             },
-          },
-          required: ["type", "outcome"],
-          additionalProperties: false,
-          description:
-            "terminal variant; all fields are data, never authentication or execution authority.",
-        },
-        {
-          type: "object",
-          properties: {
-            type: {
+            receipt: {
+              $ref: "#/$defs/Receipt",
+              description: "Immutable original committed acceptance fact.",
+            },
+            state: {
               type: "string",
-              const: "cancel_dispatched",
-              description: "Closed variant discriminator.",
+              const: "dispatching",
+              description: "Closed command lifecycle projection.",
             },
-            confirmation: {
-              type: "string",
-              enum: ["request_only", "already_terminal", "unsupported"],
+            dispatch: {
+              $ref: "#/$defs/DispatchAttempt",
               description:
-                "Cancellation request transport confirmation only; does not manufacture a model terminal.",
-            },
-          },
-          required: ["type", "confirmation"],
-          additionalProperties: false,
-          description:
-            "cancel_dispatched variant; all fields are data, never authentication or execution authority.",
-        },
-        {
-          type: "object",
-          properties: {
-            type: {
-              type: "string",
-              const: "tool_proposal",
-              description: "Closed variant discriminator.",
-            },
-            proposalId: {
-              $ref: "#/$defs/Id",
-              description: "Untrusted tool proposal correlation identifier.",
-            },
-            name: {
-              $ref: "#/$defs/Id",
-              description:
-                "Provider tool name; not an approved execution action.",
-            },
-            arguments: {
-              type: "object",
-              additionalProperties: true,
-              description:
-                "Untrusted tool JSON arguments, including keys, count toward product budgets.",
-            },
-          },
-          required: ["type", "proposalId", "name", "arguments"],
-          additionalProperties: false,
-          description:
-            "tool_proposal variant; all fields are data, never authentication or execution authority.",
-        },
-        {
-          type: "object",
-          properties: {
-            type: {
-              type: "string",
-              const: "tool_result",
-              description: "Closed variant discriminator.",
-            },
-            proposalId: {
-              $ref: "#/$defs/Id",
-              description: "Untrusted tool proposal correlation identifier.",
-            },
-            disposition: {
-              type: "string",
-              enum: ["returned", "rejected", "unavailable"],
-              description:
-                "Protocol tool-result disposition, not authoritative business execution status.",
-            },
-            text: {
-              type: "string",
-              maxLength: 65536,
-              description:
-                "Untrusted model/user text subject to the whole-envelope budgets.",
-            },
-          },
-          required: ["type", "proposalId", "disposition", "text"],
-          additionalProperties: false,
-          description:
-            "tool_result variant; all fields are data, never authentication or execution authority.",
-        },
-        {
-          type: "object",
-          properties: {
-            type: {
-              type: "string",
-              const: "interaction",
-              description: "Closed variant discriminator.",
-            },
-            interactionId: {
-              $ref: "#/$defs/Id",
-              description:
-                "Single-use interaction identity within the namespace.",
-            },
-            status: {
-              type: "string",
-              const: "pending",
-              description: "First publication of an ordinary user question.",
-            },
-            request: {
-              $ref: "#/$defs/InteractionRequest",
-              description:
-                "Required for the first pending event and equal to the newly committed Interaction request; forbidden on later lifecycle events.",
-            },
-            expiresAtMs: {
-              $ref: "#/$defs/Counter",
-              description:
-                "Inclusive UTC epoch-millisecond deadline; later first acceptance is rejected.",
-            },
-            callbackLifetime: {
-              $ref: "#/$defs/CallbackLifetime",
-              description:
-                "generation_bound cannot survive callback loss; provider_resumable requires verified native restoration.",
+                "Original attempt and append-once native correlation coordinates.",
             },
           },
           required: [
-            "type",
-            "interactionId",
-            "status",
-            "request",
-            "expiresAtMs",
-            "callbackLifetime",
+            "schemaVersion",
+            "kind",
+            "command",
+            "receipt",
+            "state",
+            "dispatch",
           ],
           additionalProperties: false,
-          description:
-            "Initial ordinary question publication; the matching Interaction is committed atomically.",
         },
         {
           type: "object",
           properties: {
-            type: {
+            schemaVersion: {
+              type: "integer",
+              const: 2,
+              description:
+                "Exact product wire version; V1 is rejected without migration or fallback.",
+            },
+            kind: {
               type: "string",
-              const: "interaction",
-              description: "Closed variant discriminator.",
+              const: "commandRecord",
+              description: "Closed product record discriminator.",
             },
-            interactionId: {
-              $ref: "#/$defs/Id",
-              description:
-                "Single-use interaction identity within the namespace.",
+            command: {
+              $ref: "#/$defs/Command",
+              description: "Immutable original command.",
             },
-            status: {
+            receipt: {
+              $ref: "#/$defs/Receipt",
+              description: "Immutable original committed acceptance fact.",
+            },
+            state: {
               type: "string",
-              const: "answered",
-              description:
-                "The first accepted response consumed this interaction.",
+              const: "running",
+              description: "Closed command lifecycle projection.",
             },
-            responseCommandId: {
-              $ref: "#/$defs/Id",
+            dispatch: {
+              $ref: "#/$defs/DispatchAttempt",
               description:
-                "Accepted response command which atomically consumed the interaction; present only when answered.",
+                "Original attempt and append-once native correlation coordinates.",
             },
           },
-          required: ["type", "interactionId", "status", "responseCommandId"],
+          required: [
+            "schemaVersion",
+            "kind",
+            "command",
+            "receipt",
+            "state",
+            "dispatch",
+          ],
           additionalProperties: false,
-          description:
-            "First accepted response identity, committed atomically with the receipt and Interaction.",
         },
         {
           type: "object",
           properties: {
-            type: {
-              type: "string",
-              const: "interaction",
-              description: "Closed variant discriminator.",
-            },
-            interactionId: {
-              $ref: "#/$defs/Id",
+            schemaVersion: {
+              type: "integer",
+              const: 2,
               description:
-                "Single-use interaction identity within the namespace.",
+                "Exact product wire version; V1 is rejected without migration or fallback.",
             },
-            status: {
+            kind: {
               type: "string",
-              enum: ["expired", "unavailable"],
+              const: "commandRecord",
+              description: "Closed product record discriminator.",
+            },
+            command: {
+              $ref: "#/$defs/Command",
+              description: "Immutable original command.",
+            },
+            receipt: {
+              $ref: "#/$defs/Receipt",
+              description: "Immutable original committed acceptance fact.",
+            },
+            state: {
+              type: "string",
+              const: "terminal",
+              description: "Closed command lifecycle projection.",
+            },
+            dispatch: {
+              $ref: "#/$defs/DispatchAttempt",
               description:
-                "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss.",
+                "Original attempt and append-once native correlation coordinates.",
+            },
+            outcome: {
+              $ref: "#/$defs/Outcome",
+              description: "Explicitly observed model terminal outcome.",
             },
           },
-          required: ["type", "interactionId", "status"],
+          required: [
+            "schemaVersion",
+            "kind",
+            "command",
+            "receipt",
+            "state",
+            "dispatch",
+            "outcome",
+          ],
           additionalProperties: false,
-          description:
-            "Question lifecycle transition; cannot republish or replace its request.",
         },
         {
           type: "object",
           properties: {
-            type: {
+            schemaVersion: {
+              type: "integer",
+              const: 2,
+              description:
+                "Exact product wire version; V1 is rejected without migration or fallback.",
+            },
+            kind: {
               type: "string",
-              const: "error",
-              description: "Closed variant discriminator.",
+              const: "commandRecord",
+              description: "Closed product record discriminator.",
+            },
+            command: {
+              $ref: "#/$defs/Command",
+              description: "Immutable original command.",
+            },
+            receipt: {
+              $ref: "#/$defs/Receipt",
+              description: "Immutable original committed acceptance fact.",
+            },
+            state: {
+              type: "string",
+              const: "reconciliation_required",
+              description: "Closed command lifecycle projection.",
+            },
+            dispatch: {
+              $ref: "#/$defs/DispatchAttempt",
+              description:
+                "Original attempt and append-once native correlation coordinates.",
+            },
+          },
+          required: [
+            "schemaVersion",
+            "kind",
+            "command",
+            "receipt",
+            "state",
+            "dispatch",
+          ],
+          additionalProperties: false,
+        },
+        {
+          type: "object",
+          properties: {
+            schemaVersion: {
+              type: "integer",
+              const: 2,
+              description:
+                "Exact product wire version; V1 is rejected without migration or fallback.",
+            },
+            kind: {
+              type: "string",
+              const: "commandRecord",
+              description: "Closed product record discriminator.",
+            },
+            command: {
+              $ref: "#/$defs/Command",
+              description: "Immutable original command.",
+            },
+            receipt: {
+              $ref: "#/$defs/Receipt",
+              description: "Immutable original committed acceptance fact.",
+            },
+            state: {
+              type: "string",
+              const: "invalidated",
+              description: "Closed command lifecycle projection.",
             },
             failure: {
               $ref: "#/$defs/Failure",
-              description: "Closed failure category and retry discipline.",
+              description: "Local failure without asserting a model terminal.",
             },
           },
-          required: ["type", "failure"],
+          required: [
+            "schemaVersion",
+            "kind",
+            "command",
+            "receipt",
+            "state",
+            "failure",
+          ],
           additionalProperties: false,
-          description:
-            "error variant; all fields are data, never authentication or execution authority.",
+        },
+      ],
+      description:
+        "Closed command lifecycle; acceptance is immutable, local invalidation does not assert a model terminal.",
+    },
+    Event: {
+      oneOf: [
+        {
+          type: "object",
+          properties: {
+            schemaVersion: {
+              type: "integer",
+              const: 2,
+              description:
+                "Exact product wire version; V1 is rejected without migration or fallback.",
+            },
+            kind: {
+              type: "string",
+              const: "event",
+              description: "Closed product record discriminator.",
+            },
+            namespace: {
+              $ref: "#/$defs/Namespace",
+              description:
+                "Trusted storage isolation scope; not copied from model or action content.",
+            },
+            eventId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Stable unique event identifier within the namespace.",
+            },
+            sequence: {
+              $ref: "#/$defs/Counter",
+              description:
+                "Strictly increasing stable-event counter; attach cursors are exclusive.",
+            },
+            generation: {
+              $ref: "#/$defs/Id",
+              description:
+                "Live provider incarnation token; rejects callbacks from previous incarnations.",
+            },
+            commandId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Original command identity within the trusted namespace.",
+            },
+            body: {
+              type: "object",
+              properties: {
+                type: {
+                  type: "string",
+                  const: "text",
+                  description: "Closed variant discriminator.",
+                },
+                messageId: {
+                  $ref: "#/$defs/Id",
+                  description: "Stable product message correlation identifier.",
+                },
+                text: {
+                  type: "string",
+                  maxLength: 65536,
+                  description:
+                    "Untrusted model/user text subject to the whole-envelope budgets.",
+                },
+              },
+              required: ["type", "messageId", "text"],
+              additionalProperties: false,
+              description:
+                "text variant; all fields are data, never authentication or execution authority.",
+            },
+            attemptId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Stable identity of one dispatch attempt; never reused after positive non-submission proof.",
+            },
+          },
+          required: [
+            "schemaVersion",
+            "kind",
+            "namespace",
+            "eventId",
+            "sequence",
+            "generation",
+            "commandId",
+            "body",
+            "attemptId",
+          ],
+          additionalProperties: false,
         },
         {
           type: "object",
           properties: {
-            type: {
-              const: "surface",
-              type: "string",
-              description: "Closed variant discriminator.",
-            },
-            surface: {
-              $ref: "#/$defs/SurfaceState",
+            schemaVersion: {
+              type: "integer",
+              const: 2,
               description:
-                "Full surface recovery state committed with this event.",
+                "Exact product wire version; V1 is rejected without migration or fallback.",
+            },
+            kind: {
+              type: "string",
+              const: "event",
+              description: "Closed product record discriminator.",
+            },
+            namespace: {
+              $ref: "#/$defs/Namespace",
+              description:
+                "Trusted storage isolation scope; not copied from model or action content.",
+            },
+            eventId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Stable unique event identifier within the namespace.",
+            },
+            sequence: {
+              $ref: "#/$defs/Counter",
+              description:
+                "Strictly increasing stable-event counter; attach cursors are exclusive.",
+            },
+            generation: {
+              $ref: "#/$defs/Id",
+              description:
+                "Live provider incarnation token; rejects callbacks from previous incarnations.",
+            },
+            commandId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Original command identity within the trusted namespace.",
+            },
+            body: {
+              type: "object",
+              properties: {
+                type: {
+                  type: "string",
+                  const: "status",
+                  description: "Closed variant discriminator.",
+                },
+                state: {
+                  type: "string",
+                  enum: ["accepted"],
+                  description: "Closed command lifecycle projection.",
+                },
+              },
+              required: ["type", "state"],
+              additionalProperties: false,
+              description:
+                "status variant; all fields are data, never authentication or execution authority.",
             },
           },
-          required: ["type", "surface"],
+          required: [
+            "schemaVersion",
+            "kind",
+            "namespace",
+            "eventId",
+            "sequence",
+            "generation",
+            "commandId",
+            "body",
+          ],
+          additionalProperties: false,
+        },
+        {
+          type: "object",
+          properties: {
+            schemaVersion: {
+              type: "integer",
+              const: 2,
+              description:
+                "Exact product wire version; V1 is rejected without migration or fallback.",
+            },
+            kind: {
+              type: "string",
+              const: "event",
+              description: "Closed product record discriminator.",
+            },
+            namespace: {
+              $ref: "#/$defs/Namespace",
+              description:
+                "Trusted storage isolation scope; not copied from model or action content.",
+            },
+            eventId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Stable unique event identifier within the namespace.",
+            },
+            sequence: {
+              $ref: "#/$defs/Counter",
+              description:
+                "Strictly increasing stable-event counter; attach cursors are exclusive.",
+            },
+            generation: {
+              $ref: "#/$defs/Id",
+              description:
+                "Live provider incarnation token; rejects callbacks from previous incarnations.",
+            },
+            commandId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Original command identity within the trusted namespace.",
+            },
+            body: {
+              type: "object",
+              properties: {
+                type: {
+                  type: "string",
+                  const: "status",
+                  description: "Closed variant discriminator.",
+                },
+                state: {
+                  type: "string",
+                  enum: ["dispatching", "running", "reconciliation_required"],
+                  description: "Closed command lifecycle projection.",
+                },
+              },
+              required: ["type", "state"],
+              additionalProperties: false,
+              description:
+                "status variant; all fields are data, never authentication or execution authority.",
+            },
+            attemptId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Stable identity of one dispatch attempt; never reused after positive non-submission proof.",
+            },
+          },
+          required: [
+            "schemaVersion",
+            "kind",
+            "namespace",
+            "eventId",
+            "sequence",
+            "generation",
+            "commandId",
+            "body",
+            "attemptId",
+          ],
+          additionalProperties: false,
+        },
+        {
+          type: "object",
+          properties: {
+            schemaVersion: {
+              type: "integer",
+              const: 2,
+              description:
+                "Exact product wire version; V1 is rejected without migration or fallback.",
+            },
+            kind: {
+              type: "string",
+              const: "event",
+              description: "Closed product record discriminator.",
+            },
+            namespace: {
+              $ref: "#/$defs/Namespace",
+              description:
+                "Trusted storage isolation scope; not copied from model or action content.",
+            },
+            eventId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Stable unique event identifier within the namespace.",
+            },
+            sequence: {
+              $ref: "#/$defs/Counter",
+              description:
+                "Strictly increasing stable-event counter; attach cursors are exclusive.",
+            },
+            generation: {
+              $ref: "#/$defs/Id",
+              description:
+                "Live provider incarnation token; rejects callbacks from previous incarnations.",
+            },
+            commandId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Original command identity within the trusted namespace.",
+            },
+            body: {
+              type: "object",
+              properties: {
+                type: {
+                  type: "string",
+                  const: "terminal",
+                  description: "Closed variant discriminator.",
+                },
+                outcome: {
+                  $ref: "#/$defs/Outcome",
+                  description:
+                    "Definite model-turn result; no implication about business side effects.",
+                },
+              },
+              required: ["type", "outcome"],
+              additionalProperties: false,
+              description:
+                "terminal variant; all fields are data, never authentication or execution authority.",
+            },
+            attemptId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Stable identity of one dispatch attempt; never reused after positive non-submission proof.",
+            },
+          },
+          required: [
+            "schemaVersion",
+            "kind",
+            "namespace",
+            "eventId",
+            "sequence",
+            "generation",
+            "commandId",
+            "body",
+            "attemptId",
+          ],
+          additionalProperties: false,
+        },
+        {
+          type: "object",
+          properties: {
+            schemaVersion: {
+              type: "integer",
+              const: 2,
+              description:
+                "Exact product wire version; V1 is rejected without migration or fallback.",
+            },
+            kind: {
+              type: "string",
+              const: "event",
+              description: "Closed product record discriminator.",
+            },
+            namespace: {
+              $ref: "#/$defs/Namespace",
+              description:
+                "Trusted storage isolation scope; not copied from model or action content.",
+            },
+            eventId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Stable unique event identifier within the namespace.",
+            },
+            sequence: {
+              $ref: "#/$defs/Counter",
+              description:
+                "Strictly increasing stable-event counter; attach cursors are exclusive.",
+            },
+            generation: {
+              $ref: "#/$defs/Id",
+              description:
+                "Live provider incarnation token; rejects callbacks from previous incarnations.",
+            },
+            commandId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Original command identity within the trusted namespace.",
+            },
+            body: {
+              type: "object",
+              properties: {
+                type: {
+                  type: "string",
+                  const: "cancel_dispatched",
+                  description: "Closed variant discriminator.",
+                },
+                confirmation: {
+                  type: "string",
+                  enum: ["request_only", "already_terminal", "unsupported"],
+                  description:
+                    "Cancellation request transport confirmation only; does not manufacture a model terminal.",
+                },
+              },
+              required: ["type", "confirmation"],
+              additionalProperties: false,
+              description:
+                "cancel_dispatched variant; all fields are data, never authentication or execution authority.",
+            },
+            attemptId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Stable identity of one dispatch attempt; never reused after positive non-submission proof.",
+            },
+          },
+          required: [
+            "schemaVersion",
+            "kind",
+            "namespace",
+            "eventId",
+            "sequence",
+            "generation",
+            "commandId",
+            "body",
+            "attemptId",
+          ],
+          additionalProperties: false,
+        },
+        {
+          type: "object",
+          properties: {
+            schemaVersion: {
+              type: "integer",
+              const: 2,
+              description:
+                "Exact product wire version; V1 is rejected without migration or fallback.",
+            },
+            kind: {
+              type: "string",
+              const: "event",
+              description: "Closed product record discriminator.",
+            },
+            namespace: {
+              $ref: "#/$defs/Namespace",
+              description:
+                "Trusted storage isolation scope; not copied from model or action content.",
+            },
+            eventId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Stable unique event identifier within the namespace.",
+            },
+            sequence: {
+              $ref: "#/$defs/Counter",
+              description:
+                "Strictly increasing stable-event counter; attach cursors are exclusive.",
+            },
+            generation: {
+              $ref: "#/$defs/Id",
+              description:
+                "Live provider incarnation token; rejects callbacks from previous incarnations.",
+            },
+            commandId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Original command identity within the trusted namespace.",
+            },
+            body: {
+              type: "object",
+              properties: {
+                type: {
+                  type: "string",
+                  const: "tool_proposal",
+                  description: "Closed variant discriminator.",
+                },
+                proposalId: {
+                  $ref: "#/$defs/Id",
+                  description:
+                    "Untrusted tool proposal correlation identifier.",
+                },
+                name: {
+                  $ref: "#/$defs/Id",
+                  description:
+                    "Provider tool name; not an approved execution action.",
+                },
+                arguments: {
+                  type: "object",
+                  additionalProperties: true,
+                  description:
+                    "Untrusted tool JSON arguments, including keys, count toward product budgets.",
+                },
+              },
+              required: ["type", "proposalId", "name", "arguments"],
+              additionalProperties: false,
+              description:
+                "tool_proposal variant; all fields are data, never authentication or execution authority.",
+            },
+            attemptId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Stable identity of one dispatch attempt; never reused after positive non-submission proof.",
+            },
+          },
+          required: [
+            "schemaVersion",
+            "kind",
+            "namespace",
+            "eventId",
+            "sequence",
+            "generation",
+            "commandId",
+            "body",
+            "attemptId",
+          ],
+          additionalProperties: false,
+        },
+        {
+          type: "object",
+          properties: {
+            schemaVersion: {
+              type: "integer",
+              const: 2,
+              description:
+                "Exact product wire version; V1 is rejected without migration or fallback.",
+            },
+            kind: {
+              type: "string",
+              const: "event",
+              description: "Closed product record discriminator.",
+            },
+            namespace: {
+              $ref: "#/$defs/Namespace",
+              description:
+                "Trusted storage isolation scope; not copied from model or action content.",
+            },
+            eventId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Stable unique event identifier within the namespace.",
+            },
+            sequence: {
+              $ref: "#/$defs/Counter",
+              description:
+                "Strictly increasing stable-event counter; attach cursors are exclusive.",
+            },
+            generation: {
+              $ref: "#/$defs/Id",
+              description:
+                "Live provider incarnation token; rejects callbacks from previous incarnations.",
+            },
+            commandId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Original command identity within the trusted namespace.",
+            },
+            body: {
+              type: "object",
+              properties: {
+                type: {
+                  type: "string",
+                  const: "tool_result",
+                  description: "Closed variant discriminator.",
+                },
+                proposalId: {
+                  $ref: "#/$defs/Id",
+                  description:
+                    "Untrusted tool proposal correlation identifier.",
+                },
+                disposition: {
+                  type: "string",
+                  enum: ["returned", "rejected", "unavailable"],
+                  description:
+                    "Protocol tool-result disposition, not authoritative business execution status.",
+                },
+                text: {
+                  type: "string",
+                  maxLength: 65536,
+                  description:
+                    "Untrusted model/user text subject to the whole-envelope budgets.",
+                },
+              },
+              required: ["type", "proposalId", "disposition", "text"],
+              additionalProperties: false,
+              description:
+                "tool_result variant; all fields are data, never authentication or execution authority.",
+            },
+            attemptId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Stable identity of one dispatch attempt; never reused after positive non-submission proof.",
+            },
+          },
+          required: [
+            "schemaVersion",
+            "kind",
+            "namespace",
+            "eventId",
+            "sequence",
+            "generation",
+            "commandId",
+            "body",
+            "attemptId",
+          ],
+          additionalProperties: false,
+        },
+        {
+          type: "object",
+          properties: {
+            schemaVersion: {
+              type: "integer",
+              const: 2,
+              description:
+                "Exact product wire version; V1 is rejected without migration or fallback.",
+            },
+            kind: {
+              type: "string",
+              const: "event",
+              description: "Closed product record discriminator.",
+            },
+            namespace: {
+              $ref: "#/$defs/Namespace",
+              description:
+                "Trusted storage isolation scope; not copied from model or action content.",
+            },
+            eventId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Stable unique event identifier within the namespace.",
+            },
+            sequence: {
+              $ref: "#/$defs/Counter",
+              description:
+                "Strictly increasing stable-event counter; attach cursors are exclusive.",
+            },
+            generation: {
+              $ref: "#/$defs/Id",
+              description:
+                "Live provider incarnation token; rejects callbacks from previous incarnations.",
+            },
+            commandId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Original command identity within the trusted namespace.",
+            },
+            body: {
+              type: "object",
+              properties: {
+                type: {
+                  type: "string",
+                  const: "interaction",
+                  description: "Closed variant discriminator.",
+                },
+                interactionId: {
+                  $ref: "#/$defs/Id",
+                  description:
+                    "Single-use interaction identity within the namespace.",
+                },
+                status: {
+                  type: "string",
+                  const: "pending",
+                  description:
+                    "First publication of an ordinary user question.",
+                },
+                request: {
+                  $ref: "#/$defs/InteractionRequest",
+                  description:
+                    "Required for the first pending event and equal to the newly committed Interaction request; forbidden on later lifecycle events.",
+                },
+                expiresAtMs: {
+                  $ref: "#/$defs/Counter",
+                  description:
+                    "Inclusive UTC epoch-millisecond deadline; later first acceptance is rejected.",
+                },
+                callbackLifetime: {
+                  $ref: "#/$defs/CallbackLifetime",
+                  description:
+                    "A live-generation callback. Restore preserves display history but always makes the previous callback unavailable.",
+                },
+              },
+              required: [
+                "type",
+                "interactionId",
+                "status",
+                "request",
+                "expiresAtMs",
+                "callbackLifetime",
+              ],
+              additionalProperties: false,
+              description:
+                "Initial ordinary question publication; the matching Interaction is committed atomically.",
+            },
+            attemptId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Stable identity of one dispatch attempt; never reused after positive non-submission proof.",
+            },
+          },
+          required: [
+            "schemaVersion",
+            "kind",
+            "namespace",
+            "eventId",
+            "sequence",
+            "generation",
+            "commandId",
+            "body",
+            "attemptId",
+          ],
+          additionalProperties: false,
+        },
+        {
+          type: "object",
+          properties: {
+            schemaVersion: {
+              type: "integer",
+              const: 2,
+              description:
+                "Exact product wire version; V1 is rejected without migration or fallback.",
+            },
+            kind: {
+              type: "string",
+              const: "event",
+              description: "Closed product record discriminator.",
+            },
+            namespace: {
+              $ref: "#/$defs/Namespace",
+              description:
+                "Trusted storage isolation scope; not copied from model or action content.",
+            },
+            eventId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Stable unique event identifier within the namespace.",
+            },
+            sequence: {
+              $ref: "#/$defs/Counter",
+              description:
+                "Strictly increasing stable-event counter; attach cursors are exclusive.",
+            },
+            generation: {
+              $ref: "#/$defs/Id",
+              description:
+                "Live provider incarnation token; rejects callbacks from previous incarnations.",
+            },
+            commandId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Original command identity within the trusted namespace.",
+            },
+            body: {
+              type: "object",
+              properties: {
+                type: {
+                  type: "string",
+                  const: "interaction",
+                  description: "Closed variant discriminator.",
+                },
+                interactionId: {
+                  $ref: "#/$defs/Id",
+                  description:
+                    "Single-use interaction identity within the namespace.",
+                },
+                status: {
+                  type: "string",
+                  const: "answered",
+                  description:
+                    "The first accepted response consumed this interaction.",
+                },
+                responseCommandId: {
+                  $ref: "#/$defs/Id",
+                  description:
+                    "Accepted response command which atomically consumed the interaction; present only when answered.",
+                },
+              },
+              required: [
+                "type",
+                "interactionId",
+                "status",
+                "responseCommandId",
+              ],
+              additionalProperties: false,
+              description:
+                "First accepted response identity, committed atomically with the receipt and Interaction.",
+            },
+            attemptId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Stable identity of one dispatch attempt; never reused after positive non-submission proof.",
+            },
+          },
+          required: [
+            "schemaVersion",
+            "kind",
+            "namespace",
+            "eventId",
+            "sequence",
+            "generation",
+            "commandId",
+            "body",
+            "attemptId",
+          ],
+          additionalProperties: false,
+        },
+        {
+          type: "object",
+          properties: {
+            schemaVersion: {
+              type: "integer",
+              const: 2,
+              description:
+                "Exact product wire version; V1 is rejected without migration or fallback.",
+            },
+            kind: {
+              type: "string",
+              const: "event",
+              description: "Closed product record discriminator.",
+            },
+            namespace: {
+              $ref: "#/$defs/Namespace",
+              description:
+                "Trusted storage isolation scope; not copied from model or action content.",
+            },
+            eventId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Stable unique event identifier within the namespace.",
+            },
+            sequence: {
+              $ref: "#/$defs/Counter",
+              description:
+                "Strictly increasing stable-event counter; attach cursors are exclusive.",
+            },
+            generation: {
+              $ref: "#/$defs/Id",
+              description:
+                "Live provider incarnation token; rejects callbacks from previous incarnations.",
+            },
+            commandId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Original command identity within the trusted namespace.",
+            },
+            body: {
+              type: "object",
+              properties: {
+                type: {
+                  type: "string",
+                  const: "interaction",
+                  description: "Closed variant discriminator.",
+                },
+                interactionId: {
+                  $ref: "#/$defs/Id",
+                  description:
+                    "Single-use interaction identity within the namespace.",
+                },
+                status: {
+                  type: "string",
+                  enum: ["expired", "unavailable"],
+                  description:
+                    "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss.",
+                },
+              },
+              required: ["type", "interactionId", "status"],
+              additionalProperties: false,
+              description:
+                "Question lifecycle transition; cannot republish or replace its request.",
+            },
+            attemptId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Stable identity of one dispatch attempt; never reused after positive non-submission proof.",
+            },
+          },
+          required: [
+            "schemaVersion",
+            "kind",
+            "namespace",
+            "eventId",
+            "sequence",
+            "generation",
+            "commandId",
+            "body",
+            "attemptId",
+          ],
+          additionalProperties: false,
+        },
+        {
+          type: "object",
+          properties: {
+            schemaVersion: {
+              type: "integer",
+              const: 2,
+              description:
+                "Exact product wire version; V1 is rejected without migration or fallback.",
+            },
+            kind: {
+              type: "string",
+              const: "event",
+              description: "Closed product record discriminator.",
+            },
+            namespace: {
+              $ref: "#/$defs/Namespace",
+              description:
+                "Trusted storage isolation scope; not copied from model or action content.",
+            },
+            eventId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Stable unique event identifier within the namespace.",
+            },
+            sequence: {
+              $ref: "#/$defs/Counter",
+              description:
+                "Strictly increasing stable-event counter; attach cursors are exclusive.",
+            },
+            generation: {
+              $ref: "#/$defs/Id",
+              description:
+                "Live provider incarnation token; rejects callbacks from previous incarnations.",
+            },
+            commandId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Original command identity within the trusted namespace.",
+            },
+            body: {
+              type: "object",
+              properties: {
+                type: {
+                  type: "string",
+                  const: "error",
+                  description: "Closed variant discriminator.",
+                },
+                failure: {
+                  $ref: "#/$defs/Failure",
+                  description: "Closed failure category and retry discipline.",
+                },
+              },
+              required: ["type", "failure"],
+              additionalProperties: false,
+              description:
+                "error variant; all fields are data, never authentication or execution authority.",
+            },
+          },
+          required: [
+            "schemaVersion",
+            "kind",
+            "namespace",
+            "eventId",
+            "sequence",
+            "generation",
+            "commandId",
+            "body",
+          ],
+          additionalProperties: false,
+        },
+        {
+          type: "object",
+          properties: {
+            schemaVersion: {
+              type: "integer",
+              const: 2,
+              description:
+                "Exact product wire version; V1 is rejected without migration or fallback.",
+            },
+            kind: {
+              type: "string",
+              const: "event",
+              description: "Closed product record discriminator.",
+            },
+            namespace: {
+              $ref: "#/$defs/Namespace",
+              description:
+                "Trusted storage isolation scope; not copied from model or action content.",
+            },
+            eventId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Stable unique event identifier within the namespace.",
+            },
+            sequence: {
+              $ref: "#/$defs/Counter",
+              description:
+                "Strictly increasing stable-event counter; attach cursors are exclusive.",
+            },
+            generation: {
+              $ref: "#/$defs/Id",
+              description:
+                "Live provider incarnation token; rejects callbacks from previous incarnations.",
+            },
+            commandId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Original command identity within the trusted namespace.",
+            },
+            body: {
+              type: "object",
+              properties: {
+                type: {
+                  type: "string",
+                  const: "invalidated",
+                  description: "Closed event discriminator.",
+                },
+                failure: {
+                  $ref: "#/$defs/Failure",
+                  description:
+                    "Local failure without asserting a model terminal.",
+                },
+              },
+              required: ["type", "failure"],
+              additionalProperties: false,
+              description:
+                "Stable event data; never execution or authentication authority.",
+            },
+          },
+          required: [
+            "schemaVersion",
+            "kind",
+            "namespace",
+            "eventId",
+            "sequence",
+            "generation",
+            "commandId",
+            "body",
+          ],
+          additionalProperties: false,
+        },
+        {
+          type: "object",
+          properties: {
+            schemaVersion: {
+              type: "integer",
+              const: 2,
+              description:
+                "Exact product wire version; V1 is rejected without migration or fallback.",
+            },
+            kind: {
+              type: "string",
+              const: "event",
+              description: "Closed product record discriminator.",
+            },
+            namespace: {
+              $ref: "#/$defs/Namespace",
+              description:
+                "Trusted storage isolation scope; not copied from model or action content.",
+            },
+            eventId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Stable unique event identifier within the namespace.",
+            },
+            sequence: {
+              $ref: "#/$defs/Counter",
+              description:
+                "Strictly increasing stable-event counter; attach cursors are exclusive.",
+            },
+            generation: {
+              $ref: "#/$defs/Id",
+              description:
+                "Live provider incarnation token; rejects callbacks from previous incarnations.",
+            },
+            commandId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Original command identity within the trusted namespace.",
+            },
+            body: {
+              type: "object",
+              properties: {
+                type: {
+                  type: "string",
+                  const: "dispatch",
+                  description: "Closed event discriminator.",
+                },
+                attempt: {
+                  $ref: "#/$defs/DispatchAttempt",
+                  description:
+                    "Complete dispatch identity retained for replay and reconciliation.",
+                },
+              },
+              required: ["type", "attempt"],
+              additionalProperties: false,
+              description:
+                "Stable event data; never execution or authentication authority.",
+            },
+            attemptId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Stable identity of one dispatch attempt; never reused after positive non-submission proof.",
+            },
+          },
+          required: [
+            "schemaVersion",
+            "kind",
+            "namespace",
+            "eventId",
+            "sequence",
+            "generation",
+            "commandId",
+            "body",
+            "attemptId",
+          ],
+          additionalProperties: false,
+        },
+        {
+          type: "object",
+          properties: {
+            schemaVersion: {
+              type: "integer",
+              const: 2,
+              description:
+                "Exact product wire version; V1 is rejected without migration or fallback.",
+            },
+            kind: {
+              type: "string",
+              const: "event",
+              description: "Closed product record discriminator.",
+            },
+            namespace: {
+              $ref: "#/$defs/Namespace",
+              description:
+                "Trusted storage isolation scope; not copied from model or action content.",
+            },
+            eventId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Stable unique event identifier within the namespace.",
+            },
+            sequence: {
+              $ref: "#/$defs/Counter",
+              description:
+                "Strictly increasing stable-event counter; attach cursors are exclusive.",
+            },
+            generation: {
+              $ref: "#/$defs/Id",
+              description:
+                "Live provider incarnation token; rejects callbacks from previous incarnations.",
+            },
+            commandId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Original command identity within the trusted namespace.",
+            },
+            body: {
+              type: "object",
+              properties: {
+                type: {
+                  type: "string",
+                  const: "reconciled",
+                  description: "Closed event discriminator.",
+                },
+                attempt: {
+                  $ref: "#/$defs/DispatchAttempt",
+                  description:
+                    "Complete dispatch identity retained for replay and reconciliation.",
+                },
+                resolution: {
+                  type: "string",
+                  enum: ["running", "terminal", "not_submitted", "unknown"],
+                  description:
+                    "Provider observation bound to this attempt and its current observer.",
+                },
+              },
+              required: ["type", "attempt", "resolution"],
+              additionalProperties: false,
+              description:
+                "Stable event data; never execution or authentication authority.",
+            },
+            attemptId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Stable identity of one dispatch attempt; never reused after positive non-submission proof.",
+            },
+          },
+          required: [
+            "schemaVersion",
+            "kind",
+            "namespace",
+            "eventId",
+            "sequence",
+            "generation",
+            "commandId",
+            "body",
+            "attemptId",
+          ],
+          additionalProperties: false,
+        },
+        {
+          type: "object",
+          properties: {
+            schemaVersion: {
+              type: "integer",
+              const: 2,
+              description:
+                "Exact product wire version; V1 is rejected without migration or fallback.",
+            },
+            kind: {
+              type: "string",
+              const: "event",
+              description: "Closed product record discriminator.",
+            },
+            namespace: {
+              $ref: "#/$defs/Namespace",
+              description:
+                "Trusted storage isolation scope; not copied from model or action content.",
+            },
+            eventId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Stable unique event identifier within the namespace.",
+            },
+            sequence: {
+              $ref: "#/$defs/Counter",
+              description:
+                "Strictly increasing stable-event counter; attach cursors are exclusive.",
+            },
+            generation: {
+              $ref: "#/$defs/Id",
+              description:
+                "Live provider incarnation token; rejects callbacks from previous incarnations.",
+            },
+            commandId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Original command identity within the trusted namespace.",
+            },
+            body: {
+              type: "object",
+              properties: {
+                type: {
+                  const: "surface",
+                  type: "string",
+                  description: "Closed variant discriminator.",
+                },
+                surface: {
+                  $ref: "#/$defs/SurfaceState",
+                  description:
+                    "Full surface recovery state committed with this event.",
+                },
+              },
+              required: ["type", "surface"],
+              additionalProperties: false,
+            },
+            attemptId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Stable identity of one dispatch attempt; never reused after positive non-submission proof.",
+            },
+          },
+          required: [
+            "schemaVersion",
+            "kind",
+            "namespace",
+            "eventId",
+            "sequence",
+            "generation",
+            "commandId",
+            "body",
+            "attemptId",
+          ],
+          additionalProperties: false,
+        },
+        {
+          type: "object",
+          properties: {
+            schemaVersion: {
+              type: "integer",
+              const: 2,
+              description:
+                "Exact product wire version; V1 is rejected without migration or fallback.",
+            },
+            kind: {
+              type: "string",
+              const: "event",
+              description: "Closed product record discriminator.",
+            },
+            namespace: {
+              $ref: "#/$defs/Namespace",
+              description:
+                "Trusted storage isolation scope; not copied from model or action content.",
+            },
+            eventId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Stable unique event identifier within the namespace.",
+            },
+            sequence: {
+              $ref: "#/$defs/Counter",
+              description:
+                "Strictly increasing stable-event counter; attach cursors are exclusive.",
+            },
+            generation: {
+              $ref: "#/$defs/Id",
+              description:
+                "Live provider incarnation token; rejects callbacks from previous incarnations.",
+            },
+            body: {
+              type: "object",
+              properties: {
+                type: {
+                  type: "string",
+                  const: "session_rebound",
+                  description: "Closed event discriminator.",
+                },
+                previousGeneration: {
+                  $ref: "#/$defs/Id",
+                  description:
+                    "Prior provider incarnation invalidated by this verified handoff.",
+                },
+              },
+              required: ["type", "previousGeneration"],
+              additionalProperties: false,
+              description:
+                "Stable event data; never execution or authentication authority.",
+            },
+          },
+          required: [
+            "schemaVersion",
+            "kind",
+            "namespace",
+            "eventId",
+            "sequence",
+            "generation",
+            "body",
+          ],
+          additionalProperties: false,
+        },
+        {
+          type: "object",
+          properties: {
+            schemaVersion: {
+              type: "integer",
+              const: 2,
+              description:
+                "Exact product wire version; V1 is rejected without migration or fallback.",
+            },
+            kind: {
+              type: "string",
+              const: "event",
+              description: "Closed product record discriminator.",
+            },
+            namespace: {
+              $ref: "#/$defs/Namespace",
+              description:
+                "Trusted storage isolation scope; not copied from model or action content.",
+            },
+            eventId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Stable unique event identifier within the namespace.",
+            },
+            sequence: {
+              $ref: "#/$defs/Counter",
+              description:
+                "Strictly increasing stable-event counter; attach cursors are exclusive.",
+            },
+            generation: {
+              $ref: "#/$defs/Id",
+              description:
+                "Live provider incarnation token; rejects callbacks from previous incarnations.",
+            },
+            body: {
+              type: "object",
+              properties: {
+                type: {
+                  type: "string",
+                  const: "session_retired",
+                  description: "Closed event discriminator.",
+                },
+              },
+              required: ["type"],
+              additionalProperties: false,
+              description:
+                "Stable event data; never execution or authentication authority.",
+            },
+          },
+          required: [
+            "schemaVersion",
+            "kind",
+            "namespace",
+            "eventId",
+            "sequence",
+            "generation",
+            "body",
+          ],
           additionalProperties: false,
         },
       ],
       description:
-        "Stable product observation. Tool proposals and results are untrusted and cannot issue execution authority.",
-    },
-    Event: {
-      type: "object",
-      properties: {
-        schemaVersion: {
-          type: "integer",
-          const: 2,
-          description:
-            "Exact product wire version; V1 is rejected without migration or fallback.",
-        },
-        kind: {
-          type: "string",
-          const: "event",
-          description: "Closed product record discriminator.",
-        },
-        namespace: {
-          $ref: "#/$defs/Namespace",
-          description:
-            "Trusted storage isolation scope; not copied from model or action content.",
-        },
-        eventId: {
-          $ref: "#/$defs/Id",
-          description: "Stable unique event identifier within the namespace.",
-        },
-        sequence: {
-          $ref: "#/$defs/Counter",
-          description:
-            "Strictly increasing stable-event counter; attach cursors are exclusive.",
-        },
-        commandId: {
-          $ref: "#/$defs/Id",
-          description:
-            "Client-generated idempotency key; reuse only with identical canonical content.",
-        },
-        generation: {
-          $ref: "#/$defs/Id",
-          description:
-            "Live provider incarnation token; rejects callbacks from previous incarnations.",
-        },
-        body: {
-          $ref: "#/$defs/EventBody",
-          description: "Stable observation committed before publication.",
-        },
-      },
-      required: [
-        "schemaVersion",
-        "kind",
-        "namespace",
-        "eventId",
-        "sequence",
-        "commandId",
-        "generation",
-        "body",
-      ],
-      additionalProperties: false,
-      description:
-        "Committed stable event in one namespace; token deltas are excluded from durable ordering.",
+        "Closed stable events. Session events have no command, attempt observations name their exact attempt.",
     },
     Session: {
       type: "object",
@@ -1034,7 +2213,7 @@ const schema31 = {
         callbackLifetime: {
           $ref: "#/$defs/CallbackLifetime",
           description:
-            "generation_bound cannot survive callback loss; provider_resumable requires verified native restoration.",
+            "A live-generation callback. Restore preserves display history but always makes the previous callback unavailable.",
         },
         nativeCallbackId: {
           $ref: "#/$defs/Id",
@@ -1236,6 +2415,62 @@ const schema31 = {
       description:
         "Immutable untrusted provider question payload. Subject to whole-record JSON budgets; never authentication, permission or execution approval.",
     },
+    DispatchAttempt: {
+      type: "object",
+      properties: {
+        nativeSessionId: {
+          $ref: "#/$defs/Id",
+          description:
+            "Provider-owned context session identifier; history alone cannot recreate it.",
+        },
+        nativeRunId: {
+          $ref: "#/$defs/Id",
+          description:
+            "Provider-owned model-turn/run identifier, required when the provider exposes it.",
+        },
+        nativeRequestId: {
+          $ref: "#/$defs/Id",
+          description:
+            "Provider-owned parent prompt/query request identifier; cannot be rebound after dispatch. Callback identities belong to Interaction.",
+        },
+        certainty: {
+          type: "string",
+          enum: ["intent", "submitted", "unknown"],
+          description:
+            "intent is stored before native submission; submitted has native acceptance; unknown requires reconciliation.",
+        },
+        attemptId: {
+          $ref: "#/$defs/Id",
+          description:
+            "Stable identity of one dispatch attempt; never reused after positive non-submission proof.",
+        },
+        originGeneration: {
+          $ref: "#/$defs/Id",
+          description:
+            "Immutable provider incarnation that originated this attempt.",
+        },
+        observerGeneration: {
+          $ref: "#/$defs/Id",
+          description:
+            "Current verified provider incarnation permitted to observe this attempt.",
+        },
+        correlationId: {
+          $ref: "#/$defs/Id",
+          description:
+            "Append-once native lookup key returned for ambiguous submission.",
+        },
+      },
+      required: [
+        "attemptId",
+        "originGeneration",
+        "observerGeneration",
+        "nativeSessionId",
+        "certainty",
+      ],
+      additionalProperties: false,
+      description:
+        "One active dispatch attempt. Origin identity is immutable; unknown native coordinates may be filled once. Only verified rebind changes observerGeneration.",
+    },
     SurfaceState: {
       type: "object",
       properties: {
@@ -1308,9 +2543,9 @@ const schema31 = {
         },
         status: {
           type: "string",
-          enum: ["active", "deleted"],
+          enum: ["active", "deleted", "invalidated"],
           description:
-            "Persisted lifecycle; deleted is a permanent tombstone for this instance.",
+            "Deleted is an upstream deletion; invalidated is a product-side loss of action authority. Neither may reactivate.",
         },
         messages: {
           type: "array",
@@ -1799,9 +3034,9 @@ const schema31 = {
     },
     CallbackLifetime: {
       type: "string",
-      enum: ["generation_bound", "provider_resumable"],
+      enum: ["generation_bound"],
       description:
-        "generation_bound cannot survive callback loss; provider_resumable requires verified native restoration.",
+        "A live-generation callback. Restore preserves display history but always makes the previous callback unavailable.",
     },
   },
   $ref: "#/$defs/Negotiation",

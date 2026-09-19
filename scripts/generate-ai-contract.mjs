@@ -87,6 +87,35 @@ const source = ts.createSourceFile(
   true,
 );
 const edits = [];
+// Closed schema alternatives also forbid fields belonging only to another branch.
+// Express absence as optional never so property access remains ergonomic without
+// weakening the generated discriminated union or accepting legacy wire fields.
+function closeUnions(node) {
+  if (ts.isUnionTypeNode(node) && node.types.every(ts.isTypeLiteralNode)) {
+    const keys = new Set(
+      node.types.flatMap((t) =>
+        t.members
+          .filter(ts.isPropertySignature)
+          .map((m) => m.name.getText(source)),
+      ),
+    );
+    for (const member of node.types) {
+      const own = new Set(
+        member.members
+          .filter(ts.isPropertySignature)
+          .map((m) => m.name.getText(source)),
+      );
+      const missing = [...keys].filter((key) => !own.has(key));
+      if (missing.length)
+        edits.push([
+          member.end - 1,
+          missing.map((key) => `${key}?: never;`).join("\n"),
+        ]);
+    }
+  }
+  ts.forEachChild(node, closeUnions);
+}
+closeUnions(source);
 function document(node, owner) {
   if (ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node))
     owner = node.name.text;
@@ -157,6 +186,12 @@ const compileValidator = (schema, strict, referenced = []) => {
 outputs.set(
   "packages/ai-contract/src/validate-record.ts",
   await format(compileValidator(schema, true), { parser: "typescript" }),
+);
+outputs.set(
+  "packages/ai-contract/src/validate-id.ts",
+  await format(compileValidator(schema.$defs.Id, true), {
+    parser: "typescript",
+  }),
 );
 outputs.set(
   "packages/ai-contract/src/validate-negotiation.ts",

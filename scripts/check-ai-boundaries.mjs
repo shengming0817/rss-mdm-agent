@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { join } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import ts from "typescript";
 const root = fileURLToPath(new URL("../packages/", import.meta.url));
 const allowed = {
@@ -16,6 +16,11 @@ const allowed = {
   ],
 };
 const errors = [];
+const serverFiles = new Map([
+  [join(root, "ai-contract/src/session.ts"), ["node:path", "node:crypto"]],
+  [join(root, "ai-contract/src/transitions.ts"), ["node:crypto"]],
+]);
+const runtimeEdges = new Map();
 function walk(path) {
   return readdirSync(path, { withFileTypes: true }).flatMap((e) =>
     e.isDirectory()
@@ -39,8 +44,26 @@ for (const [name, dependencies] of Object.entries(allowed)) {
     if (!file.endsWith(".ts")) continue;
     const source = readFileSync(file, "utf8"),
       ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
-    const check = (value) => {
-      if (value.startsWith(".")) return;
+    const check = (value, runtime = true) => {
+      if (value.startsWith(".")) {
+        if (runtime) {
+          const edges = runtimeEdges.get(file) ?? [];
+          edges.push(resolve(dirname(file), value.replace(/\.js$/, ".ts")));
+          runtimeEdges.set(file, edges);
+        }
+        return;
+      }
+      if (
+        name !== "ai-contract" &&
+        [
+          "@rss-mdm-agent/ai-contract/session",
+          "@rss-mdm-agent/ai-contract/transitions",
+          "@rss-mdm-agent/ai-contract/testing",
+        ].includes(value) &&
+        runtime
+      )
+        errors.push(`${name}: server entry in portable package`);
+      if (serverFiles.get(file)?.includes(value)) return;
       const packageName = value.startsWith("@")
         ? value.split("/").slice(0, 2).join("/")
         : value.split("/")[0];
@@ -53,7 +76,25 @@ for (const [name, dependencies] of Object.entries(allowed)) {
         node.moduleSpecifier &&
         ts.isStringLiteralLike(node.moduleSpecifier)
       )
-        check(node.moduleSpecifier.text);
+        check(
+          node.moduleSpecifier.text,
+          ts.isExportDeclaration(node)
+            ? !node.isTypeOnly &&
+                !(
+                  node.exportClause &&
+                  ts.isNamedExports(node.exportClause) &&
+                  node.exportClause.elements.every((e) => e.isTypeOnly)
+                )
+            : !node.importClause?.isTypeOnly &&
+                !(
+                  node.importClause?.namedBindings &&
+                  ts.isNamedImports(node.importClause.namedBindings) &&
+                  !node.importClause.name &&
+                  node.importClause.namedBindings.elements.every(
+                    (e) => e.isTypeOnly,
+                  )
+                ),
+        );
       if (
         ts.isCallExpression(node) &&
         ["require", "import"].includes(node.expression.getText(ast))
@@ -73,6 +114,15 @@ for (const [name, dependencies] of Object.entries(allowed)) {
       errors.push(`${name}: executable content sink`);
   }
 }
+const visited = new Set();
+function portable(file) {
+  if (visited.has(file)) return;
+  visited.add(file);
+  if (serverFiles.has(file))
+    errors.push("ai-contract: browser entry reaches server runtime");
+  for (const next of runtimeEdges.get(file) ?? []) portable(next);
+}
+portable(join(root, "ai-contract/src/index.ts"));
 if (errors.length) throw new Error(errors.join("\n"));
 console.log(
   "PASS AI package boundaries; renderer browser closure is additionally built and executed by the isolated consumer",

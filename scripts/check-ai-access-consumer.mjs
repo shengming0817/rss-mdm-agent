@@ -166,9 +166,7 @@ export default defineConfig({plugins:[{name:'forbid-server-imports',enforce:'pre
     };
     const current = unwrap(await store.session(seeded.session.namespace));
     unwrap(
-      await store.commit(
-        surfaceCommit(current, surface, seeded.interaction.commandId),
-      ),
+      await store.commit(surfaceCommit(current, surface, seeded.interaction)),
     );
     host.notify(current.namespace);
   }

@@ -1,4 +1,9 @@
+import { fingerprint } from "../codec.js";
+import { verifiedReconciliation } from "./recovery.js";
+import type { VerifiedReconciliation } from "../session.js";
+import { workspaceIdentity } from "../session.js";
 import assert from "node:assert/strict";
+import { runRecoveryConformance } from "./recovery.js";
 import {
   withinBudget,
   boundedPort,
@@ -17,7 +22,14 @@ import type {
   SessionCommit,
   Result,
 } from "../ports.js";
-import type { Command, CommandRecord, Session, SurfaceState } from "../wire.js";
+import type {
+  Command,
+  CommandRecord,
+  Session,
+  Event,
+  DispatchAttempt,
+  SurfaceState,
+} from "../wire.js";
 export const fixtureCaller: Caller = {
   tenantId: "tenant-1",
   principalId: "user-1",
@@ -32,6 +44,7 @@ export function fixtureSession(): Session {
     lastSequence: 0,
     status: "active",
     binding: {
+      workspaceId: workspaceIdentity("."),
       provider: "fake",
       providerVersion: "fixture-1",
       adapterVersion: "fixture-1",
@@ -126,6 +139,7 @@ async function runStoreScenarios(
   create: () => Promise<SessionStore>,
 ): Promise<void> {
   await runStoreBoundaries(create);
+  await runRecoveryConformance(create);
   await runSurfaceConformance(await create());
   await runCallbackConformance(await create());
   await runPageConformance(await create());
@@ -181,7 +195,13 @@ async function runStoreScenarios(
     (
       await store.commit({
         ...emptyCommit(current),
-        commands: [{ ...accepted, state: "terminal", outcome: "completed" }],
+        commands: [
+          {
+            ...accepted,
+            state: "terminal",
+            outcome: "completed",
+          } as CommandRecord,
+        ],
       })
     ).ok,
     false,
@@ -194,25 +214,14 @@ async function runStoreScenarios(
     ok: false,
     error: { code: "invalid_input", retry: "never" },
   });
-  const dispatch = {
-    generation: s.binding.generation,
-    nativeSessionId: s.binding.nativeSessionId,
-    certainty: "unknown" as const,
-  };
-  unwrap(
-    await store.commit({
-      ...emptyCommit(current),
-      commands: [{ ...accepted, state: "dispatching", dispatch }],
-    }),
+  const progressed = await dispatchCommand(
+    store,
+    current,
+    "command-1",
+    "unknown",
   );
-  const dispatching = unwrap(await store.session(s.namespace));
-  unwrap(
-    await store.commit({
-      ...emptyCommit(dispatching),
-      commands: [{ ...accepted, state: "reconciliation_required", dispatch }],
-    }),
-  );
-  const unknown = unwrap(await store.session(s.namespace));
+  const unknown = progressed.session,
+    record = progressed.record;
   assert.equal(
     unwrap(await store.recovery(10)).items[0].state,
     "reconciliation_required",
@@ -220,41 +229,23 @@ async function runStoreScenarios(
   assert.equal(
     (await store.commit({ ...emptyCommit(unknown), commands: [accepted] })).ok,
     false,
-    "unknown submission cannot return to accepted",
+    "unknown cannot return to accepted without proof",
   );
-  for (const events of [
-    [],
-    [
-      {
-        ...terminalCommit(unknown, { ...accepted, dispatch }).events[0],
-        generation: "stale",
-      },
-    ],
-    [
-      {
-        ...terminalCommit(unknown, { ...accepted, dispatch }).events[0],
-        body: { type: "terminal" as const, outcome: "failed" as const },
-      },
-    ],
-  ]) {
-    const batch = terminalCommit(unknown, { ...accepted, dispatch });
-    assert.equal(
-      (
-        await store.commit({
-          ...batch,
-          session: {
-            ...batch.session,
-            lastSequence: unknown.lastSequence + events.length,
-          },
-          events,
-        })
-      ).ok,
-      false,
-    );
-  }
-  unwrap(
-    await store.commit(terminalCommit(unknown, { ...accepted, dispatch })),
+  const batch = terminalCommit(
+    unknown,
+    record,
+    await verifiedReconciliation(unknown, record, "terminal"),
   );
+  for (const mutate of [
+    (b: SessionCommit) => ({ ...b, events: [] }),
+    (b: SessionCommit) => ({
+      ...b,
+      events: b.events.map((e) => ({ ...e, generation: "stale" })),
+    }),
+    (b: SessionCommit) => ({ ...b, reconciliations: [] }),
+  ])
+    assert.equal((await store.commit(mutate(batch))).ok, false);
+  unwrap(await store.commit(batch));
   const terminal = unwrap(await store.session(s.namespace));
   unwrap(
     await store.retire(s.namespace, terminal.revision, s.binding.generation),
@@ -356,12 +347,18 @@ async function runPageConformance(store: SessionStore): Promise<void> {
 export async function seedInteraction(
   store: SessionStore,
   status: "pending" | "unavailable" = "pending",
+  session: Session = fixtureSession(),
 ) {
-  const session = fixtureSession();
   unwrap(await store.create(session));
   unwrap(await store.accept(acceptance(session)));
-  const current = unwrap(await store.session(session.namespace));
-  const command = unwrap(await store.command(session.namespace, "command-1"));
+  const initial = unwrap(await store.session(session.namespace));
+  const { session: current } = await dispatchCommand(
+    store,
+    initial,
+    "command-1",
+    "submitted",
+    { nativeRunId: "run-1", nativeRequestId: "parent-request-1" },
+  );
   const interaction: import("../wire.js").Interaction = {
     schemaVersion: 2,
     kind: "interaction",
@@ -380,19 +377,6 @@ export async function seedInteraction(
   unwrap(
     await store.commit({
       ...emptyCommit(current),
-      commands: [
-        {
-          ...command,
-          state: "dispatching",
-          dispatch: {
-            generation: interaction.generation,
-            nativeSessionId: session.binding.nativeSessionId,
-            nativeRunId: interaction.nativeRunId,
-            nativeRequestId: "parent-request-1",
-            certainty: "submitted",
-          },
-        },
-      ],
       session: {
         ...current,
         revision: current.revision + 1,
@@ -492,29 +476,12 @@ async function runStoreBoundaries(
   );
   unwrap(await coordinatesStore.accept(acceptance(s)));
   const before = unwrap(await coordinatesStore.session(s.namespace));
-  const accepted = unwrap(
-    await coordinatesStore.command(s.namespace, "command-1"),
-  );
-  const running: import("../wire.js").CommandRecord = {
-    ...accepted,
-    state: "dispatching",
-    dispatch: {
-      generation: s.binding.generation,
-      nativeSessionId: s.binding.nativeSessionId,
-      ...coordinates,
-      certainty: "submitted",
-    },
-  };
-  unwrap(
-    await coordinatesStore.commit({
-      ...emptyCommit(before),
-      session: {
-        ...before,
-        revision: before.revision + 1,
-        binding: { ...before.binding, ...coordinates },
-      },
-      commands: [running],
-    }),
+  const { record: running } = await dispatchCommand(
+    coordinatesStore,
+    before,
+    "command-1",
+    "submitted",
+    coordinates,
   );
   const bound = unwrap(await coordinatesStore.session(s.namespace));
   for (const next of [
@@ -557,7 +524,7 @@ async function runStoreBoundaries(
       { nativeCallbackId: "other" },
       { request: { question: "different" } },
       { expiresAtMs: 101 },
-      { callbackLifetime: "provider_resumable" as const },
+      { callbackLifetime: "invalid-lifetime" as "generation_bound" },
     ])
       assert.equal(
         (
@@ -709,59 +676,185 @@ async function runStoreBoundaries(
 export function terminalCommit(
   session: Session,
   record: CommandRecord,
+  reconciliation?: VerifiedReconciliation,
 ): SessionCommit {
-  return {
-    ...emptyCommit(session),
-    session: {
-      ...session,
-      revision: session.revision + 1,
-      lastSequence: session.lastSequence + 1,
-    },
-    commands: [{ ...record, state: "terminal", outcome: "completed" }],
-    events: [
-      {
+  if (!record.dispatch)
+    throw new Error("fixture requires a dispatched command");
+  const dispatch: DispatchAttempt = {
+    ...record.dispatch,
+    certainty: "submitted",
+  };
+  const next: CommandRecord = {
+    schemaVersion: 2,
+    kind: "commandRecord",
+    command: record.command,
+    receipt: record.receipt,
+    state: "terminal",
+    dispatch,
+    outcome: "completed",
+  };
+  const bodies: Event["body"][] = [];
+  if (record.state === "reconciliation_required" && !reconciliation)
+    throw new Error("fixture requires verified reconciliation");
+  const reconciliations = reconciliation ? [reconciliation] : [];
+  if (reconciliations.length)
+    bodies.push({
+      type: "reconciled",
+      attempt: record.dispatch,
+      resolution: "terminal",
+    });
+  if (record.dispatch.certainty !== "submitted")
+    bodies.push({ type: "dispatch", attempt: dispatch });
+  bodies.push({ type: "terminal", outcome: "completed" });
+  return { ...commandCommit(session, next, bodies), reconciliations };
+}
+export function commandCommit(
+  session: Session,
+  record: CommandRecord,
+  bodies: readonly Event["body"][],
+): SessionCommit {
+  const events = bodies.map(
+    (body, i) =>
+      ({
         schemaVersion: 2,
         kind: "event",
         namespace: session.namespace,
-        eventId: `terminal-${record.command.commandId}`,
-        sequence: session.lastSequence + 1,
-        generation: session.binding.generation,
+        eventId: `change-${session.revision}-${record.command.commandId}-${i}`,
+        sequence: session.lastSequence + i + 1,
         commandId: record.command.commandId,
-        body: { type: "terminal", outcome: "completed" },
-      },
-    ],
+        generation: session.binding.generation,
+        ...(record.dispatch ? { attemptId: record.dispatch.attemptId } : {}),
+        body,
+      }) as Event,
+  );
+  return {
+    ...emptyCommit(session),
+    nowMs: 0,
+    session: {
+      ...session,
+      revision: session.revision + 1,
+      lastSequence: session.lastSequence + events.length,
+    },
+    commands: [record],
+    events,
   };
 }
-/** Surface recovery state and its stable event share a single store transaction. */
+export async function dispatchCommand(
+  store: SessionStore,
+  session: Session,
+  id = "command-1",
+  certainty: "submitted" | "unknown" = "submitted",
+  coordinates: Pick<Session["binding"], "nativeRunId" | "nativeRequestId"> = {},
+) {
+  const record = unwrap(await store.command(session.namespace, id));
+  const intent: DispatchAttempt = {
+    attemptId: `attempt-${id}`,
+    originGeneration: session.binding.generation,
+    observerGeneration: session.binding.generation,
+    nativeSessionId: session.binding.nativeSessionId,
+    certainty: "intent",
+  };
+  const preparing: CommandRecord = {
+    schemaVersion: 2,
+    kind: "commandRecord",
+    command: record.command,
+    receipt: record.receipt,
+    state: "dispatching",
+    dispatch: intent,
+  };
+  unwrap(
+    await store.commit(
+      commandCommit(session, preparing, [
+        { type: "dispatch", attempt: intent },
+        { type: "status", state: "dispatching" },
+      ]),
+    ),
+  );
+  const head = unwrap(await store.session(session.namespace));
+  const dispatch: DispatchAttempt = {
+    ...intent,
+    ...coordinates,
+    certainty,
+    ...(certainty === "unknown" ? { correlationId: `lookup-${id}` } : {}),
+  };
+  const next: CommandRecord = {
+    ...preparing,
+    state: certainty === "submitted" ? "running" : "reconciliation_required",
+    dispatch,
+  };
+  const batch = commandCommit(head, next, [
+    { type: "dispatch", attempt: dispatch },
+    {
+      type: "status",
+      state: certainty === "submitted" ? "running" : "reconciliation_required",
+    },
+  ]);
+  unwrap(
+    await store.commit({
+      ...batch,
+      session: {
+        ...batch.session,
+        binding: { ...head.binding, ...coordinates },
+      },
+    }),
+  );
+  return {
+    session: unwrap(await store.session(session.namespace)),
+    record: next,
+  };
+}
 export function surfaceCommit(
   session: Session,
   surface: SurfaceState,
-  commandId: string,
+  interaction: import("../wire.js").Interaction,
 ): SessionCommit {
+  if (surface.status === "deleted" && !surface.messages.at(-1)?.deleteSurface)
+    surface = {
+      ...surface,
+      messages: [
+        ...surface.messages,
+        { version: "v0.9.1", deleteSurface: { surfaceId: surface.surfaceId } },
+      ],
+    };
+  const event: Event = {
+    schemaVersion: 2,
+    kind: "event",
+    namespace: session.namespace,
+    eventId: `surface-${surface.surfaceInstanceId}-${surface.revision}`,
+    sequence: session.lastSequence + 1,
+    commandId: interaction.commandId,
+    attemptId: `attempt-${interaction.commandId}`,
+    generation: session.binding.generation,
+    body: { type: "surface", surface },
+  } as Event;
+  const interactions =
+    surface.status === "deleted" && interaction.status === "pending"
+      ? [{ ...interaction, status: "unavailable" as const }]
+      : [];
+  const events = [
+    event,
+    ...interactions.map((row) => ({
+      ...interactionEvent(session, row),
+      sequence: session.lastSequence + 2,
+    })),
+  ];
   return {
     ...emptyCommit(session),
     session: {
       ...session,
       revision: session.revision + 1,
-      lastSequence: session.lastSequence + 1,
+      lastSequence: session.lastSequence + events.length,
     },
     surfaces: [surface],
-    events: [
-      {
-        schemaVersion: 2,
-        kind: "event",
-        namespace: session.namespace,
-        eventId: `surface-${surface.surfaceInstanceId}-${surface.revision}`,
-        sequence: session.lastSequence + 1,
-        generation: surface.generation,
-        commandId,
-        body: { type: "surface", surface },
-      },
-    ],
+    interactions,
+    events,
   };
 }
-export async function seedSurface(store: SessionStore) {
-  const seeded = await seedInteraction(store);
+export async function seedSurface(
+  store: SessionStore,
+  session: Session = fixtureSession(),
+) {
+  const seeded = await seedInteraction(store, "pending", session);
   const template = fixtures.valid.find((v) => v.kind === "surface")!;
   const surface = {
     ...template,
@@ -774,7 +867,7 @@ export async function seedSurface(store: SessionStore) {
   };
   unwrap(
     await store.commit(
-      surfaceCommit(seeded.session, surface, seeded.interaction.commandId),
+      surfaceCommit(seeded.session, surface, seeded.interaction),
     ),
   );
   return {
@@ -788,6 +881,7 @@ async function runSurfaceConformance(store: SessionStore): Promise<void> {
     { surface } = seeded;
   for (const patch of [
     { revision: 0 },
+    { revision: 1 },
     { revision: 2 },
     { revision: 1, sourceComponentId: "different" },
     { revision: 1, interactionId: "different" },
@@ -801,10 +895,31 @@ async function runSurfaceConformance(store: SessionStore): Promise<void> {
       ).ok,
       false,
     );
+  assert.deepEqual(
+    unwrap(await store.session(seeded.session.namespace)),
+    seeded.session,
+  );
+  const malformed = surfaceCommit(
+    seeded.session,
+    { ...surface, revision: 1 },
+    seeded.interaction,
+  );
+  const malformedEvents = malformed.events.map((e) =>
+    e.body.type === "surface"
+      ? ({
+          ...e,
+          body: { ...e.body, surface: { ...e.body.surface, revision: 99 } },
+        } as Event)
+      : e,
+  );
+  assert.equal(
+    (await store.commit({ ...malformed, events: malformedEvents })).ok,
+    false,
+  );
   const updated = { ...surface, revision: 1 };
   unwrap(
     await store.commit(
-      surfaceCommit(seeded.session, updated, seeded.interaction.commandId),
+      surfaceCommit(seeded.session, updated, seeded.interaction),
     ),
   );
   const head = unwrap(await store.session(seeded.session.namespace));
@@ -829,7 +944,7 @@ async function runSurfaceConformance(store: SessionStore): Promise<void> {
       surfaceCommit(
         head,
         { ...updated, revision: 2, status: "deleted" },
-        seeded.interaction.commandId,
+        seeded.interaction,
       ),
     ),
   );
@@ -891,6 +1006,7 @@ export function interactionEvent(
     eventId: `interaction-${row.interactionId}-${row.status}`,
     sequence: session.lastSequence + 1,
     commandId: row.commandId,
+    attemptId: `attempt-${row.commandId}`,
     generation: row.generation,
     body: {
       type: "interaction",
@@ -906,7 +1022,7 @@ export function interactionEvent(
           ? { status: "answered", responseCommandId: row.responseCommandId! }
           : { status: row.status }),
     },
-  };
+  } as Event;
 }
 
 /** Every store consumer proves callback identity separately from its parent prompt. */
@@ -917,6 +1033,7 @@ async function runCallbackConformance(store: SessionStore): Promise<void> {
     { type: "interaction" }
   > = {
     type: "interaction",
+    attemptId: "attempt-command-1",
     binding: {
       ...seeded.session.binding,
       nativeRunId: seeded.interaction.nativeRunId,
@@ -980,8 +1097,8 @@ async function runCallbackConformance(store: SessionStore): Promise<void> {
                 expiresAtMs: row.expiresAtMs,
                 callbackLifetime: row.callbackLifetime,
                 ...(request === undefined ? {} : { request }),
-              } as import("../wire.js").EventBody,
-            },
+              } as Event["body"],
+            } as Event,
           ],
         })
       ).ok,
@@ -1039,4 +1156,64 @@ async function runCallbackConformance(store: SessionStore): Promise<void> {
     )?.request,
     observation.interaction.request,
   );
+}
+
+/** Deterministic dispatch metadata for adapter fixtures, never real durability evidence. */
+export function fixtureAttempt(
+  binding: Session["binding"],
+  command: Command,
+): DispatchAttempt {
+  return {
+    attemptId: `attempt-${command.commandId}`,
+    originGeneration: binding.generation,
+    observerGeneration: binding.generation,
+    nativeSessionId: binding.nativeSessionId,
+    certainty: "intent",
+  };
+}
+export function fixtureDispatchedRecord(
+  binding: Session["binding"],
+  command: Command,
+  namespace = fixtureSession().namespace,
+): CommandRecord {
+  return {
+    schemaVersion: 2,
+    kind: "commandRecord",
+    command,
+    receipt: {
+      schemaVersion: 2,
+      kind: "receipt",
+      namespace,
+      commandId: command.commandId,
+      contentHash: fingerprint(command, fixtureLimits),
+      acceptedAtMs: 0,
+      retryUntilMs: command.expiresAtMs,
+      receiptUntilMs: command.expiresAtMs,
+      acceptedRevision: 1,
+    },
+    state: "reconciliation_required",
+    dispatch: {
+      ...fixtureAttempt(binding, command),
+      certainty: "unknown",
+      correlationId: command.commandId,
+    },
+  };
+}
+export function fixtureProviderSession(
+  binding: Session["binding"],
+  configuration: import("../ports.js").ProviderConfiguration,
+): Session {
+  return {
+    ...fixtureSession(),
+    namespace: configuration.namespace,
+    binding,
+    capabilities: {
+      ...fixtureSession().capabilities,
+      tools:
+        configuration.permissions === "host_mediated"
+          ? "host_mediated"
+          : "disabled",
+      continuation: "across_processes",
+    },
+  };
 }

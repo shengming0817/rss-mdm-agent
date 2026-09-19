@@ -9,6 +9,7 @@ import {
   acceptance,
   emptyCommit,
   unwrap,
+  dispatchCommand,
 } from "../../packages/ai-contract/dist/testing/index.js";
 
 async function dispatched() {
@@ -17,24 +18,9 @@ async function dispatched() {
   unwrap(await store.create(initial));
   unwrap(await store.accept(acceptance(initial)));
   const head = unwrap(await store.session(initial.namespace));
-  const command = unwrap(await store.command(initial.namespace, "command-1"));
-  unwrap(
-    await store.commit({
-      ...emptyCommit(head),
-      commands: [
-        {
-          ...command,
-          state: "dispatching",
-          dispatch: {
-            certainty: "submitted",
-            generation: head.binding.generation,
-            nativeSessionId: head.binding.nativeSessionId,
-            nativeRequestId: "prompt-1",
-          },
-        },
-      ],
-    }),
-  );
+  await dispatchCommand(store, head, "command-1", "submitted", {
+    nativeRequestId: "prompt-1",
+  });
   return { store, session: unwrap(await store.session(initial.namespace)) };
 }
 function question(session, id = "question-1", callback = "callback-1") {
@@ -68,6 +54,7 @@ function pending(session, rows) {
       namespace: session.namespace,
       eventId: `pending-${row.interactionId}`,
       commandId: row.commandId,
+      attemptId: "attempt-command-1",
       generation: row.generation,
       sequence: session.lastSequence + index + 1,
       body: {

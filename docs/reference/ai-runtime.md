@@ -30,3 +30,6 @@ A2UI 为固定 v0.9.1 官方 schema snapshot，没有声称对应已发布 Git t
 PR #1036 修复参考：ref: Node.js lib/internal/abort_controller.js（本地 Node24.14.1 内置源码的 AbortSignal.timeout/any）；signal 只发取消通知，conformance 另持有有界 watchdog 并保留清理错误。ref: serde_json src/error.rs@1.0.151（[一手源码](https://github.com/serde-rs/json/blob/v1.0.151/src/error.rs)），parser-level NumberOutOfRange 属于 Syntax，映射为公共 number 诊断并由共享正/负指数溢出 golden 固定。ref: TypeScript lib/tsc.js@5.6.2（本地固定包的 classPrivateFieldGet helper）；私有字段提供 nominal admission 边界，运行时构造另核验模块私有 token。新增 surface.status/response.surface 从唯一 schema 再生成 Rust/TS，没有手改生成物。
 
 A04 的独立 renderer npm artifact、产品 catalog、通用 codec 改写及直接契约替换见[ACP–A2UI 开发来源表](../guides/ai-access-development.md#上游版本与来源)。A01 历史交付保持完成，其单一 owner 契约在 #2442 内演进。
+## A02 前置契约补充
+
+参考 [Pi SQLite session backend](https://github.com/earendil-works/pi/blob/d981de1229ef899957bbe968bc8dcda02a21f477/packages/session-backends/sqlite-node/src/index.ts) 的同步数据库事务边界，将领域状态转换抽为生产同步函数供内存与 SQLite adapter 共用；未复制 Pi 源码或存储格式。新的 DispatchAttempt/observerGeneration、名义恢复证据与 surface 稳定事件是本产品契约，既有格式直接替换，不提供历史导入。

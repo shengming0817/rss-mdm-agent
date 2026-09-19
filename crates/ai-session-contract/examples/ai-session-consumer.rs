@@ -1,5 +1,5 @@
 //! Isolated V2 consumer: no Tauri, Node, provider, database or code generation.
-use ai_session_contract::{decode, encode, fingerprint, Limits};
+use ai_session_contract::{decode, encode, fingerprint, Event, Limits};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::args().nth(1).ok_or("fixture path required")?;
     let fixtures: serde_json::Value = serde_json::from_slice(&std::fs::read(path)?)?;
@@ -18,6 +18,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             serde_json::from_slice::<serde_json::Value>(&encode(&decoded, &limits)?)?,
             *value
         );
+    }
+    for value in fixtures["valid"]
+        .as_array()
+        .ok_or("fixtures")?
+        .iter()
+        .filter(|v| v["kind"] == "event")
+    {
+        let event: Event = serde_json::from_value(value.clone())?;
+        match value["body"]["type"].as_str() {
+            Some("error") => assert!(matches!(event, Event::Error { .. })),
+            Some("invalidated") => assert!(matches!(event, Event::Invalidated { .. })),
+            Some("surface") => assert!(matches!(event, Event::Surface { .. })),
+            _ => {}
+        }
     }
     let command: ai_session_contract::Command =
         serde_json::from_value(fixtures["valid"][0].clone())?;

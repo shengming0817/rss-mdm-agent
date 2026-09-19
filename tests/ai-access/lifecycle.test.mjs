@@ -229,14 +229,19 @@ test("product receipt, paged recovery and late delta use only the shared stable 
   const s = unwrap(
     await host.store.session({ ...fixtureCaller, sessionId: id }),
   );
-  unwrap(
-    await host.publishDelta(fixtureCaller, id, {
-      type: "delta",
-      binding: s.binding,
-      commandId: prompt.commandId,
-      messageId: "m",
-      text: "late",
-    }),
+  assert.equal(
+    (
+      await host.publishDelta(fixtureCaller, id, {
+        type: "delta",
+        binding: s.binding,
+        commandId: prompt.commandId,
+        attemptId: `attempt-${prompt.commandId}`,
+        messageId: "m",
+        text: "late",
+      })
+    ).ok,
+    false,
+    "Host rejects deltas from an already terminal attempt",
   );
   const recovered = await runtime.restore(id, 1);
   assert.equal(recovered.commands[prompt.commandId].outcome, "max_tokens");

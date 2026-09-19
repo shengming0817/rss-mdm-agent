@@ -240,7 +240,8 @@ fn context(v: &Value) -> Result<(), ContractError> {
         }
         Some("event") if v["body"]["type"] == "surface" => {
             v["namespace"] != v["body"]["surface"]["namespace"]
-                || v["generation"] != v["body"]["surface"]["generation"]
+                || (v["body"]["surface"]["status"] != "invalidated"
+                    && v["generation"] != v["body"]["surface"]["generation"])
         }
         Some("accessUpdate") if v["update"]["type"] == "event" => {
             context(&v["update"]["event"])?;

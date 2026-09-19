@@ -112,7 +112,7 @@ export function validateSurface(
       }
     }
   }
-  if (!created || active !== (surface.status === "active"))
+  if (!created || active !== (surface.status !== "deleted"))
     throw new SurfaceError("lifecycle");
   const visit = (id: string, ancestors: Set<string>): void => {
     const node = components.get(id);

@@ -127,11 +127,7 @@ test("actions reject stale revisions, old schema, cross caller/session, missing 
       { version: "v0.9.1", deleteSurface: { surfaceId: f.surface.surfaceId } },
     ],
   };
-  unwrap(
-    await f.store.commit(
-      surfaceCommit(current, deleted, f.interaction.commandId),
-    ),
-  );
+  unwrap(await f.store.commit(surfaceCommit(current, deleted, f.interaction)));
   f.host.notify(f.session.namespace);
   await assert.rejects(runtime.action(f.action()));
   const restored = await runtime.restore("session-1", 1);
@@ -200,6 +196,7 @@ test("expired or lost question callback stays unavailable after display recovery
           kind: "event",
           namespace: head.namespace,
           eventId: "callback-lost",
+          attemptId: `attempt-${f.interaction.commandId}`,
           sequence: head.lastSequence + 1,
           commandId: f.interaction.commandId,
           generation: f.interaction.generation,

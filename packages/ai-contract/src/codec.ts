@@ -1,9 +1,10 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import valid from "./validate-record.js";
+import checkId from "./validate-id.js";
 import canonicalize from "canonicalize";
 import { visit } from "jsonc-parser";
-import type { WireRecord, Command, Event } from "./wire.js";
+import type { WireRecord, Command, Event, Id } from "./wire.js";
 
 /** Mandatory host bounds. Counts cover the entire envelope, including dynamic JSON. */
 export interface Limits {
@@ -27,6 +28,10 @@ export class ContractError extends Error {
     super(`AI contract: ${code}`);
     this.name = "ContractError";
   }
+}
+/** Validate the schema-owned primitive without Node runtime dependencies. */
+export function isId(value: unknown): value is Id {
+  return checkId(value);
 }
 const byteLength = (s: string) => new TextEncoder().encode(s).byteLength;
 const unicode = (s: string) => {
@@ -155,7 +160,8 @@ function checkContext(value: WireRecord): void {
     value.body.type === "surface" &&
     (canonicalize(value.namespace) !==
       canonicalize(value.body.surface.namespace) ||
-      value.generation !== value.body.surface.generation)
+      (value.body.surface.status !== "invalidated" &&
+        value.generation !== value.body.surface.generation))
   )
     throw new ContractError("context");
   if (value.kind === "accessUpdate" && value.update.type === "event") {
@@ -296,10 +302,7 @@ export function deliveryFingerprint(
   limits: Limits,
 ): string {
   const checked = decode(boundedJson(event, limits), limits);
-  if (
-    checked.kind !== "event" ||
-    !/^[A-Za-z0-9][A-Za-z0-9._:/+\-]{0,127}$/.test(target)
-  )
+  if (checked.kind !== "event" || !isId(target))
     throw new ContractError("schema");
   const payload = JSON.parse(boundedJson({ event: checked, target }, limits));
   return bytesToHex(sha256(new TextEncoder().encode(canonicalize(payload)!)));
