@@ -23,7 +23,7 @@ pub(crate) fn validate(p: &FrozenPlan, s: &Snapshot, limits: Limits) -> Result<(
         || s.attempts > p.spec().budget.max_attempts
         || match &s.last_event {
             None => s.revision != 0,
-            Some(e) => e.expected_revision.checked_add(1) != Some(s.revision),
+            Some(e) => e.expected_revision().checked_add(1) != Some(s.revision),
         }
     {
         return Err(bad());

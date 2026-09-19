@@ -179,15 +179,47 @@ impl Execution {
             },
         )
     }
-    /// Evaluate a host command. Caller commits the candidate atomically before acting.
-    /// Duplicate/stale checks precede verification, so replay does not re-resolve evidence.
-    /// ref: tokio tokio/src/process/mod.rs@75fef53d0a8590c2d1dbb63672aa7b7d1ef51155
-    pub fn evaluate(
+    /// Evaluate a host command without an observation verifier.
+    /// Caller commits the candidate atomically before acting.
+    ///
+    /// Observation inputs cannot enter this path:
+    /// ```compile_fail
+    /// use execution_lifecycle::{Execution, ObservationEvent};
+    /// fn wrong(state: &Execution, event: ObservationEvent) {
+    ///     state.evaluate(event, 0);
+    /// }
+    /// ```
+    pub fn evaluate(&self, event: CommandEvent, now: u64) -> Result<Evaluation, LifecycleError> {
+        self.evaluate_input(Input::Command(event), now)
+    }
+    /// Resolve a trusted observation after duplicate, revision and attempt checks.
+    /// A verifier is mandatory and ordinary commands cannot enter this path.
+    /// ```compile_fail
+    /// use execution_lifecycle::{Execution, ObservationEvent};
+    /// fn missing(state: &Execution, event: ObservationEvent) {
+    ///     state.evaluate_observation(event, 0);
+    /// }
+    /// ```
+    /// ```compile_fail
+    /// use execution_lifecycle::{CommandEvent, Execution, ObservationVerifier};
+    /// fn wrong(state: &Execution, event: CommandEvent, verifier: &dyn ObservationVerifier) {
+    ///     state.evaluate_observation(event, 0, verifier);
+    /// }
+    /// ```
+    pub fn evaluate_observation(
         &self,
-        event: Event,
+        event: ObservationEvent,
         now: u64,
-        verifier: &(impl ObservationVerifier + ?Sized),
+        verifier: &dyn ObservationVerifier,
     ) -> Result<Evaluation, LifecycleError> {
+        self.evaluate_input(Input::Observation(event, verifier), now)
+    }
+    // ref: raft-rs src/raw_node.rs@10c6e9db6792b85c81784e44fc278f895d5f0ab0
+    fn evaluate_input(&self, input: Input<'_>, now: u64) -> Result<Evaluation, LifecycleError> {
+        let event = match &input {
+            Input::Command(e) => EventRecord::Command(e.clone()),
+            Input::Observation(e, _) => EventRecord::Observation(e.clone()),
+        };
         let directive = self.directive(now)?;
         let s = &self.snapshot;
         let unchanged = |outcome| {
@@ -198,7 +230,7 @@ impl Execution {
             })
         };
         if let Some(last) = &s.last_event {
-            if last.id == event.id {
+            if last.id() == event.id() {
                 return if last == &event {
                     unchanged(EventOutcome::Duplicate)
                 } else {
@@ -206,19 +238,48 @@ impl Execution {
                 };
             }
         }
-        if event.expected_revision < s.revision {
+        if event.expected_revision() < s.revision {
             return unchanged(EventOutcome::Stale);
         }
-        if event.expected_revision != s.revision || s.revision == u64::MAX {
+        if event.expected_revision() != s.revision || s.revision == u64::MAX {
             return Err(LifecycleError::Revision);
         }
         let mut next = s.clone();
-        match &event.command {
+        match input {
+            Input::Command(event) => {
+                self.apply_command(&event.command, directive, now, &mut next)?
+            }
+            Input::Observation(event, verifier) => {
+                self.apply_observation(&event, now, verifier, &mut next)?
+            }
+        }
+        next.updated_at_unix_ms = now;
+        next.revision = s.revision + 1;
+        next.last_event = Some(event);
+        let next = Self::restore(self.plan.clone(), next, self.limits)?;
+        Ok(Evaluation {
+            outcome: EventOutcome::Applied,
+            directive: next.directive(now)?,
+            transition: Some(Transition {
+                expected_revision: s.revision,
+                next,
+            }),
+        })
+    }
+    fn apply_command(
+        &self,
+        command: &Command,
+        directive: Directive,
+        now: u64,
+        next: &mut Snapshot,
+    ) -> Result<(), LifecycleError> {
+        let s = &self.snapshot;
+        match command {
             Command::Prepare | Command::Wait => {
                 if s.attempt.is_some() || s.cancel_requested {
                     return Err(LifecycleError::Transition);
                 }
-                next.preparation = if matches!(event.command, Command::Prepare) {
+                next.preparation = if matches!(command, Command::Prepare) {
                     Preparation::Prepared
                 } else {
                     Preparation::Waiting
@@ -258,7 +319,7 @@ impl Execution {
                 });
             }
             Command::Dispatched { attempt_id } => {
-                let a = current_attempt(&mut next, attempt_id)?;
+                let a = current_attempt(next, attempt_id)?;
                 if a.dispatch != DispatchState::Starting || a.termination.is_some() {
                     return Err(LifecycleError::Transition);
                 }
@@ -266,7 +327,7 @@ impl Execution {
             }
             Command::Cancel => next.cancel_requested = true,
             Command::DispatchUnconfirmed { attempt_id, cause } => {
-                let a = current_attempt(&mut next, attempt_id)?;
+                let a = current_attempt(next, attempt_id)?;
                 a.dispatch_cause = Some(*cause);
                 if a.termination.is_none() {
                     a.dispatch = a.dispatch.uncertain();
@@ -276,7 +337,7 @@ impl Execution {
                 attempt_id,
                 outcome,
             } => {
-                current_attempt(&mut next, attempt_id)?.stop_outcome = Some(*outcome);
+                current_attempt(next, attempt_id)?.stop_outcome = Some(*outcome);
             }
             Command::Recover => {
                 if let Some(a) = &mut next.attempt {
@@ -289,7 +350,7 @@ impl Execution {
                 attempt_id,
                 total_bytes,
             } => {
-                let a = current_attempt(&mut next, attempt_id)?;
+                let a = current_attempt(next, attempt_id)?;
                 if (a.termination.is_none() && *total_bytes < a.output_bytes)
                     || (a.termination.is_some() && *total_bytes > a.output_bytes)
                 {
@@ -299,87 +360,92 @@ impl Execution {
                     a.output_bytes = *total_bytes;
                 }
             }
-            Command::Observe {
-                attempt_id,
-                evidence,
-            } => {
-                let a = current_attempt(&mut next, attempt_id)?;
-                let facts = verifier
-                    .verify(&self.plan, attempt_id, evidence, now)
-                    .map_err(LifecycleError::ObservationVerification)?;
-                if facts.plan_id != s.plan_id
-                    || facts.plan_digest != s.plan_digest
-                    || &facts.attempt_id != attempt_id
-                    || &facts.evidence != evidence
-                    || evidence.runner != a.runner
-                    || facts.observed_at_unix_ms < a.accepted_at_unix_ms
-                    || facts.observed_at_unix_ms > now
-                    || !crate::validation::valid_evidence(a.mode, evidence.kind, &facts.observation)
+        }
+        Ok(())
+    }
+    fn apply_observation(
+        &self,
+        event: &ObservationEvent,
+        now: u64,
+        verifier: &dyn ObservationVerifier,
+        next: &mut Snapshot,
+    ) -> Result<(), LifecycleError> {
+        let s = &self.snapshot;
+
+        let ObservationEvent {
+            attempt_id,
+            evidence,
+            ..
+        } = event;
+        let a = current_attempt(next, attempt_id)?;
+        let facts = verifier
+            .verify(&self.plan, attempt_id, evidence, now)
+            .map_err(LifecycleError::ObservationVerification)?;
+        if facts.plan_id != s.plan_id
+            || facts.plan_digest != s.plan_digest
+            || &facts.attempt_id != attempt_id
+            || &facts.evidence != evidence
+            || evidence.runner != a.runner
+            || facts.observed_at_unix_ms < a.accepted_at_unix_ms
+            || facts.observed_at_unix_ms > now
+            || !crate::validation::valid_evidence(a.mode, evidence.kind, &facts.observation)
+        {
+            return Err(LifecycleError::Observation);
+        }
+        let recorded = RecordedObservation {
+            evidence: evidence.clone(),
+            observed_at_unix_ms: facts.observed_at_unix_ms,
+            observation: facts.observation,
+        };
+        match &recorded.observation {
+            Observation::Exited {
+                total_output_bytes, ..
+            }
+            | Observation::NeverDispatched { total_output_bytes } => {
+                if a.termination.is_some()
+                    || (matches!(recorded.observation, Observation::NeverDispatched { .. })
+                        && a.dispatch.was_dispatched())
                 {
-                    return Err(LifecycleError::Observation);
+                    return Err(LifecycleError::Transition);
                 }
-                let recorded = RecordedObservation {
-                    evidence: evidence.clone(),
-                    observed_at_unix_ms: facts.observed_at_unix_ms,
-                    observation: facts.observation,
-                };
-                match &recorded.observation {
-                    Observation::Exited {
-                        total_output_bytes, ..
-                    }
-                    | Observation::NeverDispatched { total_output_bytes } => {
-                        if a.termination.is_some()
-                            || (matches!(recorded.observation, Observation::NeverDispatched { .. })
-                                && a.dispatch.was_dispatched())
-                        {
-                            return Err(LifecycleError::Transition);
-                        }
-                        if *total_output_bytes < a.output_bytes {
-                            return Err(LifecycleError::Accounting);
-                        }
-                        a.output_bytes = *total_output_bytes;
-                        a.termination = Some(recorded);
-                    }
-                    Observation::Effect { assessment: _ } => {
-                        let t = a.termination.as_ref().ok_or(LifecycleError::Transition)?;
-                        if recorded.observed_at_unix_ms < t.observed_at_unix_ms
-                            || a.assessment.as_ref().is_some_and(|o| {
-                                recorded.observed_at_unix_ms < o.observed_at_unix_ms
-                                    || matches!(
-                                        o.observation,
-                                        Observation::Effect {
-                                            assessment: EffectAssessment::Satisfied
-                                                | EffectAssessment::NoEffect
-                                        }
-                                    )
-                            })
-                        {
-                            return Err(LifecycleError::Transition);
-                        }
-                        a.assessment = Some(recorded);
-                    }
-                    Observation::Uncertain => {
-                        if a.termination.is_some() {
-                            return Err(LifecycleError::Transition);
-                        }
-                        a.dispatch = a.dispatch.uncertain();
-                    }
+                if *total_output_bytes < a.output_bytes {
+                    return Err(LifecycleError::Accounting);
                 }
+                a.output_bytes = *total_output_bytes;
+                a.termination = Some(recorded);
+            }
+            Observation::Effect { assessment: _ } => {
+                let t = a.termination.as_ref().ok_or(LifecycleError::Transition)?;
+                if recorded.observed_at_unix_ms < t.observed_at_unix_ms
+                    || a.assessment.as_ref().is_some_and(|o| {
+                        recorded.observed_at_unix_ms < o.observed_at_unix_ms
+                            || matches!(
+                                o.observation,
+                                Observation::Effect {
+                                    assessment: EffectAssessment::Satisfied
+                                        | EffectAssessment::NoEffect
+                                }
+                            )
+                    })
+                {
+                    return Err(LifecycleError::Transition);
+                }
+                a.assessment = Some(recorded);
+            }
+            Observation::Uncertain => {
+                if a.termination.is_some() {
+                    return Err(LifecycleError::Transition);
+                }
+                a.dispatch = a.dispatch.uncertain();
             }
         }
-        next.updated_at_unix_ms = now;
-        next.revision = s.revision + 1;
-        next.last_event = Some(event);
-        let next = Self::restore(self.plan.clone(), next, self.limits)?;
-        Ok(Evaluation {
-            outcome: EventOutcome::Applied,
-            directive: next.directive(now)?,
-            transition: Some(Transition {
-                expected_revision: s.revision,
-                next,
-            }),
-        })
+
+        Ok(())
     }
+}
+enum Input<'a> {
+    Command(CommandEvent),
+    Observation(ObservationEvent, &'a dyn ObservationVerifier),
 }
 fn current_attempt<'a>(
     s: &'a mut Snapshot,

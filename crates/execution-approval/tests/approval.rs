@@ -511,18 +511,6 @@ fn rejection_reasons_distinguish_renewal_from_temporary_unavailability() {
 
 // A deterministic transaction model, not SQLite/concurrency integration evidence.
 use execution_lifecycle as lifecycle;
-struct NoEvidence;
-impl lifecycle::ObservationVerifier for NoEvidence {
-    fn verify(
-        &self,
-        _: &FrozenPlan,
-        _: &AttemptId,
-        _: &EvidenceRef,
-        _: u64,
-    ) -> Result<lifecycle::ObservationFacts, lifecycle::ObservationError> {
-        Err(lifecycle::ObservationError::Unavailable)
-    }
-}
 struct Store {
     plan: FrozenPlan,
     state: lifecycle::Execution,
@@ -541,13 +529,13 @@ impl Store {
             },
         )
         .unwrap();
-        let event = lifecycle::Event {
+        let event = lifecycle::CommandEvent {
             id: EventId::new("prepare").unwrap(),
             expected_revision: 0,
             command: lifecycle::Command::Prepare,
         };
         let state = state
-            .evaluate(event, 1100, &NoEvidence)
+            .evaluate(event, 1100)
             .unwrap()
             .transition
             .unwrap()
@@ -562,7 +550,7 @@ impl Store {
         }
     }
     fn candidate(&self) -> lifecycle::Transition {
-        let event = lifecycle::Event {
+        let event = lifecycle::CommandEvent {
             id: EventId::new("intent").unwrap(),
             expected_revision: self.state.snapshot().revision,
             command: lifecycle::Command::BeginAttempt {
@@ -572,7 +560,7 @@ impl Store {
             },
         };
         self.state
-            .evaluate(event, 1500, &NoEvidence)
+            .evaluate(event, 1500)
             .unwrap()
             .transition
             .unwrap()
@@ -707,7 +695,10 @@ fn consumption_commit_replay_and_crash_preserve_starting_without_redispatch() {
         .commit(&approval, replay, 1600, false)
         .unwrap()
         .is_none());
-    let result = store.state.evaluate(event, 1600, &NoEvidence).unwrap();
+    let lifecycle::EventRecord::Command(event) = event else {
+        panic!("command expected")
+    };
+    let result = store.state.evaluate(event, 1600).unwrap();
     assert_eq!(result.outcome, lifecycle::EventOutcome::Duplicate);
     assert!(result.transition.is_none());
     let restored = lifecycle::Execution::restore(
@@ -731,14 +722,14 @@ fn competing_lifecycle_and_consumption_cas_reject_dispatch() {
     let approval = check(&p, &required(&p), &bindings(), &verifier(&p));
     let mut store = Store::prepared();
     let candidate = store.candidate();
-    let cancel = lifecycle::Event {
+    let cancel = lifecycle::CommandEvent {
         id: EventId::new("cancel").unwrap(),
         expected_revision: store.state.snapshot().revision,
         command: lifecycle::Command::Cancel,
     };
     store.state = store
         .state
-        .evaluate(cancel, 1400, &NoEvidence)
+        .evaluate(cancel, 1400)
         .unwrap()
         .transition
         .unwrap()

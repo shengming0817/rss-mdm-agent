@@ -26,17 +26,36 @@ impl ObservationVerifier for TestEvidence {
         })
     }
 }
-fn apply(s: Execution, name: &str, command: Command, now: u64, fact: Observation) -> Execution {
-    let event = Event {
+fn apply(s: Execution, name: &str, command: Command, now: u64) -> Execution {
+    let event = CommandEvent {
         id: EventId::new(name).unwrap(),
         expected_revision: s.snapshot().revision,
         command,
     };
-    let transition = s
-        .evaluate(event, now, &TestEvidence(fact))
-        .unwrap()
-        .transition
+    let evaluation = s.evaluate(event, now).unwrap();
+    commit(s, evaluation)
+}
+fn observe(
+    s: Execution,
+    name: &str,
+    attempt_id: AttemptId,
+    evidence: EvidenceRef,
+    now: u64,
+    fact: Observation,
+) -> Execution {
+    let event = ObservationEvent {
+        id: EventId::new(name).unwrap(),
+        expected_revision: s.snapshot().revision,
+        attempt_id,
+        evidence,
+    };
+    let evaluation = s
+        .evaluate_observation(event, now, &TestEvidence(fact))
         .unwrap();
+    commit(s, evaluation)
+}
+fn commit(s: Execution, evaluation: Evaluation) -> Execution {
+    let transition = evaluation.transition.unwrap();
     // In-memory test commit only; C18 must supply atomic authorization/consumption/storage.
     let mut committed = s;
     let action = transition
@@ -70,7 +89,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let time = plan.spec().validity.not_before_unix_ms;
     let s = Execution::open(plan.clone(), time, bounds)?;
-    let s = apply(s, "prepare", Command::Prepare, time, Observation::Uncertain);
+    let s = apply(s, "prepare", Command::Prepare, time);
     let attempt = AttemptId::new("test-attempt")?;
     let runner = Id::new("test-runner")?;
     let s = apply(
@@ -82,10 +101,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             mode: ExecutionMode::Test,
         },
         time,
-        Observation::Uncertain,
     );
     assert_eq!(s.phase(), Phase::Starting);
-    let s = apply(s, "restart", Command::Recover, time, Observation::Uncertain);
+    let s = apply(s, "restart", Command::Recover, time);
     assert_eq!(s.directive(time)?, Directive::Reconcile);
     let evidence = |name: &str| EvidenceRef {
         reference: VersionedRef {
@@ -95,13 +113,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         kind: EvidenceKind::TestResult,
         runner: runner.clone(),
     };
-    let s = apply(
+    let s = observe(
         s,
         "exit",
-        Command::Observe {
-            attempt_id: attempt.clone(),
-            evidence: evidence("test-exit"),
-        },
+        attempt.clone(),
+        evidence("test-exit"),
         time,
         Observation::Exited {
             exit_code: 0,
@@ -111,13 +127,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(s.directive(time)?, Directive::VerifyTarget);
     let encoded = serde_json::to_vec(s.snapshot())?;
     let s = Execution::decode(plan, &encoded, bounds)?;
-    let s = apply(
+    let s = observe(
         s,
         "verify",
-        Command::Observe {
-            attempt_id: attempt,
-            evidence: evidence("test-target"),
-        },
+        attempt,
+        evidence("test-target"),
         time,
         Observation::Effect {
             assessment: EffectAssessment::Satisfied,

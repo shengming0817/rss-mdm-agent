@@ -1,4 +1,6 @@
-use crate::{Command, Directive, EventOutcome, Execution, ExecutionMode};
+use crate::{
+    Command, CommandEvent, Directive, EventOutcome, EventRecord, Execution, ExecutionMode,
+};
 use execution_contract::{AttemptId, Digest, Id, PlanId};
 
 /// Outcome reported by the trusted atomic persistence owner.
@@ -43,11 +45,15 @@ impl Transition {
             return Ok(None);
         }
         let s = self.next.snapshot();
-        let Some(Command::BeginAttempt {
-            attempt_id,
-            runner,
-            mode,
-        }) = s.last_event.as_ref().map(|e| &e.command)
+        let Some(EventRecord::Command(CommandEvent {
+            command:
+                Command::BeginAttempt {
+                    attempt_id,
+                    runner,
+                    mode,
+                },
+            ..
+        })) = &s.last_event
         else {
             return Ok(None);
         };

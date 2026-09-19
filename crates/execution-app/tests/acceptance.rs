@@ -128,7 +128,7 @@ fn failed_stop_diagnostic_write_still_allows_terminal_fact_writes() {
     let mut app = open(&db, host, runner, Startup::CreateTest);
     app.submit(r, &p).unwrap();
     app.cancel(r).unwrap();
-    db.sql().execute_batch("CREATE TRIGGER fail_stop BEFORE UPDATE OF snapshot ON executions WHEN json_extract(CAST(NEW.snapshot AS TEXT), '$.lastEvent.command.kind')='stopReported' BEGIN SELECT RAISE(ABORT, 'fixture stop write failure'); END;").unwrap();
+    db.sql().execute_batch("CREATE TRIGGER fail_stop BEFORE UPDATE OF snapshot ON executions WHEN json_extract(CAST(NEW.snapshot AS TEXT), '$.lastEvent.event.command.kind')='stopReported' BEGIN SELECT RAISE(ABORT, 'fixture stop write failure'); END;").unwrap();
     assert_eq!(app.reconcile(r).unwrap_err(), Error::Conflict);
     let status = app.status(r).unwrap();
     assert!(status.cancel_requested);

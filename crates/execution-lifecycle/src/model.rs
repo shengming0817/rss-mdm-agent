@@ -254,13 +254,6 @@ pub enum Command {
     Cancel,
     /// Mark active execution uncertain after a host restart.
     Recover,
-    /// Resolve a reference through ObservationVerifier.
-    Observe {
-        /// Current attempt only.
-        attempt_id: AttemptId,
-        /// Untrusted reference until verified.
-        evidence: EvidenceRef,
-    },
     /// Account monotonic runner output from the trusted host, never UI/AI.
     /// After termination, late partial counts are acknowledged without reducing the
     /// settled total; counts above the authenticated final total are rejected.
@@ -274,13 +267,57 @@ pub enum Command {
 /// Stable command identity plus expected journal revision.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Event {
+pub struct CommandEvent {
     /// Stable id for this command and its direct retries.
     pub id: EventId,
     /// Revision on which this command was computed.
     pub expected_revision: u64,
     /// Closed command vocabulary.
     pub command: Command,
+}
+/// An evidence reference to resolve through the trusted observation boundary.
+/// This input is not a verified fact and cannot be evaluated as a host command.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ObservationEvent {
+    /// Stable id for this observation and its direct retries.
+    pub id: EventId,
+    /// Revision on which this observation was submitted.
+    pub expected_revision: u64,
+    /// Exact current attempt.
+    pub attempt_id: AttemptId,
+    /// Untrusted reference until verified.
+    pub evidence: EvidenceRef,
+}
+/// One recorded input for persistence and exact retry comparison, never an execution entrypoint.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    content = "event",
+    rename_all = "camelCase",
+    deny_unknown_fields
+)]
+pub enum EventRecord {
+    /// A host command.
+    Command(CommandEvent),
+    /// An observation reference whose facts were verified before application.
+    Observation(ObservationEvent),
+}
+impl EventRecord {
+    /// Stable identity shared by commands and observations.
+    pub fn id(&self) -> &EventId {
+        match self {
+            Self::Command(e) => &e.id,
+            Self::Observation(e) => &e.id,
+        }
+    }
+    /// Revision against which the input was evaluated.
+    pub fn expected_revision(&self) -> u64 {
+        match self {
+            Self::Command(e) => e.expected_revision,
+            Self::Observation(e) => e.expected_revision,
+        }
+    }
 }
 /// Sole current journal format; no legacy readers or automatic empty-state fallback.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -310,8 +347,8 @@ pub struct Snapshot {
     pub prior_output_bytes: u64,
     /// Current attempt, retained after termination.
     pub attempt: Option<AttemptSnapshot>,
-    /// Most recently committed command for bounded direct-retry detection.
-    pub last_event: Option<Event>,
+    /// Most recently committed input for bounded direct-retry detection.
+    pub last_event: Option<EventRecord>,
 }
 /// Explicit snapshot envelope. The minimum reserves space for any valid bounded terminal state.
 #[derive(Debug, Clone, Copy)]

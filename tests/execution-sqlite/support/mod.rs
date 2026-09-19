@@ -133,7 +133,6 @@ pub struct TestHost {
     pub expire_during_admission: bool,
     pub snapshot_clock: Option<u64>,
     pub answer_clock: Option<u64>,
-    pub observation: Observation,
 }
 impl TestHost {
     pub fn new(records: usize) -> Self {
@@ -168,7 +167,6 @@ impl TestHost {
             expire_during_admission: false,
             snapshot_clock: None,
             answer_clock: None,
-            observation: Observation::Uncertain,
         }
     }
     pub fn scope(&self) -> Scope {
@@ -193,7 +191,7 @@ impl TestHost {
             .open_execution(&operation("open"), &self.plan, self)
             .unwrap();
         store
-            .apply_execution(
+            .apply_command(
                 &operation("prepare"),
                 &self.scope(),
                 &event("prepare", 0, lifecycle::Command::Prepare),
@@ -202,7 +200,7 @@ impl TestHost {
             )
             .unwrap();
     }
-    pub fn begin(&self) -> lifecycle::Event {
+    pub fn begin(&self) -> lifecycle::CommandEvent {
         event(
             "begin",
             1,
@@ -340,7 +338,19 @@ impl AuthorityVerifier for TestHost {
         })
     }
 }
-impl ObservationVerifier for TestHost {
+pub struct TestEvidence {
+    pub observation: Observation,
+    pub calls: Cell<u32>,
+}
+impl TestEvidence {
+    pub fn new(observation: Observation) -> Self {
+        Self {
+            observation,
+            calls: Cell::new(0),
+        }
+    }
+}
+impl ObservationVerifier for TestEvidence {
     fn verify(
         &self,
         plan: &FrozenPlan,
@@ -348,6 +358,7 @@ impl ObservationVerifier for TestHost {
         evidence: &EvidenceRef,
         now: u64,
     ) -> Result<ObservationFacts, ObservationError> {
+        self.calls.set(self.calls.get() + 1);
         Ok(ObservationFacts {
             plan_id: plan.spec().plan_id.clone(),
             plan_digest: plan.digest().clone(),
@@ -358,11 +369,24 @@ impl ObservationVerifier for TestHost {
         })
     }
 }
-pub fn event(name: &str, revision: u64, command: lifecycle::Command) -> lifecycle::Event {
-    lifecycle::Event {
+pub fn event(name: &str, revision: u64, command: lifecycle::Command) -> lifecycle::CommandEvent {
+    lifecycle::CommandEvent {
         id: EventId::new(name).unwrap(),
         expected_revision: revision,
         command,
+    }
+}
+pub fn observation_event(
+    name: &str,
+    revision: u64,
+    attempt_id: AttemptId,
+    evidence: EvidenceRef,
+) -> lifecycle::ObservationEvent {
+    lifecycle::ObservationEvent {
+        id: EventId::new(name).unwrap(),
+        expected_revision: revision,
+        attempt_id,
+        evidence,
     }
 }
 pub fn spec(host: &TestHost) -> execution_interaction::Spec {
