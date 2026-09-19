@@ -16,7 +16,7 @@
     "typecheck": "vue-tsc --noEmit -p tsconfig.json",
     "check:boundaries": "node --test scripts/boundaries.test.mjs",
     "check:consumer": "node scripts/check-consumer.mjs",
-    "format:check": "prettier --check packages/ui/runtime.ts packages/ui/src packages/ui/tests apps/desktop/src scripts packages/ai-contract/src tests/ai-contract packages/ai-access/src packages/ai-client/src packages/ai-ui-bridge/src tests/ai-access packages/ai-adapters/claude/src tests/ai-adapters/claude packages/ai-store-sqlite/src tests/ai-store-recovery",
+    "format:check": "prettier --check packages/ui/runtime.ts packages/ui/src packages/ui/tests apps/desktop/src scripts packages/ai-contract/src tests/ai-contract packages/ai-access/src packages/ai-client/src packages/ai-ui-bridge/src tests/ai-access packages/ai-adapters/claude/src tests/ai-adapters/claude packages/ai-store-sqlite/src tests/ai-store-recovery packages/ai-adapters/codex/src tests/ai-adapters/codex",
     "generate:ai-contract": "node scripts/generate-ai-contract.mjs",
     "check:ai-contract": "node scripts/generate-ai-contract.mjs --check",
     "build:ai-contract": "pnpm --filter @rss-mdm-agent/ai-contract build",
@@ -32,7 +32,13 @@
     "smoke:claude": "node scripts/smoke-claude.mjs",
     "build:ai-store": "pnpm build:ai-contract && pnpm --filter @rss-mdm-agent/ai-store-sqlite build",
     "test:ai-store": "pnpm build:ai-store && node --test tests/ai-store-recovery/*.test.mjs",
-    "check:ai-store-consumer": "node scripts/check-ai-store-consumer.mjs"
+    "check:ai-store-consumer": "node scripts/check-ai-store-consumer.mjs",
+    "generate:codex-protocol": "node scripts/generate-codex-protocol.mjs",
+    "check:codex-protocol": "node scripts/generate-codex-protocol.mjs --check",
+    "build:ai-codex": "pnpm build:ai-contract && pnpm --filter @rss-mdm-agent/ai-adapter-codex build",
+    "test:ai-codex": "pnpm build:ai-codex && node --test tests/ai-adapters/codex/*.test.mjs",
+    "check:codex-consumer": "node scripts/check-codex-consumer.mjs",
+    "smoke:codex": "node scripts/smoke-codex.mjs"
   },
   "devDependencies": {
     "@types/node": "24.3.0",

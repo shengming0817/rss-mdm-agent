@@ -579,6 +579,12 @@ pub struct Binding {
     #[doc = "Provider-owned context session identifier; history alone cannot recreate it."]
     #[serde(rename = "nativeSessionId")]
     pub native_session_id: Id,
+    #[doc = "Provider-owned thread identity within the native session tree; required when the provider exposes distinct threads."]
+    #[serde(
+        rename = "nativeThreadId",
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    pub native_thread_id: ::std::option::Option<Id>,
     #[doc = "Provider adapter identity."]
     pub provider: Id,
     #[doc = "Pinned native provider implementation version."]
@@ -1640,6 +1646,12 @@ pub struct DispatchAttempt {
     #[doc = "Provider-owned context session identifier; history alone cannot recreate it."]
     #[serde(rename = "nativeSessionId")]
     pub native_session_id: Id,
+    #[doc = "Provider-owned thread identity within the native session tree; required when the provider exposes distinct threads."]
+    #[serde(
+        rename = "nativeThreadId",
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    pub native_thread_id: ::std::option::Option<Id>,
     #[doc = "Current verified provider incarnation permitted to observe this attempt."]
     #[serde(rename = "observerGeneration")]
     pub observer_generation: Id,

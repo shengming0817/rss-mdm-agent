@@ -1015,6 +1015,8 @@ export interface DispatchAttempt {
   observerGeneration: Id;
   /** Append-once native lookup key returned for ambiguous submission. */
   correlationId?: Id;
+  /** Provider-owned thread identity within the native session tree; required when the provider exposes distinct threads. */
+  nativeThreadId?: Id;
 }
 /**
  * Value-free failure and explicit retry discipline.
@@ -1133,6 +1135,8 @@ export interface Binding {
   nativeRequestId?: Id;
   /** SHA-256 identity of the normalized absolute workspace path. Filesystem containment remains owned by the provider adapter and composition root. */
   workspaceId: Id;
+  /** Provider-owned thread identity within the native session tree; required when the provider exposes distinct threads. */
+  nativeThreadId?: Id;
 }
 /**
  * Immutable configuration identity and revision; contains no credentials.

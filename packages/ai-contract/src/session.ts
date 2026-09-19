@@ -162,7 +162,8 @@ export class VerifiedProviderSession {
           providerIdentity(this.#binding),
         ) ||
         original.dispatch.observerGeneration !== this.#binding.generation ||
-        original.dispatch.nativeSessionId !== this.#binding.nativeSessionId
+        original.dispatch.nativeSessionId !== this.#binding.nativeSessionId ||
+        original.dispatch.nativeThreadId !== this.#binding.nativeThreadId
       )
         return denied();
       return await withinBudget(
@@ -390,6 +391,7 @@ export class VerifiedProviderSession {
         binding.accountRef !== prior.accountRef ||
         !same(binding.config, prior.config) ||
         binding.nativeSessionId !== prior.nativeSessionId ||
+        binding.nativeThreadId !== prior.nativeThreadId ||
         capabilities.continuation !== "across_processes"
       )
         return denied();

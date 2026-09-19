@@ -108,3 +108,10 @@ SessionState 是 adapter 持有的完整持久化状态，包括全部历史 gen
 Claude adapter 的合并集成同样使用显式 DispatchAttempt 和完整 CommandRecord。ProviderObservation 新增两类原生事实：submitted 表示该 attempt 获得原生接纳确认；interaction_unavailable 表示活 callback 已失效。它们携带当前 binding/commandId/attemptId，Host 验证后原子更新账本和稳定事件，adapter 不直接发布 Host 生命周期事件。共享 Provider conformance 的迟到 resume 场景从另一个已准入并关闭的实例取得真实 prior binding，避免用无效测试版本绕过实际恢复路径。
 
 集成入口：浏览器使用主入口的 codec、wire 与协议；Node Host 从 `@rss-mdm-agent/ai-contract/session` 导入 VerifiedProviderSession/workspaceIdentity，从 `/transitions` 消费持久化状态规则。内存和 SQLite 共用 `/read-views` 的 snapshotPage/listSessions 同水位分页；续页绑定 scope、limit 和不可变视图，30秒失效，重启后返回 cursor_expired，单实例最多128份视图/16MiB保留内容。客户端重新抓取快照后按持久 cursor 接续，分页缓存不授予回调权限。
+
+
+## 原生 thread 与 turn 的多命令绑定（#2405）
+
+Binding 和 DispatchAttempt 增加可选 nativeThreadId；拥有独立 thread 的 provider 必须同时持久化原生 session/thread，不得折叠或互相推导。它属于跨 generation 不可变的 providerIdentity；恢复、reconcile、观察投影和 SQLite 均校验。原生模型只有 session 的 provider 不填写 thread，禁止为 Codex 缺失 thread 的记录伪造兼容值。
+
+同一原生 turn 可以接收一个普通 prompt 和多个 steer，每条命令保留独立 attempt/nativeRequestId。任何未决已派发 prompt（含 unknown）都会阻止下一条普通 prompt；steer 只能定位当前已确认普通 prompt 的活动 run，intent 即携带目标 nativeRunId。输出按实际命令坐标核验，不能把 session.binding 当前 request 当成同 turn 唯一 request。run/request 只有在该 turn 的所有已派发 prompt 结束后才可整体清除；未确认 steer 不因普通 prompt 终态而自动结束，必须核实原 attempt。ACP cancel 按 native session/thread/run 去重，优先选普通 prompt 作为中断目标。
