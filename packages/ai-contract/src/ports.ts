@@ -135,6 +135,13 @@ export type ProviderEventBody = Extract<
   }
 >;
 export type ProviderObservation = { readonly attemptId: Id } & (
+  | { type: "submitted"; binding: Binding; commandId: Id }
+  | {
+      type: "interaction_unavailable";
+      binding: Binding;
+      commandId: Id;
+      interactionId: Id;
+    }
   | {
       type: "event";
       binding: Binding;

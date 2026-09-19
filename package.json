@@ -16,7 +16,7 @@
     "typecheck": "vue-tsc --noEmit -p tsconfig.json",
     "check:boundaries": "node --test scripts/boundaries.test.mjs",
     "check:consumer": "node scripts/check-consumer.mjs",
-    "format:check": "prettier --check packages/ui/runtime.ts packages/ui/src packages/ui/tests apps/desktop/src scripts packages/ai-contract/src tests/ai-contract packages/ai-store-sqlite/src tests/ai-store-recovery",
+    "format:check": "prettier --check packages/ui/runtime.ts packages/ui/src packages/ui/tests apps/desktop/src scripts packages/ai-contract/src tests/ai-contract packages/ai-adapters/claude/src tests/ai-adapters/claude packages/ai-store-sqlite/src tests/ai-store-recovery",
     "generate:ai-contract": "node scripts/generate-ai-contract.mjs",
     "check:ai-contract": "node scripts/generate-ai-contract.mjs --check",
     "build:ai-contract": "pnpm --filter @rss-mdm-agent/ai-contract build",
@@ -24,7 +24,11 @@
     "check:ai-consumer": "node scripts/check-ai-consumer.mjs",
     "build:ai-store": "pnpm build:ai-contract && pnpm --filter @rss-mdm-agent/ai-store-sqlite build",
     "test:ai-store": "pnpm build:ai-store && node --test tests/ai-store-recovery/*.test.mjs",
-    "check:ai-store-consumer": "node scripts/check-ai-store-consumer.mjs"
+    "check:ai-store-consumer": "node scripts/check-ai-store-consumer.mjs",
+    "build:ai-claude": "pnpm build:ai-contract && pnpm --filter @rss-mdm-agent/ai-adapter-claude build",
+    "test:ai-claude": "pnpm build:ai-claude && node --test tests/ai-adapters/claude/*.test.mjs",
+    "check:claude-consumer": "node scripts/check-claude-consumer.mjs",
+    "smoke:claude": "node scripts/smoke-claude.mjs"
   },
   "devDependencies": {
     "@types/node": "24.3.0",
