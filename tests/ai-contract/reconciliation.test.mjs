@@ -46,7 +46,7 @@ function reset(session, record, proof) {
     { type: "status", state: "accepted" },
   ]);
   batch.events[0].attemptId = record.dispatch.attemptId;
-  return { ...batch, nowMs: 1, reconciliations: [proof] };
+  return { ...batch, nowMs: 1, providerFacts: [proof] };
 }
 test("verified observation cannot be copied, altered, or used across namespace and original records", async () => {
   const { store, session, record } = await pending();

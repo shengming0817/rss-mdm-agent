@@ -218,8 +218,20 @@ export function createAccessService(options: AccessOptions) {
     }
     const event = item.event,
       body = event.body;
+    if (body.type === "session_recovery_unavailable") {
+      for (const waiter of pump.waiters.values())
+        waiter.reject(new RequestError(-32001, "reconciliation_required"));
+      pump.waiters.clear();
+      return;
+    }
     if (event.commandId === undefined) return;
-    if (body.type === "invalidated") {
+    if (body.type === "cancelled") {
+      pump.terminal.add(event.commandId);
+      pump.waiters.get(event.commandId)?.resolve("cancelled");
+      pump.waiters.delete(event.commandId);
+    } else if (body.type === "acknowledged") {
+      pump.terminal.add(event.commandId);
+    } else if (body.type === "invalidated") {
       pump.terminal.add(event.commandId);
       pump.waiters
         .get(event.commandId)
@@ -609,7 +621,9 @@ export function createAccessService(options: AccessOptions) {
         for (const record of page.commands)
           if (
             record.command.input.type === "prompt" &&
-            record.state !== "terminal" &&
+            !["terminal", "invalidated", "acknowledged", "cancelled"].includes(
+              record.state,
+            ) &&
             (!record.dispatch ||
               record.dispatch.nativeRunId === s.binding.nativeRunId)
           )

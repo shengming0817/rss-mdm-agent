@@ -1,0 +1,34 @@
+{
+  "name": "@rss-mdm-agent/ai-host-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "rss-ai-host": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@rss-mdm-agent/ai-contract": "workspace:*",
+    "@rss-mdm-agent/ai-host": "workspace:*",
+    "@rss-mdm-agent/ai-store-sqlite": "workspace:*",
+    "@rss-mdm-agent/ai-access": "workspace:*",
+    "@rss-mdm-agent/ai-adapter-claude": "workspace:*"
+  },
+  "engines": {
+    "node": "24.14.1"
+  }
+}

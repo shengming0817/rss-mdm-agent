@@ -6,6 +6,7 @@ import type {
   Budget,
   Clock,
   ProviderConfiguration,
+  ToolEndpoint,
 } from "@rss-mdm-agent/ai-contract";
 // The installed package manifests own compatibility identity, including packed consumers.
 const manifest = (url: URL) => JSON.parse(readFileSync(url, "utf8"));
@@ -41,6 +42,7 @@ export interface ResolvedClaudeConfiguration {
   model?: string;
 }
 export interface ClaudeAdapterOptions {
+  readonly tools?: ToolEndpoint;
   resolveConfiguration(
     identity: Pick<Binding, "config" | "accountRef">,
     budget: Budget,

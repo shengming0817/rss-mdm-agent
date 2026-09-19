@@ -128,12 +128,26 @@ test("unknown submit and cancel request do not manufacture terminal or tool auth
   const { binding } = unwrap(await port.createSession(configuration, budget()));
   port.submission = "unknown";
   assert.equal(
-    (await port.submit(binding, fixtureCommand(), intent(binding), budget()))
+    (await port.dispatch(binding, fixtureCommand(), intent(binding), budget()))
       .certainty,
     "unknown",
   );
   assert.equal(
-    (await port.cancel(binding, fixtureCommand(), budget())).value,
+    (
+      await acknowledge(
+        port,
+        binding,
+        {
+          ...fixtureCommand(),
+          input: {
+            type: "cancel",
+            targetCommandId: "command-1",
+            generation: binding.generation,
+          },
+        },
+        budget(),
+      )
+    ).value,
     "request_only",
   );
   assert.equal(
@@ -187,7 +201,7 @@ test("equivalent binding property order does not reject submission", async () =>
   const reordered = Object.fromEntries(Object.entries(binding).reverse());
   assert.equal(
     (
-      await port.submit(
+      await port.dispatch(
         reordered,
         fixtureCommand(),
         intent(reordered),
@@ -276,8 +290,9 @@ test("controlled admission requires a trusted verifier and binds immutable evide
           Object.assign(new ScriptedProvider(), {
             createSession: port.createSession,
           }),
-          { ...configuration, ...patch },
+          providerConfiguration({ ...configuration, ...patch }),
           budget(),
+          providerAdmission({ ...configuration, ...patch }),
         )
       ).ok,
       false,
@@ -290,7 +305,12 @@ test("controlled admission requires a trusted verifier and binds immutable evide
     verifier,
   };
   const admitted = unwrap(
-    await VerifiedProviderSession.open(port, config, budget()),
+    await VerifiedProviderSession.open(
+      port,
+      providerConfiguration(config),
+      budget(),
+      providerAdmission(config),
+    ),
   );
   assert.equal(verified, 1);
   assert.equal(admitted.matches(facts.binding, tools), true);
@@ -333,8 +353,9 @@ test("controlled admission requires a trusted verifier and binds immutable evide
     (
       await VerifiedProviderSession.open(
         port,
-        { ...config, accountRef: "other" },
+        providerConfiguration({ ...config, accountRef: "other" }),
         budget(),
+        providerAdmission({ ...config, accountRef: "other" }),
       )
     ).ok,
     false,
@@ -343,8 +364,15 @@ test("controlled admission requires a trusted verifier and binds immutable evide
     (
       await VerifiedProviderSession.open(
         port,
-        { ...config, config: { id: "different", revision: "1" } },
+        providerConfiguration({
+          ...config,
+          config: { id: "different", revision: "1" },
+        }),
         budget(),
+        providerAdmission({
+          ...config,
+          config: { id: "different", revision: "1" },
+        }),
       )
     ).ok,
     false,
@@ -353,7 +381,7 @@ test("controlled admission requires a trusted verifier and binds immutable evide
     (
       await VerifiedProviderSession.open(
         port,
-        {
+        providerConfiguration({
           ...config,
           verifier: {
             verify: async () => ({
@@ -361,8 +389,17 @@ test("controlled admission requires a trusted verifier and binds immutable evide
               error: { code: "permission_denied", retry: "never" },
             }),
           },
-        },
+        }),
         budget(),
+        providerAdmission({
+          ...config,
+          verifier: {
+            verify: async () => ({
+              ok: false,
+              error: { code: "permission_denied", retry: "never" },
+            }),
+          },
+        }),
       )
     ).ok,
     false,
@@ -372,14 +409,24 @@ test("controlled admission requires a trusted verifier and binds immutable evide
 test("one provider instance admits once; parallel duplicate admission preserves the successful session", async () => {
   const port = new ScriptedProvider();
   const [first, repeated] = await Promise.all([
-    VerifiedProviderSession.open(port, configuration, budget()),
-    VerifiedProviderSession.open(port, configuration, budget()),
+    VerifiedProviderSession.open(
+      port,
+      providerConfiguration(configuration),
+      budget(),
+      providerAdmission(configuration),
+    ),
+    VerifiedProviderSession.open(
+      port,
+      providerConfiguration(configuration),
+      budget(),
+      providerAdmission(configuration),
+    ),
   ]);
   const admitted = unwrap(first);
   assert.equal(repeated.ok, false);
   assert.equal(
     (
-      await port.submit(
+      await port.dispatch(
         admitted.binding,
         fixtureCommand(),
         intent(admitted.binding),
@@ -396,13 +443,7 @@ test("each conformance operation owns a fresh non-aborted signal", async () => {
     (scenario) => {
       const port = new ScriptedProvider();
       port.submission = scenario;
-      for (const name of [
-        "createSession",
-        "submit",
-        "cancel",
-        "reconcile",
-        "close",
-      ]) {
+      for (const name of ["createSession", "dispatch", "reconcile", "close"]) {
         const original = port[name].bind(port);
         port[name] = (...args) => {
           const b = args.at(-1);
@@ -421,8 +462,7 @@ test("each conformance operation owns a fresh non-aborted signal", async () => {
 });
 
 for (const operation of [
-  "submit",
-  "cancel",
+  "dispatch",
   "reconcile",
   "observe-next",
   "observe-return",
@@ -486,7 +526,7 @@ test("independent provider instances cannot accept each other's binding", async 
   assert.notDeepEqual(first.binding, second.binding);
   assert.equal(
     (
-      await b.submit(
+      await b.dispatch(
         first.binding,
         fixtureCommand(),
         intent(first.binding),
@@ -497,7 +537,7 @@ test("independent provider instances cannot accept each other's binding", async 
   );
   assert.equal(
     (
-      await b.submit(
+      await b.dispatch(
         second.binding,
         fixtureCommand(),
         intent(second.binding),
@@ -555,7 +595,7 @@ test("verified resume re-admits the new incarnation and the exact endpoint", asy
   port.resume = async (binding, actual, operationBudget) => {
     resumed++;
     assert.deepEqual(binding, prior);
-    assert.equal(actual.tools, tools);
+    assert.equal(actual.tools, undefined);
     assert.ok(operationBudget.timeoutMs > 0);
     return { ok: true, value: facts };
   };
@@ -563,8 +603,9 @@ test("verified resume re-admits the new incarnation and the exact endpoint", asy
     await VerifiedProviderSession.restore(
       port,
       { ...fixtureSession(), binding: prior },
-      config,
+      providerConfiguration(config),
       budget(),
+      providerAdmission(config),
     ),
   );
   assert.equal(resumed, 1);
@@ -612,12 +653,18 @@ for (const operation of ["open", "resume"])
       };
       const result =
         operation === "open"
-          ? await VerifiedProviderSession.open(port, config, budget())
+          ? await VerifiedProviderSession.open(
+              port,
+              providerConfiguration(config),
+              budget(),
+              providerAdmission(config),
+            )
           : await VerifiedProviderSession.restore(
               port,
               { ...fixtureSession(), binding: prior },
-              config,
+              providerConfiguration(config),
               budget(),
+              providerAdmission(config),
             );
       assert.equal(result.ok, false);
       assert.equal(closed, 1);
@@ -653,8 +700,9 @@ test("verified resume rejects stale incarnation, foreign session and configurati
         await VerifiedProviderSession.restore(
           port,
           { ...fixtureSession(), binding: prior },
-          configuration,
+          providerConfiguration(configuration),
           budget(),
+          providerAdmission(configuration),
         )
       ).ok,
       false,
@@ -678,10 +726,47 @@ test("verified resume requires across-process continuation capability", async ()
       await VerifiedProviderSession.restore(
         port,
         { ...fixtureSession(), binding: prior },
-        configuration,
+        providerConfiguration(configuration),
         budget(),
+        providerAdmission(configuration),
       )
     ).ok,
     false,
   );
 });
+
+// Assert control acknowledgements separately from model-turn outcomes.
+async function acknowledge(provider, binding, command, budget) {
+  const result = await provider.dispatch(
+    binding,
+    command,
+    {
+      attemptId: "control-" + command.commandId,
+      originGeneration: binding.generation,
+      observerGeneration: binding.generation,
+      nativeSessionId: binding.nativeSessionId,
+      certainty: "intent",
+    },
+    budget,
+  );
+  if (result.certainty === "not_sent")
+    return { ok: false, error: result.error };
+  if (result.certainty === "unknown")
+    return {
+      ok: false,
+      error: { code: "unavailable", retry: "reconcile_first" },
+    };
+  assert.equal(result.certainty, "acknowledged");
+  assert.equal(result.acknowledgement.type, command.input.type);
+  return { ok: true, value: result.acknowledgement.confirmation };
+}
+
+// Fixture bundles keep parent-only admission inputs separate from worker configuration.
+function providerConfiguration({ tools, verifier, ...configuration }) {
+  return configuration;
+}
+function providerAdmission({ tools, verifier }) {
+  return tools !== undefined || verifier !== undefined
+    ? { tools, verifier }
+    : undefined;
+}

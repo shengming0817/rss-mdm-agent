@@ -254,6 +254,79 @@ impl<'de> ::serde::Deserialize<'de> for AccessUpdateSchemaVersion {
             .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
     }
 }
+#[doc = "Native control acknowledgement; never a model turn outcome."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(tag = "type", content = "confirmation")]
+pub enum Acknowledgement {
+    #[serde(rename = "cancel")]
+    #[doc = "`Cancel` alternative; see the parent type's schema contract."]
+    Cancel(
+        #[doc = "`` member; see its generated type and parent schema."] AcknowledgementConfirmation,
+    ),
+    #[serde(rename = "respond")]
+    #[doc = "`Respond` alternative; see the parent type's schema contract."]
+    Respond,
+    #[serde(rename = "steer")]
+    #[doc = "`Steer` alternative; see the parent type's schema contract."]
+    Steer,
+}
+impl ::std::convert::From<AcknowledgementConfirmation> for Acknowledgement {
+    fn from(value: AcknowledgementConfirmation) -> Self {
+        Self::Cancel(value)
+    }
+}
+#[doc = "Provider confirms the control request, not a model terminal."]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum AcknowledgementConfirmation {
+    #[serde(rename = "request_only")]
+    #[doc = "`RequestOnly` alternative; see the parent type's schema contract."]
+    RequestOnly,
+    #[serde(rename = "already_terminal")]
+    #[doc = "`AlreadyTerminal` alternative; see the parent type's schema contract."]
+    AlreadyTerminal,
+}
+impl ::std::fmt::Display for AcknowledgementConfirmation {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::RequestOnly => f.write_str("request_only"),
+            Self::AlreadyTerminal => f.write_str("already_terminal"),
+        }
+    }
+}
+impl ::std::str::FromStr for AcknowledgementConfirmation {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "request_only" => Ok(Self::RequestOnly),
+            "already_terminal" => Ok(Self::AlreadyTerminal),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for AcknowledgementConfirmation {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for AcknowledgementConfirmation {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
 #[doc = "`ActionRequest`"]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
@@ -647,8 +720,6 @@ pub struct Capabilities {
     pub fork: CapabilityState,
     #[doc = "Whether provider-specific multimodal input is available through an adapter extension."]
     pub multimodal: CapabilityState,
-    #[doc = "Whether additional prompts may be queued while a run is active."]
-    pub queue: CapabilityState,
     #[doc = "Whether an active native run accepts targeted steering."]
     pub steer: CapabilityState,
     #[doc = "Whether a native structured callback can be represented and answered."]
@@ -974,97 +1045,154 @@ impl ::std::convert::TryFrom<::std::string::String> for CommandKind {
 }
 #[doc = "Closed command lifecycle; acceptance is immutable, local invalidation does not assert a model terminal."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
-#[serde(tag = "state", deny_unknown_fields)]
+#[serde(untagged, deny_unknown_fields)]
 pub enum CommandRecord {
-    #[serde(rename = "accepted")]
-    #[doc = "`Accepted` alternative; see the parent type's schema contract."]
-    Accepted {
+    #[doc = "`Variant0` alternative; see the parent type's schema contract."]
+    Variant0 {
         #[doc = "Immutable original command."]
         command: Command,
         #[doc = "Closed product record discriminator."]
-        kind: CommandRecordKind,
+        kind: CommandRecordVariant0Kind,
         #[doc = "Immutable original committed acceptance fact."]
         receipt: Receipt,
         #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
-        schema_version: CommandRecordSchemaVersion,
+        schema_version: CommandRecordVariant0SchemaVersion,
+        #[doc = "Closed command lifecycle projection."]
+        state: CommandRecordVariant0State,
     },
-    #[serde(rename = "dispatching")]
-    #[doc = "`Dispatching` alternative; see the parent type's schema contract."]
-    Dispatching {
+    #[doc = "`Variant1` alternative; see the parent type's schema contract."]
+    Variant1 {
         #[doc = "Immutable original command."]
         command: Command,
         #[doc = "Original attempt and append-once native correlation coordinates."]
         dispatch: DispatchAttempt,
         #[doc = "Closed product record discriminator."]
-        kind: CommandRecordKind,
+        kind: CommandRecordVariant1Kind,
         #[doc = "Immutable original committed acceptance fact."]
         receipt: Receipt,
         #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
-        schema_version: CommandRecordSchemaVersion,
+        schema_version: CommandRecordVariant1SchemaVersion,
+        #[doc = "Closed command lifecycle projection."]
+        state: CommandRecordVariant1State,
     },
-    #[serde(rename = "running")]
-    #[doc = "`Running` alternative; see the parent type's schema contract."]
-    Running {
+    #[doc = "`Variant2` alternative; see the parent type's schema contract."]
+    Variant2 {
         #[doc = "Immutable original command."]
         command: Command,
         #[doc = "Original attempt and append-once native correlation coordinates."]
         dispatch: DispatchAttempt,
         #[doc = "Closed product record discriminator."]
-        kind: CommandRecordKind,
+        kind: CommandRecordVariant2Kind,
         #[doc = "Immutable original committed acceptance fact."]
         receipt: Receipt,
         #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
-        schema_version: CommandRecordSchemaVersion,
+        schema_version: CommandRecordVariant2SchemaVersion,
+        #[doc = "Closed command lifecycle projection."]
+        state: CommandRecordVariant2State,
     },
-    #[serde(rename = "terminal")]
-    #[doc = "`Terminal` alternative; see the parent type's schema contract."]
-    Terminal {
+    #[doc = "`Variant3` alternative; see the parent type's schema contract."]
+    Variant3 {
         #[doc = "Immutable original command."]
         command: Command,
         #[doc = "Original attempt and append-once native correlation coordinates."]
         dispatch: DispatchAttempt,
         #[doc = "Closed product record discriminator."]
-        kind: CommandRecordKind,
+        kind: CommandRecordVariant3Kind,
         #[doc = "Explicitly observed model terminal outcome."]
         outcome: Outcome,
         #[doc = "Immutable original committed acceptance fact."]
         receipt: Receipt,
         #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
-        schema_version: CommandRecordSchemaVersion,
+        schema_version: CommandRecordVariant3SchemaVersion,
+        #[doc = "Closed command lifecycle projection."]
+        state: CommandRecordVariant3State,
     },
-    #[serde(rename = "reconciliation_required")]
-    #[doc = "`ReconciliationRequired` alternative; see the parent type's schema contract."]
-    ReconciliationRequired {
+    #[doc = "`Variant4` alternative; see the parent type's schema contract."]
+    Variant4 {
         #[doc = "Immutable original command."]
         command: Command,
         #[doc = "Original attempt and append-once native correlation coordinates."]
         dispatch: DispatchAttempt,
         #[doc = "Closed product record discriminator."]
-        kind: CommandRecordKind,
+        kind: CommandRecordVariant4Kind,
         #[doc = "Immutable original committed acceptance fact."]
         receipt: Receipt,
         #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
-        schema_version: CommandRecordSchemaVersion,
+        schema_version: CommandRecordVariant4SchemaVersion,
+        #[doc = "Closed command lifecycle projection."]
+        state: CommandRecordVariant4State,
     },
-    #[serde(rename = "invalidated")]
-    #[doc = "`Invalidated` alternative; see the parent type's schema contract."]
-    Invalidated {
+    #[doc = "`Variant5` alternative; see the parent type's schema contract."]
+    Variant5 {
         #[doc = "Immutable original command."]
         command: Command,
         #[doc = "Local failure without asserting a model terminal."]
         failure: Failure,
         #[doc = "Closed product record discriminator."]
-        kind: CommandRecordKind,
+        kind: CommandRecordVariant5Kind,
         #[doc = "Immutable original committed acceptance fact."]
         receipt: Receipt,
         #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
-        schema_version: CommandRecordSchemaVersion,
+        schema_version: CommandRecordVariant5SchemaVersion,
+        #[doc = "Closed command lifecycle projection."]
+        state: CommandRecordVariant5State,
+    },
+    #[doc = "`Variant6` alternative; see the parent type's schema contract."]
+    Variant6 {
+        #[doc = "Accepted local cancellation command identity."]
+        #[serde(rename = "cancelledBy")]
+        cancelled_by: Id,
+        #[doc = "Immutable original command."]
+        command: Command,
+        #[doc = "Closed product record discriminator."]
+        kind: CommandRecordVariant6Kind,
+        #[doc = "Immutable original committed acceptance fact."]
+        receipt: Receipt,
+        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[serde(rename = "schemaVersion")]
+        schema_version: CommandRecordVariant6SchemaVersion,
+        #[doc = "Closed command lifecycle projection."]
+        state: CommandRecordVariant6State,
+    },
+    #[doc = "`Variant7` alternative; see the parent type's schema contract."]
+    Variant7 {
+        #[doc = "Closed control acknowledgement; never a model-turn outcome."]
+        acknowledgement: Acknowledgement,
+        #[doc = "Immutable original command."]
+        command: Command,
+        #[doc = "Original attempt and append-once native correlation coordinates."]
+        dispatch: DispatchAttempt,
+        #[doc = "Closed product record discriminator."]
+        kind: CommandRecordVariant7Kind,
+        #[doc = "Immutable original committed acceptance fact."]
+        receipt: Receipt,
+        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[serde(rename = "schemaVersion")]
+        schema_version: CommandRecordVariant7SchemaVersion,
+        #[doc = "Closed command lifecycle projection."]
+        state: CommandRecordVariant7State,
+    },
+    #[doc = "`Variant8` alternative; see the parent type's schema contract."]
+    Variant8 {
+        #[doc = "`acknowledgement` member; see its generated type and parent schema."]
+        acknowledgement: CommandRecordVariant8Acknowledgement,
+        #[doc = "Immutable original command."]
+        command: Command,
+        #[doc = "Closed product record discriminator."]
+        kind: CommandRecordVariant8Kind,
+        #[doc = "Immutable original committed acceptance fact."]
+        receipt: Receipt,
+        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[serde(rename = "schemaVersion")]
+        schema_version: CommandRecordVariant8SchemaVersion,
+        #[doc = "Closed command lifecycle projection."]
+        state: CommandRecordVariant8State,
     },
 }
 #[doc = "Closed product record discriminator."]
@@ -1079,19 +1207,19 @@ pub enum CommandRecord {
     PartialEq,
     PartialOrd,
 )]
-pub enum CommandRecordKind {
+pub enum CommandRecordVariant0Kind {
     #[serde(rename = "commandRecord")]
     #[doc = "`CommandRecord` alternative; see the parent type's schema contract."]
     CommandRecord,
 }
-impl ::std::fmt::Display for CommandRecordKind {
+impl ::std::fmt::Display for CommandRecordVariant0Kind {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::CommandRecord => f.write_str("commandRecord"),
         }
     }
 }
-impl ::std::str::FromStr for CommandRecordKind {
+impl ::std::str::FromStr for CommandRecordVariant0Kind {
     type Err = self::error::ConversionError;
     fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         match value {
@@ -1100,13 +1228,13 @@ impl ::std::str::FromStr for CommandRecordKind {
         }
     }
 }
-impl ::std::convert::TryFrom<&str> for CommandRecordKind {
+impl ::std::convert::TryFrom<&str> for CommandRecordVariant0Kind {
     type Error = self::error::ConversionError;
     fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
 }
-impl ::std::convert::TryFrom<::std::string::String> for CommandRecordKind {
+impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant0Kind {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
@@ -1117,19 +1245,19 @@ impl ::std::convert::TryFrom<::std::string::String> for CommandRecordKind {
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct CommandRecordSchemaVersion(i64);
-impl ::std::ops::Deref for CommandRecordSchemaVersion {
+pub struct CommandRecordVariant0SchemaVersion(i64);
+impl ::std::ops::Deref for CommandRecordVariant0SchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
         &self.0
     }
 }
-impl ::std::convert::From<CommandRecordSchemaVersion> for i64 {
-    fn from(value: CommandRecordSchemaVersion) -> Self {
+impl ::std::convert::From<CommandRecordVariant0SchemaVersion> for i64 {
+    fn from(value: CommandRecordVariant0SchemaVersion) -> Self {
         value.0
     }
 }
-impl ::std::convert::TryFrom<i64> for CommandRecordSchemaVersion {
+impl ::std::convert::TryFrom<i64> for CommandRecordVariant0SchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
         if ![2_i64].contains(&value) {
@@ -1139,13 +1267,1142 @@ impl ::std::convert::TryFrom<i64> for CommandRecordSchemaVersion {
         }
     }
 }
-impl<'de> ::serde::Deserialize<'de> for CommandRecordSchemaVersion {
+impl<'de> ::serde::Deserialize<'de> for CommandRecordVariant0SchemaVersion {
     fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
     where
         D: ::serde::Deserializer<'de>,
     {
         Self::try_from(<i64>::deserialize(deserializer)?)
             .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
+#[doc = "Closed command lifecycle projection."]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum CommandRecordVariant0State {
+    #[serde(rename = "accepted")]
+    #[doc = "`Accepted` alternative; see the parent type's schema contract."]
+    Accepted,
+}
+impl ::std::fmt::Display for CommandRecordVariant0State {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Accepted => f.write_str("accepted"),
+        }
+    }
+}
+impl ::std::str::FromStr for CommandRecordVariant0State {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "accepted" => Ok(Self::Accepted),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CommandRecordVariant0State {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant0State {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Closed product record discriminator."]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum CommandRecordVariant1Kind {
+    #[serde(rename = "commandRecord")]
+    #[doc = "`CommandRecord` alternative; see the parent type's schema contract."]
+    CommandRecord,
+}
+impl ::std::fmt::Display for CommandRecordVariant1Kind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::CommandRecord => f.write_str("commandRecord"),
+        }
+    }
+}
+impl ::std::str::FromStr for CommandRecordVariant1Kind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "commandRecord" => Ok(Self::CommandRecord),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CommandRecordVariant1Kind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant1Kind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+#[derive(:: serde :: Serialize, Clone)]
+#[serde(transparent)]
+pub struct CommandRecordVariant1SchemaVersion(i64);
+impl ::std::ops::Deref for CommandRecordVariant1SchemaVersion {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::std::convert::From<CommandRecordVariant1SchemaVersion> for i64 {
+    fn from(value: CommandRecordVariant1SchemaVersion) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::TryFrom<i64> for CommandRecordVariant1SchemaVersion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if ![2_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for CommandRecordVariant1SchemaVersion {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
+#[doc = "Closed command lifecycle projection."]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum CommandRecordVariant1State {
+    #[serde(rename = "dispatching")]
+    #[doc = "`Dispatching` alternative; see the parent type's schema contract."]
+    Dispatching,
+}
+impl ::std::fmt::Display for CommandRecordVariant1State {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Dispatching => f.write_str("dispatching"),
+        }
+    }
+}
+impl ::std::str::FromStr for CommandRecordVariant1State {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "dispatching" => Ok(Self::Dispatching),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CommandRecordVariant1State {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant1State {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Closed product record discriminator."]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum CommandRecordVariant2Kind {
+    #[serde(rename = "commandRecord")]
+    #[doc = "`CommandRecord` alternative; see the parent type's schema contract."]
+    CommandRecord,
+}
+impl ::std::fmt::Display for CommandRecordVariant2Kind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::CommandRecord => f.write_str("commandRecord"),
+        }
+    }
+}
+impl ::std::str::FromStr for CommandRecordVariant2Kind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "commandRecord" => Ok(Self::CommandRecord),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CommandRecordVariant2Kind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant2Kind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+#[derive(:: serde :: Serialize, Clone)]
+#[serde(transparent)]
+pub struct CommandRecordVariant2SchemaVersion(i64);
+impl ::std::ops::Deref for CommandRecordVariant2SchemaVersion {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::std::convert::From<CommandRecordVariant2SchemaVersion> for i64 {
+    fn from(value: CommandRecordVariant2SchemaVersion) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::TryFrom<i64> for CommandRecordVariant2SchemaVersion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if ![2_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for CommandRecordVariant2SchemaVersion {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
+#[doc = "Closed command lifecycle projection."]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum CommandRecordVariant2State {
+    #[serde(rename = "running")]
+    #[doc = "`Running` alternative; see the parent type's schema contract."]
+    Running,
+}
+impl ::std::fmt::Display for CommandRecordVariant2State {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Running => f.write_str("running"),
+        }
+    }
+}
+impl ::std::str::FromStr for CommandRecordVariant2State {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "running" => Ok(Self::Running),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CommandRecordVariant2State {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant2State {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Closed product record discriminator."]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum CommandRecordVariant3Kind {
+    #[serde(rename = "commandRecord")]
+    #[doc = "`CommandRecord` alternative; see the parent type's schema contract."]
+    CommandRecord,
+}
+impl ::std::fmt::Display for CommandRecordVariant3Kind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::CommandRecord => f.write_str("commandRecord"),
+        }
+    }
+}
+impl ::std::str::FromStr for CommandRecordVariant3Kind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "commandRecord" => Ok(Self::CommandRecord),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CommandRecordVariant3Kind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant3Kind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+#[derive(:: serde :: Serialize, Clone)]
+#[serde(transparent)]
+pub struct CommandRecordVariant3SchemaVersion(i64);
+impl ::std::ops::Deref for CommandRecordVariant3SchemaVersion {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::std::convert::From<CommandRecordVariant3SchemaVersion> for i64 {
+    fn from(value: CommandRecordVariant3SchemaVersion) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::TryFrom<i64> for CommandRecordVariant3SchemaVersion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if ![2_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for CommandRecordVariant3SchemaVersion {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
+#[doc = "Closed command lifecycle projection."]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum CommandRecordVariant3State {
+    #[serde(rename = "terminal")]
+    #[doc = "`Terminal` alternative; see the parent type's schema contract."]
+    Terminal,
+}
+impl ::std::fmt::Display for CommandRecordVariant3State {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Terminal => f.write_str("terminal"),
+        }
+    }
+}
+impl ::std::str::FromStr for CommandRecordVariant3State {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "terminal" => Ok(Self::Terminal),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CommandRecordVariant3State {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant3State {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Closed product record discriminator."]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum CommandRecordVariant4Kind {
+    #[serde(rename = "commandRecord")]
+    #[doc = "`CommandRecord` alternative; see the parent type's schema contract."]
+    CommandRecord,
+}
+impl ::std::fmt::Display for CommandRecordVariant4Kind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::CommandRecord => f.write_str("commandRecord"),
+        }
+    }
+}
+impl ::std::str::FromStr for CommandRecordVariant4Kind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "commandRecord" => Ok(Self::CommandRecord),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CommandRecordVariant4Kind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant4Kind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+#[derive(:: serde :: Serialize, Clone)]
+#[serde(transparent)]
+pub struct CommandRecordVariant4SchemaVersion(i64);
+impl ::std::ops::Deref for CommandRecordVariant4SchemaVersion {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::std::convert::From<CommandRecordVariant4SchemaVersion> for i64 {
+    fn from(value: CommandRecordVariant4SchemaVersion) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::TryFrom<i64> for CommandRecordVariant4SchemaVersion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if ![2_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for CommandRecordVariant4SchemaVersion {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
+#[doc = "Closed command lifecycle projection."]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum CommandRecordVariant4State {
+    #[serde(rename = "reconciliation_required")]
+    #[doc = "`ReconciliationRequired` alternative; see the parent type's schema contract."]
+    ReconciliationRequired,
+}
+impl ::std::fmt::Display for CommandRecordVariant4State {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::ReconciliationRequired => f.write_str("reconciliation_required"),
+        }
+    }
+}
+impl ::std::str::FromStr for CommandRecordVariant4State {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "reconciliation_required" => Ok(Self::ReconciliationRequired),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CommandRecordVariant4State {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant4State {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Closed product record discriminator."]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum CommandRecordVariant5Kind {
+    #[serde(rename = "commandRecord")]
+    #[doc = "`CommandRecord` alternative; see the parent type's schema contract."]
+    CommandRecord,
+}
+impl ::std::fmt::Display for CommandRecordVariant5Kind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::CommandRecord => f.write_str("commandRecord"),
+        }
+    }
+}
+impl ::std::str::FromStr for CommandRecordVariant5Kind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "commandRecord" => Ok(Self::CommandRecord),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CommandRecordVariant5Kind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant5Kind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+#[derive(:: serde :: Serialize, Clone)]
+#[serde(transparent)]
+pub struct CommandRecordVariant5SchemaVersion(i64);
+impl ::std::ops::Deref for CommandRecordVariant5SchemaVersion {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::std::convert::From<CommandRecordVariant5SchemaVersion> for i64 {
+    fn from(value: CommandRecordVariant5SchemaVersion) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::TryFrom<i64> for CommandRecordVariant5SchemaVersion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if ![2_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for CommandRecordVariant5SchemaVersion {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
+#[doc = "Closed command lifecycle projection."]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum CommandRecordVariant5State {
+    #[serde(rename = "invalidated")]
+    #[doc = "`Invalidated` alternative; see the parent type's schema contract."]
+    Invalidated,
+}
+impl ::std::fmt::Display for CommandRecordVariant5State {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Invalidated => f.write_str("invalidated"),
+        }
+    }
+}
+impl ::std::str::FromStr for CommandRecordVariant5State {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "invalidated" => Ok(Self::Invalidated),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CommandRecordVariant5State {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant5State {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Closed product record discriminator."]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum CommandRecordVariant6Kind {
+    #[serde(rename = "commandRecord")]
+    #[doc = "`CommandRecord` alternative; see the parent type's schema contract."]
+    CommandRecord,
+}
+impl ::std::fmt::Display for CommandRecordVariant6Kind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::CommandRecord => f.write_str("commandRecord"),
+        }
+    }
+}
+impl ::std::str::FromStr for CommandRecordVariant6Kind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "commandRecord" => Ok(Self::CommandRecord),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CommandRecordVariant6Kind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant6Kind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+#[derive(:: serde :: Serialize, Clone)]
+#[serde(transparent)]
+pub struct CommandRecordVariant6SchemaVersion(i64);
+impl ::std::ops::Deref for CommandRecordVariant6SchemaVersion {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::std::convert::From<CommandRecordVariant6SchemaVersion> for i64 {
+    fn from(value: CommandRecordVariant6SchemaVersion) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::TryFrom<i64> for CommandRecordVariant6SchemaVersion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if ![2_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for CommandRecordVariant6SchemaVersion {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
+#[doc = "Closed command lifecycle projection."]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum CommandRecordVariant6State {
+    #[serde(rename = "cancelled")]
+    #[doc = "`Cancelled` alternative; see the parent type's schema contract."]
+    Cancelled,
+}
+impl ::std::fmt::Display for CommandRecordVariant6State {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Cancelled => f.write_str("cancelled"),
+        }
+    }
+}
+impl ::std::str::FromStr for CommandRecordVariant6State {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "cancelled" => Ok(Self::Cancelled),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CommandRecordVariant6State {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant6State {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Closed product record discriminator."]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum CommandRecordVariant7Kind {
+    #[serde(rename = "commandRecord")]
+    #[doc = "`CommandRecord` alternative; see the parent type's schema contract."]
+    CommandRecord,
+}
+impl ::std::fmt::Display for CommandRecordVariant7Kind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::CommandRecord => f.write_str("commandRecord"),
+        }
+    }
+}
+impl ::std::str::FromStr for CommandRecordVariant7Kind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "commandRecord" => Ok(Self::CommandRecord),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CommandRecordVariant7Kind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant7Kind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+#[derive(:: serde :: Serialize, Clone)]
+#[serde(transparent)]
+pub struct CommandRecordVariant7SchemaVersion(i64);
+impl ::std::ops::Deref for CommandRecordVariant7SchemaVersion {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::std::convert::From<CommandRecordVariant7SchemaVersion> for i64 {
+    fn from(value: CommandRecordVariant7SchemaVersion) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::TryFrom<i64> for CommandRecordVariant7SchemaVersion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if ![2_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for CommandRecordVariant7SchemaVersion {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
+#[doc = "Closed command lifecycle projection."]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum CommandRecordVariant7State {
+    #[serde(rename = "acknowledged")]
+    #[doc = "`Acknowledged` alternative; see the parent type's schema contract."]
+    Acknowledged,
+}
+impl ::std::fmt::Display for CommandRecordVariant7State {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Acknowledged => f.write_str("acknowledged"),
+        }
+    }
+}
+impl ::std::str::FromStr for CommandRecordVariant7State {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "acknowledged" => Ok(Self::Acknowledged),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CommandRecordVariant7State {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant7State {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Closed control acknowledgement; never a model-turn outcome."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct CommandRecordVariant8Acknowledgement {
+    #[doc = "Queued prompt cancelled without a native dispatch."]
+    #[serde(rename = "targetCommandId")]
+    pub target_command_id: Id,
+    #[doc = "Closed variant discriminator."]
+    #[serde(rename = "type")]
+    pub type_: CommandRecordVariant8AcknowledgementType,
+}
+#[doc = "Closed variant discriminator."]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum CommandRecordVariant8AcknowledgementType {
+    #[serde(rename = "queued_cancelled")]
+    #[doc = "`QueuedCancelled` alternative; see the parent type's schema contract."]
+    QueuedCancelled,
+}
+impl ::std::fmt::Display for CommandRecordVariant8AcknowledgementType {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::QueuedCancelled => f.write_str("queued_cancelled"),
+        }
+    }
+}
+impl ::std::str::FromStr for CommandRecordVariant8AcknowledgementType {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "queued_cancelled" => Ok(Self::QueuedCancelled),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CommandRecordVariant8AcknowledgementType {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant8AcknowledgementType {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Closed product record discriminator."]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum CommandRecordVariant8Kind {
+    #[serde(rename = "commandRecord")]
+    #[doc = "`CommandRecord` alternative; see the parent type's schema contract."]
+    CommandRecord,
+}
+impl ::std::fmt::Display for CommandRecordVariant8Kind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::CommandRecord => f.write_str("commandRecord"),
+        }
+    }
+}
+impl ::std::str::FromStr for CommandRecordVariant8Kind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "commandRecord" => Ok(Self::CommandRecord),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CommandRecordVariant8Kind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant8Kind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+#[derive(:: serde :: Serialize, Clone)]
+#[serde(transparent)]
+pub struct CommandRecordVariant8SchemaVersion(i64);
+impl ::std::ops::Deref for CommandRecordVariant8SchemaVersion {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::std::convert::From<CommandRecordVariant8SchemaVersion> for i64 {
+    fn from(value: CommandRecordVariant8SchemaVersion) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::TryFrom<i64> for CommandRecordVariant8SchemaVersion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if ![2_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for CommandRecordVariant8SchemaVersion {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
+#[doc = "Closed command lifecycle projection."]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum CommandRecordVariant8State {
+    #[serde(rename = "acknowledged")]
+    #[doc = "`Acknowledged` alternative; see the parent type's schema contract."]
+    Acknowledged,
+}
+impl ::std::fmt::Display for CommandRecordVariant8State {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Acknowledged => f.write_str("acknowledged"),
+        }
+    }
+}
+impl ::std::str::FromStr for CommandRecordVariant8State {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "acknowledged" => Ok(Self::Acknowledged),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CommandRecordVariant8State {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant8State {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
     }
 }
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
@@ -1825,8 +3082,8 @@ impl ::std::convert::TryFrom<::std::string::String> for ErrorCode {
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(untagged, deny_unknown_fields)]
 pub enum Event {
-    #[doc = "`Text` alternative; see the parent type's schema contract."]
-    Text {
+    #[doc = "`Variant0` alternative; see the parent type's schema contract."]
+    Variant0 {
         #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
         #[serde(rename = "attemptId")]
         attempt_id: Id,
@@ -1850,8 +3107,8 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`StatusAccepted` alternative; see the parent type's schema contract."]
-    StatusAccepted {
+    #[doc = "`Variant1` alternative; see the parent type's schema contract."]
+    Variant1 {
         #[doc = "`body` member; see its generated type and parent schema."]
         body: EventStatusAcceptedBody,
         #[doc = "Original command identity within the trusted namespace."]
@@ -1872,8 +3129,8 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`StatusDispatchingRunningReconciliationRequired` alternative; see the parent type's schema contract."]
-    StatusDispatchingRunningReconciliationRequired {
+    #[doc = "`Variant2` alternative; see the parent type's schema contract."]
+    Variant2 {
         #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
         #[serde(rename = "attemptId")]
         attempt_id: Id,
@@ -1897,8 +3154,8 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`Terminal` alternative; see the parent type's schema contract."]
-    Terminal {
+    #[doc = "`Variant3` alternative; see the parent type's schema contract."]
+    Variant3 {
         #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
         #[serde(rename = "attemptId")]
         attempt_id: Id,
@@ -1922,8 +3179,8 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`CancelDispatched` alternative; see the parent type's schema contract."]
-    CancelDispatched {
+    #[doc = "`Variant4` alternative; see the parent type's schema contract."]
+    Variant4 {
         #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
         #[serde(rename = "attemptId")]
         attempt_id: Id,
@@ -1947,8 +3204,8 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`ToolProposal` alternative; see the parent type's schema contract."]
-    ToolProposal {
+    #[doc = "`Variant5` alternative; see the parent type's schema contract."]
+    Variant5 {
         #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
         #[serde(rename = "attemptId")]
         attempt_id: Id,
@@ -1972,8 +3229,8 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`ToolResult` alternative; see the parent type's schema contract."]
-    ToolResult {
+    #[doc = "`Variant6` alternative; see the parent type's schema contract."]
+    Variant6 {
         #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
         #[serde(rename = "attemptId")]
         attempt_id: Id,
@@ -1997,8 +3254,8 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`InteractionPending` alternative; see the parent type's schema contract."]
-    InteractionPending {
+    #[doc = "`Variant7` alternative; see the parent type's schema contract."]
+    Variant7 {
         #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
         #[serde(rename = "attemptId")]
         attempt_id: Id,
@@ -2022,8 +3279,8 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`InteractionAnswered` alternative; see the parent type's schema contract."]
-    InteractionAnswered {
+    #[doc = "`Variant8` alternative; see the parent type's schema contract."]
+    Variant8 {
         #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
         #[serde(rename = "attemptId")]
         attempt_id: Id,
@@ -2047,8 +3304,8 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`InteractionExpiredUnavailable` alternative; see the parent type's schema contract."]
-    InteractionExpiredUnavailable {
+    #[doc = "`Variant9` alternative; see the parent type's schema contract."]
+    Variant9 {
         #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
         #[serde(rename = "attemptId")]
         attempt_id: Id,
@@ -2072,8 +3329,8 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`Error` alternative; see the parent type's schema contract."]
-    Error {
+    #[doc = "`Variant10` alternative; see the parent type's schema contract."]
+    Variant10 {
         #[doc = "`body` member; see its generated type and parent schema."]
         body: EventErrorBody,
         #[doc = "Original command identity within the trusted namespace."]
@@ -2094,8 +3351,8 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`Invalidated` alternative; see the parent type's schema contract."]
-    Invalidated {
+    #[doc = "`Variant11` alternative; see the parent type's schema contract."]
+    Variant11 {
         #[doc = "`body` member; see its generated type and parent schema."]
         body: EventInvalidatedBody,
         #[doc = "Original command identity within the trusted namespace."]
@@ -2116,8 +3373,8 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`Dispatch` alternative; see the parent type's schema contract."]
-    Dispatch {
+    #[doc = "`Variant12` alternative; see the parent type's schema contract."]
+    Variant12 {
         #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
         #[serde(rename = "attemptId")]
         attempt_id: Id,
@@ -2141,8 +3398,8 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`Reconciled` alternative; see the parent type's schema contract."]
-    Reconciled {
+    #[doc = "`Variant13` alternative; see the parent type's schema contract."]
+    Variant13 {
         #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
         #[serde(rename = "attemptId")]
         attempt_id: Id,
@@ -2166,8 +3423,8 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`Surface` alternative; see the parent type's schema contract."]
-    Surface {
+    #[doc = "`Variant14` alternative; see the parent type's schema contract."]
+    Variant14 {
         #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
         #[serde(rename = "attemptId")]
         attempt_id: Id,
@@ -2191,8 +3448,8 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`SessionRebound` alternative; see the parent type's schema contract."]
-    SessionRebound {
+    #[doc = "`Variant15` alternative; see the parent type's schema contract."]
+    Variant15 {
         #[doc = "`body` member; see its generated type and parent schema."]
         body: EventSessionReboundBody,
         #[doc = "Stable unique event identifier within the namespace."]
@@ -2210,8 +3467,8 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`SessionRetired` alternative; see the parent type's schema contract."]
-    SessionRetired {
+    #[doc = "`Variant16` alternative; see the parent type's schema contract."]
+    Variant16 {
         #[doc = "`body` member; see its generated type and parent schema."]
         body: EventSessionRetiredBody,
         #[doc = "Stable unique event identifier within the namespace."]
@@ -2229,6 +3486,290 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
+    #[doc = "`Variant17` alternative; see the parent type's schema contract."]
+    Variant17 {
+        #[doc = "Exact native dispatch attempt identity."]
+        #[serde(rename = "attemptId")]
+        attempt_id: Id,
+        #[doc = "`body` member; see its generated type and parent schema."]
+        body: EventAcknowledgedBody,
+        #[doc = "Original command identity within the trusted namespace."]
+        #[serde(rename = "commandId")]
+        command_id: Id,
+        #[doc = "Stable unique event identifier within the namespace."]
+        #[serde(rename = "eventId")]
+        event_id: Id,
+        #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
+        generation: Id,
+        #[doc = "Closed product record discriminator."]
+        kind: EventAcknowledgedKind,
+        #[doc = "Trusted storage isolation scope; not copied from model or action content."]
+        namespace: Namespace,
+        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[serde(rename = "schemaVersion")]
+        schema_version: EventAcknowledgedSchemaVersion,
+        #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
+        sequence: Counter,
+    },
+    #[doc = "`Variant18` alternative; see the parent type's schema contract."]
+    Variant18 {
+        #[doc = "`body` member; see its generated type and parent schema."]
+        body: EventCancelledBody,
+        #[doc = "Original command identity within the trusted namespace."]
+        #[serde(rename = "commandId")]
+        command_id: Id,
+        #[doc = "Stable unique event identifier within the namespace."]
+        #[serde(rename = "eventId")]
+        event_id: Id,
+        #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
+        generation: Id,
+        #[doc = "Closed product record discriminator."]
+        kind: EventCancelledKind,
+        #[doc = "Trusted storage isolation scope; not copied from model or action content."]
+        namespace: Namespace,
+        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[serde(rename = "schemaVersion")]
+        schema_version: EventCancelledSchemaVersion,
+        #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
+        sequence: Counter,
+    },
+    #[doc = "`Variant19` alternative; see the parent type's schema contract."]
+    Variant19 {
+        #[doc = "`body` member; see its generated type and parent schema."]
+        body: EventSessionRecoveryUnavailableBody,
+        #[doc = "Stable unique event identifier within the namespace."]
+        #[serde(rename = "eventId")]
+        event_id: Id,
+        #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
+        generation: Id,
+        #[doc = "Closed product record discriminator."]
+        kind: EventSessionRecoveryUnavailableKind,
+        #[doc = "Trusted storage isolation scope; not copied from model or action content."]
+        namespace: Namespace,
+        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[serde(rename = "schemaVersion")]
+        schema_version: EventSessionRecoveryUnavailableSchemaVersion,
+        #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
+        sequence: Counter,
+    },
+    #[doc = "`Variant20` alternative; see the parent type's schema contract."]
+    Variant20 {
+        #[doc = "`body` member; see its generated type and parent schema."]
+        body: EventAcknowledgedBody,
+        #[doc = "Original command identity within the trusted namespace."]
+        #[serde(rename = "commandId")]
+        command_id: Id,
+        #[doc = "Stable unique event identifier within the namespace."]
+        #[serde(rename = "eventId")]
+        event_id: Id,
+        #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
+        generation: Id,
+        #[doc = "Closed product record discriminator."]
+        kind: EventAcknowledgedKind,
+        #[doc = "Trusted storage isolation scope; not copied from model or action content."]
+        namespace: Namespace,
+        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[serde(rename = "schemaVersion")]
+        schema_version: EventAcknowledgedSchemaVersion,
+        #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
+        sequence: Counter,
+    },
+}
+#[doc = "Stable product contract field."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct EventAcknowledgedBody {
+    #[doc = "Closed control acknowledgement; never a model-turn outcome."]
+    pub acknowledgement: Acknowledgement,
+    #[doc = "Closed variant discriminator."]
+    #[serde(rename = "type")]
+    pub type_: EventAcknowledgedBodyType,
+}
+#[doc = "Closed control acknowledgement; never a model-turn outcome."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct EventAcknowledgedBodyAcknowledgement {
+    #[doc = "Queued prompt cancelled without a native dispatch."]
+    #[serde(rename = "targetCommandId")]
+    pub target_command_id: Id,
+    #[doc = "Closed variant discriminator."]
+    #[serde(rename = "type")]
+    pub type_: EventAcknowledgedBodyAcknowledgementType,
+}
+#[doc = "Closed variant discriminator."]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum EventAcknowledgedBodyAcknowledgementType {
+    #[serde(rename = "queued_cancelled")]
+    #[doc = "`QueuedCancelled` alternative; see the parent type's schema contract."]
+    QueuedCancelled,
+}
+impl ::std::fmt::Display for EventAcknowledgedBodyAcknowledgementType {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::QueuedCancelled => f.write_str("queued_cancelled"),
+        }
+    }
+}
+impl ::std::str::FromStr for EventAcknowledgedBodyAcknowledgementType {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "queued_cancelled" => Ok(Self::QueuedCancelled),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for EventAcknowledgedBodyAcknowledgementType {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for EventAcknowledgedBodyAcknowledgementType {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Closed variant discriminator."]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum EventAcknowledgedBodyType {
+    #[serde(rename = "acknowledged")]
+    #[doc = "`Acknowledged` alternative; see the parent type's schema contract."]
+    Acknowledged,
+}
+impl ::std::fmt::Display for EventAcknowledgedBodyType {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Acknowledged => f.write_str("acknowledged"),
+        }
+    }
+}
+impl ::std::str::FromStr for EventAcknowledgedBodyType {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "acknowledged" => Ok(Self::Acknowledged),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for EventAcknowledgedBodyType {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for EventAcknowledgedBodyType {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Closed product record discriminator."]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum EventAcknowledgedKind {
+    #[serde(rename = "event")]
+    #[doc = "`Event` alternative; see the parent type's schema contract."]
+    Event,
+}
+impl ::std::fmt::Display for EventAcknowledgedKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Event => f.write_str("event"),
+        }
+    }
+}
+impl ::std::str::FromStr for EventAcknowledgedKind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "event" => Ok(Self::Event),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for EventAcknowledgedKind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for EventAcknowledgedKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+#[derive(:: serde :: Serialize, Clone)]
+#[serde(transparent)]
+pub struct EventAcknowledgedSchemaVersion(i64);
+impl ::std::ops::Deref for EventAcknowledgedSchemaVersion {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::std::convert::From<EventAcknowledgedSchemaVersion> for i64 {
+    fn from(value: EventAcknowledgedSchemaVersion) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::TryFrom<i64> for EventAcknowledgedSchemaVersion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if ![2_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for EventAcknowledgedSchemaVersion {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
 }
 #[doc = "cancel_dispatched variant; all fields are data, never authentication or execution authority."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
@@ -2417,6 +3958,145 @@ impl ::std::convert::TryFrom<i64> for EventCancelDispatchedSchemaVersion {
     }
 }
 impl<'de> ::serde::Deserialize<'de> for EventCancelDispatchedSchemaVersion {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
+#[doc = "Stable product contract field."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct EventCancelledBody {
+    #[doc = "Accepted local cancellation command identity."]
+    #[serde(rename = "cancelledBy")]
+    pub cancelled_by: Id,
+    #[doc = "Closed variant discriminator."]
+    #[serde(rename = "type")]
+    pub type_: EventCancelledBodyType,
+}
+#[doc = "Closed variant discriminator."]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum EventCancelledBodyType {
+    #[serde(rename = "cancelled")]
+    #[doc = "`Cancelled` alternative; see the parent type's schema contract."]
+    Cancelled,
+}
+impl ::std::fmt::Display for EventCancelledBodyType {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Cancelled => f.write_str("cancelled"),
+        }
+    }
+}
+impl ::std::str::FromStr for EventCancelledBodyType {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "cancelled" => Ok(Self::Cancelled),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for EventCancelledBodyType {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for EventCancelledBodyType {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Closed product record discriminator."]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum EventCancelledKind {
+    #[serde(rename = "event")]
+    #[doc = "`Event` alternative; see the parent type's schema contract."]
+    Event,
+}
+impl ::std::fmt::Display for EventCancelledKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Event => f.write_str("event"),
+        }
+    }
+}
+impl ::std::str::FromStr for EventCancelledKind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "event" => Ok(Self::Event),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for EventCancelledKind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for EventCancelledKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+#[derive(:: serde :: Serialize, Clone)]
+#[serde(transparent)]
+pub struct EventCancelledSchemaVersion(i64);
+impl ::std::ops::Deref for EventCancelledSchemaVersion {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::std::convert::From<EventCancelledSchemaVersion> for i64 {
+    fn from(value: EventCancelledSchemaVersion) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::TryFrom<i64> for EventCancelledSchemaVersion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if ![2_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for EventCancelledSchemaVersion {
     fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
     where
         D: ::serde::Deserializer<'de>,
@@ -3458,6 +5138,12 @@ pub enum EventReconciledBodyResolution {
     #[serde(rename = "unknown")]
     #[doc = "`Unknown` alternative; see the parent type's schema contract."]
     Unknown,
+    #[serde(rename = "submitted")]
+    #[doc = "`Submitted` alternative; see the parent type's schema contract."]
+    Submitted,
+    #[serde(rename = "acknowledged")]
+    #[doc = "`Acknowledged` alternative; see the parent type's schema contract."]
+    Acknowledged,
 }
 impl ::std::fmt::Display for EventReconciledBodyResolution {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -3466,6 +5152,8 @@ impl ::std::fmt::Display for EventReconciledBodyResolution {
             Self::Terminal => f.write_str("terminal"),
             Self::NotSubmitted => f.write_str("not_submitted"),
             Self::Unknown => f.write_str("unknown"),
+            Self::Submitted => f.write_str("submitted"),
+            Self::Acknowledged => f.write_str("acknowledged"),
         }
     }
 }
@@ -3477,6 +5165,8 @@ impl ::std::str::FromStr for EventReconciledBodyResolution {
             "terminal" => Ok(Self::Terminal),
             "not_submitted" => Ok(Self::NotSubmitted),
             "unknown" => Ok(Self::Unknown),
+            "submitted" => Ok(Self::Submitted),
+            "acknowledged" => Ok(Self::Acknowledged),
             _ => Err("invalid value".into()),
         }
     }
@@ -3754,6 +5444,142 @@ impl ::std::convert::TryFrom<i64> for EventSessionReboundSchemaVersion {
     }
 }
 impl<'de> ::serde::Deserialize<'de> for EventSessionReboundSchemaVersion {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
+#[doc = "Stable product contract field."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct EventSessionRecoveryUnavailableBody {
+    #[doc = "Closed variant discriminator."]
+    #[serde(rename = "type")]
+    pub type_: EventSessionRecoveryUnavailableBodyType,
+}
+#[doc = "Closed variant discriminator."]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum EventSessionRecoveryUnavailableBodyType {
+    #[serde(rename = "session_recovery_unavailable")]
+    #[doc = "`SessionRecoveryUnavailable` alternative; see the parent type's schema contract."]
+    SessionRecoveryUnavailable,
+}
+impl ::std::fmt::Display for EventSessionRecoveryUnavailableBodyType {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::SessionRecoveryUnavailable => f.write_str("session_recovery_unavailable"),
+        }
+    }
+}
+impl ::std::str::FromStr for EventSessionRecoveryUnavailableBodyType {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "session_recovery_unavailable" => Ok(Self::SessionRecoveryUnavailable),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for EventSessionRecoveryUnavailableBodyType {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for EventSessionRecoveryUnavailableBodyType {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Closed product record discriminator."]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum EventSessionRecoveryUnavailableKind {
+    #[serde(rename = "event")]
+    #[doc = "`Event` alternative; see the parent type's schema contract."]
+    Event,
+}
+impl ::std::fmt::Display for EventSessionRecoveryUnavailableKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Event => f.write_str("event"),
+        }
+    }
+}
+impl ::std::str::FromStr for EventSessionRecoveryUnavailableKind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "event" => Ok(Self::Event),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for EventSessionRecoveryUnavailableKind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for EventSessionRecoveryUnavailableKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+#[derive(:: serde :: Serialize, Clone)]
+#[serde(transparent)]
+pub struct EventSessionRecoveryUnavailableSchemaVersion(i64);
+impl ::std::ops::Deref for EventSessionRecoveryUnavailableSchemaVersion {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::std::convert::From<EventSessionRecoveryUnavailableSchemaVersion> for i64 {
+    fn from(value: EventSessionRecoveryUnavailableSchemaVersion) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::TryFrom<i64> for EventSessionRecoveryUnavailableSchemaVersion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if ![2_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for EventSessionRecoveryUnavailableSchemaVersion {
     fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
     where
         D: ::serde::Deserializer<'de>,
@@ -4292,7 +6118,7 @@ impl<'de> ::serde::Deserialize<'de>
             .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
     }
 }
-#[doc = "`EventSurfaceBody`"]
+#[doc = "Stable product contract field."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct EventSurfaceBody {
@@ -6447,6 +8273,9 @@ pub enum SessionStatus {
     #[serde(rename = "active")]
     #[doc = "`Active` alternative; see the parent type's schema contract."]
     Active,
+    #[serde(rename = "recovery_required")]
+    #[doc = "`RecoveryRequired` alternative; see the parent type's schema contract."]
+    RecoveryRequired,
     #[serde(rename = "retired")]
     #[doc = "`Retired` alternative; see the parent type's schema contract."]
     Retired,
@@ -6455,6 +8284,7 @@ impl ::std::fmt::Display for SessionStatus {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Active => f.write_str("active"),
+            Self::RecoveryRequired => f.write_str("recovery_required"),
             Self::Retired => f.write_str("retired"),
         }
     }
@@ -6464,6 +8294,7 @@ impl ::std::str::FromStr for SessionStatus {
     fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         match value {
             "active" => Ok(Self::Active),
+            "recovery_required" => Ok(Self::RecoveryRequired),
             "retired" => Ok(Self::Retired),
             _ => Err("invalid value".into()),
         }
@@ -7282,6 +9113,19 @@ impl std::fmt::Debug for AccessUpdateSchemaVersion {
         ))
     }
 }
+impl std::fmt::Debug for Acknowledgement {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(Acknowledgement), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for AcknowledgementConfirmation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(AcknowledgementConfirmation),
+            "([redacted])"
+        ))
+    }
+}
 impl std::fmt::Debug for ActionRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(stringify!(ActionRequest), "([redacted])"))
@@ -7392,15 +9236,234 @@ impl std::fmt::Debug for CommandRecord {
         f.write_str(concat!(stringify!(CommandRecord), "([redacted])"))
     }
 }
-impl std::fmt::Debug for CommandRecordKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(concat!(stringify!(CommandRecordKind), "([redacted])"))
-    }
-}
-impl std::fmt::Debug for CommandRecordSchemaVersion {
+impl std::fmt::Debug for CommandRecordVariant0Kind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(
-            stringify!(CommandRecordSchemaVersion),
+            stringify!(CommandRecordVariant0Kind),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for CommandRecordVariant0SchemaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(CommandRecordVariant0SchemaVersion),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for CommandRecordVariant0State {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(CommandRecordVariant0State),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for CommandRecordVariant1Kind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(CommandRecordVariant1Kind),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for CommandRecordVariant1SchemaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(CommandRecordVariant1SchemaVersion),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for CommandRecordVariant1State {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(CommandRecordVariant1State),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for CommandRecordVariant2Kind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(CommandRecordVariant2Kind),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for CommandRecordVariant2SchemaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(CommandRecordVariant2SchemaVersion),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for CommandRecordVariant2State {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(CommandRecordVariant2State),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for CommandRecordVariant3Kind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(CommandRecordVariant3Kind),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for CommandRecordVariant3SchemaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(CommandRecordVariant3SchemaVersion),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for CommandRecordVariant3State {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(CommandRecordVariant3State),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for CommandRecordVariant4Kind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(CommandRecordVariant4Kind),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for CommandRecordVariant4SchemaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(CommandRecordVariant4SchemaVersion),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for CommandRecordVariant4State {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(CommandRecordVariant4State),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for CommandRecordVariant5Kind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(CommandRecordVariant5Kind),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for CommandRecordVariant5SchemaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(CommandRecordVariant5SchemaVersion),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for CommandRecordVariant5State {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(CommandRecordVariant5State),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for CommandRecordVariant6Kind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(CommandRecordVariant6Kind),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for CommandRecordVariant6SchemaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(CommandRecordVariant6SchemaVersion),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for CommandRecordVariant6State {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(CommandRecordVariant6State),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for CommandRecordVariant7Kind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(CommandRecordVariant7Kind),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for CommandRecordVariant7SchemaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(CommandRecordVariant7SchemaVersion),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for CommandRecordVariant7State {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(CommandRecordVariant7State),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for CommandRecordVariant8Acknowledgement {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(CommandRecordVariant8Acknowledgement),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for CommandRecordVariant8AcknowledgementType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(CommandRecordVariant8AcknowledgementType),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for CommandRecordVariant8Kind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(CommandRecordVariant8Kind),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for CommandRecordVariant8SchemaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(CommandRecordVariant8SchemaVersion),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for CommandRecordVariant8State {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(CommandRecordVariant8State),
             "([redacted])"
         ))
     }
@@ -7491,6 +9554,48 @@ impl std::fmt::Debug for Event {
         f.write_str(concat!(stringify!(Event), "([redacted])"))
     }
 }
+impl std::fmt::Debug for EventAcknowledgedBody {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(EventAcknowledgedBody), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for EventAcknowledgedBodyAcknowledgement {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(EventAcknowledgedBodyAcknowledgement),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for EventAcknowledgedBodyAcknowledgementType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(EventAcknowledgedBodyAcknowledgementType),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for EventAcknowledgedBodyType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(EventAcknowledgedBodyType),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for EventAcknowledgedKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(EventAcknowledgedKind), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for EventAcknowledgedSchemaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(EventAcknowledgedSchemaVersion),
+            "([redacted])"
+        ))
+    }
+}
 impl std::fmt::Debug for EventCancelDispatchedBody {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(
@@ -7527,6 +9632,29 @@ impl std::fmt::Debug for EventCancelDispatchedSchemaVersion {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(
             stringify!(EventCancelDispatchedSchemaVersion),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for EventCancelledBody {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(EventCancelledBody), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for EventCancelledBodyType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(EventCancelledBodyType), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for EventCancelledKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(EventCancelledKind), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for EventCancelledSchemaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(EventCancelledSchemaVersion),
             "([redacted])"
         ))
     }
@@ -7773,6 +9901,38 @@ impl std::fmt::Debug for EventSessionReboundSchemaVersion {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(
             stringify!(EventSessionReboundSchemaVersion),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for EventSessionRecoveryUnavailableBody {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(EventSessionRecoveryUnavailableBody),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for EventSessionRecoveryUnavailableBodyType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(EventSessionRecoveryUnavailableBodyType),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for EventSessionRecoveryUnavailableKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(EventSessionRecoveryUnavailableKind),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for EventSessionRecoveryUnavailableSchemaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(EventSessionRecoveryUnavailableSchemaVersion),
             "([redacted])"
         ))
     }

@@ -1,3 +1,4 @@
+import { verifiedReconciliation } from "./recovery.js";
 import { readSnapshot } from "./snapshot.js";
 import { interactionCatalog } from "../identity.js";
 import type {
@@ -98,7 +99,7 @@ export class FakeHost implements HostPort {
       binding: admitted.value.binding,
       capabilities: {
         ...admitted.value.capabilities,
-        queue: "supported",
+
         ...this.scriptedCapabilities,
         tools: "disabled",
       },
@@ -164,23 +165,6 @@ export class FakeHost implements HostPort {
             command.input.nativeRunId !== s.binding.nativeRunId))
       )
         return fail("stale_binding");
-      if (
-        command.input.type === "prompt" &&
-        command.input.policy === "queue_next" &&
-        s.capabilities.queue !== "supported"
-      ) {
-        const page = await this.store.snapshotPage(namespace, { limit: 256 });
-        if (!page.ok) return page;
-        if (
-          page.value.next ||
-          page.value.commands.some(
-            (record) =>
-              record.command.input.type === "prompt" &&
-              record.state !== "terminal",
-          )
-        )
-          return fail("unsupported_capability");
-      }
       if (command.input.type === "cancel") {
         if (s.capabilities.cancellation === "unsupported")
           return fail("unsupported_capability");
@@ -392,7 +376,27 @@ export class FakeHost implements HostPort {
           });
         }
     }
+    const providerFacts = terminal
+      ? [await verifiedReconciliation(s, record, "terminal", terminal.outcome)]
+      : [];
+    if (terminal)
+      events.push({
+        schemaVersion: 2,
+        kind: "event",
+        namespace,
+        eventId: `script-proof-${s.revision}`,
+        sequence: s.lastSequence + events.length + 1,
+        commandId,
+        attemptId: record.dispatch!.attemptId,
+        generation: s.binding.generation,
+        body: {
+          type: "reconciled",
+          attempt: record.dispatch!,
+          resolution: "terminal",
+        },
+      });
     const result = await this.store.commit({
+      providerFacts,
       ...emptyCommit(s),
       session: {
         ...s,
@@ -400,7 +404,17 @@ export class FakeHost implements HostPort {
         lastSequence: s.lastSequence + events.length,
       },
       commands: terminal
-        ? [{ ...record, state: "terminal", outcome: terminal.outcome }]
+        ? [
+            {
+              schemaVersion: 2,
+              kind: "commandRecord",
+              command: record.command,
+              receipt: record.receipt,
+              dispatch: record.dispatch!,
+              state: "terminal",
+              outcome: terminal.outcome,
+            },
+          ]
         : [],
       events,
       interactions,

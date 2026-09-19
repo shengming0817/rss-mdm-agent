@@ -18,7 +18,7 @@ export {
   selectNegotiation,
 } from "./protocol.js";
 
-export type { AdmissionResult, VerifiedReconciliation } from "./session.js";
+export type { AdmissionResult, VerifiedProviderFact } from "./session.js";
 
 export {
   interactionCatalog,

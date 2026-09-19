@@ -60,6 +60,7 @@ interface Turn {
   acceptance: ReturnType<typeof deferred<boolean>>;
   consumed: boolean;
   accepted: boolean;
+  running?: boolean;
   outcome?: Outcome;
   uncertain: boolean;
   observing: boolean;
@@ -164,20 +165,17 @@ export class ClaudeAdapter implements ProviderAgentPort {
       if (
         !same(request.namespace, config.namespace) ||
         request.workingDirectory !== config.workingDirectory ||
-        request.permissions !== config.permissions ||
-        request.tools !== config.tools ||
-        request.verifier !== config.verifier
+        request.permissions !== config.permissions
       )
         return fail("permission_denied");
       if (
         config.permissions === "host_mediated"
-          ? typeof config.tools?.propose !== "function" ||
-            typeof config.verifier?.verify !== "function"
+          ? typeof this.options.tools?.propose !== "function"
           : config.permissions !== "tools_disabled" ||
-            config.tools !== undefined ||
-            config.verifier !== undefined
+            this.options.tools !== undefined
       )
         return fail("permission_denied");
+      const tools = this.options.tools;
       const resume = prior !== undefined;
       if (
         resume &&
@@ -323,7 +321,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
                       ...proposal,
                     });
                     const result = await bounded(
-                      config.tools.propose(proposal, budget),
+                      tools!.propose(proposal, budget),
                       budget,
                     );
                     const value = result.ok
@@ -412,7 +410,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
             config.permissions === "host_mediated"
               ? "host_mediated"
               : "disabled",
-          queue: "unsupported",
+
           steer: "unsupported",
           fork: "unsupported",
           subagent: "unsupported",
@@ -446,7 +444,72 @@ export class ClaudeAdapter implements ProviderAgentPort {
       throw new Error("invalid command");
     return value;
   }
-  async submit(
+  async dispatch(
+    binding: Binding,
+    command: Command,
+    attempt: DispatchAttempt,
+    budget: Budget,
+  ): Promise<Submission> {
+    if (command.input.type === "prompt")
+      return this.dispatchPrompt(binding, command, attempt, budget);
+    try {
+      decode(
+        boundedJson(
+          {
+            schemaVersion: 2,
+            kind: "event",
+            namespace: this.session?.configuration.namespace,
+            eventId: "control-attempt",
+            sequence: 1,
+            generation: binding.generation,
+            commandId: command.commandId,
+            attemptId: attempt.attemptId,
+            body: { type: "dispatch", attempt },
+          },
+          limits,
+        ),
+        limits,
+      );
+    } catch {
+      return {
+        certainty: "not_sent",
+        error: { code: "invalid_input", retry: "never" },
+      };
+    }
+    if (
+      attempt.certainty !== "intent" ||
+      attempt.originGeneration !== binding.generation ||
+      attempt.observerGeneration !== binding.generation ||
+      attempt.nativeSessionId !== binding.nativeSessionId ||
+      (["nativeRunId", "nativeRequestId"] as const).some(
+        (key) => attempt[key] !== undefined && attempt[key] !== binding[key],
+      )
+    )
+      return {
+        certainty: "not_sent",
+        error: { code: "stale_binding", retry: "never" },
+      };
+    const result =
+      command.input.type === "cancel"
+        ? await this.cancelRun(binding, command, budget)
+        : await this.answerQuestion(binding, command, budget);
+    if (!result.ok)
+      return result.error.retry === "reconcile_first"
+        ? { certainty: "unknown", correlationId: command.commandId }
+        : { certainty: "not_sent", error: result.error };
+    return {
+      certainty: "acknowledged",
+      binding: copy(binding),
+      acknowledgement:
+        command.input.type === "cancel"
+          ? {
+              type: "cancel",
+              confirmation: result.value as "request_only" | "already_terminal",
+            }
+          : { type: "respond" },
+    };
+  }
+  private async dispatchPrompt(
     binding: Binding,
     command: Command,
     attempt: DispatchAttempt,
@@ -640,6 +703,19 @@ export class ClaudeAdapter implements ProviderAgentPort {
         throw new Error("foreign prompt");
       this.accept(s, turn);
     }
+    if (
+      turn.accepted &&
+      !turn.running &&
+      (m.type === "assistant" || m.type === "stream_event")
+    ) {
+      turn.running = true;
+      turn.queue.push({
+        type: "running",
+        binding: copy(turn.binding),
+        commandId: turn.command.commandId,
+        attemptId: turn.attempt.attemptId,
+      });
+    }
     if (m.type === "assistant") {
       if (!turn.accepted) return;
       if (!isId(m.message.id)) throw new Error("invalid message id");
@@ -745,7 +821,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
       )
     );
   }
-  async cancel(
+  private async cancelRun(
     binding: Binding,
     command: Command,
     budget: Budget,
@@ -779,7 +855,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
       return fail("unavailable", "reconcile_first");
     }
   }
-  async respond(
+  private async answerQuestion(
     binding: Binding,
     command: Command,
     budget: Budget,
@@ -827,7 +903,9 @@ export class ClaudeAdapter implements ProviderAgentPort {
       if (
         !s ||
         !record.dispatch ||
-        ["terminal", "invalidated"].includes(record.state) ||
+        ["terminal", "invalidated", "acknowledged", "cancelled"].includes(
+          record.state,
+        ) ||
         !same(record.receipt.namespace, s.configuration.namespace) ||
         record.dispatch.observerGeneration !== binding.generation ||
         record.dispatch.nativeSessionId !== binding.nativeSessionId ||
@@ -852,7 +930,12 @@ export class ClaudeAdapter implements ProviderAgentPort {
         ? ok({ ...evidence, status: "terminal", outcome: turn.outcome })
         : ok({
             ...evidence,
-            status: turn.accepted && !turn.uncertain ? "running" : "unknown",
+            status:
+              turn.accepted && !turn.uncertain
+                ? turn.running
+                  ? "running"
+                  : "submitted"
+                : "unknown",
           });
     } catch {
       return fail("invalid_input");

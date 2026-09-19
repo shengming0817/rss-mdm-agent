@@ -40,7 +40,13 @@ export interface SessionView {
   connection: "attached" | "detached" | "resync_required";
   commands: Record<
     string,
-    { state: CommandRecord["state"]; outcome?: Outcome; failure?: Failure }
+    {
+      state: CommandRecord["state"];
+      outcome?: Outcome;
+      failure?: Failure;
+      acknowledgement?: CommandRecord["acknowledgement"];
+      cancelledBy?: string;
+    }
   >;
   messages: Record<
     string,
@@ -80,9 +86,23 @@ export function emptyView(session: Session, cursor: number): SessionView {
 }
 function event(view: SessionView, e: Event): void {
   // Session-level events have no command; snapshot metadata owns session identity.
+  if (e.body.type === "session_recovery_unavailable") {
+    view.connection = "resync_required";
+    return;
+  }
   if (e.commandId === undefined) return;
   const body = e.body;
-  if (body.type === "terminal") {
+  if (body.type === "acknowledged") {
+    view.commands[e.commandId] = {
+      state: "acknowledged",
+      acknowledgement: body.acknowledgement,
+    };
+  } else if (body.type === "cancelled") {
+    view.commands[e.commandId] = {
+      state: "cancelled",
+      cancelledBy: body.cancelledBy,
+    };
+  } else if (body.type === "terminal") {
     view.commands[e.commandId] = { state: "terminal", outcome: body.outcome };
     for (const [key, message] of Object.entries(view.messages))
       if (message.commandId === e.commandId && !message.stable)
@@ -97,7 +117,7 @@ function event(view: SessionView, e: Event): void {
         delete view.messages[key];
   } else if (body.type === "status") {
     if (
-      !["terminal", "invalidated"].includes(
+      !["terminal", "invalidated", "acknowledged", "cancelled"].includes(
         view.commands[e.commandId]?.state ?? "",
       )
     )
@@ -165,6 +185,8 @@ export function restoreSnapshot(
         state: c.state,
         ...(c.outcome ? { outcome: c.outcome } : {}),
         ...(c.failure ? { failure: c.failure } : {}),
+        ...(c.acknowledgement ? { acknowledgement: c.acknowledgement } : {}),
+        ...(c.cancelledBy ? { cancelledBy: c.cancelledBy } : {}),
       };
     for (const interaction of page.interactions)
       view.interactions[interaction.interactionId] =
@@ -184,7 +206,7 @@ export function applyUpdate(view: SessionView, item: Subscription): void {
     if (
       item.generation !== view.generation ||
       !view.commands[item.commandId] ||
-      ["terminal", "invalidated"].includes(
+      ["terminal", "invalidated", "acknowledged", "cancelled"].includes(
         view.commands[item.commandId]?.state ?? "",
       )
     )

@@ -54,6 +54,7 @@ const statements = [
     due INTEGER GENERATED ALWAYS AS (json_extract(json,'$.nextAttemptAtMs')) STORED NOT NULL,
     PRIMARY KEY (${scope},id), ${sessionFk},
     FOREIGN KEY (${scope},event_id) REFERENCES events (${scope},id)) STRICT, WITHOUT ROWID`,
+  `CREATE TABLE worker_launches (${columns}, launch_id TEXT NOT NULL, ${row}, PRIMARY KEY (${scope}), UNIQUE(launch_id)) STRICT, WITHOUT ROWID`,
   `CREATE TABLE tombstones (${columns}, PRIMARY KEY (${scope})) STRICT, WITHOUT ROWID`,
   `CREATE INDEX recovery_commands ON commands (state,${scope},id)`,
   `CREATE INDEX due_deliveries ON deliveries (status,due,${scope},id)`,

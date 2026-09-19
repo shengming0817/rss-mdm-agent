@@ -12,7 +12,6 @@ test("scripted Host exercises queue, steer, cancel and continuation support and 
       undefined,
       { now: () => 0 },
       {
-        queue: supported ? "supported" : "unsupported",
         steer: supported ? "supported" : "unsupported",
         cancellation: supported ? "request_only" : "unsupported",
         continuation: supported ? "same_process" : "unsupported",
@@ -51,7 +50,7 @@ test("scripted Host exercises queue, steer, cancel and continuation support and 
           budget(),
         )
       ).ok,
-      supported,
+      true,
     );
     unwrap(
       await host.advance(fixtureCaller, s.namespace.sessionId, "first", []),

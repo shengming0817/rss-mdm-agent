@@ -1,0 +1,31 @@
+{
+  "name": "@rss-mdm-agent/ai-host",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./worker": {
+      "types": "./dist/worker.d.ts",
+      "import": "./dist/worker.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "engines": {
+    "node": "24.14.1"
+  },
+  "dependencies": {
+    "@rss-mdm-agent/ai-contract": "workspace:*"
+  }
+}

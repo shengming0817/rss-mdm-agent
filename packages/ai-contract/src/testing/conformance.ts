@@ -1,6 +1,6 @@
 import { fingerprint } from "../codec.js";
 import { verifiedReconciliation } from "./recovery.js";
-import type { VerifiedReconciliation } from "../session.js";
+import type { VerifiedProviderFact } from "../session.js";
 import { workspaceIdentity } from "../session.js";
 import assert from "node:assert/strict";
 import { runRecoveryConformance } from "./recovery.js";
@@ -54,7 +54,6 @@ export function fixtureSession(): Session {
       config: { id: "config-1", revision: "1" },
     },
     capabilities: {
-      queue: "unsupported",
       continuation: "unsupported",
       cancellation: "request_only",
       tools: "disabled",
@@ -231,7 +230,7 @@ async function runStoreScenarios(
     false,
     "unknown cannot return to accepted without proof",
   );
-  const batch = terminalCommit(
+  const batch = await terminalCommit(
     unknown,
     record,
     await verifiedReconciliation(unknown, record, "terminal"),
@@ -242,7 +241,7 @@ async function runStoreScenarios(
       ...b,
       events: b.events.map((e) => ({ ...e, generation: "stale" })),
     }),
-    (b: SessionCommit) => ({ ...b, reconciliations: [] }),
+    (b: SessionCommit) => ({ ...b, providerFacts: [] }),
   ])
     assert.equal((await store.commit(mutate(batch))).ok, false);
   unwrap(await store.commit(batch));
@@ -504,15 +503,11 @@ async function runStoreBoundaries(
       ).ok,
       false,
     );
+  const finished = await terminalCommit(bound, running);
   unwrap(
     await coordinatesStore.commit({
-      ...terminalCommit(bound, running),
-      session: {
-        ...bound,
-        revision: bound.revision + 1,
-        lastSequence: bound.lastSequence + 1,
-        binding: s.binding,
-      },
+      ...finished,
+      session: { ...finished.session, binding: s.binding },
     }),
   );
   for (const status of ["pending", "unavailable"] as const) {
@@ -673,11 +668,11 @@ async function runStoreBoundaries(
 }
 
 /** Native terminal evidence and the matching state projection form one commit. */
-export function terminalCommit(
+export async function terminalCommit(
   session: Session,
   record: CommandRecord,
-  reconciliation?: VerifiedReconciliation,
-): SessionCommit {
+  reconciliation?: VerifiedProviderFact,
+): Promise<SessionCommit> {
   if (!record.dispatch)
     throw new Error("fixture requires a dispatched command");
   const dispatch: DispatchAttempt = {
@@ -696,8 +691,11 @@ export function terminalCommit(
   const bodies: Event["body"][] = [];
   if (record.state === "reconciliation_required" && !reconciliation)
     throw new Error("fixture requires verified reconciliation");
-  const reconciliations = reconciliation ? [reconciliation] : [];
-  if (reconciliations.length)
+  const providerFacts = [
+    reconciliation ??
+      (await verifiedReconciliation(session, record, "terminal")),
+  ];
+  if (providerFacts.length)
     bodies.push({
       type: "reconciled",
       attempt: record.dispatch,
@@ -706,7 +704,7 @@ export function terminalCommit(
   if (record.dispatch.certainty !== "submitted")
     bodies.push({ type: "dispatch", attempt: dispatch });
   bodies.push({ type: "terminal", outcome: "completed" });
-  return { ...commandCommit(session, next, bodies), reconciliations };
+  return { ...commandCommit(session, next, bodies), providerFacts };
 }
 export function commandCommit(
   session: Session,
@@ -782,7 +780,17 @@ export async function dispatchCommand(
     state: certainty === "submitted" ? "running" : "reconciliation_required",
     dispatch,
   };
+  const proof = await verifiedReconciliation(
+    { ...head, binding: { ...head.binding, ...coordinates } },
+    preparing,
+    certainty === "submitted" ? "running" : "unknown",
+  );
   const batch = commandCommit(head, next, [
+    {
+      type: "reconciled",
+      attempt: intent,
+      resolution: certainty === "submitted" ? "running" : "unknown",
+    },
     { type: "dispatch", attempt: dispatch },
     {
       type: "status",
@@ -792,6 +800,7 @@ export async function dispatchCommand(
   unwrap(
     await store.commit({
       ...batch,
+      providerFacts: [proof],
       session: {
         ...batch.session,
         binding: { ...head.binding, ...coordinates },

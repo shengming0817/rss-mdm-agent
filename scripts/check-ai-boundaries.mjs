@@ -4,6 +4,7 @@ import { join, dirname, resolve } from "node:path";
 import ts from "typescript";
 const root = fileURLToPath(new URL("../packages/", import.meta.url));
 const allowed = {
+  "ai-host": ["@rss-mdm-agent/ai-contract"],
   "ai-contract": ["@noble/hashes", "canonicalize", "jsonc-parser"],
   "ai-access": ["@rss-mdm-agent/ai-contract", "@agentclientprotocol/sdk"],
   "ai-client": ["@rss-mdm-agent/ai-contract", "@agentclientprotocol/sdk"],
@@ -20,6 +21,18 @@ const serverFiles = new Map([
   [join(root, "ai-contract/src/session.ts"), ["node:path", "node:crypto"]],
   [join(root, "ai-contract/src/transitions.ts"), ["node:crypto"]],
 ]);
+for (const [file, imports] of Object.entries({
+  "index.ts": ["node:crypto"],
+  "channel.ts": ["node:crypto", "node:stream"],
+  "bootstrap.ts": ["node:net", "node:child_process"],
+  "process.ts": [
+    "node:child_process",
+    "node:crypto",
+    "node:stream",
+    "node:url",
+  ],
+}))
+  serverFiles.set(join(root, "ai-host/src", file), imports);
 const runtimeEdges = new Map();
 function walk(path) {
   return readdirSync(path, { withFileTypes: true }).flatMap((e) =>
@@ -55,6 +68,7 @@ for (const [name, dependencies] of Object.entries(allowed)) {
       }
       if (
         name !== "ai-contract" &&
+        name !== "ai-host" &&
         [
           "@rss-mdm-agent/ai-contract/session",
           "@rss-mdm-agent/ai-contract/transitions",
@@ -101,7 +115,14 @@ for (const [name, dependencies] of Object.entries(allowed)) {
       ) {
         if (ts.isStringLiteralLike(node.arguments[0]))
           check(node.arguments[0].text);
-        else errors.push(`${name}: computed module import`);
+        else if (
+          !(
+            file === join(root, "ai-host/src/bootstrap.ts") &&
+            node.expression.getText(ast) === "import" &&
+            node.arguments[0].getText(ast) === "input.artifact"
+          )
+        )
+          errors.push(`${name}: computed module import`);
       }
       ts.forEachChild(node, visit);
     }

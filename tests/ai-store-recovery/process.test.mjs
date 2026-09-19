@@ -258,7 +258,7 @@ for (const scenario of [
         await reopened.commit({
           ...proofCommit,
           nowMs: 1,
-          reconciliations: [
+          providerFacts: [
             await verifiedReconciliation(third, latest, "not_submitted"),
           ],
         }),
@@ -288,7 +288,7 @@ for (const scenario of [
       unwrap(await reopened.commit({ ...fresh(newAttempt), nowMs: 1 }));
       const history = unwrap(await reopened.events(third.namespace, 0, 1024));
       assert.deepEqual(
-        history.find((e) => e.body.type === "reconciled").body.attempt,
+        history.findLast((e) => e.body.type === "reconciled").body.attempt,
         latest.dispatch,
       );
     }

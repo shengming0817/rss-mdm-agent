@@ -123,6 +123,8 @@ export type CommandRecord =
       dispatch?: never;
       outcome?: never;
       failure?: never;
+      cancelledBy?: never;
+      acknowledgement?: never;
     }
   | {
       /**
@@ -145,6 +147,8 @@ export type CommandRecord =
       dispatch: DispatchAttempt;
       outcome?: never;
       failure?: never;
+      cancelledBy?: never;
+      acknowledgement?: never;
     }
   | {
       /**
@@ -167,6 +171,8 @@ export type CommandRecord =
       dispatch: DispatchAttempt;
       outcome?: never;
       failure?: never;
+      cancelledBy?: never;
+      acknowledgement?: never;
     }
   | {
       /**
@@ -190,6 +196,8 @@ export type CommandRecord =
       /** Explicitly observed model terminal outcome. */
       outcome: Outcome;
       failure?: never;
+      cancelledBy?: never;
+      acknowledgement?: never;
     }
   | {
       /**
@@ -212,6 +220,8 @@ export type CommandRecord =
       dispatch: DispatchAttempt;
       outcome?: never;
       failure?: never;
+      cancelledBy?: never;
+      acknowledgement?: never;
     }
   | {
       /**
@@ -234,6 +244,91 @@ export type CommandRecord =
       failure: Failure;
       dispatch?: never;
       outcome?: never;
+      cancelledBy?: never;
+      acknowledgement?: never;
+    }
+  | {
+      /**
+       * Exact product wire version; V1 is rejected without migration or fallback.
+       */
+      schemaVersion: 2;
+      /**
+       * Closed product record discriminator.
+       */
+      kind: "commandRecord";
+      /** Immutable original command. */
+      command: Command;
+      /** Immutable original committed acceptance fact. */
+      receipt: Receipt;
+      /**
+       * Closed command lifecycle projection.
+       */
+      state: "cancelled";
+      /** Accepted local cancellation command identity. */
+      cancelledBy: Id;
+      dispatch?: never;
+      outcome?: never;
+      failure?: never;
+      acknowledgement?: never;
+    }
+  | {
+      /**
+       * Exact product wire version; V1 is rejected without migration or fallback.
+       */
+      schemaVersion: 2;
+      /**
+       * Closed product record discriminator.
+       */
+      kind: "commandRecord";
+      /** Immutable original command. */
+      command: Command;
+      /** Immutable original committed acceptance fact. */
+      receipt: Receipt;
+      /**
+       * Closed command lifecycle projection.
+       */
+      state: "acknowledged";
+      /** Original attempt and append-once native correlation coordinates. */
+      dispatch: DispatchAttempt;
+      /** Closed control acknowledgement; never a model-turn outcome. */
+      acknowledgement: Acknowledgement;
+      outcome?: never;
+      failure?: never;
+      cancelledBy?: never;
+    }
+  | {
+      /**
+       * Exact product wire version; V1 is rejected without migration or fallback.
+       */
+      schemaVersion: 2;
+      /**
+       * Closed product record discriminator.
+       */
+      kind: "commandRecord";
+      /** Immutable original command. */
+      command: Command;
+      /** Immutable original committed acceptance fact. */
+      receipt: Receipt;
+      /**
+       * Closed command lifecycle projection.
+       */
+      state: "acknowledged";
+      /**
+       * Closed control acknowledgement; never a model-turn outcome.
+       */
+      /** Closed control acknowledgement; never a model-turn outcome. */
+      acknowledgement: {
+        /**
+         * Closed variant discriminator.
+         */
+        type: "queued_cancelled";
+        /** Queued prompt cancelled without a native dispatch. */
+        targetCommandId: Id;
+      };
+      dispatch?: never;
+      outcome?: never;
+      failure?: never;
+      cancelledBy?: never;
     };
 /**
  * Definite model-turn outcome; does not establish process exit or business-side-effect completion.
@@ -268,6 +363,34 @@ export type ErrorCode =
  * same_command preserves identity/content; reconcile_first checks the original operation; never forbids retry.
  */
 export type Retry = "same_command" | "reconcile_first" | "never";
+/**
+ * Native control acknowledgement; never a model turn outcome.
+ */
+export type Acknowledgement =
+  | {
+      /**
+       * Closed variant discriminator.
+       */
+      type: "cancel";
+      /**
+       * Provider confirms the control request, not a model terminal.
+       */
+      confirmation: "request_only" | "already_terminal";
+    }
+  | {
+      /**
+       * Closed variant discriminator.
+       */
+      type: "respond";
+      confirmation?: never;
+    }
+  | {
+      /**
+       * Closed variant discriminator.
+       */
+      type: "steer";
+      confirmation?: never;
+    };
 /**
  * Closed stable events. Session events have no command, attempt observations name their exact attempt.
  */
@@ -306,7 +429,7 @@ export type Event =
          */
         text: string;
       };
-      /** Stable identity of one dispatch attempt; never reused after positive non-submission proof. */
+      /** Exact native dispatch attempt identity. */
       attemptId: Id;
     }
   | {
@@ -375,7 +498,7 @@ export type Event =
          */
         state: "dispatching" | "running" | "reconciliation_required";
       };
-      /** Stable identity of one dispatch attempt; never reused after positive non-submission proof. */
+      /** Exact native dispatch attempt identity. */
       attemptId: Id;
     }
   | {
@@ -408,7 +531,7 @@ export type Event =
         /** Definite model-turn result; no implication about business side effects. */
         outcome: Outcome;
       };
-      /** Stable identity of one dispatch attempt; never reused after positive non-submission proof. */
+      /** Exact native dispatch attempt identity. */
       attemptId: Id;
     }
   | {
@@ -443,7 +566,7 @@ export type Event =
          */
         confirmation: "request_only" | "already_terminal" | "unsupported";
       };
-      /** Stable identity of one dispatch attempt; never reused after positive non-submission proof. */
+      /** Exact native dispatch attempt identity. */
       attemptId: Id;
     }
   | {
@@ -484,7 +607,7 @@ export type Event =
           [k: string]: unknown;
         };
       };
-      /** Stable identity of one dispatch attempt; never reused after positive non-submission proof. */
+      /** Exact native dispatch attempt identity. */
       attemptId: Id;
     }
   | {
@@ -525,7 +648,7 @@ export type Event =
          */
         text: string;
       };
-      /** Stable identity of one dispatch attempt; never reused after positive non-submission proof. */
+      /** Exact native dispatch attempt identity. */
       attemptId: Id;
     }
   | {
@@ -568,7 +691,7 @@ export type Event =
         /** A live-generation callback. Restore preserves display history but always makes the previous callback unavailable. */
         callbackLifetime: CallbackLifetime;
       };
-      /** Stable identity of one dispatch attempt; never reused after positive non-submission proof. */
+      /** Exact native dispatch attempt identity. */
       attemptId: Id;
     }
   | {
@@ -607,7 +730,7 @@ export type Event =
         /** Accepted response command which atomically consumed the interaction; present only when answered. */
         responseCommandId: Id;
       };
-      /** Stable identity of one dispatch attempt; never reused after positive non-submission proof. */
+      /** Exact native dispatch attempt identity. */
       attemptId: Id;
     }
   | {
@@ -644,7 +767,7 @@ export type Event =
          */
         status: "expired" | "unavailable";
       };
-      /** Stable identity of one dispatch attempt; never reused after positive non-submission proof. */
+      /** Exact native dispatch attempt identity. */
       attemptId: Id;
     }
   | {
@@ -741,7 +864,7 @@ export type Event =
         /** Complete dispatch identity retained for replay and reconciliation. */
         attempt: DispatchAttempt;
       };
-      /** Stable identity of one dispatch attempt; never reused after positive non-submission proof. */
+      /** Exact native dispatch attempt identity. */
       attemptId: Id;
     }
   | {
@@ -776,9 +899,15 @@ export type Event =
         /**
          * Provider observation bound to this attempt and its current observer.
          */
-        resolution: "running" | "terminal" | "not_submitted" | "unknown";
+        resolution:
+          | "running"
+          | "terminal"
+          | "not_submitted"
+          | "unknown"
+          | "submitted"
+          | "acknowledged";
       };
-      /** Stable identity of one dispatch attempt; never reused after positive non-submission proof. */
+      /** Exact native dispatch attempt identity. */
       attemptId: Id;
     }
   | {
@@ -800,6 +929,9 @@ export type Event =
       generation: Id;
       /** Original command identity within the trusted namespace. */
       commandId: Id;
+      /**
+       * Stable product contract field.
+       */
       body: {
         /**
          * Closed variant discriminator.
@@ -808,7 +940,7 @@ export type Event =
         /** Full surface recovery state committed with this event. */
         surface: SurfaceState;
       };
-      /** Stable identity of one dispatch attempt; never reused after positive non-submission proof. */
+      /** Exact native dispatch attempt identity. */
       attemptId: Id;
     }
   | {
@@ -869,6 +1001,142 @@ export type Event =
         type: "session_retired";
       };
       commandId?: never;
+      attemptId?: never;
+    }
+  | {
+      /**
+       * Exact product wire version; V1 is rejected without migration or fallback.
+       */
+      schemaVersion: 2;
+      /**
+       * Closed product record discriminator.
+       */
+      kind: "event";
+      /** Trusted storage isolation scope; not copied from model or action content. */
+      namespace: Namespace;
+      /** Stable unique event identifier within the namespace. */
+      eventId: Id;
+      /** Strictly increasing stable-event counter; attach cursors are exclusive. */
+      sequence: Counter;
+      /** Live provider incarnation token; rejects callbacks from previous incarnations. */
+      generation: Id;
+      /** Original command identity within the trusted namespace. */
+      commandId: Id;
+      /**
+       * Stable product contract field.
+       */
+      body: {
+        /**
+         * Closed variant discriminator.
+         */
+        type: "acknowledged";
+        /** Closed control acknowledgement; never a model-turn outcome. */
+        acknowledgement: Acknowledgement;
+      };
+      /** Exact native dispatch attempt identity. */
+      attemptId: Id;
+    }
+  | {
+      /**
+       * Exact product wire version; V1 is rejected without migration or fallback.
+       */
+      schemaVersion: 2;
+      /**
+       * Closed product record discriminator.
+       */
+      kind: "event";
+      /** Trusted storage isolation scope; not copied from model or action content. */
+      namespace: Namespace;
+      /** Stable unique event identifier within the namespace. */
+      eventId: Id;
+      /** Strictly increasing stable-event counter; attach cursors are exclusive. */
+      sequence: Counter;
+      /** Live provider incarnation token; rejects callbacks from previous incarnations. */
+      generation: Id;
+      /** Original command identity within the trusted namespace. */
+      commandId: Id;
+      /**
+       * Stable product contract field.
+       */
+      body: {
+        /**
+         * Closed variant discriminator.
+         */
+        type: "cancelled";
+        /** Accepted local cancellation command identity. */
+        cancelledBy: Id;
+      };
+      attemptId?: never;
+    }
+  | {
+      /**
+       * Exact product wire version; V1 is rejected without migration or fallback.
+       */
+      schemaVersion: 2;
+      /**
+       * Closed product record discriminator.
+       */
+      kind: "event";
+      /** Trusted storage isolation scope; not copied from model or action content. */
+      namespace: Namespace;
+      /** Stable unique event identifier within the namespace. */
+      eventId: Id;
+      /** Strictly increasing stable-event counter; attach cursors are exclusive. */
+      sequence: Counter;
+      /** Live provider incarnation token; rejects callbacks from previous incarnations. */
+      generation: Id;
+      /**
+       * Stable product contract field.
+       */
+      body: {
+        /**
+         * Closed variant discriminator.
+         */
+        type: "session_recovery_unavailable";
+      };
+      commandId?: never;
+      attemptId?: never;
+    }
+  | {
+      /**
+       * Exact product wire version; V1 is rejected without migration or fallback.
+       */
+      schemaVersion: 2;
+      /**
+       * Closed product record discriminator.
+       */
+      kind: "event";
+      /** Trusted storage isolation scope; not copied from model or action content. */
+      namespace: Namespace;
+      /** Stable unique event identifier within the namespace. */
+      eventId: Id;
+      /** Strictly increasing stable-event counter; attach cursors are exclusive. */
+      sequence: Counter;
+      /** Live provider incarnation token; rejects callbacks from previous incarnations. */
+      generation: Id;
+      /** Original command identity within the trusted namespace. */
+      commandId: Id;
+      /**
+       * Stable product contract field.
+       */
+      body: {
+        /**
+         * Closed variant discriminator.
+         */
+        type: "acknowledged";
+        /**
+         * Closed control acknowledgement; never a model-turn outcome.
+         */
+        /** Closed control acknowledgement; never a model-turn outcome. */
+        acknowledgement: {
+          /**
+           * Closed variant discriminator.
+           */
+          type: "queued_cancelled";
+          /** Queued prompt cancelled without a native dispatch. */
+          targetCommandId: Id;
+        };
+      };
       attemptId?: never;
     };
 /**
@@ -1107,7 +1375,7 @@ export interface Session {
   /**
    * Explicit lifecycle state; missing native evidence cannot be inferred from transport loss.
    */
-  status: "active" | "retired";
+  status: "active" | "recovery_required" | "retired";
 }
 /**
  * Provider context identity. Version, configuration, account and generation bind every capability and callback.
@@ -1175,8 +1443,6 @@ export interface Capabilities {
   structuredQuestion: CapabilityState;
   /** Whether provider-specific multimodal input is available through an adapter extension. */
   multimodal: CapabilityState;
-  /** Whether additional prompts may be queued while a run is active. */
-  queue: CapabilityState;
 }
 /**
  * Single-use provider callback with immutable command/native correlation, expiry and lifetime.

@@ -6,6 +6,8 @@ import type {
   Result,
   SessionCommit,
   SessionRebind,
+  RecoveryUnavailable,
+  WorkerLaunch,
   SessionStore,
   Caller,
   Clock,
@@ -28,6 +30,8 @@ import {
   commitSession,
   createState,
   rebindSession,
+  recoverUnavailable,
+  validLaunch,
   retireSession,
   canPrune,
   defaultLimits,
@@ -142,6 +146,62 @@ export class MemorySessionStore implements SessionStore {
     const result = this.apply(input.namespace, (s) => rebindSession(s, input));
     return result.ok ? this.session(input.namespace) : result;
   }
+  private workerLaunches = new Map<string, WorkerLaunch>();
+  async recoverUnavailable(
+    input: RecoveryUnavailable,
+  ): Promise<Result<Session>> {
+    const result = this.apply(input.namespace, (s) =>
+      recoverUnavailable(s, input),
+    );
+    return result.ok ? this.session(input.namespace) : result;
+  }
+  async reserveLaunch(launch: WorkerLaunch): Promise<Result<void>> {
+    return this.query(() => {
+      if (this.closed) return fail("unavailable");
+      validLaunch(launch);
+      const key = namespaceKey(launch.namespace);
+      if (launch.phase !== "reserved" || this.workerLaunches.has(key))
+        return fail("content_conflict");
+      this.workerLaunches.set(key, clone(launch));
+      return ok(undefined);
+    });
+  }
+  async registerLaunch(
+    namespace: Namespace,
+    launchId: Id,
+    rootPid: number,
+    pgid: number,
+  ): Promise<Result<void>> {
+    return this.query(() => {
+      if (this.closed) return fail("unavailable");
+      const key = namespaceKey(namespace),
+        old = this.workerLaunches.get(key);
+      if (!old || old.phase !== "reserved" || old.launchId !== launchId)
+        return fail("stale_binding");
+      const next: WorkerLaunch = { ...old, phase: "registered", rootPid, pgid };
+      validLaunch(next);
+      this.workerLaunches.set(key, next);
+      return ok(undefined);
+    });
+  }
+  async releaseLaunch(
+    namespace: Namespace,
+    launchId: Id,
+  ): Promise<Result<void>> {
+    return this.query(() => {
+      if (this.closed) return fail("unavailable");
+      const key = namespaceKey(namespace),
+        old = this.workerLaunches.get(key);
+      if (!old || old.launchId !== launchId) return fail("stale_binding");
+      this.workerLaunches.delete(key);
+      return ok(undefined);
+    });
+  }
+  async launches(): Promise<Result<readonly WorkerLaunch[]>> {
+    return this.closed
+      ? fail("unavailable")
+      : ok(clone([...this.workerLaunches.values()]));
+  }
   async snapshotPage(
     namespace: Namespace,
     query: PageQuery,
@@ -192,7 +252,7 @@ export class MemorySessionStore implements SessionStore {
             .map((s) => s.session)
             .filter(
               (s) =>
-                s.status === "active" &&
+                s.status !== "retired" &&
                 s.namespace.tenantId === caller.tenantId &&
                 s.namespace.principalId === caller.principalId &&
                 s.namespace.authorityId === caller.authorityId,
