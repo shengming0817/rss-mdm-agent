@@ -85,7 +85,7 @@ for (const signal of ["SIGTERM", "SIGINT"]) {
       assert.equal(child.exitCode, null, stderr);
       assert.equal(child.signalCode, null, stderr);
       const stat = await lstat(configuration.socketPath).catch(() => undefined);
-      return stat?.isSocket();
+      return stat?.isSocket() && (stat.mode & 0o777) === 0o600;
     });
     assert.equal((await lstat(configuration.socketPath)).mode & 0o777, 0o600);
     socket = connect(configuration.socketPath);
