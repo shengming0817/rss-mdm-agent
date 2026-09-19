@@ -53,6 +53,7 @@ export class FakeHost implements HostPort {
     if (this.closed || budget.signal.aborted) return fail("unavailable");
     if (options.profile === "controlled_tools")
       return fail("permission_denied");
+    const namespace = { ...caller, sessionId: `fake-session-${++this.next}` };
     const provider = new ScriptedProvider();
     this.providers.push(provider);
     const admitted = await VerifiedProviderSession.open(
@@ -62,6 +63,7 @@ export class FakeHost implements HostPort {
         config: options.config,
         accountRef: options.accountRef,
         workingDirectory: ".",
+        namespace,
         permissions: "tools_disabled",
       },
       budget,
@@ -74,7 +76,7 @@ export class FakeHost implements HostPort {
     const session: Session = {
       schemaVersion: 2,
       kind: "session",
-      namespace: { ...caller, sessionId: `fake-session-${++this.next}` },
+      namespace,
       revision: 0,
       lastSequence: 0,
       status: "active",

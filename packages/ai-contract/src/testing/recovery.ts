@@ -2,8 +2,12 @@ import assert from "node:assert/strict";
 import { deliveryFingerprint } from "../codec.js";
 import { fixtureLimits } from "./store.js";
 import { VerifiedProviderSession } from "../session.js";
-import type { Session, CommandRecord } from "../wire.js";
-import type { ProviderAgentPort, SessionStore } from "../ports.js";
+import type { Session, CommandRecord, Event } from "../wire.js";
+import type {
+  ProviderAgentPort,
+  SessionStore,
+  Reconciliation,
+} from "../ports.js";
 import { defaultBudget } from "./budget.js";
 import {
   fixtureSession,
@@ -15,6 +19,8 @@ import {
   commandCommit,
   terminalCommit,
   seedSurface,
+  seedInteraction,
+  interactionEvent,
 } from "./conformance.js";
 
 /** Scripted admission proof, never actual provider/process restoration evidence. */
@@ -26,6 +32,7 @@ export async function restoredSession(session: Session, generation: string) {
     config: previous.config,
     accountRef: previous.accountRef,
     workingDirectory: ".",
+    namespace: session.namespace,
     permissions: "tools_disabled" as const,
   };
   const port = {
@@ -51,11 +58,83 @@ export async function restoredSession(session: Session, generation: string) {
   );
 }
 
+/** Scripted observation via the real admission/reconcile path; no actual provider claim. */
+export async function verifiedReconciliation(
+  session: Session,
+  record: CommandRecord,
+  status: Reconciliation["status"],
+) {
+  const binding = session.binding;
+  const port = {
+    createSession: async () => ({
+      ok: true as const,
+      value: { binding, capabilities: session.capabilities },
+    }),
+    reconcile: async () => ({
+      ok: true as const,
+      value: {
+        commandId: record.command.commandId,
+        attemptId: record.dispatch!.attemptId,
+        binding,
+        status,
+        ...(status === "terminal" ? { outcome: "completed" } : {}),
+      },
+    }),
+    close: async () => ({ ok: true as const, value: { processStopped: true } }),
+  } as unknown as ProviderAgentPort;
+  const admitted = unwrap(
+    await VerifiedProviderSession.open(
+      port,
+      {
+        namespace: session.namespace,
+        provider: binding.provider,
+        config: binding.config,
+        accountRef: binding.accountRef,
+        workingDirectory: ".",
+        permissions: "tools_disabled",
+      },
+      defaultBudget(),
+    ),
+  );
+  return unwrap(await admitted.reconcile(session, record, defaultBudget()));
+}
+
 /** The same recovery transitions must pass for memory and every durable adapter. */
 export async function runRecoveryConformance(
   create: () => Promise<SessionStore>,
 ) {
   await failureAndDelivery(await create());
+  await terminalInteractions(await create());
+  await expireInteraction(await create());
+  for (const rebindFirst of [true, false]) {
+    const racing = await create(),
+      session = fixtureSession();
+    session.capabilities.continuation = "across_processes";
+    unwrap(await racing.create(session));
+    const restored = await restoredSession(session, "race-winner");
+    const rebind = () =>
+      racing.rebind({
+        namespace: session.namespace,
+        expectedRevision: 0,
+        expectedGeneration: session.binding.generation,
+        restored,
+        eventId: "race-rebind",
+      });
+    const commit = () => racing.commit(emptyCommit(session));
+    const results = await Promise.all(
+      (rebindFirst ? [rebind, commit] : [commit, rebind]).map((run) => run()),
+    );
+    assert.equal(results.filter((result) => result.ok).length, 1);
+    const head = unwrap(await racing.session(session.namespace));
+    assert.equal(head.revision, 1);
+    const rebindWon = results[rebindFirst ? 0 : 1].ok;
+    assert.equal(
+      head.binding.generation,
+      rebindWon ? "race-winner" : session.binding.generation,
+    );
+    assert.equal(head.lastSequence, rebindWon ? 1 : 0);
+    unwrap(await racing.close(defaultBudget()));
+  }
   const store = await create();
   const initial = fixtureSession();
   initial.capabilities.continuation = "across_processes";
@@ -124,7 +203,11 @@ export async function runRecoveryConformance(
     "invalidated",
   );
   assert.equal((await store.rebind(input)).ok, false);
-  const late = terminalCommit(head, rebound);
+  const late = terminalCommit(
+    head,
+    rebound,
+    await verifiedReconciliation(head, rebound, "terminal"),
+  );
   assert.equal(
     (
       await store.commit({
@@ -143,14 +226,7 @@ export async function runRecoveryConformance(
   unwrap(
     await store.commit({
       ...unknownAgain,
-      reconciliations: [
-        {
-          commandId: "command-1",
-          attemptId: original.attemptId,
-          binding: head.binding,
-          status: "unknown",
-        },
-      ],
+      reconciliations: [await verifiedReconciliation(head, rebound, "unknown")],
     }),
   );
   head = unwrap(await store.session(head.namespace));
@@ -181,12 +257,7 @@ export async function runRecoveryConformance(
       i === 0 ? ({ ...e, attemptId: original.attemptId } as typeof e) : e,
     ),
   };
-  const proof = {
-    commandId: "command-1",
-    attemptId: original.attemptId,
-    binding: head.binding,
-    status: "not_submitted" as const,
-  };
+  const proof = await verifiedReconciliation(head, rebound, "not_submitted");
   assert.equal(
     (await store.commit({ ...retry, nowMs: 1 })).ok,
     false,
@@ -197,7 +268,7 @@ export async function runRecoveryConformance(
       await store.commit({
         ...retry,
         nowMs: 1,
-        reconciliations: [{ ...proof, attemptId: "other" }],
+        reconciliations: [JSON.parse(JSON.stringify(proof))],
       })
     ).ok,
     false,
@@ -410,4 +481,76 @@ async function failureAndDelivery(store: SessionStore) {
     await store.retire(head.namespace, head.revision, head.binding.generation),
   );
   assert.equal(unwrap(await store.pruneRetired(201)), 1);
+}
+
+async function terminalInteractions(store: SessionStore) {
+  const seeded = await seedSurface(store),
+    head = seeded.session;
+  const record = unwrap(
+    await store.command(head.namespace, seeded.interaction.commandId),
+  );
+  const terminal = terminalCommit(head, record);
+  assert.equal((await store.commit(terminal)).ok, false);
+  assert.deepEqual(unwrap(await store.session(head.namespace)), head);
+  const unavailable = { ...seeded.interaction, status: "unavailable" as const };
+  const invalidated = {
+    ...seeded.surface,
+    status: "invalidated" as const,
+    revision: seeded.surface.revision + 1,
+  };
+  const event = {
+    ...interactionEvent(head, unavailable),
+    eventId: "terminal-unavailable",
+    sequence: terminal.session.lastSequence + 1,
+  };
+  const surfaceEvent = {
+    ...event,
+    eventId: "terminal-surface",
+    sequence: event.sequence + 1,
+    attemptId: record.dispatch!.attemptId,
+    body: {
+      type: "surface_invalidated" as const,
+      surfaceInstanceId: invalidated.surfaceInstanceId,
+      revision: invalidated.revision,
+    },
+  } as Event;
+  unwrap(
+    await store.commit({
+      ...terminal,
+      session: { ...terminal.session, lastSequence: surfaceEvent.sequence },
+      interactions: [unavailable],
+      surfaces: [invalidated],
+      events: [...terminal.events, event, surfaceEvent],
+    }),
+  );
+  const after = unwrap(await store.snapshot(head.namespace, 1024));
+  assert.equal(after.interactions[0].status, "unavailable");
+  assert.equal(after.surfaces[0].status, "invalidated");
+  assert.equal(
+    (await store.accept(acceptance(after.session, seeded.answer))).ok,
+    false,
+  );
+}
+async function expireInteraction(store: SessionStore) {
+  const seeded = await seedInteraction(store);
+  const expired = { ...seeded.interaction, status: "expired" as const };
+  const batch = {
+    ...emptyCommit(seeded.session),
+    session: {
+      ...seeded.session,
+      revision: seeded.session.revision + 1,
+      lastSequence: seeded.session.lastSequence + 1,
+    },
+    interactions: [expired],
+    events: [interactionEvent(seeded.session, expired)],
+  };
+  for (const nowMs of [
+    undefined,
+    -1,
+    NaN,
+    expired.expiresAtMs - 1,
+    expired.expiresAtMs,
+  ])
+    assert.equal((await store.commit({ ...batch, nowMs })).ok, false);
+  unwrap(await store.commit({ ...batch, nowMs: expired.expiresAtMs + 1 }));
 }

@@ -21,4 +21,4 @@ export { fixtures } from "./fixtures.js";
 export { ScriptedProvider, runProviderConformance } from "./provider.js";
 export { runHostConformance } from "./host-conformance.js";
 
-export { restoredSession } from "./recovery.js";
+export { restoredSession, verifiedReconciliation } from "./recovery.js";
