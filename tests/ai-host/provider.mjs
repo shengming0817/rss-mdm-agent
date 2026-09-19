@@ -6,7 +6,7 @@ import { fixtureSession } from "../../packages/ai-contract/dist/testing/index.js
 import { workspaceIdentity } from "../../packages/ai-contract/dist/session.js";
 
 // Scripted model semantics inside a real OS process. This is not model-quality evidence.
-export function createProvider({ configuration, tools }) {
+export async function createProvider({ configuration, tools }) {
   const runs = new Map();
   let current,
     closed = false;
@@ -22,6 +22,15 @@ export function createProvider({ configuration, tools }) {
       }) + "\n",
     );
   trace("activate");
+  const earlyTool = async () => {
+    if (configuration.config.revision !== "early_tool") return;
+    const result = await tools.propose(
+      { name: "early", arguments: {} },
+      { timeoutMs: 1000, signal: new AbortController().signal },
+    );
+    trace("early-tool-result", { ok: result.ok });
+  };
+  await earlyTool();
   if (configuration.config.revision === "unknown_grandchild") {
     const child = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], {
       stdio: "ignore",
@@ -78,6 +87,7 @@ export function createProvider({ configuration, tools }) {
   };
   return {
     async createSession() {
+      await earlyTool();
       return open();
     },
     async resume(previous) {

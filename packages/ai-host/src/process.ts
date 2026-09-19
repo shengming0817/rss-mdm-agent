@@ -47,6 +47,9 @@ export class WorkerPort implements ProviderAgentPort {
   private released = false;
   private reserved = false;
   private closingTask?: Promise<Result<{ processStopped: boolean }>>;
+  private starting?: Promise<Result<void>>;
+  private readonly startupAbort = new AbortController();
+  private toolsAdmitted = false;
   onFailure?: () => void;
   constructor(
     private readonly store: SessionStore,
@@ -58,17 +61,46 @@ export class WorkerPort implements ProviderAgentPort {
     configuration: ProviderConfiguration,
     budget: Budget,
   ): Promise<Result<void>> {
+    if (this.closing || this.starting || this.child) return fail("unavailable");
+    const task = this.launch(configuration, {
+      ...budget,
+      signal: AbortSignal.any([budget.signal, this.startupAbort.signal]),
+    });
+    this.starting = task;
+    const result = await task;
+    this.starting = undefined;
+    if (!result.ok)
+      await this.close({
+        timeoutMs: 2000,
+        signal: new AbortController().signal,
+      });
+    return result;
+  }
+  /** Called by the Host only after nominal admission and durable session publication. */
+  admitTools(): void {
+    if (!this.closing) this.toolsAdmitted = true;
+  }
+  private async launch(
+    configuration: ProviderConfiguration,
+    budget: Budget,
+  ): Promise<Result<void>> {
     if (process.platform === "win32" || !this.artifact.startsWith("file:"))
       return fail("unsupported_capability");
-    const reserved = await this.store.reserveLaunch({
-      namespace: this.namespace,
-      launchId: this.launchId,
-      artifact: this.artifact,
-      phase: "reserved",
-    });
-    if (!reserved.ok) return reserved;
-    this.reserved = true;
+    const check = () => {
+      if (this.closing || budget.signal.aborted)
+        throw new Error("worker startup cancelled");
+    };
     try {
+      check();
+      const reserved = await this.store.reserveLaunch({
+        namespace: this.namespace,
+        launchId: this.launchId,
+        artifact: this.artifact,
+        phase: "reserved",
+      });
+      if (!reserved.ok) return reserved;
+      this.reserved = true;
+      check();
       this.child = spawn(
         process.execPath,
         [
@@ -100,7 +132,12 @@ export class WorkerPort implements ProviderAgentPort {
         (this.child.stdio as unknown as Duplex[])[5],
         this.launchId,
         async (method, data, b) => {
-          if (method !== "propose" || this.closing || !this.bridge)
+          if (
+            method !== "propose" ||
+            this.closing ||
+            !this.toolsAdmitted ||
+            !this.bridge
+          )
             return fail("permission_denied");
           const proposal = data as {
             name: string;
@@ -140,6 +177,7 @@ export class WorkerPort implements ProviderAgentPort {
         pgid: number;
         parentPid: number;
       };
+      check();
       if (
         hello.pid !== this.child.pid ||
         hello.pgid !== hello.pid ||
@@ -155,17 +193,15 @@ export class WorkerPort implements ProviderAgentPort {
       );
       if (!registered.ok) throw new Error(registered.error.code);
       this.registered = true;
+      check();
       await this.control.call(
         "activate",
         { artifact: this.artifact, configuration },
         budget,
       );
+      check();
       return ok(undefined);
     } catch {
-      await this.close({
-        timeoutMs: 2000,
-        signal: new AbortController().signal,
-      });
       return fail("unavailable", "same_command");
     }
   }
@@ -244,7 +280,22 @@ export class WorkerPort implements ProviderAgentPort {
   ): Promise<Result<{ processStopped: boolean }>> {
     if (this.released) return ok({ processStopped: true });
     this.closing = true;
+    this.toolsAdmitted = false;
+    this.startupAbort.abort();
     const deadline = Date.now() + Math.max(1, budget.timeoutMs);
+    if (this.starting) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const finished = await Promise.race([
+        this.starting.then(() => true),
+        new Promise<false>((resolve) => {
+          timer = setTimeout(
+            () => resolve(false),
+            Math.max(1, deadline - Date.now()),
+          );
+        }),
+      ]).finally(() => clearTimeout(timer));
+      if (!finished) return ok({ processStopped: false });
+    }
     try {
       if (this.control && !this.control.closed && !this.exited)
         await this.control.call("close", [], {

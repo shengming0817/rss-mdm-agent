@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { startLocalApp } from "./index.js";
+import { ConfigurationError } from "./configuration.js";
 if (process.argv.length !== 3 || process.argv[2] === "--help") {
   process.stdout.write(
     "Usage: rss-ai-host /absolute/path/to/private-configuration.json\n",
@@ -26,8 +27,10 @@ if (process.argv.length !== 3 || process.argv[2] === "--help") {
     process.on("SIGINT", () => {
       void stop();
     });
-  } catch {
-    process.stderr.write("AI Host could not start\n");
+  } catch (error) {
+    process.stderr.write(
+      `AI Host could not start: ${error instanceof ConfigurationError ? error.code : "startup_failed"}\n`,
+    );
     process.exitCode = 1;
   }
 }

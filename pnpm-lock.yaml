@@ -19,6 +19,9 @@ importers:
       happy-dom:
         specifier: 20.10.6
         version: 20.10.6
+      js-yaml:
+        specifier: 5.4.2
+        version: 5.4.2
       json-schema-to-typescript:
         specifier: 16.0.0
         version: 16.0.0

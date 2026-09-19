@@ -1,4 +1,4 @@
-import { readFile, lstat } from "node:fs/promises";
+import { readPrivateFile } from "./private-file.js";
 import { isAbsolute } from "node:path";
 import {
   isId,
@@ -19,41 +19,65 @@ export interface LocalConfiguration {
     model?: string;
   };
 }
+export class ConfigurationError extends Error {
+  constructor(readonly code: "configuration_file" | "configuration_invalid") {
+    super(code);
+  }
+}
 /** A private, administrator-owned local composition input; never a protocol message. */
 export async function readConfiguration(
   path: string,
 ): Promise<LocalConfiguration> {
-  const stat = await lstat(path);
-  if (
-    !stat.isFile() ||
-    stat.isSymbolicLink() ||
-    (stat.mode & 0o077) !== 0 ||
-    (process.getuid && stat.uid !== process.getuid()) ||
-    stat.size > 65536
-  )
-    throw new Error("configuration must be a private owned file");
-  const value = JSON.parse(await readFile(path, "utf8")) as LocalConfiguration;
-  if (
-    [
-      value.databasePath,
-      value.socketPath,
-      value.workingDirectory,
-      value.claude?.configurationDirectory,
-      value.claude?.credentialPath,
-    ].some((path) => typeof path !== "string" || !isAbsolute(path)) ||
-    !value.caller ||
-    [
-      value.caller.tenantId,
-      value.caller.principalId,
-      value.caller.authorityId,
-      value.session?.accountRef,
-      value.session?.config?.id,
-      value.session?.config?.revision,
-    ].some((id) => !isId(id)) ||
-    value.session.provider !== "claude" ||
-    value.session.profile !== "conversation" ||
-    !["api_key", "auth_token"].includes(value.claude.credentialType)
-  )
-    throw new Error("invalid local configuration");
-  return value;
+  let contents: string;
+  try {
+    contents = await readPrivateFile(path, 65536);
+  } catch {
+    throw new ConfigurationError("configuration_file");
+  }
+  try {
+    const value = JSON.parse(contents) as LocalConfiguration;
+    if (
+      [
+        value.databasePath,
+        value.socketPath,
+        value.workingDirectory,
+        value.claude?.configurationDirectory,
+        value.claude?.credentialPath,
+      ].some((path) => typeof path !== "string" || !isAbsolute(path)) ||
+      !value.caller ||
+      [
+        value.caller.tenantId,
+        value.caller.principalId,
+        value.caller.authorityId,
+        value.session?.accountRef,
+        value.session?.config?.id,
+        value.session?.config?.revision,
+      ].some((id) => !isId(id)) ||
+      value.session.provider !== "claude" ||
+      value.session.profile !== "conversation" ||
+      !["api_key", "auth_token"].includes(value.claude.credentialType) ||
+      typeof value.claude.apiUrl !== "string" ||
+      (value.claude.model !== undefined &&
+        (typeof value.claude.model !== "string" ||
+          !value.claude.model.trim() ||
+          value.claude.model.length > 256))
+    )
+      throw new Error("invalid local configuration");
+    const url = new URL(value.claude.apiUrl);
+    if (
+      (url.protocol !== "https:" &&
+        !(
+          url.protocol === "http:" &&
+          ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)
+        )) ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash
+    )
+      throw new Error("invalid local configuration");
+    return value;
+  } catch {
+    throw new ConfigurationError("configuration_invalid");
+  }
 }

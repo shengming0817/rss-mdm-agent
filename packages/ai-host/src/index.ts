@@ -110,6 +110,8 @@ export class SessionHost implements HostPort {
   private readonly tasks = new Set<Promise<unknown>>();
   private readonly retryTimers = new Set<ReturnType<typeof setTimeout>>();
   private readonly blocked = new Set<string>();
+  private readonly admissions = new Map<Promise<unknown>, AbortController>();
+  private closingTask?: Promise<Result<void>>;
   private closing = false;
   private closed = false;
   private readonly now: () => number;
@@ -168,6 +170,21 @@ export class SessionHost implements HostPort {
     this.tasks.add(task);
     void task.finally(() => this.tasks.delete(task)).catch(() => {});
   }
+  private admit<T>(
+    namespace: Namespace,
+    b: Budget,
+    action: (budget: Budget) => Promise<Result<T>>,
+  ): Promise<Result<T>> {
+    const abort = new AbortController();
+    const task = this.mailbox(namespace, () =>
+      this.closing
+        ? Promise.resolve(fail<T>("unavailable"))
+        : action({ ...b, signal: AbortSignal.any([b.signal, abort.signal]) }),
+    );
+    this.admissions.set(task, abort);
+    void task.finally(() => this.admissions.delete(task)).catch(() => {});
+    return task;
+  }
   private async result<T>(
     action: () => Promise<Result<T>>,
   ): Promise<Result<T>> {
@@ -200,7 +217,10 @@ export class SessionHost implements HostPort {
           requireValue(
             await this.store.releaseLaunch(launch.namespace, launch.launchId),
           );
-        else this.blocked.add(namespaceKey(launch.namespace));
+        else {
+          this.blocked.add(namespaceKey(launch.namespace));
+          await this.unavailable(launch.namespace);
+        }
       }
       const namespaces = new Map<string, Namespace>();
       let after: string | undefined;
@@ -224,6 +244,20 @@ export class SessionHost implements HostPort {
     b: Budget,
     previous?: Session,
   ): Promise<Result<Session>> {
+    if (this.closing || b.signal.aborted) return fail("unavailable");
+    // Retry orphan collection on admission, without a heartbeat or signaling old PIDs.
+    for (const launch of requireValue(await this.store.launches())) {
+      const blockedKey = namespaceKey(launch.namespace);
+      if (
+        this.blocked.has(blockedKey) &&
+        (launch.phase === "reserved" || groupEmpty(launch.pgid))
+      ) {
+        requireValue(
+          await this.store.releaseLaunch(launch.namespace, launch.launchId),
+        );
+        this.blocked.delete(blockedKey);
+      }
+    }
     const key = namespaceKey(namespace);
     if (this.runtimes.has(key))
       return fail("reconciliation_required", "reconcile_first");
@@ -244,6 +278,7 @@ export class SessionHost implements HostPort {
         b,
       ),
       configuration = structuredClone(resolved.configuration);
+    if (this.closing || b.signal.aborted) return fail("unavailable");
     if (
       namespaceKey(configuration.namespace) !== namespaceKey(namespace) ||
       configuration.provider !== options.provider ||
@@ -286,6 +321,8 @@ export class SessionHost implements HostPort {
       this.track(this.mailbox(namespace, () => this.unavailable(namespace)));
     try {
       requireValue(await worker.start(configuration, b));
+      if (this.closing || b.signal.aborted)
+        throw new HostFailure({ code: "unavailable", retry: "never" });
       const admitted = previous
         ? await VerifiedProviderSession.restore(
             worker,
@@ -301,7 +338,8 @@ export class SessionHost implements HostPort {
             resolved.admission,
           );
       const verified = requireValue(admitted);
-      runtime.verified = verified;
+      if (this.closing || b.signal.aborted)
+        throw new HostFailure({ code: "unavailable", retry: "never" });
       let session: Session;
       if (previous)
         session = requireValue(
@@ -326,6 +364,8 @@ export class SessionHost implements HostPort {
         };
         requireValue(await this.store.create(session));
       }
+      runtime.verified = verified;
+      worker.admitTools();
       worker.onFailure = () =>
         this.track(this.mailbox(namespace, () => this.unavailable(namespace)));
       if (previous) {
@@ -360,7 +400,9 @@ export class SessionHost implements HostPort {
       sessionId: randomUUID(),
     };
     return this.result(() =>
-      this.mailbox(namespace, () => this.open(namespace, options, b)),
+      this.admit(namespace, b, (admissionBudget) =>
+        this.open(namespace, options, admissionBudget),
+      ),
     );
   }
   resume(
@@ -377,7 +419,7 @@ export class SessionHost implements HostPort {
       sessionId,
     };
     return this.result(() =>
-      this.mailbox(namespace, async () => {
+      this.admit(namespace, b, async (b) => {
         const previous = requireValue(await this.store.session(namespace));
         if (previous.status === "retired") return fail("session_gone");
         if (
@@ -1233,10 +1275,35 @@ export class SessionHost implements HostPort {
       if (!listeners?.size) this.subscribers.delete(key);
     }
   }
-  async close(b: Budget): Promise<Result<void>> {
+  close(b: Budget): Promise<Result<void>> {
+    if (this.closingTask) return this.closingTask;
+    const task = this.result(() => this.stop(b));
+    this.closingTask = task;
+    void task
+      .finally(() => {
+        if (this.closingTask === task) this.closingTask = undefined;
+      })
+      .catch(() => {});
+    return task;
+  }
+  private async stop(b: Budget): Promise<Result<void>> {
     if (this.closed) return ok(undefined);
     this.closing = true;
     const deadline = Date.now() + b.timeoutMs;
+    for (const abort of this.admissions.values()) abort.abort();
+    if (this.admissions.size) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const drained = await Promise.race([
+        Promise.allSettled([...this.admissions.keys()]).then(() => true),
+        new Promise<false>((resolve) => {
+          timer = setTimeout(
+            () => resolve(false),
+            Math.max(1, deadline - Date.now()),
+          );
+        }),
+      ]).finally(() => clearTimeout(timer));
+      if (!drained) return fail("unavailable", "same_command");
+    }
     for (const timer of this.retryTimers) clearTimeout(timer);
     this.retryTimers.clear();
     for (const [key, runtime] of this.runtimes) {

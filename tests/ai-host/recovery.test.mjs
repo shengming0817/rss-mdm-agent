@@ -291,6 +291,124 @@ test("unresolved registered process group freezes recovery without signaling or 
   );
   assert.equal(unwrap(await reopened.launches()).length, 1);
 });
+for (const hasSession of [true, false])
+  test(`launch recovery includes ${hasSession ? "idle session" : "pre-session"} fences and reclaims exited groups on admission`, async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), "rss-host-idle-fence-"));
+    const child = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], {
+      detached: true,
+      stdio: "ignore",
+    });
+    const path = join(directory, "host.sqlite"),
+      store = unwrap(openSqliteStore({ path, mode: "create" })),
+      session = fixtureSession();
+    let host;
+    t.after(async () => {
+      await host?.close(budget());
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGKILL");
+        await once(child, "exit");
+      }
+      await rm(directory, { recursive: true, force: true });
+    });
+    if (hasSession) unwrap(await store.create(session));
+    unwrap(
+      await store.reserveLaunch({
+        namespace: session.namespace,
+        launchId: "idle-launch",
+        artifact: "file:///trusted/provider.mjs",
+        phase: "reserved",
+      }),
+    );
+    unwrap(
+      await store.registerLaunch(
+        session.namespace,
+        "idle-launch",
+        child.pid,
+        child.pid,
+      ),
+    );
+    unwrap(await store.close(budget()));
+    const reopened = unwrap(openSqliteStore({ path, mode: "open" }));
+    host = unwrap(
+      await createHost({
+        store: reopened,
+        resolve: async () => {
+          throw new Error("fixture admission refused");
+        },
+      }),
+    );
+    assert.equal(groupEmpty(child.pid), false);
+    if (hasSession)
+      assert.equal(
+        unwrap(await reopened.session(session.namespace)).status,
+        "recovery_required",
+      );
+    child.kill("SIGKILL");
+    await once(child, "exit");
+    await until(() => groupEmpty(child.pid));
+    await host.createSession(
+      session.namespace,
+      {
+        provider: "fake",
+        config: { id: "c", revision: "1" },
+        accountRef: "a",
+        profile: "conversation",
+      },
+      budget(),
+    );
+    assert.deepEqual(unwrap(await reopened.launches()), []);
+  });
+test("worker close cannot finish before an outstanding launch reservation settles", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "rss-worker-start-close-"));
+  const store = unwrap(
+    openSqliteStore({ path: join(directory, "host.sqlite"), mode: "create" }),
+  );
+  t.after(async () => {
+    await store.close(budget());
+    await rm(directory, { recursive: true, force: true });
+  });
+  const reserve = store.reserveLaunch.bind(store);
+  let release,
+    entered = false;
+  const held = new Promise((resolve) => {
+    release = resolve;
+  });
+  store.reserveLaunch = async (input) => {
+    entered = true;
+    await held;
+    return reserve(input);
+  };
+  const namespace = fixtureSession().namespace,
+    worker = new WorkerPort(
+      store,
+      namespace,
+      new URL("./provider.mjs", import.meta.url).href,
+    );
+  const started = worker.start(
+    {
+      namespace,
+      provider: "fake",
+      config: { id: "c", revision: "1" },
+      accountRef: "a",
+      workingDirectory: directory,
+      permissions: "tools_disabled",
+    },
+    budget(),
+  );
+  await until(() => entered);
+  const closing = worker.close(budget(100));
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  release();
+  const [start, stop] = await Promise.all([started, closing]);
+  assert.equal(start.ok, false);
+  assert.equal(stop.value.processStopped, false);
+  assert.equal(unwrap(await worker.close(budget())).processStopped, true);
+  assert.deepEqual(unwrap(await store.launches()), []);
+  await assert.rejects(
+    readFile(join(directory, "trace.ndjson")),
+    (error) => error.code === "ENOENT",
+  );
+});
 test("recovery unavailability atomically preserves queues and invalidates stale callbacks and controls", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "rss-host-unavailable-")),
     store = unwrap(

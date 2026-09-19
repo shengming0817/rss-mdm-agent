@@ -12,4 +12,4 @@ SDK `Stream` 是唯一 transport 接缝；直接提供 `ndJsonStream`。本地/T
 
 运行 `pnpm test:ai-access`、`pnpm check:ai-access-consumer`。版本、边界及消费方法见[开发说明](../../docs/guides/ai-access-development.md)。
 
-`timeoutMs` 限定请求接纳和权限等待预算，不能截断订阅或把 prompt 等待误作终态。订阅随连接存活，意外结束要求恢复。`await service.close()` 立即停止接入、取消自有订阅/权限递送，并在独立 `shutdownTimeoutMs`（默认5000毫秒）内等待清理，之后拒绝 connect。超时报告 `cleanup_timeout`，返回不代表忽略取消的任务已经终止；组合根负责隔离/终止残留 provider，共享 Host 和已接纳命令仍由它持有。`onDiagnostic(code)` 只输出闭合分类，不包含 caller、模型内容或原始异常；配置 limits 同时约束原始传输 envelope。
+`timeoutMs` 限定请求接纳和权限等待预算，不能截断订阅或把 prompt 等待误作终态。标准 prompt 的持久排队期限由独立 `promptTtlMs` 控制，默认 24 小时；超过期限才失效。未知派发以 `reconciliation_required` 错误结束当前 ACP 等待并提示核实，账本继续保留原 attempt，不自动重发。订阅随连接存活，意外结束要求恢复。`await service.close()` 立即停止接入、取消自有订阅/权限递送，并在独立 `shutdownTimeoutMs`（默认5000毫秒）内等待清理，之后拒绝 connect。超时报告 `cleanup_timeout`，返回不代表忽略取消的任务已经终止；组合根负责隔离/终止残留 provider，共享 Host 和已接纳命令仍由它持有。`onDiagnostic(code)` 只输出闭合分类，不包含 caller、模型内容或原始异常；配置 limits 同时约束原始传输 envelope。

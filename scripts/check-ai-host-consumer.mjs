@@ -9,13 +9,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
-import { packHost, run } from "./ai-host-artifacts.mjs";
+import { packHost, installHost, run } from "./ai-host-artifacts.mjs";
 import { sourceState, sameCommittedSource } from "./source-state.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url)),
   start = sourceState(root),
   directory = mkdtempSync(join(tmpdir(), "rss host consumer-"));
 let behaviorPassed = false,
   failure,
+  deploymentLockSha256,
   artifacts = [];
 try {
   run("pnpm", ["build:ai-host"], root);
@@ -66,7 +67,7 @@ assert.equal(terminal,true);assert.equal(unwrap(await store.launches()).length,1
 }finally{unwrap(await host.close(budget()));await rm(dir,{recursive:true,force:true});}
 console.log('Isolated Host tarballs: typed public API, real SQLite, activated worker, durable terminal and real shutdown passed');`,
   );
-  run("pnpm", ["install", "--offline"], directory);
+  deploymentLockSha256 = installHost(root, directory);
   run("pnpm", ["exec", "tsc"], directory);
   run(process.execPath, ["out/consumer.js"], directory);
   behaviorPassed = true;
@@ -87,6 +88,7 @@ console.log('Isolated Host tarballs: typed public API, real SQLite, activated wo
         behaviorPassed,
         source: { start, end },
         artifacts,
+        deploymentLockSha256,
         lockSha256: createHash("sha256")
           .update(readFileSync(join(root, "pnpm-lock.yaml")))
           .digest("hex"),

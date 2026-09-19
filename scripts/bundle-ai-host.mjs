@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
-import { packHost, run } from "./ai-host-artifacts.mjs";
+import { packHost, installHost, run } from "./ai-host-artifacts.mjs";
 import { sourceState, sameCommittedSource } from "./source-state.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url)),
   start = sourceState(root);
@@ -28,6 +28,7 @@ const directory = join(root, ".local-ci-runs/ai-host-runtime"),
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 let behaviorPassed = false,
   failure,
+  deploymentLockSha256,
   artifacts = [];
 try {
   mkdirSync(cache, { recursive: true });
@@ -46,7 +47,7 @@ try {
   rmSync(directory, { recursive: true, force: true });
   mkdirSync(directory, { recursive: true });
   artifacts = packHost(root, directory, true);
-  run("pnpm", ["install", "--offline", "--prod"], directory);
+  deploymentLockSha256 = installHost(root, directory, true);
   run("/usr/bin/tar", ["-xzf", archive, "-C", scratch], root);
   mkdirSync(join(directory, "bin"));
   copyFileSync(
@@ -72,6 +73,14 @@ try {
     directory,
   );
   run(join(directory, "bin/rss-ai-host"), ["--help"], directory);
+  run(
+    join(directory, "bin/node"),
+    [
+      join(root, "scripts/verify-ai-host-runtime.mjs"),
+      join(directory, "bin/rss-ai-host"),
+    ],
+    directory,
+  );
   behaviorPassed = true;
 } catch (error) {
   failure = String(error);
@@ -92,11 +101,13 @@ try {
         node: { version, target, archiveSha256: sha256 },
         artifacts,
         lockSha256: hash(readFileSync(join(root, "pnpm-lock.yaml"))),
+        deploymentLockSha256,
         verification: {
           platform: process.platform,
           arch: process.arch,
           externalModel: false,
           desktopIntegration: false,
+          bundledCliLifecycle: behaviorPassed,
         },
         failure,
       },

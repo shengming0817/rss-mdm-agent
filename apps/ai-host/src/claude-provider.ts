@@ -1,4 +1,4 @@
-import { readFile, lstat } from "node:fs/promises";
+import { readPrivateFile } from "./private-file.js";
 import { createClaudeAdapter } from "@rss-mdm-agent/ai-adapter-claude";
 import type { WorkerFactory } from "@rss-mdm-agent/ai-host/worker";
 import { readConfiguration } from "./configuration.js";
@@ -20,17 +20,8 @@ export const createProvider: WorkerFactory = async ({
   return createClaudeAdapter({
     tools,
     resolveConfiguration: async () => {
-      const stat = await lstat(local.claude.credentialPath);
-      if (
-        !stat.isFile() ||
-        stat.isSymbolicLink() ||
-        (stat.mode & 0o077) !== 0 ||
-        (process.getuid && stat.uid !== process.getuid()) ||
-        stat.size > 16384
-      )
-        throw new Error("credential ownership");
       const credential = (
-        await readFile(local.claude.credentialPath, "utf8")
+        await readPrivateFile(local.claude.credentialPath, 16384)
       ).trim();
       return {
         configuration: { ...configuration, provider: "claude" },

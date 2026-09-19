@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createRequire } from "node:module";
 import { createHost } from "../../packages/ai-host/dist/index.js";
 import { openSqliteStore } from "../../packages/ai-store-sqlite/dist/index.js";
 import { runHostConformance } from "../../packages/ai-contract/dist/testing/index.js";
@@ -16,6 +17,39 @@ const caller = {
   principalId: "person",
   authorityId: "authority",
 };
+const require = createRequire(
+  new URL("../../packages/ai-access/package.json", import.meta.url),
+);
+const { client: acpClient } = await import(
+  require.resolve("@agentclientprotocol/sdk")
+);
+async function standardPeer(t, f, accessOptions = {}) {
+  const service = createAccessService({
+    host: f.host,
+    sessionOptions: f.options,
+    ...accessOptions,
+  });
+  const [a, b] = localTransportPair(),
+    updates = [];
+  service.connect(a, caller);
+  const connection = acpClient()
+    .onNotification("session/update", ({ params }) => updates.push(params))
+    .connect(b);
+  t.after(async () => {
+    connection.close();
+    await service.close();
+  });
+  await connection.agent.request("initialize", {
+    protocolVersion: 1,
+    clientCapabilities: {},
+  });
+  await connection.agent.request("session/load", {
+    sessionId: f.session.namespace.sessionId,
+    cwd: "/",
+    mcpServers: [],
+  });
+  return { agent: connection.agent, updates };
+}
 const budget = (timeoutMs = 5000) => ({
   timeoutMs,
   signal: new AbortController().signal,
@@ -210,6 +244,79 @@ test("unknown transport submission is durable and never automatically resent", a
     1,
   );
 });
+test("standard ACP exposes unknown delivery without inventing a terminal or resending", async (t) => {
+  const f = await setup(t, "unknown"),
+    { agent, updates } = await standardPeer(t, f);
+  await assert.rejects(
+    agent.request("session/prompt", {
+      sessionId: f.session.namespace.sessionId,
+      prompt: [{ type: "text", text: "unknown" }],
+    }),
+    /reconciliation_required/,
+  );
+  const snapshot = unwrap(
+    await f.store.snapshotPage(f.session.namespace, { limit: 64 }),
+  );
+  assert.equal(snapshot.commands[0].state, "reconciliation_required");
+  await until(() =>
+    updates.some((row) =>
+      row.update.content?.text?.includes("delivery is uncertain"),
+    ),
+  );
+  assert.equal(
+    (await f.trace()).filter((row) => row.type === "dispatch").length,
+    1,
+  );
+});
+test("standard ACP queued input outlives the request budget and executes in FIFO order", async (t) => {
+  let now = 0;
+  const f = await setup(t, "1", { hostOptions: { now: () => now } }),
+    { agent } = await standardPeer(t, f, { now: () => now, timeoutMs: 1000 });
+  const prompt = (text) =>
+    agent.request("session/prompt", {
+      sessionId: f.session.namespace.sessionId,
+      prompt: [{ type: "text", text }],
+    });
+  const first = prompt("hold");
+  void first.catch(() => {});
+  const active = await until(async () =>
+    unwrap(
+      await f.store.snapshotPage(f.session.namespace, { limit: 64 }),
+    ).commands.find((row) => row.state === "running"),
+  );
+  const second = prompt("quick");
+  void second.catch(() => {});
+  await until(async () =>
+    unwrap(
+      await f.store.snapshotPage(f.session.namespace, { limit: 64 }),
+    ).commands.some(
+      (row) => row.command.input.text === "quick" && row.state === "accepted",
+    ),
+  );
+  now = 31000;
+  const session = unwrap(await f.store.session(f.session.namespace));
+  unwrap(
+    await f.host.cancel(
+      caller,
+      {
+        schemaVersion: 2,
+        kind: "command",
+        sessionId: session.namespace.sessionId,
+        commandId: "release-long-run",
+        expiresAtMs: now + 5000,
+        input: {
+          type: "cancel",
+          targetCommandId: active.command.commandId,
+          generation: session.binding.generation,
+          nativeRunId: active.dispatch.nativeRunId,
+        },
+      },
+      budget(),
+    ),
+  );
+  assert.deepEqual(await first, { stopReason: "cancelled" });
+  assert.deepEqual(await second, { stopReason: "end_turn" });
+});
 test("question response is timely during a long run and has its own acknowledgement", async (t) => {
   const f = await setup(t);
   unwrap(
@@ -325,6 +432,85 @@ test("worker reverse tool RPC reaches the parent-admitted endpoint without seria
   assert.equal(verifications[0].tools, admission.tools);
   assert.deepEqual(calls[0].caller, caller);
   assert.equal(calls[0].proposal.name, "fixture");
+});
+test("worker tool bridge stays closed through factory/session creation and parent verification", async (t) => {
+  let calls = 0;
+  const admission = {
+    tools: {
+      propose: async () => {
+        calls++;
+        return {
+          ok: true,
+          value: { disposition: "rejected", text: "fixture" },
+        };
+      },
+    },
+    verifier: {
+      verify: async () => {
+        assert.equal(calls, 0);
+        return {
+          ok: true,
+          value: { platform: "fixture", verificationRef: "proof" },
+        };
+      },
+    },
+  };
+  const f = await setup(t, "early_tool", { admission });
+  assert.equal(calls, 0);
+  assert.deepEqual(
+    (await f.trace())
+      .filter((row) => row.type === "early-tool-result")
+      .map((row) => row.ok),
+    [false, false],
+  );
+  unwrap(
+    await f.host.submit(caller, f.command("tool-after", "quick"), budget()),
+  );
+  await until(() => calls === 1);
+  admission.verifier.verify = async () => ({
+    ok: false,
+    error: { code: "permission_denied", retry: "never" },
+  });
+  const rejected = await f.host.createSession(
+    caller,
+    { ...f.options, accountRef: "rejected" },
+    budget(),
+  );
+  assert.equal(rejected.ok, false);
+  assert.equal(calls, 1);
+});
+test("Host close drains admission without reading a session that is not yet persisted", async (t) => {
+  const f = await setup(t);
+  const reserve = f.store.reserveLaunch.bind(f.store);
+  let release,
+    entered = false;
+  const held = new Promise((resolve) => {
+    release = resolve;
+  });
+  f.store.reserveLaunch = async (input) => {
+    entered = true;
+    await held;
+    return reserve(input);
+  };
+  const admission = f.host.createSession(
+    caller,
+    { ...f.options, accountRef: "closing" },
+    budget(),
+  );
+  await until(() => entered);
+  const closing = f.host
+    .close(budget(100))
+    .catch((error) => ({ thrown: error }));
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  release();
+  const [admitted, closed] = await Promise.all([admission, closing]);
+  assert.equal(closed.thrown, undefined);
+  assert.equal(admitted.ok, false);
+  unwrap(await f.host.close(budget()));
+  assert.equal(
+    (await f.trace()).filter((row) => row.type === "activate").length,
+    1,
+  );
 });
 test("shared Host conformance runs against SQLite and a real isolated worker", async (t) => {
   const f = await setup(t, "1", { hostOptions: { now: () => 0 } });

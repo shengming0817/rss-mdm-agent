@@ -9,7 +9,7 @@ pnpm bundle:ai-host
 .local-ci-runs/ai-host-runtime/bin/rss-ai-host /absolute/path/configuration.json
 ```
 
-最后一条入口使用运行包内固定 Node 24.14.1（SQLite 3.51.2），不依赖系统 Node。构建校验官方 Node archive SHA-256，安装本次 tarball 及锁定依赖，并记录源码 SHA、lock hash、平台与产物 hash。运行包及证据可再生，位于 Git 忽略的 `.local-ci-runs`。目前仅 macOS arm64 通过运行包门禁。
+最后一条入口使用运行包内固定 Node 24.14.1（SQLite 3.51.2），不依赖系统 Node。构建校验官方 Node archive SHA-256，从源 lock 生成部署 lock，逐边核对 tarball 的外部依赖与源 lock 后以 frozen 模式离线安装，并记录源码 SHA、源/部署 lock hash、平台与产物 hash。最终 launcher 在无系统 Node 的 PATH 下完成固定 HTTP 模型、真实 SDK、持久终态及 SIGTERM/SIGINT 退出验收。运行包及证据可再生，位于 Git 忽略的 `.local-ci-runs`。目前仅 macOS arm64 通过运行包门禁。
 
 配置示例（路径须由部署方替换为实际绝对路径）：
 
@@ -38,7 +38,7 @@ pnpm bundle:ai-host
 }
 ```
 
-配置和凭据文件需属于运行用户、为普通文件且禁止 group/other 访问；数据库与 socket 目录为私有目录。Caller 由本地账户和私有 socket 的访问边界固定，不能从消息、模型、action 或工具参数覆盖。凭据在 worker 激活后由其读取，parent 不加载 SDK 或凭据。`credentialType` 也支持 `auth_token`；可选 `claude.model` 固定模型选择。
+配置、凭据文件及其父目录需属于运行用户并禁止 group/other 访问；文件必须为普通文件，读取使用同一文件描述符校验并拒绝符号链接。数据库与 socket 目录为私有目录。Caller 由本地账户和私有 socket 的访问边界固定，不能从消息、模型、action 或工具参数覆盖。凭据在 worker 激活后由其读取，parent 不加载 SDK 或凭据。`credentialType` 也支持 `auth_token`；可选 `claude.model` 固定模型选择。
 
 CLI 提供 conversation profile。需要 controlled_tools 的组合根使用库接口注入真实 ToolEndpoint 与可信平台 verifier；不会用配置字符串冒充隔离证明。运行目录、账号数据和凭据不进入发布包或仓库。外部模型连通性由 adapter 的独立 smoke 流程记录。
 
