@@ -217,7 +217,7 @@ AI请求与手动请求都不能自行取得可执行capability。运行模式�
 | execution-capability / admission / lifecycle | 能力、裁决、执行转换 | execution-contract；相互不必链接 |
 | execution-approval | 消费完整C07裁决、验证批准适用性、输出消费意图 | execution-admission、execution-contract |
 | script-plan / software-plan | 原生脚本启动与安装决策描述 | execution-contract；不spawn |
-| packages/ai-adapters/{codex,claude,deepseek}（规划） | Node/TS 原生引擎协议与会话适配，分别拥有 SDK/进程 | A01 ProviderAgentPort（替换历史 C02 契约），无 PR/执行内核/UI 依赖 |
+| packages/ai-adapters/{codex,claude,deepseek}（Claude 已落地，其余规划） | Node/TS 原生引擎协议与会话适配，分别拥有 SDK/进程 | A01 ProviderAgentPort（替换历史 C02 契约），无 PR/执行内核/UI 依赖 |
 | execution-mcp | 工具协议到执行服务port | execution-contract、service-catalog、rmcp |
 | execution-sqlite | journal/交互/批准消耗的原子持久化 | contract、interaction、admission（完整裁决审计）、approval、lifecycle |
 | execution-app | 能力/授权/批准/持久化和runner port的产品组装 | C06–C09、C18；不加载AI引擎 |
@@ -245,7 +245,7 @@ C03 的当前实现见[目录核心](../../crates/service-catalog/README.md)与[
 
 C01 执行契约保持自身版本与 Rust owner；A01 将 C02 完整替换为 AI Runtime V2，单一 JSON Schema 生成两端绑定，TS 拥有 Provider/Host/SessionStore ports。契约、安全解码与隔离消费见[契约开发说明](../guides/contracts-development.md)及 [AI Runtime 契约](../../packages/ai-contract/README.md)。数据校验和角色声明不产生可信主体、批准或执行证据。V1 不兼容，无历史命令导入、alias 或双写。历史 C02 交付由 Git/PR 保留。
 
-范围基线 `ai-runtime-20260918`：北向 ACP + A2UI，不使用 AG-UI；原生引擎拥有模型上下文，TS AI Host 拥有产品会话、命令接纳及展示/交互投影，Rust 执行服务拥有业务执行权威。TS 不直接写 Rust 批准、intent 或结果表。当前 A01 仅提供公共契约、fake Host 和 conformance，不表示 A02/A03/真实 provider 已实现。
+范围基线 `ai-runtime-20260918`：北向 ACP + A2UI，不使用 AG-UI；原生引擎拥有模型上下文，TS AI Host 拥有产品会话、命令接纳及展示/交互投影，Rust 执行服务拥有业务执行权威。TS 不直接写 Rust 批准、intent 或结果表。A01 提供公共契约、fake Host 和 conformance；Claude 原生适配器已在独立包落地，见 [SDK adapter](../../packages/ai-adapters/claude/README.md)。A02/A03 与最终产品装配仍由各自任务交付。
 
 durable accepted 和稳定 cursor 只能在事务提交后确认；命令账本兼任 inbox 与 provider 派发意图，事件日志用于回放，只有可靠跨服务请求/结果使用 delivery。取消派发不证明终止，未知派发先核实；generation 和 config/账号版本阻止旧回调更新新运行。ACP prompt 保持最终响应，receipt/cursor/attach 由协商扩展表达。A2UI surface/action 与会话/运行/交互/revision 精确关联，无 A2UI 时降级到标准文本、工具状态和权限交互。能力与 binding 原子建立，受控工具准入必须消费可信 verifier 的当前 incarnation 证据；surface 删除持久化并在回答事务内再校验，终态投影必须有同批匹配事件。Host/Store 提供有界关闭，分页错误遵守统一 Result。同一 turn 可有多个独立 callback，原生 callback ID 与父请求坐标分离；问题内容与 pending 记录原子发布，回答不签发执行批准。具体可靠性基线由 A01 公共契约持有。
 
