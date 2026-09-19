@@ -1,5 +1,6 @@
+use crate::database::bounded_blob;
 use crate::*;
-use execution_contract::{AttemptId, EventId, Id};
+use execution_contract::{EventId, Id};
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use serde::{de::DeserializeOwned, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -89,7 +90,10 @@ impl Store {
         crate::database::ensure_current(&tx, &self.authority, self.limits)?;
         if let Some((old_scope, old_hash, bytes)) = tx
             .query_row(
-                "SELECT scope,fingerprint,body FROM receipts WHERE operation_id=?1",
+                &format!(
+                    "SELECT scope,fingerprint,{} FROM receipts WHERE operation_id=?1",
+                    bounded_blob("body", self.limits.max_record_bytes)
+                ),
                 [op.as_str()],
                 |r| {
                     Ok((
@@ -138,7 +142,10 @@ impl Store {
         let tx = self.read(scope, Access::ReadResult, None, host)?;
         let bytes: Option<Vec<u8>> = tx
             .query_row(
-                "SELECT body FROM receipts WHERE operation_id=?1 AND scope=?2",
+                &format!(
+                    "SELECT {} FROM receipts WHERE operation_id=?1 AND scope=?2",
+                    bounded_blob("body", self.limits.max_record_bytes)
+                ),
                 params![operation.as_str(), scope.key()],
                 |r| r.get(0),
             )
@@ -147,33 +154,27 @@ impl Store {
             .map(|b| decode(&b, self.limits.max_record_bytes))
             .transpose()
     }
-    /// Pull immutable, unconfirmed results for one authorized scope/consumer. Zero starts at the beginning.
-    /// A lost response is recovered by repeating the same cursor; query receipts independently as needed.
+    /// Pull the oldest unconfirmed results for one authorized scope/consumer.
+    /// Only durable confirmation advances delivery; partial or out-of-order processing cannot skip a result.
     pub fn pull_results(
         &self,
         scope: &Scope,
         consumer: &Id,
-        after: u64,
         limit: usize,
         host: &impl Host,
     ) -> Result<Vec<Receipt>, Error> {
         let tx = self.read(scope, Access::Deliver, Some(consumer), host)?;
         if limit == 0 || limit > self.limits.max_batch {
-            return Err(Error::Configuration);
+            return Err(Error::InvalidInput);
         }
         let mut statement = tx.prepare(
-            "SELECT r.body FROM receipts r WHERE r.scope=?1 AND r.sequence>?2 AND r.kind!='trust'
-             AND NOT EXISTS(SELECT 1 FROM confirmations c WHERE c.scope=r.scope AND c.consumer=?3 AND c.sequence=r.sequence)
-             ORDER BY r.sequence LIMIT ?4")?;
-        let rows = statement.query_map(
-            params![
-                scope.key(),
-                integer(after)?,
-                consumer.as_str(),
-                limit as i64
-            ],
-            |r| r.get::<_, Vec<u8>>(0),
-        )?;
+            &format!("SELECT {} FROM receipts r WHERE r.scope=?1 AND r.kind!='trust'
+             AND NOT EXISTS(SELECT 1 FROM confirmations c WHERE c.scope=r.scope AND c.consumer=?2 AND c.sequence=r.sequence)
+             ORDER BY r.sequence LIMIT ?3", bounded_blob("r.body", self.limits.max_record_bytes)))?;
+        let rows = statement
+            .query_map(params![scope.key(), consumer.as_str(), limit as i64], |r| {
+                r.get::<_, Vec<u8>>(0)
+            })?;
         rows.map(|r| decode(&r?, self.limits.max_record_bytes))
             .collect()
     }
@@ -212,7 +213,7 @@ impl Store {
         }
         tx.execute("INSERT INTO confirmations(scope,consumer,sequence) VALUES(?1,?2,?3) ON CONFLICT(scope,consumer,sequence) DO NOTHING",
             params![scope.key(), consumer.as_str(), sequence])?;
-        tx.commit().map_err(|_| Error::CommitUnknown)
+        tx.commit().map_err(|_| Error::ConfirmationCommitUnknown)
     }
     /// Read full audit using a separate current authorization; ordinary result access is insufficient.
     pub fn audit(
@@ -223,7 +224,7 @@ impl Store {
     ) -> Result<AuditRecord, Error> {
         let tx = self.read(scope, Access::ReadAudit, None, host)?;
         let bytes: Vec<u8> = tx.query_row(
-            "SELECT a.body FROM audits a JOIN receipts r ON r.sequence=a.sequence WHERE r.scope=?1 AND r.operation_id=?2",
+            &format!("SELECT {} FROM audits a JOIN receipts r ON r.sequence=a.sequence WHERE r.scope=?1 AND r.operation_id=?2", bounded_blob("a.body", self.limits.max_record_bytes)),
             params![scope.key(), operation.as_str()], |r| r.get(0))?;
         decode(&bytes, self.limits.max_record_bytes)
     }
@@ -261,7 +262,6 @@ impl Write<'_> {
         &self,
         outcome: Outcome,
         revision: u64,
-        attempt: Option<AttemptId>,
         mut audit: AuditRecord,
     ) -> Result<Receipt, Error> {
         self.ensure_capacity()?;
@@ -278,7 +278,7 @@ impl Write<'_> {
             kind: self.kind,
             outcome,
             revision,
-            attempt_id: attempt,
+            attempt_id: audit.attempt_id.clone(),
             occurred_at_unix_ms: self.now,
         };
         if let Some(event) = &mut audit.event {
@@ -305,10 +305,9 @@ impl Write<'_> {
         self,
         outcome: Outcome,
         revision: u64,
-        attempt: Option<AttemptId>,
         audit: AuditRecord,
     ) -> Result<CommitOutcome, Error> {
-        let receipt = self.prepare(outcome, revision, attempt, audit)?;
+        let receipt = self.prepare(outcome, revision, audit)?;
         self.commit()?;
         Ok(CommitOutcome::Applied {
             receipt,
@@ -316,7 +315,7 @@ impl Write<'_> {
         })
     }
     pub fn commit(self) -> Result<(), Error> {
-        self.tx.commit().map_err(|_| Error::CommitUnknown)
+        self.tx.commit().map_err(|_| Error::OperationCommitUnknown)
     }
 }
 pub(crate) fn empty_audit(reason: AuditReason) -> AuditRecord {
@@ -338,7 +337,10 @@ pub(crate) fn load_plan(
     limits: Limits,
 ) -> Result<execution_contract::FrozenPlan, Error> {
     let (bytes, digest): (Vec<u8>, String) = conn.query_row(
-        "SELECT plan,digest FROM executions WHERE scope=?1",
+        &format!(
+            "SELECT {},digest FROM executions WHERE scope=?1",
+            bounded_blob("plan", limits.plan.max_input_bytes)
+        ),
         [scope.key()],
         |r| Ok((r.get(0)?, r.get(1)?)),
     )?;

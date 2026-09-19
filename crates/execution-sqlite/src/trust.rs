@@ -1,3 +1,4 @@
+use crate::database::bounded_blob;
 use crate::{journal::*, *};
 use execution_approval::{
     ApprovalFacts, ApprovalRecord, ApprovalStatus, ApprovalVerifier, ProfileApproval,
@@ -18,8 +19,25 @@ pub(crate) fn head(
     scope: &Scope,
     limits: Limits,
 ) -> Result<Option<Head>, Error> {
-    let row = conn.query_row("SELECT revision,authorization_revision,approval_revision,approval_digest,fresh_until FROM trust_heads WHERE scope=?1",
-        [scope.key()], |r| Ok((r.get::<_, u64>(0)?, r.get::<_, Vec<u8>>(1)?, r.get::<_, Vec<u8>>(2)?, r.get::<_, String>(3)?, r.get::<_, u64>(4)?))).optional()?;
+    let row = conn
+        .query_row(
+            &format!(
+                "SELECT revision,{},{},approval_digest,fresh_until FROM trust_heads WHERE scope=?1",
+                bounded_blob("authorization_revision", limits.max_record_bytes),
+                bounded_blob("approval_revision", limits.max_record_bytes)
+            ),
+            [scope.key()],
+            |r| {
+                Ok((
+                    r.get::<_, u64>(0)?,
+                    r.get::<_, Vec<u8>>(1)?,
+                    r.get::<_, Vec<u8>>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, u64>(4)?,
+                ))
+            },
+        )
+        .optional()?;
     row.map(|(revision, a, p, digest, until)| {
         Ok(Head {
             revision,
@@ -100,7 +118,7 @@ impl Store {
             approval_revision: snapshot.approval_revision,
             fresh_until_unix_ms: snapshot.fresh_until_unix_ms,
         });
-        w.finish(Outcome::Changed, revision, None, audit)
+        w.finish(Outcome::Changed, revision, audit)
     }
 }
 fn validate_snapshot(
@@ -163,7 +181,10 @@ fn install(w: &Write<'_>, entry: &TrustedApproval) -> Result<(), Error> {
     let bytes = w.bounded(d)?;
     let old: Option<Vec<u8>> =
         w.tx.query_row(
-            "SELECT definition FROM approvals WHERE scope=?1 AND record_id=?2 AND version=?3",
+            &format!(
+                "SELECT {} FROM approvals WHERE scope=?1 AND record_id=?2 AND version=?3",
+                bounded_blob("definition", w.limits.max_record_bytes)
+            ),
             params![
                 w.scope.key(),
                 d.reference.id.as_str(),
@@ -245,10 +266,10 @@ impl StoredApprovals<'_> {
 
     pub fn record(&self, reference: &VersionedRef) -> Result<ApprovalRecord, Error> {
         let (bytes, status, used, revision): (Vec<u8>, String, u32, u64) = self.conn.query_row(
-            "SELECT a.definition,h.status,u.used,u.revision FROM approvals a
+            &format!("SELECT {},h.status,u.used,u.revision FROM approvals a
              JOIN approval_heads h ON h.scope=a.scope AND h.record_id=a.record_id AND h.version=a.version
              JOIN approval_usage u ON u.scope=a.scope AND u.record_id=a.record_id AND u.version=a.version
-             WHERE a.scope=?1 AND a.record_id=?2 AND a.version=?3",
+             WHERE a.scope=?1 AND a.record_id=?2 AND a.version=?3", bounded_blob("a.definition", self.limits.max_record_bytes)),
              params![self.scope.key(), reference.id.as_str(), reference.revision.as_str()],
              |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
         let d: ApprovalDefinition = decode(&bytes, self.limits.max_record_bytes)?;

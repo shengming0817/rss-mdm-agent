@@ -1,3 +1,4 @@
+use crate::database::bounded_blob;
 use crate::{journal::*, trust::*, *};
 use execution_approval::ProfileApproval;
 use execution_contract::{AuditEvent, Decision, EventId, EvidenceRefs, FrozenPlan, Id, V1};
@@ -28,7 +29,7 @@ impl Store {
             Start::New(w) => w,
         };
         let state = Execution::open(plan.clone(), w.now, w.limits.lifecycle)
-            .map_err(|_| Error::Configuration)?;
+            .map_err(|_| Error::InvalidInput)?;
         w.tx.execute(
             "INSERT INTO executions VALUES(?1,?2,?3,?4,?5,?6,0,31)",
             params![
@@ -46,7 +47,7 @@ impl Store {
             Decision::Proposed {},
             AuditReason::ExecutionOpened,
         );
-        w.finish(Outcome::Changed, 0, None, audit)
+        w.finish(Outcome::Changed, 0, audit)
     }
     /// Apply one event through historical deduplication, core evaluation and atomic persistence.
     /// BeginAttempt obtains decisions lazily from Host only after receipt replay is ruled out.
@@ -101,18 +102,19 @@ impl Store {
             Decision::Proposed {},
             AuditReason::ExecutionEvent,
         );
+        audit.attempt_id = match &event.command {
+            Command::BeginAttempt { attempt_id, .. }
+            | Command::Dispatched { attempt_id }
+            | Command::Observe { attempt_id, .. }
+            | Command::Output { attempt_id, .. } => Some(attempt_id.clone()),
+            Command::Prepare | Command::Wait | Command::Cancel | Command::Recover => None,
+        };
         let gate = if let Command::BeginAttempt { attempt_id, .. } = &event.command {
-            audit.attempt_id = Some(attempt_id.clone());
             audit.submitted_approvals = bindings.iter().map(ApprovalBindingAudit::from).collect();
             let Some(h) = head(&w.tx, scope, w.limits)? else {
                 audit.reason = AuditReason::TrustUnavailable;
                 audit.event.as_mut().expect("plan audit").decision = Decision::Denied {};
-                return w.finish(
-                    Outcome::Rejected,
-                    current.snapshot().revision,
-                    Some(attempt_id.clone()),
-                    audit,
-                );
+                return w.finish(Outcome::Rejected, current.snapshot().revision, audit);
             };
             let approvals = StoredApprovals {
                 conn: &w.tx,
@@ -136,12 +138,7 @@ impl Store {
             if !check_gate(&w, &plan, attempt_id, bindings, &gate, &h) {
                 audit.reason = AuditReason::CommitGateRejected;
                 audit.event.as_mut().expect("plan audit").decision = Decision::Denied {};
-                return w.finish(
-                    Outcome::Rejected,
-                    current.snapshot().revision,
-                    Some(attempt_id.clone()),
-                    audit,
-                );
+                return w.finish(Outcome::Rejected, current.snapshot().revision, audit);
             }
             Some((gate, h))
         } else {
@@ -155,15 +152,16 @@ impl Store {
             Err(error) => {
                 audit.reason = AuditReason::LifecycleError(error);
                 audit.event.as_mut().expect("plan audit").decision = Decision::Denied {};
-                return w.finish(Outcome::Rejected, current.snapshot().revision, None, audit);
+                return w.finish(Outcome::Rejected, current.snapshot().revision, audit);
             }
         };
         let Some(transition) = evaluation.transition else {
+            audit.reason = AuditReason::Lifecycle(evaluation.directive);
             let outcome = match evaluation.outcome {
                 lifecycle::EventOutcome::Duplicate => Outcome::Duplicate,
                 _ => Outcome::Stale,
             };
-            return w.finish(outcome, current.snapshot().revision, None, audit);
+            return w.finish(outcome, current.snapshot().revision, audit);
         };
         let next = transition.next().snapshot();
         let attempt = next.attempt.as_ref().map(|a| a.id.clone());
@@ -186,7 +184,6 @@ impl Store {
                 evidence: EvidenceRefs::new(vec![evidence.clone()]).map_err(|_| Error::Corrupt)?,
             };
         }
-        audit.attempt_id = attempt.clone();
         if !matches!(event.command, Command::BeginAttempt { .. }) {
             audit.reason = AuditReason::Lifecycle(evaluation.directive);
         }
@@ -196,7 +193,7 @@ impl Store {
         if changed != 1 {
             return Err(Error::Conflict);
         }
-        let receipt = w.prepare(Outcome::Changed, next.revision, attempt, audit)?;
+        let receipt = w.prepare(Outcome::Changed, next.revision, audit)?;
         let first_dispatch = transition.commit(move |_| {
             w.commit()?;
             Ok::<_, Error>(lifecycle::CommitStatus::Applied)
@@ -219,7 +216,10 @@ fn load_execution(
 ) -> Result<(FrozenPlan, Execution, u8), Error> {
     let plan = load_plan(conn, scope, limits)?;
     let (bytes, revision, reserve): (Vec<u8>, u64, u8) = conn.query_row(
-        "SELECT snapshot,revision,reserve FROM executions WHERE scope=?1",
+        &format!(
+            "SELECT {},revision,reserve FROM executions WHERE scope=?1",
+            bounded_blob("snapshot", limits.lifecycle.max_snapshot_bytes)
+        ),
         [scope.key()],
         |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
     )?;

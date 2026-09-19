@@ -6,6 +6,16 @@ use std::path::Path;
 pub(crate) const SCHEMA_VERSION: u32 = 1;
 const APPLICATION_ID: u32 = 0x52534558;
 
+// Only internal schema column names are accepted, never caller-provided SQL.
+// SQLite reads a BLOB's length from its record header; nested CASE evaluation is lazy.
+// Invalid types (including NULL), negative lengths and oversized values become NULL,
+// so Vec<u8> decoding fails closed before SQLite or Rust materializes the payload.
+// No length-to-usize conversion is needed. All maxima come from validated Limits.
+// ref: SQLite src/func.c (lengthFunc), lang_expr.html#the_case_expression.
+pub(crate) fn bounded_blob(column: &'static str, max: usize) -> String {
+    format!("CASE WHEN typeof({column})='blob' THEN CASE WHEN length({column}) BETWEEN 0 AND {max} THEN {column} END END")
+}
+
 /// Protected synchronous journal. Open separate handles for separate threads; SQLite,
 /// not an in-process mutex, arbitrates writers. No runner or background tasks are owned.
 pub struct Store {
@@ -85,7 +95,10 @@ impl Store {
             return Err(Error::Schema);
         }
         let encoded: Vec<u8> = reader.query_row(
-            "SELECT authority FROM metadata WHERE singleton=1",
+            &format!(
+                "SELECT {} FROM metadata WHERE singleton=1",
+                bounded_blob("authority", limits.max_record_bytes)
+            ),
             [],
             |r| r.get(0),
         )?;
@@ -148,7 +161,10 @@ pub(crate) fn ensure_current(
         return Err(Error::Schema);
     }
     let encoded: Vec<u8> = conn.query_row(
-        "SELECT authority FROM metadata WHERE singleton=1",
+        &format!(
+            "SELECT {} FROM metadata WHERE singleton=1",
+            bounded_blob("authority", limits.max_record_bytes)
+        ),
         [],
         |r| r.get(0),
     )?;
@@ -193,7 +209,7 @@ fn migrate(conn: &mut Connection, authority: &Authority) -> Result<(), Error> {
         return Err(Error::Schema);
     }
     apply_schema(&tx, authority)?;
-    tx.commit().map_err(|_| Error::CommitUnknown)
+    tx.commit().map_err(|_| Error::BootstrapUnpublished)
 }
 fn apply_schema(tx: &rusqlite::Transaction<'_>, authority: &Authority) -> Result<(), Error> {
     tx.execute_batch(include_str!("schema.sql"))?;
@@ -294,6 +310,60 @@ mod tests {
         assert_empty(&conn);
         drop(conn);
         std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn bootstrap_commit_failure_is_unpublished_and_retryable() {
+        let path = temporary("commit-failure");
+        let mut conn = Connection::open(&path).unwrap();
+        conn.busy_timeout(std::time::Duration::ZERO).unwrap();
+        conn.execute_batch("CREATE TABLE fixture(id INTEGER)")
+            .unwrap();
+        let reader = Connection::open(&path).unwrap();
+        reader
+            .execute_batch("BEGIN; SELECT * FROM fixture;")
+            .unwrap();
+        // A rollback-journal reader permits schema writes but blocks COMMIT.
+        let error = migrate(&mut conn, &authority()).unwrap_err();
+        assert_eq!(error, Error::BootstrapUnpublished);
+        assert_empty(&conn);
+        reader.execute_batch("ROLLBACK").unwrap();
+        migrate(&mut conn, &authority()).unwrap();
+        drop(reader);
+        drop(conn);
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn bounded_projection_never_returns_oversized_or_non_blob_payloads() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE fixture(payload);
+            INSERT INTO fixture VALUES(NULL),(-1),(1.5),('text'),(zeroblob(0)),(zeroblob(16)),(zeroblob(17)),(zeroblob(2097152));").unwrap();
+        let mut statement = conn
+            .prepare(&format!(
+                "SELECT {} FROM fixture ORDER BY rowid",
+                bounded_blob("payload", 16)
+            ))
+            .unwrap();
+        let lengths: Vec<_> = statement
+            .query_map([], |row| {
+                // Inspect the SQL result before any owned blob allocation or decoder runs.
+                Ok(match row.get_ref(0)? {
+                    rusqlite::types::ValueRef::Null => None,
+                    rusqlite::types::ValueRef::Blob(bytes) => Some(bytes.len()),
+                    other => panic!("unbounded SQL value: {other:?}"),
+                })
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(
+            lengths,
+            vec![None, None, None, None, Some(0), Some(16), None, None]
+        );
+    }
+    #[test]
+    fn non_durable_sqlite_configuration_is_configuration_error() {
+        let conn = Connection::open_in_memory().unwrap();
+        assert_eq!(configure(&conn, test_limits()), Err(Error::Configuration));
     }
     fn test_limits() -> Limits {
         Limits {

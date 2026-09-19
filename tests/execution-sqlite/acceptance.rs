@@ -445,13 +445,13 @@ fn lost_result_and_confirmation_responses_recover_without_new_events() {
         .unwrap();
     let consumer = id("execution-app");
     let first = store
-        .pull_results(&host.scope(), &consumer, 0, 64, &host)
+        .pull_results(&host.scope(), &consumer, 64, &host)
         .unwrap();
     assert!(first.iter().any(|r| r == &receipt));
     assert_eq!(
         first,
         store
-            .pull_results(&host.scope(), &consumer, 0, 64, &host)
+            .pull_results(&host.scope(), &consumer, 64, &host)
             .unwrap()
     );
     store
@@ -464,7 +464,7 @@ fn lost_result_and_confirmation_responses_recover_without_new_events() {
         .confirm(&host.scope(), &consumer, &receipt.event_id, &host)
         .unwrap();
     assert!(!store
-        .pull_results(&host.scope(), &consumer, 0, 64, &host)
+        .pull_results(&host.scope(), &consumer, 64, &host)
         .unwrap()
         .iter()
         .any(|r| r == &receipt));
@@ -988,7 +988,7 @@ fn old_schema_handle_cannot_read_or_ack_after_upgrade() {
     ));
     assert_eq!(
         store
-            .pull_results(&host.scope(), &id("ui"), 0, 10, &host)
+            .pull_results(&host.scope(), &id("ui"), 10, &host)
             .unwrap_err(),
         Error::Schema
     );
@@ -1184,7 +1184,7 @@ fn each_endpoint_requires_its_exact_access_and_delivery_consumer() {
         .unwrap();
     assert_eq!(
         store
-            .pull_results(&host.scope(), &id("ui"), 0, 1, &host)
+            .pull_results(&host.scope(), &id("ui"), 1, &host)
             .unwrap_err(),
         Error::Denied
     );
@@ -1198,7 +1198,7 @@ fn each_endpoint_requires_its_exact_access_and_delivery_consumer() {
     host.consumer = Some(id("authorized"));
     assert_eq!(
         store
-            .pull_results(&host.scope(), &id("other"), 0, 1, &host)
+            .pull_results(&host.scope(), &id("other"), 1, &host)
             .unwrap_err(),
         Error::Denied
     );
@@ -1210,7 +1210,7 @@ fn each_endpoint_requires_its_exact_access_and_delivery_consumer() {
     );
     assert_eq!(
         store
-            .pull_results(&host.scope(), &id("authorized"), 0, 1, &host)
+            .pull_results(&host.scope(), &id("authorized"), 1, &host)
             .unwrap()
             .len(),
         1
@@ -1520,4 +1520,421 @@ fn denied_audit_does_not_promote_missing_expired_or_unknown_records_to_approval(
         );
         assert_eq!(db.count("attempts"), 0);
     }
+}
+
+#[test]
+fn out_of_order_confirmation_cannot_skip_pending_results_after_reopen() {
+    let db = Database::new();
+    let host = TestHost::new(0);
+    let mut store = db.create();
+    host.prepare(&mut store);
+    let consumer = id("out-of-order");
+    let batch = store
+        .pull_results(&host.scope(), &consumer, 2, &host)
+        .unwrap();
+    assert_eq!(batch.len(), 2);
+    store
+        .confirm(&host.scope(), &consumer, &batch[1].event_id, &host)
+        .unwrap();
+    drop(store);
+    let mut store = db.open();
+    let pending = store
+        .pull_results(&host.scope(), &consumer, 2, &host)
+        .unwrap();
+    assert_eq!(pending, vec![batch[0].clone()]);
+    store
+        .confirm(&host.scope(), &consumer, &batch[0].event_id, &host)
+        .unwrap();
+    assert!(store
+        .pull_results(&host.scope(), &consumer, 2, &host)
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        store
+            .pull_results(&host.scope(), &id("independent"), 2, &host)
+            .unwrap(),
+        batch
+    );
+}
+
+#[test]
+fn rejected_and_stale_runner_events_retain_submitted_attempt_on_replay() {
+    for (revision, outcome, reason, decision) in [
+        (
+            2,
+            Outcome::Rejected,
+            AuditReason::LifecycleError(lifecycle::LifecycleError::Attempt),
+            Decision::Denied {},
+        ),
+        (
+            1,
+            Outcome::Stale,
+            AuditReason::Lifecycle(lifecycle::Directive::Reconcile),
+            Decision::Proposed {},
+        ),
+    ] {
+        for kind in ["dispatched", "observe", "output"] {
+            let db = Database::new();
+            let host = TestHost::new(0);
+            let mut store = db.create();
+            host.prepare(&mut store);
+            store
+                .apply_execution(
+                    &operation("start"),
+                    &host.scope(),
+                    &host.begin(),
+                    &[],
+                    &host,
+                )
+                .unwrap();
+            let attempt_id = AttemptId::new("submitted-wrong-attempt").unwrap();
+            let command = match kind {
+                "dispatched" => lifecycle::Command::Dispatched {
+                    attempt_id: attempt_id.clone(),
+                },
+                "observe" => lifecycle::Command::Observe {
+                    attempt_id: attempt_id.clone(),
+                    evidence: EvidenceRef {
+                        reference: reference("evidence"),
+                        runner: id("test-runner"),
+                        kind: EvidenceKind::TestResult,
+                    },
+                },
+                _ => lifecycle::Command::Output {
+                    attempt_id: attempt_id.clone(),
+                    total_bytes: 10,
+                },
+            };
+            let command = event("runner-event", revision, command);
+            let receipt = store
+                .apply_execution(&operation("runner-op"), &host.scope(), &command, &[], &host)
+                .unwrap()
+                .receipt()
+                .clone();
+            assert_eq!(receipt.outcome, outcome);
+            assert_eq!(
+                receipt.attempt_id,
+                Some(attempt_id.clone()),
+                "{kind}, revision={revision}"
+            );
+            drop(store);
+            let mut store = db.open();
+            let audit = store
+                .audit(&host.scope(), &operation("runner-op"), &host)
+                .unwrap();
+            assert_eq!(audit.attempt_id, Some(attempt_id));
+            assert_eq!(audit.reason, reason);
+            assert_eq!(audit.event.as_ref().unwrap().decision, decision);
+            assert_eq!(
+                store
+                    .receipt(&host.scope(), &operation("runner-op"), &host)
+                    .unwrap(),
+                Some(receipt.clone())
+            );
+            let replay = store
+                .apply_execution(&operation("runner-op"), &host.scope(), &command, &[], &host)
+                .unwrap();
+            assert!(matches!(replay, CommitOutcome::AlreadyCommitted(_)));
+            assert_eq!(replay.receipt(), &receipt);
+            assert_eq!(
+                store
+                    .audit(&host.scope(), &operation("runner-op"), &host)
+                    .unwrap(),
+                audit
+            );
+        }
+    }
+}
+
+#[test]
+fn stale_event_persists_core_directive_without_a_transition() {
+    let db = Database::new();
+    let host = TestHost::new(0);
+    let mut store = db.create();
+    host.prepare(&mut store);
+    let command = event("stale", 0, lifecycle::Command::Wait);
+    let result = store
+        .apply_execution(&operation("stale"), &host.scope(), &command, &[], &host)
+        .unwrap();
+    assert_eq!(result.receipt().outcome, Outcome::Stale);
+    drop(store);
+    let mut store = db.open();
+    let audit = store
+        .audit(&host.scope(), &operation("stale"), &host)
+        .unwrap();
+    assert_eq!(
+        audit.reason,
+        AuditReason::Lifecycle(lifecycle::Directive::Ready)
+    );
+    let replay = store
+        .apply_execution(&operation("stale"), &host.scope(), &command, &[], &host)
+        .unwrap();
+    assert_eq!(replay.receipt(), result.receipt());
+    assert_eq!(
+        store
+            .audit(&host.scope(), &operation("stale"), &host)
+            .unwrap(),
+        audit
+    );
+}
+
+#[test]
+fn oversized_approval_definition_is_corrupt_before_refresh_comparison() {
+    let db = Database::new();
+    let host = TestHost::new(1);
+    let mut store = db.create();
+    host.prepare(&mut store);
+    db.sql()
+        .execute(
+            "UPDATE approvals SET definition=zeroblob(?1)",
+            [limits().max_record_bytes + 1],
+        )
+        .unwrap();
+    assert_eq!(
+        store
+            .refresh_trust(&operation("refresh"), &host.scope(), Some(1), &host)
+            .unwrap_err(),
+        Error::Corrupt
+    );
+    assert_eq!(db.count("receipts"), 3);
+}
+
+#[test]
+fn invalid_call_input_is_not_storage_configuration() {
+    assert_eq!(
+        OperationRequestId::new("").unwrap_err(),
+        Error::InvalidInput
+    );
+    let db = Database::new();
+    let host = TestHost::new(0);
+    let mut store = db.create();
+    host.prepare(&mut store);
+    for limit in [0, limits().max_batch + 1] {
+        assert_eq!(
+            store
+                .pull_results(&host.scope(), &id("input"), limit, &host)
+                .unwrap_err(),
+            Error::InvalidInput
+        );
+    }
+    let mut invalid = spec(&host);
+    invalid.expires_at_unix_ms = host.now.get();
+    assert_eq!(
+        store
+            .open_interaction(&operation("invalid"), &host.scope(), &invalid, &host)
+            .unwrap_err(),
+        Error::InvalidInput
+    );
+    assert_eq!(db.count("interactions"), 0);
+    assert_eq!(db.count("receipts"), 3);
+}
+
+#[test]
+fn confirmation_commit_failure_has_its_own_recovery_and_is_retryable() {
+    let db = Database::new();
+    let host = TestHost::new(0);
+    let mut store = db.create();
+    host.prepare(&mut store);
+    let consumer = id("confirm-failure");
+    let receipt = store
+        .pull_results(&host.scope(), &consumer, 1, &host)
+        .unwrap()
+        .remove(0);
+    // A deferred FK fails at COMMIT, after the confirmation INSERT succeeded.
+    db.sql().execute_batch("CREATE TABLE commit_fault (id INTEGER REFERENCES receipts(sequence) DEFERRABLE INITIALLY DEFERRED);
+        CREATE TRIGGER fail_confirm AFTER INSERT ON confirmations BEGIN INSERT INTO commit_fault VALUES(-1); END;").unwrap();
+    let error = store
+        .confirm(&host.scope(), &consumer, &receipt.event_id, &host)
+        .unwrap_err();
+    assert_eq!(error, Error::ConfirmationCommitUnknown);
+    assert_eq!(db.count("confirmations"), 0);
+    db.sql()
+        .execute_batch("DROP TRIGGER fail_confirm;")
+        .unwrap();
+    store
+        .confirm(&host.scope(), &consumer, &receipt.event_id, &host)
+        .unwrap();
+    drop(store);
+    let mut store = db.open();
+    store
+        .confirm(&host.scope(), &consumer, &receipt.event_id, &host)
+        .unwrap();
+    assert_eq!(db.count("confirmations"), 1);
+    assert!(!store
+        .pull_results(&host.scope(), &consumer, 64, &host)
+        .unwrap()
+        .contains(&receipt));
+}
+
+#[test]
+fn oversized_protected_records_fail_closed_at_every_read_entry() {
+    for (table, column, maximum) in [
+        ("metadata", "authority", limits().max_record_bytes),
+        ("receipts", "body", limits().max_record_bytes),
+        ("audits", "body", limits().max_record_bytes),
+        ("executions", "plan", limits().plan.max_input_bytes),
+        (
+            "executions",
+            "snapshot",
+            limits().lifecycle.max_snapshot_bytes,
+        ),
+        (
+            "interactions",
+            "snapshot",
+            limits().interaction.max_snapshot_bytes,
+        ),
+        (
+            "trust_heads",
+            "authorization_revision",
+            limits().max_record_bytes,
+        ),
+        (
+            "trust_heads",
+            "approval_revision",
+            limits().max_record_bytes,
+        ),
+        ("approvals", "definition", limits().max_record_bytes),
+    ] {
+        let db = Database::new();
+        let host = TestHost::new(1);
+        let mut store = db.create();
+        host.prepare(&mut store);
+        let interaction = spec(&host);
+        store
+            .open_interaction(
+                &operation("interaction"),
+                &host.scope(),
+                &interaction,
+                &host,
+            )
+            .unwrap();
+        db.sql()
+            .execute(
+                &format!("UPDATE {table} SET {column}=zeroblob(?1)"),
+                [maximum + 1],
+            )
+            .unwrap();
+        let check = |error| assert_eq!(error, Error::Corrupt, "{table}.{column}");
+        match table {
+            "metadata" => {
+                check(store.execution(&host.scope(), &host).unwrap_err());
+                match Store::open(&db.path, &host.scope().authority, limits()) {
+                    Err(error) => check(error),
+                    Ok(_) => panic!("oversized authority opened"),
+                }
+            }
+            "receipts" => {
+                check(
+                    store
+                        .receipt(&host.scope(), &operation("open"), &host)
+                        .unwrap_err(),
+                );
+                check(
+                    store
+                        .pull_results(&host.scope(), &id("bounded"), 64, &host)
+                        .unwrap_err(),
+                );
+                check(
+                    store
+                        .open_execution(&operation("open"), &host.plan, &host)
+                        .unwrap_err(),
+                );
+            }
+            "audits" => check(
+                store
+                    .audit(&host.scope(), &operation("open"), &host)
+                    .unwrap_err(),
+            ),
+            "executions" => check(store.execution(&host.scope(), &host).unwrap_err()),
+            "interactions" => check(
+                store
+                    .interaction(&host.scope(), &interaction.id, &host)
+                    .unwrap_err(),
+            ),
+            _ => check(
+                store
+                    .apply_execution(
+                        &operation("start"),
+                        &host.scope(),
+                        &host.begin(),
+                        &host.bindings(),
+                        &host,
+                    )
+                    .unwrap_err(),
+            ),
+        }
+        assert_eq!(db.count("receipts"), 4);
+        assert_eq!(db.count("attempts"), 0);
+        assert_eq!(db.count("approval_consumptions"), 0);
+    }
+}
+
+#[test]
+fn operation_commit_failure_retains_operation_recovery_without_dispatch() {
+    let db = Database::new();
+    let host = TestHost::new(1);
+    let mut store = db.create();
+    host.prepare(&mut store);
+    db.sql().execute_batch("CREATE TABLE commit_fault (id INTEGER REFERENCES receipts(sequence) DEFERRABLE INITIALLY DEFERRED);
+        CREATE TRIGGER fail_operation AFTER INSERT ON receipts BEGIN INSERT INTO commit_fault VALUES(-1); END;").unwrap();
+    assert_eq!(
+        store
+            .apply_execution(
+                &operation("start"),
+                &host.scope(),
+                &host.begin(),
+                &host.bindings(),
+                &host
+            )
+            .unwrap_err(),
+        Error::OperationCommitUnknown
+    );
+    assert!(store
+        .receipt(&host.scope(), &operation("start"), &host)
+        .unwrap()
+        .is_none());
+    assert_eq!(db.count("attempts"), 0);
+    assert_eq!(db.count("approval_consumptions"), 0);
+    db.sql()
+        .execute_batch("DROP TRIGGER fail_operation")
+        .unwrap();
+    let result = store
+        .apply_execution(
+            &operation("start"),
+            &host.scope(),
+            &host.begin(),
+            &host.bindings(),
+            &host,
+        )
+        .unwrap();
+    assert!(matches!(
+        result,
+        CommitOutcome::Applied {
+            first_dispatch: Some(_),
+            ..
+        }
+    ));
+    let replay = store
+        .apply_execution(
+            &operation("start"),
+            &host.scope(),
+            &host.begin(),
+            &host.bindings(),
+            &host,
+        )
+        .unwrap();
+    assert!(matches!(replay, CommitOutcome::AlreadyCommitted(_)));
+    assert_eq!(replay.receipt(), result.receipt());
+}
+
+#[test]
+fn invalid_store_limits_remain_configuration_errors() {
+    let db = Database::new();
+    let mut invalid = limits();
+    invalid.max_batch = 0;
+    assert!(matches!(
+        Store::initialize_test(&db.path, plan().spec().request.authority.clone(), invalid),
+        Err(Error::Configuration)
+    ));
+    assert!(!db.path.exists());
 }

@@ -7,9 +7,12 @@ use serde::{Deserialize, Serialize};
 /// Static failure codes; never include SQL, paths, input payloads or provider text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
-    /// Invalid explicit store limits.
+    /// Invalid explicit store limits or SQLite durability configuration.
     #[error("invalid storage configuration")]
     Configuration,
+    /// Invalid operation identity, query arguments or new aggregate input; correct the call.
+    #[error("invalid storage operation input")]
+    InvalidInput,
     /// Authentication, scope, or requested access was rejected.
     #[error("storage access denied")]
     Denied,
@@ -40,9 +43,18 @@ pub enum Error {
     /// Storage protection or filesystem operation failed.
     #[error("protected storage unavailable")]
     Storage,
-    /// Commit did not report success; query the same operation ID before proceeding.
-    #[error("commit outcome unknown")]
-    CommitUnknown,
+    /// Operation commit did not report success; query or resubmit the SAME operation ID.
+    /// Never use a new ID or redispatch a runner to recover this error.
+    #[error("operation commit outcome unknown")]
+    OperationCommitUnknown,
+    /// Confirmation commit did not report success; retry the SAME scope/consumer/event.
+    /// No operation receipt exists for confirmation; retry is idempotent.
+    #[error("confirmation commit outcome unknown")]
+    ConfirmationCommitUnknown,
+    /// Migration commit failed in an isolated bootstrap file; no database was published.
+    /// Retry initialize_test with the same intended path, or diagnose storage first.
+    #[error("bootstrap database not published")]
+    BootstrapUnpublished,
 }
 impl From<rusqlite::Error> for Error {
     fn from(value: rusqlite::Error) -> Self {
@@ -67,7 +79,7 @@ pub struct OperationRequestId(Id);
 impl OperationRequestId {
     /// Construct a bounded ID; this grants no authority.
     pub fn new(value: impl Into<String>) -> Result<Self, Error> {
-        Id::new(value).map(Self).map_err(|_| Error::Configuration)
+        Id::new(value).map(Self).map_err(|_| Error::InvalidInput)
     }
     /// Borrow the bounded identifier.
     pub fn as_str(&self) -> &str {
@@ -316,7 +328,7 @@ pub enum Outcome {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Receipt {
-    /// Stable increasing cursor within this database.
+    /// Stable increasing ordering key within this database; never a delivery checkpoint.
     pub sequence: u64,
     /// Stable event identity, reused on every pull/replay.
     pub event_id: EventId,
@@ -330,7 +342,7 @@ pub struct Receipt {
     pub outcome: Outcome,
     /// Aggregate/head revision at this operation.
     pub revision: u64,
-    /// Bound attempt, if applicable.
+    /// Exact submitted attempt for attempt-bearing commands; absent for other commands.
     pub attempt_id: Option<AttemptId>,
     /// Trusted recorded receipt time.
     pub occurred_at_unix_ms: u64,

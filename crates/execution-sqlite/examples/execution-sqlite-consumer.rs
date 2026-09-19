@@ -215,14 +215,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         lifecycle::Directive::Reconcile
     );
     let consumer = id("test-consumer");
-    let events = store.pull_results(&scope, &consumer, 0, 64, &host)?;
+    assert_eq!(OperationRequestId::new(""), Err(Error::InvalidInput));
+    assert_eq!(
+        store.pull_results(&scope, &consumer, 0, &host),
+        Err(Error::InvalidInput)
+    );
+    let events = store.pull_results(&scope, &consumer, 64, &host)?;
     assert_eq!(events.len(), 3);
-    for result in events {
+    // Confirm a later event first; an earlier pending result must still be delivered.
+    store.confirm(&scope, &consumer, &events[2].event_id, &host)?;
+    assert_eq!(
+        store.pull_results(&scope, &consumer, 64, &host)?,
+        events[..2]
+    );
+    for result in &events[..2] {
         store.confirm(&scope, &consumer, &result.event_id, &host)?;
     }
-    assert!(store
-        .pull_results(&scope, &consumer, 0, 64, &host)?
-        .is_empty());
+    assert!(store.pull_results(&scope, &consumer, 64, &host)?.is_empty());
     assert_eq!(store.receipt(&scope, &op("begin"), &host)?, Some(receipt));
     println!("execution-sqlite: real file transaction, test-only authorization/action, restart replay and result confirmation");
     Ok(())

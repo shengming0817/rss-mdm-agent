@@ -1,3 +1,4 @@
+use crate::database::bounded_blob;
 use crate::{execution::plan_audit, journal::*, *};
 use execution_contract::Decision;
 use execution_interaction::{self as interaction, Command, Interaction, Reference, Spec};
@@ -28,7 +29,7 @@ impl Store {
         };
         let plan = load_plan(&w.tx, scope, w.limits)?;
         let state = Interaction::open(spec.clone(), w.now, w.limits.interaction)
-            .map_err(|_| Error::Configuration)?;
+            .map_err(|_| Error::InvalidInput)?;
         w.tx.execute(
             "INSERT INTO interactions VALUES(?1,?2,?3,0,1)",
             params![spec.id.as_str(), scope.key(), w.bounded(state.snapshot())?],
@@ -39,7 +40,7 @@ impl Store {
             Decision::Proposed {},
             AuditReason::InteractionOpened,
         );
-        w.finish(Outcome::Changed, 0, None, audit)
+        w.finish(Outcome::Changed, 0, audit)
     }
     /// Resolve answer/cancel/expiry against the current protected state inside one write transaction.
     /// No public method accepts the core's freely constructible Transition.
@@ -91,7 +92,7 @@ impl Store {
             Ok(value) => value,
             Err(error) => {
                 audit.reason = AuditReason::InteractionError(error);
-                return w.finish(Outcome::Rejected, state.snapshot().revision, None, audit);
+                return w.finish(Outcome::Rejected, state.snapshot().revision, audit);
             }
         };
         let outcome = match evaluation.outcome {
@@ -113,7 +114,7 @@ impl Store {
         } else {
             state.snapshot().revision
         };
-        w.finish(outcome, revision, None, audit)
+        w.finish(outcome, revision, audit)
     }
     /// Restore a pending or terminal interaction without changing the execution task.
     pub fn interaction(
@@ -133,7 +134,10 @@ fn load(
     limits: Limits,
 ) -> Result<Interaction, Error> {
     let (bytes, revision): (Vec<u8>, u64) = conn.query_row(
-        "SELECT snapshot,revision FROM interactions WHERE id=?1 AND scope=?2",
+        &format!(
+            "SELECT {},revision FROM interactions WHERE id=?1 AND scope=?2",
+            bounded_blob("snapshot", limits.interaction.max_snapshot_bytes)
+        ),
         params![id.as_str(), scope.key()],
         |r| Ok((r.get(0)?, r.get(1)?)),
     )?;
