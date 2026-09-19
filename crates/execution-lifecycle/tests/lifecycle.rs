@@ -3,6 +3,26 @@ use execution_lifecycle::*;
 use std::cell::Cell;
 
 #[test]
+fn event_record_snapshots_require_version_two() {
+    let limits = Limits {
+        max_snapshot_bytes: MIN_SNAPSHOT_BYTES,
+    };
+    let state = started();
+    let mut snapshot = state.snapshot().clone();
+    snapshot.version = 1;
+    let bytes = serde_json::to_vec(&snapshot).unwrap();
+    assert_eq!(
+        Execution::decode(plan(), &bytes, limits).unwrap_err(),
+        LifecycleError::Snapshot
+    );
+    assert_eq!(
+        Execution::restore(plan(), snapshot, limits).unwrap_err(),
+        LifecycleError::Snapshot
+    );
+    assert_eq!(state.snapshot().version, 2);
+}
+
+#[test]
 fn ordinary_command_needs_no_observation_verifier() {
     let state = Execution::open(
         plan(),

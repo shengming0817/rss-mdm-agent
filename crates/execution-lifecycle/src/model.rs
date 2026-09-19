@@ -1,6 +1,8 @@
 use execution_contract::{AttemptId, Digest, EventId, EvidenceRef, FrozenPlan, Id, PlanId};
 use serde::{Deserialize, Serialize};
 
+pub(crate) const SNAPSHOT_VERSION: u8 = 2;
+
 /// Explicit execution provenance; test effects never become real effects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -323,7 +325,7 @@ impl EventRecord {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Snapshot {
-    /// Exactly version 1.
+    /// Exactly version 2, with a tagged command or observation record.
     pub version: u8,
     /// Bound frozen plan identity.
     pub plan_id: PlanId,

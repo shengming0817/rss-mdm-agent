@@ -655,6 +655,23 @@ fn actual_sqlite_full_rolls_back_and_preserves_existing_authority() {
     );
 }
 #[test]
+fn prior_schema_is_rejected_without_modifying_the_database() {
+    let db = Database::new();
+    drop(db.create());
+    let conn = db.sql();
+    conn.pragma_update(None, "user_version", 1).unwrap();
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+        .unwrap();
+    drop(conn);
+    let before = std::fs::read(&db.path).unwrap();
+    assert!(matches!(
+        Store::open(&db.path, &plan().spec().request.authority, limits()),
+        Err(Error::Schema)
+    ));
+    assert_eq!(std::fs::read(&db.path).unwrap(), before);
+}
+
+#[test]
 fn newer_schema_is_diagnostics_only_and_corrupt_database_is_never_reinitialized() {
     let db = Database::new();
     drop(db.create());
@@ -668,7 +685,7 @@ fn newer_schema_is_diagnostics_only_and_corrupt_database_is_never_reinitialized(
         Store::open(&db.path, &plan().spec().request.authority, limits()).unwrap(),
         OpenOutcome::NewerSchema {
             found: 99,
-            supported: 1
+            supported: 2
         }
     ));
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
@@ -1051,7 +1068,13 @@ fn old_schema_handle_cannot_read_or_ack_after_upgrade() {
         .receipt(&host.scope(), &operation("open"), &host)
         .unwrap()
         .unwrap();
-    db.sql().execute_batch("PRAGMA user_version=2;").unwrap();
+    let conn = db.sql();
+    let version: u32 = conn
+        .pragma_query_value(None, "user_version", |r| r.get(0))
+        .unwrap();
+    conn.pragma_update(None, "user_version", version + 1)
+        .unwrap();
+    drop(conn);
     assert_eq!(
         store
             .receipt(&host.scope(), &operation("open"), &host)

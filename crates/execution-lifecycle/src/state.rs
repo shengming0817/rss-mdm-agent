@@ -16,7 +16,7 @@ impl Execution {
     /// Create received state. Time may precede the plan window; attempts cannot.
     pub fn open(plan: FrozenPlan, now: u64, limits: Limits) -> Result<Self, LifecycleError> {
         let snapshot = Snapshot {
-            version: 1,
+            version: crate::model::SNAPSHOT_VERSION,
             plan_id: plan.spec().plan_id.clone(),
             plan_digest: plan.digest().clone(),
             opened_at_unix_ms: now,

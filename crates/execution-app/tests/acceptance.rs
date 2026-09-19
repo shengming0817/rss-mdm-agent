@@ -226,7 +226,7 @@ fn newer_schema_retains_read_only_startup_diagnostic() {
     };
     assert_eq!(
         format!("{error:?}"),
-        "NewerSchema { found: 999, supported: 1 }"
+        "NewerSchema { found: 999, supported: 2 }"
     );
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
     assert_eq!(runner.dispatch_count(), 0);

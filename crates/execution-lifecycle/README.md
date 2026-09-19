@@ -14,7 +14,7 @@ Transition 为私有构造且不可复制，以 next()/expected_revision() 提�
 
 首次动作只活在内存中：提交后崩溃或丢弃动作，恢复的 Starting 一律 Reconcile；不能从 Snapshot 再造首次动作。宿主派发前仍检查停止/取消与 runner 能力，派发结果不明进入核对，不重试旧动作。
 
-decode/restore 只接受当前格式 version=1，拒绝未知字段/版本、非法绑定、时间/预算/状态组合和超大输入，不提供旧版兼容或失败回退。恢复输入必须来自经过认证的受保护 journal；可反序列化的 Snapshot 本身不是执行许可。显式 Limits 至少保留 16 KiB 快照空间，当前有限字段和 C01 ID 上限使终止/核实记录可在该空间内落地。
+decode/restore 只接受当前格式 version=2，lastEvent 使用带 kind/event 的命令或观察记录；拒绝 v1、未知字段/版本、非法绑定、时间/预算/状态组合和超大输入，不提供旧版兼容或失败回退。恢复输入必须来自经过认证的受保护 journal；可反序列化的 Snapshot 本身不是执行许可。显式 Limits 至少保留 16 KiB 快照空间，当前有限字段和 C01 ID 上限使终止/核实记录可在该空间内落地。
 
 ## 准入、取消、退出与核实
 
