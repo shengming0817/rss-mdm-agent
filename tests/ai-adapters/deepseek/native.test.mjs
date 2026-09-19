@@ -44,6 +44,22 @@ test("real Harness process: true deltas, durable terminal, cold read and native 
     "completed",
     JSON.stringify(events),
   );
+  assert.equal(
+    (
+      await first.submit(
+        sent.binding,
+        c,
+        { ...a, attemptId: "replacement-attempt" },
+        budget(),
+      )
+    ).certainty,
+    "not_sent",
+  );
+  assert.equal(
+    env.requests.length,
+    1,
+    "a completed command cannot acquire another native attempt",
+  );
   await first.close(budget());
   const before = await files(env.dir);
   assert.ok(Object.keys(before).length);
@@ -121,6 +137,98 @@ test("real Harness process: true deltas, durable terminal, cold read and native 
         m.role === "assistant" &&
         JSON.stringify(m.content).includes("native answer"),
     ),
+  );
+});
+
+test("terminal commit -> restore/rebind -> new command without reconciling settled records", async (t) => {
+  const env = await environment(t, (_b, res) => completion(res)),
+    p = env.port();
+  const admitted = unwrap(
+    await VerifiedProviderSession.open(p, env.config, budget()),
+  );
+  const store = new MemorySessionStore(),
+    initial = {
+      ...fixtureSession(),
+      namespace: env.config.namespace,
+      binding: admitted.binding,
+      capabilities: admitted.capabilities,
+    };
+  unwrap(await store.create(initial));
+  const c = command();
+  unwrap(await store.accept(acceptance(initial, c)));
+  let head = unwrap(await store.session(initial.namespace));
+  let record = unwrap(await store.command(head.namespace, c.commandId));
+  const attempt = fixtureAttempt(head.binding, c);
+  record = { ...record, state: "dispatching", dispatch: attempt };
+  unwrap(
+    await store.commit(
+      commandCommit(head, record, [
+        { type: "dispatch", attempt },
+        { type: "status", state: "dispatching" },
+      ]),
+    ),
+  );
+  const sent = await p.submit(head.binding, c, attempt, budget());
+  assert.equal(sent.certainty, "submitted");
+  head = unwrap(await store.session(head.namespace));
+  record = {
+    ...record,
+    state: "running",
+    dispatch: {
+      ...attempt,
+      certainty: "submitted",
+      nativeRequestId: sent.binding.nativeRequestId,
+    },
+  };
+  const committed = commandCommit(head, record, [
+    { type: "dispatch", attempt: record.dispatch },
+    { type: "status", state: "running" },
+  ]);
+  committed.session.binding = sent.binding;
+  unwrap(await store.commit(committed));
+  assert.equal(
+    (await collect(p, sent.binding)).at(-1)?.body?.outcome,
+    "completed",
+  );
+  head = unwrap(await store.session(head.namespace));
+  unwrap(await store.commit(terminalCommit(head, record)));
+  await p.close(budget());
+  const before = await files(env.dir),
+    previous = unwrap(await store.session(head.namespace)),
+    next = env.port();
+  const restored = unwrap(
+    await VerifiedProviderSession.restore(next, previous, env.config, budget()),
+  );
+  unwrap(
+    await store.rebind({
+      namespace: head.namespace,
+      expectedRevision: previous.revision,
+      expectedGeneration: previous.binding.generation,
+      restored,
+      eventId: "settled-rebind",
+    }),
+  );
+  head = unwrap(await store.session(head.namespace));
+  record = unwrap(await store.command(head.namespace, c.commandId));
+  assert.equal(record.state, "terminal");
+  assert.equal(
+    (await restored.reconcile(head, record, budget())).ok,
+    false,
+    "settled records cannot obtain reconciliation proofs",
+  );
+  assert.deepEqual(await files(env.dir), before);
+  assert.equal(env.requests.length, 1);
+  const c2 = command("after-settled");
+  const sent2 = await next.submit(
+    head.binding,
+    c2,
+    fixtureAttempt(head.binding, c2),
+    budget(),
+  );
+  assert.equal(sent2.certainty, "submitted");
+  assert.equal(
+    (await collect(next, sent2.binding)).at(-1)?.body?.outcome,
+    "completed",
   );
 });
 

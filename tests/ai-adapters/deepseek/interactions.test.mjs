@@ -152,6 +152,12 @@ test("controlled profile has only question + proposal and checkpoints before hos
   const events = await collect(p, sent.binding);
   assert.equal(events.at(-1)?.body?.outcome, "completed");
   assert.equal(proposals, 1);
+  const schema = env.requests[0].tools.find(
+    (t) => t.function.name === "host_propose",
+  ).function.parameters;
+  assert.equal(schema.type, "object");
+  assert.deepEqual(schema.required, ["name", "arguments"]);
+  assert.equal(schema.properties.arguments.type, "object");
   assert.deepEqual(env.requests[0].tools.map((t) => t.function.name).sort(), [
     "ask_user_question",
     "host_propose",

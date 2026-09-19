@@ -1,11 +1,17 @@
 import { Context } from "@deepseek-ai/cordis";
 import { SessionId } from "@deepseek-ai/dsh-session";
 import { randomUUID } from "node:crypto";
-import { assemble, COMPOSITION_ID, type Initialization } from "./assembly.js";
+import {
+  assemble,
+  COMPOSITION_ID,
+  TOOL_PROFILE,
+  type Initialization,
+} from "./assembly.js";
 import { copy, deferred } from "./support.js";
 import { history, outcome } from "./history.js";
 import { sealTools } from "./guard.js";
 import type { NativeEvent, Operation } from "./protocol.js";
+import { NativeFault } from "./protocol.js";
 
 const ctx = new Context();
 let init: Initialization | undefined,
@@ -34,6 +40,18 @@ const gateway = (method: string, request: unknown) =>
     signal: lifetime.signal,
   });
 let verify = () => {};
+let admittedAgent: ReturnType<typeof ctx.agents.get>;
+let admittedSession: ReturnType<typeof ctx.sessions.get>;
+let activation: string;
+function drift() {
+  if (lifetime.signal.aborted) return;
+  notify({
+    type: "lost",
+    diagnostic: { stage: "profile", reason: "profile_drift" },
+  });
+  process.exitCode = 1;
+  void shutdown();
+}
 function waitCallback(
   kind: "question" | "proposal",
   request: any,
@@ -81,7 +99,8 @@ async function initialize(i: Initialization) {
     throw Error("invalid incarnation");
   init = copy(i);
   process.chdir(i.workingDirectory);
-  await assemble(ctx, i);
+  const observed = await assemble(ctx, i, drift);
+  activation = observed.activation;
   ctx.on("user-questions/request", async (request) => {
     verify();
     if (
@@ -97,17 +116,7 @@ async function initialize(i: Initialization) {
   });
   if (i.controlled)
     ctx.tools.register({
-      name: "host_propose",
-      description:
-        "Propose a business operation to the host. This tool does not grant execution authority.",
-      parameters: {
-        name: { type: "string", required: true },
-        arguments: {
-          type: "object",
-          additionalProperties: true,
-          required: true,
-        },
-      },
+      ...TOOL_PROFILE.proposal,
       output: {
         schema: { type: "object", additionalProperties: true },
         render: (_args, value) => [
@@ -120,14 +129,23 @@ async function initialize(i: Initialization) {
       },
     });
   const allowed = [
-    "ask_user_question",
-    ...(i.controlled ? ["host_propose"] : []),
+    TOOL_PROFILE.question,
+    ...(i.controlled ? [TOOL_PROFILE.proposal.name] : []),
   ];
-  verify = sealTools(ctx, i.nativeSessionId, allowed, () => {
-    notify({ type: "lost" });
-    process.exitCode = 1;
-    void shutdown();
-  });
+  const verifyTools = sealTools(ctx, i.nativeSessionId, allowed, drift);
+  verify = () => {
+    observed.verify();
+    verifyTools();
+    if (
+      (admittedSession &&
+        ctx.sessions.get(SessionId(i.nativeSessionId)) !== admittedSession) ||
+      (admittedAgent &&
+        ctx.agents.get(SessionId(i.nativeSessionId)) !== admittedAgent)
+    ) {
+      drift();
+      throw Error("native incarnation drift");
+    }
+  };
   ctx.on("agent/error", () => {
     if (activeRequest) notify({ type: "error", requestId: activeRequest });
   });
@@ -135,6 +153,7 @@ async function initialize(i: Initialization) {
     verify();
     return next();
   });
+  let previousTerminal = false;
   if (i.restore) {
     const read = await ctx.sessionController.inspect(
       SessionId(i.nativeSessionId),
@@ -145,17 +164,27 @@ async function initialize(i: Initialization) {
       read.meta.cwd !== i.workingDirectory ||
       ctx.agents.get(SessionId(i.nativeSessionId))
     )
-      throw Error("invalid restoration");
+      throw new NativeFault("restoration_failed");
+    previousTerminal =
+      !!i.previousRequestId &&
+      history(read.events, i.previousRequestId).status === "terminal";
   } else
     await gateway("create", {
       sessionId: i.nativeSessionId,
       cwd: i.workingDirectory,
     });
+  admittedSession = ctx.sessions.get(SessionId(i.nativeSessionId));
+  admittedAgent = ctx.agents.get(SessionId(i.nativeSessionId));
+  if ((!i.restore && !admittedSession) || !!admittedAgent === i.restore)
+    throw Error("invalid activation");
+  verify();
   initialized = true;
   return {
     composition: COMPOSITION_ID,
     nativeSessionId: i.nativeSessionId,
     observationOnly: !ctx.agents.get(SessionId(i.nativeSessionId)),
+    activation,
+    previousTerminal,
   };
 }
 async function follow() {
@@ -295,7 +324,20 @@ const operations: Record<Operation, (value: any) => Promise<any> | any> = {
       content: [{ type: "text", text: v.text }],
     });
     if (value.accepted !== true) throw Error("not accepted");
-    return { status: "accepted", requestId: v.requestId };
+    const agent = ctx.agents.get(SessionId(init!.nativeSessionId));
+    if (!agent || (admittedAgent && admittedAgent !== agent)) {
+      drift();
+      throw Error("invalid activation");
+    }
+    admittedAgent = agent;
+    admittedSession ??= ctx.sessions.get(SessionId(init!.nativeSessionId));
+    verify();
+    return {
+      status: "accepted",
+      requestId: v.requestId,
+      activation,
+      observationOnly: false,
+    };
   },
   async inspect(v) {
     verify();
@@ -326,8 +368,13 @@ process.on("message", async (raw: any) => {
     if (!Object.hasOwn(operations, operation)) throw Error("unknown operation");
     const result = await operations[operation as Operation](value);
     process.send?.(copy({ type: "reply", id, ok: true, value: result }));
-  } catch {
-    process.send?.({ type: "reply", id, ok: false });
+  } catch (error) {
+    process.send?.({
+      type: "reply",
+      id,
+      ok: false,
+      reason: error instanceof NativeFault ? error.reason : "native_failure",
+    });
   }
 });
 process.on("disconnect", () => {

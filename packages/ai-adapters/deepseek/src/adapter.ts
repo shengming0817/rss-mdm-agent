@@ -34,10 +34,12 @@ import {
   validateConfiguration,
   type DeepSeekAdapterOptions,
   type ResolvedDeepSeekConfiguration,
+  type DeepSeekDiagnostic,
 } from "./configuration.js";
-import { COMPOSITION_ID } from "./assembly.js";
+import { COMPOSITION_ID, ACTIVE_PROFILE_ID } from "./assembly.js";
 import { nativeRuntime } from "./runtime.js";
 import type { NativeEvent, NativeRuntime, RuntimeFactory } from "./protocol.js";
+import { NativeFault, diagnosticReasons, type Operation } from "./protocol.js";
 import {
   bounded,
   copy,
@@ -86,6 +88,47 @@ export class DeepSeekAdapter implements ProviderAgentPort {
   private readonly lifetime = new AbortController();
   private readonly now: () => number;
   private readonly ttl: number;
+  private diagnose(diagnostic: Omit<DeepSeekDiagnostic, "generation">) {
+    if (
+      !diagnosticReasons.includes(diagnostic.reason) ||
+      ![
+        "configuration",
+        "initialize",
+        "prompt",
+        "inspect",
+        "cancel",
+        "answer",
+        "tool_result",
+        "close",
+        "process",
+        "profile",
+      ].includes(diagnostic.stage)
+    )
+      return;
+    try {
+      const result = this.options.onDiagnostic?.({
+        stage: diagnostic.stage,
+        reason: diagnostic.reason,
+        generation: this.binding?.generation,
+      });
+      void Promise.resolve(result).catch(() => {});
+    } catch {
+      /* Diagnostics cannot change protocol behavior. */
+    }
+  }
+  private async call(operation: Operation, value: unknown, budget: Budget) {
+    try {
+      return await this.runtime!.call(operation, value, budget);
+    } catch (error) {
+      if (operation !== "initialize")
+        this.diagnose({
+          stage: operation,
+          reason:
+            error instanceof NativeFault ? error.reason : "native_failure",
+        });
+      throw error;
+    }
+  }
   constructor(
     private readonly options: DeepSeekAdapterOptions,
     private readonly factory: RuntimeFactory = nativeRuntime,
@@ -138,7 +181,15 @@ export class DeepSeekAdapter implements ProviderAgentPort {
         remaining(),
       );
       if (this.closed || !liveBudget(remaining())) return fail("unavailable");
-      validateConfiguration(c, resolved);
+      try {
+        validateConfiguration(c, resolved);
+      } catch {
+        this.diagnose({
+          stage: "configuration",
+          reason: "configuration_rejected",
+        });
+        throw new NativeFault("configuration_rejected");
+      }
       const prefix = sessionPrefix(c, resolved, COMPOSITION_ID);
       const providerVersion = `harness-${HARNESS_VERSION}.${COMPOSITION_ID}`;
       if (
@@ -186,7 +237,7 @@ export class DeepSeekAdapter implements ProviderAgentPort {
         runtime.stop();
         return fail("unavailable");
       }
-      const result = await runtime.call(
+      const result = await this.call(
         "initialize",
         {
           nativeSessionId: binding.nativeSessionId,
@@ -199,6 +250,9 @@ export class DeepSeekAdapter implements ProviderAgentPort {
           controlled: c.permissions === "host_mediated",
           restore: !!previous,
           composition: COMPOSITION_ID,
+          ...(previous?.nativeRequestId
+            ? { previousRequestId: previous.nativeRequestId }
+            : {}),
         },
         remaining(),
       );
@@ -207,11 +261,13 @@ export class DeepSeekAdapter implements ProviderAgentPort {
         this.failed ||
         !liveBudget(remaining()) ||
         result.composition !== COMPOSITION_ID ||
-        result.nativeSessionId !== binding.nativeSessionId
+        result.nativeSessionId !== binding.nativeSessionId ||
+        result.activation !== ACTIVE_PROFILE_ID ||
+        result.observationOnly !== !!previous
       )
-        throw Error("unverified incarnation");
+        throw new NativeFault("profile_drift");
       this.restored = !!previous;
-      if (previous?.nativeRequestId)
+      if (previous?.nativeRequestId && result.previousTerminal !== true)
         this.unresolved.add(previous.nativeRequestId);
       return ok({
         binding: copy(binding),
@@ -229,7 +285,11 @@ export class DeepSeekAdapter implements ProviderAgentPort {
           multimodal: "unsupported",
         },
       });
-    } catch {
+    } catch (error) {
+      this.diagnose({
+        stage: "initialize",
+        reason: error instanceof NativeFault ? error.reason : "native_failure",
+      });
       this.runtime?.stop();
       return fail("unavailable", "same_command");
     }
@@ -311,6 +371,15 @@ export class DeepSeekAdapter implements ProviderAgentPort {
       return denied("unsupported_capability");
     const requestId = this.requestId(c, attempt),
       prior = this.turns.get(requestId);
+    const commandTurn = [...this.turns.values()].find(
+      (t) => t.command.commandId === c.commandId,
+    );
+    if (commandTurn && commandTurn !== prior)
+      return denied(
+        commandTurn.hash !== fingerprint(c, limits)
+          ? "content_conflict"
+          : "stale_binding",
+      );
     if (prior) {
       if (!same(attempt, prior.attempt)) return denied("stale_binding");
       if (prior.hash !== fingerprint(c, limits))
@@ -340,13 +409,21 @@ export class DeepSeekAdapter implements ProviderAgentPort {
     this.turns.set(requestId, turn);
     this.active = turn;
     try {
-      const reply = await this.runtime!.call(
+      const reply = await this.call(
         "prompt",
         { requestId, text: c.input.text },
         budget,
       );
       if (reply.requestId !== requestId || reply.status !== "accepted")
         throw Error("native prompt uncertain");
+      if (
+        reply.activation !== ACTIVE_PROFILE_ID ||
+        reply.observationOnly !== false
+      ) {
+        this.invalidate();
+        throw Error("unverified activation");
+      }
+      this.restored = false;
       this.accept(turn);
       return { certainty: "submitted", binding: copy(turn.binding) };
     } catch {
@@ -380,6 +457,7 @@ export class DeepSeekAdapter implements ProviderAgentPort {
     });
   }
   private event(e: NativeEvent): void {
+    if (e.diagnostic) this.diagnose(e.diagnostic);
     if (e.type === "lost") {
       this.lost();
       return;
@@ -508,11 +586,7 @@ export class DeepSeekAdapter implements ProviderAgentPort {
     if (this.closed || this.failed || t.outcome || this.active !== t) return;
     try {
       this.emit(t, { type: "tool_result", proposalId, ...value });
-      await this.runtime!.call(
-        "tool_result",
-        { callbackId: proposalId, value },
-        b,
-      );
+      await this.call("tool_result", { callbackId: proposalId, value }, b);
     } catch {
       this.invalidate();
     }
@@ -571,7 +645,7 @@ export class DeepSeekAdapter implements ProviderAgentPort {
       )
         return fail("stale_binding");
       if (t.outcome) return ok("already_terminal");
-      await this.runtime!.call("cancel", {}, budget);
+      await this.call("cancel", {}, budget);
       return ok("request_only");
     } catch {
       return fail("unavailable", "reconcile_first");
@@ -597,7 +671,7 @@ export class DeepSeekAdapter implements ProviderAgentPort {
       const hash = fingerprint(c, limits);
       if (cb.answered)
         return cb.answered === hash ? ok(undefined) : fail("already_answered");
-      await this.runtime!.call(
+      await this.call(
         "answer",
         { callbackId: cb.id, answer: c.input.answer },
         budget,
@@ -650,7 +724,7 @@ export class DeepSeekAdapter implements ProviderAgentPort {
       const t = this.turns.get(requestId);
       if (t && t.hash !== fingerprint(record.command, limits))
         return fail("content_conflict");
-      const found = await this.runtime!.call("inspect", { requestId }, budget);
+      const found = await this.call("inspect", { requestId }, budget);
       const evidence = {
         commandId: record.command.commandId,
         attemptId: a.attemptId,

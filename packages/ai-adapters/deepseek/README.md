@@ -7,7 +7,7 @@ import { createDeepSeekAdapter } from '@rss-mdm-agent/ai-adapter-deepseek';
 import { VerifiedProviderSession } from '@rss-mdm-agent/ai-contract/session';
 const port = createDeepSeekAdapter({
   resolveConfiguration: async (identity, budget) => ({
-    configuration, // ProviderConfiguration，必须含可信 namespace
+    configuration, // DeepSeekConfiguration，必须含可信 namespace
     persistenceDirectory, // 私有耐久目录，不能由模型或终端用户任意指定
     model: 'deepseek-chat',
     apiKey: await credentials.resolve(identity.accountRef, budget),
@@ -36,7 +36,7 @@ const admitted = await VerifiedProviderSession.open(port, configuration, budget)
 2. 恢复仅装配服务并 `inspect` 原生历史，不调用 follow/resume、不创建 Agent、不请求模型、不修复原生日志。
 3. Host 使用恢复凭证 `SessionStore.rebind`，重新读取 Session 与 CommandRecord。
 4. `admitted.reconcile(currentSession, record, budget)` 返回私有 `VerifiedReconciliation`，Host 通过 `SessionCommit.reconciliations` 原子提交。
-5. 缺失历史、inbox 未完成、冷读补出的 `interrupted` 都保持 unknown，持续阻断；本适配器不从日志缺失推导 `not_submitted`。后续显式 submit 才在同一已准入 Context 激活原生 Agent。
+5. 已结算的耐久终态按 exact previous request 只读核实后可继续新命令；缺失历史、inbox 未完成、冷读补出的 `interrupted` 都保持 unknown，持续阻断；本适配器不从日志缺失推导 `not_submitted`。后续显式 submit 才在同一已准入 Context 激活原生 Agent。
 
 原 attemptId、originGeneration、correlationId 和已持久化原生坐标保留，observerGeneration 随重绑变化。适配器只发原生事实；交互/surface 的原子失效、合法重试和命令期限由 Host/Store 持有。该 API 不能感知 Host 是否已提交凭证，调用顺序由 Host 执行。
 
@@ -44,4 +44,6 @@ const admitted = await VerifiedProviderSession.open(port, configuration, budget)
 
 验证入口：`pnpm test:ai-deepseek`（A01 fixture + 实际 Harness 子进程、本地模型协议、恢复/故障/权限）、`pnpm check:deepseek-consumer`（干净已提交源码的固定 tarball 消费）、`pnpm smoke:deepseek`（显式配置 `DEEPSEEK_API_KEY` 或 `RSS_DEEPSEEK_KEY_FILE`）。后者仅访问官方端点，缺密钥失败，不静默降级为 fixture。
 
-[来源与证据边界](../../../docs/reference/deepseek-harness.md)。已执行平台与源码/lock/artifact 身份以 PR 及 `.local-ci-runs` 实际结果为准；不声称已经发布 registry 包或完成 Windows/企业平台 T3。
+[来源与证据边界](https://dev.azure.com/shengming0923/rss/_git/rss-mdm-agent?path=/docs/reference/deepseek-harness.md&version=GC80f8efc2048de118ad055dc5f0d6006edf4c42ef)。已执行平台与源码/lock/artifact 身份以 PR 及 `.local-ci-runs` 实际结果为准；不声称已经发布 registry 包或完成 Windows/企业平台 T3。
+
+可选 `onDiagnostic` 接收封闭的 stage/reason 和 generation，用于区分配置、依赖、恢复、IPC 和清理故障；不返回原始异常、路径、提示词或凭据。诊断回调抛错不会改变协议行为。准入校验必需 fiber 的 ACTIVE 状态及 create/restore 的 Agent 状态；必需 fiber/配置或工具 guard 漂移使原 incarnation 永久失效。

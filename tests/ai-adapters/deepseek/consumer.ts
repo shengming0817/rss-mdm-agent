@@ -5,15 +5,12 @@ import { tmpdir } from "node:os";
 import {
   createDeepSeekAdapter,
   type DeepSeekAdapterOptions,
+  type DeepSeekConfiguration,
 } from "@rss-mdm-agent/ai-adapter-deepseek";
 import { VerifiedProviderSession } from "@rss-mdm-agent/ai-contract/session";
-import type {
-  ProviderAgentPort,
-  ProviderConfiguration,
-  Session,
-} from "@rss-mdm-agent/ai-contract";
+import type { ProviderAgentPort, Session } from "@rss-mdm-agent/ai-contract";
 const directory = await mkdtemp(join(tmpdir(), "dsh-packed-"));
-const config: ProviderConfiguration = {
+const config: DeepSeekConfiguration = {
   namespace: {
     tenantId: "consumer-tenant",
     principalId: "user",
@@ -84,3 +81,6 @@ const invalid: DeepSeekAdapterOptions = {
   runtimeFactory: () => null,
 };
 void invalid;
+// @ts-expect-error Provider discrimination survives the fixed tarball boundary.
+const wrongProvider: DeepSeekConfiguration = { ...config, provider: "claude" };
+void wrongProvider;

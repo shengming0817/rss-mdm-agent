@@ -309,6 +309,9 @@ importers:
       '@rss-mdm-agent/ai-contract':
         specifier: workspace:*
         version: link:../../ai-contract
+      canonicalize:
+        specifier: 5.0.0
+        version: 5.0.0
 
   packages/ai-client:
     dependencies:

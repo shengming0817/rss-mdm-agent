@@ -1,5 +1,8 @@
 import { DeepSeekAdapter } from "../../../packages/ai-adapters/deepseek/dist/adapter.js";
-import { COMPOSITION_ID } from "../../../packages/ai-adapters/deepseek/dist/assembly.js";
+import {
+  COMPOSITION_ID,
+  ACTIVE_PROFILE_ID,
+} from "../../../packages/ai-adapters/deepseek/dist/assembly.js";
 import { fixtureSession } from "../../../packages/ai-contract/dist/testing/index.js";
 export const configuration = (
   directory = process.cwd(),
@@ -34,10 +37,17 @@ export function scriptedAdapter(scenario = "submitted", overrides = {}) {
         return {
           composition: COMPOSITION_ID,
           nativeSessionId: value.nativeSessionId,
+          activation: ACTIVE_PROFILE_ID,
+          observationOnly: value.restore,
         };
       if (op === "prompt") {
         if (scenario === "unknown") throw Error("transport lost");
-        return { status: "accepted", requestId: value.requestId };
+        return {
+          status: "accepted",
+          requestId: value.requestId,
+          activation: ACTIVE_PROFILE_ID,
+          observationOnly: false,
+        };
       }
       if (op === "inspect") return { status: "unknown" };
       if (op === "cancel") return {};

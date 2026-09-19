@@ -1,4 +1,4 @@
-import { Context } from "@deepseek-ai/cordis";
+import { Context, FiberState, type Fiber } from "@deepseek-ai/cordis";
 import Agents from "@deepseek-ai/dsh-agent";
 import AgentLoop from "@deepseek-ai/dsh-agent-loop";
 import AgentDefaultModel from "@deepseek-ai/dsh-agent-default-model";
@@ -33,6 +33,7 @@ import { join } from "node:path";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { digest, manifest } from "./configuration.js";
+import { NativeFault } from "./protocol.js";
 
 export interface Initialization {
   nativeSessionId: string;
@@ -45,6 +46,7 @@ export interface Initialization {
   controlled: boolean;
   restore: boolean;
   composition: string;
+  previousRequestId?: string;
 }
 // Sole declaration of the installed profile. No Loader, discovery, settings, MCP,
 // PTC, terminal, delegation or executable workspace instructions are mounted.
@@ -112,31 +114,63 @@ const assembly: readonly [string, any, (i: Initialization) => any][] = [
   ["dsh-api-gateway", Gateway, () => ({ websocketHeartbeatIntervalMs: 2000 })],
   ["dsh-api-session-controller", Controller, () => ({ nativeOpen: false })],
 ];
+export const TOOL_PROFILE = {
+  question: "ask_user_question",
+  proposal: {
+    name: "host_propose",
+    description:
+      "Propose a business operation to the host. This tool does not grant execution authority.",
+    parameters: {
+      type: "object",
+      properties: {
+        name: { type: "string" },
+        arguments: { type: "object", additionalProperties: true },
+      },
+      required: ["name", "arguments"],
+      additionalProperties: false,
+    },
+  },
+};
+const modelConfiguration = (i: Initialization) => ({
+  protocol: "chat-completions" as const,
+  baseURL: i.apiUrl,
+  apiKeyEnv: "DEEPSEEK_API_KEY",
+  thinking: "disabled" as const,
+  models: [{ id: i.model }],
+  maxTokens: 4096,
+});
 export const COMPOSITION_ID = digest([
   assembly.map(([name, , config]) => [name, config.toString()]),
   manifest.dependencies,
+  TOOL_PROFILE,
+  modelConfiguration.toString(),
   "native;deny-guard-v1;question;host-propose;chat-completions;checkpoint",
 ]);
-export async function assemble(ctx: Context, i: Initialization): Promise<void> {
+export const ACTIVE_PROFILE_ID = digest([
+  COMPOSITION_ID,
+  assembly.map(([name]) => [name, "active"]),
+]);
+export async function assemble(
+  ctx: Context,
+  i: Initialization,
+  onDrift: () => void = () => {},
+) {
   const require = createRequire(import.meta.url);
   for (const [name, version] of Object.entries(manifest.dependencies)) {
     if (!name.startsWith("@deepseek-ai/")) continue;
     const installed = JSON.parse(
       readFileSync(require.resolve(`${name}/package.json`), "utf8"),
     );
-    if (installed.version !== version) throw Error("dependency drift");
+    if (installed.version !== version)
+      throw new NativeFault("dependency_drift");
   }
-  for (const [, plugin, config] of assembly)
-    await ctx.plugin(plugin, config(i));
+  const fibers: { name: string; fiber: Fiber; config: string }[] = [];
+  for (const [name, plugin, config] of assembly) {
+    const fiber = await ctx.plugin(plugin, config(i));
+    fibers.push({ name, fiber, config: digest(fiber.config ?? null) });
+  }
   ctx.typert.register(TYPERT as Parameters<typeof ctx.typert.register>[0]);
-  const connection = resolveAdapterOptions({
-    protocol: "chat-completions",
-    baseURL: i.apiUrl,
-    apiKeyEnv: "DEEPSEEK_API_KEY",
-    thinking: "disabled",
-    models: [{ id: i.model }],
-    maxTokens: 4096,
-  });
+  const connection = resolveAdapterOptions(modelConfiguration(i));
   ctx.llm.registerAdapter(
     ["deepseek-official"],
     new DeepSeekAdapter({
@@ -146,4 +180,47 @@ export async function assemble(ctx: Context, i: Initialization): Promise<void> {
       prepareExtensions: async () => ({ fields: {}, accept: async () => {} }),
     }),
   );
+  let live = true;
+  const drift = () => {
+    if (live) {
+      live = false;
+      onDrift();
+    }
+  };
+  const verify = () => {
+    if (
+      !live ||
+      fibers.some(
+        ({ fiber, config }) =>
+          fiber.state !== FiberState.ACTIVE ||
+          digest(fiber.config ?? null) !== config,
+      )
+    ) {
+      drift();
+      throw new NativeFault("profile_drift");
+    }
+  };
+  verify();
+  ctx.on("internal/status", (fiber) => {
+    if (
+      fibers.some((f) => f.fiber === fiber) &&
+      fiber.state !== FiberState.ACTIVE
+    )
+      drift();
+  });
+  ctx.on(
+    "internal/update",
+    function () {
+      if (fibers.some((f) => f.fiber === this)) drift();
+      throw Error("configuration update disabled");
+    },
+    { global: true },
+  );
+  return {
+    verify,
+    activation: digest([
+      COMPOSITION_ID,
+      fibers.map(({ name }) => [name, "active"]),
+    ]),
+  };
 }

@@ -18,6 +18,51 @@ const require = createRequire(
 const { Context } = require("@deepseek-ai/cordis");
 const { ToolCallId } = require("@deepseek-ai/dsh-llm");
 const { SessionId } = require("@deepseek-ai/dsh-session");
+for (const mode of ["dispose", "update"])
+  test(`required non-tool fiber ${mode} invalidates the observed assembly permanently`, async () => {
+    const dir = await mkdtemp(join(tmpdir(), "rss-dsh-fibers-")),
+      ctx = new Context(),
+      oldHome = process.env.DSH_HOME;
+    process.env.DSH_HOME = dir;
+    try {
+      let drifts = 0;
+      const observed = await assemble(
+        ctx,
+        {
+          nativeSessionId: "fiber-session",
+          workingDirectory: dir,
+          persistenceDirectory: dir,
+          scope: "fibers",
+          model: "deepseek-chat",
+          apiKey: "fixture",
+          apiUrl: "http://127.0.0.1:1",
+          controlled: false,
+          restore: false,
+          composition: COMPOSITION_ID,
+        },
+        () => drifts++,
+      );
+      observed.verify();
+      // The checkpoint service is a policy plugin, not a tool inventory change.
+      const checkpoint = require("@deepseek-ai/dsh-session-checkpoint-policy");
+      const runtime = ctx.registry.get(checkpoint);
+      assert.ok(runtime);
+      if (mode === "dispose") await [...runtime.fibers][0].dispose();
+      else assert.throws(() => [...runtime.fibers][0].update({}));
+      assert.equal(drifts, 1);
+      assert.throws(observed.verify);
+      await ctx.plugin(checkpoint);
+      assert.throws(
+        observed.verify,
+        "a replacement cannot revive old admission",
+      );
+    } finally {
+      await ctx.fiber.dispose();
+      if (oldHome === undefined) delete process.env.DSH_HOME;
+      else process.env.DSH_HOME = oldHome;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 test("deny guard wins over later allow, rejects nested/delegated callers and invalidates on inventory drift", async () => {
   const dir = await mkdtemp(join(tmpdir(), "rss-dsh-guard-")),
     ctx = new Context(),

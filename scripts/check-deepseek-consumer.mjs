@@ -70,7 +70,7 @@ try {
   );
   writeFileSync(
     join(directory, "pnpm-workspace.yaml"),
-    `packages: []\noverrides: ${JSON.stringify({ "@rss-mdm-agent/ai-contract": `file:./${contract}` })}\n`,
+    `packages: []\nallowBuilds: {koffi: false}\noverrides: ${JSON.stringify({ "@rss-mdm-agent/ai-contract": `file:./${contract}` })}\n`,
   );
   writeFileSync(
     join(directory, "tsconfig.json"),
