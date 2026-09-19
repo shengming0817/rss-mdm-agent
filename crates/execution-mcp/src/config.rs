@@ -27,51 +27,6 @@ pub struct McpLimits {
     pub parameters: ParameterLimits,
 }
 
-/// Provider-neutral description of a trusted host's stdio launcher.
-///
-/// Only the host constructs this value; no Deserialize implementation is provided.
-/// This is process configuration, never identity evidence. Provider adapters map the
-/// same command/arguments into their native SDK configuration without adding credentials.
-/// The launcher must obtain its service binding independently of model-editable arguments.
-pub struct StdioServiceConfig {
-    command: std::path::PathBuf,
-    arguments: Vec<String>,
-}
-impl StdioServiceConfig {
-    /// Construct bounded explicit configuration. The host must verify executable provenance.
-    pub fn new(
-        command: std::path::PathBuf,
-        arguments: Vec<String>,
-    ) -> Result<Self, crate::ServiceError> {
-        if !command.is_absolute()
-            || command
-                .to_str()
-                .is_none_or(|s| s.len() > 4096 || s.contains('\0'))
-            || arguments.len() > 128
-            || arguments.iter().any(|s| s.len() > 4096 || s.contains('\0'))
-            || arguments.iter().map(String::len).sum::<usize>() > 65536
-        {
-            return Err(crate::ServiceError::InvalidInput);
-        }
-        Ok(Self { command, arguments })
-    }
-    /// Stable name used by all native provider adapters.
-    pub fn name(&self) -> &'static str {
-        "rss_execution"
-    }
-    /// Trusted executable location; never search a model-controlled PATH.
-    pub fn command(&self) -> &std::path::Path {
-        &self.command
-    }
-    /// Host-selected non-secret startup arguments.
-    pub fn arguments(&self) -> &[String] {
-        &self.arguments
-    }
-    /// Sole supported MCP protocol revision.
-    pub fn protocol_version(&self) -> &'static str {
-        "2025-11-25"
-    }
-}
 impl McpLimits {
     pub(crate) fn validate(&self) -> Result<(), crate::ServiceError> {
         let nonzero = [

@@ -200,7 +200,7 @@ async fn raw_numbers_are_not_rounded_before_the_catalog_validates_them() {
         assert_eq!(error(&reply)["code"], "invalidInput", "{reply}");
         assert_eq!(
             error(&reply)["catalogReason"],
-            "InvalidArguments(RoundedNumber)"
+            json!({"kind":"invalidArguments","rule":"roundedNumber"})
         );
         assert!(!reply.to_string().contains(numeric));
     }
@@ -221,6 +221,87 @@ async fn raw_numbers_are_not_rounded_before_the_catalog_validates_them() {
             .await;
         assert_eq!(error(&r)["code"], "invalidInput");
     }
+    w.close().await;
+}
+
+#[tokio::test]
+async fn catalog_diagnostics_are_structured_closed_and_match_output_schemas() {
+    let s = service();
+    let mut w = Wire::open(s.clone(), limits()).await;
+    w.send(json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}))
+        .await;
+    let list = w.recv().await;
+    let tools = list["result"]["tools"].as_array().unwrap();
+    for (args, rule) in [
+        (json!({}), "required"),
+        (json!({"host":7}), "type"),
+        (json!({"host":"example.invalid","count":99}), "range"),
+        (
+            json!({"host":"example.invalid","private":"diagnostic-canary"}),
+            "unknownParameter",
+        ),
+    ] {
+        let reply = w
+            .call(
+                3,
+                "execution_preview",
+                json!({"catalog":{"selection":selection(&s,"invalid",args)}}),
+            )
+            .await;
+        assert_eq!(
+            error(&reply)["catalogReason"],
+            json!({"kind":"invalidArguments","rule":rule})
+        );
+        assert!(!reply.to_string().contains("diagnostic-canary"));
+        for tool in tools {
+            assert!(jsonschema::draft202012::is_valid(
+                &tool["outputSchema"],
+                &reply["result"]["structuredContent"]
+            ));
+        }
+    }
+    let mut missing = selection(&s, "missing", json!({"host":"example.invalid"}));
+    missing["itemId"] = json!("unknown-item-canary");
+    let reply = w
+        .call(
+            4,
+            "execution_preview",
+            json!({"catalog":{"selection":missing}}),
+        )
+        .await;
+    assert_eq!(error(&reply)["catalogReason"], json!({"kind":"notFound"}));
+    assert!(!reply.to_string().contains("unknown-item-canary"));
+    for tool in tools {
+        let schema = jsonschema::draft202012::new(&tool["outputSchema"]).unwrap();
+        assert!(schema.is_valid(&reply["result"]["structuredContent"]));
+        for invalid in [
+            json!("InvalidArguments(RoundedNumber)"),
+            json!({"kind":"unrecognized"}),
+            json!({"kind":"invalidArguments"}),
+            json!({"kind":"invalidArguments","rule":"parameterTitle"}),
+            json!({"kind":"invalidArguments","rule":"required","raw":"diagnostic-canary"}),
+            json!({"kind":"limitExceeded","coordinate":"raw-field-name"}),
+            json!({"kind":"notFound","rule":"required"}),
+        ] {
+            let output =
+                json!({"status":"error","error":{"code":"invalidInput","catalogReason":invalid}});
+            assert!(!schema.is_valid(&output), "schema accepted {output}");
+        }
+    }
+    w.close().await;
+
+    let mut l = limits();
+    l.parameters.max_parameters = 1;
+    let mut w = Wire::open(s, l).await;
+    let reply = w.call(2, "execution_catalog", json!({})).await;
+    assert_eq!(
+        error(&reply)["catalogReason"],
+        json!({"kind":"limitExceeded","coordinate":"parameters"})
+    );
+    assert!(jsonschema::draft202012::is_valid(
+        &tools[0]["outputSchema"],
+        &reply["result"]["structuredContent"]
+    ));
     w.close().await;
 }
 
@@ -702,31 +783,54 @@ async fn failed_output_writer_returns_a_static_host_error() {
 }
 
 #[tokio::test]
-async fn read_timeouts_do_not_claim_unknown_acceptance() {
-    for name in [
-        "execution_catalog",
-        "execution_capabilities",
-        "execution_status",
-    ] {
-        let s = service();
-        s.catalog_delay_ms.store(200, Ordering::SeqCst);
-        s.capability_delay_ms.store(200, Ordering::SeqCst);
-        s.status_delay_ms.store(200, Ordering::SeqCst);
-        let mut l = limits();
-        l.request_timeout = Duration::from_millis(30);
-        let mut w = Wire::open(s, l).await;
-        let args = if name == "execution_status" {
-            json!({"operationRequestId":"original-id"})
-        } else {
-            json!({})
-        };
-        assert_eq!(
-            error(&w.call(2, name, args).await)["code"],
-            "unavailable",
-            "{name}"
-        );
-        w.close().await;
+async fn every_tool_advertises_and_times_out_according_to_its_effects() {
+    let s = service();
+    let mut l = limits();
+    l.request_timeout = Duration::from_millis(100);
+    let mut w = Wire::open(s.clone(), l).await;
+    let p = plan(&mut w, &s, "original-id").await;
+    let submit = json!({"operationRequestId":"original-id","plan":p});
+    assert_eq!(
+        value(&w.call(11, "execution_submit", submit.clone()).await)["phase"],
+        "accepted"
+    );
+    w.send(json!({"jsonrpc":"2.0","id":12,"method":"tools/list","params":{}}))
+        .await;
+    let list = w.recv().await;
+    let tools = list["result"]["tools"].as_array().unwrap();
+    let selected =
+        json!({"catalog":{"selection":selection(&s,"delayed",json!({"host":"example.invalid"}))}});
+    let operation = json!({"operationRequestId":"original-id"});
+    let cases = [
+        ("execution_catalog", json!({}), true, "unavailable"),
+        ("execution_capabilities", json!({}), true, "unavailable"),
+        ("execution_status", operation.clone(), true, "unavailable"),
+        (
+            "execution_propose",
+            selected.clone(),
+            false,
+            "outcomeUnknown",
+        ),
+        ("execution_submit", submit, false, "outcomeUnknown"),
+        ("execution_cancel", operation, false, "outcomeUnknown"),
+        ("execution_preview", selected, false, "outcomeUnknown"),
+    ];
+    assert_eq!(tools.len(), cases.len());
+    s.catalog_delay_ms.store(1000, Ordering::SeqCst);
+    s.capability_delay_ms.store(1000, Ordering::SeqCst);
+    s.status_delay_ms.store(1000, Ordering::SeqCst);
+    s.submit_delay_ms.store(1000, Ordering::SeqCst);
+    for (name, args, read_only, code) in cases {
+        let tool = tools.iter().find(|t| t["name"] == name).unwrap();
+        let reply = w.call(20, name, args).await;
+        assert_eq!(error(&reply)["code"], code, "{name}");
+        assert!(jsonschema::draft202012::is_valid(
+            &tool["outputSchema"],
+            &reply["result"]["structuredContent"]
+        ));
+        assert_eq!(tool["annotations"]["readOnlyHint"], read_only, "{name}");
     }
+    w.close().await;
 }
 
 #[tokio::test]
@@ -743,16 +847,6 @@ async fn interrupted_frame_reads_resume_without_losing_bytes() {
     w.raw(&next[middle..]).await;
     assert_eq!(w.recv().await["id"], 3);
     w.close().await;
-}
-
-#[test]
-fn provider_config_requires_an_explicit_bounded_launcher() {
-    assert!(StdioServiceConfig::new("relative-launcher".into(), vec![]).is_err());
-    assert!(StdioServiceConfig::new(
-        std::env::current_exe().unwrap(),
-        vec!["secret\0value".into()]
-    )
-    .is_err());
 }
 
 #[tokio::test]

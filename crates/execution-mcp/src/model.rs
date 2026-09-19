@@ -289,7 +289,7 @@ pub struct CancelResult {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ErrorView {
     pub code: ServiceError,
-    pub catalog_reason: Option<String>,
+    pub catalog_reason: Option<crate::catalog_error::CatalogErrorView>,
 }
 /// One output schema for both success and tool-level failure.
 #[derive(Serialize, JsonSchema)]

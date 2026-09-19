@@ -1,6 +1,7 @@
 //! Bounded controlled-execution MCP adapter. Execution authority belongs to the service.
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
+mod catalog_error;
 mod config;
 mod ingress;
 mod model;
@@ -8,7 +9,7 @@ mod output;
 mod port;
 mod server;
 mod transport;
-pub use config::{McpLimits, StdioServiceConfig};
+pub use config::McpLimits;
 pub use model::{
     CancelDisposition, CancelResult, CandidateReceipt, CandidateRequest, CapabilityState,
     CapabilityView, CatalogCandidate, OperationPhase, OperationRequest, OperationStatus,

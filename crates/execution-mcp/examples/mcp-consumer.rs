@@ -409,16 +409,9 @@ pub fn run_process(catalog: &str, plan: &str) {
             let _ = self.0.wait();
         }
     }
-    let endpoint = StdioServiceConfig::new(
-        std::env::current_exe().unwrap(),
-        vec!["--test-server".into(), catalog.into(), plan.into()],
-    )
-    .unwrap();
-    assert_eq!(endpoint.name(), "rss_execution");
-    assert_eq!(endpoint.protocol_version(), "2025-11-25");
     let mut child = ChildGuard(
-        Command::new(endpoint.command())
-            .args(endpoint.arguments())
+        Command::new(std::env::current_exe().unwrap())
+            .args(["--test-server", catalog, plan])
             .env("RUST_LOG", "trace")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

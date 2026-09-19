@@ -50,7 +50,9 @@ candidate 预览为 `{"candidate":{"operationRequestId":"...","candidate":<Exact
 目录由服务限制可见范围，核心 FrozenCatalog 只证明数据校验，不证明发布方或调用主体可信。
 跨命名空间查询不能泄露对象是否存在。输出只携带授权投影/证据引用；服务不得把秘密放入目录展示字段或标识。
 Expired、Denied、NotFound、Conflict、Unsupported、Unavailable 等分类由服务返回；
-目录错误保留现有静态诊断，不回显输入或底层错误。
+目录错误投影为闭合 `catalogReason` 对象：`kind` 区分类别，参数/定义错误带 `rule`，预算错误带 `coordinate`。
+例如 `{"kind":"invalidArguments","rule":"roundedNumber"}`、`{"kind":"limitExceeded","coordinate":"parameters"}`；
+这些字段均由静态枚举映射并进入 outputSchema，不回显输入或底层错误，也不要求客户端解析 Rust Debug。
 
 业务幂等只由执行服务拥有：
 
@@ -64,8 +66,9 @@ Expired、Denied、NotFound、Conflict、Unsupported、Unavailable 等分类由�
 
 工具返回 `{status:"ok",result:...}` 或 `{status:"error",error:{code,catalogReason}}`，
 与各工具 outputSchema 一致。unknown tool/协议形状错误使用 JSON-RPC 错误；无法安全解码的输入关闭连接。
-目录、能力和状态读取超时返回 unavailable，可重新读取。
-候选、冻结预览、提交和取消可能已持久化，超时返回 outcomeUnknown；调用方使用原 ID 查询或重试，不能据此声称已执行或未执行。
+内部 `ToolKind` 单源持有工具名称及副作用分类，注册/分派/超时均消费该类型。
+目录、能力和状态声明只读，超时返回 unavailable，可重新读取。
+候选、冻结预览、提交和取消声明非只读：它们可能已持久化，超时返回 outcomeUnknown；调用方使用原 ID 查询或重试，不能据此声称已执行或未执行。
 
 ## 预算、生命周期与日志
 
@@ -89,20 +92,14 @@ rmcp 仍会记录协议关联标识、clientInfo 和授权结果投影。**宿�
 库不覆盖全局日志策略。真实进程 consumer 的 stderr 检查仅证明该测试 launcher 的输出纪律，不替代带 subscriber 的回归测试。
 stdout 只写 MCP；所有错误和本 crate 的诊断保持静态、脱敏。
 
-## 三个原生 provider 的交接
+## 原生 provider 的交接
 
-`StdioServiceConfig` 提供固定服务名 rss_execution、可信 launcher 的绝对路径、非秘密启动参数和协议版本。
-它不实现 Deserialize、不携带身份/token，不启动进程。宿主负责验证可执行文件来源；路径合法不代表来源可信。
-
-| 消费 owner | 交接 |
-| --- | --- |
-| Codex app-server adapter | 将同一 command/arguments 映射到其固定版本的 MCP 服务配置 |
-| Claude Agent SDK adapter | 将同一描述映射到其固定版本的原生 stdio MCP 配置 |
-| DeepSeek Harness adapter | 将同一描述注入其原生受控工具 endpoint |
-
-这是 provider 无关配置接缝，不是三个引擎 SDK 配置或旁路封闭验证。各 provider owner
-负责具体映射、版本烟测与原生工具限制，#2412/#2413 负责真实执行服务和桌面装配。
-若 provider 不支持本协议基线，应报告不支持，不隐式启用旧路径。
+provider 范围与任务映射由[产品 PRD 的引擎基线](../../docs/product/rss-mdm-agent-prd.md#provider-baseline)持有。
+具体 provider adapter/组合根直接映射其固定版本的原生配置，并验证可信 launcher 来源、身份绑定、
+协议版本及原生工具限制；#2412/#2413 负责真实执行服务和桌面装配。
+本 crate 只接收宿主持有的字节流，不公开尚无生产消费者的 launcher 配置描述。
+测试 consumer 直接启动自身 TEST-only 子进程，不代表 provider 接线或工具旁路封闭验证。
+若 provider 不支持本协议基线，应报告不支持。
 
 ## 验证与来源
 
@@ -127,3 +124,6 @@ TestService 为显式测试 authority、内存存储和预设事实，没有数�
 - ref: rmcp transport/async_rw.rs@fd7811fdaa9fefa1c8034534b4d7a31c97204f89：[默认整行累积](https://github.com/modelcontextprotocol/rust-sdk/blob/fd7811fdaa9fefa1c8034534b4d7a31c97204f89/crates/rmcp/src/transport/async_rw.rs#L125-L160)，本 adapter 补齐 decode 前预算。
 - ref: rmcp service.rs@fd7811fdaa9fefa1c8034534b4d7a31c97204f89：[请求分派与取消](https://github.com/modelcontextprotocol/rust-sdk/blob/fd7811fdaa9fefa1c8034534b4d7a31c97204f89/crates/rmcp/src/service.rs#L1564-L1659)，本 adapter 补齐入站许可与等待期限。
 - ref: rmcp handler/server.rs@fd7811fdaa9fefa1c8034534b4d7a31c97204f89：[版本支持接口](https://github.com/modelcontextprotocol/rust-sdk/blob/fd7811fdaa9fefa1c8034534b4d7a31c97204f89/crates/rmcp/src/handler/server.rs#L378-L400)，显式限制实际支持集合。
+
+- ref: rmcp-macros src/tool.rs@fd7811fdaa9fefa1c8034534b4d7a31c97204f89：[工具元数据](https://github.com/modelcontextprotocol/rust-sdk/blob/fd7811fdaa9fefa1c8034534b4d7a31c97204f89/crates/rmcp-macros/src/tool.rs)，本 adapter 用私有 typed descriptor 绑定元数据与分派，保留原始参数预算路径。
+- ref: rmcp src/model.rs@fd7811fdaa9fefa1c8034534b4d7a31c97204f89：[结构化错误与结果](https://github.com/modelcontextprotocol/rust-sdk/blob/fd7811fdaa9fefa1c8034534b4d7a31c97204f89/crates/rmcp/src/model.rs)，目录诊断使用 adapter 自有的闭合 wire 投影。

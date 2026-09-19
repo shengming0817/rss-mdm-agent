@@ -1,4 +1,7 @@
-use crate::{server::Handler, ExecutionServicePort, McpLimits, ServiceError};
+use crate::{
+    server::{Handler, ToolKind},
+    ExecutionServicePort, McpLimits, ServiceError,
+};
 use futures_util::StreamExt;
 use rmcp::{
     model::*,
@@ -348,17 +351,8 @@ impl<S: ExecutionServicePort> Service<RoleServer> for BoundedService<S> {
         let cancelled = context.ct.clone();
         let tool = matches!(&request, ClientRequest::CallToolRequest(_));
         let timeout_error = match &request {
-            ClientRequest::CallToolRequest(call)
-                if matches!(
-                    call.params.name.as_ref(),
-                    "execution_propose"
-                        | "execution_preview"
-                        | "execution_submit"
-                        | "execution_cancel"
-                ) =>
-            {
-                ServiceError::OutcomeUnknown
-            }
+            ClientRequest::CallToolRequest(call) => ToolKind::from_name(&call.params.name)
+                .map_or(ServiceError::Unavailable, ToolKind::timeout_error),
             _ => ServiceError::Unavailable,
         };
         let outcome = tokio::select! {

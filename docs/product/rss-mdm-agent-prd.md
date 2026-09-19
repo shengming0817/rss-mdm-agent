@@ -25,7 +25,7 @@ C05 经用户扩大范围：提取独立 Vue UI 包和可启动的 Tauri 桌面�
 | S3：企业远程接线 | 正式目录分配、设备注册、策略、远程任务、回执、可信升级 | 消费 rss-mdm wire/artifact，完成限定产品 T3；后续 PBI |
 
 S1 中一个“软件项目”和一个“脚本工具”只是目录与控制流程的测试实例，不表示软件已安装或系统已修复。
-S1 不要求所有 AI 引擎完成才验证首个闭环：C20 选择 Codex；Claude/Cursor 各自交付适配能力，不伪称未经验证的引擎具有同等控制能力。
+S1 不要求所有 AI 引擎完成才验证首个闭环：C20 选择 Codex；Claude/DeepSeek Harness 各自交付适配能力，不伪称未经验证的引擎具有同等控制能力。
 
 本批不实现：真实 PowerShell/Bash 或包安装、特权后台服务、Agent 远程注册/领取、MDM 变更派发、系统更新、可信升级、后台自动重启部署、真实设备 T3。
 不迁入 PR 监控、仓库扫描、Webhook、review 调度、标签/评论、PR 去重/数据库、PR deep link/CLI、远程终端或消息集成。
@@ -119,7 +119,7 @@ Agent wire 的唯一 producer 仍为 rss-mdm；`execution-contract` 是本地执
 | 编号 | 要求 | 验收 |
 | --- | --- | --- |
 | CLI-AI01 | 通用 Conversation/Message/ToolCall 契约，无 PR 语义 | 不要求 pr_number/repository；流式输出、中断和错误可独立消费 |
-| CLI-AI02 | Codex、Claude、Cursor 独立适配，共用宿主工具裁决接缝 | 各自固定版本并声明续接/进程 generation/工具控制能力；不以一个引擎证明全部支持 |
+| CLI-AI02 | Codex app-server、Claude Agent SDK、DeepSeek Harness 独立适配，共用宿主工具裁决接缝 | 各自固定版本并声明续接/进程 generation/工具控制能力；不以一个引擎证明全部支持 |
 | CLI-AI03 | AI 通过目录、能力、预览、候选、提交、状态和取消工具工作 | 无“AI 自行批准”工具；MCP adapter 不直接调用 shell/PTY 或 runner |
 | CLI-AI04 | 受控模式禁止继承来源项目自动批准/全权限旁路 | 任意原生工具、直接 shell、本地 IPC 或其他入口可绕过时，受控模式不可用 |
 | CLI-AI05 | AI 输出、工具元数据和终端输出都视作不可信数据 | 工具输出中的指令/自报安全等级/自报完成不能创建授权或执行回执 |
@@ -214,12 +214,29 @@ AI请求与手动请求都不能自行取得可执行capability。运行模式�
 | execution-capability / admission / lifecycle | 能力、裁决、执行转换 | execution-contract；相互不必链接 |
 | execution-approval | 消费完整C07裁决、验证批准适用性、输出消费意图 | execution-admission、execution-contract |
 | script-plan / software-plan | 原生脚本启动与安装决策描述 | execution-contract；不spawn |
-| ai-codex / ai-claude / ai-cursor | 具体引擎协议/进程会话适配 | ai-session-contract，无PR/执行内核/UI依赖 |
+| packages/ai-adapters/{codex,claude,deepseek}（规划） | TypeScript 原生引擎协议/进程会话适配 | A01 ai-runtime 契约；C12/C13 保留 C02 消费关系，无PR/执行内核/UI依赖 |
 | execution-mcp | 工具协议到执行服务port | execution-contract、service-catalog、rmcp |
 | execution-sqlite | journal/交互/批准消耗的原子持久化 | interaction、approval、lifecycle |
 | execution-app | 能力/授权/批准/持久化和runner port的产品组装 | C06–C09、C18；不加载AI引擎 |
 | packages/ui | 提取的纯展示组件 | Vue/展示依赖，props/events |
 | apps/desktop | C05桌面基础壳与样本；后续自助UI、AI UI、宿主桥接和共同闭环 | 组件契约与宿主adapter，组合根唯一 |
+
+<a id="provider-baseline"></a>
+
+### 原生引擎基线（ai-runtime-20260918）
+
+经 2026-09-18 授权，当前 provider 规划为 Codex app-server、Claude Agent SDK、DeepSeek Harness，
+由各自 TypeScript adapter 映射原生会话/事件/权限，消费 [A01 #2439](https://dev.azure.com/shengming0923/rss/_workitems/edit/2439) 契约。
+这里记录范围与 owner，不宣称已实现或通过真实引擎验证；DeepSeek Harness 仍是规划。
+
+| Provider | 实施 owner | 验证责任 |
+| --- | --- | --- |
+| Codex app-server | [C12 #2405](https://dev.azure.com/shengming0923/rss/_workitems/edit/2405) | 固定原生版本，分别验证协议、真实模型和受控工具边界；C20 首个闭环选择 |
+| Claude Agent SDK | [C13 #2406](https://dev.azure.com/shengming0923/rss/_workitems/edit/2406) | 固定 SDK 版本，独立验证会话、工具与权限接缝 |
+| DeepSeek Harness | [A05 #2443](https://dev.azure.com/shengming0923/rss/_workitems/edit/2443) | 固定 revision/runtime/profile/plugin，独立验证原生接入与旁路封闭 |
+
+历史 [C14 #2407](https://dev.azure.com/shengming0923/rss/_workitems/edit/2407) Cursor 任务已移出当前范围，保留编号作迁移追踪；
+移除不等于完成，不作为新任务前置。DeepSeek 不复用 Cursor 的完成状态、测试证据或来源权利。
 
 C03 的当前实现见[目录核心](../../crates/service-catalog/README.md)与[后端对齐](../guides/202609130000-2396-service-catalog.md)：一个格式与参数规则可显式演进，未知语义拒绝；新增目录内容无需修改核心。选择保留目录/资源摘要、变体、参数和要求；上下架/期限绑定快照，外部展示说明绑定精确选择和目标。核心不计算能力或授权，缺少后续 owner 接线时不能声称执行闭环完成。
 
@@ -237,7 +254,8 @@ C19不重新做Scope/Group/Resource，C20不复制授权；双方调用公共接
 
 必须改写：`ReviewEngine::start(pr_number, SkillInvocation)`、按PR/skill去重、Review命名事件和store、PR prompt/skill默认入口。
 新标识为Conversation/Proposal/ExecutionTask；UI能在无仓库/PR上下文下工作。
-移除`approvalPolicy=never`与danger-full-access、Claude bypassPermissions、Cursor force/sandbox-disabled及反向自动批准作为受控默认行为。
+移除`approvalPolicy=never`与danger-full-access、Claude bypassPermissions及反向自动批准作为受控默认行为。
+历史 Cursor 的 force/sandbox-disabled 同样禁止继承，仅作来源记录，不属于当前 provider 支持矩阵。
 
 AI引擎适配不等于安全执行器。具体引擎若仍能通过内置shell、网络或其他工具绕过宿主约束，必须禁用对应工具或提供实际隔离；无法强制时明确不支持受控模式。
 恢复能力按provider/version/process generation描述，不伪装三引擎具有相同跨重启resume。
@@ -292,9 +310,11 @@ PowerShell/Bash是原生载荷；Rust提供启动、预算、权限、恢复，J
 | [C09 #2402](https://dev.azure.com/shengming0923/rss/_workitems/edit/2402) | 生命周期：EX06、REC03–04 | C01 |
 | [C10 #2403](https://dev.azure.com/shengming0923/rss/_workitems/edit/2403) | 脚本计划：EX04–05、SEC04 | C01 |
 | [C11 #2404](https://dev.azure.com/shengming0923/rss/_workitems/edit/2404) | 软件计划：SW01–04 | C01 |
-| [C12 #2405](https://dev.azure.com/shengming0923/rss/_workitems/edit/2405) | Codex提取：AI01–06 | C02 |
-| [C13 #2406](https://dev.azure.com/shengming0923/rss/_workitems/edit/2406) | Claude提取：AI01–06 | C02 |
-| [C14 #2407](https://dev.azure.com/shengming0923/rss/_workitems/edit/2407) | Cursor提取：AI01–06 | C02 |
+| [C12 #2405](https://dev.azure.com/shengming0923/rss/_workitems/edit/2405) | Codex app-server TypeScript 适配：AI01–06 | C02/A01 |
+| [C13 #2406](https://dev.azure.com/shengming0923/rss/_workitems/edit/2406) | Claude Agent SDK TypeScript 适配：AI01–06 | C02/A01 |
+| [C14 #2407](https://dev.azure.com/shengming0923/rss/_workitems/edit/2407) | 历史 Cursor 任务，已移出当前 provider 范围；非完成记录 | — |
+| [A01 #2439](https://dev.azure.com/shengming0923/rss/_workitems/edit/2439) | AI runtime 公共契约与 provider ports | 依赖以 tracker 为准 |
+| [A05 #2443](https://dev.azure.com/shengming0923/rss/_workitems/edit/2443) | DeepSeek Harness TypeScript 适配：AI01–06（规划） | A01 |
 | [C15 #2408](https://dev.azure.com/shengming0923/rss/_workitems/edit/2408) | 自助UI：UI01–04、CAT03–06、INT01–03 | C03/C04/C05 |
 | [C16 #2409](https://dev.azure.com/shengming0923/rss/_workitems/edit/2409) | AI UI：AI01/03/05/06、UI02/04 | C02/C05 |
 | [C17 #2410](https://dev.azure.com/shengming0923/rss/_workitems/edit/2410) | MCP：AI03、CAT03–04、SEC02 | C01/C03 |
@@ -305,8 +325,8 @@ PowerShell/Bash是原生载荷；Rust提供启动、预算、权限、恢复，J
 需求代码缩写均省略共同前缀CLI。OS02–04、ID03本地生产authority、SEC06的平台enforcement、真实执行和企业连接属于后续阶段，不因表内模型任务完成而关闭。
 
 依赖只反映真正的产物消费。能力/授权/批准/计划核心接受显式可信输入，安全强制在C19/C20组合与后续平台adapter完成，不能把所有核心人为串行。
-C02工具提案无需消费执行内核；C17通过port可用测试服务验收；C15人用UI不依赖AI，C20不等待C13/C14。
-共享生成类型由各契约owner维护，AI公共注册/选择在C20组合，C12–14仅改各自provider目录。
+C02工具提案无需消费执行内核；C17通过port可用测试服务验收；C15人用UI不依赖AI，C20不等待C13/A05。
+共享生成类型由各契约owner维护，AI公共注册/选择在C20组合，C12/C13/A05仅改各自provider目录，公共契约归A01。
 C05组件、C15自助页面、C16对话页面分别独占目录；交互核心不拥有Vue组件，host将C04结果映射到UI。
 C18独占SQLite migration；C19不另建表；Cargo/lock/UI package配置与根入口由单一集成人串行合并。
 真实开工前复核变更文件、隐式消费和测试数据库/临时目录冲突；无Predecessor不自动代表可同时改同一文件。

@@ -1,4 +1,5 @@
 use crate::{
+    catalog_error::CatalogErrorView,
     model::{CatalogInput, Empty, ErrorView, PreviewInput, ProposeInput, ToolOutput},
     transport::OriginalArguments,
     *,
@@ -38,7 +39,7 @@ struct ParameterView {
 
 pub(crate) struct Failure {
     code: ServiceError,
-    catalog: Option<String>,
+    catalog: Option<CatalogErrorView>,
 }
 impl From<ServiceError> for Failure {
     fn from(code: ServiceError) -> Self {
@@ -52,7 +53,7 @@ impl From<CatalogError> for Failure {
     fn from(error: CatalogError) -> Self {
         Self {
             code: ServiceError::InvalidInput,
-            catalog: Some(format!("{error:?}")),
+            catalog: Some(error.into()),
         }
     }
 }
@@ -70,32 +71,86 @@ fn schema<T: JsonSchema>() -> Arc<serde_json::Map<String, Value>> {
     object.insert("type".into(), Value::String("object".into()));
     Arc::new(object)
 }
-fn tool<I: JsonSchema, O: JsonSchema>(
-    name: &'static str,
-    description: &'static str,
-    read: bool,
-) -> Tool {
+// Tool identity and effect metadata have one typed owner. Exhaustive matches
+// bind schemas and dispatch to that owner without repeating wire-name lists.
+#[derive(Clone, Copy)]
+pub(crate) enum ToolKind {
+    Catalog,
+    Capabilities,
+    Preview,
+    Propose,
+    Submit,
+    Status,
+    Cancel,
+}
+#[derive(Clone, Copy)]
+enum Effect {
+    ReadOnly,
+    MayPersist,
+}
+impl ToolKind {
+    const ALL: [Self; 7] = [
+        Self::Catalog,
+        Self::Capabilities,
+        Self::Preview,
+        Self::Propose,
+        Self::Submit,
+        Self::Status,
+        Self::Cancel,
+    ];
+
+    fn descriptor(self) -> (&'static str, &'static str, Effect) {
+        match self {
+            Self::Catalog => ("execution_catalog", "Authorized directory and shared parameter schemas. Visibility does not authorize execution.", Effect::ReadOnly),
+            Self::Capabilities => ("execution_capabilities", "Current bound-context capabilities. Unknown is not supported.", Effect::ReadOnly),
+            Self::Preview => ("execution_preview", "Freeze an exact plan without approval or execution.", Effect::MayPersist),
+            Self::Propose => ("execution_propose", "Record a bounded immutable candidate; never approve or execute it.", Effect::MayPersist),
+            Self::Submit => ("execution_submit", "Accept an exact plan idempotently. On timeout query or retry the SAME operationRequestId. Accepted is not success.", Effect::MayPersist),
+            Self::Status => ("execution_status", "Authorized lookup by the original operationRequestId.", Effect::ReadOnly),
+            Self::Cancel => ("execution_cancel", "Request business cancellation; receipt does not prove termination or rollback.", Effect::MayPersist),
+        }
+    }
+    pub(crate) fn from_name(name: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|kind| kind.descriptor().0 == name)
+    }
+    pub(crate) fn timeout_error(self) -> ServiceError {
+        match self.descriptor().2 {
+            Effect::ReadOnly => ServiceError::Unavailable,
+            Effect::MayPersist => ServiceError::OutcomeUnknown,
+        }
+    }
+    fn definition(self) -> Tool {
+        match self {
+            Self::Catalog => tool::<Empty, CatalogView>(self),
+            Self::Capabilities => tool::<Empty, CapabilityView>(self),
+            Self::Preview => tool::<PreviewInput, PlanPreview>(self),
+            Self::Propose => tool::<ProposeInput, CandidateReceipt>(self),
+            Self::Submit => tool::<SubmitRequest, OperationStatus>(self),
+            Self::Status => tool::<OperationRequest, OperationStatus>(self),
+            Self::Cancel => tool::<OperationRequest, CancelResult>(self),
+        }
+    }
+}
+fn tool<I: JsonSchema, O: JsonSchema>(kind: ToolKind) -> Tool {
+    let (name, description, effect) = kind.descriptor();
     let mut t = Tool::default();
     t.name = name.into();
     t.description = Some(description.into());
     t.input_schema = schema::<I>();
     t.output_schema = Some(schema::<ToolOutput<O>>());
     let mut hints = ToolAnnotations::default();
-    hints.read_only_hint = Some(read);
+    hints.read_only_hint = Some(matches!(effect, Effect::ReadOnly));
     hints.open_world_hint = Some(false);
     t.annotations = Some(hints);
     t
 }
 pub(crate) fn tools() -> Vec<Tool> {
-    vec![
-        tool::<Empty, CatalogView>("execution_catalog", "Authorized directory and shared parameter schemas. Visibility does not authorize execution.", true),
-        tool::<Empty, CapabilityView>("execution_capabilities", "Current bound-context capabilities. Unknown is not supported.", true),
-        tool::<PreviewInput, PlanPreview>("execution_preview", "Preview an exact plan without approval or execution.", true),
-        tool::<ProposeInput, CandidateReceipt>("execution_propose", "Record a bounded immutable candidate; never approve or execute it.", false),
-        tool::<SubmitRequest, OperationStatus>("execution_submit", "Accept an exact plan idempotently. On timeout query or retry the SAME operationRequestId. Accepted is not success.", false),
-        tool::<OperationRequest, OperationStatus>("execution_status", "Authorized lookup by the original operationRequestId.", true),
-        tool::<OperationRequest, CancelResult>("execution_cancel", "Request business cancellation; receipt does not prove termination or rollback.", false),
-    ]
+    ToolKind::ALL
+        .into_iter()
+        .map(ToolKind::definition)
+        .collect()
 }
 pub(crate) fn failure(code: ServiceError) -> CallToolResult {
     result::<()>(Err(code.into()), 1024).expect("static error fits minimum limit")
@@ -239,9 +294,11 @@ impl<S: ExecutionServicePort> Handler<S> {
             .check_binding()
             .map_err(|_| ErrorData::invalid_request("service binding unavailable", None))?;
         let max = self.limits.response_bytes;
-        match name {
-            "execution_catalog" => result(self.catalog(raw, wait).await, max),
-            "execution_capabilities" => {
+        let kind = ToolKind::from_name(name)
+            .ok_or_else(|| ErrorData::invalid_params("unknown tool", None))?;
+        match kind {
+            ToolKind::Catalog => result(self.catalog(raw, wait).await, max),
+            ToolKind::Capabilities => {
                 let r = async {
                     let _: Empty = decode(raw)?;
                     Ok(self.service.capabilities(wait).await?)
@@ -249,21 +306,20 @@ impl<S: ExecutionServicePort> Handler<S> {
                 .await;
                 result(r, max)
             }
-            "execution_preview" => result(self.preview(raw, wait).await, max),
-            "execution_propose" => result(self.propose(raw, wait).await, max),
-            "execution_submit" => result(
+            ToolKind::Preview => result(self.preview(raw, wait).await, max),
+            ToolKind::Propose => result(self.propose(raw, wait).await, max),
+            ToolKind::Submit => result(
                 async { Ok(self.service.submit(decode(raw)?, wait).await?) }.await,
                 max,
             ),
-            "execution_status" => result(
+            ToolKind::Status => result(
                 async { Ok(self.service.status(decode(raw)?, wait).await?) }.await,
                 max,
             ),
-            "execution_cancel" => result(
+            ToolKind::Cancel => result(
                 async { Ok(self.service.cancel(decode(raw)?, wait).await?) }.await,
                 max,
             ),
-            _ => Err(ErrorData::invalid_params("unknown tool", None)),
         }
     }
 }
