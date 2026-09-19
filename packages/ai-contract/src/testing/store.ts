@@ -421,15 +421,17 @@ export class MemorySessionStore implements SessionStore {
       ids.add(event.eventId);
       copy.events.push(clone(event));
     }
+    const interactionIds = new Set<Id>();
     for (const row of batch.interactions) {
+      if (interactionIds.has(row.interactionId)) return fail("invalid_input");
+      interactionIds.add(row.interactionId);
       const source = copy.commands.get(row.commandId);
       if (
         namespaceKey(row.namespace) !== namespaceKey(batch.namespace) ||
         row.generation !== batch.expectedGeneration ||
         !source?.dispatch ||
         source.dispatch.generation !== row.generation ||
-        source.dispatch.nativeRunId !== row.nativeRunId ||
-        source.dispatch.nativeRequestId !== row.nativeRequestId
+        source.dispatch.nativeRunId !== row.nativeRunId
       )
         return fail("stale_binding");
       const old = copy.interactions.get(row.interactionId);
@@ -439,7 +441,37 @@ export class MemorySessionStore implements SessionStore {
         if (!same(identity, nextIdentity)) return fail("stale_binding");
         if (old.status !== "pending" && !same(old, row))
           return fail("already_answered");
-      } else if (row.status === "answered") return fail("invalid_input");
+      } else {
+        if (
+          row.status !== "pending" ||
+          source.dispatch.certainty !== "submitted" ||
+          !["dispatching", "running"].includes(source.state)
+        )
+          return fail("invalid_input");
+        const pending = batch.events.filter(
+          (event) =>
+            event.body.type === "interaction" &&
+            event.body.interactionId === row.interactionId,
+        );
+        if (
+          pending.length !== 1 ||
+          pending[0].commandId !== row.commandId ||
+          pending[0].generation !== row.generation ||
+          pending[0].body.type !== "interaction" ||
+          pending[0].body.status !== "pending" ||
+          !same(pending[0].body.request, row.request)
+        )
+          return fail("invalid_input");
+      }
+      if (
+        [...copy.interactions.values()].some(
+          (other) =>
+            other.interactionId !== row.interactionId &&
+            other.generation === row.generation &&
+            other.nativeCallbackId === row.nativeCallbackId,
+        )
+      )
+        return fail("content_conflict");
       if (row.status === "answered") {
         const response = copy.commands.get(row.responseCommandId!);
         if (
@@ -453,6 +485,26 @@ export class MemorySessionStore implements SessionStore {
           return fail("invalid_input");
       }
       copy.interactions.set(row.interactionId, clone(row));
+    }
+    for (const event of batch.events) {
+      if (event.body.type !== "interaction") continue;
+      const body = event.body;
+      const row = copy.interactions.get(body.interactionId);
+      if (
+        !row ||
+        row.commandId !== event.commandId ||
+        row.generation !== event.generation ||
+        row.status !== body.status
+      )
+        return fail("invalid_input");
+      if (body.status === "pending") {
+        if (
+          state.interactions.has(row.interactionId) ||
+          !interactionIds.has(row.interactionId) ||
+          !same(body.request, row.request)
+        )
+          return fail("invalid_input");
+      } else if (body.request !== undefined) return fail("invalid_input");
     }
     for (const row of batch.deliveries) {
       if (

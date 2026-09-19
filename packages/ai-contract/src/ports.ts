@@ -106,9 +106,26 @@ export interface MessageDelta {
   readonly messageId: Id;
   readonly text: string;
 }
+/** Callback metadata from a live provider. Host supplies namespace, command and
+ * generation from the verified observation binding, then atomically stores the
+ * pending Interaction and its matching event. Display recovery cannot revive a callback. */
+export type ProviderInteraction = Pick<
+  Interaction,
+  | "interactionId"
+  | "nativeCallbackId"
+  | "expiresAtMs"
+  | "callbackLifetime"
+  | "request"
+>;
 export type ProviderObservation =
   | { type: "event"; binding: Binding; commandId: Id; body: Event["body"] }
-  | ({ type: "delta"; binding: Binding } & MessageDelta);
+  | ({ type: "delta"; binding: Binding } & MessageDelta)
+  | {
+      type: "interaction";
+      binding: Binding;
+      commandId: Id;
+      interaction: ProviderInteraction;
+    };
 export type Submission =
   | { certainty: "submitted"; binding: Binding }
   | { certainty: "not_sent"; error: Failure }

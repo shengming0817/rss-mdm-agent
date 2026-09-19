@@ -123,7 +123,7 @@
         },
         "nativeRequestId": {
           "$ref": "#/$defs/Id",
-          "description": "Provider-owned request/callback identifier; cannot be rebound after dispatch."
+          "description": "Provider-owned parent prompt/query request identifier; cannot be rebound after dispatch. Callback identities belong to Interaction."
         }
       },
       "required": [
@@ -479,7 +479,7 @@
         },
         "nativeRequestId": {
           "$ref": "#/$defs/Id",
-          "description": "Provider-owned request/callback identifier; cannot be rebound after dispatch."
+          "description": "Provider-owned parent prompt/query request identifier; cannot be rebound after dispatch. Callback identities belong to Interaction."
         },
         "certainty": {
           "type": "string",
@@ -678,6 +678,10 @@
               "type": "string",
               "enum": ["pending", "answered", "expired", "unavailable"],
               "description": "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."
+            },
+            "request": {
+              "$ref": "#/$defs/InteractionRequest",
+              "description": "Required for the first pending event and equal to the newly committed Interaction request; forbidden on later lifecycle events."
             }
           },
           "required": ["type", "interactionId", "status"],
@@ -840,10 +844,6 @@
           "$ref": "#/$defs/Id",
           "description": "Provider-owned model-turn/run identifier, required when the provider exposes it."
         },
-        "nativeRequestId": {
-          "$ref": "#/$defs/Id",
-          "description": "Provider-owned request/callback identifier; cannot be rebound after dispatch."
-        },
         "expiresAtMs": {
           "$ref": "#/$defs/Counter",
           "description": "Inclusive UTC epoch-millisecond deadline; later first acceptance is rejected."
@@ -861,6 +861,14 @@
           "type": "string",
           "enum": ["generation_bound", "provider_resumable"],
           "description": "generation_bound cannot survive callback loss; provider_resumable requires verified native restoration."
+        },
+        "nativeCallbackId": {
+          "$ref": "#/$defs/Id",
+          "description": "Provider-owned callback identifier, immutable and unique within a session generation; distinct from the parent dispatch request."
+        },
+        "request": {
+          "$ref": "#/$defs/InteractionRequest",
+          "description": "Immutable untrusted question payload retained for display; does not restore a lost native callback or grant approval."
         }
       },
       "required": [
@@ -870,10 +878,11 @@
         "interactionId",
         "commandId",
         "generation",
-        "nativeRequestId",
+        "nativeCallbackId",
         "expiresAtMs",
         "status",
-        "callbackLifetime"
+        "callbackLifetime",
+        "request"
       ],
       "additionalProperties": false,
       "description": "Single-use provider callback with immutable command/native correlation, expiry and lifetime."
@@ -1106,6 +1115,11 @@
       "required": ["instanceId", "revision"],
       "additionalProperties": false,
       "description": "Surface revision checked atomically when accepting an action response."
+    },
+    "InteractionRequest": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Immutable untrusted provider question payload. Subject to whole-record JSON budgets; never authentication, permission or execution approval."
     }
   }
 }

@@ -13,7 +13,7 @@ pub struct Binding {
     pub config: ConfigRef,
     #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
     pub generation: Id,
-    #[doc = "Provider-owned request/callback identifier; cannot be rebound after dispatch."]
+    #[doc = "Provider-owned parent prompt/query request identifier; cannot be rebound after dispatch. Callback identities belong to Interaction."]
     #[serde(
         rename = "nativeRequestId",
         skip_serializing_if = "::std::option::Option::is_none"
@@ -672,7 +672,7 @@ pub struct Dispatch {
     pub certainty: DispatchCertainty,
     #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
     pub generation: Id,
-    #[doc = "Provider-owned request/callback identifier; cannot be rebound after dispatch."]
+    #[doc = "Provider-owned parent prompt/query request identifier; cannot be rebound after dispatch. Callback identities belong to Interaction."]
     #[serde(
         rename = "nativeRequestId",
         skip_serializing_if = "::std::option::Option::is_none"
@@ -940,6 +940,9 @@ pub enum EventBody {
         #[doc = "Single-use interaction identity within the namespace."]
         #[serde(rename = "interactionId")]
         interaction_id: Id,
+        #[doc = "Required for the first pending event and equal to the newly committed Interaction request; forbidden on later lifecycle events."]
+        #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+        request: ::std::option::Option<InteractionRequest>,
         #[doc = "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."]
         status: EventBodyStatus,
     },
@@ -1423,15 +1426,17 @@ pub struct Interaction {
     pub kind: ::std::string::String,
     #[doc = "Trusted storage isolation scope; not copied from model or action content."]
     pub namespace: Namespace,
-    #[doc = "Provider-owned request/callback identifier; cannot be rebound after dispatch."]
-    #[serde(rename = "nativeRequestId")]
-    pub native_request_id: Id,
+    #[doc = "Provider-owned callback identifier, immutable and unique within a session generation; distinct from the parent dispatch request."]
+    #[serde(rename = "nativeCallbackId")]
+    pub native_callback_id: Id,
     #[doc = "Provider-owned model-turn/run identifier, required when the provider exposes it."]
     #[serde(
         rename = "nativeRunId",
         skip_serializing_if = "::std::option::Option::is_none"
     )]
     pub native_run_id: ::std::option::Option<Id>,
+    #[doc = "Immutable untrusted question payload retained for display; does not restore a lost native callback or grant approval."]
+    pub request: InteractionRequest,
     #[doc = "Accepted response command which atomically consumed the interaction; present only when answered."]
     #[serde(
         rename = "responseCommandId",
@@ -1494,6 +1499,30 @@ impl ::std::convert::TryFrom<::std::string::String> for InteractionCallbackLifet
         value: ::std::string::String,
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
+    }
+}
+#[doc = "Immutable untrusted provider question payload. Subject to whole-record JSON budgets; never authentication, permission or execution approval."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(transparent)]
+pub struct InteractionRequest(pub ::serde_json::Map<::std::string::String, ::serde_json::Value>);
+impl ::std::ops::Deref for InteractionRequest {
+    type Target = ::serde_json::Map<::std::string::String, ::serde_json::Value>;
+    fn deref(&self) -> &::serde_json::Map<::std::string::String, ::serde_json::Value> {
+        &self.0
+    }
+}
+impl ::std::convert::From<InteractionRequest>
+    for ::serde_json::Map<::std::string::String, ::serde_json::Value>
+{
+    fn from(value: InteractionRequest) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::From<::serde_json::Map<::std::string::String, ::serde_json::Value>>
+    for InteractionRequest
+{
+    fn from(value: ::serde_json::Map<::std::string::String, ::serde_json::Value>) -> Self {
+        Self(value)
     }
 }
 #[doc = "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."]
@@ -2249,6 +2278,11 @@ impl std::fmt::Debug for InteractionCallbackLifetime {
             stringify!(InteractionCallbackLifetime),
             "([redacted])"
         ))
+    }
+}
+impl std::fmt::Debug for InteractionRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(InteractionRequest), "([redacted])"))
     }
 }
 impl std::fmt::Debug for InteractionStatus {

@@ -247,7 +247,7 @@ C01 执行契约保持自身版本与 Rust owner；A01 将 C02 完整替换为 A
 
 范围基线 `ai-runtime-20260918`：北向 ACP + A2UI，不使用 AG-UI；原生引擎拥有模型上下文，TS AI Host 拥有产品会话、命令接纳及展示/交互投影，Rust 执行服务拥有业务执行权威。TS 不直接写 Rust 批准、intent 或结果表。当前 A01 仅提供公共契约、fake Host 和 conformance，不表示 A02/A03/真实 provider 已实现。
 
-durable accepted 和稳定 cursor 只能在事务提交后确认；命令账本兼任 inbox 与 provider 派发意图，事件日志用于回放，只有可靠跨服务请求/结果使用 delivery。取消派发不证明终止，未知派发先核实；generation 和 config/账号版本阻止旧回调更新新运行。ACP prompt 保持最终响应，receipt/cursor/attach 由协商扩展表达。A2UI surface/action 与会话/运行/交互/revision 精确关联，无 A2UI 时降级到标准文本、工具状态和权限交互。能力与 binding 原子建立，受控工具准入必须消费可信 verifier 的当前 incarnation 证据；surface 删除持久化并在回答事务内再校验，终态投影必须有同批匹配事件。Host/Store 提供有界关闭，分页错误遵守统一 Result。具体可靠性基线由 A01 公共契约持有。
+durable accepted 和稳定 cursor 只能在事务提交后确认；命令账本兼任 inbox 与 provider 派发意图，事件日志用于回放，只有可靠跨服务请求/结果使用 delivery。取消派发不证明终止，未知派发先核实；generation 和 config/账号版本阻止旧回调更新新运行。ACP prompt 保持最终响应，receipt/cursor/attach 由协商扩展表达。A2UI surface/action 与会话/运行/交互/revision 精确关联，无 A2UI 时降级到标准文本、工具状态和权限交互。能力与 binding 原子建立，受控工具准入必须消费可信 verifier 的当前 incarnation 证据；surface 删除持久化并在回答事务内再校验，终态投影必须有同批匹配事件。Host/Store 提供有界关闭，分页错误遵守统一 Result。同一 turn 可有多个独立 callback，原生 callback ID 与父请求坐标分离；问题内容与 pending 记录原子发布，回答不签发执行批准。具体可靠性基线由 A01 公共契约持有。
 
 AI工具参数经过MCP/host映射到执行请求，C02不直接嵌入另一份执行状态；该映射在C20验证。
 `execution-admission`就是C07的唯一actor/action/resource/context授权裁决核心；“admission”是包名，“授权”是职责，不另建平行authorization service。C19消费该裁决并强制持久执行准入。
