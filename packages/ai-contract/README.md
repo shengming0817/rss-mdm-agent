@@ -30,7 +30,7 @@ V2 一次替换 C02 的 V1。没有 V1 reader、alias、双写、fallback、转�
 - 一个命令账本同时持有 inbox、内容绑定、派发意图和 native IDs，不复制第二份 provider 队列。事件日志支持重放，稳定事件先提交后发布；临时 token delta 没有 durable sequence，可丢弃/合并。
 - Delivery 只用于需可靠跨服务交付的请求/结果，通过稳定 operationId/eventId、目标与内容摘要关联原事件。摘要固定为 `SHA-256(JCS({event, target}))`，由 `deliveryFingerprint(event, target, limits)` 生成，Store 必须核对完整引用事件和目标。接收方幂等；retry 类别为 receiver_idempotent/reconcile_first/never；未知副作用转核实，不自动重发。待交付记录和引用事件必须一起保留。
 - retention.retryWindowMs > 0、receiptWindowMs >= retryWindowMs，精确截止时间写入 receipt。首次接纳拒绝过期 command；receipt 保留期内同内容重复返回既有接纳事实，不能据此重发模型命令。receipt 过期后仍保留键/摘要阻止复用，直到 namespace 退役并清理；达到容量上限应拒绝新接纳。仅所有命令 terminal/invalidated、无 pending 交互且 delivery 已全部 delivered 方可退役，收据过期且 delivery 全结清后才能清理；旧 session ID 永不重建。
-- interaction 固定 generation/native run/nativeCallbackId、问题 request、期限及 callbackLifetime。回答接纳与 pending→answered 在同一事务；第二个不同回答返回 already_answered，同命令重复返回 receipt。回调失效为 unavailable，重建 UI 不恢复 callback。provider_resumable 仍须 adapter 证明真实恢复；不能从序列化 capability 直接推断。
+- interaction 固定 generation/native run/nativeCallbackId、问题 request、期限及 callbackLifetime。回答接纳与 pending→answered 在同一事务；第二个不同回答返回 already_answered，同命令重复返回 receipt。回调失效为 unavailable，重建 UI 不恢复 callback。仅支持 generation_bound；恢复旧显示内容不会恢复旧回调。
 
 ## ACP–A2UI 产品约定
 
@@ -38,7 +38,7 @@ ACP 固定官方 SDK 1.4.0 / schema-v1.21.0。标准 session/new、session/promp
 
 产品能力在 capabilities._meta 的 `rss-mdm-agent.ai-runtime` 下协商 contractVersion=2、durableReceipts、cursorAttach，以及可选 A2UI version/catalogId/catalogVersion。`_rss-mdm-agent/submit`、`/snapshot`、`/attach` 和 `/update` 是扩展方法的完整产品前缀约定（代码中的 extension 常量为准），只有协商后使用；未知 request 按 ACP 返回 method-not-found，未知 notification 按上游规则忽略。A01 只冻结约定和 fixtures；实际 transport/协议 service 归 A04。
 
-A2UI 固定 v0.9.1 snapshot，客户端 action、服务端 surface 生命周期、basic catalog 与 common types schema 原样保留在 [upstream](schema/upstream/a2ui/NOTICE.md)。`SurfaceBinding` 绑定 session/run、surfaceId、surfaceInstanceId、revision、interaction、component/event、catalog/version。create/update/delete 的上游 payload 不改写；产品扩展携带关联 metadata。一次新建 surface 使用新 instance ID，创建 revision 为0，更新/删除以 session revision/generation CAS 为前提严格递增1，身份字段不可重绑；active→deleted 持久化 tombstone 且不可复活，若交互仍 pending，同批使其 unavailable 并追加交互事件；已经 ended 的交互不重复转换。snapshot 与事件恢复这些关联；renderer 和 catalog 内容校验由 A04 持有。
+A2UI 固定 v0.9.1 snapshot，客户端 action、服务端 surface 生命周期、basic catalog 与 common types schema 原样保留在 [upstream](schema/upstream/a2ui/NOTICE.md)。`SurfaceState` 绑定 session/run、surfaceId、surfaceInstanceId、revision、interaction、component/event、catalog/version。create/update/delete 的上游 payload 不改写；产品扩展携带关联 metadata。一次新建 surface 使用新 instance ID，创建 revision 为0，更新/删除以 session revision/generation CAS 为前提严格递增1，身份字段不可重绑；active→deleted 持久化 tombstone 且不可复活，同时使 pending interaction unavailable。snapshotPage 与事件恢复这些关联和实际内容；完整有界 messages 与 surface 稳定事件同批发布，内容校验由公共 validateSurface 完成，A04 在发布和渲染前消费。
 
 `resolveSurfaceAction(store, caller, metadata, standard, limits)` 从 Store 读取当前 surface 后校验关联与 Caller，返回的 context 仍是未经授权的回答数据；名称、timestamp、context 中的 actor/approved 均无批准权。metadata 中的 commandId 由产品客户端为该次回答生成并在重试时复用；它不是权限凭据。返回的 surface instance/revision 必须放入 respond input.surface；Store 在回答接纳事务中再核对 active 状态与 revision，关联 surface 的 interaction 不允许省略该字段。回答单次消费由 Host/Store 保证，解析与提交之间的删除/更新也会拒绝旧回答。无 A2UI 客户端保留文本、工具状态和标准权限交互；专有结构交互明确不支持，不能自动批准或用普通消息替代回答。
 
@@ -60,7 +60,7 @@ Node 验证基线24.14.1 / pnpm11.4.0。`/transitions` 导出同步纯状态转�
 
 `Interaction.nativeRequestId` 直接替换为必填 `nativeCallbackId`，同时必填 `request`；旧记录、旧字段和双字段输入均拒绝，不提供迁移、alias 或双读。`Binding` / dispatch 的 `nativeRequestId` 仅表示父 prompt/query 请求，原命令通过 `Interaction.commandId` 关联；一个父请求可有多个独立 callback。callback ID 在 namespace + generation 内唯一，不能换 interactionId 重复消费。
 
-`ProviderObservation` 新增 `type: "interaction"`，`interaction: ProviderInteraction` 从同一生成 wire 类型选取 callback ID、产品 interaction ID、期限、lifetime 和问题载荷。Host 先验证完整 binding 与 command dispatch，从可信会话补 namespace/generation/nativeRunId，再原子提交 pending Interaction 与同 ID/command/generation、内容相同的 interaction 事件。首次 pending 必须携带 request；其它状态事件不得携带 request。创建只接受已确认提交的活动命令，缺一侧或重复 pending 均拒绝。`request` 是有预算的、不可信 provider JSON，不是执行工具提案，也不是第二套 UI schema；A04 拥有展示适配。
+`ProviderObservation` 新增 `type: "interaction"`，`interaction: ProviderInteraction` 从同一生成 wire 类型选取 callback ID、产品 interaction ID、期限、lifetime 和问题载荷。Host 先验证完整 binding 与 command dispatch，从可信会话补 namespace/generation/nativeRunId，再原子提交 pending Interaction 与同 ID/command/generation、内容相同的 interaction 事件。首次 pending 必须携带与 Interaction 相等的 request、expiresAtMs 和 callbackLifetime；answered 必须携带相同 responseCommandId；其它状态事件不得携带 request。所有交互状态变化都必须有同批匹配事件。创建只接受已确认提交的活动命令，缺一侧或重复 pending 均拒绝。`request` 是有预算的、不可信 provider JSON，不是执行工具提案，也不是第二套 UI schema；A04 拥有展示适配。
 
 `respond(binding, command, budget)` 签名不变。Host 负责可信 Caller 与 Store 的单次接纳；adapter 通过 binding + interactionId 定位私有活回调并核验 generation/期限，不能从客户端提交的 ID 构造回调。回答不形成执行批准，执行工具与追问回调隔离。显示历史保留 request，但 generation_bound callback 丢失后必须 unavailable。
 
@@ -70,6 +70,9 @@ Node 验证基线24.14.1 / pnpm11.4.0。`/transitions` 导出同步纯状态转�
 
 Interaction 的必填 `category: "question"` 仅允许普通用户追问；权限 callback 不属于普通 respond 生命周期，进入 ToolEndpoint/verifier 或拒绝。Provider 的 pending 发布只能使用专用 interaction observation。wire schema 按状态闭合：pending 必带 request，answered/expired/unavailable 禁带 request；旧格式直接拒绝，TS/Rust 由同一 schema 生成。
 
+A04 同 PR 的直接契约替换、分页/列表、明确终态与浏览器入口见[ACP–A2UI 开发](../../docs/guides/ai-access-development.md)。协商字段和全部产品扩展 DTO 从同一 schema 生成；通用包入口没有 Node fs/crypto，生成期编译静态校验器，运行期使用固定 noble 摘要。旧单次 snapshot API 不再提供。
+
+A2UI version/catalogId/catalogVersion 的声明在 runtime schema 的 A2uiNegotiation，生成的冻结 `interactionCatalog` 为运行时唯一入口；`selectNegotiation` 在双端限制 selection≤offer。Memory store 完成且未签发 continuation 的单页读视图立即释放；已签发 token 的视图保留至 TTL，支持原 token 的重复读取。
 ## A02 前置恢复契约（#2440）
 
 `DispatchAttempt` 必填 attemptId、originGeneration、observerGeneration 和 nativeSessionId。Host 必须先保存 certainty=intent 再调用 `submit(binding, command, attempt, budget)`；原始身份固定，native run/request/correlationId 只可首次补入。ProviderObservation 必须携带原 attemptId，Host 同时核对当前 observer 与完整 binding。unknown 的 correlationId 持久化，stream 中断或进程退出不能清除派发事实。
@@ -78,7 +81,7 @@ Interaction 的必填 `category: "question"` 仅允许普通用户追问；权�
 
 `VerifiedProviderSession.restore` 消费 provider.resume 的原子 binding/capabilities，并重新核验配置、账号、provider/adapter 版本、原 native session 和受控工具 verifier。`SessionStore.rebind` 只消费这份不可序列化的恢复证据，以 revision/generation CAS 原子切换会话、更新未决 attempt 的 observerGeneration、保留 originGeneration 与全部原生坐标、转为 reconciliation_required。已接纳但未派发的旧代回答/取消/steer 失效；已派发的控制命令保留待核实；queue_next 仍保留。旧 generation 永不复用。
 
-同一 rebind 原子使 pending interaction unavailable、active surface invalidated，并追加 session_rebound、状态、交互及 surface_invalidated 事件。历史问题与 A2UI payload 留在事件日志；失效不是上游 deleteSurface。create/update/delete 的原样 payload 必须与 surface revision、关联行和稳定水位同事务提交；删除还需同批提交交互失效及其事件。
+同一 rebind 原子使 pending interaction unavailable、active surface invalidated，并追加 session_rebound、状态、交互及 status=invalidated 的完整 surface 事件。历史问题与 A2UI payload 留在事件日志；失效不是上游 deleteSurface。create/update/delete 的原样 payload 必须与 surface revision、关联行和稳定水位同事务提交；删除还需同批提交交互失效及其事件。
 
 `SessionCommit.reconciliations` 处理 running/terminal/not_submitted/unknown；不存在第二个恢复提交 API 或 provider 队列。证据必须指向原 attempt 和当前 observer，原生坐标不可覆盖。unknown 保持阻断；not_submitted 将完整旧 attempt（含 correlationId）写入 reconciled 事件，且仅原期限内 queue_next 可再次接纳派发，新派发必须使用新 attemptId。已过期或绑定旧代的控制输入进入 invalidated。重试不扩大原 receipt 窗口。
 
@@ -95,11 +98,13 @@ provider 通用 event 使用 `ProviderEventBody` 白名单，只含文本、工�
 
 Binding 新增必填 workspaceId：`workspaceIdentity(workingDirectory)` 对规范化绝对路径计算 SHA-256，restore 必须与原 binding 相同，实际传给 adapter 的路径在外部 await 前规范化固定。它是逻辑目录身份，不是 symlink、挂载或操作系统 containment 证明；平台隔离仍由 adapter/verifier 持有。旧 binding 无此字段直接拒绝。callbackLifetime 只保留 generation_bound；未实现的 provider_resumable 已删除，无兼容分支。
 
-命令 terminal/invalidated 必须在同一提交结束该命令所有 pending Interaction 并使 active SurfaceBinding 失效，同时附带对应稳定事件；缺任一状态或事件则整批拒绝。pending→expired 必须传有效 nowMs，且严格晚于包含端点的 expiresAtMs。rebind 的事件 seed 先经 schema-owned isId 检查；codec、transition 与 adapter 共用该原语。
+命令 terminal/invalidated 必须在同一提交结束该命令所有 pending Interaction 并使 active SurfaceState 失效，同时附带对应稳定事件；缺任一状态或事件则整批拒绝。pending→expired 必须传有效 nowMs，且严格晚于包含端点的 expiresAtMs。rebind 的事件 seed 先经 schema-owned isId 检查；codec、transition 与 adapter 共用该原语。
 
-Rust 生成时将同一 schema 的 const 等价投影为单值 enum，以补足 typify 0.8 对 const 的忽略；Event variant 名由原始判别字段稳定生成。wire schema 仍是唯一来源；Rust 变体匹配与独立 consumer 同时验证 error/invalidated 和 surface create/update/delete 的真实类型。
+Rust 生成时将同一 schema 的 const 等价投影为单值 enum，以补足 typify 0.8 对 const 的忽略；Event variant 名由原始判别字段稳定生成。wire schema 仍是唯一来源；Rust 变体匹配与独立 consumer 同时验证 error/invalidated 和完整 surface 状态的真实类型。
 
-SessionState 是 adapter 持有的完整持久化状态，包括全部历史 generations。createState 仅创建 revision/sequence 为0的全新会话；Snapshot 是显示读模型，不能拿来重建 persistence state。共享恢复检查涵盖两种调用顺序的并发 rebind/旧代 commit；SQLite adapter 另外以真实重启验证 generation 历史。
+SessionState 是 adapter 持有的完整持久化状态，包括全部历史 generations。createState 仅创建 revision/sequence 为0的全新会话；SnapshotPage 是显示读模型，不能拿来重建 persistence state。共享恢复检查涵盖两种调用顺序的并发 rebind/旧代 commit；SQLite adapter 另外以真实重启验证 generation 历史。
 
 
 Claude adapter 的合并集成同样使用显式 DispatchAttempt 和完整 CommandRecord。ProviderObservation 新增两类原生事实：submitted 表示该 attempt 获得原生接纳确认；interaction_unavailable 表示活 callback 已失效。它们携带当前 binding/commandId/attemptId，Host 验证后原子更新账本和稳定事件，adapter 不直接发布 Host 生命周期事件。共享 Provider conformance 的迟到 resume 场景从另一个已准入并关闭的实例取得真实 prior binding，避免用无效测试版本绕过实际恢复路径。
+
+集成入口：浏览器使用主入口的 codec、wire 与协议；Node Host 从 `@rss-mdm-agent/ai-contract/session` 导入 VerifiedProviderSession/workspaceIdentity，从 `/transitions` 消费持久化状态规则。内存和 SQLite 共用 `/read-views` 的 snapshotPage/listSessions 同水位分页；续页绑定 scope、limit 和不可变视图，30秒失效，重启后返回 cursor_expired，单实例最多128份视图/16MiB保留内容。客户端重新抓取快照后按持久 cursor 接续，分页缓存不授予回调权限。

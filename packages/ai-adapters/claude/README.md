@@ -6,7 +6,7 @@
 
 ```ts
 import { createClaudeAdapter } from '@rss-mdm-agent/ai-adapter-claude';
-import { VerifiedProviderSession } from '@rss-mdm-agent/ai-contract';
+import { VerifiedProviderSession } from '@rss-mdm-agent/ai-contract/session';
 
 const configuration = {
   namespace: { tenantId:'tenant', principalId:'principal', authorityId:'authority', sessionId:'session' },
@@ -41,14 +41,15 @@ JSON 取得凭据。`ClaudeConfiguration` 将 provider 固定为 claude，resolv
   显式消费当前配置并对新 generation 重新验证；返回新的名义准入，旧证据不能复用。
   adapter 的原始 resume 只返回待验证的 binding+capabilities，不能代替这个入口。
 - 一次只派发一个 turn。Host 持有持久 command ledger 与 `queue_next` 队列；忙时返回
-  `not_sent/same_command`。本包保留有界进程内 command 身份，不声明持久接纳。
+  `not_sent/same_command`，provider 的 queue 能力明确为 unsupported。Host 可另行持有队列。本包保留有界进程内 command 身份，不声明持久接纳。
 - 本地 input 入队不是提交确认。原生回显/带匹配 prompt UUID 的回复才确认 submitted。
   `nativeRequestId` 是送入 SDK 并由其回显的 user-message UUID；SDK 未提供独立 run ID，
   因而不构造 `nativeRunId`。已交给 SDK 但未确认的请求返回 unknown，先 reconcile。
 - SDK 原生 transcript 持有模型上下文；Host 文本事件只用于展示。冷恢复不导入展示记录，
   不复活旧 generation 的 callback，不凭没有观测到结果推断“未执行”。
 - delta 使用原生 message ID；稳定文本和匹配 UUID 的原生 result 分别映射展示与模型终态。
-  不转发 thinking、原始 SDK 异常、原始 stderr。断流/超时无终态；取消仅 request_only。
+  原生 aborted result 映射 cancelled，max_tokens 映射同名终态，error_max_turns 映射 max_turn_requests；美元预算/结构化输出重试耗尽映射 failed，不伪装 token 或 turn 上限。
+  不转发 thinking、原始 SDK 异常、原始 stderr。断流/超时无终态；取消请求本身仍仅 request_only。
 - `close` 结束输入与 callback、调用 SDK close；只有真实 child exit 或确证未 spawn 才确认
   processStopped。超时可带新预算重试。结束模型 turn 不等于进程退出或业务执行成功。
 

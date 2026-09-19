@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { VerifiedProviderSession } from "../../packages/ai-contract/dist/index.js";
+import { VerifiedProviderSession } from "../../packages/ai-contract/dist/session.js";
 import {
   ScriptedProvider,
   fixtureSession,

@@ -1,5 +1,6 @@
-import { readFileSync } from "node:fs";
-import { Ajv2020 } from "ajv/dist/2020.js";
+import { interactionCatalog } from "./identity.js";
+import validAction from "./validate-action.js";
+import validNegotiation from "./validate-negotiation.js";
 import { decode, boundedJson, type Limits } from "./codec.js";
 import type {
   Caller,
@@ -8,17 +9,34 @@ import type {
   ProviderObservation,
   Subscription,
 } from "./ports.js";
-import type { SurfaceAction, SurfaceBinding } from "./wire.js";
-const actionSchema = JSON.parse(
-  readFileSync(
-    new URL("../schema/upstream/a2ui/client_to_server.json", import.meta.url),
-    "utf8",
-  ),
-);
-const validAction = new Ajv2020({
-  strict: false,
-  validateFormats: false,
-}).compile(actionSchema);
+import type { SurfaceAction, SurfaceState } from "./wire.js";
+export function parseNegotiation(
+  input: unknown,
+  limits: Limits,
+): import("./wire.js").Negotiation {
+  const value: unknown = JSON.parse(boundedJson(input, limits));
+  if (!validNegotiation(value)) throw new Error("unsupported negotiation");
+  return value as import("./wire.js").Negotiation;
+}
+/** Both peers enforce selection <= offer before storing negotiated capabilities. */
+export function selectNegotiation(
+  offered: import("./wire.js").Negotiation,
+  input: unknown,
+  limits: Limits,
+): import("./wire.js").Negotiation {
+  const selected = parseNegotiation(input, limits);
+  if (
+    (selected.cursorAttach && !offered.cursorAttach) ||
+    (selected.durableReceipts && !offered.durableReceipts) ||
+    (selected.a2ui &&
+      (!offered.a2ui ||
+        selected.a2ui.version !== offered.a2ui.version ||
+        selected.a2ui.catalogId !== offered.a2ui.catalogId ||
+        selected.a2ui.catalogVersion !== offered.a2ui.catalogVersion))
+  )
+    throw new Error("unsupported negotiation selection");
+  return selected;
+}
 /** ACP extension namespace. Advertise through capabilities._meta before calling methods. */
 export const extension = {
   capability: "rss-mdm-agent.ai-runtime",
@@ -26,12 +44,16 @@ export const extension = {
   snapshot: "_rss-mdm-agent/snapshot",
   attach: "_rss-mdm-agent/attach",
   update: "_rss-mdm-agent/update",
+  list: "_rss-mdm-agent/list",
+  detach: "_rss-mdm-agent/detach",
+  action: "_rss-mdm-agent/action",
+  resume: "_rss-mdm-agent/resume",
 } as const;
 /** Product association only; the upstream action context remains untrusted tool data.
  * Timestamp is an upstream annotation, never an expiry/authority source. The access
  * adapter owns transport byte limits and official renderer/catalog validation. */
 export async function resolveSurfaceAction(
-  store: SessionStore,
+  store: Pick<SessionStore, "surface">,
   caller: Caller,
   metadata: SurfaceAction,
   standard: unknown,
@@ -48,7 +70,7 @@ export async function resolveSurfaceAction(
     ok: false,
     error: { code, retry: "never" },
   });
-  let binding: SurfaceBinding;
+  let binding: SurfaceState;
   try {
     const checkedMetadata = decode(boundedJson(metadata, limits), limits);
     if (checkedMetadata.kind !== "surfaceAction") return fail("invalid_input");
@@ -81,7 +103,7 @@ export async function resolveSurfaceAction(
     };
   };
   const action = message.action;
-  if (message.version !== "v0.9.1" || !action)
+  if (message.version !== interactionCatalog.version || !action)
     return fail("unsupported_version");
   if (
     caller.tenantId !== binding.namespace.tenantId ||

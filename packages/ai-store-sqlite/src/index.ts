@@ -1,3 +1,8 @@
+import {
+  ReadViews,
+  readSnapshotPage,
+  readSessionPage,
+} from "@rss-mdm-agent/ai-contract/read-views";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import {
   closeSync,
@@ -30,8 +35,11 @@ import {
   type SessionRebind,
   type SessionStore,
   type StoreCursor,
-  type Snapshot,
-  type SurfaceBinding,
+  type SnapshotPage,
+  type SessionPage,
+  type PageQuery,
+  type Caller,
+  type SurfaceState,
   type WireRecord,
 } from "@rss-mdm-agent/ai-contract";
 import {
@@ -274,6 +282,7 @@ class SqliteSessionStore implements SessionStore {
   readonly #db: DatabaseSync;
   readonly #bounds: Bounds;
   readonly #owned = new Map<string, string>();
+  readonly #views = new ReadViews({ now: () => Date.now() }, 30000);
   #closed = false;
   #closing = false;
   constructor(db: DatabaseSync, limits: Bounds) {
@@ -304,6 +313,7 @@ class SqliteSessionStore implements SessionStore {
             this.#db.close();
             this.#closed = true;
             this.#owned.clear();
+            this.#views.clear();
           } catch {
             /* cleanup remains retryable through close */
           }
@@ -365,11 +375,11 @@ class SqliteSessionStore implements SessionStore {
         .map((r) => this.#decode<T>(r.json, kind));
     const commands = load<CommandRecord>("commands", "commandRecord"),
       events = load<Event>("events", "event"),
-      interactions = load<Snapshot["interactions"][number]>(
+      interactions = load<SnapshotPage["interactions"][number]>(
         "interactions",
         "interaction",
       ),
-      surfaces = load<SurfaceBinding>("surfaces", "surface"),
+      surfaces = load<SurfaceState>("surfaces", "surface"),
       deliveries = load<Delivery>("deliveries", "delivery");
     if (
       events.length !== session.lastSequence ||
@@ -529,7 +539,7 @@ class SqliteSessionStore implements SessionStore {
         : fail("unavailable");
     });
   }
-  async surface(n: Namespace, id: Id): Promise<Result<SurfaceBinding>> {
+  async surface(n: Namespace, id: Id): Promise<Result<SurfaceState>> {
     return this.#query(() => {
       if (this.#session(n).status !== "active") return fail("session_gone");
       if (!isId(id)) return fail("invalid_input");
@@ -537,7 +547,7 @@ class SqliteSessionStore implements SessionStore {
         .prepare(`SELECT json FROM surfaces WHERE ${whereScope} AND id=?`)
         .get(...nsValues(n), id);
       return row
-        ? this.#bounded(this.#decode<SurfaceBinding>(row.json, "surface"))
+        ? this.#bounded(this.#decode<SurfaceState>(row.json, "surface"))
         : fail("stale_binding");
     });
   }
@@ -596,27 +606,80 @@ class SqliteSessionStore implements SessionStore {
       );
     return result;
   }
-  async snapshot(n: Namespace, limit: number): Promise<Result<Snapshot>> {
+  async snapshotPage(
+    n: Namespace,
+    query: PageQuery,
+  ): Promise<Result<SnapshotPage>> {
     return this.#query(() => {
-      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1024)
-        return fail("invalid_input");
-      const state = this.#state(n);
-      if (
-        state.events.length +
-          state.commands.size +
-          state.interactions.size +
-          state.surfaces.size >
-        limit
-      )
-        return fail("limit_exceeded");
-      return this.#bounded({
-        session: state.session,
-        cursor: state.session.lastSequence,
-        events: state.events,
-        commands: [...state.commands.values()],
-        interactions: [...state.interactions.values()],
-        surfaces: [...state.surfaces.values()],
-      });
+      const key = namespaceKey(n);
+      this.#session(n);
+      return readSnapshotPage(
+        this.#views,
+        `snapshot:${key}`,
+        query,
+        () => {
+          const state = this.#state(n);
+          return {
+            session: state.session,
+            records: [
+              ...state.events,
+              ...state.commands.values(),
+              ...state.interactions.values(),
+              ...state.surfaces.values(),
+            ],
+          };
+        },
+        {
+          ...defaultLimits,
+          maxBytes: Math.min(
+            defaultLimits.maxBytes,
+            this.#bounds.maxQueryBytes,
+          ),
+          maxTextBytes: Math.min(
+            defaultLimits.maxTextBytes,
+            this.#bounds.maxQueryBytes,
+          ),
+        },
+      );
+    });
+  }
+  async listSessions(
+    caller: Caller,
+    query: PageQuery,
+  ): Promise<Result<SessionPage>> {
+    return this.#query(() => {
+      namespaceKey({ ...caller, sessionId: "scope-validation" });
+      const params = [caller.tenantId, caller.principalId, caller.authorityId];
+      return readSessionPage(
+        this.#views,
+        `list:${JSON.stringify(params)}`,
+        query,
+        () =>
+          this.#rows(
+            "SELECT json FROM sessions WHERE tenant_id=? AND principal_id=? AND authority_id=? AND status='active' ORDER BY session_id",
+            params,
+          ).map((row) => {
+            const session = this.#decode<Session>(row.json, "session");
+            if (
+              session.namespace.tenantId !== caller.tenantId ||
+              session.namespace.principalId !== caller.principalId ||
+              session.namespace.authorityId !== caller.authorityId
+            )
+              throw new SchemaError();
+            return session;
+          }),
+        {
+          ...defaultLimits,
+          maxBytes: Math.min(
+            defaultLimits.maxBytes,
+            this.#bounds.maxQueryBytes,
+          ),
+          maxTextBytes: Math.min(
+            defaultLimits.maxTextBytes,
+            this.#bounds.maxQueryBytes,
+          ),
+        },
+      );
     });
   }
   async events(
@@ -787,6 +850,7 @@ class SqliteSessionStore implements SessionStore {
       this.#db.close();
       this.#closed = true;
       this.#owned.clear();
+      this.#views.clear();
       return ok(undefined);
     } catch (error) {
       return errorResult(error);

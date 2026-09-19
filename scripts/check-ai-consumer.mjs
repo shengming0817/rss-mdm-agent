@@ -73,7 +73,8 @@ try {
   writeFileSync(
     join(dir, "consumer.ts"),
     `import assert from 'node:assert/strict';
-import {decode,boundedJson,fingerprint,type HostPort,type ProviderAgentPort,type SessionStore,type ProviderConfiguration,type Subscription,type ProviderInteraction,type ProviderObservation,type ProviderEventBody,VerifiedProviderSession} from '@rss-mdm-agent/ai-contract';
+import { decode, boundedJson, fingerprint, type HostPort, type ProviderAgentPort, type SessionStore, type ProviderConfiguration, type Subscription, type ProviderInteraction, type ProviderObservation, type ProviderEventBody } from '@rss-mdm-agent/ai-contract';
+import { VerifiedProviderSession } from '@rss-mdm-agent/ai-contract/session';
 import {createState,acceptCommand,type SessionState} from '@rss-mdm-agent/ai-contract/transitions';
 import {fixtureSession,acceptance,unwrap,FakeHost,MemorySessionStore,ScriptedProvider,fixtures,fixtureLimits,runStoreConformance,runProviderConformance,runHostConformance} from '@rss-mdm-agent/ai-contract/testing';
 // @ts-expect-error Resume must return capabilities with binding.

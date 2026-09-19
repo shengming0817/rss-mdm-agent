@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { decode } from "../../packages/ai-contract/dist/index.js";
 import {
   VerifiedProviderSession,
-  decode,
   workspaceIdentity,
-} from "../../packages/ai-contract/dist/index.js";
+} from "../../packages/ai-contract/dist/session.js";
 import {
   MemorySessionStore,
   fixtureSession,

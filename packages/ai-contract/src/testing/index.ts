@@ -25,3 +25,5 @@ export { ScriptedProvider, runProviderConformance } from "./provider.js";
 export { runHostConformance } from "./host-conformance.js";
 
 export { restoredSession, verifiedReconciliation } from "./recovery.js";
+
+export { readSnapshot } from "./snapshot.js";

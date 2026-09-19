@@ -29,12 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         match value["body"]["type"].as_str() {
             Some("error") => assert!(matches!(event, Event::Error { .. })),
             Some("invalidated") => assert!(matches!(event, Event::Invalidated { .. })),
-            Some("surface") => match value["body"]["operation"].as_str() {
-                Some("create") => assert!(matches!(event, Event::SurfaceCreate { .. })),
-                Some("update") => assert!(matches!(event, Event::SurfaceUpdate { .. })),
-                Some("delete") => assert!(matches!(event, Event::SurfaceDelete { .. })),
-                _ => panic!("unknown operation"),
-            },
+            Some("surface") => assert!(matches!(event, Event::Surface { .. })),
             _ => {}
         }
     }

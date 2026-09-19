@@ -23,6 +23,14 @@
     "./transitions": {
       "types": "./dist/transitions.d.ts",
       "import": "./dist/transitions.js"
+    },
+    "./session": {
+      "types": "./dist/session.d.ts",
+      "import": "./dist/session.js"
+    },
+    "./read-views": {
+      "types": "./dist/read-views.d.ts",
+      "import": "./dist/read-views.js"
     }
   },
   "scripts": {
@@ -30,13 +38,14 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "ajv": "8.20.0",
     "canonicalize": "5.0.0",
-    "jsonc-parser": "3.3.1"
+    "jsonc-parser": "3.3.1",
+    "@noble/hashes": "2.0.1"
   },
   "devDependencies": {
     "@agentclientprotocol/sdk": "1.4.0",
-    "json-schema-to-typescript": "16.0.0"
+    "json-schema-to-typescript": "16.0.0",
+    "ajv": "8.20.0"
   },
   "engines": {
     "node": ">=24"

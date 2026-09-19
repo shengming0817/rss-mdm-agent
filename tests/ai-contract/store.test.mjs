@@ -1,3 +1,4 @@
+import { readSnapshot } from "../../packages/ai-contract/dist/testing/index.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
@@ -19,7 +20,10 @@ test("failed acceptance publishes neither inbox nor event; lost receipt returns 
   unwrap(await store.create(s));
   store.failNextCommit = true;
   assert.equal((await store.accept(acceptance())).ok, false);
-  assert.equal(unwrap(await store.snapshot(s.namespace)).cursor, 0);
+  assert.equal(
+    unwrap(await store.snapshotPage(s.namespace, { limit: 256 })).cursor,
+    0,
+  );
   const a = unwrap(await store.accept(acceptance()));
   assert.deepEqual(unwrap(await store.accept(acceptance())), a);
 });
@@ -31,7 +35,8 @@ test("pending callback answer is consumed atomically and is unavailable after lo
   store.failNextCommit = true;
   assert.equal((await store.accept(input)).ok, false);
   assert.equal(
-    unwrap(await store.snapshot(s.namespace)).interactions[0].status,
+    unwrap(await store.snapshotPage(s.namespace, { limit: 256 }))
+      .interactions[0].status,
     "pending",
   );
   const receipt = unwrap(await store.accept(input));
@@ -46,17 +51,16 @@ test("pending callback answer is consumed atomically and is unavailable after lo
     "already_answered",
   );
 });
-test("snapshot retains stable history and fails explicitly at its output bound", async () => {
+test("snapshot retains stable history and exposes a continuation at its page bound", async () => {
   const store = new MemorySessionStore(),
     s = fixtureSession();
   unwrap(await store.create(s));
   unwrap(await store.accept(acceptance()));
-  const snapshot = unwrap(await store.snapshot(s.namespace, 1024));
-  assert.equal(snapshot.events.at(-1).sequence, snapshot.cursor);
-  assert.equal(
-    (await store.snapshot(s.namespace, 1)).error.code,
-    "limit_exceeded",
+  const snapshot = unwrap(
+    await store.snapshotPage(s.namespace, { limit: 256 }),
   );
+  assert.equal(snapshot.events.at(-1).sequence, snapshot.cursor);
+  assert.ok(unwrap(await store.snapshotPage(s.namespace, { limit: 1 })).next);
 });
 
 test("terminal cannot be committed without matching provider evidence", async () => {
@@ -148,7 +152,7 @@ test("surface response and deletion cannot be smuggled into one commit", async (
   const shadow = new MemorySessionStore();
   await seedSurface(shadow);
   unwrap(await shadow.accept(acceptance(seeded.session, answer)));
-  const next = unwrap(await shadow.snapshot(seeded.session.namespace, 1024));
+  const next = unwrap(await readSnapshot(shadow, seeded.session.namespace));
   assert.equal(
     (
       await store.commit({
@@ -167,8 +171,8 @@ test("surface response and deletion cannot be smuggled into one commit", async (
     false,
   );
   assert.equal(
-    unwrap(await store.snapshot(seeded.session.namespace, 1024)).interactions[0]
-      .status,
+    unwrap(await store.snapshotPage(seeded.session.namespace, { limit: 256 }))
+      .interactions[0].status,
     "pending",
   );
 });

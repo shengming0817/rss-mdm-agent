@@ -37,6 +37,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // owns semantics; document each generated serialized alternative here.
         if let syn::Item::Enum(enumeration) = item {
             for variant in &mut enumeration.variants {
+                // Only named fields: typify's tuple variants also have generated From impls.
+                if let syn::Fields::Named(fields) = &mut variant.fields {
+                    for field in &mut fields.named {
+                        if matches!(&field.ty, syn::Type::Path(p)
+                            if p.path.is_ident("SurfaceState") || p.path.is_ident("Event") || p.path.is_ident("EventSurfaceBody"))
+                        {
+                            let ty = &field.ty;
+                            field.ty = syn::parse_quote!(::std::boxed::Box<#ty>);
+                        }
+                    }
+                }
                 // Inline object schemas become named types; typify moves their
                 // description to that type and leaves the containing field bare.
                 for field in &mut variant.fields {

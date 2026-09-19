@@ -1,3 +1,4 @@
+import { validateSurface } from "./a2ui.js";
 import { createHash } from "node:crypto";
 import {
   VerifiedProviderSession,
@@ -18,7 +19,6 @@ import type {
   AcceptCommand,
   Result,
   SessionCommit,
-  Snapshot,
   SessionRebind,
   Reconciliation,
 } from "./ports.js";
@@ -30,6 +30,7 @@ import type {
   Id,
   Namespace,
   Session,
+  SnapshotPage,
 } from "./wire.js";
 export const defaultLimits: Readonly<Limits> = Object.freeze({
   maxBytes: 262144,
@@ -56,9 +57,9 @@ export interface SessionState {
   generations: Set<Id>;
   commands: Map<Id, CommandRecord>;
   events: Event[];
-  interactions: Map<Id, Snapshot["interactions"][number]>;
+  interactions: Map<Id, SnapshotPage["interactions"][number]>;
   deliveries: Map<Id, Delivery>;
-  surfaces: Map<Id, Snapshot["surfaces"][number]>;
+  surfaces: Map<Id, SnapshotPage["surfaces"][number]>;
 }
 
 export function eventId(seed: string, label: string): Id {
@@ -162,7 +163,7 @@ function reduceAcceptance(
     receipt,
     state: "accepted",
   };
-  const interactions: Snapshot["interactions"][number][] = [];
+  const interactions: SnapshotPage["interactions"][number][] = [];
   if (input.command.input.type === "respond") {
     const request = input.command.input;
     const interaction = state.interactions.get(request.interactionId);
@@ -227,6 +228,7 @@ function reduceAcceptance(
             type: "interaction" as const,
             interactionId: row.interactionId,
             status: "answered" as const,
+            responseCommandId: row.responseCommandId!,
           },
         })),
       ],
@@ -583,7 +585,11 @@ function reduceCommit(
       ["text", "tool_proposal", "tool_result", "surface"].includes(
         event.body.type,
       ) &&
-      isSettled(source)
+      isSettled(source) &&
+      !(
+        event.body.type === "surface" &&
+        event.body.surface.status === "invalidated"
+      )
     )
       return fail("content_conflict");
     if (
@@ -612,7 +618,8 @@ function reduceCommit(
     )
       return fail("invalid_input");
     if (
-      event.body.type === "surface_invalidated" &&
+      event.body.type === "surface" &&
+      event.body.surface.status === "invalidated" &&
       (!isSettled(source) ||
         !commandIds.has(event.commandId) ||
         (prior && isSettled(prior)))
@@ -733,10 +740,17 @@ function reduceCommit(
       if (
         state.interactions.has(row.interactionId) ||
         !interactionIds.has(row.interactionId) ||
-        !same(body.request, row.request)
+        !same(body.request, row.request) ||
+        body.expiresAtMs !== row.expiresAtMs ||
+        body.callbackLifetime !== row.callbackLifetime
       )
         return fail("invalid_input");
-    } else if ("request" in body) return fail("invalid_input");
+    } else if (
+      "request" in body ||
+      (body.status === "answered" &&
+        body.responseCommandId !== row.responseCommandId)
+    )
+      return fail("invalid_input");
   }
   const deliveryIds = new Set<Id>();
   for (const row of batch.deliveries) {
@@ -768,6 +782,11 @@ function reduceCommit(
   }
   const surfaceIds = new Set<Id>();
   for (const row of batch.surfaces) {
+    try {
+      validateSurface(row, limits);
+    } catch {
+      return fail("invalid_input");
+    }
     const interaction = copy.interactions.get(row.interactionId);
     if (
       surfaceIds.has(row.surfaceInstanceId) ||
@@ -781,8 +800,8 @@ function reduceCommit(
     surfaceIds.add(row.surfaceInstanceId);
     const old = copy.surfaces.get(row.surfaceInstanceId);
     if (old) {
-      const { revision: _a, status: _b, ...identity } = old;
-      const { revision: _c, status: _d, ...nextIdentity } = row;
+      const { revision: _a, status: _b, messages: _m, ...identity } = old;
+      const { revision: _c, status: _d, messages: _n, ...nextIdentity } = row;
       if (!same(identity, nextIdentity)) return fail("stale_binding");
       if (old.status !== "active" || row.revision !== old.revision + 1)
         return fail("revision_conflict", "same_command");
@@ -792,67 +811,36 @@ function reduceCommit(
       interaction.status !== "pending"
     )
       return fail("invalid_input");
+    const matching = batch.events.filter(
+      (e) =>
+        e.body.type === "surface" &&
+        e.body.surface.surfaceInstanceId === row.surfaceInstanceId,
+    );
+    if (
+      matching.length !== 1 ||
+      matching[0].body.type !== "surface" ||
+      !same(matching[0].body.surface, row) ||
+      matching[0].commandId !== interaction.commandId
+    )
+      return fail("invalid_input");
     if (row.status === "invalidated") {
       const source = copy.commands.get(interaction.commandId);
-      const invalidation = batch.events.filter(
-        (e) =>
-          e.body.type === "surface_invalidated" &&
-          e.body.surfaceInstanceId === row.surfaceInstanceId,
-      );
       if (
         !old ||
         !source ||
         !isSettled(source) ||
-        invalidation.length !== 1 ||
-        invalidation[0].body.type !== "surface_invalidated" ||
-        invalidation[0].body.revision !== row.revision ||
-        invalidation[0].commandId !== interaction.commandId
+        !same(row.messages, old.messages)
       )
         return fail("invalid_input");
-      copy.surfaces.set(row.surfaceInstanceId, clone(row));
-      continue;
     }
-    const matching = batch.events.filter(
-      (e) =>
-        e.body.type === "surface" &&
-        e.body.surfaceInstanceId === row.surfaceInstanceId,
-    );
-    const expected = !old
-      ? "create"
-      : row.status === "deleted"
-        ? "delete"
-        : "update";
-    if (
-      matching.length !== 1 ||
-      matching[0].body.type !== "surface" ||
-      matching[0].body.operation !== expected ||
-      matching[0].body.revision !== row.revision ||
-      matching[0].commandId !== interaction.commandId
-    )
-      return fail("invalid_input");
-    const payload = matching[0].body.payload;
-    const operationKeys =
-      expected === "create"
-        ? ["createSurface"]
-        : expected === "delete"
-          ? ["deleteSurface"]
-          : ["updateComponents", "updateDataModel"];
-    const keys = Object.keys(payload).filter((k) => k !== "version");
-    if (
-      payload.version !== "v0.9.1" ||
-      keys.length !== 1 ||
-      !operationKeys.includes(keys[0]) ||
-      (payload[keys[0]] as { surfaceId?: unknown })?.surfaceId !== row.surfaceId
-    )
-      return fail("invalid_input");
     copy.surfaces.set(row.surfaceInstanceId, clone(row));
     if (row.status === "deleted" && interaction.status === "pending")
       return fail("invalid_input");
   }
   for (const e of batch.events)
     if (
-      (e.body.type === "surface" || e.body.type === "surface_invalidated") &&
-      !surfaceIds.has(e.body.surfaceInstanceId)
+      e.body.type === "surface" &&
+      !surfaceIds.has(e.body.surface.surfaceInstanceId)
     )
       return fail("invalid_input");
   for (const record of batch.commands) {
@@ -1021,9 +1009,8 @@ function reduceRebind(
         attemptId: copy.commands.get(interaction.commandId)!.dispatch!
           .attemptId,
         body: {
-          type: "surface_invalidated",
-          surfaceInstanceId: id,
-          revision: next.revision,
+          type: "surface",
+          surface: next,
         },
       },
       `surface-${id}`,

@@ -106,7 +106,7 @@ import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {openSqliteStore} from '@rss-mdm-agent/ai-store-sqlite';
 import type {SessionStore} from '@rss-mdm-agent/ai-contract';
-import {runStoreConformance,fixtureSession,acceptance,unwrap,restoredSession} from '@rss-mdm-agent/ai-contract/testing';
+import {readSnapshot,runStoreConformance,fixtureSession,acceptance,unwrap,restoredSession} from '@rss-mdm-agent/ai-contract/testing';
 const dir=mkdtempSync(join(tmpdir(),'isolated-ai-data-'));let i=0;
 const budget=()=>({timeoutMs:1000,signal:new AbortController().signal});
 try {
@@ -119,7 +119,7 @@ try {
  unwrap(await store.close(budget()));
  assert.equal(spawnSync(process.execPath,[probe,path,'open'],{stdio:'inherit'}).status,0);
  store=unwrap(openSqliteStore({path,mode:'open'}));assert.deepEqual(unwrap(await store.accept(acceptance(initial))),receipt);
- const before=unwrap(await store.snapshot(initial.namespace,1024));
+ const before=unwrap(await readSnapshot(store, initial.namespace));
  const restored=await restoredSession(before.session,'isolated-restored');
  const current=unwrap(await store.rebind({namespace:initial.namespace,expectedRevision:before.session.revision,expectedGeneration:initial.binding.generation,restored,eventId:'restore'}));
  assert.equal(current.binding.generation,'isolated-restored');unwrap(await store.close(budget()));

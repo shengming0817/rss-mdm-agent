@@ -28,6 +28,7 @@ import type {
   Session,
   Event,
   DispatchAttempt,
+  SurfaceState,
 } from "../wire.js";
 export const fixtureCaller: Caller = {
   tenantId: "tenant-1",
@@ -53,6 +54,7 @@ export function fixtureSession(): Session {
       config: { id: "config-1", revision: "1" },
     },
     capabilities: {
+      queue: "unsupported",
       continuation: "unsupported",
       cancellation: "request_only",
       tools: "disabled",
@@ -140,6 +142,7 @@ async function runStoreScenarios(
   await runRecoveryConformance(create);
   await runSurfaceConformance(await create());
   await runCallbackConformance(await create());
+  await runPageConformance(await create());
   const store = await create(),
     s = fixtureSession(),
     input = acceptance(s);
@@ -147,7 +150,8 @@ async function runStoreScenarios(
   const [a, b] = await Promise.all([store.accept(input), store.accept(input)]);
   assert.deepEqual(unwrap(a), unwrap(b));
   assert.equal(
-    unwrap(await store.snapshot(s.namespace, 1024)).commands.length,
+    unwrap(await store.snapshotPage(s.namespace, { limit: 256 })).commands
+      .length,
     1,
   );
   const conflict = await store.accept({
@@ -266,6 +270,79 @@ async function runStoreScenarios(
   assert.equal((await store.create(fixtureSession())).ok, false);
 }
 
+/** A continuation is a frozen read view, including writes between any two pages. */
+async function runPageConformance(store: SessionStore): Promise<void> {
+  const initial = fixtureSession();
+  unwrap(await store.create(initial));
+  for (let i = 0; i < 3; i++) {
+    const head = unwrap(await store.session(initial.namespace));
+    unwrap(await store.accept(acceptance(head, fixtureCommand(`frozen-${i}`))));
+  }
+  const expected = unwrap(
+    await store.snapshotPage(initial.namespace, { limit: 256 }),
+  );
+  const first = unwrap(
+    await store.snapshotPage(initial.namespace, { limit: 1 }),
+  );
+  assert.ok(first.next);
+  const other = {
+    ...initial,
+    namespace: { ...initial.namespace, sessionId: "other-session" },
+  };
+  unwrap(await store.create(other));
+  for (const namespace of [
+    other.namespace,
+    { ...initial.namespace, principalId: "other" },
+  ])
+    assert.equal(
+      (
+        await store.snapshotPage(namespace, {
+          limit: 1,
+          continuation: first.next,
+        })
+      ).ok,
+      false,
+    );
+  const collected = {
+    commands: [...first.commands],
+    events: [...first.events],
+    interactions: [...first.interactions],
+    surfaces: [...first.surfaces],
+  };
+  let continuation: string | undefined = first.next,
+    index = 1;
+  while (continuation) {
+    assert.ok(index < 32, "bounded conformance continuation");
+    const head = unwrap(await store.session(initial.namespace));
+    unwrap(
+      await store.accept(
+        acceptance(head, fixtureCommand(`concurrent-${index}`)),
+      ),
+    );
+    const page: import("../wire.js").SnapshotPage = unwrap(
+      await store.snapshotPage(initial.namespace, { limit: 1, continuation }),
+    );
+    assert.equal(page.snapshotId, first.snapshotId);
+    assert.equal(page.cursor, first.cursor);
+    assert.deepEqual(page.session, first.session);
+    assert.equal(page.pageIndex, index++);
+    collected.commands.push(...page.commands);
+    collected.events.push(...page.events);
+    collected.interactions.push(...page.interactions);
+    collected.surfaces.push(...page.surfaces);
+    continuation = page.next;
+  }
+  assert.deepEqual(collected, {
+    commands: expected.commands,
+    events: expected.events,
+    interactions: expected.interactions,
+    surfaces: expected.surfaces,
+  });
+  assert.ok(
+    unwrap(await store.session(initial.namespace)).lastSequence > first.cursor,
+  );
+}
+
 /** Prepare a real dispatched callback using only the public store port. */
 export async function seedInteraction(
   store: SessionStore,
@@ -372,7 +449,10 @@ async function runStoreBoundaries(
         session: {
           ...s,
           revision: 1,
-          capabilities: { ...s.capabilities, tools: "host_mediated" },
+          capabilities: {
+            ...s.capabilities,
+            tools: "host_mediated",
+          },
         },
       })
     ).ok,
@@ -498,8 +578,8 @@ async function runStoreBoundaries(
     assert.equal(second.ok, false);
     if (!second.ok) assert.equal(second.error.code, "already_answered");
     assert.equal(
-      unwrap(await callbacks.snapshot(head.namespace, 1024)).interactions[0]
-        .status,
+      unwrap(await callbacks.snapshotPage(head.namespace, { limit: 256 }))
+        .interactions[0].status,
       "answered",
     );
   }
@@ -553,11 +633,12 @@ async function runStoreBoundaries(
       false,
     );
   }
-  const snapshot = unwrap(await store.snapshot(s.namespace, 1024));
+  const snapshot = unwrap(
+    await store.snapshotPage(s.namespace, { limit: 256 }),
+  );
   assert.equal(snapshot.events.at(-1)!.sequence, snapshot.cursor);
-  const over = await store.snapshot(s.namespace, 1);
-  assert.equal(over.ok, false);
-  if (!over.ok) assert.equal(over.error.code, "limit_exceeded");
+  const over = await store.snapshotPage(s.namespace, { limit: 1 });
+  assert.ok(unwrap(over).next);
   const replay = [];
   let cursor = 0;
   for (let i = 0; i < 3; i++) {
@@ -724,32 +805,17 @@ export async function dispatchCommand(
 }
 export function surfaceCommit(
   session: Session,
-  surface: import("../wire.js").SurfaceBinding,
+  surface: SurfaceState,
   interaction: import("../wire.js").Interaction,
 ): SessionCommit {
-  const operation =
-    surface.status === "deleted"
-      ? "delete"
-      : surface.revision === 0
-        ? "create"
-        : "update";
-  const key =
-    operation === "create"
-      ? "createSurface"
-      : operation === "delete"
-        ? "deleteSurface"
-        : "updateComponents";
-  const payload = {
-    version: "v0.9.1",
-    [key]: {
-      surfaceId: surface.surfaceId,
-      ...(operation === "create"
-        ? { catalogId: surface.catalogId }
-        : operation === "update"
-          ? { components: [] }
-          : {}),
-    },
-  };
+  if (surface.status === "deleted" && !surface.messages.at(-1)?.deleteSurface)
+    surface = {
+      ...surface,
+      messages: [
+        ...surface.messages,
+        { version: "v0.9.1", deleteSurface: { surfaceId: surface.surfaceId } },
+      ],
+    };
   const event: Event = {
     schemaVersion: 2,
     kind: "event",
@@ -759,13 +825,7 @@ export function surfaceCommit(
     commandId: interaction.commandId,
     attemptId: `attempt-${interaction.commandId}`,
     generation: session.binding.generation,
-    body: {
-      type: "surface",
-      operation,
-      surfaceInstanceId: surface.surfaceInstanceId,
-      revision: surface.revision,
-      payload,
-    },
+    body: { type: "surface", surface },
   } as Event;
   const interactions =
     surface.status === "deleted" && interaction.status === "pending"
@@ -846,7 +906,10 @@ async function runSurfaceConformance(store: SessionStore): Promise<void> {
   );
   const malformedEvents = malformed.events.map((e) =>
     e.body.type === "surface"
-      ? ({ ...e, body: { ...e.body, revision: 99 } } as Event)
+      ? ({
+          ...e,
+          body: { ...e.body, surface: { ...e.body.surface, revision: 99 } },
+        } as Event)
       : e,
   );
   assert.equal(
@@ -892,7 +955,8 @@ async function runSurfaceConformance(store: SessionStore): Promise<void> {
     "deleted",
   );
   assert.equal(
-    unwrap(await store.snapshot(head.namespace, 1024)).interactions[0].status,
+    unwrap(await store.snapshotPage(head.namespace, { limit: 256 }))
+      .interactions[0].status,
     "unavailable",
   );
   assert.equal(
@@ -948,8 +1012,15 @@ export function interactionEvent(
       type: "interaction",
       interactionId: row.interactionId,
       ...(row.status === "pending"
-        ? { status: "pending" as const, request: row.request }
-        : { status: row.status }),
+        ? {
+            status: "pending",
+            request: row.request,
+            expiresAtMs: row.expiresAtMs,
+            callbackLifetime: row.callbackLifetime,
+          }
+        : row.status === "answered"
+          ? { status: "answered", responseCommandId: row.responseCommandId! }
+          : { status: row.status }),
     },
   } as Event;
 }
@@ -1023,6 +1094,8 @@ async function runCallbackConformance(store: SessionStore): Promise<void> {
                 type: "interaction",
                 interactionId: row.interactionId,
                 status: "pending",
+                expiresAtMs: row.expiresAtMs,
+                callbackLifetime: row.callbackLifetime,
                 ...(request === undefined ? {} : { request }),
               } as Event["body"],
             } as Event,
@@ -1032,7 +1105,7 @@ async function runCallbackConformance(store: SessionStore): Promise<void> {
       false,
     );
     const unchanged = unwrap(
-      await store.snapshot(seeded.session.namespace, 1024),
+      await store.snapshotPage(seeded.session.namespace, { limit: 256 }),
     );
     assert.equal(unchanged.interactions.length, 1);
     assert.equal(unchanged.cursor, seeded.session.lastSequence);
@@ -1072,7 +1145,9 @@ async function runCallbackConformance(store: SessionStore): Promise<void> {
       ),
     );
   }
-  const snapshot = unwrap(await store.snapshot(head.namespace, 1024));
+  const snapshot = unwrap(
+    await store.snapshotPage(head.namespace, { limit: 256 }),
+  );
   assert.equal(snapshot.interactions.length, 2);
   assert.ok(snapshot.interactions.every((row) => row.status === "answered"));
   assert.deepEqual(

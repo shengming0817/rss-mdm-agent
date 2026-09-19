@@ -1,3 +1,4 @@
+import { readSnapshot } from "../../packages/ai-contract/dist/testing/index.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -42,9 +43,8 @@ test("terminal requires atomic closure of pending interactions and active surfac
     eventId: "terminal-surface",
     sequence: event.sequence + 1,
     body: {
-      type: "surface_invalidated",
-      surfaceInstanceId: invalidated.surfaceInstanceId,
-      revision: invalidated.revision,
+      type: "surface",
+      surface: invalidated,
     },
   };
   unwrap(
@@ -56,7 +56,7 @@ test("terminal requires atomic closure of pending interactions and active surfac
       events: [...terminal.events, event, surfaceEvent],
     }),
   );
-  const after = unwrap(await store.snapshot(head.namespace, 1024));
+  const after = unwrap(await readSnapshot(store, head.namespace));
   assert.equal(after.interactions[0].status, "unavailable");
   assert.equal(after.surfaces[0].status, "invalidated");
   assert.equal(

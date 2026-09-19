@@ -221,6 +221,32 @@ pub fn decode(bytes: &[u8], limits: &Limits) -> Result<WireRecord, ContractError
 }
 fn context(v: &Value) -> Result<(), ContractError> {
     let bad = match v["kind"].as_str() {
+        Some("snapshotPage") => {
+            let mut invalid = v["cursor"] != v["session"]["lastSequence"];
+            for field in ["events", "commands", "interactions", "surfaces"] {
+                for row in v[field].as_array().into_iter().flatten() {
+                    context(row)?;
+                    let namespace = if row["kind"] == "commandRecord" {
+                        &row["receipt"]["namespace"]
+                    } else {
+                        &row["namespace"]
+                    };
+                    invalid |= namespace != &v["session"]["namespace"];
+                    invalid |=
+                        row["kind"] == "event" && row["sequence"].as_u64() > v["cursor"].as_u64();
+                }
+            }
+            invalid
+        }
+        Some("event") if v["body"]["type"] == "surface" => {
+            v["namespace"] != v["body"]["surface"]["namespace"]
+                || (v["body"]["surface"]["status"] != "invalidated"
+                    && v["generation"] != v["body"]["surface"]["generation"])
+        }
+        Some("accessUpdate") if v["update"]["type"] == "event" => {
+            context(&v["update"]["event"])?;
+            v["sessionId"] != v["update"]["event"]["namespace"]["sessionId"]
+        }
         Some("command") => {
             v["input"]["type"] == "prompt"
                 && ((v["input"]["policy"] == "steer") != v["input"].get("targetRunId").is_some())

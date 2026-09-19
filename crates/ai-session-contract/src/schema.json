@@ -26,10 +26,40 @@
       "$ref": "#/$defs/Delivery"
     },
     {
-      "$ref": "#/$defs/SurfaceBinding"
+      "$ref": "#/$defs/SurfaceState"
     },
     {
       "$ref": "#/$defs/SurfaceAction"
+    },
+    {
+      "$ref": "#/$defs/SnapshotPage"
+    },
+    {
+      "$ref": "#/$defs/SessionPage"
+    },
+    {
+      "$ref": "#/$defs/SnapshotRequest"
+    },
+    {
+      "$ref": "#/$defs/ListRequest"
+    },
+    {
+      "$ref": "#/$defs/AttachRequest"
+    },
+    {
+      "$ref": "#/$defs/DetachRequest"
+    },
+    {
+      "$ref": "#/$defs/ResumeRequest"
+    },
+    {
+      "$ref": "#/$defs/ActionRequest"
+    },
+    {
+      "$ref": "#/$defs/AccessUpdate"
+    },
+    {
+      "$ref": "#/$defs/AttachReceipt"
     }
   ],
   "$defs": {
@@ -38,7 +68,7 @@
       "minLength": 1,
       "maxLength": 128,
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
-      "description": "Opaque ASCII correlation identifier (1\u2013128 characters); never an authentication credential."
+      "description": "Opaque ASCII correlation identifier (1–128 characters); never an authentication credential."
     },
     "Counter": {
       "type": "integer",
@@ -66,12 +96,7 @@
           "description": "Logical session identifier, never reusable after retirement."
         }
       },
-      "required": [
-        "tenantId",
-        "principalId",
-        "authorityId",
-        "sessionId"
-      ],
+      "required": ["tenantId", "principalId", "authorityId", "sessionId"],
       "additionalProperties": false,
       "description": "Trusted tenant/principal/authority/logical-session storage scope supplied by authenticated ingress."
     },
@@ -87,10 +112,7 @@
           "description": "Immutable configuration revision; changing it invalidates prior capability evidence."
         }
       },
-      "required": [
-        "id",
-        "revision"
-      ],
+      "required": ["id", "revision"],
       "additionalProperties": false,
       "description": "Immutable configuration identity and revision; contains no credentials."
     },
@@ -153,11 +175,7 @@
     },
     "CapabilityState": {
       "type": "string",
-      "enum": [
-        "supported",
-        "unsupported",
-        "unknown"
-      ],
+      "enum": ["supported", "unsupported", "unknown"],
       "description": "Only supported enables an operation; unknown and unsupported fail closed."
     },
     "Capabilities": {
@@ -185,12 +203,7 @@
         },
         "tools": {
           "type": "string",
-          "enum": [
-            "host_mediated",
-            "provider_managed",
-            "disabled",
-            "unknown"
-          ],
+          "enum": ["host_mediated", "provider_managed", "disabled", "unknown"],
           "description": "host_mediated still requires containment evidence; provider_managed is not controlled execution; disabled/unknown cannot enable tools."
         },
         "steer": {
@@ -216,6 +229,10 @@
         "multimodal": {
           "$ref": "#/$defs/CapabilityState",
           "description": "Whether provider-specific multimodal input is available through an adapter extension."
+        },
+        "queue": {
+          "$ref": "#/$defs/CapabilityState",
+          "description": "Whether additional prompts may be queued while a run is active."
         }
       },
       "required": [
@@ -227,7 +244,8 @@
         "subagent",
         "terminal",
         "structuredQuestion",
-        "multimodal"
+        "multimodal",
+        "queue"
       ],
       "additionalProperties": false,
       "description": "Capabilities established for one exact provider binding, never execution authorization."
@@ -236,9 +254,10 @@
       "type": "string",
       "enum": [
         "completed",
-        "interrupted",
+        "cancelled",
         "refused",
-        "limit_reached",
+        "max_tokens",
+        "max_turn_requests",
         "failed"
       ],
       "description": "Definite model-turn outcome; does not establish process exit or business-side-effect completion."
@@ -266,11 +285,7 @@
     },
     "Retry": {
       "type": "string",
-      "enum": [
-        "same_command",
-        "reconcile_first",
-        "never"
-      ],
+      "enum": ["same_command", "reconcile_first", "never"],
       "description": "same_command preserves identity/content; reconcile_first checks the original operation; never forbids retry."
     },
     "Failure": {
@@ -285,10 +300,7 @@
           "description": "Explicit retry discipline; uncertainty never authorizes blind resubmission."
         }
       },
-      "required": [
-        "code",
-        "retry"
-      ],
+      "required": ["code", "retry"],
       "additionalProperties": false,
       "description": "Value-free failure and explicit retry discipline."
     },
@@ -309,10 +321,7 @@
             },
             "policy": {
               "type": "string",
-              "enum": [
-                "queue_next",
-                "steer"
-              ],
+              "enum": ["queue_next", "steer"],
               "description": "queue_next serializes later work; steer must match the currently active native run."
             },
             "targetRunId": {
@@ -320,11 +329,7 @@
               "description": "Exact active native run required for steer; forbidden for queue_next."
             }
           },
-          "required": [
-            "type",
-            "text",
-            "policy"
-          ],
+          "required": ["type", "text", "policy"],
           "additionalProperties": false,
           "description": "prompt variant; all fields are data, never authentication or execution authority."
         },
@@ -349,11 +354,7 @@
               "description": "Provider-owned model-turn/run identifier, required when the provider exposes it."
             }
           },
-          "required": [
-            "type",
-            "targetCommandId",
-            "generation"
-          ],
+          "required": ["type", "targetCommandId", "generation"],
           "additionalProperties": false,
           "description": "cancel variant; all fields are data, never authentication or execution authority."
         },
@@ -387,12 +388,7 @@
               "description": "Mandatory for an interaction associated with a surface; cannot bypass deleted/stale state."
             }
           },
-          "required": [
-            "type",
-            "interactionId",
-            "generation",
-            "answer"
-          ],
+          "required": ["type", "interactionId", "generation", "answer"],
           "additionalProperties": false,
           "description": "respond variant; all fields are data, never authentication or execution authority."
         }
@@ -526,13 +522,7 @@
               "description": "Closed command lifecycle projection."
             }
           },
-          "required": [
-            "schemaVersion",
-            "kind",
-            "command",
-            "receipt",
-            "state"
-          ],
+          "required": ["schemaVersion", "kind", "command", "receipt", "state"],
           "additionalProperties": false
         },
         {
@@ -801,11 +791,7 @@
                   "description": "Untrusted model/user text subject to the whole-envelope budgets."
                 }
               },
-              "required": [
-                "type",
-                "messageId",
-                "text"
-              ],
+              "required": ["type", "messageId", "text"],
               "additionalProperties": false,
               "description": "text variant; all fields are data, never authentication or execution authority."
             },
@@ -870,16 +856,11 @@
                 },
                 "state": {
                   "type": "string",
-                  "enum": [
-                    "accepted"
-                  ],
+                  "enum": ["accepted"],
                   "description": "Closed command lifecycle projection."
                 }
               },
-              "required": [
-                "type",
-                "state"
-              ],
+              "required": ["type", "state"],
               "additionalProperties": false,
               "description": "status variant; all fields are data, never authentication or execution authority."
             }
@@ -939,18 +920,11 @@
                 },
                 "state": {
                   "type": "string",
-                  "enum": [
-                    "dispatching",
-                    "running",
-                    "reconciliation_required"
-                  ],
+                  "enum": ["dispatching", "running", "reconciliation_required"],
                   "description": "Closed command lifecycle projection."
                 }
               },
-              "required": [
-                "type",
-                "state"
-              ],
+              "required": ["type", "state"],
               "additionalProperties": false,
               "description": "status variant; all fields are data, never authentication or execution authority."
             },
@@ -1018,10 +992,7 @@
                   "description": "Definite model-turn result; no implication about business side effects."
                 }
               },
-              "required": [
-                "type",
-                "outcome"
-              ],
+              "required": ["type", "outcome"],
               "additionalProperties": false,
               "description": "terminal variant; all fields are data, never authentication or execution authority."
             },
@@ -1086,18 +1057,11 @@
                 },
                 "confirmation": {
                   "type": "string",
-                  "enum": [
-                    "request_only",
-                    "already_terminal",
-                    "unsupported"
-                  ],
+                  "enum": ["request_only", "already_terminal", "unsupported"],
                   "description": "Cancellation request transport confirmation only; does not manufacture a model terminal."
                 }
               },
-              "required": [
-                "type",
-                "confirmation"
-              ],
+              "required": ["type", "confirmation"],
               "additionalProperties": false,
               "description": "cancel_dispatched variant; all fields are data, never authentication or execution authority."
             },
@@ -1174,12 +1138,7 @@
                   "description": "Untrusted tool JSON arguments, including keys, count toward product budgets."
                 }
               },
-              "required": [
-                "type",
-                "proposalId",
-                "name",
-                "arguments"
-              ],
+              "required": ["type", "proposalId", "name", "arguments"],
               "additionalProperties": false,
               "description": "tool_proposal variant; all fields are data, never authentication or execution authority."
             },
@@ -1248,11 +1207,7 @@
                 },
                 "disposition": {
                   "type": "string",
-                  "enum": [
-                    "returned",
-                    "rejected",
-                    "unavailable"
-                  ],
+                  "enum": ["returned", "rejected", "unavailable"],
                   "description": "Protocol tool-result disposition, not authoritative business execution status."
                 },
                 "text": {
@@ -1261,12 +1216,7 @@
                   "description": "Untrusted model/user text subject to the whole-envelope budgets."
                 }
               },
-              "required": [
-                "type",
-                "proposalId",
-                "disposition",
-                "text"
-              ],
+              "required": ["type", "proposalId", "disposition", "text"],
               "additionalProperties": false,
               "description": "tool_result variant; all fields are data, never authentication or execution authority."
             },
@@ -1341,13 +1291,23 @@
                 "request": {
                   "$ref": "#/$defs/InteractionRequest",
                   "description": "Required for the first pending event and equal to the newly committed Interaction request; forbidden on later lifecycle events."
+                },
+                "expiresAtMs": {
+                  "$ref": "#/$defs/Counter",
+                  "description": "Inclusive UTC epoch-millisecond deadline; later first acceptance is rejected."
+                },
+                "callbackLifetime": {
+                  "$ref": "#/$defs/CallbackLifetime",
+                  "description": "A live-generation callback. Restore preserves display history but always makes the previous callback unavailable."
                 }
               },
               "required": [
                 "type",
                 "interactionId",
                 "status",
-                "request"
+                "request",
+                "expiresAtMs",
+                "callbackLifetime"
               ],
               "additionalProperties": false,
               "description": "Initial ordinary question publication; the matching Interaction is committed atomically."
@@ -1417,19 +1377,93 @@
                 },
                 "status": {
                   "type": "string",
-                  "enum": [
-                    "answered",
-                    "expired",
-                    "unavailable"
-                  ],
-                  "description": "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."
+                  "const": "answered",
+                  "description": "The first accepted response consumed this interaction."
+                },
+                "responseCommandId": {
+                  "$ref": "#/$defs/Id",
+                  "description": "Accepted response command which atomically consumed the interaction; present only when answered."
                 }
               },
               "required": [
                 "type",
                 "interactionId",
-                "status"
+                "status",
+                "responseCommandId"
               ],
+              "additionalProperties": false,
+              "description": "First accepted response identity, committed atomically with the receipt and Interaction."
+            },
+            "attemptId": {
+              "$ref": "#/$defs/Id",
+              "description": "Stable identity of one dispatch attempt; never reused after positive non-submission proof."
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "kind",
+            "namespace",
+            "eventId",
+            "sequence",
+            "generation",
+            "commandId",
+            "body",
+            "attemptId"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "integer",
+              "const": 2,
+              "description": "Exact product wire version; V1 is rejected without migration or fallback."
+            },
+            "kind": {
+              "type": "string",
+              "const": "event",
+              "description": "Closed product record discriminator."
+            },
+            "namespace": {
+              "$ref": "#/$defs/Namespace",
+              "description": "Trusted storage isolation scope; not copied from model or action content."
+            },
+            "eventId": {
+              "$ref": "#/$defs/Id",
+              "description": "Stable unique event identifier within the namespace."
+            },
+            "sequence": {
+              "$ref": "#/$defs/Counter",
+              "description": "Strictly increasing stable-event counter; attach cursors are exclusive."
+            },
+            "generation": {
+              "$ref": "#/$defs/Id",
+              "description": "Live provider incarnation token; rejects callbacks from previous incarnations."
+            },
+            "commandId": {
+              "$ref": "#/$defs/Id",
+              "description": "Original command identity within the trusted namespace."
+            },
+            "body": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "interaction",
+                  "description": "Closed variant discriminator."
+                },
+                "interactionId": {
+                  "$ref": "#/$defs/Id",
+                  "description": "Single-use interaction identity within the namespace."
+                },
+                "status": {
+                  "type": "string",
+                  "enum": ["expired", "unavailable"],
+                  "description": "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."
+                }
+              },
+              "required": ["type", "interactionId", "status"],
               "additionalProperties": false,
               "description": "Question lifecycle transition; cannot republish or replace its request."
             },
@@ -1497,10 +1531,7 @@
                   "description": "Closed failure category and retry discipline."
                 }
               },
-              "required": [
-                "type",
-                "failure"
-              ],
+              "required": ["type", "failure"],
               "additionalProperties": false,
               "description": "error variant; all fields are data, never authentication or execution authority."
             }
@@ -1563,10 +1594,7 @@
                   "description": "Local failure without asserting a model terminal."
                 }
               },
-              "required": [
-                "type",
-                "failure"
-              ],
+              "required": ["type", "failure"],
               "additionalProperties": false,
               "description": "Stable event data; never execution or authentication authority."
             }
@@ -1629,10 +1657,7 @@
                   "description": "Complete dispatch identity retained for replay and reconciliation."
                 }
               },
-              "required": [
-                "type",
-                "attempt"
-              ],
+              "required": ["type", "attempt"],
               "additionalProperties": false,
               "description": "Stable event data; never execution or authentication authority."
             },
@@ -1701,20 +1726,11 @@
                 },
                 "resolution": {
                   "type": "string",
-                  "enum": [
-                    "running",
-                    "terminal",
-                    "not_submitted",
-                    "unknown"
-                  ],
+                  "enum": ["running", "terminal", "not_submitted", "unknown"],
                   "description": "Provider observation bound to this attempt and its current observer."
                 }
               },
-              "required": [
-                "type",
-                "attempt",
-                "resolution"
-              ],
+              "required": ["type", "attempt", "resolution"],
               "additionalProperties": false,
               "description": "Stable event data; never execution or authentication authority."
             },
@@ -1773,290 +1789,17 @@
               "type": "object",
               "properties": {
                 "type": {
-                  "type": "string",
                   "const": "surface",
-                  "description": "Closed event discriminator."
-                },
-                "operation": {
                   "type": "string",
-                  "const": "create",
-                  "description": "Upstream surface lifecycle operation paired with its projection."
+                  "description": "Closed variant discriminator."
                 },
-                "surfaceInstanceId": {
-                  "$ref": "#/$defs/Id",
-                  "description": "Product surface incarnation, never resurrected after removal."
-                },
-                "revision": {
-                  "$ref": "#/$defs/Counter",
-                  "description": "Surface revision advanced atomically with the event watermark."
-                },
-                "payload": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "description": "Original bounded upstream A2UI payload, preserved for display recovery."
+                "surface": {
+                  "$ref": "#/$defs/SurfaceState",
+                  "description": "Full surface recovery state committed with this event."
                 }
               },
-              "required": [
-                "type",
-                "operation",
-                "surfaceInstanceId",
-                "revision",
-                "payload"
-              ],
-              "additionalProperties": false,
-              "description": "Stable event data; never execution or authentication authority."
-            },
-            "attemptId": {
-              "$ref": "#/$defs/Id",
-              "description": "Stable identity of one dispatch attempt; never reused after positive non-submission proof."
-            }
-          },
-          "required": [
-            "schemaVersion",
-            "kind",
-            "namespace",
-            "eventId",
-            "sequence",
-            "generation",
-            "commandId",
-            "body",
-            "attemptId"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "properties": {
-            "schemaVersion": {
-              "type": "integer",
-              "const": 2,
-              "description": "Exact product wire version; V1 is rejected without migration or fallback."
-            },
-            "kind": {
-              "type": "string",
-              "const": "event",
-              "description": "Closed product record discriminator."
-            },
-            "namespace": {
-              "$ref": "#/$defs/Namespace",
-              "description": "Trusted storage isolation scope; not copied from model or action content."
-            },
-            "eventId": {
-              "$ref": "#/$defs/Id",
-              "description": "Stable unique event identifier within the namespace."
-            },
-            "sequence": {
-              "$ref": "#/$defs/Counter",
-              "description": "Strictly increasing stable-event counter; attach cursors are exclusive."
-            },
-            "generation": {
-              "$ref": "#/$defs/Id",
-              "description": "Live provider incarnation token; rejects callbacks from previous incarnations."
-            },
-            "commandId": {
-              "$ref": "#/$defs/Id",
-              "description": "Original command identity within the trusted namespace."
-            },
-            "body": {
-              "type": "object",
-              "properties": {
-                "type": {
-                  "type": "string",
-                  "const": "surface",
-                  "description": "Closed event discriminator."
-                },
-                "operation": {
-                  "type": "string",
-                  "const": "update",
-                  "description": "Upstream surface lifecycle operation paired with its projection."
-                },
-                "surfaceInstanceId": {
-                  "$ref": "#/$defs/Id",
-                  "description": "Product surface incarnation, never resurrected after removal."
-                },
-                "revision": {
-                  "$ref": "#/$defs/Counter",
-                  "description": "Surface revision advanced atomically with the event watermark."
-                },
-                "payload": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "description": "Original bounded upstream A2UI payload, preserved for display recovery."
-                }
-              },
-              "required": [
-                "type",
-                "operation",
-                "surfaceInstanceId",
-                "revision",
-                "payload"
-              ],
-              "additionalProperties": false,
-              "description": "Stable event data; never execution or authentication authority."
-            },
-            "attemptId": {
-              "$ref": "#/$defs/Id",
-              "description": "Stable identity of one dispatch attempt; never reused after positive non-submission proof."
-            }
-          },
-          "required": [
-            "schemaVersion",
-            "kind",
-            "namespace",
-            "eventId",
-            "sequence",
-            "generation",
-            "commandId",
-            "body",
-            "attemptId"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "properties": {
-            "schemaVersion": {
-              "type": "integer",
-              "const": 2,
-              "description": "Exact product wire version; V1 is rejected without migration or fallback."
-            },
-            "kind": {
-              "type": "string",
-              "const": "event",
-              "description": "Closed product record discriminator."
-            },
-            "namespace": {
-              "$ref": "#/$defs/Namespace",
-              "description": "Trusted storage isolation scope; not copied from model or action content."
-            },
-            "eventId": {
-              "$ref": "#/$defs/Id",
-              "description": "Stable unique event identifier within the namespace."
-            },
-            "sequence": {
-              "$ref": "#/$defs/Counter",
-              "description": "Strictly increasing stable-event counter; attach cursors are exclusive."
-            },
-            "generation": {
-              "$ref": "#/$defs/Id",
-              "description": "Live provider incarnation token; rejects callbacks from previous incarnations."
-            },
-            "commandId": {
-              "$ref": "#/$defs/Id",
-              "description": "Original command identity within the trusted namespace."
-            },
-            "body": {
-              "type": "object",
-              "properties": {
-                "type": {
-                  "type": "string",
-                  "const": "surface",
-                  "description": "Closed event discriminator."
-                },
-                "operation": {
-                  "type": "string",
-                  "const": "delete",
-                  "description": "Upstream surface lifecycle operation paired with its projection."
-                },
-                "surfaceInstanceId": {
-                  "$ref": "#/$defs/Id",
-                  "description": "Product surface incarnation, never resurrected after removal."
-                },
-                "revision": {
-                  "$ref": "#/$defs/Counter",
-                  "description": "Surface revision advanced atomically with the event watermark."
-                },
-                "payload": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "description": "Original bounded upstream A2UI payload, preserved for display recovery."
-                }
-              },
-              "required": [
-                "type",
-                "operation",
-                "surfaceInstanceId",
-                "revision",
-                "payload"
-              ],
-              "additionalProperties": false,
-              "description": "Stable event data; never execution or authentication authority."
-            },
-            "attemptId": {
-              "$ref": "#/$defs/Id",
-              "description": "Stable identity of one dispatch attempt; never reused after positive non-submission proof."
-            }
-          },
-          "required": [
-            "schemaVersion",
-            "kind",
-            "namespace",
-            "eventId",
-            "sequence",
-            "generation",
-            "commandId",
-            "body",
-            "attemptId"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "properties": {
-            "schemaVersion": {
-              "type": "integer",
-              "const": 2,
-              "description": "Exact product wire version; V1 is rejected without migration or fallback."
-            },
-            "kind": {
-              "type": "string",
-              "const": "event",
-              "description": "Closed product record discriminator."
-            },
-            "namespace": {
-              "$ref": "#/$defs/Namespace",
-              "description": "Trusted storage isolation scope; not copied from model or action content."
-            },
-            "eventId": {
-              "$ref": "#/$defs/Id",
-              "description": "Stable unique event identifier within the namespace."
-            },
-            "sequence": {
-              "$ref": "#/$defs/Counter",
-              "description": "Strictly increasing stable-event counter; attach cursors are exclusive."
-            },
-            "generation": {
-              "$ref": "#/$defs/Id",
-              "description": "Live provider incarnation token; rejects callbacks from previous incarnations."
-            },
-            "commandId": {
-              "$ref": "#/$defs/Id",
-              "description": "Original command identity within the trusted namespace."
-            },
-            "body": {
-              "type": "object",
-              "properties": {
-                "type": {
-                  "type": "string",
-                  "const": "surface_invalidated",
-                  "description": "Closed event discriminator."
-                },
-                "surfaceInstanceId": {
-                  "$ref": "#/$defs/Id",
-                  "description": "Product surface incarnation, never resurrected after removal."
-                },
-                "revision": {
-                  "$ref": "#/$defs/Counter",
-                  "description": "Surface revision advanced atomically with the event watermark."
-                }
-              },
-              "required": [
-                "type",
-                "surfaceInstanceId",
-                "revision"
-              ],
-              "additionalProperties": false,
-              "description": "Stable event data; never execution or authentication authority."
+              "required": ["type", "surface"],
+              "additionalProperties": false
             },
             "attemptId": {
               "$ref": "#/$defs/Id",
@@ -2118,10 +1861,7 @@
                   "description": "Prior provider incarnation invalidated by this verified handoff."
                 }
               },
-              "required": [
-                "type",
-                "previousGeneration"
-              ],
+              "required": ["type", "previousGeneration"],
               "additionalProperties": false,
               "description": "Stable event data; never execution or authentication authority."
             }
@@ -2175,9 +1915,7 @@
                   "description": "Closed event discriminator."
                 }
               },
-              "required": [
-                "type"
-              ],
+              "required": ["type"],
               "additionalProperties": false,
               "description": "Stable event data; never execution or authentication authority."
             }
@@ -2231,10 +1969,7 @@
         },
         "status": {
           "type": "string",
-          "enum": [
-            "active",
-            "retired"
-          ],
+          "enum": ["active", "retired"],
           "description": "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."
         }
       },
@@ -2290,12 +2025,7 @@
         },
         "status": {
           "type": "string",
-          "enum": [
-            "pending",
-            "answered",
-            "expired",
-            "unavailable"
-          ],
+          "enum": ["pending", "answered", "expired", "unavailable"],
           "description": "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."
         },
         "responseCommandId": {
@@ -2303,10 +2033,7 @@
           "description": "Accepted response command which atomically consumed the interaction; present only when answered."
         },
         "callbackLifetime": {
-          "type": "string",
-          "enum": [
-            "generation_bound"
-          ],
+          "$ref": "#/$defs/CallbackLifetime",
           "description": "A live-generation callback. Restore preserves display history but always makes the previous callback unavailable."
         },
         "nativeCallbackId": {
@@ -2376,20 +2103,12 @@
         },
         "retry": {
           "type": "string",
-          "enum": [
-            "receiver_idempotent",
-            "reconcile_first",
-            "never"
-          ],
+          "enum": ["receiver_idempotent", "reconcile_first", "never"],
           "description": "Explicit retry discipline; uncertainty never authorizes blind resubmission."
         },
         "status": {
           "type": "string",
-          "enum": [
-            "pending",
-            "delivered",
-            "reconciliation_required"
-          ],
+          "enum": ["pending", "delivered", "reconciliation_required"],
           "description": "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."
         },
         "attempts": {
@@ -2416,98 +2135,6 @@
       ],
       "additionalProperties": false,
       "description": "Reliable cross-service outbox record bound to an immutable event and target."
-    },
-    "SurfaceBinding": {
-      "type": "object",
-      "properties": {
-        "schemaVersion": {
-          "type": "integer",
-          "const": 2,
-          "description": "Exact product wire version; V1 is rejected without migration or fallback."
-        },
-        "kind": {
-          "type": "string",
-          "const": "surface",
-          "description": "Closed product record discriminator."
-        },
-        "namespace": {
-          "$ref": "#/$defs/Namespace",
-          "description": "Trusted storage isolation scope; not copied from model or action content."
-        },
-        "generation": {
-          "$ref": "#/$defs/Id",
-          "description": "Live provider incarnation token; rejects callbacks from previous incarnations."
-        },
-        "nativeRunId": {
-          "$ref": "#/$defs/Id",
-          "description": "Provider-owned model-turn/run identifier, required when the provider exposes it."
-        },
-        "surfaceId": {
-          "$ref": "#/$defs/Id",
-          "description": "Upstream A2UI surface identifier."
-        },
-        "surfaceInstanceId": {
-          "$ref": "#/$defs/Id",
-          "description": "Fresh product identity for each surface creation; deletion permanently invalidates old actions."
-        },
-        "revision": {
-          "$ref": "#/$defs/Counter",
-          "description": "Monotonic CAS revision of this product record."
-        },
-        "interactionId": {
-          "$ref": "#/$defs/Id",
-          "description": "Single-use interaction identity within the namespace."
-        },
-        "sourceComponentId": {
-          "$ref": "#/$defs/Id",
-          "description": "Exact upstream source component allowed to emit this action."
-        },
-        "eventName": {
-          "$ref": "#/$defs/Id",
-          "description": "Exact upstream action name associated with this interaction."
-        },
-        "catalogId": {
-          "$ref": "#/$defs/Id",
-          "description": "Negotiated upstream catalog identity."
-        },
-        "catalogVersion": {
-          "$ref": "#/$defs/Id",
-          "description": "Negotiated fixed catalog version; not a renderer implementation claim."
-        },
-        "a2uiVersion": {
-          "type": "string",
-          "const": "v0.9.1",
-          "description": "Exact negotiated upstream A2UI version."
-        },
-        "status": {
-          "type": "string",
-          "enum": [
-            "active",
-            "deleted",
-            "invalidated"
-          ],
-          "description": "Deleted is an upstream deletion; invalidated is a product-side loss of action authority. Neither may reactivate."
-        }
-      },
-      "required": [
-        "schemaVersion",
-        "kind",
-        "namespace",
-        "generation",
-        "nativeRunId",
-        "surfaceId",
-        "surfaceInstanceId",
-        "revision",
-        "interactionId",
-        "sourceComponentId",
-        "eventName",
-        "catalogId",
-        "catalogVersion",
-        "a2uiVersion",
-        "status"
-      ],
-      "additionalProperties": false,
-      "description": "Product association for an upstream A2UI surface instance; catalog/renderer retain upstream ownership."
     },
     "SurfaceAction": {
       "type": "object",
@@ -2577,10 +2204,7 @@
           "description": "Current surface revision checked atomically during response acceptance."
         }
       },
-      "required": [
-        "instanceId",
-        "revision"
-      ],
+      "required": ["instanceId", "revision"],
       "additionalProperties": false,
       "description": "Surface revision checked atomically when accepting an action response."
     },
@@ -2606,11 +2230,7 @@
         },
         "certainty": {
           "type": "string",
-          "enum": [
-            "intent",
-            "submitted",
-            "unknown"
-          ],
+          "enum": ["intent", "submitted", "unknown"],
           "description": "intent is stored before native submission; submitted has native acceptance; unknown requires reconciliation."
         },
         "attemptId": {
@@ -2639,6 +2259,576 @@
       ],
       "additionalProperties": false,
       "description": "One active dispatch attempt. Origin identity is immutable; unknown native coordinates may be filled once. Only verified rebind changes observerGeneration."
+    },
+    "SurfaceState": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "integer",
+          "const": 2,
+          "description": "Exact product wire version; V1 is rejected without migration or fallback."
+        },
+        "kind": {
+          "type": "string",
+          "const": "surface",
+          "description": "Closed product record discriminator."
+        },
+        "namespace": {
+          "$ref": "#/$defs/Namespace",
+          "description": "Trusted storage isolation scope; not copied from model or action content."
+        },
+        "generation": {
+          "$ref": "#/$defs/Id",
+          "description": "Live provider incarnation token; rejects callbacks from previous incarnations."
+        },
+        "nativeRunId": {
+          "$ref": "#/$defs/Id",
+          "description": "Provider-owned model-turn/run identifier, required when the provider exposes it."
+        },
+        "surfaceId": {
+          "$ref": "#/$defs/Id",
+          "description": "Upstream A2UI surface identifier."
+        },
+        "surfaceInstanceId": {
+          "$ref": "#/$defs/Id",
+          "description": "Fresh product identity for each surface creation; deletion permanently invalidates old actions."
+        },
+        "revision": {
+          "$ref": "#/$defs/Counter",
+          "description": "Monotonic CAS revision of this product record."
+        },
+        "interactionId": {
+          "$ref": "#/$defs/Id",
+          "description": "Single-use interaction identity within the namespace."
+        },
+        "sourceComponentId": {
+          "$ref": "#/$defs/Id",
+          "description": "Exact upstream source component allowed to emit this action."
+        },
+        "eventName": {
+          "$ref": "#/$defs/Id",
+          "description": "Exact upstream action name associated with this interaction."
+        },
+        "catalogId": {
+          "$ref": "#/$defs/Id",
+          "description": "Negotiated upstream catalog identity."
+        },
+        "catalogVersion": {
+          "$ref": "#/$defs/Id",
+          "description": "Negotiated fixed catalog version; not a renderer implementation claim."
+        },
+        "a2uiVersion": {
+          "type": "string",
+          "const": "v0.9.1",
+          "description": "Exact negotiated upstream A2UI version."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "deleted", "invalidated"],
+          "description": "Deleted is an upstream deletion; invalidated is a product-side loss of action authority. Neither may reactivate."
+        },
+        "messages": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "description": "Bounded unchanged upstream messages needed to rebuild this instance; not a second A2UI schema."
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "namespace",
+        "generation",
+        "nativeRunId",
+        "surfaceId",
+        "surfaceInstanceId",
+        "revision",
+        "interactionId",
+        "sourceComponentId",
+        "eventName",
+        "catalogId",
+        "catalogVersion",
+        "a2uiVersion",
+        "status",
+        "messages"
+      ],
+      "additionalProperties": false,
+      "description": "Single surface record: association, lifecycle and bounded upstream recovery content."
+    },
+    "PageQuery": {
+      "type": "object",
+      "properties": {
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 256,
+          "description": "Maximum records in this page, from 1 to 256."
+        },
+        "continuation": {
+          "$ref": "#/$defs/Id",
+          "description": "Opaque continuation of one immutable read view; expires independently of the session."
+        }
+      },
+      "required": ["limit"],
+      "additionalProperties": false
+    },
+    "SnapshotPage": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 2,
+          "type": "integer",
+          "description": "Exact product contract version; no legacy readers."
+        },
+        "kind": {
+          "const": "snapshotPage",
+          "type": "string",
+          "description": "Closed record discriminator."
+        },
+        "snapshotId": {
+          "$ref": "#/$defs/Id",
+          "description": "Identity shared by all pages from one immutable read view."
+        },
+        "pageIndex": {
+          "$ref": "#/$defs/Counter",
+          "description": "Zero-based page order within this snapshot."
+        },
+        "session": {
+          "$ref": "#/$defs/Session",
+          "description": "Session at the snapshot watermark."
+        },
+        "cursor": {
+          "$ref": "#/$defs/Counter",
+          "description": "Stable event watermark shared by every page."
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Event"
+          },
+          "description": "Stable events at or below the watermark."
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CommandRecord"
+          },
+          "description": "Command projections at the watermark."
+        },
+        "interactions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Interaction"
+          },
+          "description": "Interaction display state; does not restore a native callback."
+        },
+        "surfaces": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SurfaceState"
+          },
+          "description": "Bounded original A2UI recovery messages and their associations."
+        },
+        "next": {
+          "$ref": "#/$defs/Id",
+          "description": "Opaque continuation; absent at end of the read view."
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "snapshotId",
+        "pageIndex",
+        "session",
+        "cursor",
+        "events",
+        "commands",
+        "interactions",
+        "surfaces"
+      ],
+      "additionalProperties": false
+    },
+    "SessionPage": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 2,
+          "type": "integer",
+          "description": "Exact product contract version; no legacy readers."
+        },
+        "kind": {
+          "const": "sessionPage",
+          "type": "string",
+          "description": "Closed record discriminator."
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Session"
+          },
+          "description": "Caller-scoped sessions in this immutable page."
+        },
+        "next": {
+          "$ref": "#/$defs/Id",
+          "description": "Opaque continuation; absent at end of the read view."
+        }
+      },
+      "required": ["schemaVersion", "kind", "items"],
+      "additionalProperties": false
+    },
+    "Subscription": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "event",
+              "type": "string",
+              "description": "Closed variant discriminator."
+            },
+            "event": {
+              "$ref": "#/$defs/Event",
+              "description": "Stable Host event."
+            }
+          },
+          "required": ["type", "event"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "delta",
+              "type": "string",
+              "description": "Closed variant discriminator."
+            },
+            "generation": {
+              "$ref": "#/$defs/Id",
+              "description": "Exact native provider incarnation."
+            },
+            "commandId": {
+              "$ref": "#/$defs/Id",
+              "description": "Product command identity."
+            },
+            "messageId": {
+              "$ref": "#/$defs/Id",
+              "description": "Identity of the streamed message within a command."
+            },
+            "text": {
+              "type": "string",
+              "description": "Untrusted display text."
+            }
+          },
+          "required": ["type", "generation", "commandId", "messageId", "text"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "resync_required",
+              "type": "string",
+              "description": "Closed variant discriminator."
+            }
+          },
+          "required": ["type"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "SnapshotRequest": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 2,
+          "type": "integer",
+          "description": "Exact product contract version; no legacy readers."
+        },
+        "kind": {
+          "const": "snapshotRequest",
+          "type": "string",
+          "description": "Closed record discriminator."
+        },
+        "sessionId": {
+          "$ref": "#/$defs/Id",
+          "description": "Product session identity within the authenticated caller namespace."
+        },
+        "query": {
+          "$ref": "#/$defs/PageQuery",
+          "description": "Bounded page query with an opaque caller-bound continuation."
+        }
+      },
+      "required": ["schemaVersion", "kind", "sessionId", "query"],
+      "additionalProperties": false
+    },
+    "ListRequest": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 2,
+          "type": "integer",
+          "description": "Exact product contract version; no legacy readers."
+        },
+        "kind": {
+          "const": "listRequest",
+          "type": "string",
+          "description": "Closed record discriminator."
+        },
+        "query": {
+          "$ref": "#/$defs/PageQuery",
+          "description": "Bounded page query with an opaque caller-bound continuation."
+        }
+      },
+      "required": ["schemaVersion", "kind", "query"],
+      "additionalProperties": false
+    },
+    "AttachRequest": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 2,
+          "type": "integer",
+          "description": "Exact product contract version; no legacy readers."
+        },
+        "kind": {
+          "const": "attachRequest",
+          "type": "string",
+          "description": "Closed record discriminator."
+        },
+        "sessionId": {
+          "$ref": "#/$defs/Id",
+          "description": "Product session identity within the authenticated caller namespace."
+        },
+        "after": {
+          "$ref": "#/$defs/Counter",
+          "description": "Last stable sequence consumed before attaching."
+        },
+        "attachmentId": {
+          "$ref": "#/$defs/Id",
+          "description": "Connection-local attachment identity, echoed on every update."
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "sessionId",
+        "after",
+        "attachmentId"
+      ],
+      "additionalProperties": false
+    },
+    "DetachRequest": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 2,
+          "type": "integer",
+          "description": "Exact product contract version; no legacy readers."
+        },
+        "kind": {
+          "const": "detachRequest",
+          "type": "string",
+          "description": "Closed record discriminator."
+        },
+        "sessionId": {
+          "$ref": "#/$defs/Id",
+          "description": "Product session identity within the authenticated caller namespace."
+        },
+        "attachmentId": {
+          "$ref": "#/$defs/Id",
+          "description": "Connection-local attachment identity, echoed on every update."
+        }
+      },
+      "required": ["schemaVersion", "kind", "sessionId", "attachmentId"],
+      "additionalProperties": false
+    },
+    "ResumeRequest": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 2,
+          "type": "integer",
+          "description": "Exact product contract version; no legacy readers."
+        },
+        "kind": {
+          "const": "resumeRequest",
+          "type": "string",
+          "description": "Closed record discriminator."
+        },
+        "sessionId": {
+          "$ref": "#/$defs/Id",
+          "description": "Product session identity within the authenticated caller namespace."
+        }
+      },
+      "required": ["schemaVersion", "kind", "sessionId"],
+      "additionalProperties": false
+    },
+    "ActionRequest": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 2,
+          "type": "integer",
+          "description": "Exact product contract version; no legacy readers."
+        },
+        "kind": {
+          "const": "actionRequest",
+          "type": "string",
+          "description": "Closed record discriminator."
+        },
+        "metadata": {
+          "$ref": "#/$defs/SurfaceAction",
+          "description": "Product action association, checked independently of untrusted upstream context."
+        },
+        "message": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "Unchanged upstream A2UI client message, validated against the negotiated schema."
+        },
+        "expiresAtMs": {
+          "$ref": "#/$defs/Counter",
+          "description": "Command expiry in Unix milliseconds."
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "metadata",
+        "message",
+        "expiresAtMs"
+      ],
+      "additionalProperties": false
+    },
+    "AccessUpdate": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 2,
+          "type": "integer",
+          "description": "Exact product contract version; no legacy readers."
+        },
+        "kind": {
+          "const": "accessUpdate",
+          "type": "string",
+          "description": "Closed record discriminator."
+        },
+        "sessionId": {
+          "$ref": "#/$defs/Id",
+          "description": "Product session identity within the authenticated caller namespace."
+        },
+        "attachmentId": {
+          "$ref": "#/$defs/Id",
+          "description": "Connection-local attachment identity, echoed on every update."
+        },
+        "update": {
+          "$ref": "#/$defs/Subscription",
+          "description": "Stable event, ephemeral delta, or explicit resynchronization signal."
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "sessionId",
+        "attachmentId",
+        "update"
+      ],
+      "additionalProperties": false
+    },
+    "AttachReceipt": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 2,
+          "type": "integer",
+          "description": "Exact product contract version; no legacy readers."
+        },
+        "kind": {
+          "const": "attachReceipt",
+          "type": "string",
+          "description": "Closed record discriminator."
+        },
+        "sessionId": {
+          "$ref": "#/$defs/Id",
+          "description": "Product session identity within the authenticated caller namespace."
+        },
+        "attachmentId": {
+          "$ref": "#/$defs/Id",
+          "description": "Connection-local attachment identity, echoed on every update."
+        },
+        "after": {
+          "$ref": "#/$defs/Counter",
+          "description": "Last stable sequence consumed before attaching."
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "sessionId",
+        "attachmentId",
+        "after"
+      ],
+      "additionalProperties": false
+    },
+    "Negotiation": {
+      "description": "Selected product ACP extensions; capability metadata is never execution authority.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "contractVersion": {
+          "description": "Exact product contract version.",
+          "type": "integer",
+          "const": 2
+        },
+        "acp": {
+          "description": "Exact ACP protocol version.",
+          "type": "integer",
+          "const": 1
+        },
+        "durableReceipts": {
+          "description": "Host supports transactional receipt semantics; memory doubles simulate this only.",
+          "type": "boolean"
+        },
+        "cursorAttach": {
+          "description": "Host supports stable snapshot-to-event attachment.",
+          "type": "boolean"
+        },
+        "a2ui": {
+          "$ref": "#/$defs/A2uiNegotiation",
+          "description": "Explicitly selected upstream version and product catalog."
+        }
+      },
+      "required": ["contractVersion", "acp", "durableReceipts", "cursorAttach"]
+    },
+    "A2uiNegotiation": {
+      "description": "Explicitly selected upstream version and product catalog.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "description": "Fixed upstream protocol version.",
+          "type": "string",
+          "const": "v0.9.1"
+        },
+        "catalogId": {
+          "type": "string",
+          "const": "urn:rss-mdm-agent:a2ui:interaction",
+          "description": "Fixed product catalog identity."
+        },
+        "catalogVersion": {
+          "type": "string",
+          "const": "1",
+          "description": "Fixed product catalog revision."
+        }
+      },
+      "required": ["version", "catalogId", "catalogVersion"]
+    },
+    "CallbackLifetime": {
+      "type": "string",
+      "enum": ["generation_bound"],
+      "description": "A live-generation callback. Restore preserves display history but always makes the previous callback unavailable."
     }
   }
 }

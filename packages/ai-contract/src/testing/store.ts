@@ -1,3 +1,4 @@
+import { ReadViews, readSnapshotPage, readSessionPage } from "../read-views.js";
 import type {
   AcceptCommand,
   Budget,
@@ -6,7 +7,8 @@ import type {
   SessionCommit,
   SessionRebind,
   SessionStore,
-  Snapshot,
+  Caller,
+  Clock,
 } from "../ports.js";
 import type {
   CommandRecord,
@@ -16,7 +18,10 @@ import type {
   Id,
   Namespace,
   Session,
-  SurfaceBinding,
+  SurfaceState,
+  SnapshotPage,
+  SessionPage,
+  PageQuery,
 } from "../wire.js";
 import {
   acceptCommand,
@@ -39,6 +44,13 @@ const clone = <T>(v: T): T => structuredClone(v);
 export class MemorySessionStore implements SessionStore {
   readonly evidence = "memory_test_double" as const;
   private closed = false;
+  private readonly views: ReadViews;
+  constructor(options: { clock?: Clock; snapshotTtlMs?: number } = {}) {
+    const ttl = options.snapshotTtlMs ?? 30000;
+    if (!Number.isSafeInteger(ttl) || ttl <= 0)
+      throw new TypeError("snapshot ttl");
+    this.views = new ReadViews(options.clock ?? { now: () => Date.now() }, ttl);
+  }
   private states = new Map<string, SessionState>();
   private retiredIds = new Set<string>();
   failNextCommit = false;
@@ -101,7 +113,7 @@ export class MemorySessionStore implements SessionStore {
       return row ? ok(clone(row)) : fail("unavailable");
     });
   }
-  async surface(namespace: Namespace, id: Id): Promise<Result<SurfaceBinding>> {
+  async surface(namespace: Namespace, id: Id): Promise<Result<SurfaceState>> {
     return this.query(() => {
       if (this.closed) return fail("unavailable");
       const state = this.states.get(namespaceKey(namespace));
@@ -130,33 +142,69 @@ export class MemorySessionStore implements SessionStore {
     const result = this.apply(input.namespace, (s) => rebindSession(s, input));
     return result.ok ? this.session(input.namespace) : result;
   }
-  async snapshot(
+  async snapshotPage(
     namespace: Namespace,
-    limit: number = 1024,
-  ): Promise<Result<Snapshot>> {
+    query: PageQuery,
+  ): Promise<Result<SnapshotPage>> {
     return this.query(() => {
       if (this.closed) return fail("unavailable");
-      const s = this.states.get(namespaceKey(namespace));
-      if (!s) return fail("session_gone");
-      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1024)
-        return fail("invalid_input");
-      if (
-        s.events.length +
-          s.commands.size +
-          s.interactions.size +
-          s.surfaces.size >
-        limit
-      )
-        return fail("limit_exceeded");
-      return ok(
-        clone({
-          session: s.session,
-          cursor: s.session.lastSequence,
-          events: s.events,
-          commands: [...s.commands.values()],
-          interactions: [...s.interactions.values()],
-          surfaces: [...s.surfaces.values()],
+      const state = this.states.get(namespaceKey(namespace));
+      if (!state) return fail("session_gone");
+      if (this.failNextQuery) {
+        this.failNextQuery = false;
+        return fail("unavailable", "same_command");
+      }
+      return readSnapshotPage(
+        this.views,
+        `snapshot:${namespaceKey(namespace)}`,
+        query,
+        () => ({
+          session: state.session,
+          records: [
+            ...state.events,
+            ...state.commands.values(),
+            ...state.interactions.values(),
+            ...state.surfaces.values(),
+          ],
         }),
+        fixtureLimits,
+      );
+    });
+  }
+  async listSessions(
+    caller: Caller,
+    query: PageQuery,
+  ): Promise<Result<SessionPage>> {
+    return this.query(() => {
+      if (this.closed) return fail("unavailable");
+      const scope = JSON.stringify([
+        caller.tenantId,
+        caller.principalId,
+        caller.authorityId,
+      ]);
+      namespaceKey({ ...caller, sessionId: "scope-validation" });
+      return readSessionPage(
+        this.views,
+        `list:${scope}`,
+        query,
+        () =>
+          [...this.states.values()]
+            .map((s) => s.session)
+            .filter(
+              (s) =>
+                s.status === "active" &&
+                s.namespace.tenantId === caller.tenantId &&
+                s.namespace.principalId === caller.principalId &&
+                s.namespace.authorityId === caller.authorityId,
+            )
+            .sort((a, b) =>
+              a.namespace.sessionId < b.namespace.sessionId
+                ? -1
+                : a.namespace.sessionId > b.namespace.sessionId
+                  ? 1
+                  : 0,
+            ),
+        fixtureLimits,
       );
     });
   }
@@ -266,6 +314,7 @@ export class MemorySessionStore implements SessionStore {
   }
   async close(_budget: Budget): Promise<Result<void>> {
     this.closed = true;
+    this.views.clear();
     return ok(undefined);
   }
 }

@@ -16,19 +16,23 @@
     "typecheck": "vue-tsc --noEmit -p tsconfig.json",
     "check:boundaries": "node --test scripts/boundaries.test.mjs",
     "check:consumer": "node scripts/check-consumer.mjs",
-    "format:check": "prettier --check packages/ui/runtime.ts packages/ui/src packages/ui/tests apps/desktop/src scripts packages/ai-contract/src tests/ai-contract packages/ai-adapters/claude/src tests/ai-adapters/claude packages/ai-store-sqlite/src tests/ai-store-recovery",
+    "format:check": "prettier --check packages/ui/runtime.ts packages/ui/src packages/ui/tests apps/desktop/src scripts packages/ai-contract/src tests/ai-contract packages/ai-access/src packages/ai-client/src packages/ai-ui-bridge/src tests/ai-access packages/ai-adapters/claude/src tests/ai-adapters/claude packages/ai-store-sqlite/src tests/ai-store-recovery",
     "generate:ai-contract": "node scripts/generate-ai-contract.mjs",
     "check:ai-contract": "node scripts/generate-ai-contract.mjs --check",
     "build:ai-contract": "pnpm --filter @rss-mdm-agent/ai-contract build",
     "test:ai-contract": "pnpm build:ai-contract && node --test tests/ai-contract/*.test.mjs",
     "check:ai-consumer": "node scripts/check-ai-consumer.mjs",
-    "build:ai-store": "pnpm build:ai-contract && pnpm --filter @rss-mdm-agent/ai-store-sqlite build",
-    "test:ai-store": "pnpm build:ai-store && node --test tests/ai-store-recovery/*.test.mjs",
-    "check:ai-store-consumer": "node scripts/check-ai-store-consumer.mjs",
+    "build:ai-access": "pnpm --filter @rss-mdm-agent/ai-contract --filter @rss-mdm-agent/ai-access --filter @rss-mdm-agent/ai-client --filter @rss-mdm-agent/ai-ui-bridge build",
+    "test:ai-access": "pnpm build:ai-access && node --test tests/ai-access/*.test.mjs",
+    "check:ai-access-consumer": "node scripts/check-ai-access-consumer.mjs",
+    "check:ai-boundaries": "node scripts/check-ai-boundaries.mjs",
     "build:ai-claude": "pnpm build:ai-contract && pnpm --filter @rss-mdm-agent/ai-adapter-claude build",
     "test:ai-claude": "pnpm build:ai-claude && node --test tests/ai-adapters/claude/*.test.mjs",
     "check:claude-consumer": "node scripts/check-claude-consumer.mjs",
-    "smoke:claude": "node scripts/smoke-claude.mjs"
+    "smoke:claude": "node scripts/smoke-claude.mjs",
+    "build:ai-store": "pnpm build:ai-contract && pnpm --filter @rss-mdm-agent/ai-store-sqlite build",
+    "test:ai-store": "pnpm build:ai-store && node --test tests/ai-store-recovery/*.test.mjs",
+    "check:ai-store-consumer": "node scripts/check-ai-store-consumer.mjs"
   },
   "devDependencies": {
     "@types/node": "24.3.0",
@@ -41,7 +45,8 @@
     "vite": "6.4.3",
     "vitest": "3.2.4",
     "vue": "3.5.38",
-    "vue-tsc": "2.1.10"
+    "vue-tsc": "2.1.10",
+    "playwright-core": "1.58.2"
   },
   "type": "module"
 }

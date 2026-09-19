@@ -1,6 +1,7 @@
-import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { Ajv2020 } from "ajv/dist/2020.js";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
+import valid from "./validate-record.js";
+import checkId from "./validate-id.js";
 import canonicalize from "canonicalize";
 import { visit } from "jsonc-parser";
 import type { WireRecord, Command, Event, Id } from "./wire.js";
@@ -28,24 +29,11 @@ export class ContractError extends Error {
     this.name = "ContractError";
   }
 }
-const schema = JSON.parse(
-  readFileSync(
-    new URL("../schema/runtime.schema.json", import.meta.url),
-    "utf8",
-  ),
-);
-const validator = new Ajv2020({
-  strict: true,
-  allErrors: false,
-  validateFormats: false,
-});
-const valid = validator.compile<WireRecord>(schema);
-const checkId = validator.compile<Id>(schema.$defs.Id);
-/** Validate the schema-owned primitive, including its type and length bounds. */
+/** Validate the schema-owned primitive without Node runtime dependencies. */
 export function isId(value: unknown): value is Id {
   return checkId(value);
 }
-const byteLength = (s: string) => Buffer.byteLength(s, "utf8");
+const byteLength = (s: string) => new TextEncoder().encode(s).byteLength;
 const unicode = (s: string) => {
   for (const c of s) {
     const n = c.codePointAt(0)!;
@@ -145,10 +133,42 @@ export function decode(input: string | Uint8Array, limits: Limits): WireRecord {
   )
     throw new ContractError("version");
   if (!valid(value)) throw new ContractError("schema");
-  checkContext(value);
-  return value;
+  checkContext(value as WireRecord);
+  return value as WireRecord;
 }
 function checkContext(value: WireRecord): void {
+  if (value.kind === "snapshotPage") {
+    if (value.cursor !== value.session.lastSequence)
+      throw new ContractError("context");
+    const namespace = canonicalize(value.session.namespace);
+    for (const row of [
+      ...value.events,
+      ...value.commands,
+      ...value.interactions,
+      ...value.surfaces,
+    ]) {
+      checkContext(row);
+      const scope =
+        row.kind === "commandRecord" ? row.receipt.namespace : row.namespace;
+      if (canonicalize(scope) !== namespace) throw new ContractError("context");
+      if (row.kind === "event" && row.sequence > value.cursor)
+        throw new ContractError("context");
+    }
+  }
+  if (
+    value.kind === "event" &&
+    value.body.type === "surface" &&
+    (canonicalize(value.namespace) !==
+      canonicalize(value.body.surface.namespace) ||
+      (value.body.surface.status !== "invalidated" &&
+        value.generation !== value.body.surface.generation))
+  )
+    throw new ContractError("context");
+  if (value.kind === "accessUpdate" && value.update.type === "event") {
+    checkContext(value.update.event);
+    if (value.sessionId !== value.update.event.namespace.sessionId)
+      throw new ContractError("context");
+  }
   if (
     value.kind === "command" &&
     value.input.type === "prompt" &&
@@ -186,7 +206,7 @@ function checkContext(value: WireRecord): void {
     throw new ContractError("context");
 }
 function hash(command: Command): string {
-  return createHash("sha256").update(canonicalize(command)!).digest("hex");
+  return bytesToHex(sha256(new TextEncoder().encode(canonicalize(command)!)));
 }
 /** Serialize plain constructed JSON under the same budgets, without invoking accessors/toJSON. */
 export function boundedJson(value: unknown, limits: Limits): string {
@@ -285,5 +305,5 @@ export function deliveryFingerprint(
   if (checked.kind !== "event" || !isId(target))
     throw new ContractError("schema");
   const payload = JSON.parse(boundedJson({ event: checked, target }, limits));
-  return createHash("sha256").update(canonicalize(payload)!).digest("hex");
+  return bytesToHex(sha256(new TextEncoder().encode(canonicalize(payload)!)));
 }

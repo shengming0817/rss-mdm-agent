@@ -10,8 +10,23 @@ export {
   ContractError,
 } from "./codec.js";
 export type { Limits, Diagnostic } from "./codec.js";
-export { extension, resolveSurfaceAction, projectDelta } from "./protocol.js";
-
-export { VerifiedProviderSession, workspaceIdentity } from "./session.js";
+export {
+  extension,
+  resolveSurfaceAction,
+  projectDelta,
+  parseNegotiation,
+  selectNegotiation,
+} from "./protocol.js";
 
 export type { AdmissionResult, VerifiedReconciliation } from "./session.js";
+
+export {
+  interactionCatalog,
+  accessLimits,
+  validateSurface,
+  SurfaceError,
+} from "./a2ui.js";
+
+export { boundedStream } from "./stream.js";
+
+export { errorCodes } from "./identity.js";

@@ -15,7 +15,7 @@ import {
   SDK_VERSION,
   CLI_VERSION,
 } from "../packages/ai-adapters/claude/dist/index.js";
-import { VerifiedProviderSession } from "../packages/ai-contract/dist/index.js";
+import { VerifiedProviderSession } from "../packages/ai-contract/dist/session.js";
 import { sourceState, sameCommittedSource } from "./source-state.mjs";
 const schema = JSON.parse(
   readFileSync(

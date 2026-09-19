@@ -1,3 +1,4 @@
+import { readSnapshot } from "./snapshot.js";
 import assert from "node:assert/strict";
 import { deliveryFingerprint } from "../codec.js";
 import { fixtureLimits } from "./store.js";
@@ -353,7 +354,7 @@ export async function runRecoveryConformance(
     ).ok,
     false,
   );
-  const history = unwrap(await store.snapshot(head.namespace, 1024));
+  const history = unwrap(await readSnapshot(store, head.namespace));
   const resolved = history.events.find(
     (e) =>
       e.body.type === "reconciled" && e.body.resolution === "not_submitted",
@@ -370,7 +371,7 @@ export async function runRecoveryConformance(
   const surfaceStore = await create();
   const seeded = await seedSurface(surfaceStore, initial);
   const before = unwrap(
-    await surfaceStore.snapshot(seeded.session.namespace, 1024),
+    await readSnapshot(surfaceStore, seeded.session.namespace),
   );
   const restoredSurface = await restoredSession(
     before.session,
@@ -385,11 +386,11 @@ export async function runRecoveryConformance(
       eventId: "surface-rebind",
     }),
   );
-  const snapshot = unwrap(await surfaceStore.snapshot(after.namespace, 1024));
+  const snapshot = unwrap(await readSnapshot(surfaceStore, after.namespace));
   const appended = snapshot.events.slice(before.events.length);
   assert.deepEqual(
     appended.map((e) => e.body.type),
-    ["session_rebound", "status", "interaction", "surface_invalidated"],
+    ["session_rebound", "status", "interaction", "surface"],
   );
   assert.deepEqual(
     appended.map((e) => e.sequence),
@@ -410,12 +411,12 @@ export async function runRecoveryConformance(
     before.events,
   );
   assert.equal(
-    snapshot.events.some((e) => e.body.type === "surface_invalidated"),
+    snapshot.events.some((e) => e.body.type === "surface"),
     true,
   );
   assert.equal(
     snapshot.events.some(
-      (e) => e.body.type === "surface" && e.body.operation === "delete",
+      (e) => e.body.type === "surface" && e.body.surface.status === "deleted",
     ),
     false,
   );
@@ -433,7 +434,7 @@ async function failureAndDelivery(store: SessionStore) {
     () => store.session(invalid),
     () => store.command(invalid, "command-1"),
     () => store.surface(invalid, "surface-1"),
-    () => store.snapshot(invalid, 1024),
+    () => readSnapshot(store, invalid),
     () => store.events(invalid, 0, 1),
   ]) {
     const result = await operation();
@@ -509,9 +510,8 @@ async function terminalInteractions(store: SessionStore) {
     sequence: event.sequence + 1,
     attemptId: record.dispatch!.attemptId,
     body: {
-      type: "surface_invalidated" as const,
-      surfaceInstanceId: invalidated.surfaceInstanceId,
-      revision: invalidated.revision,
+      type: "surface" as const,
+      surface: invalidated,
     },
   } as Event;
   unwrap(
@@ -523,7 +523,7 @@ async function terminalInteractions(store: SessionStore) {
       events: [...terminal.events, event, surfaceEvent],
     }),
   );
-  const after = unwrap(await store.snapshot(head.namespace, 1024));
+  const after = unwrap(await readSnapshot(store, head.namespace));
   assert.equal(after.interactions[0].status, "unavailable");
   assert.equal(after.surfaces[0].status, "invalidated");
   assert.equal(

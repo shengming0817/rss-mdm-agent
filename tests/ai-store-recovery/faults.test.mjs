@@ -1,3 +1,4 @@
+import { readSnapshot } from "../../packages/ai-contract/dist/testing/index.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -34,7 +35,7 @@ test("real SQLITE_FULL aborts acceptance without shrinking the deduplication his
   assert.equal(result.ok, false);
   assert.equal(result.error.code, "limit_exceeded");
   assert.equal(db.isTransaction, false);
-  assert.equal(unwrap(await store.snapshot(initial.namespace, 1024)).cursor, 0);
+  assert.equal(unwrap(await readSnapshot(store, initial.namespace)).cursor, 0);
   db.exec(`PRAGMA max_page_count=${pages + 128}`);
   unwrap(await store.accept(acceptance(initial, large)));
 });
@@ -52,7 +53,7 @@ test("foreign key failure at the final write rolls back every earlier table", as
   );
   assert.equal((await store.accept(acceptance(initial))).ok, false);
   assert.equal(
-    unwrap(await store.snapshot(initial.namespace, 1024)).commands.length,
+    unwrap(await readSnapshot(store, initial.namespace)).commands.length,
     0,
   );
   db.exec(
@@ -117,7 +118,7 @@ test("snapshot cursor bridges surface create/update/delete and restart without g
     path = join(h.directory, "surface.sqlite"),
     store = unwrap(h.open(path));
   const seeded = await seedSurface(store),
-    before = unwrap(await store.snapshot(seeded.session.namespace, 1024));
+    before = unwrap(await readSnapshot(store, seeded.session.namespace));
   const updated = { ...seeded.surface, revision: 1 };
   unwrap(
     await store.commit(
@@ -140,14 +141,22 @@ test("snapshot cursor bridges surface create/update/delete and restart without g
     [before.cursor + 1, before.cursor + 2, before.cursor + 3],
   );
   assert.deepEqual(
-    delta.filter((e) => e.body.type === "surface").map((e) => e.body.operation),
-    ["update", "delete"],
+    delta
+      .filter((e) => e.body.type === "surface")
+      .map((e) => ({
+        status: e.body.surface.status,
+        revision: e.body.surface.revision,
+      })),
+    [
+      { status: "active", revision: 1 },
+      { status: "deleted", revision: 2 },
+    ],
   );
-  const full = unwrap(await store.snapshot(head.namespace, 1024));
+  const full = unwrap(await readSnapshot(store, head.namespace));
   assert.deepEqual([...before.events, ...delta], full.events);
   unwrap(await store.close(budget()));
   assert.deepEqual(
-    unwrap(await unwrap(h.open(path, "open")).snapshot(head.namespace, 1024)),
+    unwrap(await readSnapshot(unwrap(h.open(path, "open")), head.namespace)),
     full,
   );
 });
@@ -228,7 +237,7 @@ test("capacity fails explicitly; retirement retains an irreversible namespace to
     "limit_exceeded",
   );
   assert.equal(
-    unwrap(await limited.snapshot(initial.namespace, 1024)).cursor,
+    unwrap(await readSnapshot(limited, initial.namespace)).cursor,
     0,
   );
 });

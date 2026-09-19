@@ -28,8 +28,8 @@ await store.close({ timeoutMs: 1000, signal: new AbortController().signal });
 
 - `BEGIN IMMEDIATE` 内只执行同步状态转换和 SQL；没有可注入 async 事务回调。命令、事件、交互、surface、delivery 先写，带 revision/generation 的 session CAS 最后写；任何失败全部回滚。
 - 每张主键、唯一键、外键及作用域查询都包含 tenant/principal/authority/session。session 内 event ID 和 sequence 唯一；callback ID 在 namespace/generation 内唯一；delivery 引用同 namespace 的原事件。
-- surface 的原样上游 payload 只保存在稳定事件中，关联表保存身份/revision/lifecycle。历史 payload 与问题可重放；恢复 UI 不复活原生 callback。
-- snapshot 是当前同步连接上的一致性读取，包含全部稳定历史及同一 cursor；不压缩活动日志，不静默截断。events 从 exclusive cursor 接续。全局 recovery/deliveries 使用有界 keyset 分页，cursor 仅向相同 adapter 原样回传。
+- surface 的原样上游 messages 随完整 SurfaceState 同时保存在状态和稳定事件中，身份/revision/lifecycle 与恢复内容原子推进。历史 payload 与问题可重放；恢复 UI 不复活原生 callback。
+- snapshotPage 在当前同步连接捕获一致性读视图，按同一 cursor 分页全部稳定历史；listSessions 按可信 caller 隔离并分页。两者续页缓存最多128份/16MiB、30秒期限，关闭/重启后返回 cursor_expired；重新抓取快照即可按持久水位接续。不压缩活动日志，不静默截断。events 从 exclusive cursor 接续。全局 recovery/deliveries 使用有界 keyset 分页，cursor 仅向相同 adapter 原样回传。
 - delivery 查询同时返回到期 pending 与 reconciliation_required。调用方检查 status/retry，未知副作用先核实；查询不是领取或自动重发许可。重复 delivered 结算保持幂等，不承诺跨数据库/外部副作用 exactly-once。
 - 全部命令 terminal/invalidated、无 pending interaction 且 delivery 全部 delivered 才能 retire。receipt 保留期结束后可 prune；永久 namespace tombstone 防止 session ID 复用。active 命令、历史去重键和未决副作用不会为了腾容量而删除。
 

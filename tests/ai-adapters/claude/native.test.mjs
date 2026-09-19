@@ -17,7 +17,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createClaudeAdapter } from "../../../packages/ai-adapters/claude/dist/index.js";
-import { VerifiedProviderSession } from "../../../packages/ai-contract/dist/index.js";
+import { VerifiedProviderSession } from "../../../packages/ai-contract/dist/session.js";
 const budget = (ms = 15000) => ({
   timeoutMs: ms,
   signal: AbortSignal.timeout(ms),
@@ -498,7 +498,7 @@ test(
       ),
     );
     assert.equal(state.status, "terminal");
-    assert.equal(state.outcome, "interrupted");
+    assert.equal(state.outcome, "cancelled");
     assert.equal(unwrap(await adapter.close(budget())).processStopped, true);
   },
 );

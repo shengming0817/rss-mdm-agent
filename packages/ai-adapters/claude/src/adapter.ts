@@ -1,3 +1,4 @@
+import { workspaceIdentity } from "@rss-mdm-agent/ai-contract/session";
 import { randomUUID } from "node:crypto";
 import {
   createSdkMcpServer,
@@ -12,7 +13,6 @@ import {
   decode,
   boundedJson,
   fingerprint,
-  workspaceIdentity,
   isId,
   type DispatchAttempt,
   type Reconciliation,
@@ -412,6 +412,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
             config.permissions === "host_mediated"
               ? "host_mediated"
               : "disabled",
+          queue: "unsupported",
           steer: "unsupported",
           fork: "unsupported",
           subagent: "unsupported",
@@ -681,18 +682,16 @@ export class ClaudeAdapter implements ProviderAgentPort {
       const outcome: Outcome =
         m.terminal_reason === "aborted_streaming" ||
         m.terminal_reason === "aborted_tools"
-          ? "interrupted"
+          ? "cancelled"
           : m.stop_reason === "refusal"
             ? "refused"
-            : m.subtype === "success"
-              ? m.is_error
-                ? "failed"
-                : "completed"
-              : m.subtype === "error_max_turns" ||
-                  m.subtype === "error_max_budget_usd" ||
-                  m.subtype === "error_max_structured_output_retries"
-                ? "limit_reached"
-                : "failed";
+            : m.stop_reason === "max_tokens"
+              ? "max_tokens"
+              : m.subtype === "error_max_turns"
+                ? "max_turn_requests"
+                : m.subtype === "success" && !m.is_error
+                  ? "completed"
+                  : "failed";
       turn.interactions.invalidate();
       turn.outcome = outcome;
       this.emit(turn, { type: "terminal", outcome });

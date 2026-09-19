@@ -230,7 +230,7 @@ test("conformance watchdog reaches cleanup when an adapter ignores abort", async
   }
 });
 
-import { VerifiedProviderSession } from "../../packages/ai-contract/dist/index.js";
+import { VerifiedProviderSession } from "../../packages/ai-contract/dist/session.js";
 import { fixtureSession } from "../../packages/ai-contract/dist/testing/index.js";
 
 test("controlled admission requires a trusted verifier and binds immutable evidence to endpoint and incarnation", async () => {

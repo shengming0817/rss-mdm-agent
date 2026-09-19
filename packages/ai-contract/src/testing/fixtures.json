@@ -94,7 +94,8 @@
         "subagent": "unsupported",
         "terminal": "unsupported",
         "structuredQuestion": "unsupported",
-        "multimodal": "unsupported"
+        "multimodal": "unsupported",
+        "queue": "unsupported"
       },
       "status": "active"
     },
@@ -155,10 +156,78 @@
       "interactionId": "i-1",
       "sourceComponentId": "button-1",
       "eventName": "respond",
-      "catalogId": "catalog-1",
+      "catalogId": "urn:rss-mdm-agent:a2ui:interaction",
       "catalogVersion": "1",
       "a2uiVersion": "v0.9.1",
-      "status": "active"
+      "status": "active",
+      "messages": [
+        {
+          "version": "v0.9.1",
+          "createSurface": {
+            "surfaceId": "surface-1",
+            "catalogId": "urn:rss-mdm-agent:a2ui:interaction"
+          }
+        },
+        {
+          "version": "v0.9.1",
+          "updateComponents": {
+            "surfaceId": "surface-1",
+            "components": [
+              {
+                "id": "root",
+                "component": "Column",
+                "children": ["question", "field", "button-1"]
+              },
+              {
+                "id": "question",
+                "component": "Text",
+                "text": {
+                  "path": "/question"
+                }
+              },
+              {
+                "id": "field",
+                "component": "TextField",
+                "label": "Answer",
+                "value": {
+                  "path": "/answer"
+                }
+              },
+              {
+                "id": "button-1",
+                "component": "Button",
+                "child": "label",
+                "action": {
+                  "event": {
+                    "name": "respond",
+                    "context": {
+                      "answer": {
+                        "path": "/answer"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "id": "label",
+                "component": "Text",
+                "text": "Send answer"
+              }
+            ]
+          }
+        },
+        {
+          "version": "v0.9.1",
+          "updateDataModel": {
+            "surfaceId": "surface-1",
+            "path": "/",
+            "value": {
+              "question": "Choose an option",
+              "answer": "pending"
+            }
+          }
+        }
+      ]
     },
     {
       "schemaVersion": 2,
@@ -254,7 +323,7 @@
       "generation": "generation-1",
       "body": {
         "type": "terminal",
-        "outcome": "interrupted"
+        "outcome": "cancelled"
       },
       "attemptId": "attempt-command-1"
     },
@@ -765,9 +834,97 @@
       "commandId": "command-1",
       "generation": "generation-1",
       "body": {
-        "type": "surface_invalidated",
-        "surfaceInstanceId": "surface-instance-1",
-        "revision": 1
+        "type": "surface",
+        "surface": {
+          "schemaVersion": 2,
+          "kind": "surface",
+          "namespace": {
+            "tenantId": "tenant-1",
+            "principalId": "user-1",
+            "authorityId": "authority-1",
+            "sessionId": "session-1"
+          },
+          "generation": "generation-1",
+          "nativeRunId": "run-1",
+          "surfaceId": "surface-1",
+          "surfaceInstanceId": "surface-instance-1",
+          "revision": 1,
+          "interactionId": "i-1",
+          "sourceComponentId": "button-1",
+          "eventName": "respond",
+          "catalogId": "urn:rss-mdm-agent:a2ui:interaction",
+          "catalogVersion": "1",
+          "a2uiVersion": "v0.9.1",
+          "status": "invalidated",
+          "messages": [
+            {
+              "version": "v0.9.1",
+              "createSurface": {
+                "surfaceId": "surface-1",
+                "catalogId": "urn:rss-mdm-agent:a2ui:interaction"
+              }
+            },
+            {
+              "version": "v0.9.1",
+              "updateComponents": {
+                "surfaceId": "surface-1",
+                "components": [
+                  {
+                    "id": "root",
+                    "component": "Column",
+                    "children": ["question", "field", "button-1"]
+                  },
+                  {
+                    "id": "question",
+                    "component": "Text",
+                    "text": {
+                      "path": "/question"
+                    }
+                  },
+                  {
+                    "id": "field",
+                    "component": "TextField",
+                    "label": "Answer",
+                    "value": {
+                      "path": "/answer"
+                    }
+                  },
+                  {
+                    "id": "button-1",
+                    "component": "Button",
+                    "child": "label",
+                    "action": {
+                      "event": {
+                        "name": "respond",
+                        "context": {
+                          "answer": {
+                            "path": "/answer"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "id": "label",
+                    "component": "Text",
+                    "text": "Send answer"
+                  }
+                ]
+              }
+            },
+            {
+              "version": "v0.9.1",
+              "updateDataModel": {
+                "surfaceId": "surface-1",
+                "path": "/",
+                "value": {
+                  "question": "Choose an option",
+                  "answer": "pending"
+                }
+              }
+            }
+          ]
+        }
       },
       "attemptId": "attempt-command-1"
     },
@@ -802,15 +959,95 @@
       "generation": "generation-1",
       "body": {
         "type": "surface",
-        "operation": "create",
-        "surfaceInstanceId": "surface-instance-1",
-        "revision": 0,
-        "payload": {
-          "version": "v0.9.1",
-          "createSurface": {
-            "surfaceId": "surface-1",
-            "catalogId": "basic"
-          }
+        "surface": {
+          "schemaVersion": 2,
+          "kind": "surface",
+          "namespace": {
+            "tenantId": "tenant-1",
+            "principalId": "user-1",
+            "authorityId": "authority-1",
+            "sessionId": "session-1"
+          },
+          "generation": "generation-1",
+          "nativeRunId": "run-1",
+          "surfaceId": "surface-1",
+          "surfaceInstanceId": "surface-instance-1",
+          "revision": 0,
+          "interactionId": "i-1",
+          "sourceComponentId": "button-1",
+          "eventName": "respond",
+          "catalogId": "urn:rss-mdm-agent:a2ui:interaction",
+          "catalogVersion": "1",
+          "a2uiVersion": "v0.9.1",
+          "status": "active",
+          "messages": [
+            {
+              "version": "v0.9.1",
+              "createSurface": {
+                "surfaceId": "surface-1",
+                "catalogId": "urn:rss-mdm-agent:a2ui:interaction"
+              }
+            },
+            {
+              "version": "v0.9.1",
+              "updateComponents": {
+                "surfaceId": "surface-1",
+                "components": [
+                  {
+                    "id": "root",
+                    "component": "Column",
+                    "children": ["question", "field", "button-1"]
+                  },
+                  {
+                    "id": "question",
+                    "component": "Text",
+                    "text": {
+                      "path": "/question"
+                    }
+                  },
+                  {
+                    "id": "field",
+                    "component": "TextField",
+                    "label": "Answer",
+                    "value": {
+                      "path": "/answer"
+                    }
+                  },
+                  {
+                    "id": "button-1",
+                    "component": "Button",
+                    "child": "label",
+                    "action": {
+                      "event": {
+                        "name": "respond",
+                        "context": {
+                          "answer": {
+                            "path": "/answer"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "id": "label",
+                    "component": "Text",
+                    "text": "Send answer"
+                  }
+                ]
+              }
+            },
+            {
+              "version": "v0.9.1",
+              "updateDataModel": {
+                "surfaceId": "surface-1",
+                "path": "/",
+                "value": {
+                  "question": "Choose an option",
+                  "answer": "pending"
+                }
+              }
+            }
+          ]
         }
       },
       "attemptId": "attempt-command-1"
@@ -830,15 +1067,95 @@
       "generation": "generation-1",
       "body": {
         "type": "surface",
-        "operation": "update",
-        "surfaceInstanceId": "surface-instance-1",
-        "revision": 0,
-        "payload": {
-          "version": "v0.9.1",
-          "updateComponents": {
-            "surfaceId": "surface-1",
-            "components": []
-          }
+        "surface": {
+          "schemaVersion": 2,
+          "kind": "surface",
+          "namespace": {
+            "tenantId": "tenant-1",
+            "principalId": "user-1",
+            "authorityId": "authority-1",
+            "sessionId": "session-1"
+          },
+          "generation": "generation-1",
+          "nativeRunId": "run-1",
+          "surfaceId": "surface-1",
+          "surfaceInstanceId": "surface-instance-1",
+          "revision": 0,
+          "interactionId": "i-1",
+          "sourceComponentId": "button-1",
+          "eventName": "respond",
+          "catalogId": "urn:rss-mdm-agent:a2ui:interaction",
+          "catalogVersion": "1",
+          "a2uiVersion": "v0.9.1",
+          "status": "active",
+          "messages": [
+            {
+              "version": "v0.9.1",
+              "createSurface": {
+                "surfaceId": "surface-1",
+                "catalogId": "urn:rss-mdm-agent:a2ui:interaction"
+              }
+            },
+            {
+              "version": "v0.9.1",
+              "updateComponents": {
+                "surfaceId": "surface-1",
+                "components": [
+                  {
+                    "id": "root",
+                    "component": "Column",
+                    "children": ["question", "field", "button-1"]
+                  },
+                  {
+                    "id": "question",
+                    "component": "Text",
+                    "text": {
+                      "path": "/question"
+                    }
+                  },
+                  {
+                    "id": "field",
+                    "component": "TextField",
+                    "label": "Answer",
+                    "value": {
+                      "path": "/answer"
+                    }
+                  },
+                  {
+                    "id": "button-1",
+                    "component": "Button",
+                    "child": "label",
+                    "action": {
+                      "event": {
+                        "name": "respond",
+                        "context": {
+                          "answer": {
+                            "path": "/answer"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "id": "label",
+                    "component": "Text",
+                    "text": "Send answer"
+                  }
+                ]
+              }
+            },
+            {
+              "version": "v0.9.1",
+              "updateDataModel": {
+                "surfaceId": "surface-1",
+                "path": "/",
+                "value": {
+                  "question": "Choose an option",
+                  "answer": "pending"
+                }
+              }
+            }
+          ]
         }
       },
       "attemptId": "attempt-command-1"
@@ -858,15 +1175,148 @@
       "generation": "generation-1",
       "body": {
         "type": "surface",
-        "operation": "delete",
-        "surfaceInstanceId": "surface-instance-1",
-        "revision": 0,
-        "payload": {
-          "version": "v0.9.1",
-          "deleteSurface": {
-            "surfaceId": "surface-1"
-          }
+        "surface": {
+          "schemaVersion": 2,
+          "kind": "surface",
+          "namespace": {
+            "tenantId": "tenant-1",
+            "principalId": "user-1",
+            "authorityId": "authority-1",
+            "sessionId": "session-1"
+          },
+          "generation": "generation-1",
+          "nativeRunId": "run-1",
+          "surfaceId": "surface-1",
+          "surfaceInstanceId": "surface-instance-1",
+          "revision": 0,
+          "interactionId": "i-1",
+          "sourceComponentId": "button-1",
+          "eventName": "respond",
+          "catalogId": "urn:rss-mdm-agent:a2ui:interaction",
+          "catalogVersion": "1",
+          "a2uiVersion": "v0.9.1",
+          "status": "deleted",
+          "messages": [
+            {
+              "version": "v0.9.1",
+              "createSurface": {
+                "surfaceId": "surface-1",
+                "catalogId": "urn:rss-mdm-agent:a2ui:interaction"
+              }
+            },
+            {
+              "version": "v0.9.1",
+              "updateComponents": {
+                "surfaceId": "surface-1",
+                "components": [
+                  {
+                    "id": "root",
+                    "component": "Column",
+                    "children": ["question", "field", "button-1"]
+                  },
+                  {
+                    "id": "question",
+                    "component": "Text",
+                    "text": {
+                      "path": "/question"
+                    }
+                  },
+                  {
+                    "id": "field",
+                    "component": "TextField",
+                    "label": "Answer",
+                    "value": {
+                      "path": "/answer"
+                    }
+                  },
+                  {
+                    "id": "button-1",
+                    "component": "Button",
+                    "child": "label",
+                    "action": {
+                      "event": {
+                        "name": "respond",
+                        "context": {
+                          "answer": {
+                            "path": "/answer"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "id": "label",
+                    "component": "Text",
+                    "text": "Send answer"
+                  }
+                ]
+              }
+            },
+            {
+              "version": "v0.9.1",
+              "updateDataModel": {
+                "surfaceId": "surface-1",
+                "path": "/",
+                "value": {
+                  "question": "Choose an option",
+                  "answer": "pending"
+                }
+              }
+            },
+            {
+              "version": "v0.9.1",
+              "deleteSurface": {
+                "surfaceId": "surface-1"
+              }
+            }
+          ]
         }
+      },
+      "attemptId": "attempt-command-1"
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "event",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "eventId": "pending-golden",
+      "sequence": 1,
+      "commandId": "command-1",
+      "generation": "generation-1",
+      "body": {
+        "type": "interaction",
+        "interactionId": "question-golden",
+        "status": "pending",
+        "request": {
+          "question": "Choose"
+        },
+        "expiresAtMs": 100,
+        "callbackLifetime": "generation_bound"
+      },
+      "attemptId": "attempt-command-1"
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "event",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "eventId": "answered-golden",
+      "sequence": 1,
+      "commandId": "command-1",
+      "generation": "generation-1",
+      "body": {
+        "type": "interaction",
+        "interactionId": "question-golden",
+        "status": "answered",
+        "responseCommandId": "response-golden"
       },
       "attemptId": "attempt-command-1"
     }
@@ -1027,6 +1477,31 @@
     {
       "name": "session-event-with-command",
       "raw": "{\"schemaVersion\":2,\"kind\":\"event\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"eventId\":\"event-1\",\"sequence\":1,\"commandId\":\"command-1\",\"generation\":\"generation-1\",\"body\":{\"type\":\"session_retired\"},\"attemptId\":\"attempt-command-1\"}",
+      "code": "schema"
+    },
+    {
+      "name": "snapshot-watermark-mismatch",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"snapshotPage\",\"snapshotId\":\"snapshot-1\",\"pageIndex\":0,\"session\":{\"schemaVersion\":2,\"kind\":\"session\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"revision\":0,\"lastSequence\":0,\"binding\":{\"provider\":\"fake\",\"providerVersion\":\"fixture-1\",\"adapterVersion\":\"fixture-1\",\"generation\":\"generation-1\",\"accountRef\":\"account-1\",\"nativeSessionId\":\"native-1\",\"config\":{\"id\":\"config-1\",\"revision\":\"1\"},\"workspaceId\":\"workspace-1\"},\"capabilities\":{\"continuation\":\"unsupported\",\"cancellation\":\"request_only\",\"tools\":\"disabled\",\"steer\":\"unsupported\",\"fork\":\"unsupported\",\"subagent\":\"unsupported\",\"terminal\":\"unsupported\",\"structuredQuestion\":\"unsupported\",\"multimodal\":\"unsupported\",\"queue\":\"unsupported\"},\"status\":\"active\"},\"cursor\":1,\"events\":[],\"commands\":[],\"interactions\":[],\"surfaces\":[]}",
+      "code": "context"
+    },
+    {
+      "name": "nested-command-hash-mismatch",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"snapshotPage\",\"snapshotId\":\"snapshot-1\",\"pageIndex\":0,\"session\":{\"schemaVersion\":2,\"kind\":\"session\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"revision\":0,\"lastSequence\":0,\"binding\":{\"provider\":\"fake\",\"providerVersion\":\"fixture-1\",\"adapterVersion\":\"fixture-1\",\"generation\":\"generation-1\",\"accountRef\":\"account-1\",\"nativeSessionId\":\"native-1\",\"config\":{\"id\":\"config-1\",\"revision\":\"1\"},\"workspaceId\":\"workspace-1\"},\"capabilities\":{\"continuation\":\"unsupported\",\"cancellation\":\"request_only\",\"tools\":\"disabled\",\"steer\":\"unsupported\",\"fork\":\"unsupported\",\"subagent\":\"unsupported\",\"terminal\":\"unsupported\",\"structuredQuestion\":\"unsupported\",\"multimodal\":\"unsupported\",\"queue\":\"unsupported\"},\"status\":\"active\"},\"cursor\":0,\"events\":[],\"commands\":[{\"schemaVersion\":2,\"kind\":\"commandRecord\",\"command\":{\"schemaVersion\":2,\"kind\":\"command\",\"sessionId\":\"session-1\",\"commandId\":\"command-1\",\"expiresAtMs\":1000,\"input\":{\"type\":\"prompt\",\"text\":\"fixture text\",\"policy\":\"queue_next\"}},\"receipt\":{\"schemaVersion\":2,\"kind\":\"receipt\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"commandId\":\"command-1\",\"contentHash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"acceptedAtMs\":0,\"retryUntilMs\":100,\"receiptUntilMs\":200,\"acceptedRevision\":1},\"state\":\"accepted\"}],\"interactions\":[],\"surfaces\":[]}",
+      "code": "context"
+    },
+    {
+      "name": "interaction event missing expiresAtMs",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"event\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"eventId\":\"pending-golden\",\"sequence\":1,\"commandId\":\"command-1\",\"generation\":\"generation-1\",\"body\":{\"type\":\"interaction\",\"interactionId\":\"question-golden\",\"status\":\"pending\",\"request\":{\"question\":\"Choose\"},\"callbackLifetime\":\"generation_bound\"},\"attemptId\":\"attempt-command-1\"}",
+      "code": "schema"
+    },
+    {
+      "name": "interaction event missing callbackLifetime",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"event\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"eventId\":\"pending-golden\",\"sequence\":1,\"commandId\":\"command-1\",\"generation\":\"generation-1\",\"body\":{\"type\":\"interaction\",\"interactionId\":\"question-golden\",\"status\":\"pending\",\"request\":{\"question\":\"Choose\"},\"expiresAtMs\":100},\"attemptId\":\"attempt-command-1\"}",
+      "code": "schema"
+    },
+    {
+      "name": "interaction event missing responseCommandId",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"event\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"eventId\":\"answered-golden\",\"sequence\":1,\"commandId\":\"command-1\",\"generation\":\"generation-1\",\"body\":{\"type\":\"interaction\",\"interactionId\":\"question-golden\",\"status\":\"answered\"},\"attemptId\":\"attempt-command-1\"}",
       "code": "schema"
     }
   ],

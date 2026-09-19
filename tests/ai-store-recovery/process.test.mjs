@@ -1,3 +1,4 @@
+import { readSnapshot } from "../../packages/ai-contract/dist/testing/index.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { spawn } from "node:child_process";
@@ -118,7 +119,7 @@ for (const scenario of [
     }
     const store = unwrap(h.open(path, "open")),
       initial = fixtureSession();
-    const snapshot = unwrap(await store.snapshot(initial.namespace, 1024));
+    const snapshot = unwrap(await readSnapshot(store, initial.namespace));
     const persisted = scenario !== "accept-before-commit";
     assert.equal(snapshot.commands.length, persisted ? 1 : 0);
     assert.equal(snapshot.events.length, snapshot.cursor);
@@ -130,7 +131,7 @@ for (const scenario of [
       const receipt = unwrap(await store.accept(acceptance(initial)));
       assert.deepEqual(receipt, snapshot.commands[0].receipt);
       assert.equal(
-        unwrap(await store.snapshot(initial.namespace, 1024)).cursor,
+        unwrap(await readSnapshot(store, initial.namespace)).cursor,
         snapshot.cursor,
         "lost receipt never appends acceptance twice",
       );

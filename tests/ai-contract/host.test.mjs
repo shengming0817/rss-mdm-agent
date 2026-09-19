@@ -90,8 +90,14 @@ test("controlled tools fail closed, unsupported steer and stale cancel do not di
   );
   assert.equal(receipt.commandId, "cancel-1");
   assert.equal(
-    unwrap(await host.snapshot(fixtureCaller, command.sessionId, budget()))
-      .commands[0].state,
+    unwrap(
+      await host.snapshotPage(
+        fixtureCaller,
+        command.sessionId,
+        { limit: 256 },
+        budget(),
+      ),
+    ).commands[0].state,
     "accepted",
   );
 });

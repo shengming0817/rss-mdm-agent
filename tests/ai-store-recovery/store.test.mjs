@@ -1,3 +1,4 @@
+import { readSnapshot } from "../../packages/ai-contract/dist/testing/index.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -53,12 +54,12 @@ test("reopen preserves acceptance but requires a verified new generation before 
   unwrap(await store.create(initial));
   const input = acceptance(initial),
     receipt = unwrap(await store.accept(input));
-  const before = unwrap(await store.snapshot(initial.namespace, 1024));
+  const before = unwrap(await readSnapshot(store, initial.namespace));
   unwrap(await store.close(budget()));
   store = unwrap(h.open(path, "open"));
   assert.deepEqual(unwrap(await store.accept(input)), receipt);
   assert.deepEqual(
-    unwrap(await store.snapshot(initial.namespace, 1024)),
+    unwrap(await readSnapshot(store, initial.namespace)),
     before,
   );
   const another = acceptance(before.session, {
@@ -99,7 +100,7 @@ test("failure at the final session CAS rolls back command, receipt and event", a
   );
   const result = await store.accept(acceptance(initial));
   assert.equal(result.ok, false);
-  assert.deepEqual(unwrap(await store.snapshot(initial.namespace, 1024)), {
+  assert.deepEqual(unwrap(await readSnapshot(store, initial.namespace)), {
     session: initial,
     cursor: 0,
     events: [],

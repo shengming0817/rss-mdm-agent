@@ -116,6 +116,10 @@ await adapter.close({timeoutMs:100,signal:new AbortController().signal});`,
         "@rss-mdm-agent/ai-contract/testing",
       )
       .replaceAll(
+        "../../../packages/ai-contract/dist/session.js",
+        "@rss-mdm-agent/ai-contract/session",
+      )
+      .replaceAll(
         "../../../packages/ai-contract/dist/index.js",
         "@rss-mdm-agent/ai-contract",
       );

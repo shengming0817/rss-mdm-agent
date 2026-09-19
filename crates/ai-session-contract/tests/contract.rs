@@ -104,18 +104,9 @@ fn event_discriminators_select_the_actual_rust_variant() {
                 event,
                 ai_session_contract::Event::Invalidated { .. }
             )),
-            (Some("surface"), Some("create")) => assert!(matches!(
-                event,
-                ai_session_contract::Event::SurfaceCreate { .. }
-            )),
-            (Some("surface"), Some("update")) => assert!(matches!(
-                event,
-                ai_session_contract::Event::SurfaceUpdate { .. }
-            )),
-            (Some("surface"), Some("delete")) => assert!(matches!(
-                event,
-                ai_session_contract::Event::SurfaceDelete { .. }
-            )),
+            (Some("surface"), _) => {
+                assert!(matches!(event, ai_session_contract::Event::Surface { .. }))
+            }
             _ => (),
         }
     }

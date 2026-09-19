@@ -72,13 +72,25 @@ async function runHostScenarios(host: HostPort): Promise<void> {
     { ...fixtureCaller, authorityId: "other" },
   ]) {
     assert.equal(
-      (await host.snapshot(caller, command.sessionId, budget())).ok,
+      (
+        await host.snapshotPage(
+          caller,
+          command.sessionId,
+          { limit: 256 },
+          budget(),
+        )
+      ).ok,
       false,
     );
     assert.equal((await host.submit(caller, command, budget())).ok, false);
   }
   const snapshot = unwrap(
-    await host.snapshot(fixtureCaller, command.sessionId, budget()),
+    await host.snapshotPage(
+      fixtureCaller,
+      command.sessionId,
+      { limit: 256 },
+      budget(),
+    ),
   );
   assert.equal(snapshot.cursor, 1);
   assert.equal(snapshot.events.at(-1)!.sequence, snapshot.cursor);
@@ -111,8 +123,14 @@ async function runHostScenarios(host: HostPort): Promise<void> {
     await stream.return?.();
   }
   assert.equal(
-    unwrap(await host.snapshot(fixtureCaller, command.sessionId, budget()))
-      .commands[0].state,
+    unwrap(
+      await host.snapshotPage(
+        fixtureCaller,
+        command.sessionId,
+        { limit: 256 },
+        budget(),
+      ),
+    ).commands[0].state,
     "accepted",
   );
   const expired = host
@@ -165,12 +183,23 @@ async function runHostScenarios(host: HostPort): Promise<void> {
     ),
   );
   assert.equal(
-    unwrap(await host.snapshot(fixtureCaller, command.sessionId, budget()))
-      .commands[0].state,
+    unwrap(
+      await host.snapshotPage(
+        fixtureCaller,
+        command.sessionId,
+        { limit: 256 },
+        budget(),
+      ),
+    ).commands[0].state,
     "accepted",
   );
   const head = unwrap(
-    await host.snapshot(fixtureCaller, command.sessionId, budget()),
+    await host.snapshotPage(
+      fixtureCaller,
+      command.sessionId,
+      { limit: 256 },
+      budget(),
+    ),
   );
   const waiting = host
     .subscribe(fixtureCaller, command.sessionId, head.cursor, budget())
@@ -188,7 +217,14 @@ async function runHostScenarios(host: HostPort): Promise<void> {
   );
   assert.equal((await host.submit(fixtureCaller, command, budget())).ok, false);
   assert.equal(
-    (await host.snapshot(fixtureCaller, command.sessionId, budget())).ok,
+    (
+      await host.snapshotPage(
+        fixtureCaller,
+        command.sessionId,
+        { limit: 256 },
+        budget(),
+      )
+    ).ok,
     false,
   );
   unwrap(await host.close(budget()));

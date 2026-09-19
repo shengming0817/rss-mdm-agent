@@ -758,6 +758,48 @@ test("new and resumed sessions cannot omit configuration identity fields", async
   }
 });
 
+for (const [patch, outcome] of [
+  [{ terminal_reason: "aborted_streaming" }, "cancelled"],
+  [{ terminal_reason: "aborted_tools" }, "cancelled"],
+  [{ stop_reason: "refusal" }, "refused"],
+  [{ stop_reason: "max_tokens" }, "max_tokens"],
+  [{ subtype: "error_max_turns", is_error: true }, "max_turn_requests"],
+  [{ subtype: "error_max_budget_usd", is_error: true }, "failed"],
+  [
+    { subtype: "error_max_structured_output_retries", is_error: true },
+    "failed",
+  ],
+])
+  test(`native terminal maps to the closed ACP-compatible outcome: ${JSON.stringify(patch)}`, async () => {
+    const h = harness();
+    try {
+      const session = unwrap(
+        await h.adapter.createSession(configuration, budget()),
+      );
+      assert.equal(session.capabilities.queue, "unsupported");
+      const sent = await h.adapter.submit(
+        session.binding,
+        fixtureCommand(),
+        fixtureAttempt(session.binding, fixtureCommand()),
+        budget(),
+      );
+      assert.equal(sent.certainty, "submitted");
+      h.output.push({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        session_id: session.binding.nativeSessionId,
+        user_message_uuid: sent.binding.nativeRequestId,
+        ...patch,
+      });
+      const events = await Array.fromAsync(
+        h.adapter.observe(sent.binding, budget()),
+      );
+      assert.equal(events.at(-1).body.outcome, outcome);
+    } finally {
+      await h.adapter.close(budget());
+    }
+  });
 test("dispatch and reconciliation cannot substitute another attempt or namespace", async () => {
   const h = harness(),
     binding = await create(h),
