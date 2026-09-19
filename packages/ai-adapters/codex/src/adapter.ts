@@ -26,6 +26,7 @@ import {
 } from "@rss-mdm-agent/ai-contract/session";
 import {
   ADAPTER_VERSION,
+  CodexConfigurationFailure,
   compatible,
   launchSpec,
   type CodexAdapterOptions,
@@ -394,7 +395,8 @@ export class CodexAdapter implements CodexAdapterPort {
           multimodal: "unsupported",
         },
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof CodexConfigurationFailure) return fail(error.code);
       return fail("unavailable", "same_command");
     }
   }
@@ -410,11 +412,12 @@ export class CodexAdapter implements CodexAdapterPort {
       budget,
     );
     if (!Array.isArray(result.layers))
-      throw new Error("configuration layers unavailable");
+      throw new CodexConfigurationFailure("permission_denied");
     let user = 0,
       flags = 0;
     for (const layer of result.layers) {
-      if (layer.disabledReason) throw new Error("disabled configuration layer");
+      if (layer.disabledReason)
+        throw new CodexConfigurationFailure("permission_denied");
       if (
         layer.name.type === "user" &&
         layer.name.file ===
@@ -431,17 +434,17 @@ export class CodexAdapter implements CodexAdapterPort {
         flags++;
       else if (layer.name.type === "system" && same(layer.config, {})) {
         /* Empty system policy contributes no settings. */
-      } else throw new Error("foreign configuration layer");
+      } else throw new CodexConfigurationFailure("permission_denied");
     }
     if (user !== 1 || flags !== (Object.keys(overrides).length ? 1 : 0))
-      throw new Error("configuration lineage unavailable");
+      throw new CodexConfigurationFailure("permission_denied");
     const effective = result.config as any;
     if (
       effective.approval_policy !== "on-request" ||
       effective.sandbox_mode !== "read-only" ||
       effective.web_search !== "disabled"
     )
-      throw new Error("unsafe native policy");
+      throw new CodexConfigurationFailure("permission_denied");
     const expected = (overrides.mcp_servers ?? settings.mcp_servers) as Record<
       string,
       unknown
@@ -452,11 +455,11 @@ export class CodexAdapter implements CodexAdapterPort {
         Object.keys(expected).sort(),
       )
     )
-      throw new Error("foreign MCP endpoint");
+      throw new CodexConfigurationFailure("permission_denied");
     for (const [name, fields] of Object.entries(expected))
       for (const [key, value] of Object.entries(fields as object))
         if (!same(effective.mcp_servers[name]?.[key], value))
-          throw new Error("MCP configuration changed");
+          throw new CodexConfigurationFailure("permission_denied");
   }
   private checkThread(thread: Thread, restored: boolean): void {
     // 0.155.0 resume/fork reconstitute the local environment even when the owned

@@ -10,6 +10,13 @@ import { CODEX_VERSION, type LaunchSpec } from "./runtime.js";
 import { HOST_SERVER, type ToolBridge } from "./bridge.js";
 
 export const ADAPTER_VERSION = "0.1.0";
+/** Internal admission signal for deterministic configuration rejection. */
+export class CodexConfigurationFailure extends Error {
+  constructor(readonly code: "invalid_input" | "permission_denied") {
+    super("Codex configuration rejected");
+    this.name = "CodexConfigurationFailure";
+  }
+}
 export type CodexConfiguration = ProviderConfiguration & {
   readonly provider: "codex";
 };
@@ -132,7 +139,12 @@ export async function launchSpec(
   settings: Record<string, unknown>;
   overrides: Record<string, unknown>;
 }> {
-  const url = new URL(resolved.apiUrl);
+  let url: URL;
+  try {
+    url = new URL(resolved.apiUrl);
+  } catch {
+    throw new CodexConfigurationFailure("invalid_input");
+  }
   if (
     (url.protocol !== "https:" &&
       !(
@@ -148,7 +160,7 @@ export async function launchSpec(
     !isAbsolute(resolved.nativeDirectory) ||
     !isAbsolute(resolved.configuration.workingDirectory)
   )
-    throw new Error("invalid host configuration");
+    throw new CodexConfigurationFailure("invalid_input");
   await mkdir(resolved.nativeDirectory, { recursive: true, mode: 0o700 });
   const stat = await lstat(resolved.nativeDirectory);
   if (
@@ -156,9 +168,9 @@ export async function launchSpec(
     stat.isSymbolicLink() ||
     (process.platform !== "win32" && stat.mode & 0o077)
   )
-    throw new Error("native storage must be private");
+    throw new CodexConfigurationFailure("permission_denied");
   if ((await realpath(resolved.nativeDirectory)) !== resolved.nativeDirectory)
-    throw new Error("native storage alias");
+    throw new CodexConfigurationFailure("permission_denied");
   const settings = nativeSettings(resolved);
   const content =
     Object.entries(settings)
@@ -168,11 +180,9 @@ export async function launchSpec(
   try {
     await writeFile(path, content, { flag: "wx", mode: 0o600 });
   } catch (error) {
-    if (
-      (error as NodeJS.ErrnoException).code !== "EEXIST" ||
-      (await readFile(path, "utf8")) !== content
-    )
-      throw new Error("foreign native configuration");
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    if ((await readFile(path, "utf8")) !== content)
+      throw new CodexConfigurationFailure("permission_denied");
   }
   const overrides = bridge
     ? {
