@@ -339,9 +339,11 @@ PowerShell/Bash是原生载荷；Rust提供启动、预算、权限、恢复，J
 C02工具提案无需消费执行内核；C17通过port可用测试服务验收；C15人用UI不依赖AI，C20 先以 Codex 完成产品闭环，不等待 Claude/DeepSeek；A06 汇合三引擎。
 AI 产品 schema 变更回 A01 协调；C12/C13/A05 只改各自 provider 目录，A03 持有公共运行支撑，C20 唯一拥有最终桌面装配。公共 workspace/lock/工程入口每个 wave 串行集成，不等待 C20 才建立基础工程。
 C05组件、C15自助页面、C16对话页面分别独占目录；交互核心不拥有Vue组件，host将C04结果映射到UI。
-C18 的当前公共入口与 S1 测试存储证据见 [execution-sqlite](../../crates/execution-sqlite/README.md)。回执兼作可靠结果，由各 consumer 的持久确认推进投递，乱序确认不能跳过未确认结果；失败/陈旧 runner 事件保留提交的 attempt 与裁决原因。受保护 BLOB 在物化前检查大小，错误区分调用输入、配置及操作/确认/初始化恢复。查询/拉取/确认不派发 runner；只提供显式测试 authority 初始化，真实 ACL/可信身份与平台隔离仍归后续交付。
+C09/C18 分别提供普通命令与可信观察入口，输入类型互斥；普通 Host 无需证据验证器，C19 仅在观察路径装配验证器。两个路径共用幂等、审计和原子提交机制。C18 的当前公共入口与 S1 测试存储证据见 [execution-sqlite](../../crates/execution-sqlite/README.md)。回执兼作可靠结果，由各 consumer 的持久确认推进投递，乱序确认不能跳过未确认结果；失败/陈旧 runner 事件保留提交的 attempt 与裁决原因。受保护 BLOB 在物化前检查大小，错误区分调用输入、配置及操作/确认/初始化恢复。查询/拉取/确认不派发 runner；只提供显式测试 authority 初始化，真实 ACL/可信身份与平台隔离仍归后续交付。
 
 C18 独占 Rust 执行 SQLite migration，A02 独占 TS AI SQLite migration；C19不另建表；Cargo/lock/UI package配置与根入口由单一集成人串行合并。
+
+当前执行存储只接受 C09/C18 的 v2 格式；类型拆分同时提升快照、数据库和指纹域版本。当前无旧数据迁移要求，不提供 v1 reader、升级迁移或升级回归；不支持版本保留原库并拒绝打开。
 
 C19 的当前公共入口与 S1 证据见 [execution-app](../../crates/execution-app/README.md)。应用服务区分原请求重放与显式新尝试，每次新尝试经当前能力/C07/C08及原子提交；仅首次提交释放一次派发。服务 owner 独立于窗口和模型调用，丢失 runner 历史保留 Unknown，不从计划合成成功。配置由可信 host 加载/持久审计，应用验证版本、硬上限、原子替换及 LKG/degraded 接缝；C20 另行承担实际 UI/AI 接线，生产身份和真实 runner 仍归后续阶段。
 

@@ -16,14 +16,14 @@ pub(crate) fn valid_evidence(
 }
 pub(crate) fn validate(p: &FrozenPlan, s: &Snapshot, limits: Limits) -> Result<(), LifecycleError> {
     let bad = || LifecycleError::Snapshot;
-    if s.version != 1
+    if s.version != crate::model::SNAPSHOT_VERSION
         || s.plan_id != p.spec().plan_id
         || &s.plan_digest != p.digest()
         || s.updated_at_unix_ms < s.opened_at_unix_ms
         || s.attempts > p.spec().budget.max_attempts
         || match &s.last_event {
             None => s.revision != 0,
-            Some(e) => e.expected_revision.checked_add(1) != Some(s.revision),
+            Some(e) => e.expected_revision().checked_add(1) != Some(s.revision),
         }
     {
         return Err(bad());

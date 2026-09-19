@@ -23,7 +23,7 @@ fn dispatch_diagnostics_keep_submitted_attempt_and_cause_even_when_stale_or_reje
             },
         );
         let result = store
-            .apply_execution(
+            .apply_command(
                 &operation("diagnostic"),
                 &host.scope(),
                 &command,
@@ -117,7 +117,7 @@ fn first_commit_consumes_all_approvals_once_and_replay_never_reauthorizes_or_dis
     let mut host = TestHost::new(2);
     host.prepare(&mut store);
     let first = store
-        .apply_execution(
+        .apply_command(
             &operation("start"),
             &host.scope(),
             &host.begin(),
@@ -152,7 +152,7 @@ fn first_commit_consumes_all_approvals_once_and_replay_never_reauthorizes_or_dis
     host.now.set(5000);
     host.write = false;
     let replay = store
-        .apply_execution(
+        .apply_command(
             &operation("start"),
             &host.scope(),
             &host.begin(),
@@ -192,7 +192,7 @@ fn second_approval_write_failure_rolls_back_first_consumption_intent_state_and_a
     db.sql().execute_batch("CREATE TRIGGER fail_second BEFORE UPDATE ON approval_usage WHEN NEW.record_id='approval-1' BEGIN SELECT RAISE(ABORT,'fixture'); END;").unwrap();
     assert_eq!(
         store
-            .apply_execution(
+            .apply_command(
                 &operation("start"),
                 &host.scope(),
                 &host.begin(),
@@ -224,7 +224,7 @@ fn second_approval_write_failure_rolls_back_first_consumption_intent_state_and_a
     db.sql().execute_batch("DROP TRIGGER fail_second").unwrap();
     assert!(matches!(
         store
-            .apply_execution(
+            .apply_command(
                 &operation("start"),
                 &host.scope(),
                 &host.begin(),
@@ -254,7 +254,7 @@ fn concurrent_duplicate_has_one_action_one_attempt_and_one_consumption() {
             std::thread::spawn(move || {
                 barrier.wait();
                 store
-                    .apply_execution(
+                    .apply_command(
                         &operation("start"),
                         &host.scope(),
                         &host.begin(),
@@ -292,13 +292,13 @@ fn content_and_subject_conflicts_do_not_mutate_and_historical_event_ids_cannot_b
     let changed = event("prepare", 0, lifecycle::Command::Cancel);
     assert_eq!(
         store
-            .apply_execution(&operation("prepare"), &host.scope(), &changed, &[], &host)
+            .apply_command(&operation("prepare"), &host.scope(), &changed, &[], &host)
             .unwrap_err(),
         Error::Conflict
     );
     assert_eq!(
         store
-            .apply_execution(
+            .apply_command(
                 &operation("another-operation"),
                 &host.scope(),
                 &event("prepare", 1, lifecycle::Command::Wait),
@@ -339,7 +339,7 @@ fn same_record_covering_multiple_profiles_is_consumed_once() {
         .push(reference("extra-profile"));
     host.prepare(&mut store);
     store
-        .apply_execution(
+        .apply_command(
             &operation("start"),
             &host.scope(),
             &host.begin(),
@@ -371,7 +371,7 @@ fn expired_or_revoked_decision_is_durable_rejection_without_attempt_or_consumpti
         host.prepare(&mut store);
         host.expire_during_admission = expiry;
         let result = store
-            .apply_execution(
+            .apply_command(
                 &operation("start"),
                 &host.scope(),
                 &host.begin(),
@@ -384,7 +384,7 @@ fn expired_or_revoked_decision_is_durable_rejection_without_attempt_or_consumpti
         assert_eq!(db.count("approval_consumptions"), 0);
         assert!(matches!(
             store
-                .apply_execution(
+                .apply_command(
                     &operation("start"),
                     &host.scope(),
                     &host.begin(),
@@ -403,7 +403,7 @@ fn refresh_cannot_rewrite_definition_refund_usage_or_resurrect_old_trust_revisio
     let mut host = TestHost::new(1);
     host.prepare(&mut store);
     store
-        .apply_execution(
+        .apply_command(
             &operation("start"),
             &host.scope(),
             &host.begin(),
@@ -515,7 +515,7 @@ fn lost_result_and_confirmation_responses_recover_without_new_events() {
     host.prepare(&mut store);
     drop(
         store
-            .apply_execution(
+            .apply_command(
                 &operation("start"),
                 &host.scope(),
                 &host.begin(),
@@ -577,7 +577,7 @@ fn busy_and_clock_rollback_fail_without_partial_writes() {
     blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
     assert_eq!(
         store
-            .apply_execution(
+            .apply_command(
                 &operation("start"),
                 &host.scope(),
                 &host.begin(),
@@ -591,7 +591,7 @@ fn busy_and_clock_rollback_fail_without_partial_writes() {
     host.now.set(999);
     assert_eq!(
         store
-            .apply_execution(
+            .apply_command(
                 &operation("start"),
                 &host.scope(),
                 &host.begin(),
@@ -604,7 +604,7 @@ fn busy_and_clock_rollback_fail_without_partial_writes() {
     assert_eq!(db.count("attempts"), 0);
     host.now.set(1000);
     store
-        .apply_execution(
+        .apply_command(
             &operation("start"),
             &host.scope(),
             &host.begin(),
@@ -630,7 +630,7 @@ fn actual_sqlite_full_rolls_back_and_preserves_existing_authority() {
     let before = db.count("receipts");
     assert_eq!(
         store
-            .apply_execution(
+            .apply_command(
                 &operation("start"),
                 &host.scope(),
                 &host.begin(),
@@ -655,6 +655,23 @@ fn actual_sqlite_full_rolls_back_and_preserves_existing_authority() {
     );
 }
 #[test]
+fn prior_schema_is_rejected_without_modifying_the_database() {
+    let db = Database::new();
+    drop(db.create());
+    let conn = db.sql();
+    conn.pragma_update(None, "user_version", 1).unwrap();
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+        .unwrap();
+    drop(conn);
+    let before = std::fs::read(&db.path).unwrap();
+    assert!(matches!(
+        Store::open(&db.path, &plan().spec().request.authority, limits()),
+        Err(Error::Schema)
+    ));
+    assert_eq!(std::fs::read(&db.path).unwrap(), before);
+}
+
+#[test]
 fn newer_schema_is_diagnostics_only_and_corrupt_database_is_never_reinitialized() {
     let db = Database::new();
     drop(db.create());
@@ -668,7 +685,7 @@ fn newer_schema_is_diagnostics_only_and_corrupt_database_is_never_reinitialized(
         Store::open(&db.path, &plan().spec().request.authority, limits()).unwrap(),
         OpenOutcome::NewerSchema {
             found: 99,
-            supported: 1
+            supported: 2
         }
     ));
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
@@ -686,7 +703,7 @@ fn existing_writer_is_fenced_when_schema_changes_after_open() {
     db.sql().pragma_update(None, "user_version", 99).unwrap();
     assert_eq!(
         store
-            .apply_execution(
+            .apply_command(
                 &operation("start"),
                 &host.scope(),
                 &host.begin(),
@@ -708,7 +725,7 @@ fn reserved_terminal_receipts_survive_exhausted_normal_capacity() {
     let mut store = Store::initialize_test(&db.path, host.scope().authority, bounds).unwrap();
     host.prepare(&mut store);
     store
-        .apply_execution(
+        .apply_command(
             &operation("start"),
             &host.scope(),
             &host.begin(),
@@ -719,7 +736,7 @@ fn reserved_terminal_receipts_survive_exhausted_normal_capacity() {
     // 4 receipts + 5 terminal reservations exhaust ordinary allocation.
     assert_eq!(
         store
-            .apply_execution(
+            .apply_command(
                 &operation("output"),
                 &host.scope(),
                 &event(
@@ -738,10 +755,10 @@ fn reserved_terminal_receipts_survive_exhausted_normal_capacity() {
     );
     let cancel = event("cancel", 2, lifecycle::Command::Cancel);
     store
-        .apply_execution(&operation("cancel"), &host.scope(), &cancel, &[], &host)
+        .apply_command(&operation("cancel"), &host.scope(), &cancel, &[], &host)
         .unwrap();
     store
-        .apply_execution(
+        .apply_command(
             &operation("recover"),
             &host.scope(),
             &event("recover", 3, lifecycle::Command::Recover),
@@ -749,29 +766,26 @@ fn reserved_terminal_receipts_survive_exhausted_normal_capacity() {
             &host,
         )
         .unwrap();
-    let mut observer = host.clone();
-    observer.observation = lifecycle::Observation::Exited {
+    let mut observer = TestEvidence::new(lifecycle::Observation::Exited {
         exit_code: 0,
         total_output_bytes: 0,
-    };
+    });
     let evidence = |name: &str| EvidenceRef {
         reference: reference(name),
         kind: EvidenceKind::TestResult,
         runner: id("test-runner"),
     };
     store
-        .apply_execution(
+        .apply_observation(
             &operation("exit"),
             &host.scope(),
-            &event(
+            &observation_event(
                 "exit",
                 4,
-                lifecycle::Command::Observe {
-                    attempt_id: AttemptId::new("attempt-1").unwrap(),
-                    evidence: evidence("exit"),
-                },
+                AttemptId::new("attempt-1").unwrap(),
+                evidence("exit"),
             ),
-            &[],
+            &host,
             &observer,
         )
         .unwrap();
@@ -779,18 +793,16 @@ fn reserved_terminal_receipts_survive_exhausted_normal_capacity() {
         assessment: lifecycle::EffectAssessment::Satisfied,
     };
     store
-        .apply_execution(
+        .apply_observation(
             &operation("verify"),
             &host.scope(),
-            &event(
+            &observation_event(
                 "verify",
                 5,
-                lifecycle::Command::Observe {
-                    attempt_id: AttemptId::new("attempt-1").unwrap(),
-                    evidence: evidence("verify"),
-                },
+                AttemptId::new("attempt-1").unwrap(),
+                evidence("verify"),
             ),
-            &[],
+            &host,
             &observer,
         )
         .unwrap();
@@ -821,7 +833,7 @@ fn subprocess_committed_intent_cannot_regain_first_dispatch_after_restart() {
             _ => panic!("current"),
         };
         let result = store
-            .apply_execution(
+            .apply_command(
                 &operation("start"),
                 &host.scope(),
                 &host.begin(),
@@ -856,7 +868,7 @@ fn subprocess_committed_intent_cannot_regain_first_dispatch_after_restart() {
     let mut store = db.open();
     assert!(matches!(
         store
-            .apply_execution(
+            .apply_command(
                 &operation("start"),
                 &host.scope(),
                 &host.begin(),
@@ -873,7 +885,7 @@ fn subprocess_committed_intent_cannot_regain_first_dispatch_after_restart() {
         lifecycle::Directive::Reconcile
     );
     store
-        .apply_execution(
+        .apply_command(
             &operation("recover"),
             &host.scope(),
             &event("recover", 2, lifecycle::Command::Recover),
@@ -968,7 +980,7 @@ fn distinct_attempts_race_without_spending_approval_twice() {
             std::thread::spawn(move || {
                 barrier.wait();
                 store
-                    .apply_execution(
+                    .apply_command(
                         &operation(&format!("start-{n}")),
                         &host.scope(),
                         &event(
@@ -1014,7 +1026,7 @@ fn approval_free_attempt_still_requires_current_authorization_revision() {
     host.prepare(&mut store);
     host.authorization = reference("new-authorization");
     let rejected = store
-        .apply_execution(
+        .apply_command(
             &operation("stale-epoch"),
             &host.scope(),
             &host.begin(),
@@ -1031,7 +1043,7 @@ fn approval_free_attempt_still_requires_current_authorization_revision() {
     next.id = EventId::new("current-epoch").unwrap();
     assert!(matches!(
         store
-            .apply_execution(
+            .apply_command(
                 &operation("current-epoch"),
                 &host.scope(),
                 &next,
@@ -1056,7 +1068,13 @@ fn old_schema_handle_cannot_read_or_ack_after_upgrade() {
         .receipt(&host.scope(), &operation("open"), &host)
         .unwrap()
         .unwrap();
-    db.sql().execute_batch("PRAGMA user_version=2;").unwrap();
+    let conn = db.sql();
+    let version: u32 = conn
+        .pragma_query_value(None, "user_version", |r| r.get(0))
+        .unwrap();
+    conn.pragma_update(None, "user_version", version + 1)
+        .unwrap();
+    drop(conn);
     assert_eq!(
         store
             .receipt(&host.scope(), &operation("open"), &host)
@@ -1137,7 +1155,7 @@ fn rejected_approval_audit_preserves_exact_trusted_and_submitted_evidence() {
     host.entries[0].state = ApprovalState::Revoked;
     host.prepare(&mut store);
     let result = store
-        .apply_execution(
+        .apply_command(
             &operation("denied"),
             &host.scope(),
             &host.begin(),
@@ -1216,7 +1234,7 @@ fn each_endpoint_requires_its_exact_access_and_delivery_consumer() {
     host.denied = vec![Access::Execute];
     assert_eq!(
         store
-            .apply_execution(
+            .apply_command(
                 &operation("blocked-execute"),
                 &host.scope(),
                 &host.begin(),
@@ -1229,7 +1247,7 @@ fn each_endpoint_requires_its_exact_access_and_delivery_consumer() {
     host.denied = vec![Access::RunnerFact];
     assert_eq!(
         store
-            .apply_execution(
+            .apply_command(
                 &operation("blocked-runner"),
                 &host.scope(),
                 &event("recover", 1, lifecycle::Command::Recover),
@@ -1365,11 +1383,11 @@ fn quota_accepts_uncertain_and_manual_review_before_final_evidence() {
         let db = Database::new();
         let mut bounds = limits();
         bounds.max_receipts = 9;
-        let mut host = TestHost::new(0);
+        let host = TestHost::new(0);
         let mut store = Store::initialize_test(&db.path, host.scope().authority, bounds).unwrap();
         host.prepare(&mut store);
         store
-            .apply_execution(
+            .apply_command(
                 &operation("start"),
                 &host.scope(),
                 &host.begin(),
@@ -1402,26 +1420,19 @@ fn quota_accepts_uncertain_and_manual_review_before_final_evidence() {
                 },
             ),
         ] {
-            host.observation = observation;
+            let observer = TestEvidence::new(observation);
             store
-                .apply_execution(
+                .apply_observation(
                     &operation(name),
                     &host.scope(),
-                    &event(
-                        name,
-                        revision,
-                        lifecycle::Command::Observe {
-                            attempt_id: attempt.clone(),
-                            evidence: evidence(name),
-                        },
-                    ),
-                    &[],
+                    &observation_event(name, revision, attempt.clone(), evidence(name)),
                     &host,
+                    &observer,
                 )
                 .unwrap();
             if name == "uncertain" {
                 store
-                    .apply_execution(
+                    .apply_command(
                         &operation("cancel"),
                         &host.scope(),
                         &event("cancel", 3, lifecycle::Command::Cancel),
@@ -1574,7 +1585,7 @@ fn denied_audit_does_not_promote_missing_expired_or_unknown_records_to_approval(
             bindings[0].record = reference("not-in-protected-store");
         }
         store
-            .apply_execution(
+            .apply_command(
                 &operation("denied"),
                 &host.scope(),
                 &host.begin(),
@@ -1644,6 +1655,22 @@ fn out_of_order_confirmation_cannot_skip_pending_results_after_reopen() {
     );
 }
 
+fn submit_runner_record(
+    store: &mut Store,
+    host: &TestHost,
+    record: &lifecycle::EventRecord,
+    observer: &TestEvidence,
+) -> Result<CommitOutcome, Error> {
+    match record {
+        lifecycle::EventRecord::Command(e) => {
+            store.apply_command(&operation("runner-op"), &host.scope(), e, &[], host)
+        }
+        lifecycle::EventRecord::Observation(e) => {
+            store.apply_observation(&operation("runner-op"), &host.scope(), e, host, observer)
+        }
+    }
+}
+
 #[test]
 fn rejected_and_stale_runner_events_retain_submitted_attempt_on_replay() {
     for (revision, outcome, reason, decision) in [
@@ -1666,7 +1693,7 @@ fn rejected_and_stale_runner_events_retain_submitted_attempt_on_replay() {
             let mut store = db.create();
             host.prepare(&mut store);
             store
-                .apply_execution(
+                .apply_command(
                     &operation("start"),
                     &host.scope(),
                     &host.begin(),
@@ -1675,26 +1702,35 @@ fn rejected_and_stale_runner_events_retain_submitted_attempt_on_replay() {
                 )
                 .unwrap();
             let attempt_id = AttemptId::new("submitted-wrong-attempt").unwrap();
-            let command = match kind {
-                "dispatched" => lifecycle::Command::Dispatched {
-                    attempt_id: attempt_id.clone(),
-                },
-                "observe" => lifecycle::Command::Observe {
-                    attempt_id: attempt_id.clone(),
-                    evidence: EvidenceRef {
+            let record = match kind {
+                "observe" => lifecycle::EventRecord::Observation(observation_event(
+                    "runner-event",
+                    revision,
+                    attempt_id.clone(),
+                    EvidenceRef {
                         reference: reference("evidence"),
                         runner: id("test-runner"),
                         kind: EvidenceKind::TestResult,
                     },
-                },
-                _ => lifecycle::Command::Output {
-                    attempt_id: attempt_id.clone(),
-                    total_bytes: 10,
-                },
+                )),
+                "dispatched" => lifecycle::EventRecord::Command(event(
+                    "runner-event",
+                    revision,
+                    lifecycle::Command::Dispatched {
+                        attempt_id: attempt_id.clone(),
+                    },
+                )),
+                _ => lifecycle::EventRecord::Command(event(
+                    "runner-event",
+                    revision,
+                    lifecycle::Command::Output {
+                        attempt_id: attempt_id.clone(),
+                        total_bytes: 10,
+                    },
+                )),
             };
-            let command = event("runner-event", revision, command);
-            let receipt = store
-                .apply_execution(&operation("runner-op"), &host.scope(), &command, &[], &host)
+            let observer = TestEvidence::new(lifecycle::Observation::Uncertain);
+            let receipt = submit_runner_record(&mut store, &host, &record, &observer)
                 .unwrap()
                 .receipt()
                 .clone();
@@ -1718,11 +1754,10 @@ fn rejected_and_stale_runner_events_retain_submitted_attempt_on_replay() {
                     .unwrap(),
                 Some(receipt.clone())
             );
-            let replay = store
-                .apply_execution(&operation("runner-op"), &host.scope(), &command, &[], &host)
-                .unwrap();
+            let replay = submit_runner_record(&mut store, &host, &record, &observer).unwrap();
             assert!(matches!(replay, CommitOutcome::AlreadyCommitted(_)));
             assert_eq!(replay.receipt(), &receipt);
+            assert_eq!(observer.calls.get(), 0);
             assert_eq!(
                 store
                     .audit(&host.scope(), &operation("runner-op"), &host)
@@ -1741,7 +1776,7 @@ fn stale_event_persists_core_directive_without_a_transition() {
     host.prepare(&mut store);
     let command = event("stale", 0, lifecycle::Command::Wait);
     let result = store
-        .apply_execution(&operation("stale"), &host.scope(), &command, &[], &host)
+        .apply_command(&operation("stale"), &host.scope(), &command, &[], &host)
         .unwrap();
     assert_eq!(result.receipt().outcome, Outcome::Stale);
     drop(store);
@@ -1754,7 +1789,7 @@ fn stale_event_persists_core_directive_without_a_transition() {
         AuditReason::Lifecycle(lifecycle::Directive::Ready)
     );
     let replay = store
-        .apply_execution(&operation("stale"), &host.scope(), &command, &[], &host)
+        .apply_command(&operation("stale"), &host.scope(), &command, &[], &host)
         .unwrap();
     assert_eq!(replay.receipt(), result.receipt());
     assert_eq!(
@@ -1940,7 +1975,7 @@ fn oversized_protected_records_fail_closed_at_every_read_entry() {
             ),
             _ => check(
                 store
-                    .apply_execution(
+                    .apply_command(
                         &operation("start"),
                         &host.scope(),
                         &host.begin(),
@@ -1966,7 +2001,7 @@ fn operation_commit_failure_retains_operation_recovery_without_dispatch() {
         CREATE TRIGGER fail_operation AFTER INSERT ON receipts BEGIN INSERT INTO commit_fault VALUES(-1); END;").unwrap();
     assert_eq!(
         store
-            .apply_execution(
+            .apply_command(
                 &operation("start"),
                 &host.scope(),
                 &host.begin(),
@@ -1986,7 +2021,7 @@ fn operation_commit_failure_retains_operation_recovery_without_dispatch() {
         .execute_batch("DROP TRIGGER fail_operation")
         .unwrap();
     let result = store
-        .apply_execution(
+        .apply_command(
             &operation("start"),
             &host.scope(),
             &host.begin(),
@@ -2002,7 +2037,7 @@ fn operation_commit_failure_retains_operation_recovery_without_dispatch() {
         }
     ));
     let replay = store
-        .apply_execution(
+        .apply_command(
             &operation("start"),
             &host.scope(),
             &host.begin(),
@@ -2024,4 +2059,182 @@ fn invalid_store_limits_remain_configuration_errors() {
         Err(Error::Configuration)
     ));
     assert!(!db.path.exists());
+}
+
+#[test]
+fn observations_have_separate_authority_and_replay_without_resolving_evidence() {
+    let db = Database::new();
+    let mut host = TestHost::new(0); // Deliberately implements no ObservationVerifier.
+    let mut store = db.create();
+    host.prepare(&mut store);
+    store
+        .apply_command(
+            &operation("start"),
+            &host.scope(),
+            &host.begin(),
+            &[],
+            &host,
+        )
+        .unwrap();
+    host.denied.push(Access::Execute);
+    let mut verifier = TestEvidence::new(lifecycle::Observation::Exited {
+        exit_code: 0,
+        total_output_bytes: 0,
+    });
+    let input = observation_event(
+        "exit",
+        2,
+        AttemptId::new("attempt-1").unwrap(),
+        EvidenceRef {
+            reference: reference("exit"),
+            kind: EvidenceKind::TestResult,
+            runner: id("test-runner"),
+        },
+    );
+    let result = store
+        .apply_observation(&operation("exit"), &host.scope(), &input, &host, &verifier)
+        .unwrap();
+    assert_eq!(result.receipt().outcome, Outcome::Changed);
+    assert!(matches!(
+        &result,
+        CommitOutcome::Applied {
+            first_dispatch: None,
+            ..
+        }
+    ));
+    let receipt = result.receipt().clone();
+    assert_eq!(verifier.calls.get(), 1);
+    let snapshot = store
+        .execution(&host.scope(), &host)
+        .unwrap()
+        .snapshot()
+        .clone();
+    assert_eq!(
+        snapshot.last_event,
+        Some(lifecycle::EventRecord::Observation(input.clone()))
+    );
+    let audit = store
+        .audit(&host.scope(), &operation("exit"), &host)
+        .unwrap();
+    assert!(matches!(
+        audit.event.unwrap().decision,
+        Decision::Observed { .. }
+    ));
+    drop(store);
+    let mut store = db.open();
+    assert_eq!(
+        store.execution(&host.scope(), &host).unwrap().snapshot(),
+        &snapshot
+    );
+
+    // Only intent is fingerprinted. Changed evidence output is irrelevant to receipt replay.
+    verifier.observation = lifecycle::Observation::Uncertain;
+    host.denied.push(Access::RunnerFact);
+    let replay = store
+        .apply_observation(&operation("exit"), &host.scope(), &input, &host, &verifier)
+        .unwrap();
+    assert!(matches!(replay, CommitOutcome::AlreadyCommitted(_)));
+    assert_eq!(replay.receipt(), &receipt);
+    assert_eq!(verifier.calls.get(), 1);
+    assert_eq!(
+        store.execution(&host.scope(), &host).unwrap().snapshot(),
+        &snapshot
+    );
+}
+
+#[test]
+fn rejected_and_stale_observations_do_not_resolve_evidence_or_mutate_execution() {
+    let db = Database::new();
+    let mut host = TestHost::new(0);
+    let mut store = db.create();
+    host.prepare(&mut store);
+    store
+        .apply_command(
+            &operation("start"),
+            &host.scope(),
+            &host.begin(),
+            &[],
+            &host,
+        )
+        .unwrap();
+    let snapshot = store
+        .execution(&host.scope(), &host)
+        .unwrap()
+        .snapshot()
+        .clone();
+    let verifier = TestEvidence::new(lifecycle::Observation::Uncertain);
+    let mut input = observation_event(
+        "denied",
+        2,
+        AttemptId::new("attempt-1").unwrap(),
+        EvidenceRef {
+            reference: reference("exit"),
+            kind: EvidenceKind::TestResult,
+            runner: id("test-runner"),
+        },
+    );
+    host.denied.push(Access::RunnerFact);
+    assert_eq!(
+        store
+            .apply_observation(
+                &operation("denied"),
+                &host.scope(),
+                &input,
+                &host,
+                &verifier
+            )
+            .unwrap_err(),
+        Error::Denied
+    );
+    host.denied.clear();
+    input.id = EventId::new("stale-observation").unwrap();
+    input.expected_revision = 1;
+    assert_eq!(
+        store
+            .apply_observation(
+                &operation("stale-observation"),
+                &host.scope(),
+                &input,
+                &host,
+                &verifier
+            )
+            .unwrap()
+            .receipt()
+            .outcome,
+        Outcome::Stale
+    );
+    assert_eq!(
+        store
+            .apply_observation(
+                &operation("changed-operation"),
+                &host.scope(),
+                &input,
+                &host,
+                &verifier
+            )
+            .unwrap_err(),
+        Error::Conflict
+    );
+    input.id = EventId::new("wrong-attempt").unwrap();
+    input.expected_revision = 2;
+    input.attempt_id = AttemptId::new("wrong-attempt").unwrap();
+    assert_eq!(
+        store
+            .apply_observation(
+                &operation("wrong-observation"),
+                &host.scope(),
+                &input,
+                &host,
+                &verifier
+            )
+            .unwrap()
+            .receipt()
+            .outcome,
+        Outcome::Rejected
+    );
+    assert_eq!(verifier.calls.get(), 0);
+    assert_eq!(
+        store.execution(&host.scope(), &host).unwrap().snapshot(),
+        &snapshot
+    );
 }

@@ -128,7 +128,7 @@ fn failed_stop_diagnostic_write_still_allows_terminal_fact_writes() {
     let mut app = open(&db, host, runner, Startup::CreateTest);
     app.submit(r, &p).unwrap();
     app.cancel(r).unwrap();
-    db.sql().execute_batch("CREATE TRIGGER fail_stop BEFORE UPDATE OF snapshot ON executions WHEN json_extract(CAST(NEW.snapshot AS TEXT), '$.lastEvent.command.kind')='stopReported' BEGIN SELECT RAISE(ABORT, 'fixture stop write failure'); END;").unwrap();
+    db.sql().execute_batch("CREATE TRIGGER fail_stop BEFORE UPDATE OF snapshot ON executions WHEN json_extract(CAST(NEW.snapshot AS TEXT), '$.lastEvent.event.command.kind')='stopReported' BEGIN SELECT RAISE(ABORT, 'fixture stop write failure'); END;").unwrap();
     assert_eq!(app.reconcile(r).unwrap_err(), Error::Conflict);
     let status = app.status(r).unwrap();
     assert!(status.cancel_requested);
@@ -226,7 +226,7 @@ fn newer_schema_retains_read_only_startup_diagnostic() {
     };
     assert_eq!(
         format!("{error:?}"),
-        "NewerSchema { found: 999, supported: 1 }"
+        "NewerSchema { found: 999, supported: 2 }"
     );
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
     assert_eq!(runner.dispatch_count(), 0);

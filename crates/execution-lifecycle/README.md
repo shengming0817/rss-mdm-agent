@@ -6,13 +6,15 @@ C09 是无 I/O 的执行生命周期核心，只依赖 C01 和基础序列化/�
 
 Execution 保存完整冻结计划和一个有界 Snapshot：准备状态、独立取消标记、首尝试时间、累计预算、当前 attempt、最新事件。phase/directive 由事实推导，不保存另一份成功/重试状态。历史 attempt 与事件唯一性由 C18 journal 持有。
 
-open 建立 Received；evaluate(Event, now, verifier) 产生含 expected_revision 的 Transition。只有条件写入提交成功后候选才是 authority。最新完全相同事件返回 Duplicate；相同 ID 不同内容拒绝；旧 revision 返回 Stale，未来/溢出 revision 拒绝。C18 须保证所有历史事件和 attempt ID 唯一，不能用新 revision 重新提交历史命令。
+open 建立 Received；普通命令使用 `evaluate(CommandEvent, now)`，观察使用 `evaluate_observation(ObservationEvent, now, verifier)`，两者产生含 expected_revision 的 Transition。只有条件写入提交成功后候选才是 authority。最新完全相同事件返回 Duplicate；相同 ID 不同内容拒绝；旧 revision 返回 Stale，未来/溢出 revision 拒绝。C18 须保证所有历史事件和 attempt ID 唯一，不能用新 revision 重新提交历史命令。
+
+`Command` 只包含普通命令；`ObservationEvent` 携带事件 ID、预期 revision、attempt 与 EvidenceRef，不能传给普通入口。`EventRecord::Command / Observation` 仅用于快照和精确幂等比较，不是执行入口。普通消费者无需构造验证器或假观察；两入口共享状态检查，重复、陈旧、错误 revision 和错误 attempt 都在观察验证前返回。
 
 Transition 为私有构造且不可复制，以 next()/expected_revision() 提供候选读取。commit 消费候选并调用可信持久化回调：首次原子接纳返回 Applied；重放返回 AlreadyCommitted；CAS 冲突、失败和结果不明返回错误。只有 BeginAttempt 的首次成功提交产生不可复制、不可反序列化的 DispatchAction；其 dispatch 消费 self，绑定精确计划、attempt、runner、mode 与提交 revision。其它状态转换不产生动作。C18/C19 回调必须兑现授权重检和原子写入，类型本身不证明外部写入成功。
 
 首次动作只活在内存中：提交后崩溃或丢弃动作，恢复的 Starting 一律 Reconcile；不能从 Snapshot 再造首次动作。宿主派发前仍检查停止/取消与 runner 能力，派发结果不明进入核对，不重试旧动作。
 
-decode/restore 只接受当前格式 version=1，拒绝未知字段/版本、非法绑定、时间/预算/状态组合和超大输入，不提供旧版兼容或失败回退。恢复输入必须来自经过认证的受保护 journal；可反序列化的 Snapshot 本身不是执行许可。显式 Limits 至少保留 16 KiB 快照空间，当前有限字段和 C01 ID 上限使终止/核实记录可在该空间内落地。
+decode/restore 只接受当前格式 version=2，lastEvent 使用带 kind/event 的命令或观察记录；拒绝 v1、未知字段/版本、非法绑定、时间/预算/状态组合和超大输入，不提供旧版兼容或失败回退。恢复输入必须来自经过认证的受保护 journal；可反序列化的 Snapshot 本身不是执行许可。显式 Limits 至少保留 16 KiB 快照空间，当前有限字段和 C01 ID 上限使终止/核实记录可在该空间内落地。
 
 ## 准入、取消、退出与核实
 
@@ -22,7 +24,7 @@ Exited/NeverDispatched 必须携带可信最终输出总量，与终止事实同
 Cancel 只保留停止意图；Recover 将未终止 attempt 标记 Unknown 并保留曾派发的单调事实，不能再接受冲突的 NeverDispatched。StopRunner 是建议，不能冒充退出或回滚。预算/有效期耗尽阻止新尝试并建议停止，仍接受迟到的退出、已结算范围内的输出与核实证据。
 StopReason/LimitReason 区分取消、尚未生效、过期、输出、总时长与尝试次数；同时发生时按取消、有效期、输出、超时、尝试次数顺序给出原因。宿主将原因与裁决时间写入审计，不将超时建议记成进程退出。ObservationVerification 保留 Unavailable/Untrusted 分类，成功返回后的绑定失败另报 Observation；均不携带外部文本。
 
-Observe 只接收 EvidenceRef，必须经 ObservationVerifier 认证来源、完整计划/attempt/runner 绑定、证据类别和观察时间。Exited 必须证明本次受控执行及其委派工作均停止；仅父 shell 退出而子进程继续活动应返回 Uncertain。NeverDispatched 必须有权威派发记录，不能从“未发现进程”推断。退出码 0 仍须独立核实目标，不直接成为成功。
+观察入口只接收 EvidenceRef，必须经 ObservationVerifier 认证来源、完整计划/attempt/runner 绑定、证据类别和观察时间。Exited 必须证明本次受控执行及其委派工作均停止；仅父 shell 退出而子进程继续活动应返回 Uncertain。NeverDispatched 必须有权威派发记录，不能从“未发现进程”推断。退出码 0 仍须独立核实目标，不直接成为成功。
 
 只有停止且核实 NoEffect，或权威证据证明 NeverDispatched，才可 RetryEligible；NotSatisfied 可能已有副作用，Unknown 不证明无副作用，均进入 ManualReview。还必须满足未取消、总时长/输出与尝试数预算。测试 mode 只能消费 TestResult；真实 mode 区分 ProcessExited/StateObserved；Test authority 禁止 Real，重试不可更换 mode/runner。Done 也可能代表取消后的无副作用结束，读取方必须同时展示 mode 与 assessment。
 
