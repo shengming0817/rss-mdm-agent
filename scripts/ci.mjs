@@ -37,6 +37,8 @@ const steps = [
   ["AI SQLite packed consumer", "pnpm", ["check:ai-store-consumer"]],
   ["Claude SDK adapter", "pnpm", ["test:ai-claude"]],
   ["Claude packed consumer", "pnpm", ["check:claude-consumer"]],
+  ["DeepSeek Harness adapter", "pnpm", ["test:ai-deepseek"]],
+  ["DeepSeek packed consumer", "pnpm", ["check:deepseek-consumer"]],
   ["frontend build", "pnpm", ["build"]],
   ["types", "pnpm", ["typecheck"]],
   ["frontend format", "pnpm", ["format:check"]],

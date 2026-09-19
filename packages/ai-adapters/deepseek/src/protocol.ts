@@ -1,0 +1,41 @@
+import type { Budget } from "@rss-mdm-agent/ai-contract";
+export type Operation =
+  | "initialize"
+  | "prompt"
+  | "inspect"
+  | "cancel"
+  | "answer"
+  | "tool_result"
+  | "close";
+export interface NativeEvent {
+  type:
+    | "accepted"
+    | "delta"
+    | "text"
+    | "terminal"
+    | "question"
+    | "question_unavailable"
+    | "proposal"
+    | "lost"
+    | "error";
+  requestId?: string;
+  messageId?: string;
+  text?: string;
+  outcome?:
+    | "completed"
+    | "refused"
+    | "cancelled"
+    | "failed"
+    | "max_tokens"
+    | "max_turn_requests";
+  callbackId?: string;
+  request?: Record<string, unknown>;
+  proposal?: { name: string; arguments: Record<string, unknown> };
+}
+export interface NativeRuntime {
+  call(operation: Operation, value: unknown, budget: Budget): Promise<any>;
+  onEvent(listener: (event: NativeEvent) => void): void;
+  stop(): void;
+  readonly stopped: Promise<void>;
+}
+export type RuntimeFactory = () => NativeRuntime;

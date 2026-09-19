@@ -1,0 +1,86 @@
+import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import {
+  createDeepSeekAdapter,
+  type DeepSeekAdapterOptions,
+} from "@rss-mdm-agent/ai-adapter-deepseek";
+import { VerifiedProviderSession } from "@rss-mdm-agent/ai-contract/session";
+import type {
+  ProviderAgentPort,
+  ProviderConfiguration,
+  Session,
+} from "@rss-mdm-agent/ai-contract";
+const directory = await mkdtemp(join(tmpdir(), "dsh-packed-"));
+const config: ProviderConfiguration = {
+  namespace: {
+    tenantId: "consumer-tenant",
+    principalId: "user",
+    authorityId: "authority",
+    sessionId: "session",
+  },
+  provider: "deepseek",
+  config: { id: "official", revision: "1" },
+  accountRef: "account",
+  workingDirectory: directory,
+  permissions: "tools_disabled",
+};
+const options: DeepSeekAdapterOptions = {
+  resolveConfiguration: async () => ({
+    configuration: config,
+    persistenceDirectory: directory,
+    apiKey: "not-used-no-model-request",
+    model: "deepseek-chat",
+  }),
+};
+const first: ProviderAgentPort = createDeepSeekAdapter(options),
+  second = createDeepSeekAdapter(options);
+const budget = () => ({
+  timeoutMs: 10000,
+  signal: new AbortController().signal,
+});
+try {
+  const admitted = await VerifiedProviderSession.open(first, config, budget());
+  assert.ok(admitted.ok);
+  assert.equal((await first.close(budget())).ok, true);
+  const previous: Session = {
+    schemaVersion: 2,
+    kind: "session",
+    namespace: config.namespace,
+    revision: 0,
+    lastSequence: 0,
+    status: "active",
+    binding: admitted.value.binding,
+    capabilities: admitted.value.capabilities,
+  };
+  const restored = await VerifiedProviderSession.restore(
+    second,
+    previous,
+    config,
+    budget(),
+  );
+  assert.ok(restored.ok);
+  assert.ok(restored.value.restores(previous));
+  assert.notEqual(
+    restored.value.binding.generation,
+    previous.binding.generation,
+  );
+  assert.equal(
+    restored.value.binding.nativeSessionId,
+    previous.binding.nativeSessionId,
+  );
+  console.log(
+    "PASS packed public API and real child cold session, no model request",
+  );
+} finally {
+  await first.close(budget());
+  await second.close(budget());
+  await rm(directory, { recursive: true, force: true });
+}
+// @ts-expect-error No test/runtime factory escapes the public adapter interface.
+const invalid: DeepSeekAdapterOptions = {
+  ...options,
+  runtimeFactory: () => null,
+};
+void invalid;
