@@ -16,6 +16,7 @@ const configuration = {
 };
 const budget = () => ({ timeoutMs: 1000, signal: AbortSignal.timeout(1000) });
 const callback = {
+  category: "question",
   interactionId: "question-1",
   nativeCallbackId: "callback-1",
   expiresAtMs: 100,
@@ -44,6 +45,34 @@ const callbackHarness = (mutate) =>
 test("provider conformance accepts a distinct live callback", () =>
   callbackHarness((x) => x));
 for (const [name, mutate] of [
+  [
+    "permission callback",
+    (x) => {
+      x.interaction.category = "tool_permission";
+      return x;
+    },
+  ],
+  [
+    "unclassified callback",
+    (x) => {
+      delete x.interaction.category;
+      return x;
+    },
+  ],
+  [
+    "pending callback via generic event",
+    (x) => ({
+      type: "event",
+      binding: x.binding,
+      commandId: x.commandId,
+      body: {
+        type: "interaction",
+        interactionId: x.interaction.interactionId,
+        status: "pending",
+        request: x.interaction.request,
+      },
+    }),
+  ],
   [
     "legacy callback",
     (x) => {

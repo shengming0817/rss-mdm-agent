@@ -111,6 +111,7 @@ export interface MessageDelta {
  * pending Interaction and its matching event. Display recovery cannot revive a callback. */
 export type ProviderInteraction = Pick<
   Interaction,
+  | "category"
   | "interactionId"
   | "nativeCallbackId"
   | "expiresAtMs"
@@ -118,7 +119,12 @@ export type ProviderInteraction = Pick<
   | "request"
 >;
 export type ProviderObservation =
-  | { type: "event"; binding: Binding; commandId: Id; body: Event["body"] }
+  | {
+      type: "event";
+      binding: Binding;
+      commandId: Id;
+      body: Exclude<Event["body"], { type: "interaction"; status: "pending" }>;
+    }
   | ({ type: "delta"; binding: Binding } & MessageDelta)
   | {
       type: "interaction";

@@ -459,7 +459,10 @@ export class MemorySessionStore implements SessionStore {
           pending[0].generation !== row.generation ||
           pending[0].body.type !== "interaction" ||
           pending[0].body.status !== "pending" ||
-          !same(pending[0].body.request, row.request)
+          !same(
+            "request" in pending[0].body ? pending[0].body.request : undefined,
+            row.request,
+          )
         )
           return fail("invalid_input");
       }
@@ -504,7 +507,7 @@ export class MemorySessionStore implements SessionStore {
           !same(body.request, row.request)
         )
           return fail("invalid_input");
-      } else if (body.request !== undefined) return fail("invalid_input");
+      } else if ("request" in body) return fail("invalid_input");
     }
     for (const row of batch.deliveries) {
       if (

@@ -67,3 +67,5 @@ Node 验证基线24.14.1 / pnpm11.4.0。主导出是生成类型、编解码、p
 共同 `runStoreConformance` 包含一个父请求的多个 callback、反序回答、callback 别名拒绝及 pending 记录/事件的原子提交。Claude/Codex/其它 adapter 直接消费此接口；本包没有 SDK 依赖，也没有新增 Host worker。
 
 回调身份参考固定发布包 [Claude Agent SDK 0.3.277 sdk.d.ts](https://unpkg.com/@anthropic-ai/claude-agent-sdk@0.3.277/sdk.d.ts) 的 `CanUseTool`：每次回调独立携带 `requestId` 和 `toolUseID`，不能与父 prompt 身份合并。此引用不形成运行依赖或 SDK 互操作证明。
+
+Interaction 的必填 `category: "question"` 仅允许普通用户追问；权限 callback 不属于普通 respond 生命周期，进入 ToolEndpoint/verifier 或拒绝。Provider 的 pending 发布只能使用专用 interaction observation。wire schema 按状态闭合：pending 必带 request，answered/expired/unavailable 禁带 request；旧格式直接拒绝，TS/Rust 由同一 schema 生成。

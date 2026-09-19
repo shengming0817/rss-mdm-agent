@@ -49,3 +49,5 @@ pnpm check:ai-consumer
 生成工具仅在维护时运行；Rust 独立 consumer 不需要 Node 或相邻 package。TS 隔离 tarball consumer 有独立 package/workspace/lock，从打包产物运行 codec、fake Host 与共用 store conformance。测试替身结果不替代真实 SQLite 事务、模型或旁路隔离证据。完整 CI 绑定 clean committed source；本地快速检查允许脏树，但不能称交付证明。
 
 A01 回调补齐采用直接替换：Interaction 使用必填 `nativeCallbackId` 与 `request`，父请求 ID 仅由 binding/dispatch 持有。消费者同步生成绑定并使用新版 `runStoreConformance`；不保留旧字段兼容。行为映射及同批 pending 投影约束见 [AI Runtime 回调说明](../../packages/ai-contract/README.md#a01-回调契约替换2406)。
+
+Interaction 的必填 `category: "question"` 仅允许普通用户追问；权限 callback 不属于普通 respond 生命周期，进入 ToolEndpoint/verifier 或拒绝。Provider 的 pending 发布只能使用专用 interaction observation。wire schema 按状态闭合：pending 必带 request，answered/expired/unavailable 禁带 request；旧格式直接拒绝，TS/Rust 由同一 schema 生成。

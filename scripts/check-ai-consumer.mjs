@@ -73,7 +73,7 @@ try {
   writeFileSync(
     join(dir, "consumer.ts"),
     `import assert from 'node:assert/strict';
-import {decode,boundedJson,fingerprint,type HostPort,type ProviderAgentPort,type SessionStore,type ProviderConfiguration,type Subscription,type ProviderInteraction,VerifiedProviderSession} from '@rss-mdm-agent/ai-contract';
+import {decode,boundedJson,fingerprint,type HostPort,type ProviderAgentPort,type SessionStore,type ProviderConfiguration,type Subscription,type ProviderInteraction,type ProviderObservation,VerifiedProviderSession} from '@rss-mdm-agent/ai-contract';
 import {FakeHost,MemorySessionStore,ScriptedProvider,fixtures,fixtureLimits,runStoreConformance,runProviderConformance,runHostConformance} from '@rss-mdm-agent/ai-contract/testing';
 // @ts-expect-error Controlled mode cannot omit its verifier and ToolEndpoint.
 const invalidConfiguration:ProviderConfiguration={provider:'fake',config:{id:'c',revision:'1'},accountRef:'a',workingDirectory:'.',permissions:'host_mediated'};
@@ -81,9 +81,13 @@ const invalidConfiguration:ProviderConfiguration={provider:'fake',config:{id:'c'
 const forged:VerifiedProviderSession={binding:{},capabilities:{}};
 // @ts-expect-error Every subscription delta retains its message identity.
 const missingMessage:Subscription={type:'delta',commandId:'c',generation:'g',text:'x'};
-const question:ProviderInteraction={interactionId:'question',nativeCallbackId:'callback',expiresAtMs:1,callbackLifetime:'generation_bound',request:{question:'Choose'}};
+const question:ProviderInteraction={category:'question',interactionId:'question',nativeCallbackId:'callback',expiresAtMs:1,callbackLifetime:'generation_bound',request:{question:'Choose'}};
 // @ts-expect-error Legacy parent request field is forbidden even with a valid callback.
-const oldQuestion:ProviderInteraction={interactionId:'question',nativeCallbackId:'callback',nativeRequestId:'request',expiresAtMs:1,callbackLifetime:'generation_bound',request:{}};
+const oldQuestion:ProviderInteraction={category:'question',interactionId:'question',nativeCallbackId:'callback',nativeRequestId:'request',expiresAtMs:1,callbackLifetime:'generation_bound',request:{}};
+// @ts-expect-error Permission callbacks cannot enter the ordinary response lifecycle.
+const permission:ProviderInteraction={...question,category:'tool_permission'};
+// @ts-expect-error Initial pending callbacks cannot bypass their dedicated observation.
+const pending:ProviderObservation={type:'event',binding:{} as any,commandId:'c',body:{type:'interaction',interactionId:'q',status:'pending',request:{}}};
 assert.equal(question.nativeCallbackId,'callback');
 assert.throws(()=>boundedJson({get secret(){throw new Error('accessor must not run');}},fixtureLimits),{code:'encoding'});
 const host:HostPort=new FakeHost();const provider:ProviderAgentPort=new ScriptedProvider();const store:SessionStore=new MemorySessionStore();

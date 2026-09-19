@@ -116,7 +116,8 @@
       "request": {
         "question": "Choose an option",
         "options": ["a", "b"]
-      }
+      },
+      "category": "question"
     },
     {
       "schemaVersion": 2,
@@ -185,7 +186,7 @@
       "body": {
         "type": "text",
         "messageId": "m-1",
-        "text": "你好 <script> inert"
+        "text": "\u4f60\u597d <script> inert"
       }
     },
     {
@@ -637,6 +638,26 @@
     {
       "name": "old callback request identity is not accepted",
       "raw": "{\"schemaVersion\":2,\"kind\":\"interaction\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"interactionId\":\"i-1\",\"commandId\":\"command-1\",\"generation\":\"generation-1\",\"expiresAtMs\":100,\"status\":\"pending\",\"callbackLifetime\":\"generation_bound\",\"nativeRequestId\":\"r-1\"}",
+      "code": "schema"
+    },
+    {
+      "name": "pending_without_request",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"event\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"eventId\":\"question-state\",\"sequence\":1,\"commandId\":\"command-1\",\"generation\":\"generation-1\",\"body\":{\"type\":\"interaction\",\"interactionId\":\"i-1\",\"status\":\"pending\"}}",
+      "code": "schema"
+    },
+    {
+      "name": "answered_with_request",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"event\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"eventId\":\"question-state\",\"sequence\":1,\"commandId\":\"command-1\",\"generation\":\"generation-1\",\"body\":{\"type\":\"interaction\",\"interactionId\":\"i-1\",\"status\":\"answered\",\"request\":{\"question\":\"Choose an option\",\"options\":[\"a\",\"b\"]}}}",
+      "code": "schema"
+    },
+    {
+      "name": "permission_callback",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"interaction\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"interactionId\":\"i-1\",\"commandId\":\"command-1\",\"generation\":\"generation-1\",\"expiresAtMs\":100,\"status\":\"pending\",\"callbackLifetime\":\"generation_bound\",\"nativeCallbackId\":\"r-1\",\"request\":{\"question\":\"Choose an option\",\"options\":[\"a\",\"b\"]},\"category\":\"tool_permission\"}",
+      "code": "schema"
+    },
+    {
+      "name": "unclassified_callback",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"interaction\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"interactionId\":\"i-1\",\"commandId\":\"command-1\",\"generation\":\"generation-1\",\"expiresAtMs\":100,\"status\":\"pending\",\"callbackLifetime\":\"generation_bound\",\"nativeCallbackId\":\"r-1\",\"request\":{\"question\":\"Choose an option\",\"options\":[\"a\",\"b\"]}}",
       "code": "schema"
     }
   ],

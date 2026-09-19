@@ -38,7 +38,7 @@
       "minLength": 1,
       "maxLength": 128,
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
-      "description": "Opaque ASCII correlation identifier (1–128 characters); never an authentication credential."
+      "description": "Opaque ASCII correlation identifier (1\u2013128 characters); never an authentication credential."
     },
     "Counter": {
       "type": "integer",
@@ -676,17 +676,39 @@
             },
             "status": {
               "type": "string",
-              "enum": ["pending", "answered", "expired", "unavailable"],
-              "description": "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."
+              "const": "pending",
+              "description": "First publication of an ordinary user question."
             },
             "request": {
               "$ref": "#/$defs/InteractionRequest",
               "description": "Required for the first pending event and equal to the newly committed Interaction request; forbidden on later lifecycle events."
             }
           },
+          "required": ["type", "interactionId", "status", "request"],
+          "additionalProperties": false,
+          "description": "Initial ordinary question publication; the matching Interaction is committed atomically."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "interaction",
+              "description": "Closed variant discriminator."
+            },
+            "interactionId": {
+              "$ref": "#/$defs/Id",
+              "description": "Single-use interaction identity within the namespace."
+            },
+            "status": {
+              "type": "string",
+              "enum": ["answered", "expired", "unavailable"],
+              "description": "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."
+            }
+          },
           "required": ["type", "interactionId", "status"],
           "additionalProperties": false,
-          "description": "interaction variant; all fields are data, never authentication or execution authority."
+          "description": "Question lifecycle transition; cannot republish or replace its request."
         },
         {
           "type": "object",
@@ -869,6 +891,11 @@
         "request": {
           "$ref": "#/$defs/InteractionRequest",
           "description": "Immutable untrusted question payload retained for display; does not restore a lost native callback or grant approval."
+        },
+        "category": {
+          "type": "string",
+          "const": "question",
+          "description": "Ordinary user question only; permission and execution callbacks are forbidden in this lifecycle."
         }
       },
       "required": [
@@ -882,7 +909,8 @@
         "expiresAtMs",
         "status",
         "callbackLifetime",
-        "request"
+        "request",
+        "category"
       ],
       "additionalProperties": false,
       "description": "Single-use provider callback with immutable command/native correlation, expiry and lifetime."

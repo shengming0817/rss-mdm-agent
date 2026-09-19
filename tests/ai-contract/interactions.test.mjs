@@ -41,6 +41,7 @@ function question(session, id = "question-1", callback = "callback-1") {
   return {
     schemaVersion: 2,
     kind: "interaction",
+    category: "question",
     namespace: session.namespace,
     interactionId: id,
     commandId: "command-1",
@@ -190,4 +191,29 @@ test("callback and question content cannot be rebound after publication", async 
       false,
     );
   }
+});
+
+test("wire rejects pending without request and lifecycle events with request", () => {
+  const session = fixtureSession(),
+    row = question(session);
+  const event = pending(session, [row]).events[0];
+  const missing = structuredClone(event);
+  delete missing.body.request;
+  assert.throws(() => decode(JSON.stringify(missing), fixtureLimits));
+  for (const status of ["answered", "expired", "unavailable"])
+    assert.throws(() =>
+      decode(
+        JSON.stringify({ ...event, body: { ...event.body, status } }),
+        fixtureLimits,
+      ),
+    );
+});
+
+test("wire callback category accepts questions only and is mandatory", () => {
+  const row = { ...question(fixtureSession()), category: "question" };
+  assert.deepEqual(decode(JSON.stringify(row), fixtureLimits), row);
+  for (const category of [undefined, "tool_permission"])
+    assert.throws(() =>
+      decode(JSON.stringify({ ...row, category }), fixtureLimits),
+    );
 });
