@@ -1,6 +1,7 @@
 import { cpSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { verifyRuntimeIntegrity } from "./ai-host-artifacts.mjs";
 import { sourceState } from "./source-state.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const source = join(root, ".local-ci-runs/ai-host-runtime");
@@ -18,6 +19,7 @@ if (
   throw new Error(
     "A verified artifact from this committed macOS arm64 source is required",
   );
+verifyRuntimeIntegrity(source, manifest.runtimeTreeSha256);
 const destination = join(
   root,
   "apps/desktop/src-tauri/resources/ai-host-runtime",
@@ -36,4 +38,5 @@ for (const name of [
     recursive: true,
     verbatimSymlinks: true,
   });
+verifyRuntimeIntegrity(destination, manifest.runtimeTreeSha256);
 console.log("Desktop runtime staged from the verified local candidate");

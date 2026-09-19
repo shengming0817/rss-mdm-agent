@@ -1,9 +1,22 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { createHash } from "node:crypto";
+import {
+  lstatSync,
+  readFileSync,
+  readdirSync,
+  readlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { createHash, timingSafeEqual } from "node:crypto";
 import assert from "node:assert/strict";
 import { load } from "js-yaml";
+const runtimeRoots = [
+  "bin",
+  "node_modules",
+  "NODE-LICENSE",
+  "package.json",
+  "pnpm-lock.yaml",
+];
 const sourceDirectory = (name) =>
   name === "ai-host-app"
     ? "apps/ai-host"
@@ -173,6 +186,60 @@ export function installArtifacts(root, directory, production = false) {
     directory,
   );
   return createHash("sha256").update(readFileSync(lockPath)).digest("hex");
+}
+
+function hashRuntimeEntry(hash, root, name) {
+  const path = join(root, name),
+    stat = lstatSync(path),
+    portableName = name.split(sep).join("/");
+  if (stat.isSymbolicLink()) {
+    const target = readlinkSync(path),
+      resolved = resolve(dirname(path), target),
+      fromRoot = relative(root, resolved);
+    if (
+      isAbsolute(target) ||
+      isAbsolute(fromRoot) ||
+      fromRoot === ".." ||
+      fromRoot.startsWith(`..${sep}`)
+    )
+      throw new Error(
+        `runtime symlink escapes deployment tree: ${portableName}`,
+      );
+    hash.update(`link\0${portableName}\0${target}\0`);
+    return;
+  }
+  if (stat.isDirectory()) {
+    hash.update(`directory\0${portableName}\0`);
+    for (const child of readdirSync(path).sort())
+      hashRuntimeEntry(hash, root, join(name, child));
+    return;
+  }
+  if (!stat.isFile())
+    throw new Error(`unsupported runtime entry: ${portableName}`);
+  hash.update(`file\0${portableName}\0${stat.mode & 0o777}\0${stat.size}\0`);
+  hash.update(readFileSync(path));
+}
+
+/** Hash the complete deployed runtime tree without embedding its local absolute path. */
+export function runtimeTreeSha256(directory) {
+  const hash = createHash("sha256");
+  for (const name of runtimeRoots) hashRuntimeEntry(hash, directory, name);
+  return hash.digest("hex");
+}
+
+/** Recompute and verify the deployed bytes, file modes and pnpm symlink graph. */
+export function verifyRuntimeIntegrity(directory, expectedSha256) {
+  if (!/^[a-f0-9]{64}$/.test(expectedSha256 ?? ""))
+    throw new Error("runtime tree integrity digest is missing or invalid");
+  const actual = runtimeTreeSha256(directory);
+  if (
+    !timingSafeEqual(
+      Buffer.from(actual, "hex"),
+      Buffer.from(expectedSha256, "hex"),
+    )
+  )
+    throw new Error("runtime tree integrity mismatch");
+  return actual;
 }
 
 /** Root manifest owns the runtime version; each approved archive binds its platform and SQLite ABI. */
