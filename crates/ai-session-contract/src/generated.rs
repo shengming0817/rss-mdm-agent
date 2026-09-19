@@ -1,4 +1,88 @@
 // @generated from packages/ai-contract/schema/runtime.schema.json. Do not edit.
+#[doc = "Explicitly selected upstream version and product catalog."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct A2uiNegotiation {
+    #[doc = "Selected catalog identity."]
+    #[serde(rename = "catalogId")]
+    pub catalog_id: Id,
+    #[doc = "Selected catalog revision."]
+    #[serde(rename = "catalogVersion")]
+    pub catalog_version: Id,
+    #[doc = "Fixed upstream protocol version."]
+    pub version: ::std::string::String,
+}
+#[doc = "`AccessUpdate`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct AccessUpdate {
+    #[doc = "Connection-local attachment identity, echoed on every update."]
+    #[serde(rename = "attachmentId")]
+    pub attachment_id: Id,
+    #[doc = "Closed record discriminator."]
+    pub kind: ::std::string::String,
+    #[doc = "Exact product contract version; no legacy readers."]
+    #[serde(rename = "schemaVersion")]
+    pub schema_version: i64,
+    #[doc = "Product session identity within the authenticated caller namespace."]
+    #[serde(rename = "sessionId")]
+    pub session_id: Id,
+    #[doc = "Stable event, ephemeral delta, or explicit resynchronization signal."]
+    pub update: Subscription,
+}
+#[doc = "`ActionRequest`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ActionRequest {
+    #[doc = "Command expiry in Unix milliseconds."]
+    #[serde(rename = "expiresAtMs")]
+    pub expires_at_ms: Counter,
+    #[doc = "Closed record discriminator."]
+    pub kind: ::std::string::String,
+    #[doc = "Unchanged upstream A2UI client message, validated against the negotiated schema."]
+    pub message: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+    #[doc = "Product action association, checked independently of untrusted upstream context."]
+    pub metadata: SurfaceAction,
+    #[doc = "Exact product contract version; no legacy readers."]
+    #[serde(rename = "schemaVersion")]
+    pub schema_version: i64,
+}
+#[doc = "`AttachReceipt`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct AttachReceipt {
+    #[doc = "Last stable sequence consumed before attaching."]
+    pub after: Counter,
+    #[doc = "Connection-local attachment identity, echoed on every update."]
+    #[serde(rename = "attachmentId")]
+    pub attachment_id: Id,
+    #[doc = "Closed record discriminator."]
+    pub kind: ::std::string::String,
+    #[doc = "Exact product contract version; no legacy readers."]
+    #[serde(rename = "schemaVersion")]
+    pub schema_version: i64,
+    #[doc = "Product session identity within the authenticated caller namespace."]
+    #[serde(rename = "sessionId")]
+    pub session_id: Id,
+}
+#[doc = "`AttachRequest`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct AttachRequest {
+    #[doc = "Last stable sequence consumed before attaching."]
+    pub after: Counter,
+    #[doc = "Connection-local attachment identity, echoed on every update."]
+    #[serde(rename = "attachmentId")]
+    pub attachment_id: Id,
+    #[doc = "Closed record discriminator."]
+    pub kind: ::std::string::String,
+    #[doc = "Exact product contract version; no legacy readers."]
+    #[serde(rename = "schemaVersion")]
+    pub schema_version: i64,
+    #[doc = "Product session identity within the authenticated caller namespace."]
+    #[serde(rename = "sessionId")]
+    pub session_id: Id,
+}
 #[doc = "Provider context identity. Version, configuration, account and generation bind every capability and callback."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
@@ -46,6 +130,8 @@ pub struct Capabilities {
     pub fork: CapabilityState,
     #[doc = "Whether provider-specific multimodal input is available through an adapter extension."]
     pub multimodal: CapabilityState,
+    #[doc = "Whether additional prompts may be queued while a run is active."]
+    pub queue: CapabilityState,
     #[doc = "Whether an active native run accepts targeted steering."]
     pub steer: CapabilityState,
     #[doc = "Whether a native structured callback can be represented and answered."]
@@ -664,6 +750,22 @@ impl ::std::convert::TryFrom<::std::string::String> for DeliveryStatus {
         value.parse()
     }
 }
+#[doc = "`DetachRequest`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct DetachRequest {
+    #[doc = "Connection-local attachment identity, echoed on every update."]
+    #[serde(rename = "attachmentId")]
+    pub attachment_id: Id,
+    #[doc = "Closed record discriminator."]
+    pub kind: ::std::string::String,
+    #[doc = "Exact product contract version; no legacy readers."]
+    #[serde(rename = "schemaVersion")]
+    pub schema_version: i64,
+    #[doc = "Product session identity within the authenticated caller namespace."]
+    #[serde(rename = "sessionId")]
+    pub session_id: Id,
+}
 #[doc = "Persisted native correlation and certainty; unknown requires reconciliation before any further send."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
@@ -974,6 +1076,14 @@ pub enum EventBody {
     Variant8 {
         #[doc = "Closed failure category and retry discipline."]
         failure: Failure,
+        #[doc = "Closed variant discriminator."]
+        #[serde(rename = "type")]
+        type_: ::std::string::String,
+    },
+    #[doc = "`Variant9` alternative; see the parent type's schema contract."]
+    Variant9 {
+        #[doc = "Full surface recovery state committed with this event."]
+        surface: SurfaceState,
         #[doc = "Closed variant discriminator."]
         #[serde(rename = "type")]
         type_: ::std::string::String,
@@ -1660,6 +1770,18 @@ impl ::std::convert::TryFrom<::std::string::String> for InteractionStatus {
         value.parse()
     }
 }
+#[doc = "`ListRequest`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ListRequest {
+    #[doc = "Closed record discriminator."]
+    pub kind: ::std::string::String,
+    #[doc = "Bounded page query with an opaque caller-bound continuation."]
+    pub query: PageQuery,
+    #[doc = "Exact product contract version; no legacy readers."]
+    #[serde(rename = "schemaVersion")]
+    pub schema_version: i64,
+}
 #[doc = "Trusted tenant/principal/authority/logical-session storage scope supplied by authenticated ingress."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
@@ -1677,6 +1799,25 @@ pub struct Namespace {
     #[serde(rename = "tenantId")]
     pub tenant_id: Id,
 }
+#[doc = "Selected product ACP extensions; capability metadata is never execution authority."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct Negotiation {
+    #[doc = "Explicitly selected upstream version and product catalog."]
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub a2ui: ::std::option::Option<A2uiNegotiation>,
+    #[doc = "Exact ACP protocol version."]
+    pub acp: i64,
+    #[doc = "Exact product contract version."]
+    #[serde(rename = "contractVersion")]
+    pub contract_version: i64,
+    #[doc = "Host supports stable snapshot-to-event attachment."]
+    #[serde(rename = "cursorAttach")]
+    pub cursor_attach: bool,
+    #[doc = "Host supports transactional receipt semantics; memory doubles simulate this only."]
+    #[serde(rename = "durableReceipts")]
+    pub durable_receipts: bool,
+}
 #[doc = "Definite model-turn outcome; does not establish process exit or business-side-effect completion."]
 #[derive(
     :: serde :: Deserialize,
@@ -1693,15 +1834,18 @@ pub enum Outcome {
     #[serde(rename = "completed")]
     #[doc = "`Completed` alternative; see the parent type's schema contract."]
     Completed,
-    #[serde(rename = "interrupted")]
-    #[doc = "`Interrupted` alternative; see the parent type's schema contract."]
-    Interrupted,
+    #[serde(rename = "cancelled")]
+    #[doc = "`Cancelled` alternative; see the parent type's schema contract."]
+    Cancelled,
     #[serde(rename = "refused")]
     #[doc = "`Refused` alternative; see the parent type's schema contract."]
     Refused,
-    #[serde(rename = "limit_reached")]
-    #[doc = "`LimitReached` alternative; see the parent type's schema contract."]
-    LimitReached,
+    #[serde(rename = "max_tokens")]
+    #[doc = "`MaxTokens` alternative; see the parent type's schema contract."]
+    MaxTokens,
+    #[serde(rename = "max_turn_requests")]
+    #[doc = "`MaxTurnRequests` alternative; see the parent type's schema contract."]
+    MaxTurnRequests,
     #[serde(rename = "failed")]
     #[doc = "`Failed` alternative; see the parent type's schema contract."]
     Failed,
@@ -1710,9 +1854,10 @@ impl ::std::fmt::Display for Outcome {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Completed => f.write_str("completed"),
-            Self::Interrupted => f.write_str("interrupted"),
+            Self::Cancelled => f.write_str("cancelled"),
             Self::Refused => f.write_str("refused"),
-            Self::LimitReached => f.write_str("limit_reached"),
+            Self::MaxTokens => f.write_str("max_tokens"),
+            Self::MaxTurnRequests => f.write_str("max_turn_requests"),
             Self::Failed => f.write_str("failed"),
         }
     }
@@ -1722,9 +1867,10 @@ impl ::std::str::FromStr for Outcome {
     fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         match value {
             "completed" => Ok(Self::Completed),
-            "interrupted" => Ok(Self::Interrupted),
+            "cancelled" => Ok(Self::Cancelled),
             "refused" => Ok(Self::Refused),
-            "limit_reached" => Ok(Self::LimitReached),
+            "max_tokens" => Ok(Self::MaxTokens),
+            "max_turn_requests" => Ok(Self::MaxTurnRequests),
             "failed" => Ok(Self::Failed),
             _ => Err("invalid value".into()),
         }
@@ -1743,6 +1889,16 @@ impl ::std::convert::TryFrom<::std::string::String> for Outcome {
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
+}
+#[doc = "`PageQuery`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct PageQuery {
+    #[doc = "Opaque continuation of one immutable read view; expires independently of the session."]
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub continuation: ::std::option::Option<Id>,
+    #[doc = "Maximum records in this page, from 1 to 256."]
+    pub limit: ::std::num::NonZeroU64,
 }
 #[doc = "Immutable acceptance fact. Only an actual committed store makes it durable; it is not a model terminal."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
@@ -1826,6 +1982,19 @@ impl<'de> ::serde::Deserialize<'de> for ReceiptContentHash {
             })
     }
 }
+#[doc = "`ResumeRequest`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ResumeRequest {
+    #[doc = "Closed record discriminator."]
+    pub kind: ::std::string::String,
+    #[doc = "Exact product contract version; no legacy readers."]
+    #[serde(rename = "schemaVersion")]
+    pub schema_version: i64,
+    #[doc = "Product session identity within the authenticated caller namespace."]
+    #[serde(rename = "sessionId")]
+    pub session_id: Id,
+}
 #[doc = "same_command preserves identity/content; reconcile_first checks the original operation; never forbids retry."]
 #[derive(
     :: serde :: Deserialize,
@@ -1906,6 +2075,21 @@ pub struct Session {
     #[doc = "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."]
     pub status: SessionStatus,
 }
+#[doc = "`SessionPage`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct SessionPage {
+    #[doc = "Caller-scoped sessions in this immutable page."]
+    pub items: ::std::vec::Vec<Session>,
+    #[doc = "Closed record discriminator."]
+    pub kind: ::std::string::String,
+    #[doc = "Opaque continuation; absent at end of the read view."]
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub next: ::std::option::Option<Id>,
+    #[doc = "Exact product contract version; no legacy readers."]
+    #[serde(rename = "schemaVersion")]
+    pub schema_version: i64,
+}
 #[doc = "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."]
 #[derive(
     :: serde :: Deserialize,
@@ -1958,6 +2142,80 @@ impl ::std::convert::TryFrom<::std::string::String> for SessionStatus {
         value.parse()
     }
 }
+#[doc = "`SnapshotPage`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct SnapshotPage {
+    #[doc = "Command projections at the watermark."]
+    pub commands: ::std::vec::Vec<CommandRecord>,
+    #[doc = "Stable event watermark shared by every page."]
+    pub cursor: Counter,
+    #[doc = "Stable events at or below the watermark."]
+    pub events: ::std::vec::Vec<Event>,
+    #[doc = "Interaction display state; does not restore a native callback."]
+    pub interactions: ::std::vec::Vec<Interaction>,
+    #[doc = "Closed record discriminator."]
+    pub kind: ::std::string::String,
+    #[doc = "Opaque continuation; absent at end of the read view."]
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub next: ::std::option::Option<Id>,
+    #[doc = "Zero-based page order within this snapshot."]
+    #[serde(rename = "pageIndex")]
+    pub page_index: Counter,
+    #[doc = "Exact product contract version; no legacy readers."]
+    #[serde(rename = "schemaVersion")]
+    pub schema_version: i64,
+    #[doc = "Session at the snapshot watermark."]
+    pub session: Session,
+    #[doc = "Identity shared by all pages from one immutable read view."]
+    #[serde(rename = "snapshotId")]
+    pub snapshot_id: Id,
+    #[doc = "Bounded original A2UI recovery messages and their associations."]
+    pub surfaces: ::std::vec::Vec<SurfaceState>,
+}
+#[doc = "`SnapshotRequest`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct SnapshotRequest {
+    #[doc = "Closed record discriminator."]
+    pub kind: ::std::string::String,
+    #[doc = "Bounded page query with an opaque caller-bound continuation."]
+    pub query: PageQuery,
+    #[doc = "Exact product contract version; no legacy readers."]
+    #[serde(rename = "schemaVersion")]
+    pub schema_version: i64,
+    #[doc = "Product session identity within the authenticated caller namespace."]
+    #[serde(rename = "sessionId")]
+    pub session_id: Id,
+}
+#[doc = "`Subscription`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(tag = "type", deny_unknown_fields)]
+pub enum Subscription {
+    #[serde(rename = "event")]
+    #[doc = "`Event` alternative; see the parent type's schema contract."]
+    Event {
+        #[doc = "Stable Host event."]
+        event: Event,
+    },
+    #[serde(rename = "delta")]
+    #[doc = "`Delta` alternative; see the parent type's schema contract."]
+    Delta {
+        #[doc = "Product command identity."]
+        #[serde(rename = "commandId")]
+        command_id: Id,
+        #[doc = "Exact native provider incarnation."]
+        generation: Id,
+        #[doc = "Identity of the streamed message within a command."]
+        #[serde(rename = "messageId")]
+        message_id: Id,
+        #[doc = "Untrusted display text."]
+        text: ::std::string::String,
+    },
+    #[serde(rename = "resync_required")]
+    #[doc = "`ResyncRequired` alternative; see the parent type's schema contract."]
+    ResyncRequired,
+}
 #[doc = "Product metadata accompanying an unchanged upstream action; association does not grant permission."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
@@ -1988,10 +2246,20 @@ pub struct SurfaceAction {
     #[serde(rename = "surfaceRevision")]
     pub surface_revision: Counter,
 }
-#[doc = "Product association for an upstream A2UI surface instance; catalog/renderer retain upstream ownership."]
+#[doc = "Surface revision checked atomically when accepting an action response."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
-pub struct SurfaceBinding {
+pub struct SurfaceReference {
+    #[doc = "Exact product surface instance associated with this response."]
+    #[serde(rename = "instanceId")]
+    pub instance_id: Id,
+    #[doc = "Current surface revision checked atomically during response acceptance."]
+    pub revision: Counter,
+}
+#[doc = "Single surface record: association, lifecycle and bounded upstream recovery content."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct SurfaceState {
     #[doc = "Exact negotiated upstream A2UI version."]
     #[serde(rename = "a2uiVersion")]
     pub a2ui_version: ::std::string::String,
@@ -2011,6 +2279,8 @@ pub struct SurfaceBinding {
     pub interaction_id: Id,
     #[doc = "Closed product record discriminator."]
     pub kind: ::std::string::String,
+    #[doc = "Bounded unchanged upstream messages needed to rebuild this instance; not a second A2UI schema."]
+    pub messages: ::std::vec::Vec<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
     #[doc = "Trusted storage isolation scope; not copied from model or action content."]
     pub namespace: Namespace,
     #[doc = "Provider-owned model-turn/run identifier, required when the provider exposes it."]
@@ -2025,7 +2295,7 @@ pub struct SurfaceBinding {
     #[serde(rename = "sourceComponentId")]
     pub source_component_id: Id,
     #[doc = "Persisted lifecycle; deleted is a permanent tombstone for this instance."]
-    pub status: SurfaceBindingStatus,
+    pub status: SurfaceStateStatus,
     #[doc = "Upstream A2UI surface identifier."]
     #[serde(rename = "surfaceId")]
     pub surface_id: Id,
@@ -2045,7 +2315,7 @@ pub struct SurfaceBinding {
     PartialEq,
     PartialOrd,
 )]
-pub enum SurfaceBindingStatus {
+pub enum SurfaceStateStatus {
     #[serde(rename = "active")]
     #[doc = "`Active` alternative; see the parent type's schema contract."]
     Active,
@@ -2053,7 +2323,7 @@ pub enum SurfaceBindingStatus {
     #[doc = "`Deleted` alternative; see the parent type's schema contract."]
     Deleted,
 }
-impl ::std::fmt::Display for SurfaceBindingStatus {
+impl ::std::fmt::Display for SurfaceStateStatus {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Active => f.write_str("active"),
@@ -2061,7 +2331,7 @@ impl ::std::fmt::Display for SurfaceBindingStatus {
         }
     }
 }
-impl ::std::str::FromStr for SurfaceBindingStatus {
+impl ::std::str::FromStr for SurfaceStateStatus {
     type Err = self::error::ConversionError;
     fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         match value {
@@ -2071,29 +2341,19 @@ impl ::std::str::FromStr for SurfaceBindingStatus {
         }
     }
 }
-impl ::std::convert::TryFrom<&str> for SurfaceBindingStatus {
+impl ::std::convert::TryFrom<&str> for SurfaceStateStatus {
     type Error = self::error::ConversionError;
     fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
 }
-impl ::std::convert::TryFrom<::std::string::String> for SurfaceBindingStatus {
+impl ::std::convert::TryFrom<::std::string::String> for SurfaceStateStatus {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
-}
-#[doc = "Surface revision checked atomically when accepting an action response."]
-#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
-#[serde(deny_unknown_fields)]
-pub struct SurfaceReference {
-    #[doc = "Exact product surface instance associated with this response."]
-    #[serde(rename = "instanceId")]
-    pub instance_id: Id,
-    #[doc = "Current surface revision checked atomically during response acceptance."]
-    pub revision: Counter,
 }
 #[doc = "Product reliability records only. No record authenticates a caller, grants approval or proves business execution. Standard ACP/A2UI schemas retain their upstream owners."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
@@ -2113,10 +2373,30 @@ pub enum WireRecord {
     Interaction(Interaction),
     #[doc = "`Delivery` alternative; see the parent type's schema contract."]
     Delivery(Delivery),
-    #[doc = "`SurfaceBinding` alternative; see the parent type's schema contract."]
-    SurfaceBinding(SurfaceBinding),
+    #[doc = "`SurfaceState` alternative; see the parent type's schema contract."]
+    SurfaceState(SurfaceState),
     #[doc = "`SurfaceAction` alternative; see the parent type's schema contract."]
     SurfaceAction(SurfaceAction),
+    #[doc = "`SnapshotPage` alternative; see the parent type's schema contract."]
+    SnapshotPage(SnapshotPage),
+    #[doc = "`SessionPage` alternative; see the parent type's schema contract."]
+    SessionPage(SessionPage),
+    #[doc = "`SnapshotRequest` alternative; see the parent type's schema contract."]
+    SnapshotRequest(SnapshotRequest),
+    #[doc = "`ListRequest` alternative; see the parent type's schema contract."]
+    ListRequest(ListRequest),
+    #[doc = "`AttachRequest` alternative; see the parent type's schema contract."]
+    AttachRequest(AttachRequest),
+    #[doc = "`DetachRequest` alternative; see the parent type's schema contract."]
+    DetachRequest(DetachRequest),
+    #[doc = "`ResumeRequest` alternative; see the parent type's schema contract."]
+    ResumeRequest(ResumeRequest),
+    #[doc = "`ActionRequest` alternative; see the parent type's schema contract."]
+    ActionRequest(ActionRequest),
+    #[doc = "`AccessUpdate` alternative; see the parent type's schema contract."]
+    AccessUpdate(AccessUpdate),
+    #[doc = "`AttachReceipt` alternative; see the parent type's schema contract."]
+    AttachReceipt(AttachReceipt),
 }
 impl ::std::convert::From<Command> for WireRecord {
     fn from(value: Command) -> Self {
@@ -2153,14 +2433,64 @@ impl ::std::convert::From<Delivery> for WireRecord {
         Self::Delivery(value)
     }
 }
-impl ::std::convert::From<SurfaceBinding> for WireRecord {
-    fn from(value: SurfaceBinding) -> Self {
-        Self::SurfaceBinding(value)
+impl ::std::convert::From<SurfaceState> for WireRecord {
+    fn from(value: SurfaceState) -> Self {
+        Self::SurfaceState(value)
     }
 }
 impl ::std::convert::From<SurfaceAction> for WireRecord {
     fn from(value: SurfaceAction) -> Self {
         Self::SurfaceAction(value)
+    }
+}
+impl ::std::convert::From<SnapshotPage> for WireRecord {
+    fn from(value: SnapshotPage) -> Self {
+        Self::SnapshotPage(value)
+    }
+}
+impl ::std::convert::From<SessionPage> for WireRecord {
+    fn from(value: SessionPage) -> Self {
+        Self::SessionPage(value)
+    }
+}
+impl ::std::convert::From<SnapshotRequest> for WireRecord {
+    fn from(value: SnapshotRequest) -> Self {
+        Self::SnapshotRequest(value)
+    }
+}
+impl ::std::convert::From<ListRequest> for WireRecord {
+    fn from(value: ListRequest) -> Self {
+        Self::ListRequest(value)
+    }
+}
+impl ::std::convert::From<AttachRequest> for WireRecord {
+    fn from(value: AttachRequest) -> Self {
+        Self::AttachRequest(value)
+    }
+}
+impl ::std::convert::From<DetachRequest> for WireRecord {
+    fn from(value: DetachRequest) -> Self {
+        Self::DetachRequest(value)
+    }
+}
+impl ::std::convert::From<ResumeRequest> for WireRecord {
+    fn from(value: ResumeRequest) -> Self {
+        Self::ResumeRequest(value)
+    }
+}
+impl ::std::convert::From<ActionRequest> for WireRecord {
+    fn from(value: ActionRequest) -> Self {
+        Self::ActionRequest(value)
+    }
+}
+impl ::std::convert::From<AccessUpdate> for WireRecord {
+    fn from(value: AccessUpdate) -> Self {
+        Self::AccessUpdate(value)
+    }
+}
+impl ::std::convert::From<AttachReceipt> for WireRecord {
+    fn from(value: AttachReceipt) -> Self {
+        Self::AttachReceipt(value)
     }
 }
 #[doc = " Error types."]
@@ -2187,6 +2517,31 @@ pub mod error {
         fn from(value: String) -> Self {
             Self(value.into())
         }
+    }
+}
+impl std::fmt::Debug for A2uiNegotiation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(A2uiNegotiation), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for AccessUpdate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(AccessUpdate), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for ActionRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(ActionRequest), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for AttachReceipt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(AttachReceipt), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for AttachRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(AttachRequest), "([redacted])"))
     }
 }
 impl std::fmt::Debug for Binding {
@@ -2268,6 +2623,11 @@ impl std::fmt::Debug for DeliveryRetry {
 impl std::fmt::Debug for DeliveryStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(stringify!(DeliveryStatus), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for DetachRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(DetachRequest), "([redacted])"))
     }
 }
 impl std::fmt::Debug for Dispatch {
@@ -2374,14 +2734,29 @@ impl std::fmt::Debug for InteractionStatus {
         f.write_str(concat!(stringify!(InteractionStatus), "([redacted])"))
     }
 }
+impl std::fmt::Debug for ListRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(ListRequest), "([redacted])"))
+    }
+}
 impl std::fmt::Debug for Namespace {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(stringify!(Namespace), "([redacted])"))
     }
 }
+impl std::fmt::Debug for Negotiation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(Negotiation), "([redacted])"))
+    }
+}
 impl std::fmt::Debug for Outcome {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(stringify!(Outcome), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for PageQuery {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(PageQuery), "([redacted])"))
     }
 }
 impl std::fmt::Debug for Receipt {
@@ -2394,6 +2769,11 @@ impl std::fmt::Debug for ReceiptContentHash {
         f.write_str(concat!(stringify!(ReceiptContentHash), "([redacted])"))
     }
 }
+impl std::fmt::Debug for ResumeRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(ResumeRequest), "([redacted])"))
+    }
+}
 impl std::fmt::Debug for Retry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(stringify!(Retry), "([redacted])"))
@@ -2404,9 +2784,29 @@ impl std::fmt::Debug for Session {
         f.write_str(concat!(stringify!(Session), "([redacted])"))
     }
 }
+impl std::fmt::Debug for SessionPage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(SessionPage), "([redacted])"))
+    }
+}
 impl std::fmt::Debug for SessionStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(stringify!(SessionStatus), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for SnapshotPage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(SnapshotPage), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for SnapshotRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(SnapshotRequest), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for Subscription {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(Subscription), "([redacted])"))
     }
 }
 impl std::fmt::Debug for SurfaceAction {
@@ -2414,19 +2814,19 @@ impl std::fmt::Debug for SurfaceAction {
         f.write_str(concat!(stringify!(SurfaceAction), "([redacted])"))
     }
 }
-impl std::fmt::Debug for SurfaceBinding {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(concat!(stringify!(SurfaceBinding), "([redacted])"))
-    }
-}
-impl std::fmt::Debug for SurfaceBindingStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(concat!(stringify!(SurfaceBindingStatus), "([redacted])"))
-    }
-}
 impl std::fmt::Debug for SurfaceReference {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(stringify!(SurfaceReference), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for SurfaceState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(SurfaceState), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for SurfaceStateStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(SurfaceStateStatus), "([redacted])"))
     }
 }
 impl std::fmt::Debug for WireRecord {

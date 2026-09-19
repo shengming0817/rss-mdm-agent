@@ -12,8 +12,13 @@ import type {
   Namespace,
   Receipt,
   Session,
-  SurfaceBinding,
+  SurfaceState,
+  SnapshotPage,
+  PageQuery,
+  SessionPage,
+  Subscription,
   ConfigRef,
+  Negotiation,
 } from "./wire.js";
 /** Supplied by authenticated ingress, never decoded from model/tool/action content.
  * This port does not authenticate its caller; the composition root owns that proof. */
@@ -25,7 +30,6 @@ export interface Caller {
 export interface Budget {
   readonly timeoutMs: number;
   readonly signal: AbortSignal;
-  readonly maxSnapshotRecords?: number;
 }
 export interface Retention {
   readonly retryWindowMs: number;
@@ -52,17 +56,6 @@ export interface ControlledToolVerifier {
       verificationRef: Id;
     }>
   >;
-}
-export interface Negotiation {
-  readonly contractVersion: 2;
-  readonly acp: 1;
-  readonly a2ui?: {
-    readonly version: "v0.9.1";
-    readonly catalogId: Id;
-    readonly catalogVersion: Id;
-  };
-  readonly durableReceipts: boolean;
-  readonly cursorAttach: boolean;
 }
 export interface SessionOptions {
   readonly provider: Id;
@@ -172,18 +165,6 @@ export interface ProviderAgentPort {
   resume?(binding: Binding, budget: Budget): Promise<Result<Binding>>;
   close(budget: Budget): Promise<Result<{ processStopped: boolean }>>;
 }
-export interface Snapshot {
-  readonly session: Session;
-  readonly cursor: Counter;
-  readonly events: readonly Event[];
-  readonly commands: readonly CommandRecord[];
-  readonly interactions: readonly Interaction[];
-  readonly surfaces: readonly SurfaceBinding[];
-}
-export type Subscription =
-  | { type: "event"; event: Event }
-  | ({ type: "delta"; generation: Id } & MessageDelta)
-  | { type: "resync_required" };
 /** Close stops admission, ends subscriptions/workers, then closes provider and store.
  * It is idempotent; failed cleanup may be retried with a fresh budget. */
 export interface Closeable {
@@ -212,11 +193,28 @@ export interface HostPort extends Closeable {
     command: Command,
     budget: Budget,
   ): Promise<Result<Receipt>>;
-  snapshot(
+  surface(
+    caller: Caller,
+    sessionId: Id,
+    instanceId: Id,
+    budget: Budget,
+  ): Promise<Result<SurfaceState>>;
+  snapshotPage(
+    caller: Caller,
+    sessionId: Id,
+    query: PageQuery,
+    budget: Budget,
+  ): Promise<Result<SnapshotPage>>;
+  listSessions(
+    caller: Caller,
+    query: PageQuery,
+    budget: Budget,
+  ): Promise<Result<SessionPage>>;
+  resume(
     caller: Caller,
     sessionId: Id,
     budget: Budget,
-  ): Promise<Result<Snapshot>>;
+  ): Promise<Result<Session>>;
   subscribe(
     caller: Caller,
     sessionId: Id,
@@ -234,7 +232,7 @@ export interface SessionCommit {
   readonly events: readonly Event[];
   readonly interactions: readonly Interaction[];
   readonly deliveries: readonly Delivery[];
-  readonly surfaces: readonly SurfaceBinding[];
+  readonly surfaces: readonly SurfaceState[];
 }
 export interface AcceptCommand {
   readonly namespace: Namespace;
@@ -254,13 +252,14 @@ export interface SessionStore extends Closeable {
   create(session: Session): Promise<Result<void>>;
   session(namespace: Namespace): Promise<Result<Session>>;
   accept(input: AcceptCommand): Promise<Result<Receipt>>;
-  surface(
-    namespace: Namespace,
-    instanceId: Id,
-  ): Promise<Result<SurfaceBinding>>;
+  surface(namespace: Namespace, instanceId: Id): Promise<Result<SurfaceState>>;
   command(namespace: Namespace, commandId: Id): Promise<Result<CommandRecord>>;
   commit(batch: SessionCommit): Promise<Result<void>>;
-  snapshot(namespace: Namespace, limit: number): Promise<Result<Snapshot>>;
+  snapshotPage(
+    namespace: Namespace,
+    query: PageQuery,
+  ): Promise<Result<SnapshotPage>>;
+  listSessions(caller: Caller, query: PageQuery): Promise<Result<SessionPage>>;
   events(
     namespace: Namespace,
     after: Counter,
@@ -281,3 +280,5 @@ export interface SessionStore extends Closeable {
    * Missing/retired namespaces never implicitly recreate a session. */
   pruneRetired(nowMs: Counter): Promise<Result<number>>;
 }
+
+export type { Subscription, Negotiation } from "./wire.js";

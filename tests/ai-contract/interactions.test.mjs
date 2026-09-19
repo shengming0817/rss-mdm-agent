@@ -130,7 +130,9 @@ test("one native prompt accepts two distinct callbacks and answers in reverse or
       "already_answered",
     );
   }
-  const snapshot = unwrap(await store.snapshot(session.namespace, 1024));
+  const snapshot = unwrap(
+    await store.snapshotPage(session.namespace, { limit: 256 }),
+  );
   assert.equal(snapshot.interactions.length, 2);
   assert.ok(snapshot.interactions.every((row) => row.status === "answered"));
   assert.deepEqual(snapshot.interactions[0].request, rows[0].request);
@@ -165,7 +167,8 @@ test("pending state and its display event commit together with identical payload
     mutation(batch);
     assert.equal((await store.commit(batch)).ok, false);
     assert.equal(
-      unwrap(await store.snapshot(session.namespace, 1024)).interactions.length,
+      unwrap(await store.snapshotPage(session.namespace, { limit: 256 }))
+        .interactions.length,
       0,
     );
   }

@@ -38,7 +38,7 @@ ACP 固定官方 SDK 1.4.0 / schema-v1.21.0。标准 session/new、session/promp
 
 产品能力在 capabilities._meta 的 `rss-mdm-agent.ai-runtime` 下协商 contractVersion=2、durableReceipts、cursorAttach，以及可选 A2UI version/catalogId/catalogVersion。`_rss-mdm-agent/submit`、`/snapshot`、`/attach` 和 `/update` 是扩展方法的完整产品前缀约定（代码中的 extension 常量为准），只有协商后使用；未知 request 按 ACP 返回 method-not-found，未知 notification 按上游规则忽略。A01 只冻结约定和 fixtures；实际 transport/协议 service 归 A04。
 
-A2UI 固定 v0.9.1 snapshot，客户端 action、服务端 surface 生命周期、basic catalog 与 common types schema 原样保留在 [upstream](schema/upstream/a2ui/NOTICE.md)。`SurfaceBinding` 绑定 session/run、surfaceId、surfaceInstanceId、revision、interaction、component/event、catalog/version。create/update/delete 的上游 payload 不改写；产品扩展携带关联 metadata。一次新建 surface 使用新 instance ID，创建 revision 为0，更新/删除以 session revision/generation CAS 为前提严格递增1，身份字段不可重绑；active→deleted 持久化 tombstone 且不可复活，同时使 pending interaction unavailable。snapshot 与事件恢复这些关联；renderer 和 catalog 内容校验由 A04 持有。
+A2UI 固定 v0.9.1 snapshot，客户端 action、服务端 surface 生命周期、basic catalog 与 common types schema 原样保留在 [upstream](schema/upstream/a2ui/NOTICE.md)。`SurfaceState` 绑定 session/run、surfaceId、surfaceInstanceId、revision、interaction、component/event、catalog/version。create/update/delete 的上游 payload 不改写；产品扩展携带关联 metadata。一次新建 surface 使用新 instance ID，创建 revision 为0，更新/删除以 session revision/generation CAS 为前提严格递增1，身份字段不可重绑；active→deleted 持久化 tombstone 且不可复活，同时使 pending interaction unavailable。snapshotPage 与事件恢复这些关联和实际内容；完整有界 messages 与 surface 稳定事件同批发布，内容校验由公共 validateSurface 完成，A04 在发布和渲染前消费。
 
 `resolveSurfaceAction(store, caller, metadata, standard, limits)` 从 Store 读取当前 surface 后校验关联与 Caller，返回的 context 仍是未经授权的回答数据；名称、timestamp、context 中的 actor/approved 均无批准权。metadata 中的 commandId 由产品客户端为该次回答生成并在重试时复用；它不是权限凭据。返回的 surface instance/revision 必须放入 respond input.surface；Store 在回答接纳事务中再核对 active 状态与 revision，关联 surface 的 interaction 不允许省略该字段。回答单次消费由 Host/Store 保证，解析与提交之间的删除/更新也会拒绝旧回答。无 A2UI 客户端保留文本、工具状态和标准权限交互；专有结构交互明确不支持，不能自动批准或用普通消息替代回答。
 
@@ -69,3 +69,5 @@ Node 验证基线24.14.1 / pnpm11.4.0。主导出是生成类型、编解码、p
 回调身份参考固定发布包 [Claude Agent SDK 0.3.277 sdk.d.ts](https://unpkg.com/@anthropic-ai/claude-agent-sdk@0.3.277/sdk.d.ts) 的 `CanUseTool`：每次回调独立携带 `requestId` 和 `toolUseID`，不能与父 prompt 身份合并。此引用不形成运行依赖或 SDK 互操作证明。
 
 Interaction 的必填 `category: "question"` 仅允许普通用户追问；权限 callback 不属于普通 respond 生命周期，进入 ToolEndpoint/verifier 或拒绝。Provider 的 pending 发布只能使用专用 interaction observation。wire schema 按状态闭合：pending 必带 request，answered/expired/unavailable 禁带 request；旧格式直接拒绝，TS/Rust 由同一 schema 生成。
+
+A04 同 PR 的直接契约替换、分页/列表、明确终态与浏览器入口见[ACP–A2UI 开发](../../docs/guides/ai-access-development.md)。协商字段和全部产品扩展 DTO 从同一 schema 生成；通用包入口没有 Node fs/crypto，生成期编译静态校验器，运行期使用固定 noble 摘要。旧单次 snapshot API 不再提供。

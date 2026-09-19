@@ -5,6 +5,7 @@ export {
   runStoreConformance,
   seedInteraction,
   seedSurface,
+  surfaceCommit,
   terminalCommit,
   fixtureCaller,
   fixtureSession,

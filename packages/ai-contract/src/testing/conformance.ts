@@ -17,7 +17,7 @@ import type {
   SessionCommit,
   Result,
 } from "../ports.js";
-import type { Command, CommandRecord, Session } from "../wire.js";
+import type { Command, CommandRecord, Session, SurfaceState } from "../wire.js";
 export const fixtureCaller: Caller = {
   tenantId: "tenant-1",
   principalId: "user-1",
@@ -41,6 +41,7 @@ export function fixtureSession(): Session {
       config: { id: "config-1", revision: "1" },
     },
     capabilities: {
+      queue: "unsupported",
       continuation: "unsupported",
       cancellation: "request_only",
       tools: "disabled",
@@ -134,7 +135,8 @@ async function runStoreScenarios(
   const [a, b] = await Promise.all([store.accept(input), store.accept(input)]);
   assert.deepEqual(unwrap(a), unwrap(b));
   assert.equal(
-    unwrap(await store.snapshot(s.namespace, 1024)).commands.length,
+    unwrap(await store.snapshotPage(s.namespace, { limit: 256 })).commands
+      .length,
     1,
   );
   const conflict = await store.accept({
@@ -389,7 +391,10 @@ async function runStoreBoundaries(
         session: {
           ...s,
           revision: 1,
-          capabilities: { ...s.capabilities, tools: "host_mediated" },
+          capabilities: {
+            ...s.capabilities,
+            tools: "host_mediated",
+          },
         },
       })
     ).ok,
@@ -532,8 +537,8 @@ async function runStoreBoundaries(
     assert.equal(second.ok, false);
     if (!second.ok) assert.equal(second.error.code, "already_answered");
     assert.equal(
-      unwrap(await callbacks.snapshot(head.namespace, 1024)).interactions[0]
-        .status,
+      unwrap(await callbacks.snapshotPage(head.namespace, { limit: 256 }))
+        .interactions[0].status,
       "answered",
     );
   }
@@ -587,11 +592,12 @@ async function runStoreBoundaries(
       false,
     );
   }
-  const snapshot = unwrap(await store.snapshot(s.namespace, 1024));
+  const snapshot = unwrap(
+    await store.snapshotPage(s.namespace, { limit: 256 }),
+  );
   assert.equal(snapshot.events.at(-1)!.sequence, snapshot.cursor);
-  const over = await store.snapshot(s.namespace, 1);
-  assert.equal(over.ok, false);
-  if (!over.ok) assert.equal(over.error.code, "limit_exceeded");
+  const over = await store.snapshotPage(s.namespace, { limit: 1 });
+  assert.ok(unwrap(over).next);
   const replay = [];
   let cursor = 0;
   for (let i = 0; i < 3; i++) {
@@ -652,6 +658,34 @@ export function terminalCommit(
     ],
   };
 }
+/** Surface recovery state and its stable event share a single store transaction. */
+export function surfaceCommit(
+  session: Session,
+  surface: SurfaceState,
+  commandId: string,
+): SessionCommit {
+  return {
+    ...emptyCommit(session),
+    session: {
+      ...session,
+      revision: session.revision + 1,
+      lastSequence: session.lastSequence + 1,
+    },
+    surfaces: [surface],
+    events: [
+      {
+        schemaVersion: 2,
+        kind: "event",
+        namespace: session.namespace,
+        eventId: `surface-${surface.surfaceInstanceId}-${surface.revision}`,
+        sequence: session.lastSequence + 1,
+        generation: surface.generation,
+        commandId,
+        body: { type: "surface", surface },
+      },
+    ],
+  };
+}
 export async function seedSurface(store: SessionStore) {
   const seeded = await seedInteraction(store);
   const template = fixtures.valid.find((v) => v.kind === "surface")!;
@@ -665,7 +699,9 @@ export async function seedSurface(store: SessionStore) {
     status: "active" as const,
   };
   unwrap(
-    await store.commit({ ...emptyCommit(seeded.session), surfaces: [surface] }),
+    await store.commit(
+      surfaceCommit(seeded.session, surface, seeded.interaction.commandId),
+    ),
   );
   return {
     ...seeded,
@@ -693,7 +729,9 @@ async function runSurfaceConformance(store: SessionStore): Promise<void> {
     );
   const updated = { ...surface, revision: 1 };
   unwrap(
-    await store.commit({ ...emptyCommit(seeded.session), surfaces: [updated] }),
+    await store.commit(
+      surfaceCommit(seeded.session, updated, seeded.interaction.commandId),
+    ),
   );
   const head = unwrap(await store.session(seeded.session.namespace));
   assert.equal(seeded.answer.input.type, "respond");
@@ -713,10 +751,13 @@ async function runSurfaceConformance(store: SessionStore): Promise<void> {
     "surface cannot be omitted",
   );
   unwrap(
-    await store.commit({
-      ...emptyCommit(head),
-      surfaces: [{ ...updated, revision: 2, status: "deleted" }],
-    }),
+    await store.commit(
+      surfaceCommit(
+        head,
+        { ...updated, revision: 2, status: "deleted" },
+        seeded.interaction.commandId,
+      ),
+    ),
   );
   const deleted = unwrap(await store.session(head.namespace));
   assert.equal(
@@ -725,7 +766,8 @@ async function runSurfaceConformance(store: SessionStore): Promise<void> {
     "deleted",
   );
   assert.equal(
-    unwrap(await store.snapshot(head.namespace, 1024)).interactions[0].status,
+    unwrap(await store.snapshotPage(head.namespace, { limit: 256 }))
+      .interactions[0].status,
     "unavailable",
   );
   assert.equal(
@@ -863,7 +905,7 @@ async function runCallbackConformance(store: SessionStore): Promise<void> {
       false,
     );
     const unchanged = unwrap(
-      await store.snapshot(seeded.session.namespace, 1024),
+      await store.snapshotPage(seeded.session.namespace, { limit: 256 }),
     );
     assert.equal(unchanged.interactions.length, 1);
     assert.equal(unchanged.cursor, seeded.session.lastSequence);
@@ -903,7 +945,9 @@ async function runCallbackConformance(store: SessionStore): Promise<void> {
       ),
     );
   }
-  const snapshot = unwrap(await store.snapshot(head.namespace, 1024));
+  const snapshot = unwrap(
+    await store.snapshotPage(head.namespace, { limit: 256 }),
+  );
   assert.equal(snapshot.interactions.length, 2);
   assert.ok(snapshot.interactions.every((row) => row.status === "answered"));
   assert.deepEqual(

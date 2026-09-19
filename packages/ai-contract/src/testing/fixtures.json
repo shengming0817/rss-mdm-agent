@@ -93,7 +93,8 @@
         "subagent": "unsupported",
         "terminal": "unsupported",
         "structuredQuestion": "unsupported",
-        "multimodal": "unsupported"
+        "multimodal": "unsupported",
+        "queue": "unsupported"
       },
       "status": "active"
     },
@@ -154,10 +155,78 @@
       "interactionId": "i-1",
       "sourceComponentId": "button-1",
       "eventName": "respond",
-      "catalogId": "catalog-1",
+      "catalogId": "urn:rss-mdm-agent:a2ui:interaction",
       "catalogVersion": "1",
       "a2uiVersion": "v0.9.1",
-      "status": "active"
+      "status": "active",
+      "messages": [
+        {
+          "version": "v0.9.1",
+          "createSurface": {
+            "surfaceId": "surface-1",
+            "catalogId": "urn:rss-mdm-agent:a2ui:interaction"
+          }
+        },
+        {
+          "version": "v0.9.1",
+          "updateComponents": {
+            "surfaceId": "surface-1",
+            "components": [
+              {
+                "id": "root",
+                "component": "Column",
+                "children": ["question", "field", "button-1"]
+              },
+              {
+                "id": "question",
+                "component": "Text",
+                "text": {
+                  "path": "/question"
+                }
+              },
+              {
+                "id": "field",
+                "component": "TextField",
+                "label": "Answer",
+                "value": {
+                  "path": "/answer"
+                }
+              },
+              {
+                "id": "button-1",
+                "component": "Button",
+                "child": "label",
+                "action": {
+                  "event": {
+                    "name": "respond",
+                    "context": {
+                      "answer": {
+                        "path": "/answer"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "id": "label",
+                "component": "Text",
+                "text": "Send answer"
+              }
+            ]
+          }
+        },
+        {
+          "version": "v0.9.1",
+          "updateDataModel": {
+            "surfaceId": "surface-1",
+            "path": "/",
+            "value": {
+              "question": "Choose an option",
+              "answer": "pending"
+            }
+          }
+        }
+      ]
     },
     {
       "schemaVersion": 2,
@@ -186,7 +255,7 @@
       "body": {
         "type": "text",
         "messageId": "m-1",
-        "text": "\u4f60\u597d <script> inert"
+        "text": "你好 <script> inert"
       }
     },
     {
@@ -250,7 +319,7 @@
       "generation": "generation-1",
       "body": {
         "type": "terminal",
-        "outcome": "interrupted"
+        "outcome": "cancelled"
       }
     },
     {
@@ -525,6 +594,174 @@
         "interactionId": "i-1",
         "status": "unavailable"
       }
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "snapshotPage",
+      "snapshotId": "snapshot-1",
+      "pageIndex": 0,
+      "session": {
+        "schemaVersion": 2,
+        "kind": "session",
+        "namespace": {
+          "tenantId": "tenant-1",
+          "principalId": "user-1",
+          "authorityId": "authority-1",
+          "sessionId": "session-1"
+        },
+        "revision": 0,
+        "lastSequence": 0,
+        "binding": {
+          "provider": "fake",
+          "providerVersion": "fixture-1",
+          "adapterVersion": "fixture-1",
+          "generation": "generation-1",
+          "accountRef": "account-1",
+          "nativeSessionId": "native-1",
+          "config": {
+            "id": "config-1",
+            "revision": "1"
+          }
+        },
+        "capabilities": {
+          "continuation": "unsupported",
+          "cancellation": "request_only",
+          "tools": "disabled",
+          "steer": "unsupported",
+          "fork": "unsupported",
+          "subagent": "unsupported",
+          "terminal": "unsupported",
+          "structuredQuestion": "unsupported",
+          "multimodal": "unsupported",
+          "queue": "unsupported"
+        },
+        "status": "active"
+      },
+      "cursor": 0,
+      "events": [],
+      "commands": [],
+      "interactions": [],
+      "surfaces": []
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "sessionPage",
+      "items": [
+        {
+          "schemaVersion": 2,
+          "kind": "session",
+          "namespace": {
+            "tenantId": "tenant-1",
+            "principalId": "user-1",
+            "authorityId": "authority-1",
+            "sessionId": "session-1"
+          },
+          "revision": 0,
+          "lastSequence": 0,
+          "binding": {
+            "provider": "fake",
+            "providerVersion": "fixture-1",
+            "adapterVersion": "fixture-1",
+            "generation": "generation-1",
+            "accountRef": "account-1",
+            "nativeSessionId": "native-1",
+            "config": {
+              "id": "config-1",
+              "revision": "1"
+            }
+          },
+          "capabilities": {
+            "continuation": "unsupported",
+            "cancellation": "request_only",
+            "tools": "disabled",
+            "steer": "unsupported",
+            "fork": "unsupported",
+            "subagent": "unsupported",
+            "terminal": "unsupported",
+            "structuredQuestion": "unsupported",
+            "multimodal": "unsupported",
+            "queue": "unsupported"
+          },
+          "status": "active"
+        }
+      ]
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "snapshotRequest",
+      "sessionId": "session-1",
+      "query": {
+        "limit": 64
+      }
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "listRequest",
+      "query": {
+        "limit": 64
+      }
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "attachRequest",
+      "sessionId": "session-1",
+      "after": 0,
+      "attachmentId": "attach-1"
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "attachReceipt",
+      "sessionId": "session-1",
+      "after": 0,
+      "attachmentId": "attach-1"
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "detachRequest",
+      "sessionId": "session-1",
+      "attachmentId": "attach-1"
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "resumeRequest",
+      "sessionId": "session-1"
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "accessUpdate",
+      "sessionId": "session-1",
+      "attachmentId": "attach-1",
+      "update": {
+        "type": "resync_required"
+      }
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "actionRequest",
+      "metadata": {
+        "schemaVersion": 2,
+        "kind": "surfaceAction",
+        "sessionId": "session-1",
+        "commandId": "action-1",
+        "surfaceInstanceId": "surface-instance-1",
+        "surfaceRevision": 1,
+        "interactionId": "i-1",
+        "generation": "generation-1",
+        "nativeRunId": "run-1"
+      },
+      "message": {
+        "version": "v0.9.1",
+        "action": {
+          "name": "respond",
+          "surfaceId": "surface-1",
+          "sourceComponentId": "button-1",
+          "timestamp": "2026-09-19T00:00:00Z",
+          "context": {
+            "answer": "a"
+          }
+        }
+      },
+      "expiresAtMs": 100
     }
   ],
   "invalid": [
@@ -659,6 +896,16 @@
       "name": "unclassified_callback",
       "raw": "{\"schemaVersion\":2,\"kind\":\"interaction\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"interactionId\":\"i-1\",\"commandId\":\"command-1\",\"generation\":\"generation-1\",\"expiresAtMs\":100,\"status\":\"pending\",\"callbackLifetime\":\"generation_bound\",\"nativeCallbackId\":\"r-1\",\"request\":{\"question\":\"Choose an option\",\"options\":[\"a\",\"b\"]}}",
       "code": "schema"
+    },
+    {
+      "name": "snapshot-watermark-mismatch",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"snapshotPage\",\"snapshotId\":\"snapshot-1\",\"pageIndex\":0,\"session\":{\"schemaVersion\":2,\"kind\":\"session\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"revision\":0,\"lastSequence\":0,\"binding\":{\"provider\":\"fake\",\"providerVersion\":\"fixture-1\",\"adapterVersion\":\"fixture-1\",\"generation\":\"generation-1\",\"accountRef\":\"account-1\",\"nativeSessionId\":\"native-1\",\"config\":{\"id\":\"config-1\",\"revision\":\"1\"}},\"capabilities\":{\"continuation\":\"unsupported\",\"cancellation\":\"request_only\",\"tools\":\"disabled\",\"steer\":\"unsupported\",\"fork\":\"unsupported\",\"subagent\":\"unsupported\",\"terminal\":\"unsupported\",\"structuredQuestion\":\"unsupported\",\"multimodal\":\"unsupported\",\"queue\":\"unsupported\"},\"status\":\"active\"},\"cursor\":1,\"events\":[],\"commands\":[],\"interactions\":[],\"surfaces\":[]}",
+      "code": "context"
+    },
+    {
+      "name": "nested-command-hash-mismatch",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"snapshotPage\",\"snapshotId\":\"snapshot-1\",\"pageIndex\":0,\"session\":{\"schemaVersion\":2,\"kind\":\"session\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"revision\":0,\"lastSequence\":0,\"binding\":{\"provider\":\"fake\",\"providerVersion\":\"fixture-1\",\"adapterVersion\":\"fixture-1\",\"generation\":\"generation-1\",\"accountRef\":\"account-1\",\"nativeSessionId\":\"native-1\",\"config\":{\"id\":\"config-1\",\"revision\":\"1\"}},\"capabilities\":{\"continuation\":\"unsupported\",\"cancellation\":\"request_only\",\"tools\":\"disabled\",\"steer\":\"unsupported\",\"fork\":\"unsupported\",\"subagent\":\"unsupported\",\"terminal\":\"unsupported\",\"structuredQuestion\":\"unsupported\",\"multimodal\":\"unsupported\",\"queue\":\"unsupported\"},\"status\":\"active\"},\"cursor\":0,\"events\":[],\"commands\":[{\"schemaVersion\":2,\"kind\":\"commandRecord\",\"command\":{\"schemaVersion\":2,\"kind\":\"command\",\"sessionId\":\"session-1\",\"commandId\":\"command-1\",\"expiresAtMs\":1000,\"input\":{\"type\":\"prompt\",\"text\":\"fixture text\",\"policy\":\"queue_next\"}},\"receipt\":{\"schemaVersion\":2,\"kind\":\"receipt\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"commandId\":\"command-1\",\"contentHash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"acceptedAtMs\":0,\"retryUntilMs\":100,\"receiptUntilMs\":200,\"acceptedRevision\":1},\"state\":\"accepted\"}],\"interactions\":[],\"surfaces\":[]}",
+      "code": "context"
     }
   ],
   "commandHash": "273d2bc05c0cb23b02f666dff841b992d7839f7c43352570827c46ab4b6b0de7",

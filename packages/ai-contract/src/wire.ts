@@ -11,8 +11,18 @@ export type WireRecord =
   | Session
   | Interaction
   | Delivery
-  | SurfaceBinding
-  | SurfaceAction;
+  | SurfaceState
+  | SurfaceAction
+  | SnapshotPage
+  | SessionPage
+  | SnapshotRequest
+  | ListRequest
+  | AttachRequest
+  | DetachRequest
+  | ResumeRequest
+  | ActionRequest
+  | AccessUpdate
+  | AttachReceipt;
 /**
  * Opaque ASCII correlation identifier (1–128 characters); never an authentication credential.
  */
@@ -87,9 +97,10 @@ export type CommandState =
  */
 export type Outcome =
   | "completed"
-  | "interrupted"
+  | "cancelled"
   | "refused"
-  | "limit_reached"
+  | "max_tokens"
+  | "max_turn_requests"
   | "failed";
 /**
  * Closed value-free error category; diagnostics never include model text or credentials.
@@ -220,11 +231,50 @@ export type EventBody =
       type: "error";
       /** Closed failure category and retry discipline. */
       failure: Failure;
+    }
+  | {
+      /**
+       * Closed variant discriminator.
+       */
+      type: "surface";
+      /** Full surface recovery state committed with this event. */
+      surface: SurfaceState;
     };
 /**
  * Only supported enables an operation; unknown and unsupported fail closed.
  */
 export type CapabilityState = "supported" | "unsupported" | "unknown";
+export type Subscription =
+  | {
+      /**
+       * Closed variant discriminator.
+       */
+      type: "event";
+      /** Stable Host event. */
+      event: Event;
+    }
+  | {
+      /**
+       * Closed variant discriminator.
+       */
+      type: "delta";
+      /** Exact native provider incarnation. */
+      generation: Id;
+      /** Product command identity. */
+      commandId: Id;
+      /** Identity of the streamed message within a command. */
+      messageId: Id;
+      /**
+       * Untrusted display text.
+       */
+      text: string;
+    }
+  | {
+      /**
+       * Closed variant discriminator.
+       */
+      type: "resync_required";
+    };
 
 /**
  * Client command identity and complete canonical input; trusted namespace is supplied separately.
@@ -381,6 +431,57 @@ export interface InteractionRequest {
   [k: string]: unknown;
 }
 /**
+ * Single surface record: association, lifecycle and bounded upstream recovery content.
+ */
+export interface SurfaceState {
+  /**
+   * Exact product wire version; V1 is rejected without migration or fallback.
+   */
+  schemaVersion: 2;
+  /**
+   * Closed product record discriminator.
+   */
+  kind: "surface";
+  /** Trusted storage isolation scope; not copied from model or action content. */
+  namespace: Namespace;
+  /** Live provider incarnation token; rejects callbacks from previous incarnations. */
+  generation: Id;
+  /** Provider-owned model-turn/run identifier, required when the provider exposes it. */
+  nativeRunId: Id;
+  /** Upstream A2UI surface identifier. */
+  surfaceId: Id;
+  /** Fresh product identity for each surface creation; deletion permanently invalidates old actions. */
+  surfaceInstanceId: Id;
+  /** Monotonic CAS revision of this product record. */
+  revision: Counter;
+  /** Single-use interaction identity within the namespace. */
+  interactionId: Id;
+  /** Exact upstream source component allowed to emit this action. */
+  sourceComponentId: Id;
+  /** Exact upstream action name associated with this interaction. */
+  eventName: Id;
+  /** Negotiated upstream catalog identity. */
+  catalogId: Id;
+  /** Negotiated fixed catalog version; not a renderer implementation claim. */
+  catalogVersion: Id;
+  /**
+   * Exact negotiated upstream A2UI version.
+   */
+  a2uiVersion: "v0.9.1";
+  /**
+   * Persisted lifecycle; deleted is a permanent tombstone for this instance.
+   */
+  status: "active" | "deleted";
+  /**
+   * Bounded unchanged upstream messages needed to rebuild this instance; not a second A2UI schema.
+   *
+   * @maxItems 128
+   */
+  messages: {
+    [k: string]: unknown;
+  }[];
+}
+/**
  * Logical session state and stable event watermark committed at one revision.
  */
 export interface Session {
@@ -471,6 +572,8 @@ export interface Capabilities {
   structuredQuestion: CapabilityState;
   /** Whether provider-specific multimodal input is available through an adapter extension. */
   multimodal: CapabilityState;
+  /** Whether additional prompts may be queued while a run is active. */
+  queue: CapabilityState;
 }
 /**
  * Single-use provider callback with immutable command/native correlation, expiry and lifetime.
@@ -553,49 +656,6 @@ export interface Delivery {
   nextAttemptAtMs: Counter;
 }
 /**
- * Product association for an upstream A2UI surface instance; catalog/renderer retain upstream ownership.
- */
-export interface SurfaceBinding {
-  /**
-   * Exact product wire version; V1 is rejected without migration or fallback.
-   */
-  schemaVersion: 2;
-  /**
-   * Closed product record discriminator.
-   */
-  kind: "surface";
-  /** Trusted storage isolation scope; not copied from model or action content. */
-  namespace: Namespace;
-  /** Live provider incarnation token; rejects callbacks from previous incarnations. */
-  generation: Id;
-  /** Provider-owned model-turn/run identifier, required when the provider exposes it. */
-  nativeRunId: Id;
-  /** Upstream A2UI surface identifier. */
-  surfaceId: Id;
-  /** Fresh product identity for each surface creation; deletion permanently invalidates old actions. */
-  surfaceInstanceId: Id;
-  /** Monotonic CAS revision of this product record. */
-  revision: Counter;
-  /** Single-use interaction identity within the namespace. */
-  interactionId: Id;
-  /** Exact upstream source component allowed to emit this action. */
-  sourceComponentId: Id;
-  /** Exact upstream action name associated with this interaction. */
-  eventName: Id;
-  /** Negotiated upstream catalog identity. */
-  catalogId: Id;
-  /** Negotiated fixed catalog version; not a renderer implementation claim. */
-  catalogVersion: Id;
-  /**
-   * Exact negotiated upstream A2UI version.
-   */
-  a2uiVersion: "v0.9.1";
-  /**
-   * Persisted lifecycle; deleted is a permanent tombstone for this instance.
-   */
-  status: "active" | "deleted";
-}
-/**
  * Product metadata accompanying an unchanged upstream action; association does not grant permission.
  */
 export interface SurfaceAction {
@@ -621,4 +681,220 @@ export interface SurfaceAction {
   generation: Id;
   /** Provider-owned model-turn/run identifier, required when the provider exposes it. */
   nativeRunId: Id;
+}
+export interface SnapshotPage {
+  /**
+   * Exact product contract version; no legacy readers.
+   */
+  schemaVersion: 2;
+  /**
+   * Closed record discriminator.
+   */
+  kind: "snapshotPage";
+  /** Identity shared by all pages from one immutable read view. */
+  snapshotId: Id;
+  /** Zero-based page order within this snapshot. */
+  pageIndex: Counter;
+  /** Session at the snapshot watermark. */
+  session: Session;
+  /** Stable event watermark shared by every page. */
+  cursor: Counter;
+  /**
+   * Stable events at or below the watermark.
+   */
+  events: Event[];
+  /**
+   * Command projections at the watermark.
+   */
+  commands: CommandRecord[];
+  /**
+   * Interaction display state; does not restore a native callback.
+   */
+  interactions: Interaction[];
+  /**
+   * Bounded original A2UI recovery messages and their associations.
+   */
+  surfaces: SurfaceState[];
+  /** Opaque continuation; absent at end of the read view. */
+  next?: Id;
+}
+export interface SessionPage {
+  /**
+   * Exact product contract version; no legacy readers.
+   */
+  schemaVersion: 2;
+  /**
+   * Closed record discriminator.
+   */
+  kind: "sessionPage";
+  /**
+   * Caller-scoped sessions in this immutable page.
+   */
+  items: Session[];
+  /** Opaque continuation; absent at end of the read view. */
+  next?: Id;
+}
+export interface SnapshotRequest {
+  /**
+   * Exact product contract version; no legacy readers.
+   */
+  schemaVersion: 2;
+  /**
+   * Closed record discriminator.
+   */
+  kind: "snapshotRequest";
+  /** Product session identity within the authenticated caller namespace. */
+  sessionId: Id;
+  /** Bounded page query with an opaque caller-bound continuation. */
+  query: PageQuery;
+}
+export interface PageQuery {
+  /**
+   * Maximum records in this page, from 1 to 256.
+   */
+  limit: number;
+  /** Opaque continuation of one immutable read view; expires independently of the session. */
+  continuation?: Id;
+}
+export interface ListRequest {
+  /**
+   * Exact product contract version; no legacy readers.
+   */
+  schemaVersion: 2;
+  /**
+   * Closed record discriminator.
+   */
+  kind: "listRequest";
+  /** Bounded page query with an opaque caller-bound continuation. */
+  query: PageQuery;
+}
+export interface AttachRequest {
+  /**
+   * Exact product contract version; no legacy readers.
+   */
+  schemaVersion: 2;
+  /**
+   * Closed record discriminator.
+   */
+  kind: "attachRequest";
+  /** Product session identity within the authenticated caller namespace. */
+  sessionId: Id;
+  /** Last stable sequence consumed before attaching. */
+  after: Counter;
+  /** Connection-local attachment identity, echoed on every update. */
+  attachmentId: Id;
+}
+export interface DetachRequest {
+  /**
+   * Exact product contract version; no legacy readers.
+   */
+  schemaVersion: 2;
+  /**
+   * Closed record discriminator.
+   */
+  kind: "detachRequest";
+  /** Product session identity within the authenticated caller namespace. */
+  sessionId: Id;
+  /** Connection-local attachment identity, echoed on every update. */
+  attachmentId: Id;
+}
+export interface ResumeRequest {
+  /**
+   * Exact product contract version; no legacy readers.
+   */
+  schemaVersion: 2;
+  /**
+   * Closed record discriminator.
+   */
+  kind: "resumeRequest";
+  /** Product session identity within the authenticated caller namespace. */
+  sessionId: Id;
+}
+export interface ActionRequest {
+  /**
+   * Exact product contract version; no legacy readers.
+   */
+  schemaVersion: 2;
+  /**
+   * Closed record discriminator.
+   */
+  kind: "actionRequest";
+  /** Product action association, checked independently of untrusted upstream context. */
+  metadata: SurfaceAction;
+  /**
+   * Unchanged upstream A2UI client message, validated against the negotiated schema.
+   */
+  message: {
+    [k: string]: unknown;
+  };
+  /** Command expiry in Unix milliseconds. */
+  expiresAtMs: Counter;
+}
+export interface AccessUpdate {
+  /**
+   * Exact product contract version; no legacy readers.
+   */
+  schemaVersion: 2;
+  /**
+   * Closed record discriminator.
+   */
+  kind: "accessUpdate";
+  /** Product session identity within the authenticated caller namespace. */
+  sessionId: Id;
+  /** Connection-local attachment identity, echoed on every update. */
+  attachmentId: Id;
+  /** Stable event, ephemeral delta, or explicit resynchronization signal. */
+  update: Subscription;
+}
+export interface AttachReceipt {
+  /**
+   * Exact product contract version; no legacy readers.
+   */
+  schemaVersion: 2;
+  /**
+   * Closed record discriminator.
+   */
+  kind: "attachReceipt";
+  /** Product session identity within the authenticated caller namespace. */
+  sessionId: Id;
+  /** Connection-local attachment identity, echoed on every update. */
+  attachmentId: Id;
+  /** Last stable sequence consumed before attaching. */
+  after: Counter;
+}
+
+/**
+ * Selected product ACP extensions; capability metadata is never execution authority.
+ */
+export interface Negotiation {
+  /**
+   * Exact product contract version.
+   */
+  contractVersion: 2;
+  /**
+   * Exact ACP protocol version.
+   */
+  acp: 1;
+  /**
+   * Host supports transactional receipt semantics; memory doubles simulate this only.
+   */
+  durableReceipts: boolean;
+  /**
+   * Host supports stable snapshot-to-event attachment.
+   */
+  cursorAttach: boolean;
+  /** Explicitly selected upstream version and product catalog. */
+  a2ui?: A2UiNegotiation;
+}
+
+/**
+ * Explicitly selected upstream version and product catalog.
+ */
+export interface A2UiNegotiation {
+  /**
+   * Fixed upstream protocol version.
+   */
+  version: "v0.9.1";
+  catalogId: Id;
+  catalogVersion: Id;
 }

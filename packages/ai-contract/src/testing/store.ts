@@ -1,3 +1,4 @@
+import { ReadViews } from "./pages.js";
 import canonicalize from "canonicalize";
 import {
   decode,
@@ -13,7 +14,8 @@ import type {
   Result,
   SessionCommit,
   SessionStore,
-  Snapshot,
+  Caller,
+  Clock,
 } from "../ports.js";
 import type {
   CommandRecord,
@@ -23,7 +25,10 @@ import type {
   Id,
   Namespace,
   Session,
-  SurfaceBinding,
+  SurfaceState,
+  SnapshotPage,
+  SessionPage,
+  PageQuery,
 } from "../wire.js";
 export const fixtureLimits = {
   maxBytes: 262144,
@@ -51,14 +56,21 @@ interface State {
   session: Session;
   commands: Map<Id, CommandRecord>;
   events: Event[];
-  interactions: Map<Id, Snapshot["interactions"][number]>;
+  interactions: Map<Id, SnapshotPage["interactions"][number]>;
   deliveries: Map<Id, Delivery>;
-  surfaces: Map<Id, Snapshot["surfaces"][number]>;
+  surfaces: Map<Id, SnapshotPage["surfaces"][number]>;
 }
 /** Deterministic contract test double. No disk, crash durability, locks, workers or leases. */
 export class MemorySessionStore implements SessionStore {
   readonly evidence = "memory_test_double" as const;
   private closed = false;
+  private readonly views: ReadViews;
+  constructor(options: { clock?: Clock; snapshotTtlMs?: number } = {}) {
+    const ttl = options.snapshotTtlMs ?? 30000;
+    if (!Number.isSafeInteger(ttl) || ttl <= 0)
+      throw new TypeError("snapshot ttl");
+    this.views = new ReadViews(options.clock ?? { now: () => Date.now() }, ttl);
+  }
   private states = new Map<string, State>();
   private retiredIds = new Set<string>();
   /** Inject a transaction failure before publication, without partially mutating state. */
@@ -99,7 +111,7 @@ export class MemorySessionStore implements SessionStore {
   async surface(
     namespace: Namespace,
     instanceId: Id,
-  ): Promise<Result<SurfaceBinding>> {
+  ): Promise<Result<SurfaceState>> {
     if (this.closed) return fail("unavailable");
     const state = this.states.get(namespaceKey(namespace));
     if (!state || state.session.status !== "active")
@@ -109,6 +121,7 @@ export class MemorySessionStore implements SessionStore {
   }
   async close(_budget: Budget): Promise<Result<void>> {
     this.closed = true;
+    this.views.clear();
     return ok(undefined);
   }
   async command(namespace: Namespace, id: Id): Promise<Result<CommandRecord>> {
@@ -183,7 +196,7 @@ export class MemorySessionStore implements SessionStore {
       receipt,
       state: "accepted",
     };
-    const interactions: Snapshot["interactions"][number][] = [];
+    const interactions: SnapshotPage["interactions"][number][] = [];
     if (input.command.input.type === "respond") {
       const request = input.command.input;
       const interaction = state.interactions.get(request.interactionId);
@@ -221,6 +234,22 @@ export class MemorySessionStore implements SessionStore {
         responseCommandId: input.command.commandId,
       });
     }
+    const events: Event[] = [input.event];
+    for (const interaction of interactions)
+      events.push({
+        schemaVersion: 2,
+        kind: "event",
+        namespace: input.namespace,
+        eventId: `answered-${interaction.interactionId}`,
+        sequence: input.event.sequence + events.length,
+        commandId: interaction.commandId,
+        generation: interaction.generation,
+        body: {
+          type: "interaction",
+          interactionId: interaction.interactionId,
+          status: "answered",
+        },
+      });
     const result = await this.commit({
       namespace: input.namespace,
       expectedRevision: input.expectedRevision,
@@ -228,10 +257,10 @@ export class MemorySessionStore implements SessionStore {
       session: {
         ...state.session,
         revision: state.session.revision + 1,
-        lastSequence: state.session.lastSequence + 1,
+        lastSequence: state.session.lastSequence + events.length,
       },
       commands: [record],
-      events: [input.event],
+      events,
       interactions,
       deliveries: [],
       surfaces: [],
@@ -547,10 +576,22 @@ export class MemorySessionStore implements SessionStore {
       )
         return fail("invalid_input");
       surfaceIds.add(row.surfaceInstanceId);
+      const matching = batch.events.filter(
+        (event) =>
+          event.body.type === "surface" &&
+          event.body.surface.surfaceInstanceId === row.surfaceInstanceId,
+      );
+      if (
+        matching.length !== 1 ||
+        matching[0].commandId !== interaction.commandId ||
+        matching[0].body.type !== "surface" ||
+        !same(matching[0].body.surface, row)
+      )
+        return fail("invalid_input");
       const old = copy.surfaces.get(row.surfaceInstanceId);
       if (old) {
-        const { revision: _a, status: _b, ...identity } = old;
-        const { revision: _c, status: _d, ...nextIdentity } = row;
+        const { revision: _a, status: _b, messages: _m, ...identity } = old;
+        const { revision: _c, status: _d, messages: _n, ...nextIdentity } = row;
         if (!same(identity, nextIdentity)) return fail("stale_binding");
         if (old.status === "deleted" || row.revision !== old.revision + 1)
           return fail("revision_conflict", "same_command");
@@ -566,6 +607,13 @@ export class MemorySessionStore implements SessionStore {
           ...interaction,
           status: "unavailable",
         });
+    }
+    for (const event of batch.events) {
+      if (
+        event.body.type === "surface" &&
+        !surfaceIds.has(event.body.surface.surfaceInstanceId)
+      )
+        return fail("invalid_input");
     }
     // A direct commit must satisfy the same surface fence as accept(), including
     // a deletion or revision change carried by this very batch.
@@ -597,33 +645,116 @@ export class MemorySessionStore implements SessionStore {
     this.states.set(namespaceKey(batch.namespace), copy);
     return ok(undefined);
   }
-  async snapshot(
+  async snapshotPage(
     namespace: Namespace,
-    limit: number = 1024,
-  ): Promise<Result<Snapshot>> {
+    query: PageQuery,
+  ): Promise<Result<SnapshotPage>> {
     if (this.closed) return fail("unavailable");
-    const s = this.states.get(namespaceKey(namespace));
-    if (!s) return fail("session_gone");
-    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1024)
-      return fail("invalid_input");
-    if (
-      s.events.length +
-        s.commands.size +
-        s.interactions.size +
-        s.surfaces.size >
-      limit
-    )
-      return fail("limit_exceeded");
-    return ok(
-      clone({
-        session: s.session,
-        cursor: s.session.lastSequence,
-        events: s.events,
-        commands: [...s.commands.values()],
-        interactions: [...s.interactions.values()],
-        surfaces: [...s.surfaces.values()],
+    const state = this.states.get(namespaceKey(namespace));
+    if (!state) return fail("session_gone");
+    if (this.failNextQuery) {
+      this.failNextQuery = false;
+      return fail("unavailable", "same_command");
+    }
+    const read = this.views.read(
+      `snapshot:${namespaceKey(namespace)}`,
+      query,
+      () => ({
+        session: state.session,
+        records: [
+          ...state.events,
+          ...state.commands.values(),
+          ...state.interactions.values(),
+          ...state.surfaces.values(),
+        ],
       }),
     );
+    if (!read.ok) return read;
+    const { id, offset, index, value } = read.value;
+    if (offset > value.records.length) return fail("cursor_expired");
+    let count = Math.min(query.limit, value.records.length - offset);
+    for (;;) {
+      const records = value.records.slice(offset, offset + count);
+      const page: SnapshotPage = {
+        schemaVersion: 2,
+        kind: "snapshotPage",
+        snapshotId: id,
+        pageIndex: index,
+        session: value.session,
+        cursor: value.session.lastSequence,
+        events: records.filter((r): r is Event => r.kind === "event"),
+        commands: records.filter(
+          (r): r is CommandRecord => r.kind === "commandRecord",
+        ),
+        interactions: records.filter(
+          (r): r is SnapshotPage["interactions"][number] =>
+            r.kind === "interaction",
+        ),
+        surfaces: records.filter(
+          (r): r is SurfaceState => r.kind === "surface",
+        ),
+        ...(offset + count < value.records.length
+          ? { next: this.views.next(id, offset + count, index + 1) }
+          : {}),
+      };
+      try {
+        boundedJson(page, fixtureLimits);
+        return ok(page);
+      } catch {
+        if (count <= 1) return fail("limit_exceeded");
+        count = Math.floor(count / 2);
+      }
+    }
+  }
+  async listSessions(
+    caller: Caller,
+    query: PageQuery,
+  ): Promise<Result<SessionPage>> {
+    if (this.closed) return fail("unavailable");
+    const scope = JSON.stringify([
+      caller.tenantId,
+      caller.principalId,
+      caller.authorityId,
+    ]);
+    const read = this.views.read(`list:${scope}`, query, () =>
+      [...this.states.values()]
+        .map((s) => s.session)
+        .filter(
+          (s) =>
+            s.status === "active" &&
+            s.namespace.tenantId === caller.tenantId &&
+            s.namespace.principalId === caller.principalId &&
+            s.namespace.authorityId === caller.authorityId,
+        )
+        .sort((a, b) =>
+          a.namespace.sessionId < b.namespace.sessionId
+            ? -1
+            : a.namespace.sessionId > b.namespace.sessionId
+              ? 1
+              : 0,
+        ),
+    );
+    if (!read.ok) return read;
+    const { id, offset, index, value } = read.value;
+    if (offset > value.length) return fail("cursor_expired");
+    let count = Math.min(query.limit, value.length - offset);
+    for (;;) {
+      const page: SessionPage = {
+        schemaVersion: 2,
+        kind: "sessionPage",
+        items: value.slice(offset, offset + count),
+        ...(offset + count < value.length
+          ? { next: this.views.next(id, offset + count, index + 1) }
+          : {}),
+      };
+      try {
+        boundedJson(page, fixtureLimits);
+        return ok(page);
+      } catch {
+        if (count <= 1) return fail("limit_exceeded");
+        count = Math.floor(count / 2);
+      }
+    }
   }
   async events(
     namespace: Namespace,

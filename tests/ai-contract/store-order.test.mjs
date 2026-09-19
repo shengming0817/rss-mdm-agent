@@ -6,8 +6,8 @@ import {
 test("shared store conformance permits unordered interaction snapshots", () =>
   runStoreConformance(() => {
     const store = new MemorySessionStore(),
-      snapshot = store.snapshot.bind(store);
-    store.snapshot = async (...args) => {
+      snapshot = store.snapshotPage.bind(store);
+    store.snapshotPage = async (...args) => {
       const result = await snapshot(...args);
       return result.ok
         ? {
