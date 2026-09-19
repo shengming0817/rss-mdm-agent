@@ -94,6 +94,7 @@ for (const scenario of [
   "accept-before-commit",
   "accept-after-commit",
   "before-publish",
+  "intent-before-commit",
   "intent-after-commit",
   "unknown",
 ]) {
@@ -123,6 +124,49 @@ for (const scenario of [
         unwrap(await store.snapshot(initial.namespace, 1024)).cursor,
         snapshot.cursor,
         "lost receipt never appends acceptance twice",
+      );
+    }
+    if (scenario === "intent-before-commit") {
+      assert.equal(snapshot.commands[0].state, "accepted");
+      assert.equal(snapshot.commands[0].dispatch, undefined);
+      assert.equal(snapshot.cursor, 1);
+      assert.equal(snapshot.session.revision, 1);
+      const restored = await restoredSession(
+        snapshot.session,
+        "intent-successor",
+      );
+      const current = unwrap(
+        await store.rebind({
+          namespace: initial.namespace,
+          expectedRevision: snapshot.session.revision,
+          expectedGeneration: initial.binding.generation,
+          restored,
+          eventId: "intent-rollback-rebind",
+        }),
+      );
+      const attempt = {
+        attemptId: "fresh-after-rollback",
+        originGeneration: current.binding.generation,
+        observerGeneration: current.binding.generation,
+        nativeSessionId: current.binding.nativeSessionId,
+        certainty: "intent",
+      };
+      const dispatching = {
+        ...snapshot.commands[0],
+        state: "dispatching",
+        dispatch: attempt,
+      };
+      unwrap(
+        await store.commit(
+          commandCommit(current, dispatching, [
+            { type: "dispatch", attempt },
+            { type: "status", state: "dispatching" },
+          ]),
+        ),
+      );
+      assert.deepEqual(
+        unwrap(await store.command(initial.namespace, "command-1")),
+        dispatching,
       );
     }
     if (scenario === "intent-after-commit" || scenario === "unknown") {

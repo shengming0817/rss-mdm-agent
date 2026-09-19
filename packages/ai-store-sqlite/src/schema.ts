@@ -59,9 +59,41 @@ const statements = [
   `CREATE INDEX due_deliveries ON deliveries (status,due,${scope},id)`,
 ];
 const normalize = (sql: string) => sql.replace(/\s+/g, " ").trim();
+const normalizedStatements = statements.map(normalize).sort();
 const checksum = createHash("sha256")
-  .update(statements.join(";\n"))
+  .update(normalizedStatements.join(";\n"))
   .digest("hex");
+
+/** Read-only identity and shape check, also rerun under the writer lock. */
+export function validateExisting(db: DatabaseSync): void {
+  if (
+    Number(db.prepare("PRAGMA user_version").get()!.user_version) !== version ||
+    Number(db.prepare("PRAGMA application_id").get()!.application_id) !==
+      applicationId
+  )
+    throw new SchemaError();
+  const metadata = db.prepare("SELECT version,checksum FROM schema_meta").all();
+  if (
+    metadata.length !== 1 ||
+    metadata[0].version !== version ||
+    metadata[0].checksum !== checksum
+  )
+    throw new SchemaError();
+  const actual = db
+    .prepare(
+      "SELECT sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY name",
+    )
+    .all()
+    .map((r) => normalize(String(r.sql)))
+    .sort();
+  if (JSON.stringify(actual) !== JSON.stringify(normalizedStatements))
+    throw new SchemaError();
+  if (
+    db.prepare("PRAGMA quick_check(1)").get()!.quick_check !== "ok" ||
+    db.prepare("PRAGMA foreign_key_check").get()
+  )
+    throw new SchemaError();
+}
 
 /** Startup owns a real write transaction before advertising the store. Version 0
  * is accepted only by explicit create, never as recovery of a partial/foreign DB. */
@@ -85,30 +117,7 @@ export function initialize(db: DatabaseSync, create: boolean): void {
         `PRAGMA application_id=${applicationId}; PRAGMA user_version=${version}`,
       );
     }
-    const metadata = db
-      .prepare("SELECT version,checksum FROM schema_meta")
-      .all();
-    if (
-      metadata.length !== 1 ||
-      metadata[0].version !== version ||
-      metadata[0].checksum !== checksum
-    )
-      throw new SchemaError();
-    const actual = db
-      .prepare(
-        "SELECT sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY name",
-      )
-      .all()
-      .map((r) => normalize(String(r.sql)))
-      .sort();
-    const expected = statements.map(normalize).sort();
-    if (JSON.stringify(actual) !== JSON.stringify(expected))
-      throw new SchemaError();
-    if (
-      db.prepare("PRAGMA quick_check(1)").get()!.quick_check !== "ok" ||
-      db.prepare("PRAGMA foreign_key_check").get()
-    )
-      throw new SchemaError();
+    validateExisting(db);
     // Exercise the writer lock even when no migration is needed. EXCLUSIVE/WAL
     // retains it between transactions until this connection closes or dies.
     db.prepare("UPDATE schema_meta SET checksum=checksum WHERE version=?").run(

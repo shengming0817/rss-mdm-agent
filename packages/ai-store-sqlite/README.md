@@ -35,18 +35,18 @@ await store.close({ timeoutMs: 1000, signal: new AbortController().signal });
 
 ## Schema、安全与容量
 
-独立 application ID 与 schema version 1。首次建库的 DDL、版本和 checksum 在同一事务；已有文件缺版本、缺表、对象变化、较新版本或校验失败时拒绝打开。没有旧 PR 数据库导入、双读、fallback 或损坏后重建。首次建库失败可能留下无 schema 的文件；必须由操作方检查并处置，`open` 不将其当成新库。
+独立 application ID 与 schema version 1。`open` 先通过临时只读连接验证身份与 schema，不改变外部数据库；取得长期写连接后，在写事务内重新验证，再设置持久配置。首次建库的 DDL、版本和 checksum 在同一事务；已有文件缺版本、缺表、对象变化、较新版本或校验失败时拒绝打开。没有旧 PR 数据库导入、双读、fallback 或损坏后重建。首次建库失败可能留下无 schema 的文件；必须由操作方检查并处置，`open` 不将其当成新库。
 
-默认预算如下，组合根通过 `StoreOptions` 选择更合适的值；超过边界明确失败。
+`path` 必须是本机私有目录中的绝对文件路径。所有数值必须为安全整数；组合根通过 `StoreOptions` 选择下列范围内的值，超过边界返回 `invalid_input`。运行中超过容量预算返回 `limit_exceeded`。
 
-| 选项 | 默认值 | 约束对象 |
-| --- | --- | --- |
-| busyTimeoutMs | 1000 | SQLite 锁等待；最多10000毫秒 |
-| maxDatabaseBytes | 256 MiB | 主数据库页数上限；WAL 保留目标同值 |
-| maxSessionRecords | 10000 | 会话及其事件、投影和 generation 历史 |
-| maxSessionBytes | 16 MiB | 会话全部持久记录 JSON 总量 |
-| maxBatchRecords | 1024 | 一次 commit 的输入记录与 prune 的会话数 |
-| maxQueryBytes | 4 MiB | 每次查询返回总量；分页先在 SQL 中核对原始字节量 |
+| 选项 | 默认值 | 有效范围（含边界） | 约束对象 |
+| --- | --- | --- | --- |
+| busyTimeoutMs | 1000 | 1–10000 | SQLite 锁等待毫秒 |
+| maxDatabaseBytes | 256 MiB | 65536–1073741824 | 主数据库页数上限；WAL 保留目标同值 |
+| maxSessionRecords | 10000 | 1–100000 | 会话及其事件、投影和 generation 历史 |
+| maxSessionBytes | 16 MiB | 1–1073741824 | 会话持久记录 JSON 与 generation 字节总量 |
+| maxBatchRecords | 1024 | 1–100000 | 一次 commit 的输入记录与 prune 的会话数 |
+| maxQueryBytes | 4 MiB | 1–1073741824 | 每次查询返回总量；分页先在 SQL 中核对原始字节量 |
 
 单条记录继续使用 A01 的262144字节及字符串/节点/深度预算；页大小最多1024。主文件通过 `max_page_count` 限制，WAL 自动 checkpoint 为256页；WAL 在事务/checkpoint 期间需要额外磁盘空间，`maxDatabaseBytes` 不是主文件与 WAL 总和的硬配额。磁盘满返回 limit_exceeded，锁/存储错误返回不含原始 SQL、路径、正文或 provider 数据的 Failure。
 
@@ -64,4 +64,4 @@ make ci CI_BASE=origin/develop
 
 WAL 使用 `synchronous=FULL`，按 SQLite 的文件系统同步契约请求提交耐久性。SIGKILL 测试证明进程崩溃恢复；没有执行真实断电、存储控制器故障、网络文件系统或真实模型/OS 工具隔离验收，不能以进程测试替代这些证据。
 
-固定源码对标、来源取舍与许可见[来源记录](../../docs/reference/ai-store-sqlite.md)。
+固定源码对标、来源取舍与许可见[来源记录](https://dev.azure.com/shengming0923/rss/_git/rss-mdm-agent?path=%2Fdocs%2Freference%2Fai-store-sqlite.md&version=GCeb7aa3c52bd91bd764eead511d58a11b78fea716)。

@@ -44,9 +44,18 @@ import {
   fail,
   type SessionState,
 } from "@rss-mdm-agent/ai-contract/transitions";
-import { initialize, SchemaError, scope, whereScope } from "./schema.js";
+import {
+  initialize,
+  validateExisting,
+  SchemaError,
+  scope,
+  whereScope,
+} from "./schema.js";
 
+/** All numeric bounds are positive safe integers. Full ranges are documented
+ * in the package README capacity table. */
 export interface StoreOptions {
+  /** Absolute file path in a private local directory. */
   readonly path: string;
   /** create refuses existing files; open refuses missing/uninitialized databases. */
   readonly mode: "create" | "open";
@@ -165,41 +174,62 @@ function privatePath(options: StoreOptions): string {
   return path;
 }
 
+function pageLimit(db: DatabaseSync, maxBytes: number): number {
+  const size = Number(db.prepare("PRAGMA page_size").get()!.page_size);
+  const pages = Math.floor(maxBytes / size);
+  if (Number(db.prepare("PRAGMA page_count").get()!.page_count) > pages)
+    throw new InputError("limit_exceeded");
+  return pages;
+}
+
 /** One Host owns the whole database for this connection's lifetime. There is no
  * lease, background worker, side-effect execution or asynchronous transaction hook. */
-export function openSqliteStore(
-  options: StoreOptions,
-): Result<SqliteSessionStore> {
+export function openSqliteStore(options: StoreOptions): Result<SessionStore> {
   let db: DatabaseSync | undefined;
   try {
     if (process.versions.node !== "24.14.1") return fail("unsupported_version");
     const limits = bounds(options),
       path = privatePath(options);
+    if (options.mode === "open") {
+      const probe = new DatabaseSync(path, {
+        readOnly: true,
+        timeout: limits.busyTimeoutMs,
+        enableForeignKeyConstraints: true,
+        enableDoubleQuotedStringLiterals: false,
+        allowExtension: false,
+      });
+      try {
+        probe.exec("PRAGMA trusted_schema=OFF");
+        pageLimit(probe, limits.maxDatabaseBytes);
+        validateExisting(probe);
+      } finally {
+        probe.close();
+      }
+    }
     db = new DatabaseSync(path, {
       timeout: limits.busyTimeoutMs,
       enableForeignKeyConstraints: true,
       enableDoubleQuotedStringLiterals: false,
       allowExtension: false,
     });
-    db.exec("PRAGMA locking_mode=EXCLUSIVE");
+    db.exec(
+      "PRAGMA locking_mode=EXCLUSIVE; PRAGMA trusted_schema=OFF; PRAGMA synchronous=FULL",
+    );
+    const pages = pageLimit(db, limits.maxDatabaseBytes);
+    // Recheck under the writer lock before any persistent PRAGMA change.
+    if (options.mode === "open") initialize(db, false);
     if (db.prepare("PRAGMA journal_mode=WAL").get()!.journal_mode !== "wal")
       throw new SchemaError();
-    db.exec(
-      "PRAGMA synchronous=FULL; PRAGMA trusted_schema=OFF; PRAGMA wal_autocheckpoint=256",
-    );
+    db.exec("PRAGMA wal_autocheckpoint=256");
     db.exec(`PRAGMA journal_size_limit=${limits.maxDatabaseBytes}`);
-    const pageSize = Number(db.prepare("PRAGMA page_size").get()!.page_size);
-    const pages = Math.floor(limits.maxDatabaseBytes / pageSize);
-    if (Number(db.prepare("PRAGMA page_count").get()!.page_count) > pages)
-      throw new InputError("limit_exceeded");
     db.exec(`PRAGMA max_page_count=${pages}`);
     if (
       db.prepare("SELECT sqlite_version() AS version").get()!.version !==
       "3.51.2"
     )
       throw new SchemaError();
-    initialize(db, options.mode === "create");
-    return ok(new SqliteSessionStore(construction, db, limits));
+    if (options.mode === "create") initialize(db, true);
+    return ok(new SqliteSessionStore(db, limits));
   } catch (error) {
     try {
       db?.close();
@@ -209,16 +239,12 @@ export function openSqliteStore(
     return errorResult(error);
   }
 }
-const construction = Symbol("SQLite store owner");
-export class SqliteSessionStore implements SessionStore {
+class SqliteSessionStore implements SessionStore {
   readonly #db: DatabaseSync;
   readonly #bounds: Bounds;
   readonly #owned = new Map<string, string>();
   #closed = false;
-  /** Use openSqliteStore; the runtime token prevents bypassing startup/ownership. */
-  constructor(token: symbol, db: DatabaseSync, limits: Bounds) {
-    if (token !== construction)
-      throw new TypeError("AI SQLite: invalid construction");
+  constructor(db: DatabaseSync, limits: Bounds) {
     this.#db = db;
     this.#bounds = limits;
   }
@@ -658,7 +684,7 @@ export class SqliteSessionStore implements SessionStore {
     revision: Counter,
     generation: Id,
   ): Promise<Result<void>> {
-    return this.#transaction(() => {
+    const retired = this.#transaction(() => {
       const before = this.#state(n);
       this.#writable(before);
       const result = retireSession(before, revision, generation);
@@ -666,6 +692,8 @@ export class SqliteSessionStore implements SessionStore {
       this.#save(before, result.value);
       return ok(undefined);
     });
+    if (retired.ok) this.#owned.delete(namespaceKey(n));
+    return retired;
   }
   async pruneRetired(nowMs: Counter): Promise<Result<number>> {
     return this.#transaction(() => {

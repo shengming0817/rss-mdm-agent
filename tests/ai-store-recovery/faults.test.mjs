@@ -287,3 +287,29 @@ test("query byte budgets and invalid cursors fail with value-free errors", async
     "invalid_input",
   );
 });
+
+test("refusing a foreign SQLite file preserves its bytes and journal mode", async (t) => {
+  const h = harness(t),
+    path = join(h.directory, "foreign-valid.sqlite");
+  writeFileSync(path, "", { mode: 0o600 });
+  const raw = new DatabaseSync(path);
+  raw.exec(
+    "CREATE TABLE foreign_data (body TEXT); INSERT INTO foreign_data VALUES ('keep-me')",
+  );
+  assert.equal(raw.prepare("PRAGMA journal_mode").get().journal_mode, "delete");
+  raw.close();
+  const bytes = readFileSync(path);
+  assert.equal(h.open(path, "open").error.code, "unsupported_version");
+  assert.deepEqual(readFileSync(path), bytes);
+  for (const suffix of ["-wal", "-shm", "-journal"])
+    assert.equal(existsSync(path + suffix), false);
+  const check = new DatabaseSync(path, { readOnly: true });
+  try {
+    assert.equal(
+      check.prepare("PRAGMA journal_mode").get().journal_mode,
+      "delete",
+    );
+  } finally {
+    check.close();
+  }
+});
