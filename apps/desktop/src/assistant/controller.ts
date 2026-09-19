@@ -70,7 +70,7 @@ type Pending = { command: Command; draft?: string };
 export function createAssistant(
   services: AssistantServices | undefined,
   identity: () => string,
-  now = Date.now,
+  now = () => Date.now(),
 ) {
   const runtime = shallowRef<RuntimeClient>();
   const clock = shallowRef(now());
