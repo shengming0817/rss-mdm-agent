@@ -82,8 +82,8 @@ const forged:VerifiedProviderSession={binding:{},capabilities:{}};
 // @ts-expect-error Every subscription delta retains its message identity.
 const missingMessage:Subscription={type:'delta',commandId:'c',generation:'g',text:'x'};
 const question:ProviderInteraction={interactionId:'question',nativeCallbackId:'callback',expiresAtMs:1,callbackLifetime:'generation_bound',request:{question:'Choose'}};
-// @ts-expect-error Parent request identity cannot substitute for a callback identity.
-const oldQuestion:ProviderInteraction={interactionId:'question',nativeRequestId:'request',expiresAtMs:1,callbackLifetime:'generation_bound',request:{}};
+// @ts-expect-error Legacy parent request field is forbidden even with a valid callback.
+const oldQuestion:ProviderInteraction={interactionId:'question',nativeCallbackId:'callback',nativeRequestId:'request',expiresAtMs:1,callbackLifetime:'generation_bound',request:{}};
 assert.equal(question.nativeCallbackId,'callback');
 const host:HostPort=new FakeHost();const provider:ProviderAgentPort=new ScriptedProvider();const store:SessionStore=new MemorySessionStore();
 const value=decode(JSON.stringify(fixtures.valid[0]),fixtureLimits);assert.equal(value.kind,'command');if(value.kind==='command')assert.equal(fingerprint(value,fixtureLimits),fixtures.commandHash);

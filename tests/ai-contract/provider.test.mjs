@@ -4,6 +4,7 @@ import {
   ScriptedProvider,
   runProviderConformance,
   fixtureCommand,
+  fixtureLimits,
   unwrap,
 } from "../../packages/ai-contract/dist/testing/index.js";
 const configuration = {
@@ -14,6 +15,72 @@ const configuration = {
   permissions: "tools_disabled",
 };
 const budget = () => ({ timeoutMs: 1000, signal: AbortSignal.timeout(1000) });
+const callback = {
+  interactionId: "question-1",
+  nativeCallbackId: "callback-1",
+  expiresAtMs: 100,
+  callbackLifetime: "generation_bound",
+  request: { question: "Choose" },
+};
+const callbackHarness = (mutate) =>
+  runProviderConformance(
+    (scenario) => {
+      const port = new ScriptedProvider();
+      port.submission = scenario;
+      port.observe = async function* (binding) {
+        if (scenario === "submitted")
+          yield mutate({
+            type: "interaction",
+            binding,
+            commandId: fixtureCommand().commandId,
+            interaction: structuredClone(callback),
+          });
+      };
+      return port;
+    },
+    configuration,
+    budget,
+  );
+test("provider conformance accepts a distinct live callback", () =>
+  callbackHarness((x) => x));
+for (const [name, mutate] of [
+  [
+    "legacy callback",
+    (x) => {
+      delete x.interaction.nativeCallbackId;
+      x.interaction.nativeRequestId = "old";
+      return x;
+    },
+  ],
+  [
+    "missing request",
+    (x) => {
+      delete x.interaction.request;
+      return x;
+    },
+  ],
+  [
+    "oversized request",
+    (x) => {
+      x.interaction.request = {
+        question: "x".repeat(fixtureLimits.maxTextBytes + 1),
+      };
+      return x;
+    },
+  ],
+  ...[
+    "accountRef",
+    "nativeSessionId",
+    "nativeRequestId",
+    "provider",
+    "nativeRunId",
+  ].map((key) => [
+    key,
+    (x) => ({ ...x, binding: { ...x.binding, [key]: "wrong" } }),
+  ]),
+])
+  test(`provider conformance rejects ${name}`, () =>
+    assert.rejects(callbackHarness(mutate)));
 test("shared provider lifecycle conformance runs without Tauri", () =>
   runProviderConformance(
     (scenario) => {
