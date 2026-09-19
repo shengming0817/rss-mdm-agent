@@ -19,6 +19,8 @@ import type {
   Result,
   ToolEndpoint,
   Reconciliation,
+  ProviderAdmission,
+  ProviderObservation,
   ProviderInstance,
   ProviderForkPort,
   ProviderForkRequest,
@@ -76,15 +78,15 @@ export const providerIdentity = ({
   nativeRequestId: _request,
   ...identity
 }: Binding) => identity;
-const proofBrand: unique symbol = Symbol("verified reconciliation");
+const proofBrand: unique symbol = Symbol("verified provider fact");
 /** Process-local evidence minted only by an admitted provider call. */
-export interface VerifiedReconciliation {
+export interface VerifiedProviderFact {
   readonly [proofBrand]: true;
   readonly commandId: Id;
   readonly observation: Reconciliation;
 }
 const observations = new WeakMap<
-  VerifiedReconciliation,
+  VerifiedProviderFact,
   {
     session: Pick<Session, "namespace" | "binding">;
     record: CommandRecord;
@@ -92,8 +94,8 @@ const observations = new WeakMap<
   }
 >();
 /** Internal transition check; structural copies cannot recover the private evidence. */
-export function reconciliationFor(
-  proof: VerifiedReconciliation,
+export function providerFactFor(
+  proof: VerifiedProviderFact,
   session: Session,
   record: CommandRecord,
 ): Reconciliation | undefined {
@@ -101,9 +103,32 @@ export function reconciliationFor(
   return evidence &&
     same(evidence.session, {
       namespace: session.namespace,
-      binding: session.binding,
+      binding: providerIdentity(session.binding),
     }) &&
-    same(evidence.record, record)
+    same(evidence.record.command, record.command) &&
+    same(evidence.record.receipt, record.receipt) &&
+    evidence.record.dispatch !== undefined &&
+    record.dispatch !== undefined &&
+    (
+      [
+        "attemptId",
+        "originGeneration",
+        "observerGeneration",
+        "nativeSessionId",
+        "nativeRunId",
+        "nativeRequestId",
+        "correlationId",
+      ] as const
+    ).every(
+      (k) =>
+        evidence.record.dispatch![k] === undefined ||
+        evidence.record.dispatch![k] === record.dispatch![k],
+    ) &&
+    (["nativeRunId", "nativeRequestId"] as const).every(
+      (k) =>
+        record.dispatch![k] === undefined ||
+        evidence.observation.binding[k] === record.dispatch![k],
+    )
     ? structuredClone(evidence.observation)
     : undefined;
 }
@@ -155,111 +180,295 @@ export class VerifiedProviderSession {
       )
     );
   }
-  /** Reconcile the exact stored attempt through this admitted instance. No caller-supplied observation is accepted. */
-  async reconcile(
-    session: Session,
-    record: CommandRecord,
-    budget: Budget,
-  ): Promise<Result<VerifiedReconciliation>> {
+  private mint(
+    head: Session,
+    original: CommandRecord,
+    observed: Reconciliation,
+  ): Result<VerifiedProviderFact> {
+    const limits = {
+      maxBytes: 262144,
+      maxTextBytes: 131072,
+      maxDepth: 32,
+      maxNodes: 16384,
+    };
     try {
-      const head = structuredClone(session),
-        original = structuredClone(record);
-      const limits = {
-        maxBytes: 262144,
-        maxTextBytes: 131072,
-        maxDepth: 32,
-        maxNodes: 16384,
-      };
+      const extra =
+        observed.status === "terminal"
+          ? ["outcome"]
+          : observed.status === "not_submitted" && observed.error
+            ? ["error"]
+            : observed.status === "acknowledged"
+              ? ["acknowledgement"]
+              : observed.status === "observed"
+                ? ["observation"]
+                : observed.status === "unknown" && observed.correlationId
+                  ? ["correlationId"]
+                  : [];
+      if (
+        !same(
+          Object.keys(observed).sort(),
+          ["commandId", "attemptId", "binding", "status", ...extra].sort(),
+        )
+      )
+        return denied();
       decode(boundedJson(head, limits), limits);
       decode(boundedJson(original, limits), limits);
       if (
         head.status !== "active" ||
         !original.dispatch ||
-        ["terminal", "invalidated"].includes(original.state) ||
+        ["terminal", "invalidated", "acknowledged", "cancelled"].includes(
+          original.state,
+        ) ||
         !same(head.namespace, this.#namespace) ||
         !same(original.receipt.namespace, this.#namespace) ||
-        original.command.sessionId !== this.#namespace.sessionId ||
         !same(
           providerIdentity(head.binding),
           providerIdentity(this.#binding),
         ) ||
         original.dispatch.observerGeneration !== this.#binding.generation ||
         original.dispatch.nativeSessionId !== this.#binding.nativeSessionId ||
-        original.dispatch.nativeThreadId !== this.#binding.nativeThreadId
+        original.dispatch.nativeThreadId !== this.#binding.nativeThreadId ||
+        observed.commandId !== original.command.commandId ||
+        observed.attemptId !== original.dispatch.attemptId ||
+        !same(
+          providerIdentity(observed.binding),
+          providerIdentity(this.#binding),
+        ) ||
+        (["nativeRunId", "nativeRequestId"] as const).some(
+          (k) =>
+            original.dispatch![k] !== undefined &&
+            original.dispatch![k] !== observed.binding[k],
+        )
       )
         return denied();
-      return await withinBudget(
-        () => budget,
-        async (b) => {
-          const response = await this.#port.reconcile(
-            structuredClone(head.binding),
-            structuredClone(original),
-            b,
-          );
-          if (!response.ok) return response;
-          const observed: Reconciliation = JSON.parse(
-            boundedJson(response.value, limits),
-          );
-          const keys = [
-            "attemptId",
-            "binding",
-            "commandId",
-            "status",
-            ...(observed.status === "terminal" ? ["outcome"] : []),
-          ].sort();
-          if (
-            b.signal.aborted ||
-            !same(Object.keys(observed).sort(), keys) ||
-            observed.commandId !== original.command.commandId ||
-            observed.attemptId !== original.dispatch!.attemptId ||
-            !["unknown", "running", "terminal", "not_submitted"].includes(
-              observed.status,
-            ) ||
-            !same(
-              providerIdentity(observed.binding),
-              providerIdentity(head.binding),
-            ) ||
-            (["nativeRunId", "nativeRequestId"] as const).some(
-              (k) =>
-                original.dispatch![k] !== undefined &&
-                observed.binding[k] !== original.dispatch![k],
-            )
-          )
-            return denied();
+      decode(
+        boundedJson({ ...head, binding: observed.binding }, limits),
+        limits,
+      );
+      if (observed.status === "observed") {
+        const value = observed.observation;
+        if (value.type === "delta" || value.type === "event")
           decode(
-            boundedJson({ ...head, binding: observed.binding }, limits),
+            boundedJson(
+              {
+                schemaVersion: 3,
+                kind: "event",
+                namespace: head.namespace,
+                eventId: "verify-observation",
+                sequence: 1,
+                generation: head.binding.generation,
+                commandId: original.command.commandId,
+                attemptId: original.dispatch!.attemptId,
+                body:
+                  value.type === "delta"
+                    ? {
+                        type: "text",
+                        messageId: value.messageId,
+                        text: value.text,
+                      }
+                    : value.body,
+              },
+              limits,
+            ),
             limits,
           );
-          if (observed.status === "terminal")
-            decode(
-              boundedJson(
-                {
-                  ...original,
-                  state: "terminal",
-                  dispatch: { ...original.dispatch, certainty: "submitted" },
-                  outcome: observed.outcome,
-                },
-                limits,
-              ),
-              limits,
-            );
-          const proof: VerifiedReconciliation = Object.freeze({
-            [proofBrand]: true as const,
-            commandId: observed.commandId,
-            get observation() {
-              return structuredClone(observed);
+      }
+      if (observed.status === "terminal")
+        decode(
+          boundedJson(
+            {
+              ...original,
+              state: "terminal",
+              dispatch: { ...original.dispatch, certainty: "submitted" },
+              outcome: observed.outcome,
             },
-          });
-          observations.set(proof, {
-            session: { namespace: head.namespace, binding: head.binding },
-            record: original,
-            observation: observed,
-          });
-          return { ok: true as const, value: proof };
+            limits,
+          ),
+          limits,
+        );
+      if (observed.status === "acknowledged")
+        decode(
+          boundedJson(
+            {
+              ...original,
+              state: "acknowledged",
+              dispatch: { ...original.dispatch, certainty: "submitted" },
+              acknowledgement: observed.acknowledgement,
+            },
+            limits,
+          ),
+          limits,
+        );
+      const observation = JSON.parse(
+        boundedJson(observed, limits),
+      ) as Reconciliation;
+      const proof: VerifiedProviderFact = Object.freeze({
+        [proofBrand]: true as const,
+        commandId: observed.commandId,
+        get observation() {
+          return structuredClone(observation);
         },
+      });
+      observations.set(proof, {
+        session: {
+          namespace: structuredClone(head.namespace),
+          binding: providerIdentity(head.binding),
+        },
+        record: structuredClone(original),
+        observation,
+      });
+      return { ok: true, value: proof };
+    } catch {
+      return denied();
+    }
+  }
+  /** Provider I/O never holds the session mailbox. Evidence retains original attempt identity. */
+  async dispatch(
+    session: Session,
+    record: CommandRecord,
+    budget: Budget,
+  ): Promise<Result<VerifiedProviderFact>> {
+    const head = structuredClone(session),
+      original = structuredClone(record);
+    if (
+      !original.dispatch ||
+      original.state !== "dispatching" ||
+      original.dispatch.certainty !== "intent"
+    )
+      return denied();
+    const basis = {
+      commandId: original.command.commandId,
+      attemptId: original.dispatch.attemptId,
+      binding: head.binding,
+    };
+    if (!this.mint(head, original, { ...basis, status: "unknown" }).ok)
+      return denied();
+    try {
+      const result = await withinBudget(
+        () => budget,
+        (b) =>
+          this.#port.dispatch(
+            head.binding,
+            original.command,
+            original.dispatch!,
+            b,
+          ),
       );
+      switch (result.certainty) {
+        case "submitted":
+          return this.mint(head, original, {
+            ...basis,
+            binding: result.binding,
+            status: "submitted",
+          });
+        case "acknowledged":
+          return this.mint(head, original, {
+            ...basis,
+            binding: result.binding,
+            status: "acknowledged",
+            acknowledgement: result.acknowledgement,
+          });
+        case "not_sent":
+          return this.mint(head, original, {
+            ...basis,
+            status: "not_submitted",
+            error: result.error,
+          });
+        case "unknown":
+          return this.mint(head, original, {
+            ...basis,
+            status: "unknown",
+            correlationId: result.correlationId,
+          });
+      }
+      return denied();
+    } catch {
+      return this.mint(head, original, { ...basis, status: "unknown" });
+    }
+  }
+  async reconcile(
+    session: Session,
+    record: CommandRecord,
+    budget: Budget,
+  ): Promise<Result<VerifiedProviderFact>> {
+    const head = structuredClone(session),
+      original = structuredClone(record);
+    if (!original.dispatch) return denied();
+    if (
+      !this.mint(head, original, {
+        status: "unknown",
+        binding: {
+          ...head.binding,
+          ...(original.dispatch.nativeRunId !== undefined
+            ? { nativeRunId: original.dispatch.nativeRunId }
+            : {}),
+          ...(original.dispatch.nativeRequestId !== undefined
+            ? { nativeRequestId: original.dispatch.nativeRequestId }
+            : {}),
+        },
+        commandId: original.command.commandId,
+        attemptId: original.dispatch.attemptId,
+      }).ok
+    )
+      return denied();
+    try {
+      const result = await withinBudget(
+        () => budget,
+        (b) => this.#port.reconcile(head.binding, original, b),
+      );
+      if (!result.ok) return result;
+      if (
+        ![
+          "submitted",
+          "running",
+          "terminal",
+          "unknown",
+          "not_submitted",
+          "acknowledged",
+        ].includes(result.value.status)
+      )
+        return denied();
+      return this.mint(head, original, result.value);
     } catch {
       return { ok: false, error: unavailable() };
+    }
+  }
+  async *observe(
+    session: Session,
+    record: CommandRecord,
+    budget: Budget,
+  ): AsyncIterable<VerifiedProviderFact> {
+    const head = structuredClone(session),
+      original = structuredClone(record);
+    if (!original.dispatch) return;
+    for await (const observation of this.#port.observe(head.binding, budget)) {
+      if (budget.signal.aborted) return;
+      let resolution: Reconciliation;
+      const base = {
+        binding: observation.binding,
+        commandId: observation.commandId,
+        attemptId: observation.attemptId,
+      };
+      if (observation.type === "submitted" || observation.type === "running")
+        resolution = { ...base, status: observation.type };
+      else if (observation.type === "acknowledged")
+        resolution = {
+          ...base,
+          status: "acknowledged",
+          acknowledgement: observation.acknowledgement,
+        };
+      else if (
+        observation.type === "event" &&
+        observation.body.type === "terminal"
+      )
+        resolution = {
+          ...base,
+          status: "terminal",
+          outcome: observation.body.outcome,
+        };
+      else resolution = { ...base, status: "observed", observation };
+      const fact = this.mint(head, original, resolution);
+      if (fact.ok) yield fact.value;
     }
   }
   /** Host calls this with its already-owned fresh child; admission and cleanup stay here.
@@ -269,6 +478,7 @@ export class VerifiedProviderSession {
     throughTurnId: Id,
     configuration: ProviderConfiguration,
     budget: Budget,
+    admission?: ProviderAdmission,
   ): Promise<ForkAdmissionResult> {
     const request: ProviderForkRequest = {
       namespace: structuredClone(this.#namespace),
@@ -313,6 +523,7 @@ export class VerifiedProviderSession {
       configuration,
       budget,
       undefined,
+      admission,
       fork,
     );
     if (admitted.ok)
@@ -335,21 +546,24 @@ export class VerifiedProviderSession {
     previous: Session,
     configuration: ProviderConfiguration,
     budget: Budget,
+    admission?: ProviderAdmission,
   ): Promise<AdmissionResult> {
-    return this.admit(port, configuration, budget, previous);
+    return this.admit(port, configuration, budget, previous, admission);
   }
   static open(
     port: ProviderAgentPort,
     configuration: ProviderConfiguration,
     budget: Budget,
+    admission?: ProviderAdmission,
   ): Promise<AdmissionResult> {
-    return this.admit(port, configuration, budget);
+    return this.admit(port, configuration, budget, undefined, admission);
   }
   private static async admit(
     port: ProviderAgentPort,
     configuration: ProviderConfiguration,
     budget: Budget,
     previous?: Session,
+    admission?: ProviderAdmission,
     fork?: ForkAdmission,
   ): Promise<AdmissionResult> {
     // Each instance belongs to one admission. Refusing a second call never closes
@@ -368,7 +582,7 @@ export class VerifiedProviderSession {
       };
       result = await withinBudget(
         () => budget,
-        (b) => this.initialize(port, settings, b, prior, fork),
+        (b) => this.initialize(port, settings, b, prior, admission, fork),
       );
     } catch {
       result = { ok: false, error: unavailable() };
@@ -398,6 +612,7 @@ export class VerifiedProviderSession {
     configuration: ProviderConfiguration,
     budget: Budget,
     previous?: Session,
+    admission?: ProviderAdmission,
     fork?: ForkAdmission,
   ): Promise<Result<VerifiedProviderSession>> {
     if (budget.signal.aborted) return denied();
@@ -411,11 +626,11 @@ export class VerifiedProviderSession {
     const controlled = configuration.permissions === "host_mediated";
     if (
       controlled
-        ? typeof configuration.tools?.propose !== "function" ||
-          typeof configuration.verifier?.verify !== "function"
+        ? typeof admission?.tools?.propose !== "function" ||
+          typeof admission?.verifier?.verify !== "function"
         : configuration.permissions !== "tools_disabled" ||
-          configuration.tools !== undefined ||
-          configuration.verifier !== undefined
+          admission?.tools !== undefined ||
+          admission?.verifier !== undefined
     )
       return denied();
     // Snapshot caller-owned identity before any external await. Endpoint/verifier identities
@@ -424,8 +639,8 @@ export class VerifiedProviderSession {
     const config = structuredClone(configuration.config),
       accountRef = configuration.accountRef,
       provider = configuration.provider;
-    const tools = configuration.tools,
-      verifier = configuration.verifier;
+    const tools = admission?.tools,
+      verifier = admission?.verifier;
     if (previous && !port.resume) return denied();
     const settings = {
       ...configuration,

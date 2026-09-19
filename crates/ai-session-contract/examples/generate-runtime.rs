@@ -6,9 +6,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Event tags are nested in body. Derive Rust variant names from those exact
     // schema discriminators rather than unstable oneOf array positions.
     if let Some(events) = schema["$defs"]["Event"]["oneOf"].as_array_mut() {
+        let mut names = std::collections::BTreeSet::new();
         for event in events {
             let properties = &event["properties"]["body"]["properties"];
-            let parts: Vec<String> = ["type", "state", "status", "operation"]
+            let mut parts: Vec<String> = ["type", "state", "status", "operation"]
                 .iter()
                 .filter_map(|key| {
                     let property = &properties[key];
@@ -23,7 +24,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     })
                 })
                 .collect();
-            event["title"] = serde_json::Value::String(format!("Event_{}", parts.join("_")));
+            if let Some(tag) = properties["acknowledgement"]["properties"]["type"]["const"].as_str()
+            {
+                parts.push(tag.to_owned());
+            }
+            let name = format!("Event_{}", parts.join("_"));
+            if !names.insert(name.clone()) {
+                return Err("event discriminators must generate unique Rust variant names".into());
+            }
+            event["title"] = serde_json::Value::String(name);
         }
     }
     project_constants(&mut schema);
@@ -50,19 +59,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 // Inline object schemas become named types; typify moves their
                 // description to that type and leaves the containing field bare.
-                for field in &mut variant.fields {
-                    if !field.attrs.iter().any(|a| a.path().is_ident("doc")) {
-                        let doc = format!(
-                            "`{}` member; see its generated type and parent schema.",
-                            field
-                                .ident
-                                .as_ref()
-                                .map(ToString::to_string)
-                                .unwrap_or_default()
-                        );
-                        field.attrs.push(syn::parse_quote!(#[doc = #doc]));
-                    }
-                }
+                document_fields(&mut variant.fields);
                 if !variant.attrs.iter().any(|a| a.path().is_ident("doc")) {
                     let doc = format!(
                         "`{}` alternative; see the parent type's schema contract.",
@@ -73,7 +70,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         let (name, attrs) = match item {
-            syn::Item::Struct(s) => (&s.ident, &mut s.attrs),
+            syn::Item::Struct(s) => {
+                document_fields(&mut s.fields);
+                (&s.ident, &mut s.attrs)
+            }
             syn::Item::Enum(e) => (&e.ident, &mut e.attrs),
             _ => continue,
         };
@@ -118,5 +118,21 @@ fn project_constants(value: &mut serde_json::Value) {
             }
         }
         _ => (),
+    }
+}
+
+fn document_fields(fields: &mut syn::Fields) {
+    for field in fields {
+        if !field.attrs.iter().any(|a| a.path().is_ident("doc")) {
+            let doc = format!(
+                "`{}` member; see its generated type and parent schema.",
+                field
+                    .ident
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_default()
+            );
+            field.attrs.push(syn::parse_quote!(#[doc = #doc]));
+        }
     }
 }

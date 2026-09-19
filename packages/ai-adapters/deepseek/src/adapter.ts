@@ -199,6 +199,12 @@ export class DeepSeekAdapter implements ProviderAgentPort {
             return fail("unavailable");
           try {
             validateConfiguration(c, resolved);
+            if (
+              c.permissions === "host_mediated"
+                ? !this.options.tools
+                : this.options.tools !== undefined
+            )
+              throw Error("tool composition");
           } catch {
             this.diagnose({
               stage: "configuration",
@@ -300,7 +306,7 @@ export class DeepSeekAdapter implements ProviderAgentPort {
                 c.permissions === "host_mediated"
                   ? "host_mediated"
                   : "disabled",
-              queue: "unsupported",
+
               steer: "unsupported",
               fork: "unsupported",
               subagent: "unsupported",
@@ -347,7 +353,65 @@ export class DeepSeekAdapter implements ProviderAgentPort {
       a.attemptId,
     ]);
   }
-  async submit(
+  async dispatch(
+    binding: Binding,
+    command: Command,
+    attempt: DispatchAttempt,
+    budget: Budget,
+  ): Promise<Submission> {
+    if (command.input.type === "prompt") {
+      const result = await this.dispatchPrompt(
+        binding,
+        command,
+        attempt,
+        budget,
+      );
+      return command.input.policy === "steer" &&
+        result.certainty === "submitted"
+        ? {
+            certainty: "acknowledged",
+            binding: result.binding,
+            acknowledgement: { type: "steer" },
+          }
+        : result;
+    }
+    if (
+      !isId(attempt.attemptId) ||
+      attempt.certainty !== "intent" ||
+      (attempt.nativeRunId !== undefined &&
+        attempt.nativeRunId !== binding.nativeRunId) ||
+      (attempt.nativeRequestId !== undefined &&
+        attempt.nativeRequestId !== binding.nativeRequestId) ||
+      attempt.originGeneration !== binding.generation ||
+      attempt.observerGeneration !== binding.generation ||
+      attempt.nativeSessionId !== binding.nativeSessionId ||
+      attempt.nativeThreadId !== binding.nativeThreadId
+    )
+      return {
+        certainty: "not_sent",
+        error: { code: "stale_binding", retry: "never" },
+      };
+    const result =
+      command.input.type === "cancel"
+        ? await this.cancelRun(binding, command, budget)
+        : await this.answerQuestion(binding, command, budget);
+    if (!result.ok)
+      return result.error.retry === "reconcile_first"
+        ? { certainty: "unknown", correlationId: attempt.attemptId }
+        : { certainty: "not_sent", error: result.error };
+    return {
+      certainty: "acknowledged",
+      binding: { ...binding },
+      acknowledgement:
+        command.input.type === "cancel"
+          ? {
+              type: "cancel",
+              confirmation: result.value as "request_only" | "already_terminal",
+            }
+          : { type: "respond" },
+    };
+  }
+  private async dispatchPrompt(
     binding: Binding,
     command: Command,
     attempt: DispatchAttempt,
@@ -590,7 +654,7 @@ export class DeepSeekAdapter implements ProviderAgentPort {
     }
     const proposalId = e.callbackId,
       proposal = copy(e.proposal),
-      endpoint = this.configuration.tools;
+      endpoint = this.options.tools!;
     await withinBudget(
       () => ({ timeoutMs: 30000, signal: this.lifetime.signal }),
       async (b) => {
@@ -673,7 +737,7 @@ export class DeepSeekAdapter implements ProviderAgentPort {
         )
       : undefined;
   }
-  async cancel(
+  private async cancelRun(
     b: Binding,
     command: Command,
     budget: Budget,
@@ -696,7 +760,7 @@ export class DeepSeekAdapter implements ProviderAgentPort {
       return fail("unavailable", "reconcile_first");
     }
   }
-  async respond(
+  private async answerQuestion(
     b: Binding,
     command: Command,
     budget: Budget,

@@ -227,7 +227,7 @@ async function main() {
       stage = "submit";
       detail = {};
       const attemptId = `attempt-${id}`;
-      const sent = await adapter.submit(
+      const sent = await adapter.dispatch(
         binding,
         {
           schemaVersion: 3,

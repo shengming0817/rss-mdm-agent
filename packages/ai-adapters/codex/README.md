@@ -27,9 +27,9 @@
 
 固定版本实际 fork 返回新的 sessionId 和 threadId，均保存原值；源关系使用 forkedFromId。A01 `ProviderForkPort` 只在 Host 已持有的 child 上执行原生操作，不创建其他 adapter 或反向执行 Host 准入。`VerifiedProviderSession.fork` 复用共同准入与受控 verifier；失败清理 child，`cleanupError` 表示 Host 仍须对同一 `child.agent` 重试 close。创建回执丢失或创建后准入失败返回 unknown，禁止盲目重试创建。Host/A03 持有创建意图、来源与子会话的持久化，成功记录后才对客户端发布；该 adapter 不接管 Host journal。A03/产品装配仍由对应任务交付。
 
-`reconcile` 读取原 thread 的完整分页历史，以 userMessage.clientId 对照原 attempt；查无记录仍为 unknown，绝不自行得出 not_submitted。固定协议明确返回 turn/steer 未提交拒绝时，适配器保留该 incarnation 内的负面证据，submit 返回 not_sent，reconcile 可据此返回 not_submitted；Host 经原 attempt 的验证凭证提交本地失效后继续对话。这不扩展为任意 RPC error 或跨进程负面推断。RPC request ID 不进入持久化身份。原生进程退出、网络错误、取消请求成功均不能伪造模型终态。核实结果经 `VerifiedProviderSession.reconcile` 才能成为 Store 可消费的凭证；adapter 不修改 Host 账本。原生 history 仅供内部 reconcile/fork 核实和 testing；正式端口不返回上游实验 Turn DTO，也不重放已有产品稳定事件。
+`reconcile` 读取原 thread 的完整分页历史，以 userMessage.clientId 对照原 attempt；查无记录仍为 unknown，绝不自行得出 not_submitted。固定协议明确返回 turn/steer 未提交拒绝时，适配器保留该 incarnation 内的负面证据，dispatch 返回 not_sent，reconcile 可据此返回 not_submitted；Host 经原 attempt 的验证凭证提交本地失效后继续对话。这不扩展为任意 RPC error 或跨进程负面推断。RPC request ID 不进入持久化身份。原生进程退出、网络错误、取消请求成功均不能伪造模型终态。核实结果经 `VerifiedProviderSession.reconcile` 才能成为 Store 可消费的凭证；adapter 不修改 Host 账本。原生 history 仅供内部 reconcile/fork 核实和 testing；正式端口不返回上游实验 Turn DTO，也不重放已有产品稳定事件。
 
-跨 turn 的 Binding 可清除 run/request；仅当同一 turn 的全部已派发 prompt（含未知 steer）均已核实结束时允许清除。A01、真实 SQLite 恢复测试及 ACP 按 turn 去重取消共用这一规则，不增加另一套恢复状态机。
+跨 turn 的 Binding 可清除 run/request；仅当同一 turn 的普通 prompt 已有终态、所有 steer 均已确认或核实未提交时允许清除。A01、真实 SQLite 恢复测试及 ACP 按 turn 去重取消共用这一规则，不增加另一套恢复状态机。
 
 ## 权限与协议边界
 
@@ -65,3 +65,5 @@ smoke JSON 为 `{ "mode": "real_model", "apiUrl": "https://api.openai.com/v1", "
 ## 来源
 
 协议生成自固定 Codex 版本并保留 Apache-2.0 LICENSE/NOTICE；本仓适配代码为 MIT。固定源码、生成复现和逐文件改写范围见[来源记录](../../../docs/reference/codex-adapter.md)。
+
+公共 `ProviderConfiguration` 仅含可序列化身份与配置；受控工具通过 adapter options 的 `tools` 注入，并将同一个 endpoint 与可信 verifier 作为 `ProviderAdmission` 显式传入 `VerifiedProviderSession.open/restore/fork`。所有命令共用带 attempt 的 `dispatch`；cancel/respond（以及支持的 steer）成功返回 `acknowledged`，不生成模型 outcome。原生核实证据经 `SessionCommit.providerFacts` 原子提交。

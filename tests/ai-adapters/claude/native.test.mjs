@@ -6,7 +6,7 @@ import {
 } from "../../../packages/ai-contract/dist/testing/index.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createServer } from "node:http";
+import { createModelServer } from "./model-fixture.mjs";
 import {
   mkdtempSync,
   mkdirSync,
@@ -66,91 +66,7 @@ async function fixture(t, replies, controlled = false) {
   const requests = [],
     tools = [],
     verifications = [];
-  const server = createServer(async (req, res) => {
-    try {
-      let data = "";
-      for await (const chunk of req) data += chunk;
-      if (!req.url.startsWith("/v1/messages")) {
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end("{}");
-        return;
-      }
-      const body = JSON.parse(data);
-      requests.push(body);
-      const blocks = replies.shift();
-      if (!blocks) throw new Error("unexpected model request");
-      if (blocks === "http-error") {
-        res.writeHead(400, { "content-type": "application/json" });
-        res.end(
-          JSON.stringify({
-            type: "error",
-            error: {
-              type: "invalid_request_error",
-              message: "fixed fixture failure",
-            },
-          }),
-        );
-        return;
-      }
-      res.writeHead(200, { "content-type": "text/event-stream" });
-      const emit = (type, info) =>
-        res.write(
-          `event: ${type}\ndata: ${JSON.stringify({ type, ...info })}\n\n`,
-        );
-      emit("message_start", {
-        message: {
-          id: `msg_fixture_${requests.length}`,
-          type: "message",
-          role: "assistant",
-          model: "fixture-model",
-          content: [],
-          stop_reason: null,
-          stop_sequence: null,
-          usage: { input_tokens: 1, output_tokens: 0 },
-        },
-      });
-      if (blocks === "hang") return;
-      for (const [index, block] of blocks.entries()) {
-        if (block.type === "text") {
-          emit("content_block_start", {
-            index,
-            content_block: { type: "text", text: "" },
-          });
-          emit("content_block_delta", {
-            index,
-            delta: { type: "text_delta", text: block.text },
-          });
-        } else {
-          emit("content_block_start", {
-            index,
-            content_block: { ...block, input: {} },
-          });
-          emit("content_block_delta", {
-            index,
-            delta: {
-              type: "input_json_delta",
-              partial_json: JSON.stringify(block.input),
-            },
-          });
-        }
-        emit("content_block_stop", { index });
-      }
-      emit("message_delta", {
-        delta: {
-          stop_reason: blocks.some((b) => b.type === "tool_use")
-            ? "tool_use"
-            : "end_turn",
-          stop_sequence: null,
-        },
-        usage: { output_tokens: 1 },
-      });
-      emit("message_stop", {});
-      res.end();
-    } catch {
-      res.writeHead(500);
-      res.end();
-    }
-  });
+  const server = createModelServer(replies, requests);
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   const configuration = {
     provider: "claude",
@@ -190,8 +106,9 @@ async function fixture(t, replies, controlled = false) {
   };
   const create = () =>
     createClaudeAdapter({
+      tools: configuration.tools,
       resolveConfiguration: async () => ({
-        configuration,
+        configuration: providerConfiguration(configuration),
         configurationDirectory: configDirectory,
         apiUrl: `http://127.0.0.1:${server.address().port}`,
         credential: { type: "api_key", value: "fixture-only-key" },
@@ -215,7 +132,7 @@ async function fixture(t, replies, controlled = false) {
   };
 }
 async function run(adapter, binding, cmd, onQuestion) {
-  const sent = await adapter.submit(
+  const sent = await adapter.dispatch(
     binding,
     cmd,
     fixtureAttempt(binding, cmd),
@@ -260,8 +177,9 @@ test(
         await VerifiedProviderSession.restore(
           resumed,
           fixtureProviderSession(second.binding, f.configuration),
-          f.configuration,
+          providerConfiguration(f.configuration),
           budget(),
+          providerAdmission(f.configuration),
         ),
       ).binding;
     assert.equal(binding.nativeSessionId, second.binding.nativeSessionId);
@@ -325,7 +243,7 @@ test(
             answer: { answers: { "Choose?": "A" } },
           },
         };
-        unwrap(await adapter.respond(binding, response, budget()));
+        unwrap(await acknowledge(adapter, binding, response, budget()));
       },
     );
     assert.equal(callbacks, 1);
@@ -410,7 +328,12 @@ test(
     );
     const adapter = f.create(),
       session = unwrap(
-        await VerifiedProviderSession.open(adapter, f.configuration, budget()),
+        await VerifiedProviderSession.open(
+          adapter,
+          providerConfiguration(f.configuration),
+          budget(),
+          providerAdmission(f.configuration),
+        ),
       );
     // A verifier admits an endpoint object, not a mutable resolver property.
     let unverifiedCalls = 0;
@@ -461,7 +384,7 @@ test(
       await adapter.createSession(f.configuration, budget()),
     );
     const cmd = command("cancel-target");
-    const sent = await adapter.submit(
+    const sent = await adapter.dispatch(
       session.binding,
       cmd,
       fixtureAttempt(session.binding, cmd),
@@ -469,7 +392,8 @@ test(
     );
     assert.equal(sent.certainty, "submitted");
     const cancelled = unwrap(
-      await adapter.cancel(
+      await acknowledge(
+        adapter,
         sent.binding,
         {
           ...command("cancel"),
@@ -513,7 +437,7 @@ test(
       await adapter.createSession(f.configuration, budget()),
     );
     const cmd = command("http-failure");
-    const sent = await adapter.submit(
+    const sent = await adapter.dispatch(
       session.binding,
       cmd,
       fixtureAttempt(session.binding, cmd),
@@ -591,7 +515,12 @@ test(
     );
     const first = f.create();
     const original = unwrap(
-      await VerifiedProviderSession.open(first, f.configuration, budget()),
+      await VerifiedProviderSession.open(
+        first,
+        providerConfiguration(f.configuration),
+        budget(),
+        providerAdmission(f.configuration),
+      ),
     );
     const finished = await run(
       first,
@@ -604,8 +533,9 @@ test(
       await VerifiedProviderSession.restore(
         second,
         fixtureProviderSession(finished.binding, f.configuration),
-        f.configuration,
+        providerConfiguration(f.configuration),
         budget(),
+        providerAdmission(f.configuration),
       ),
     );
     assert.equal(f.verifications.length, 2);
@@ -635,8 +565,9 @@ test(
         await VerifiedProviderSession.restore(
           denied,
           fixtureProviderSession(resumed.binding, f.configuration),
-          f.configuration,
+          providerConfiguration(f.configuration),
           budget(),
+          providerAdmission(f.configuration),
         )
       ).ok,
       false,
@@ -682,14 +613,25 @@ for (const method of ["createSession", "resume"])
       const control = new AbortController();
       const pending =
         method === "resume"
-          ? VerifiedProviderSession.restore(port, previous, f.configuration, {
-              ...budget(),
-              signal: control.signal,
-            })
-          : VerifiedProviderSession.open(port, f.configuration, {
-              ...budget(),
-              signal: control.signal,
-            });
+          ? VerifiedProviderSession.restore(
+              port,
+              previous,
+              providerConfiguration(f.configuration),
+              {
+                ...budget(),
+                signal: control.signal,
+              },
+              providerAdmission(f.configuration),
+            )
+          : VerifiedProviderSession.open(
+              port,
+              providerConfiguration(f.configuration),
+              {
+                ...budget(),
+                signal: control.signal,
+              },
+              providerAdmission(f.configuration),
+            );
       try {
         await started;
         control.abort();
@@ -710,3 +652,39 @@ for (const method of ["createSession", "resume"])
       }
     },
   );
+
+// Assert control acknowledgements separately from model-turn outcomes.
+async function acknowledge(provider, binding, command, budget) {
+  const result = await provider.dispatch(
+    binding,
+    command,
+    {
+      attemptId: "control-" + command.commandId,
+      originGeneration: binding.generation,
+      observerGeneration: binding.generation,
+      nativeSessionId: binding.nativeSessionId,
+      certainty: "intent",
+    },
+    budget,
+  );
+  if (result.certainty === "not_sent")
+    return { ok: false, error: result.error };
+  if (result.certainty === "unknown")
+    return {
+      ok: false,
+      error: { code: "unavailable", retry: "reconcile_first" },
+    };
+  assert.equal(result.certainty, "acknowledged");
+  assert.equal(result.acknowledgement.type, command.input.type);
+  return { ok: true, value: result.acknowledgement.confirmation };
+}
+
+// Fixture bundles keep parent-only admission inputs separate from worker configuration.
+function providerConfiguration({ tools, verifier, ...configuration }) {
+  return configuration;
+}
+function providerAdmission({ tools, verifier }) {
+  return tools !== undefined || verifier !== undefined
+    ? { tools, verifier }
+    : undefined;
+}

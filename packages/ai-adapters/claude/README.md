@@ -130,3 +130,8 @@ lock 固定 SDK 及平台包版本；pnpm release-age 例外仅列这些精确�
 
 
 A01 恢复契约升级后，submit 显式接收 Host 已持久化的 DispatchAttempt；重复调用必须保持原 attempt。所有观察含 attemptId，reconcile 接收完整 CommandRecord 并返回同一命令/attempt 的闭合结果；Host 通过 VerifiedProviderSession.reconcile 获取 store 可消费的 nominal 证据。原生 echo 使用 submitted 观察，callback 丢失使用 interaction_unavailable 观察；adapter 不直接发布 Host 的 status/interaction 生命周期事件。Binding 持久化 workspaceId，resolver 必须与准入 namespace 和工作目录一致；每个 adapter 实例在 close 后永久停止准入，冷恢复使用新实例。
+
+
+A03 统一端口：prompt、cancel 与 respond 均调用 `dispatch(binding, command, attempt, budget)`。cancel / respond 返回 acknowledged，不形成模型 Outcome。原生 acceptance 只证明 submitted；assistant / stream_event 的运行观察才证明 running。`ProviderConfiguration` 只含数据，ToolEndpoint 由 `ClaudeAdapterOptions.tools` 注入；verifier 由 parent 的 `VerifiedProviderSession` 准入参数持有，adapter / SDK worker 不接收 verifier。
+
+原生 transcript/恢复状态目录在 SDK 启动前校验为当前 UID 拥有的真实私有目录，拒绝 symlink、普通文件及任何 group/other 权限。缺失目录按 `0700` 创建，`CLAUDE_CONFIG_DIR` 只接收核对过的 canonical realpath；错误不包含路径或凭据。

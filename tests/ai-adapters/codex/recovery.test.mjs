@@ -76,7 +76,7 @@ test(
     const pending = prompt(admitted.binding, "killed-active-turn");
     unwrap(await store.accept(acceptance(initial, pending.command)));
     const accepted = unwrap(await store.session(initial.namespace));
-    const submission = await firstPort.submit(
+    const submission = await firstPort.dispatch(
       admitted.binding,
       pending.command,
       pending.attempt,
@@ -92,6 +92,8 @@ test(
         nativeRunId: submission.binding.nativeRunId,
         nativeRequestId: submission.binding.nativeRequestId,
       },
+      undefined,
+      first.configuration.workingDirectory,
     );
     assert.equal(durable.record.dispatch.attemptId, pending.attempt.attemptId);
     assert.equal(
@@ -207,7 +209,7 @@ test(
       },
       { type: "terminal", outcome: "cancelled" },
     ]);
-    unwrap(await store.commit({ ...commit, reconciliations: [proof] }));
+    unwrap(await store.commit({ ...commit, providerFacts: [proof] }));
     const settled = unwrap(
       await store.command(rebound.namespace, pending.command.commandId),
     );

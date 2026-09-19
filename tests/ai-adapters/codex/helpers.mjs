@@ -101,28 +101,29 @@ export async function nativeFixture(
     accountRef: "fixture-account",
     workingDirectory: cwd,
     permissions: controlled ? "host_mediated" : "tools_disabled",
-    ...(controlled
-      ? {
-          tools: endpoint ?? {
-            propose: async () => ({
-              ok: true,
-              value: { disposition: "rejected", text: "fixture denial" },
-            }),
-          },
-          verifier: {
-            verify: async () => ({
-              ok: true,
-              value: {
-                platform: "darwin-arm64",
-                verificationRef: "native-fixture",
-              },
-            }),
-          },
-        }
-      : {}),
   };
+  const admission = controlled
+    ? {
+        tools: endpoint ?? {
+          propose: async () => ({
+            ok: true,
+            value: { disposition: "rejected", text: "fixture denial" },
+          }),
+        },
+        verifier: {
+          verify: async () => ({
+            ok: true,
+            value: {
+              platform: "darwin-arm64",
+              verificationRef: "native-fixture",
+            },
+          }),
+        },
+      }
+    : undefined;
   const lineage = new Map();
   const options = {
+    tools: admission?.tools,
     resolveConfiguration: async (identity) => ({
       configuration: { ...configuration, namespace: identity.namespace },
       nativeDirectory: join(root, "native"),
@@ -145,7 +146,16 @@ export async function nativeFixture(
     await new Promise((resolve) => model.close(resolve));
     await rm(root, { recursive: true, force: true });
   });
-  return { root, requests, configuration, options, make, lineage, ports };
+  return {
+    root,
+    requests,
+    configuration,
+    admission,
+    options,
+    make,
+    lineage,
+    ports,
+  };
 }
 export function prompt(binding, commandId) {
   return {
@@ -173,7 +183,7 @@ export function prompt(binding, commandId) {
 }
 export async function conversation(port, admitted, id) {
   const { command, attempt } = prompt(admitted.binding, id);
-  const submission = await port.submit(
+  const submission = await port.dispatch(
     admitted.binding,
     command,
     attempt,

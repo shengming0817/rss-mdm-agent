@@ -5,8 +5,10 @@ import {
   fixtureSession,
 } from "../../../packages/ai-contract/dist/testing/index.js";
 import assert from "node:assert/strict";
-import { test } from "node:test";
-import { readFileSync } from "node:fs";
+import { test, after } from "node:test";
+import { readFileSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { createTestAdapter } from "../../../packages/ai-adapters/claude/dist/testing.js";
@@ -15,6 +17,10 @@ import {
   unwrap,
   runProviderConformance,
 } from "../../../packages/ai-contract/dist/testing/index.js";
+const configurationDirectory = mkdtempSync(
+  join(tmpdir(), "rss-sdk-test-config-"),
+);
+after(() => rmSync(configurationDirectory, { recursive: true, force: true }));
 const configuration = {
   provider: "claude",
   config: { id: "claude-config", revision: "1" },
@@ -68,7 +74,7 @@ function harness({
     {
       resolveConfiguration: async () => ({
         configuration,
-        configurationDirectory: "/tmp/rss-sdk-test-config",
+        configurationDirectory,
         apiUrl: "https://example.invalid",
         credential: { type: "api_key", value: "fixture-secret" },
       }),
@@ -160,7 +166,7 @@ test("submit waits for native acceptance; deltas and terminal retain prompt iden
   const h = harness(),
     b = await create(h),
     c = fixtureCommand();
-  const submitted = await h.adapter.submit(
+  const submitted = await h.adapter.dispatch(
     b,
     c,
     fixtureAttempt(b, c),
@@ -195,7 +201,7 @@ test("submit waits for native acceptance; deltas and terminal retain prompt iden
     ),
   );
   assert.equal(
-    (await h.adapter.submit(b, c, fixtureAttempt(b, c), budget())).certainty,
+    (await h.adapter.dispatch(b, c, fixtureAttempt(b, c), budget())).certainty,
     "submitted",
   );
   await h.adapter.close(budget());
@@ -205,7 +211,8 @@ test("ambiguous send and cancellation cannot manufacture a terminal", async () =
     b = await create(h),
     c = fixtureCommand();
   assert.equal(
-    (await h.adapter.submit(b, c, fixtureAttempt(b, c), budget(15))).certainty,
+    (await h.adapter.dispatch(b, c, fixtureAttempt(b, c), budget(15)))
+      .certainty,
     "unknown",
   );
   const cancel = {
@@ -218,7 +225,7 @@ test("ambiguous send and cancellation cannot manufacture a terminal", async () =
     },
   };
   assert.equal(
-    unwrap(await h.adapter.cancel(b, cancel, budget())),
+    unwrap(await acknowledge(h.adapter, b, cancel, budget())),
     "request_only",
   );
   assert.equal(h.interrupted, 1);
@@ -233,7 +240,7 @@ test("two native callbacks under one prompt are answered independently and only 
   const h = harness(),
     b = await create(h),
     c = fixtureCommand(),
-    sent = await h.adapter.submit(b, c, fixtureAttempt(b, c), budget()),
+    sent = await h.adapter.dispatch(b, c, fixtureAttempt(b, c), budget()),
     live = sent.binding;
   const questions = {
     questions: [
@@ -277,12 +284,13 @@ test("two native callbacks under one prompt are answered independently and only 
     },
   });
   const reply = respond(seen[1], "response-2");
-  assert.equal((await h.adapter.respond(live, reply, budget())).ok, true);
+  assert.equal((await acknowledge(h.adapter, live, reply, budget())).ok, true);
   assert.equal((await second).behavior, "allow");
-  assert.equal((await h.adapter.respond(live, reply, budget())).ok, true);
+  assert.equal((await acknowledge(h.adapter, live, reply, budget())).ok, true);
   assert.equal(
     (
-      await h.adapter.respond(
+      await acknowledge(
+        h.adapter,
         live,
         respond(seen[1], "response-other"),
         budget(),
@@ -291,8 +299,14 @@ test("two native callbacks under one prompt are answered independently and only 
     "already_answered",
   );
   assert.equal(
-    (await h.adapter.respond(live, respond(seen[0], "response-1"), budget()))
-      .ok,
+    (
+      await acknowledge(
+        h.adapter,
+        live,
+        respond(seen[0], "response-1"),
+        budget(),
+      )
+    ).ok,
     true,
   );
   assert.equal((await first).behavior, "allow");
@@ -302,7 +316,7 @@ test("two native callbacks under one prompt are answered independently and only 
 test("execution and foreign MCP requests always fail closed", async () => {
   const h = harness(),
     b = await create(h);
-  await h.adapter.submit(
+  await h.adapter.dispatch(
     b,
     fixtureCommand(),
     fixtureAttempt(b, fixtureCommand()),
@@ -347,7 +361,7 @@ test("stale binding and steer cannot dispatch; close timeout stays retryable", a
     c = fixtureCommand();
   assert.equal(
     (
-      await h.adapter.submit(
+      await h.adapter.dispatch(
         { ...b, accountRef: "other" },
         c,
         fixtureAttempt({ ...b, accountRef: "other" }, c),
@@ -358,7 +372,7 @@ test("stale binding and steer cannot dispatch; close timeout stays retryable", a
   );
   assert.equal(
     (
-      await h.adapter.submit(
+      await h.adapter.dispatch(
         b,
         { ...c, input: { ...c.input, policy: "steer", targetRunId: "run" } },
         fixtureAttempt(b, {
@@ -389,7 +403,7 @@ for (const loss of ["abort", "expiry", "close"])
     let now = 0;
     const h = harness({ clock: () => now, ttl: 100 }),
       binding = await create(h),
-      sent = await h.adapter.submit(
+      sent = await h.adapter.dispatch(
         binding,
         fixtureCommand(),
         fixtureAttempt(binding, fixtureCommand()),
@@ -435,7 +449,10 @@ for (const loss of ["abort", "expiry", "close"])
     if (loss === "abort") controller.abort();
     else if (loss === "expiry") now = 101;
     else await h.adapter.close(budget());
-    assert.equal((await h.adapter.respond(live, response, budget())).ok, false);
+    assert.equal(
+      (await acknowledge(h.adapter, live, response, budget())).ok,
+      false,
+    );
     assert.equal((await question).behavior, "deny");
     await it.return();
     await h.adapter.close(budget());
@@ -443,7 +460,7 @@ for (const loss of ["abort", "expiry", "close"])
 test("question response cannot carry permission or cross-account authority", async () => {
   const h = harness(),
     binding = await create(h),
-    sent = await h.adapter.submit(
+    sent = await h.adapter.dispatch(
       binding,
       fixtureCommand(),
       fixtureAttempt(binding, fixtureCommand()),
@@ -490,14 +507,15 @@ test("question response cannot carry permission or cross-account authority", asy
     },
   };
   assert.equal(
-    (await h.adapter.respond(live, command, budget())).error.code,
+    (await acknowledge(h.adapter, live, command, budget())).error.code,
     "invalid_input",
   );
   delete command.input.answer.approved;
   delete command.input.answer.updatedPermissions;
   assert.equal(
     (
-      await h.adapter.respond(
+      await acknowledge(
+        h.adapter,
         { ...live, accountRef: "foreign" },
         command,
         budget(),
@@ -507,7 +525,8 @@ test("question response cannot carry permission or cross-account authority", asy
   );
   assert.equal(
     (
-      await h.adapter.respond(
+      await acknowledge(
+        h.adapter,
         live,
         { ...command, input: { ...command.input, generation: "stale" } },
         budget(),
@@ -527,7 +546,7 @@ test("foreign native terminal and missing prompt correlation never complete a tu
   ]) {
     const h = harness(),
       binding = await create(h),
-      sent = await h.adapter.submit(
+      sent = await h.adapter.dispatch(
         binding,
         fixtureCommand(),
         fixtureAttempt(binding, fixtureCommand()),
@@ -558,7 +577,7 @@ test("exhausted budgets do not send prompts or interrupts", async () => {
     cmd = fixtureCommand();
   assert.equal(
     (
-      await h.adapter.submit(
+      await h.adapter.dispatch(
         binding,
         cmd,
         fixtureAttempt(binding, cmd),
@@ -567,7 +586,7 @@ test("exhausted budgets do not send prompts or interrupts", async () => {
     ).certainty,
     "not_sent",
   );
-  const sent = await h.adapter.submit(
+  const sent = await h.adapter.dispatch(
     binding,
     cmd,
     fixtureAttempt(binding, cmd),
@@ -586,7 +605,7 @@ test("exhausted budgets do not send prompts or interrupts", async () => {
   abort.abort();
   assert.equal(
     (
-      await h.adapter.cancel(sent.binding, cancel, {
+      await acknowledge(h.adapter, sent.binding, cancel, {
         timeoutMs: 100,
         signal: abort.signal,
       })
@@ -615,13 +634,13 @@ test("invalid resume input returns a value-free Result", async () => {
   await h.adapter.close(budget());
 });
 
-test("late native acceptance reconciles unknown submission to running", async () => {
+test("late native acceptance reconciles unknown submission to submitted", async () => {
   const h = harness({ acknowledge: false }),
     binding = await create(h),
     cmd = fixtureCommand();
   assert.equal(
     (
-      await h.adapter.submit(
+      await h.adapter.dispatch(
         binding,
         cmd,
         fixtureAttempt(binding, cmd),
@@ -650,11 +669,11 @@ test("late native acceptance reconciles unknown submission to running", async ()
       budget(),
     ),
   );
-  assert.equal(state.status, "running");
+  assert.equal(state.status, "submitted");
   assert.equal(state.binding.nativeRequestId, h.lastUser.uuid);
   assert.equal(
     (
-      await h.adapter.submit(
+      await h.adapter.dispatch(
         binding,
         cmd,
         fixtureAttempt(binding, cmd),
@@ -695,7 +714,7 @@ for (const consume of [false, true])
     const h = harness();
     let binding = await create(h);
     for (let n = 0; n < 4; n++) {
-      const sent = await h.adapter.submit(
+      const sent = await h.adapter.dispatch(
         binding,
         fixtureCommand(`large-${n}`),
         fixtureAttempt(binding, fixtureCommand(`large-${n}`)),
@@ -779,8 +798,8 @@ for (const [patch, outcome] of [
       const session = unwrap(
         await h.adapter.createSession(configuration, budget()),
       );
-      assert.equal(session.capabilities.queue, "unsupported");
-      const sent = await h.adapter.submit(
+      assert.equal("queue" in session.capabilities, false);
+      const sent = await h.adapter.dispatch(
         session.binding,
         fixtureCommand(),
         fixtureAttempt(session.binding, fixtureCommand()),
@@ -810,12 +829,12 @@ test("dispatch and reconciliation cannot substitute another attempt or namespace
   const attempt = fixtureAttempt(binding, command);
   try {
     assert.equal(
-      (await h.adapter.submit(binding, command, attempt, budget())).certainty,
+      (await h.adapter.dispatch(binding, command, attempt, budget())).certainty,
       "submitted",
     );
     assert.equal(
       (
-        await h.adapter.submit(
+        await h.adapter.dispatch(
           binding,
           command,
           { ...attempt, attemptId: "forged-attempt" },
@@ -851,11 +870,36 @@ test("dispatch and reconciliation cannot substitute another attempt or namespace
   }
 });
 
+// Assert control acknowledgements separately from model-turn outcomes.
+async function acknowledge(provider, binding, command, budget) {
+  const result = await provider.dispatch(
+    binding,
+    command,
+    {
+      attemptId: "control-" + command.commandId,
+      originGeneration: binding.generation,
+      observerGeneration: binding.generation,
+      nativeSessionId: binding.nativeSessionId,
+      certainty: "intent",
+    },
+    budget,
+  );
+  if (result.certainty === "not_sent")
+    return { ok: false, error: result.error };
+  if (result.certainty === "unknown")
+    return {
+      ok: false,
+      error: { code: "unavailable", retry: "reconcile_first" },
+    };
+  assert.equal(result.certainty, "acknowledged");
+  assert.equal(result.acknowledgement.type, command.input.type);
+  return { ok: true, value: result.acknowledgement.confirmation };
+}
 test("duplicate option labels are denied before a provider callback is admitted", async () => {
   const h = harness(),
     b = await create(h),
     c = fixtureCommand();
-  await h.adapter.submit(b, c, fixtureAttempt(b, c), budget());
+  await h.adapter.dispatch(b, c, fixtureAttempt(b, c), budget());
   const abort = new AbortController();
   let settled = false;
   const result = h.options

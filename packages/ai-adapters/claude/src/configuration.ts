@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import type {
@@ -6,6 +6,7 @@ import type {
   Budget,
   Clock,
   ProviderConfiguration,
+  ToolEndpoint,
 } from "@rss-mdm-agent/ai-contract";
 // The installed package manifests own compatibility identity, including packed consumers.
 const manifest = (url: URL) => JSON.parse(readFileSync(url, "utf8"));
@@ -41,12 +42,34 @@ export interface ResolvedClaudeConfiguration {
   model?: string;
 }
 export interface ClaudeAdapterOptions {
+  readonly tools?: ToolEndpoint;
   resolveConfiguration(
     identity: Pick<Binding, "config" | "accountRef">,
     budget: Budget,
   ): Promise<ResolvedClaudeConfiguration>;
   clock?: Clock;
   callbackTimeoutMs?: number;
+}
+/** Native transcripts and resume state share the credential trust boundary. */
+function privateDirectory(path: string): string {
+  try {
+    if (!isAbsolute(path) || !process.getuid) throw new Error();
+    mkdirSync(path, { recursive: true, mode: 0o700 });
+    const stat = lstatSync(path);
+    if (
+      !stat.isDirectory() ||
+      stat.isSymbolicLink() ||
+      stat.uid !== process.getuid() ||
+      (stat.mode & 0o077) !== 0
+    )
+      throw new Error();
+    const canonical = realpathSync(path),
+      actual = lstatSync(canonical);
+    if (actual.dev !== stat.dev || actual.ino !== stat.ino) throw new Error();
+    return canonical;
+  } catch {
+    throw new Error("invalid configuration directory");
+  }
 }
 /** No raw SDK option passthrough. Settings, child environment and tool inventory are sealed. */
 export function sdkOptions(resolved: ResolvedClaudeConfiguration): Options {
@@ -73,7 +96,7 @@ export function sdkOptions(resolved: ResolvedClaudeConfiguration): Options {
     throw new Error("invalid configuration");
   const env: Record<string, string> = {
     ANTHROPIC_BASE_URL: resolved.apiUrl,
-    CLAUDE_CONFIG_DIR: resolved.configurationDirectory,
+    CLAUDE_CONFIG_DIR: privateDirectory(resolved.configurationDirectory),
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
   };
   // No host search path: native metadata helpers must not select user shims.

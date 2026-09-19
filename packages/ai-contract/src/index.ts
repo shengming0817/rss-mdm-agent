@@ -21,7 +21,7 @@ export {
 export type {
   AdmissionResult,
   ForkAdmissionResult,
-  VerifiedReconciliation,
+  VerifiedProviderFact,
 } from "./session.js";
 
 export {

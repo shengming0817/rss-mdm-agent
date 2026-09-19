@@ -231,7 +231,7 @@ async function fillObservationQueue(s, count = 511) {
     return { turn: value };
   });
   for (let current = 0; current < count; current++) {
-    const result = await s.adapter.submit(
+    const result = await s.adapter.dispatch(
       s.admitted.binding,
       fixtureCommand(`fill-${current}`),
       s.attempt(`fill-${current}`),
@@ -267,10 +267,10 @@ test("pinned admission seals native capability negotiation and separates thread/
   assert.equal(params.approvalPolicy, "on-request");
   assert.equal(params.sandbox, "read-only");
 });
-test("stream output belongs to start; start and each steer terminate with their own attempt", async (t) => {
+test("stream output and terminal belong to start; each steer has its own acknowledgement", async (t) => {
   const s = await setup(t),
     binding = s.admitted.binding;
-  const first = await s.adapter.submit(
+  const first = await s.adapter.dispatch(
     binding,
     fixtureCommand(),
     s.attempt("command-1"),
@@ -286,13 +286,13 @@ test("stream output belongs to start; start and each steer terminate with their 
       text: "change",
     },
   };
-  const redirected = await s.adapter.submit(
+  const redirected = await s.adapter.dispatch(
     first.binding,
     steer,
     s.attempt("steer", { nativeRunId: "turn-1" }),
     budget(),
   );
-  assert.equal(redirected.certainty, "submitted");
+  assert.equal(redirected.certainty, "acknowledged");
   assert.notEqual(
     first.binding.nativeRequestId,
     redirected.binding.nativeRequestId,
@@ -313,16 +313,13 @@ test("stream output belongs to start; start and each steer terminate with their 
   const observed = [];
   for await (const item of s.adapter.observe(binding, budget())) {
     observed.push(item);
-    if (observed.filter((v) => v.body?.type === "terminal").length === 2) break;
+    if (observed.filter((v) => v.body?.type === "terminal").length === 1) break;
   }
   assert.deepEqual(
     observed
       .filter((v) => v.body?.type === "terminal")
       .map((v) => [v.commandId, v.attemptId]),
-    [
-      ["command-1", "attempt-command-1"],
-      ["steer", "attempt-steer"],
-    ],
+    [["command-1", "attempt-command-1"]],
   );
   assert.equal(observed.find((v) => v.type === "delta").commandId, "command-1");
   assert.equal(
@@ -340,7 +337,7 @@ test("lost submit response is reconciled by clientId; no blind second start", as
       throw new Error("connection lost");
     }
   });
-  const result = await s.adapter.submit(
+  const result = await s.adapter.dispatch(
     s.admitted.binding,
     command,
     attempt,
@@ -350,7 +347,7 @@ test("lost submit response is reconciled by clientId; no blind second start", as
     certainty: "unknown",
     correlationId: attempt.attemptId,
   });
-  await s.adapter.submit(
+  await s.adapter.dispatch(
     s.admitted.binding,
     fixtureCommand("second"),
     s.attempt("second"),
@@ -383,7 +380,7 @@ test("missing native history is unknown and reverse dynamic/approval calls canno
   s.fault((method) => {
     if (method === "turn/start") throw new Error("unknown");
   });
-  await s.adapter.submit(s.admitted.binding, command, attempt, budget());
+  await s.adapter.dispatch(s.admitted.binding, command, attempt, budget());
   const record = {
     schemaVersion: 3,
     kind: "commandRecord",
@@ -483,7 +480,7 @@ test("Codex participates in shared ProviderAgentPort conformance", async (t) => 
 
 test("terminal arriving before steer ACK closes the acknowledged steer exactly once", async (t) => {
   const s = await setup(t);
-  const started = await s.adapter.submit(
+  const started = await s.adapter.dispatch(
     s.admitted.binding,
     fixtureCommand(),
     s.attempt("command-1"),
@@ -504,13 +501,13 @@ test("terminal arriving before steer ACK closes the acknowledged steer exactly o
       text: "change",
     },
   };
-  const steered = await s.adapter.submit(
+  const steered = await s.adapter.dispatch(
     started.binding,
     command,
     s.attempt("steer", { nativeRunId: "turn-1" }),
     budget(),
   );
-  assert.equal(steered.certainty, "submitted");
+  assert.equal(steered.certainty, "acknowledged");
   const observations = [];
   for await (const item of s.adapter.observe(s.admitted.binding, {
     ...budget(),
@@ -521,15 +518,15 @@ test("terminal arriving before steer ACK closes the acknowledged steer exactly o
     observations
       .filter((v) => v.body?.type === "terminal")
       .map((v) => v.commandId),
-    ["command-1", "steer"],
+    ["command-1"],
   );
   assert.equal(
     observations.filter(
-      (v) => v.type === "submitted" && v.commandId === "steer",
+      (v) => v.type === "acknowledged" && v.commandId === "steer",
     ).length,
     1,
   );
-  const next = await s.adapter.submit(
+  const next = await s.adapter.dispatch(
     s.admitted.binding,
     fixtureCommand("next"),
     s.attempt("next"),
@@ -562,7 +559,7 @@ test("ACK replay overflow fails the incarnation without fabricating a terminal",
     });
     return { turn: active };
   });
-  const result = await s.adapter.submit(
+  const result = await s.adapter.dispatch(
     s.admitted.binding,
     fixtureCommand("overflow"),
     s.attempt("overflow"),
@@ -587,7 +584,7 @@ test("ACK replay overflow fails the incarnation without fabricating a terminal",
   );
   assert.equal(
     (
-      await s.adapter.submit(
+      await s.adapter.dispatch(
         s.admitted.binding,
         fixtureCommand("after-overflow"),
         s.attempt("after-overflow"),
@@ -602,7 +599,7 @@ test("steer ACK overflow preserves submission fact and fails the incarnation", a
   const s = await setup(t, { nativeDiagnostics: false });
   await fillObservationQueue(s);
   s.fault(undefined);
-  const started = await s.adapter.submit(
+  const started = await s.adapter.dispatch(
     s.admitted.binding,
     fixtureCommand("active"),
     s.attempt("active"),
@@ -623,7 +620,7 @@ test("steer ACK overflow preserves submission fact and fails the incarnation", a
       text: "change",
     },
   };
-  const result = await s.adapter.submit(
+  const result = await s.adapter.dispatch(
     started.binding,
     command,
     s.attempt("overflow-steer", {
@@ -631,14 +628,14 @@ test("steer ACK overflow preserves submission fact and fails the incarnation", a
     }),
     budget(),
   );
-  assert.equal(result.certainty, "submitted");
+  assert.equal(result.certainty, "acknowledged");
   assert.equal(
     s.calls.some((call) => call.method === "runtime/close"),
     true,
   );
   assert.equal(
     (
-      await s.adapter.submit(
+      await s.adapter.dispatch(
         s.admitted.binding,
         fixtureCommand("after-steer-overflow"),
         s.attempt("after-steer-overflow"),
@@ -672,7 +669,7 @@ test("reconcile replay overflow fails closed and stops the incarnation", async (
     throw new Error("lost ACK");
   });
   assert.equal(
-    (await s.adapter.submit(s.admitted.binding, command, attempt, budget()))
+    (await s.adapter.dispatch(s.admitted.binding, command, attempt, budget()))
       .certainty,
     "unknown",
   );
@@ -725,7 +722,7 @@ test("unmatched buffered notifications do not loop during another turn ACK", asy
     itemId: "old-item",
     delta: "unattributed",
   });
-  const submitted = await s.adapter.submit(
+  const submitted = await s.adapter.dispatch(
     s.admitted.binding,
     fixtureCommand(),
     s.attempt("command-1"),
@@ -769,7 +766,7 @@ test("typed item/started correlates and replays earlier deltas after a lost resp
     });
     throw new Error("lost response");
   });
-  const result = await s.adapter.submit(
+  const result = await s.adapter.dispatch(
     s.admitted.binding,
     fixtureCommand(),
     s.attempt("command-1"),
@@ -796,7 +793,7 @@ test("typed notifications retain runtime rejection of malformed payloads", async
     ["turn/completed", { turn: { id: "turn-1", status: "bogus", items: [] } }],
   ]) {
     const s = await setup(t);
-    const result = await s.adapter.submit(
+    const result = await s.adapter.dispatch(
       s.admitted.binding,
       fixtureCommand(),
       s.attempt("command-1"),
@@ -827,7 +824,7 @@ test("unknown notification methods cannot confirm a lost submission", async (t) 
     });
     throw new Error("lost response");
   });
-  const result = await s.adapter.submit(
+  const result = await s.adapter.dispatch(
     s.admitted.binding,
     fixtureCommand(),
     s.attempt("command-1"),
@@ -882,7 +879,7 @@ test("absent and slow diagnostic consumers never terminate a healthy incarnation
   assert.ok((await stream.next()).value.dropped > 0);
   for (let i = 0; i < 2048; i++) s.emit("diagnostic-only", {});
   await stream.return();
-  const result = await s.adapter.submit(
+  const result = await s.adapter.dispatch(
     s.admitted.binding,
     fixtureCommand(),
     s.attempt("command-1"),

@@ -16,7 +16,7 @@ V3 直接替换 V2（以及更早的 C02 V1）。`command_accepted` 稳定事件
 
 能力分基础会话和受控工具 profile。基础可建立会话、文本多轮、输出/状态/终态和取消；取消能力区分 unsupported/unknown/request_only/terminal_acknowledged。跨进程 resume、steer、fork、子 agent、终端、结构化追问及多模态显式声明；扩展操作由 A01 定义的受控 extension port 承接，公共 V3 input 只接纳文本、取消和回答，不伪造通用多模态载荷。缺少能力不能请求对应操作。
 
-能力声明必须绑定 provider/adapter version、config、账号及 generation；Host 在使用观察事件前核对完整 binding 与命令账本的 native run/request 关联。resume 必须核对 provider/config/account，跨 generation 仅在 across_processes 能力与 provider 成功响应后成立。展示历史不恢复模型上下文。`ProviderConfiguration` 是闭合权限联合：tools_disabled 禁止 endpoint/verifier；host_mediated 必须同时提供 ToolEndpoint 与组合根注入的可信平台 verifier。Host 通过 `VerifiedProviderSession.open` 或 `VerifiedProviderSession.restore(port, previousSession, configuration, budget)` 消费原子结果并完成验证；恢复显式消费当前配置，核对原 session ID、新 generation 与 across_processes 能力，重新执行 verifier；已打开 runtime 的准入失败会以独立有界预算关闭，调用方仍须处理/重试未完成的关闭。私有构造和运行时 token 阻止同形对象/JSON 冒充 admission；证据固定完整 binding、capabilities 与 endpoint 对象身份，跨 incarnation 使用须重新验证。verifier 是受信代码边界，具体平台/版本的原生工具旁路证明由 adapter 持有；本包不从字符串或模型声明推导该证明。
+能力声明必须绑定 provider/adapter version、config、账号及 generation；Host 在使用观察事件前核对完整 binding 与命令账本的 native run/request 关联。resume 必须核对 provider/config/account，跨 generation 仅在 across_processes 能力与 provider 成功响应后成立。展示历史不恢复模型上下文。`ProviderConfiguration` 是纯数据，权限为 tools_disabled 或 host_mediated；ToolEndpoint 与可信平台 verifier 通过 parent-only ProviderAdmission 参数单独注入，verifier 不跨 worker IPC。Host 通过 `VerifiedProviderSession.open` 或 `VerifiedProviderSession.restore(port, previousSession, configuration, budget)` 消费原子结果并完成验证；恢复显式消费当前配置，核对原 session ID、新 generation 与 across_processes 能力，重新执行 verifier；已打开 runtime 的准入失败会以独立有界预算关闭，调用方仍须处理/重试未完成的关闭。私有构造和运行时 token 阻止同形对象/JSON 冒充 admission；证据固定完整 binding、capabilities 与 endpoint 对象身份，跨 incarnation 使用须重新验证。verifier 是受信代码边界，具体平台/版本的原生工具旁路证明由 adapter 持有；本包不从字符串或模型声明推导该证明。
 
 `HostPort` 接受可信 ingress 提供的 Caller，提供 createSession、submit/cancel/respond、negotiate、snapshot/subscribe/close。Caller 是组合根的认证前置，不是本包签发的证书；禁止从模型内容、工具参数或 A2UI context 构造它。snapshot 包含稳定事件、命令、交互和 surface 与同一水位；超过明确输出上限返回 limit_exceeded，不静默裁掉历史。subscribe 从 exclusive cursor 回放后接实时；临时 delta 保留 commandId/generation/messageId/text，同一命令的交错消息按 messageId 归并；detach/AbortSignal 只结束订阅。过期 cursor、丢失事件或输出背压必须要求 resync，不伪造终态。
 
@@ -38,6 +38,7 @@ V3 直接替换 V2（以及更早的 C02 V1）。`command_accepted` 稳定事件
 
 ACP 固定官方 SDK 1.4.0 / schema-v1.21.0。标准 session/new、session/prompt、session/update、session/cancel、session/request_permission 保持上游语义；prompt 的最终响应必须有真实 stopReason，不能提前返回 accepted receipt。无 stopReason 的错误走标准错误路径，不制造成功响应。
 
+产品能力在 capabilities.\_meta 的 `rss-mdm-agent.ai-runtime` 下协商 contractVersion=2、durableReceipts、cursorAttach，以及可选 A2UI version/catalogId/catalogVersion。`_rss-mdm-agent/submit`、`/snapshot`、`/attach` 和 `/update` 是扩展方法的完整产品前缀约定（代码中的 extension 常量为准），只有协商后使用；未知 request 按 ACP 返回 method-not-found，未知 notification 按上游规则忽略。A01 只冻结约定和 fixtures；实际 transport/协议 service 归 A04。
 产品能力在 capabilities._meta 的 `rss-mdm-agent.ai-runtime` 下协商 contractVersion=3、durableReceipts、cursorAttach，以及可选 A2UI version/catalogId/catalogVersion。`_rss-mdm-agent/submit`、`/snapshot`、`/attach` 和 `/update` 是扩展方法的完整产品前缀约定（代码中的 extension 常量为准），只有协商后使用；未知 request 按 ACP 返回 method-not-found，未知 notification 按上游规则忽略。A01 只冻结约定和 fixtures；实际 transport/协议 service 归 A04。
 
 A2UI 固定 v0.9.1 snapshot，客户端 action、服务端 surface 生命周期、basic catalog 与 common types schema 原样保留在 [upstream](schema/upstream/a2ui/NOTICE.md)。`SurfaceState` 绑定 session/run、surfaceId、surfaceInstanceId、revision、interaction、component/event、catalog/version。create/update/delete 的上游 payload 不改写；产品扩展携带关联 metadata。一次新建 surface 使用新 instance ID，创建 revision 为0，更新/删除以 session revision/generation CAS 为前提严格递增1，身份字段不可重绑；active→deleted 持久化 tombstone 且不可复活，同时使 pending interaction unavailable。snapshotPage 与事件恢复这些关联和实际内容；完整有界 messages 与 surface 稳定事件同批发布，内容校验由公共 validateSurface 完成，A04 在发布和渲染前消费。
@@ -64,7 +65,7 @@ Node 验证基线24.14.1 / pnpm11.4.0。`/transitions` 导出同步纯状态转�
 
 `ProviderObservation` 新增 `type: "interaction"`，`interaction: ProviderInteraction` 从同一生成 wire 类型选取 callback ID、产品 interaction ID、期限、lifetime 和问题载荷。Host 先验证完整 binding 与 command dispatch，从可信会话补 namespace/generation/nativeRunId，再原子提交 pending Interaction 与同 ID/command/generation、内容相同的 interaction 事件。首次 pending 必须携带与 Interaction 相等的 request、expiresAtMs 和 callbackLifetime；answered 必须携带相同 responseCommandId；其它状态事件不得携带 request。所有交互状态变化都必须有同批匹配事件。创建只接受已确认提交的活动命令，缺一侧或重复 pending 均拒绝。`request` 是有预算的、不可信 provider JSON，不是执行工具提案，也不是第二套 UI schema；A04 拥有展示适配。
 
-`respond(binding, command, budget)` 签名不变。Host 负责可信 Caller 与 Store 的单次接纳；adapter 通过 binding + interactionId 定位私有活回调并核验 generation/期限，不能从客户端提交的 ID 构造回调。回答不形成执行批准，执行工具与追问回调隔离。显示历史保留 request，但 generation_bound callback 丢失后必须 unavailable。
+`dispatch(binding, command, attempt, budget)` 统一派发响应与其他控制命令。Host 负责可信 Caller 与 Store 的单次接纳；adapter 通过 binding + interactionId 定位私有活回调并核验 generation/期限，不能从客户端提交的 ID 构造回调。回答不形成执行批准，执行工具与追问回调隔离。显示历史保留 request，但 generation_bound callback 丢失后必须 unavailable。
 
 共同 `runStoreConformance` 包含一个父请求的多个 callback、反序回答、callback 别名拒绝及 pending 记录/事件的原子提交。Claude/Codex/其它 adapter 直接消费此接口；本包没有 SDK 依赖，也没有新增 Host worker。
 
@@ -75,9 +76,10 @@ Interaction 的必填 `category: "question"` 仅允许普通用户追问；权�
 A04 同 PR 的直接契约替换、分页/列表、明确终态与浏览器入口见[ACP–A2UI 开发](../../docs/guides/ai-access-development.md)。协商字段和全部产品扩展 DTO 从同一 schema 生成；通用包入口没有 Node fs/crypto，生成期编译静态校验器，运行期使用固定 noble 摘要。旧单次 snapshot API 不再提供。
 
 A2UI version/catalogId/catalogVersion 的声明在 runtime schema 的 A2uiNegotiation，生成的冻结 `interactionCatalog` 为运行时唯一入口；`selectNegotiation` 在双端限制 selection≤offer。Memory store 完成且未签发 continuation 的单页读视图立即释放；已签发 token 的视图保留至 TTL，支持原 token 的重复读取。
+
 ## A02 前置恢复契约（#2440）
 
-`DispatchAttempt` 必填 attemptId、originGeneration、observerGeneration 和 nativeSessionId。Host 必须先保存 certainty=intent 再调用 `submit(binding, command, attempt, budget)`；原始身份固定，native run/request/correlationId 只可首次补入。ProviderObservation 必须携带原 attemptId，Host 同时核对当前 observer 与完整 binding。unknown 的 correlationId 持久化，stream 中断或进程退出不能清除派发事实。
+`DispatchAttempt` 必填 attemptId、originGeneration、observerGeneration 和 nativeSessionId。Host 必须先保存 certainty=intent 再调用 `dispatch(binding, command, attempt, budget)`；原始身份固定，native run/request/correlationId 只可首次补入。ProviderObservation 必须携带原 attemptId，Host 同时核对当前 observer 与完整 binding。unknown 的 correlationId 持久化，stream 中断或进程退出不能清除派发事实。
 
 `CommandRecord` 按状态闭合：accepted 无 dispatch；dispatching/running/reconciliation_required 有 dispatch；terminal 同时有 dispatch/outcome；invalidated 只有本地 failure，不能伪造模型终态。普通 commit 不创建命令，接纳只经 accept。状态改变和派发坐标补入必须携带匹配的稳定事件。
 
@@ -85,7 +87,7 @@ A2UI version/catalogId/catalogVersion 的声明在 runtime schema 的 A2uiNegoti
 
 同一 rebind 原子使 pending interaction unavailable、active surface invalidated，并追加 session_rebound、状态、交互及 status=invalidated 的完整 surface 事件。历史问题与 A2UI payload 留在事件日志；失效不是上游 deleteSurface。create/update/delete 的原样 payload 必须与 surface revision、关联行和稳定水位同事务提交；删除还需同批提交交互失效及其事件。
 
-`SessionCommit.reconciliations` 处理 running/terminal/not_submitted/unknown；不存在第二个恢复提交 API 或 provider 队列。证据必须指向原 attempt 和当前 observer，原生坐标不可覆盖。unknown 保持阻断；not_submitted 将完整旧 attempt（含 correlationId）写入 reconciled 事件，且仅原期限内 queue_next 可再次接纳派发，新派发必须使用新 attemptId。已过期或绑定旧代的控制输入进入 invalidated。重试不扩大原 receipt 窗口。
+`SessionCommit.providerFacts` 处理 running/terminal/not_submitted/unknown；不存在第二个恢复提交 API 或 provider 队列。证据必须指向原 attempt 和当前 observer，原生坐标不可覆盖。unknown 保持阻断；not_submitted 将完整旧 attempt（含 correlationId）写入 reconciled 事件，且仅原期限内 queue_next 可再次接纳派发，新派发必须使用新 attemptId。已过期或绑定旧代的控制输入进入 invalidated。重试不扩大原 receipt 窗口。
 
 共用 conformance 覆盖多代恢复、拒绝结构化假证据、旧 observer / 旧 attempt 回调、正反向核实证据、旧控制命令与 surface 失效、水位连续回放。真实进程故障与 SQLite 事务由 A02 单独验证。
 
@@ -95,8 +97,7 @@ provider 通用 event 使用 `ProviderEventBody` 白名单，只含文本、工�
 
 `deliveries` 返回到期的 pending 与 reconciliation_required 记录，调用方必须先检查 status/retry；查询不代表领取或允许重发。仅全部 delivered 才允许 retire。`StoreCursor` 是1–2048字符的 opaque continuation，与 wire Id 分离，调用方仅原样回传给同一 adapter。
 
-
-外部复核后的契约收口：ProviderConfiguration 必须由 composition root 提供完整 namespace；准入时复制它并绑定该 provider 实例。`VerifiedProviderSession.reconcile(session, record, budget)` 是唯一恢复凭证入口，实际调用所准入的 port，绑定当前完整 binding、namespace 和原始 CommandRecord。返回的 `VerifiedReconciliation` 通过模块私有 WeakMap 校验，公开 observation 只返回副本；结构转换、JSON 复制或改写原始记录均不能生成有效证据。SessionCommit 只消费这类凭证，不接受原始 Reconciliation。原始 provider 方法仍返回普通观察数据；数据本身不是重试许可。
+外部复核后的契约收口：ProviderConfiguration 必须由 composition root 提供完整 namespace；准入时复制它并绑定该 provider 实例。`VerifiedProviderSession.reconcile(session, record, budget)` 是统一 provider 事实入口之一，实际调用所准入的 port，绑定当前完整 binding、namespace 和原始 CommandRecord。返回的 `VerifiedProviderFact` 通过模块私有 WeakMap 校验，公开 observation 只返回副本；结构转换、JSON 复制或改写原始记录均不能生成有效证据。SessionCommit.providerFacts 只消费这类凭证，不接受原始 provider 结果。原始 provider 方法仍返回普通观察数据；数据本身不是重试许可。
 
 Binding 新增必填 workspaceId：`workspaceIdentity(workingDirectory)` 对规范化绝对路径计算 SHA-256，restore 必须与原 binding 相同，实际传给 adapter 的路径在外部 await 前规范化固定。它是逻辑目录身份，不是 symlink、挂载或操作系统 containment 证明；平台隔离仍由 adapter/verifier 持有。旧 binding 无此字段直接拒绝。callbackLifetime 只保留 generation_bound；未实现的 provider_resumable 已删除，无兼容分支。
 
@@ -106,11 +107,11 @@ Rust 生成时将同一 schema 的 const 等价投影为单值 enum，以补足 
 
 SessionState 是 adapter 持有的完整持久化状态，包括全部历史 generations。createState 仅创建 revision/sequence 为0的全新会话；SnapshotPage 是显示读模型，不能拿来重建 persistence state。共享恢复检查涵盖两种调用顺序的并发 rebind/旧代 commit；SQLite adapter 另外以真实重启验证 generation 历史。
 
-
 Claude adapter 的合并集成同样使用显式 DispatchAttempt 和完整 CommandRecord。ProviderObservation 新增两类原生事实：submitted 表示该 attempt 获得原生接纳确认；interaction_unavailable 表示活 callback 已失效。它们携带当前 binding/commandId/attemptId，Host 验证后原子更新账本和稳定事件，adapter 不直接发布 Host 生命周期事件。共享 Provider conformance 的迟到 resume 场景从另一个已准入并关闭的实例取得真实 prior binding，避免用无效测试版本绕过实际恢复路径。
 
 集成入口：浏览器使用主入口的 codec、wire 与协议；Node Host 从 `@rss-mdm-agent/ai-contract/session` 导入 VerifiedProviderSession/workspaceIdentity，从 `/transitions` 消费持久化状态规则。内存和 SQLite 共用 `/read-views` 的 snapshotPage/listSessions 同水位分页；续页绑定 scope、limit 和不可变视图，30秒失效，重启后返回 cursor_expired，单实例最多128份视图/16MiB保留内容。客户端重新抓取快照后按持久 cursor 接续，分页缓存不授予回调权限。
 
+A03 收口：ProviderAgentPort 仅保留统一 `dispatch`，原生提交确认保持 dispatching，实际运行观察才进入 running。控制命令 acknowledged 和本地 queued_cancelled / cancelled 是闭合终态，不使用模型 Outcome。Capabilities 不再声明 queue；持久 FIFO 属于 Host。`VerifiedProviderFact` 覆盖 dispatch / observe / reconcile，并在当前 revision/generation CAS 时校验原 attempt。`SessionStore.recoverUnavailable` 原子冻结恢复不可用的旧绑定及回调，`Session.status=recovery_required` 由同一列表/快照展示。OS 启动 fence 由 Host 独立 `WorkerLaunchFenceStore` 持有，公共 `SessionStore` 不含 PID/PGID/artifact。详见 [Host](../ai-host/README.md)。
 
 ## 原生 thread 与 turn 的多命令绑定（#2405）
 

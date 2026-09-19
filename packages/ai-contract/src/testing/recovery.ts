@@ -64,8 +64,19 @@ export async function verifiedReconciliation(
   session: Session,
   record: CommandRecord,
   status: Reconciliation["status"],
+  outcome: import("../wire.js").Outcome = "completed",
+  workingDirectory = ".",
+  acknowledgement?: import("../wire.js").Acknowledgement,
 ) {
-  const binding = session.binding;
+  const binding = {
+    ...session.binding,
+    ...(record.dispatch?.nativeRunId
+      ? { nativeRunId: record.dispatch.nativeRunId }
+      : {}),
+    ...(record.dispatch?.nativeRequestId
+      ? { nativeRequestId: record.dispatch.nativeRequestId }
+      : {}),
+  };
   const port = {
     createSession: async () => ({
       ok: true as const,
@@ -78,7 +89,8 @@ export async function verifiedReconciliation(
         attemptId: record.dispatch!.attemptId,
         binding,
         status,
-        ...(status === "terminal" ? { outcome: "completed" } : {}),
+        ...(status === "terminal" ? { outcome } : {}),
+        ...(status === "acknowledged" ? { acknowledgement } : {}),
       },
     }),
     close: async () => ({ ok: true as const, value: { processStopped: true } }),
@@ -91,7 +103,7 @@ export async function verifiedReconciliation(
         provider: binding.provider,
         config: binding.config,
         accountRef: binding.accountRef,
-        workingDirectory: ".",
+        workingDirectory,
         permissions: "tools_disabled",
       },
       defaultBudget(),
@@ -204,7 +216,7 @@ export async function runRecoveryConformance(
     "invalidated",
   );
   assert.equal((await store.rebind(input)).ok, false);
-  const late = terminalCommit(
+  const late = await terminalCommit(
     head,
     rebound,
     await verifiedReconciliation(head, rebound, "terminal"),
@@ -227,7 +239,7 @@ export async function runRecoveryConformance(
   unwrap(
     await store.commit({
       ...unknownAgain,
-      reconciliations: [await verifiedReconciliation(head, rebound, "unknown")],
+      providerFacts: [await verifiedReconciliation(head, rebound, "unknown")],
     }),
   );
   head = unwrap(await store.session(head.namespace));
@@ -268,12 +280,12 @@ export async function runRecoveryConformance(
       await store.commit({
         ...retry,
         nowMs: 1,
-        reconciliations: [JSON.parse(JSON.stringify(proof))],
+        providerFacts: [JSON.parse(JSON.stringify(proof))],
       })
     ).ok,
     false,
   );
-  unwrap(await store.commit({ ...retry, nowMs: 1, reconciliations: [proof] }));
+  unwrap(await store.commit({ ...retry, nowMs: 1, providerFacts: [proof] }));
   head = unwrap(await store.session(head.namespace));
   const nextAttempt = {
     ...original,
@@ -315,7 +327,7 @@ export async function runRecoveryConformance(
   assert.deepEqual(unwrap(await store.session(head.namespace)), head);
   unwrap(await store.commit({ ...start, nowMs: 1 }));
   head = unwrap(await store.session(head.namespace));
-  const terminal = terminalCommit(head, dispatching);
+  const terminal = await terminalCommit(head, dispatching);
   assert.equal(
     (
       await store.commit({
@@ -445,7 +457,9 @@ async function failureAndDelivery(store: SessionStore) {
     store,
     unwrap(await store.session(initial.namespace)),
   );
-  unwrap(await store.commit(terminalCommit(started.session, started.record)));
+  unwrap(
+    await store.commit(await terminalCommit(started.session, started.record)),
+  );
   let head = unwrap(await store.session(initial.namespace));
   const event = unwrap(await store.events(initial.namespace, 0, 1))[0];
   const delivery: import("../wire.js").Delivery = {
@@ -489,7 +503,7 @@ async function terminalInteractions(store: SessionStore) {
   const record = unwrap(
     await store.command(head.namespace, seeded.interaction.commandId),
   );
-  const terminal = terminalCommit(head, record);
+  const terminal = await terminalCommit(head, record);
   assert.equal((await store.commit(terminal)).ok, false);
   assert.deepEqual(unwrap(await store.session(head.namespace)), head);
   const unavailable = { ...seeded.interaction, status: "unavailable" as const };

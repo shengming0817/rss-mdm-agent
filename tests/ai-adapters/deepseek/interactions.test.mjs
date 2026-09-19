@@ -1,3 +1,4 @@
+import { acknowledge } from "../control.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { VerifiedProviderSession } from "../../../packages/ai-contract/dist/session.js";
@@ -57,11 +58,16 @@ test("native structured question is generation bound; answer only returns a tool
   );
   const p = env.port(),
     admitted = unwrap(
-      await VerifiedProviderSession.open(p, env.config, budget()),
+      await VerifiedProviderSession.open(
+        p,
+        env.config,
+        budget(),
+        env.admission,
+      ),
     ),
     c = command(),
     a = fixtureAttempt(admitted.binding, c),
-    sent = await p.submit(admitted.binding, c, a, budget());
+    sent = await p.dispatch(admitted.binding, c, a, budget());
   assert.equal(sent.certainty, "submitted");
   let seen = false;
   const observations = [];
@@ -81,7 +87,8 @@ test("native structured question is generation bound; answer only returns a tool
       };
       assert.equal(
         (
-          await p.respond(
+          await acknowledge(
+            p,
             { ...e.binding, generation: "old" },
             response,
             budget(),
@@ -89,7 +96,7 @@ test("native structured question is generation bound; answer only returns a tool
         ).ok,
         false,
       );
-      unwrap(await p.respond(e.binding, response, budget()));
+      unwrap(await acknowledge(p, e.binding, response, budget()));
     }
   }
   assert.equal(seen, true, JSON.stringify(observations));
@@ -141,10 +148,15 @@ test("controlled profile has only question + proposal and checkpoints before hos
   );
   const p = env.port(),
     admitted = unwrap(
-      await VerifiedProviderSession.open(p, env.config, budget()),
+      await VerifiedProviderSession.open(
+        p,
+        env.config,
+        budget(),
+        env.admission,
+      ),
     ),
     c = command(),
-    sent = await p.submit(
+    sent = await p.dispatch(
       admitted.binding,
       c,
       fixtureAttempt(admitted.binding, c),
@@ -182,10 +194,15 @@ for (const name of [
     );
     const p = env.port(),
       admitted = unwrap(
-        await VerifiedProviderSession.open(p, env.config, budget()),
+        await VerifiedProviderSession.open(
+          p,
+          env.config,
+          budget(),
+          env.admission,
+        ),
       ),
       c = command(),
-      sent = await p.submit(
+      sent = await p.dispatch(
         admitted.binding,
         c,
         fixtureAttempt(admitted.binding, c),
@@ -216,10 +233,15 @@ test("native cancellation invalidates callbacks without fabricating terminal on 
   );
   const p = env.port(),
     admitted = unwrap(
-      await VerifiedProviderSession.open(p, env.config, budget()),
+      await VerifiedProviderSession.open(
+        p,
+        env.config,
+        budget(),
+        env.admission,
+      ),
     ),
     c = command(),
-    sent = await p.submit(
+    sent = await p.dispatch(
       admitted.binding,
       c,
       fixtureAttempt(admitted.binding, c),
@@ -238,7 +260,7 @@ test("native cancellation invalidates callbacks without fabricating terminal on 
         },
       };
       assert.equal(
-        unwrap(await p.cancel(e.binding, cancel, budget())),
+        unwrap(await acknowledge(p, e.binding, cancel, budget())),
         "request_only",
       );
     }
@@ -261,10 +283,15 @@ test("provider HTTP error has sanitized error and native failed terminal", async
   });
   const p = env.port(),
     admitted = unwrap(
-      await VerifiedProviderSession.open(p, env.config, budget()),
+      await VerifiedProviderSession.open(
+        p,
+        env.config,
+        budget(),
+        env.admission,
+      ),
     ),
     c = command(),
-    sent = await p.submit(
+    sent = await p.dispatch(
       admitted.binding,
       c,
       fixtureAttempt(admitted.binding, c),
@@ -293,10 +320,15 @@ test("33 sequential native questions do not consume pending callback capacity", 
   );
   const p = env.port(),
     admitted = unwrap(
-      await VerifiedProviderSession.open(p, env.config, budget()),
+      await VerifiedProviderSession.open(
+        p,
+        env.config,
+        budget(),
+        env.admission,
+      ),
     ),
     c = command();
-  const sent = await p.submit(
+  const sent = await p.dispatch(
     admitted.binding,
     c,
     fixtureAttempt(admitted.binding, c),
@@ -316,8 +348,8 @@ test("33 sequential native questions do not consume pending callback capacity", 
           answer: { answers: [{ id: "q", selected: ["yes"] }] },
         },
       };
-      unwrap(await p.respond(e.binding, response, budget()));
-      unwrap(await p.respond(e.binding, response, budget()));
+      unwrap(await acknowledge(p, e.binding, response, budget()));
+      unwrap(await acknowledge(p, e.binding, response, budget()));
     }
     if (e.body?.type === "terminal") terminal = e.body.outcome;
   }
@@ -356,10 +388,10 @@ test("native answer remains idempotent after its acknowledgement is lost", async
     return runtime;
   });
   const admitted = unwrap(
-    await VerifiedProviderSession.open(p, env.config, budget()),
+    await VerifiedProviderSession.open(p, env.config, budget(), env.admission),
   );
   const c = command();
-  const sent = await p.submit(
+  const sent = await p.dispatch(
     admitted.binding,
     c,
     fixtureAttempt(admitted.binding, c),
@@ -379,12 +411,12 @@ test("native answer remains idempotent after its acknowledgement is lost", async
           answer: { answers: [{ id: "q", selected: ["yes"] }] },
         },
       };
-      const uncertain = await p.respond(e.binding, response, budget());
+      const uncertain = await acknowledge(p, e.binding, response, budget());
       assert.equal(uncertain.ok, false);
       assert.equal(uncertain.error.code, "unavailable");
       assert.equal(uncertain.error.retry, "reconcile_first");
-      unwrap(await p.respond(e.binding, response, budget()));
-      unwrap(await p.respond(e.binding, response, budget()));
+      unwrap(await acknowledge(p, e.binding, response, budget()));
+      unwrap(await acknowledge(p, e.binding, response, budget()));
       release();
     }
     if (e.body?.type === "terminal") terminal = e.body.outcome;

@@ -24,7 +24,7 @@ test("terminal requires atomic closure of pending interactions and active surfac
   const record = unwrap(
     await store.command(head.namespace, seeded.interaction.commandId),
   );
-  const terminal = terminalCommit(head, record);
+  const terminal = await terminalCommit(head, record);
   assert.equal((await store.commit(terminal)).ok, false);
   assert.deepEqual(unwrap(await store.session(head.namespace)), head);
   const unavailable = { ...seeded.interaction, status: "unavailable" };
@@ -138,7 +138,7 @@ test("raw reconciliation cannot reset an ambiguous attempt", async () => {
   const result = await store.commit({
     ...batch,
     nowMs: 1,
-    reconciliations: [
+    providerFacts: [
       {
         commandId: record.command.commandId,
         attemptId: record.dispatch.attemptId,

@@ -31,7 +31,7 @@ function run(command, args, cwd = dir) {
 }
 try {
   run("pnpm", ["build:ai-store"], root);
-  for (const name of ["ai-contract", "ai-store-sqlite"])
+  for (const name of ["ai-contract", "ai-host", "ai-store-sqlite"])
     run("pnpm", [
       "--dir",
       join(root, "packages", name),
@@ -48,7 +48,7 @@ try {
         .digest("hex"),
     });
   const dependencies = Object.fromEntries(
-    ["ai-contract", "ai-store-sqlite"].map((name) => {
+    ["ai-contract", "ai-host", "ai-store-sqlite"].map((name) => {
       const archive = archives.find((p) =>
         p.startsWith(`rss-mdm-agent-${name}-`),
       );
@@ -72,7 +72,10 @@ try {
       },
     }),
   );
-  writeFileSync(join(dir, "pnpm-workspace.yaml"), "packages: []\n");
+  writeFileSync(
+    join(dir, "pnpm-workspace.yaml"),
+    JSON.stringify({ packages: [], overrides: dependencies }),
+  );
   writeFileSync(
     join(dir, "tsconfig.json"),
     JSON.stringify({
@@ -137,7 +140,8 @@ try {
   );
   if (
     Object.keys(manifest.dependencies ?? {}).length !== 0 ||
-    manifest.peerDependencies["@rss-mdm-agent/ai-contract"] !== "0.1.0"
+    manifest.peerDependencies["@rss-mdm-agent/ai-contract"] !== "0.1.0" ||
+    manifest.peerDependencies["@rss-mdm-agent/ai-host"] !== "0.1.0"
   )
     throw new Error("unexpected runtime dependency closure");
   passed = true;

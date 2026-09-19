@@ -1,3 +1,4 @@
+import { acknowledge } from "../control.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { EventEmitter } from "node:events";
@@ -66,7 +67,7 @@ function fixture(answer = async () => ({})) {
 async function question(f) {
   const opened = unwrap(await f.port.createSession(f.c, budget())),
     c = fixtureCommand();
-  const sent = await f.port.submit(
+  const sent = await f.port.dispatch(
     opened.binding,
     c,
     fixtureAttempt(opened.binding, c),
@@ -102,7 +103,7 @@ for (const reason of ["budget_exhausted", "process_exit", "protocol_failure"])
     });
     try {
       const { binding, response } = await question(f);
-      const result = await f.port.respond(binding, response, budget());
+      const result = await acknowledge(f.port, binding, response, budget());
       assert.equal(result.ok, false);
       assert.equal(result.error.code, "unavailable");
       assert.equal(result.error.retry, "reconcile_first");
@@ -206,7 +207,7 @@ test("closing during an answer suppresses the expected late transport fault", as
   let reject;
   const f = fixture(() => new Promise((_, r) => (reject = r)));
   const { binding, response } = await question(f);
-  const pending = f.port.respond(binding, response, budget());
+  const pending = acknowledge(f.port, binding, response, budget());
   await f.port.close(budget());
   reject(new NativeFault("process_exit"));
   assert.equal((await pending).ok, false);

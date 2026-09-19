@@ -2,7 +2,7 @@ import { validateSurface } from "./a2ui.js";
 import { createHash } from "node:crypto";
 import {
   VerifiedProviderSession,
-  reconciliationFor,
+  providerFactFor,
   providerIdentity,
 } from "./session.js";
 import canonicalize from "canonicalize";
@@ -20,6 +20,7 @@ import type {
   Result,
   SessionCommit,
   SessionRebind,
+  RecoveryUnavailable,
   Reconciliation,
 } from "./ports.js";
 import type {
@@ -68,7 +69,7 @@ export function eventId(seed: string, label: string): Id {
     .digest("hex");
 }
 export const isSettled = (c: CommandRecord): boolean =>
-  c.state === "terminal" || c.state === "invalidated";
+  ["terminal", "invalidated", "acknowledged", "cancelled"].includes(c.state);
 export function createState(
   session: Session,
   limits: Limits = defaultLimits,
@@ -320,14 +321,13 @@ function reduceCommit(
   const attemptIds = new Set(
     state.events.flatMap((e) => (e.attemptId ? [e.attemptId] : [])),
   );
-  const reconciliations = new Map<Id, Reconciliation>();
-  for (const proof of batch.reconciliations ?? []) {
+  const providerFacts = new Map<Id, Reconciliation>();
+  for (const proof of batch.providerFacts ?? []) {
     const record = state.commands.get(proof?.commandId);
-    const observation =
-      record && reconciliationFor(proof, state.session, record);
+    const observation = record && providerFactFor(proof, state.session, record);
     if (!observation) return fail("permission_denied");
-    if (reconciliations.has(proof.commandId)) return fail("invalid_input");
-    reconciliations.set(proof.commandId, observation);
+    if (providerFacts.has(proof.commandId)) return fail("invalid_input");
+    providerFacts.set(proof.commandId, observation);
   }
   for (const c of batch.commands) {
     const id = c.command.commandId;
@@ -339,7 +339,7 @@ function reduceCommit(
     )
       return fail("permission_denied");
     const old = state.commands.get(id),
-      resolution = reconciliations.get(id);
+      resolution = providerFacts.get(id);
     if (old && (!same(old.receipt, c.receipt) || !same(old.command, c.command)))
       return fail("content_conflict");
     if (old && isSettled(old) && !same(old, c)) return fail("content_conflict");
@@ -356,7 +356,9 @@ function reduceCommit(
         c.dispatch.nativeThreadId !== state.session.binding.nativeThreadId)
     )
       return fail("stale_binding");
-    if (resolution) {
+    if (resolution && resolution.status !== "observed") {
+      if (resolution.status === "submitted" && old?.state === "running")
+        return fail("content_conflict");
       if (
         !old?.dispatch ||
         isSettled(old) ||
@@ -392,6 +394,7 @@ function reduceCommit(
         if (old.dispatch.certainty === "submitted")
           return fail("content_conflict");
         const eligible =
+          resolution.error?.retry !== "never" &&
           c.command.input.type === "prompt" &&
           c.command.input.policy === "queue_next" &&
           batch.nowMs! <=
@@ -405,18 +408,27 @@ function reduceCommit(
         c.state !==
           (resolution.status === "unknown"
             ? "reconciliation_required"
-            : resolution.status) ||
+            : resolution.status === "submitted"
+              ? "dispatching"
+              : resolution.status) ||
         (resolution.status === "terminal" && c.outcome !== resolution.outcome)
       )
         return fail("invalid_input");
     } else if (old && old.state !== c.state) {
       const allowed: Record<string, readonly string[]> = {
-        accepted: ["dispatching", "invalidated"],
-        dispatching: ["running", "terminal", "reconciliation_required"],
+        accepted: ["dispatching", "invalidated", "cancelled", "acknowledged"],
+        dispatching: [
+          "running",
+          "terminal",
+          "reconciliation_required",
+          "acknowledged",
+        ],
         running: ["terminal", "reconciliation_required"],
         reconciliation_required: [],
         terminal: [],
         invalidated: [],
+        acknowledged: [],
+        cancelled: [],
       };
       if (!allowed[old.state].includes(c.state))
         return fail("content_conflict");
@@ -513,6 +525,17 @@ function reduceCommit(
     }
     if (c.dispatch?.certainty === "unknown" && !c.dispatch.correlationId)
       return fail("invalid_input");
+    if (
+      ((c.state === "terminal" && old?.state !== "terminal") ||
+        (c.state === "running" && old?.state !== "running") ||
+        (c.dispatch?.certainty === "submitted" &&
+          old?.dispatch?.certainty !== "submitted")) &&
+      (!resolution ||
+        !["submitted", "running", "terminal", "acknowledged"].includes(
+          resolution.status,
+        ))
+    )
+      return fail("permission_denied");
     if (c.state === "running" && c.dispatch.certainty !== "submitted")
       return fail("invalid_input");
     if (c.state === "invalidated" && old?.state !== "invalidated") {
@@ -525,8 +548,12 @@ function reduceCommit(
             ((c.failure.code === "expired" &&
               Number.isSafeInteger(batch.nowMs) &&
               batch.nowMs! > dispatchDeadline(state, c)) ||
-              (c.command.input.type !== "prompt" &&
-                c.command.input.generation !== batch.expectedGeneration))
+              (c.failure.code === "stale_binding" &&
+                controlIsStale(
+                  state.session,
+                  [...state.commands.values()],
+                  c.command,
+                )))
           )) ||
         !batch.events.some(
           (e) =>
@@ -537,8 +564,67 @@ function reduceCommit(
       )
         return fail("invalid_input");
     }
+    if (c.state === "cancelled" && old?.state !== "cancelled") {
+      const cancellation = batch.commands.find(
+        (row) => row.command.commandId === c.cancelledBy,
+      );
+      if (
+        old?.state !== "accepted" ||
+        c.command.input.type !== "prompt" ||
+        c.command.input.policy !== "queue_next" ||
+        cancellation?.state !== "acknowledged" ||
+        cancellation.acknowledgement.type !== "queued_cancelled" ||
+        cancellation.acknowledgement.targetCommandId !== id ||
+        !batch.events.some(
+          (e) =>
+            e.commandId === id &&
+            e.body.type === "cancelled" &&
+            e.body.cancelledBy === c.cancelledBy,
+        )
+      )
+        return fail("invalid_input");
+    }
+    if (c.state === "acknowledged" && old?.state !== "acknowledged") {
+      if (c.acknowledgement.type === "queued_cancelled") {
+        const targetId = c.acknowledgement.targetCommandId;
+        const target = batch.commands.find(
+          (row) => row.command.commandId === targetId,
+        );
+        if (
+          old?.state !== "accepted" ||
+          c.command.input.type !== "cancel" ||
+          c.command.input.targetCommandId !==
+            c.acknowledgement.targetCommandId ||
+          target?.state !== "cancelled" ||
+          target.cancelledBy !== id ||
+          c.command.input.generation !== batch.expectedGeneration
+        )
+          return fail("invalid_input");
+      } else if (
+        !old?.dispatch ||
+        c.dispatch?.certainty !== "submitted" ||
+        resolution?.status !== "acknowledged" ||
+        !same(c.acknowledgement, resolution.acknowledgement) ||
+        (c.command.input.type === "prompt"
+          ? c.command.input.policy !== "steer" ||
+            c.acknowledgement.type !== "steer"
+          : c.command.input.type !== c.acknowledgement.type)
+      )
+        return fail("invalid_input");
+      if (
+        !batch.events.some(
+          (e) =>
+            e.commandId === id &&
+            e.body.type === "acknowledged" &&
+            same(e.body.acknowledgement, c.acknowledgement),
+        )
+      )
+        return fail("invalid_input");
+    }
     if (c.state === "terminal" && old?.state !== "terminal") {
       if (
+        c.command.input.type !== "prompt" ||
+        c.command.input.policy !== "queue_next" ||
         !old?.dispatch ||
         c.dispatch.certainty !== "submitted" ||
         !batch.events.some(
@@ -554,7 +640,9 @@ function reduceCommit(
     }
     if (
       (!old || old.state !== c.state) &&
-      !["terminal", "invalidated"].includes(c.state) &&
+      !["terminal", "invalidated", "acknowledged", "cancelled"].includes(
+        c.state,
+      ) &&
       !(c.state === "accepted" && resolution?.status === "not_submitted") &&
       !batch.events.some(
         (e) =>
@@ -567,7 +655,7 @@ function reduceCommit(
       return fail("invalid_input");
     copy.commands.set(id, clone(c));
   }
-  if ([...reconciliations.keys()].some((id) => !commandIds.has(id)))
+  if ([...providerFacts.keys()].some((id) => !commandIds.has(id)))
     return fail("invalid_input");
   // Acceptance may queue many prompts, but an unresolved dispatch owns the turn.
   if (
@@ -601,7 +689,11 @@ function reduceCommit(
       if (
         !records.some(
           (c) =>
-            (c.state === "dispatching" || c.state === "running") &&
+            (c.state === "dispatching" ||
+              c.state === "running" ||
+              (c.state === "terminal" &&
+                providerFacts.get(c.command.commandId)?.status ===
+                  "terminal")) &&
             c.dispatch?.certainty === "submitted" &&
             coordinatesMatch(c.dispatch, nextBinding),
         )
@@ -663,6 +755,8 @@ function reduceCommit(
         "reconciled",
         "invalidated",
         "status",
+        "acknowledged",
+        "cancelled",
       ].includes(event.body.type) &&
       !commandIds.has(event.commandId)
     )
@@ -687,10 +781,7 @@ function reduceCommit(
       !same(event.body.attempt, source.dispatch)
     )
       return fail("invalid_input");
-    if (
-      event.body.type === "reconciled" &&
-      !reconciliations.has(event.commandId)
-    )
+    if (event.body.type === "reconciled" && !providerFacts.has(event.commandId))
       return fail("invalid_input");
     if (
       event.body.type === "invalidated" &&
@@ -965,15 +1056,24 @@ function reduceCommit(
   return ok(copy);
 }
 
-/** Verified handoff changes observation authority, never the original attempt identity. */
+/** Both unavailable recovery and verified rebind atomically invalidate live callbacks. */
 function reduceRebind(
   state: SessionState,
   input: SessionRebind,
   limits: Limits = defaultLimits,
 ): Result<SessionState> {
+  return reduceHandoff(state, input, limits, input.restored);
+}
+function reduceHandoff(
+  state: SessionState,
+  input: RecoveryUnavailable,
+  limits: Limits,
+  restored?: VerifiedProviderSession,
+): Result<SessionState> {
   if (!isId(input.eventId)) return fail("invalid_input");
+  if (state.session.status === "retired") return fail("session_gone");
   const checked = checkState(
-    state,
+    { ...state, session: { ...state.session, status: "active" } },
     input.expectedRevision,
     input.expectedGeneration,
   );
@@ -981,18 +1081,17 @@ function reduceRebind(
   if (namespaceKey(input.namespace) !== namespaceKey(state.session.namespace))
     return fail("permission_denied");
   if (
-    !(input.restored instanceof VerifiedProviderSession) ||
-    !VerifiedProviderSession.prototype.restores.call(
-      input.restored,
-      state.session,
-    )
+    restored &&
+    (!(restored instanceof VerifiedProviderSession) ||
+      !VerifiedProviderSession.prototype.restores.call(restored, state.session))
   )
     return fail("permission_denied");
-  const binding = input.restored.binding,
-    capabilities = input.restored.capabilities;
+  const binding = restored?.binding ?? state.session.binding,
+    capabilities = restored?.capabilities ?? state.session.capabilities;
   if (
-    state.generations.has(binding.generation) ||
-    state.session.capabilities.continuation !== "across_processes"
+    restored &&
+    (state.generations.has(binding.generation) ||
+      state.session.capabilities.continuation !== "across_processes")
   )
     return fail("stale_binding");
   const copy = clone(state),
@@ -1017,10 +1116,12 @@ function reduceRebind(
   };
   append(
     {
-      body: {
-        type: "session_rebound",
-        previousGeneration: state.session.binding.generation,
-      },
+      body: restored
+        ? {
+            type: "session_rebound",
+            previousGeneration: state.session.binding.generation,
+          }
+        : { type: "session_recovery_unavailable" },
     },
     "rebind",
   );
@@ -1055,7 +1156,14 @@ function reduceRebind(
         code: "stale_binding" as const,
         retry: "never" as const,
       };
-      copy.commands.set(id, { ...c, state: "invalidated", failure });
+      copy.commands.set(id, {
+        schemaVersion: 3,
+        kind: "commandRecord",
+        command: c.command,
+        receipt: c.receipt,
+        state: "invalidated",
+        failure,
+      });
       append(
         { commandId: id, body: { type: "invalidated", failure } },
         `command-${id}`,
@@ -1102,6 +1210,7 @@ function reduceRebind(
     ...copy.session,
     binding,
     capabilities,
+    status: restored ? "active" : "recovery_required",
     revision: copy.session.revision + 1,
     lastSequence: copy.session.lastSequence + events.length,
   };
@@ -1202,4 +1311,39 @@ function dispatchDeadline(state: SessionState, c: CommandRecord): number {
   )
     ? Math.min(c.command.expiresAtMs, c.receipt.retryUntilMs)
     : c.command.expiresAtMs;
+}
+
+export function recoverUnavailable(
+  state: SessionState,
+  input: RecoveryUnavailable,
+  limits: Limits = defaultLimits,
+): Result<SessionState> {
+  return guarded(() => reduceHandoff(state, input, limits));
+}
+
+/** Controls are scoped to their current native run, never the most recent unrelated turn. */
+export function controlIsStale(
+  session: Session,
+  records: readonly CommandRecord[],
+  command: import("./wire.js").Command,
+): boolean {
+  const input = command.input;
+  if (input.type === "prompt")
+    return (
+      input.policy === "steer" &&
+      (input.targetRunId !== session.binding.nativeRunId ||
+        !records.some(
+          (row) =>
+            row.state === "running" &&
+            row.dispatch?.nativeRunId === input.targetRunId,
+        ))
+    );
+  if (input.generation !== session.binding.generation) return true;
+  if (
+    input.type === "cancel" &&
+    !records.find((row) => row.command.commandId === input.targetCommandId)
+      ?.dispatch
+  )
+    return false;
+  return input.nativeRunId !== session.binding.nativeRunId;
 }

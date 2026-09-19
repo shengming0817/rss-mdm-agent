@@ -225,6 +225,8 @@ test("fork runs the child's controlled verifier and closes it after denial", asy
   const controlled = {
     ...configuration,
     permissions: "host_mediated",
+  };
+  const admission = {
     tools: { propose: async () => assert.fail("not a tool call") },
     verifier: {
       verify: async () =>
@@ -241,7 +243,12 @@ test("fork runs the child's controlled verifier and closes it after denial", asy
     close: async () => ({ ok: true, value: { processStopped: true } }),
   };
   const parent = unwrap(
-    await VerifiedProviderSession.open(parentPort, controlled, budget()),
+    await VerifiedProviderSession.open(
+      parentPort,
+      controlled,
+      budget(),
+      admission,
+    ),
   );
   const child = {
     agent: {
@@ -277,6 +284,7 @@ test("fork runs the child's controlled verifier and closes it after denial", asy
       namespace: { ...controlled.namespace, sessionId: "child" },
     },
     budget(),
+    admission,
   );
   assert.equal(result.certainty, "unknown");
   assert.equal(result.error.code, "permission_denied");

@@ -24,11 +24,16 @@ test("real Harness process: true deltas, durable terminal, cold read and native 
   const env = await environment(t, (_body, res) => completion(res));
   const first = env.port(),
     admitted = unwrap(
-      await VerifiedProviderSession.open(first, env.config, budget()),
+      await VerifiedProviderSession.open(
+        first,
+        env.config,
+        budget(),
+        env.admission,
+      ),
     );
   const c = command(),
     a = fixtureAttempt(admitted.binding, c);
-  const sent = await first.submit(admitted.binding, c, a, budget());
+  const sent = await first.dispatch(admitted.binding, c, a, budget());
   assert.equal(sent.certainty, "submitted");
   const events = await collect(first, sent.binding);
   assert.ok(
@@ -46,7 +51,7 @@ test("real Harness process: true deltas, durable terminal, cold read and native 
   );
   assert.equal(
     (
-      await first.submit(
+      await first.dispatch(
         sent.binding,
         c,
         { ...a, attemptId: "replacement-attempt" },
@@ -76,6 +81,7 @@ test("real Harness process: true deltas, durable terminal, cold read and native 
         previous,
         env.config,
         budget(),
+        env.admission,
       ),
     );
   assert.notEqual(restored.binding.generation, admitted.binding.generation);
@@ -113,7 +119,7 @@ test("real Harness process: true deltas, durable terminal, cold read and native 
   assert.equal(proof.observation.status, "terminal");
   assert.deepEqual(await files(env.dir), before);
   const next = command("command-2", "what did I say before?");
-  const result = await second.submit(
+  const result = await second.dispatch(
     restored.binding,
     next,
     fixtureAttempt(restored.binding, next),
@@ -144,7 +150,7 @@ test("terminal commit -> restore/rebind -> new command without reconciling settl
   const env = await environment(t, (_b, res) => completion(res)),
     p = env.port();
   const admitted = unwrap(
-    await VerifiedProviderSession.open(p, env.config, budget()),
+    await VerifiedProviderSession.open(p, env.config, budget(), env.admission),
   );
   const store = new MemorySessionStore(),
     initial = {
@@ -168,12 +174,13 @@ test("terminal commit -> restore/rebind -> new command without reconciling settl
       ]),
     ),
   );
-  const sent = await p.submit(head.binding, c, attempt, budget());
-  assert.equal(sent.certainty, "submitted");
+  const dispatched = unwrap(await admitted.dispatch(head, record, budget()));
+  assert.equal(dispatched.observation.status, "submitted");
+  const sent = { binding: dispatched.observation.binding };
   head = unwrap(await store.session(head.namespace));
   record = {
     ...record,
-    state: "running",
+    state: "dispatching",
     dispatch: {
       ...attempt,
       certainty: "submitted",
@@ -181,23 +188,38 @@ test("terminal commit -> restore/rebind -> new command without reconciling settl
     },
   };
   const committed = commandCommit(head, record, [
+    { type: "reconciled", attempt, resolution: "submitted" },
     { type: "dispatch", attempt: record.dispatch },
-    { type: "status", state: "running" },
   ]);
   committed.session.binding = sent.binding;
+  committed.providerFacts = [dispatched];
   unwrap(await store.commit(committed));
   assert.equal(
     (await collect(p, sent.binding)).at(-1)?.body?.outcome,
     "completed",
   );
   head = unwrap(await store.session(head.namespace));
-  unwrap(await store.commit(terminalCommit(head, record)));
+  unwrap(
+    await store.commit(
+      await terminalCommit(
+        head,
+        record,
+        unwrap(await admitted.reconcile(head, record, budget())),
+      ),
+    ),
+  );
   await p.close(budget());
   const before = await files(env.dir),
     previous = unwrap(await store.session(head.namespace)),
     next = env.port();
   const restored = unwrap(
-    await VerifiedProviderSession.restore(next, previous, env.config, budget()),
+    await VerifiedProviderSession.restore(
+      next,
+      previous,
+      env.config,
+      budget(),
+      env.admission,
+    ),
   );
   unwrap(
     await store.rebind({
@@ -219,7 +241,7 @@ test("terminal commit -> restore/rebind -> new command without reconciling settl
   assert.deepEqual(await files(env.dir), before);
   assert.equal(env.requests.length, 1);
   const c2 = command("after-settled");
-  const sent2 = await next.submit(
+  const sent2 = await next.dispatch(
     head.binding,
     c2,
     fixtureAttempt(head.binding, c2),
@@ -236,7 +258,12 @@ test("real native evidence through restore -> rebind -> reconcile -> atomic stor
   const env = await environment(t, (_b, res) => completion(res));
   const p = env.port(),
     admitted = unwrap(
-      await VerifiedProviderSession.open(p, env.config, budget()),
+      await VerifiedProviderSession.open(
+        p,
+        env.config,
+        budget(),
+        env.admission,
+      ),
     );
   const store = new MemorySessionStore(),
     initial = {
@@ -260,7 +287,7 @@ test("real native evidence through restore -> rebind -> reconcile -> atomic stor
       ]),
     ),
   );
-  const sent = await p.submit(head.binding, c, attempt, budget());
+  const sent = await p.dispatch(head.binding, c, attempt, budget());
   assert.equal(sent.certainty, "submitted");
   await collect(p, sent.binding);
   head = unwrap(await store.session(head.namespace));
@@ -290,6 +317,7 @@ test("real native evidence through restore -> rebind -> reconcile -> atomic stor
       previous,
       env.config,
       budget(),
+      env.admission,
     ),
   );
   assert.equal(
@@ -324,12 +352,12 @@ test("real native evidence through restore -> rebind -> reconcile -> atomic stor
   );
   const proof = unwrap(await restored.reconcile(head, record, budget()));
   assert.equal(proof.observation.status, "terminal");
-  const batch = terminalCommit(head, record, proof);
+  const batch = await terminalCommit(head, record, proof);
   assert.equal(
     (
       await store.commit({
         ...batch,
-        reconciliations: [JSON.parse(JSON.stringify(proof))],
+        providerFacts: [JSON.parse(JSON.stringify(proof))],
       })
     ).ok,
     false,
@@ -349,11 +377,16 @@ test("request checkpoint precedes HTTP dispatch; crash and synthetic interrupted
   });
   const p = env.port(),
     admitted = unwrap(
-      await VerifiedProviderSession.open(p, env.config, budget()),
+      await VerifiedProviderSession.open(
+        p,
+        env.config,
+        budget(),
+        env.admission,
+      ),
     );
   const c = command(),
     a = fixtureAttempt(admitted.binding, c),
-    sent = await p.submit(admitted.binding, c, a, budget());
+    sent = await p.dispatch(admitted.binding, c, a, budget());
   assert.equal(sent.certainty, "submitted");
   await requested;
   const atEffect = Object.values(await files(env.dir)).join("\n");
@@ -374,6 +407,7 @@ test("request checkpoint precedes HTTP dispatch; crash and synthetic interrupted
         previous,
         env.config,
         budget(),
+        env.admission,
       ),
     );
   const record = {
@@ -410,7 +444,7 @@ test("request checkpoint precedes HTTP dispatch; crash and synthetic interrupted
   const next = command("next");
   assert.equal(
     (
-      await replacement.submit(
+      await replacement.dispatch(
         admitted2.binding,
         next,
         fixtureAttempt(admitted2.binding, next),
@@ -427,7 +461,12 @@ test("fresh admission checkpoints an empty session before immediate close and co
   const env = await environment(t, (_body, res) => completion(res));
   const p = env.port(),
     admitted = unwrap(
-      await VerifiedProviderSession.open(p, env.config, budget()),
+      await VerifiedProviderSession.open(
+        p,
+        env.config,
+        budget(),
+        env.admission,
+      ),
     );
   unwrap(await p.close(budget()));
   const before = await files(env.dir);
@@ -447,6 +486,7 @@ test("fresh admission checkpoints an empty session before immediate close and co
       },
       env.config,
       budget(),
+      env.admission,
     ),
   );
   assert.equal(
@@ -473,7 +513,7 @@ test("real worker restoration fault survives IPC and budget classification", asy
   const env = await environment(t, (_b, res) => completion(res)),
     p = env.port();
   const admitted = unwrap(
-    await VerifiedProviderSession.open(p, env.config, budget()),
+    await VerifiedProviderSession.open(p, env.config, budget(), env.admission),
   );
   await p.close(budget());
   const before = await files(env.dir),

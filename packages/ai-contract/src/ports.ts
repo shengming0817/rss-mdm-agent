@@ -21,6 +21,7 @@ import type {
   Negotiation,
   DispatchAttempt,
   Outcome,
+  Acknowledgement,
 } from "./wire.js";
 /** Supplied by authenticated ingress, never decoded from model/tool/action content.
  * This port does not authenticate its caller; the composition root owns that proof. */
@@ -84,19 +85,15 @@ interface ProviderConfigurationBase {
   readonly accountRef: Id;
   readonly workingDirectory: string;
 }
-export type ProviderConfiguration = ProviderConfigurationBase &
-  (
-    | {
-        readonly permissions: "tools_disabled";
-        readonly tools?: never;
-        readonly verifier?: never;
-      }
-    | {
-        readonly permissions: "host_mediated";
-        readonly tools: ToolEndpoint;
-        readonly verifier: ControlledToolVerifier;
-      }
-  );
+/** Pure data crossing the private worker IPC boundary. */
+export interface ProviderConfiguration extends ProviderConfigurationBase {
+  readonly permissions: "tools_disabled" | "host_mediated";
+}
+/** Parent-only admission inputs. The verifier never crosses worker IPC. */
+export interface ProviderAdmission {
+  readonly tools: ToolEndpoint;
+  readonly verifier: ControlledToolVerifier;
+}
 export interface MessageDelta {
   readonly commandId: Id;
   readonly messageId: Id;
@@ -129,6 +126,13 @@ export type ProviderEventBody = Extract<
 >;
 export type ProviderObservation = { readonly attemptId: Id } & (
   | { type: "submitted"; binding: Binding; commandId: Id }
+  | { type: "running"; binding: Binding; commandId: Id }
+  | {
+      type: "acknowledged";
+      binding: Binding;
+      commandId: Id;
+      acknowledgement: Acknowledgement;
+    }
   | {
       type: "interaction_unavailable";
       binding: Binding;
@@ -150,6 +154,11 @@ export type ProviderObservation = { readonly attemptId: Id } & (
     }
 );
 export type Submission =
+  | {
+      certainty: "acknowledged";
+      binding: Binding;
+      acknowledgement: Acknowledgement;
+    }
   | { certainty: "submitted"; binding: Binding }
   | { certainty: "not_sent"; error: Failure }
   | { certainty: "unknown"; correlationId: Id };
@@ -161,22 +170,12 @@ export interface ProviderAgentPort {
     configuration: ProviderConfiguration,
     budget: Budget,
   ): Promise<Result<ProviderSessionBinding>>;
-  submit(
+  dispatch(
     binding: Binding,
     command: Command,
     attempt: DispatchAttempt,
     budget: Budget,
   ): Promise<Submission>;
-  cancel(
-    binding: Binding,
-    command: Command,
-    budget: Budget,
-  ): Promise<Result<"request_only" | "already_terminal" | "unsupported">>;
-  respond(
-    binding: Binding,
-    command: Command,
-    budget: Budget,
-  ): Promise<Result<void>>;
   observe(binding: Binding, budget: Budget): AsyncIterable<ProviderObservation>;
   reconcile(
     binding: Binding,
@@ -250,7 +249,7 @@ export interface HostPort extends Closeable {
 /** Atomic batch, checked against both revision and generation. No external await inside a transaction. */
 export interface SessionCommit {
   /** Verified provider reconciliation observations; consumed by the same transition rules. */
-  readonly reconciliations?: readonly import("./session.js").VerifiedReconciliation[];
+  readonly providerFacts?: readonly import("./session.js").VerifiedProviderFact[];
   /** Required for retry eligibility and local expiry transitions. */
   readonly nowMs?: Counter;
   readonly namespace: Namespace;
@@ -292,6 +291,7 @@ export interface SessionStore extends Closeable {
   ): Promise<Result<SnapshotPage>>;
   listSessions(caller: Caller, query: PageQuery): Promise<Result<SessionPage>>;
   rebind(input: SessionRebind): Promise<Result<Session>>;
+  recoverUnavailable(input: RecoveryUnavailable): Promise<Result<Session>>;
   events(
     namespace: Namespace,
     after: Counter,
@@ -323,9 +323,28 @@ export type Reconciliation = {
   readonly attemptId: Id;
   readonly binding: Binding;
 } & (
-  | { readonly status: "running" | "unknown"; readonly outcome?: never }
+  | { readonly status: "running" | "submitted"; readonly outcome?: never }
+  | {
+      readonly status: "unknown";
+      readonly correlationId?: Id;
+      readonly outcome?: never;
+    }
   | { readonly status: "terminal"; readonly outcome: Outcome }
-  | { readonly status: "not_submitted"; readonly outcome?: never }
+  | {
+      readonly status: "not_submitted";
+      readonly outcome?: never;
+      readonly error?: Failure;
+    }
+  | {
+      readonly status: "acknowledged";
+      readonly acknowledgement: Acknowledgement;
+      readonly outcome?: never;
+    }
+  | {
+      readonly status: "observed";
+      readonly observation: ProviderObservation;
+      readonly outcome?: never;
+    }
 );
 /** A trusted resume result, never a wire-decoded capability assertion. */
 export interface SessionRebind {
@@ -333,6 +352,13 @@ export interface SessionRebind {
   readonly expectedRevision: Counter;
   readonly expectedGeneration: Id;
   readonly restored: import("./session.js").VerifiedProviderSession;
+  readonly eventId: Id;
+}
+
+export interface RecoveryUnavailable {
+  readonly namespace: Namespace;
+  readonly expectedRevision: Counter;
+  readonly expectedGeneration: Id;
   readonly eventId: Id;
 }
 

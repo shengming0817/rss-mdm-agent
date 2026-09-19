@@ -1,4 +1,9 @@
 import {
+  validLaunch,
+  type WorkerLaunch,
+  type WorkerLaunchFenceStore,
+} from "@rss-mdm-agent/ai-host/launch-fence";
+import {
   ReadViews,
   readSnapshotPage,
   readSessionPage,
@@ -33,6 +38,7 @@ import {
   type Session,
   type SessionCommit,
   type SessionRebind,
+  type RecoveryUnavailable,
   type SessionStore,
   type StoreCursor,
   type SnapshotPage,
@@ -47,6 +53,7 @@ import {
   commitSession,
   createState,
   rebindSession,
+  recoverUnavailable,
   retireSession,
   defaultLimits,
   namespaceKey,
@@ -217,7 +224,9 @@ function pageLimit(db: DatabaseSync, maxBytes: number): number {
 
 /** One Host owns the whole database for this connection's lifetime. There is no
  * lease, background worker, side-effect execution or asynchronous transaction hook. */
-export function openSqliteStore(options: StoreOptions): Result<SessionStore> {
+export function openSqliteStore(
+  options: StoreOptions,
+): Result<SessionStore & WorkerLaunchFenceStore> {
   let db: DatabaseSync | undefined;
   try {
     if (
@@ -278,7 +287,7 @@ export function openSqliteStore(options: StoreOptions): Result<SessionStore> {
     return errorResult(error);
   }
 }
-class SqliteSessionStore implements SessionStore {
+class SqliteSessionStore implements SessionStore, WorkerLaunchFenceStore {
   readonly #db: DatabaseSync;
   readonly #bounds: Bounds;
   readonly #owned = new Map<string, string>();
@@ -572,14 +581,14 @@ class SqliteSessionStore implements SessionStore {
           batch.interactions,
           batch.surfaces,
           batch.deliveries,
-          batch.reconciliations ?? [],
+          batch.providerFacts ?? [],
         ].some((rows) => !Array.isArray(rows)) ||
         batch.commands.length +
           batch.events.length +
           batch.interactions.length +
           batch.surfaces.length +
           batch.deliveries.length +
-          (batch.reconciliations?.length ?? 0) >
+          (batch.providerFacts?.length ?? 0) >
           this.#bounds.maxBatchRecords
       )
         return fail("limit_exceeded");
@@ -605,6 +614,105 @@ class SqliteSessionStore implements SessionStore {
         result.value.binding.generation,
       );
     return result;
+  }
+  async recoverUnavailable(
+    input: RecoveryUnavailable,
+  ): Promise<Result<Session>> {
+    const result = this.#transaction(() => {
+      const before = this.#state(input.namespace),
+        result = recoverUnavailable(before, input);
+      if (!result.ok) return result;
+      this.#save(before, result.value);
+      return ok(result.value.session);
+    });
+    if (result.ok) this.#owned.delete(namespaceKey(input.namespace));
+    return result;
+  }
+  async reserveLaunch(launch: WorkerLaunch): Promise<Result<void>> {
+    return this.#transaction(() => {
+      validLaunch(launch);
+      if (launch.phase !== "reserved") return fail("invalid_input");
+      if (
+        Number(
+          this.#db.prepare("SELECT count(*) AS n FROM worker_launches").get()!
+            .n,
+        ) >= 128
+      )
+        return fail("limit_exceeded");
+      if (
+        this.#db
+          .prepare(`SELECT 1 FROM worker_launches WHERE ${whereScope}`)
+          .get(...nsValues(launch.namespace))
+      )
+        return fail("content_conflict");
+      this.#db
+        .prepare(
+          `INSERT INTO worker_launches (${scope},launch_id,json) VALUES (?,?,?,?,?,?)`,
+        )
+        .run(
+          ...nsValues(launch.namespace),
+          launch.launchId,
+          JSON.stringify(launch),
+        );
+      return ok(undefined);
+    });
+  }
+  async registerLaunch(
+    namespace: Namespace,
+    launchId: Id,
+    rootPid: number,
+    pgid: number,
+  ): Promise<Result<void>> {
+    return this.#transaction(() => {
+      const row = this.#db
+        .prepare(
+          `SELECT json FROM worker_launches WHERE ${whereScope} AND launch_id=?`,
+        )
+        .get(...nsValues(namespace), launchId);
+      if (!row) return fail("stale_binding");
+      const old = JSON.parse(String(row.json)) as WorkerLaunch;
+      if (old.phase !== "reserved") return fail("content_conflict");
+      const next: WorkerLaunch = { ...old, phase: "registered", rootPid, pgid };
+      validLaunch(next);
+      this.#db
+        .prepare(
+          `UPDATE worker_launches SET json=? WHERE ${whereScope} AND launch_id=?`,
+        )
+        .run(JSON.stringify(next), ...nsValues(namespace), launchId);
+      return ok(undefined);
+    });
+  }
+  async releaseLaunch(
+    namespace: Namespace,
+    launchId: Id,
+  ): Promise<Result<void>> {
+    return this.#transaction(() => {
+      const result = this.#db
+        .prepare(
+          `DELETE FROM worker_launches WHERE ${whereScope} AND launch_id=?`,
+        )
+        .run(...nsValues(namespace), launchId);
+      return Number(result.changes) === 1
+        ? ok(undefined)
+        : fail("stale_binding");
+    });
+  }
+  async launches(): Promise<Result<readonly WorkerLaunch[]>> {
+    return this.#query(() => {
+      const rows = this.#db
+        .prepare(
+          "SELECT json FROM worker_launches ORDER BY launch_id LIMIT 129",
+        )
+        .all();
+      if (rows.length > 128) return fail("limit_exceeded");
+      return ok(
+        rows.map((row) => {
+          const launch = JSON.parse(String(row.json)) as WorkerLaunch;
+          validLaunch(launch);
+          return launch;
+        }),
+      );
+    });
   }
   async snapshotPage(
     n: Namespace,
@@ -656,7 +764,7 @@ class SqliteSessionStore implements SessionStore {
         query,
         () =>
           this.#rows(
-            "SELECT json FROM sessions WHERE tenant_id=? AND principal_id=? AND authority_id=? AND status='active' ORDER BY session_id",
+            "SELECT json FROM sessions WHERE tenant_id=? AND principal_id=? AND authority_id=? AND status IN ('active','recovery_required') ORDER BY session_id",
             params,
           ).map((row) => {
             const session = this.#decode<Session>(row.json, "session");
@@ -729,7 +837,7 @@ class SqliteSessionStore implements SessionStore {
     }
     const filter =
       table === "commands"
-        ? "state NOT IN ('terminal','invalidated')"
+        ? "state NOT IN ('terminal','invalidated','acknowledged','cancelled')"
         : "status!='delivered' AND due<=?";
     const params: SQLInputValue[] = table === "commands" ? [] : [due!];
     if (cursor) params.push(...cursor);

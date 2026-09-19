@@ -36,9 +36,15 @@ export async function environment(t, handler, configure = () => {}) {
   });
   const config = configuration(dir);
   configure(config);
+  const admission = config.tools
+    ? { tools: config.tools, verifier: config.verifier }
+    : undefined;
+  delete config.tools;
+  delete config.verifier;
   function port(transformRuntime = (runtime) => runtime) {
     const result = new DeepSeekAdapter(
       {
+        tools: admission?.tools,
         resolveConfiguration: async () => ({
           configuration: config,
           persistenceDirectory: dir,
@@ -66,7 +72,7 @@ export async function environment(t, handler, configure = () => {}) {
     ports.push(result);
     return result;
   }
-  return { dir, config, port, requests };
+  return { dir, config, admission, port, requests };
 }
 export function completion(res, text = "native answer") {
   res.writeHead(200, { "content-type": "text/event-stream" });

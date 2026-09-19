@@ -92,7 +92,13 @@ async function runHostScenarios(host: HostPort): Promise<void> {
       budget(),
     ),
   );
-  assert.equal(snapshot.cursor, 1);
+  assert.ok(snapshot.cursor >= 1);
+  assert.ok(
+    snapshot.events.some(
+      (e) =>
+        e.commandId === command.commandId && e.body.type === "command_accepted",
+    ),
+  );
   assert.equal(snapshot.events.at(-1)!.sequence, snapshot.cursor);
   const control = new AbortController();
   const stream = host
@@ -114,7 +120,12 @@ async function runHostScenarios(host: HostPort): Promise<void> {
         budget(),
       ),
     );
-    const live = await pending;
+    let live = await pending;
+    while (
+      live.value?.type === "event" &&
+      live.value.event.commandId !== "command-2"
+    )
+      live = await stream.next();
     assert.equal(live.value?.type, "event");
     if (live.value?.type === "event")
       assert.equal(live.value.event.commandId, "command-2");
@@ -122,7 +133,7 @@ async function runHostScenarios(host: HostPort): Promise<void> {
     control.abort();
     await stream.return?.();
   }
-  assert.equal(
+  assert.deepEqual(
     unwrap(
       await host.snapshotPage(
         fixtureCaller,
@@ -130,8 +141,9 @@ async function runHostScenarios(host: HostPort): Promise<void> {
         { limit: 256 },
         budget(),
       ),
-    ).commands[0].state,
-    "accepted",
+    ).commands.find((row) => row.command.commandId === command.commandId)!
+      .receipt,
+    receipt,
   );
   const expired = host
     .subscribe(fixtureCaller, command.sessionId, 999, budget())
@@ -169,6 +181,17 @@ async function runHostScenarios(host: HostPort): Promise<void> {
   );
   assert.equal(answer.ok, false);
   if (!answer.ok) assert.equal(answer.error.code, "stale_binding");
+  const beforeCancel = unwrap(
+    await host.snapshotPage(
+      fixtureCaller,
+      command.sessionId,
+      { limit: 256 },
+      budget(),
+    ),
+  );
+  const target = beforeCancel.commands.find(
+    (row) => row.command.commandId === command.commandId,
+  )!;
   unwrap(
     await host.cancel(
       fixtureCaller,
@@ -177,12 +200,15 @@ async function runHostScenarios(host: HostPort): Promise<void> {
         input: {
           ...cancellation.input,
           generation: session.binding.generation,
+          ...(target.dispatch?.nativeRunId
+            ? { nativeRunId: target.dispatch.nativeRunId }
+            : {}),
         },
       },
       budget(),
     ),
   );
-  assert.equal(
+  assert.deepEqual(
     unwrap(
       await host.snapshotPage(
         fixtureCaller,
@@ -190,8 +216,9 @@ async function runHostScenarios(host: HostPort): Promise<void> {
         { limit: 256 },
         budget(),
       ),
-    ).commands[0].state,
-    "accepted",
+    ).commands.find((row) => row.command.commandId === command.commandId)!
+      .receipt,
+    receipt,
   );
   const head = unwrap(
     await host.snapshotPage(
@@ -206,11 +233,9 @@ async function runHostScenarios(host: HostPort): Promise<void> {
     [Symbol.asyncIterator]();
   const pending = waiting.next();
   unwrap(await host.close(budget()));
-  assert.equal(
-    (await pending).done,
-    true,
-    "close terminates pending subscriptions",
-  );
+  let ended = await pending;
+  while (!ended.done) ended = await waiting.next();
+  assert.equal(ended.done, true, "close terminates pending subscriptions");
   assert.equal(
     (await host.createSession(fixtureCaller, options, budget())).ok,
     false,

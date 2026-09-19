@@ -8,6 +8,7 @@ import {
   acceptance,
   dispatchCommand,
   terminalCommit,
+  commandCommit,
   emptyCommit,
   restoredSession,
   unwrap,
@@ -89,8 +90,9 @@ test("SQLite rebind retains native thread and all steer attempts; terminal closu
             ...head.binding,
             nativeRequestId: record.dispatch.nativeRequestId,
           },
-          status: "terminal",
-          outcome: "completed",
+          ...(id === "start"
+            ? { status: "terminal", outcome: "completed" }
+            : { status: "acknowledged", acknowledgement: { type: "steer" } }),
         },
       }),
     };
@@ -109,7 +111,29 @@ test("SQLite rebind retains native thread and all steer attempts; terminal closu
       ),
     );
     const proof = unwrap(await admitted.reconcile(head, record, budget()));
-    unwrap(await store.commit(terminalCommit(head, record, proof)));
+    const batch =
+      id === "start"
+        ? await terminalCommit(head, record, proof)
+        : {
+            ...commandCommit(
+              head,
+              {
+                ...record,
+                state: "acknowledged",
+                acknowledgement: { type: "steer" },
+              },
+              [
+                {
+                  type: "reconciled",
+                  attempt: record.dispatch,
+                  resolution: "acknowledged",
+                },
+                { type: "acknowledged", acknowledgement: { type: "steer" } },
+              ],
+            ),
+            providerFacts: [proof],
+          };
+    unwrap(await store.commit(batch));
     head = unwrap(await store.session(head.namespace));
   }
   const clear = emptyCommit(head);
@@ -124,7 +148,7 @@ test("SQLite rebind retains native thread and all steer attempts; terminal closu
   assert.equal(
     snapshot.commands.every(
       (record) =>
-        record.state === "terminal" &&
+        ["terminal", "acknowledged"].includes(record.state) &&
         record.dispatch.nativeThreadId === "owned-thread",
     ),
     true,

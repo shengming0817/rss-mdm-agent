@@ -20,6 +20,9 @@ importers:
       happy-dom:
         specifier: 20.10.6
         version: 20.10.6
+      js-yaml:
+        specifier: 5.4.2
+        version: 5.4.2
       json-schema-to-typescript:
         specifier: 16.0.0
         version: 16.0.0
@@ -44,6 +47,24 @@ importers:
       vue-tsc:
         specifier: 2.1.10
         version: 2.1.10(typescript@5.6.2)
+
+  apps/ai-host:
+    dependencies:
+      "@rss-mdm-agent/ai-access":
+        specifier: workspace:*
+        version: link:../../packages/ai-access
+      "@rss-mdm-agent/ai-adapter-claude":
+        specifier: workspace:*
+        version: link:../../packages/ai-adapters/claude
+      "@rss-mdm-agent/ai-contract":
+        specifier: workspace:*
+        version: link:../../packages/ai-contract
+      "@rss-mdm-agent/ai-host":
+        specifier: workspace:*
+        version: link:../../packages/ai-host
+      "@rss-mdm-agent/ai-store-sqlite":
+        specifier: workspace:*
+        version: link:../../packages/ai-store-sqlite
 
   apps/desktop:
     dependencies:
@@ -230,11 +251,20 @@ importers:
         specifier: 16.0.0
         version: 16.0.0
 
+  packages/ai-host:
+    dependencies:
+      "@rss-mdm-agent/ai-contract":
+        specifier: workspace:*
+        version: link:../ai-contract
+
   packages/ai-store-sqlite:
     devDependencies:
       '@rss-mdm-agent/ai-contract':
         specifier: workspace:*
         version: link:../ai-contract
+      "@rss-mdm-agent/ai-host":
+        specifier: workspace:*
+        version: link:../ai-host
 
   packages/ai-ui-bridge:
     dependencies:

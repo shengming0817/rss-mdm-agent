@@ -1,3 +1,4 @@
+import { acknowledge } from "../control.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { VerifiedProviderSession } from "../../../packages/ai-contract/dist/session.js";
@@ -36,10 +37,15 @@ test(
     });
     const port = s.make(),
       admitted = unwrap(
-        await VerifiedProviderSession.open(port, s.configuration, budget()),
+        await VerifiedProviderSession.open(
+          port,
+          s.configuration,
+          budget(),
+          s.admission,
+        ),
       );
     const start = prompt(admitted.binding, "start");
-    const submitted = await port.submit(
+    const submitted = await port.dispatch(
       admitted.binding,
       start.command,
       start.attempt,
@@ -55,24 +61,25 @@ test(
       targetRunId: submitted.binding.nativeRunId,
     };
     steer.attempt.nativeRunId = submitted.binding.nativeRunId;
-    const redirected = await port.submit(
+    const redirected = await port.dispatch(
       submitted.binding,
       steer.command,
       steer.attempt,
       budget(),
     );
-    assert.equal(redirected.certainty, "submitted");
+    assert.equal(redirected.certainty, "acknowledged");
     assert.equal(redirected.binding.nativeRunId, submitted.binding.nativeRunId);
     release();
     const terminals = [];
     for await (const event of port.observe(admitted.binding, budget())) {
-      if (event.body?.type === "terminal") terminals.push(event);
+      if (event.body?.type === "terminal" || event.type === "acknowledged")
+        terminals.push(event);
       if (terminals.length === 2) break;
     }
-    assert.deepEqual(
-      terminals.map((event) => event.commandId),
-      ["start", "steer"],
-    );
+    assert.deepEqual(terminals.map((event) => event.commandId).sort(), [
+      "start",
+      "steer",
+    ]);
     const history = unwrap(await port.readHistory(admitted.binding, budget()));
     assert.equal(history.length, 1);
     assert.deepEqual(
@@ -99,10 +106,15 @@ test(
     });
     const port = s.make(),
       admitted = unwrap(
-        await VerifiedProviderSession.open(port, s.configuration, budget()),
+        await VerifiedProviderSession.open(
+          port,
+          s.configuration,
+          budget(),
+          s.admission,
+        ),
       );
     const start = prompt(admitted.binding, "cancel-me");
-    const sent = await port.submit(
+    const sent = await port.dispatch(
       admitted.binding,
       start.command,
       start.attempt,
@@ -111,7 +123,8 @@ test(
     assert.equal(sent.certainty, "submitted");
     await received;
     const result = unwrap(
-      await port.cancel(
+      await acknowledge(
+        port,
         sent.binding,
         {
           ...start.command,
@@ -151,12 +164,17 @@ test(
     });
     const port = s.make(),
       admitted = unwrap(
-        await VerifiedProviderSession.open(port, s.configuration, budget()),
+        await VerifiedProviderSession.open(
+          port,
+          s.configuration,
+          budget(),
+          s.admission,
+        ),
       );
     const start = prompt(admitted.binding, "http-error");
     assert.equal(
       (
-        await port.submit(
+        await port.dispatch(
           admitted.binding,
           start.command,
           start.attempt,
@@ -182,7 +200,12 @@ test(
     const s = await nativeFixture(t),
       port = s.make();
     const admitted = unwrap(
-      await VerifiedProviderSession.open(port, s.configuration, budget()),
+      await VerifiedProviderSession.open(
+        port,
+        s.configuration,
+        budget(),
+        s.admission,
+      ),
     );
     const first = await conversation(port, admitted, "first");
     assert.equal(s.requests.length, 1);
@@ -213,6 +236,7 @@ test(
         previous,
         s.configuration,
         budget(),
+        s.admission,
       ),
     );
     assert.notEqual(restored.binding.generation, admitted.binding.generation);
@@ -255,7 +279,12 @@ test(
     const s = await nativeFixture(t, { controlled: true }),
       port = s.make();
     const admitted = unwrap(
-      await VerifiedProviderSession.open(port, s.configuration, budget()),
+      await VerifiedProviderSession.open(
+        port,
+        s.configuration,
+        budget(),
+        s.admission,
+      ),
     );
     await conversation(port, admitted, "controlled");
     const names = s.requests[0].tools
@@ -291,6 +320,7 @@ test(
       s.make(),
       s.configuration,
       budget(),
+      s.admission,
     );
     assert.equal(result.ok, false);
     assert.equal(result.error.code, "unsupported_capability");

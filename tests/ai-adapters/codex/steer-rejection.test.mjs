@@ -6,6 +6,7 @@ import {
   acceptance,
   commandCommit,
   dispatchCommand,
+  verifiedReconciliation,
   unwrap,
 } from "../../../packages/ai-contract/dist/testing/index.js";
 import { createTestAdapter } from "../../../packages/ai-adapters/codex/dist/testing.js";
@@ -43,7 +44,13 @@ async function persistIntent(store, session, command, attempt) {
   };
 }
 
-async function persistDispatch(store, persisted, certainty, coordinates = {}) {
+async function persistDispatch(
+  store,
+  persisted,
+  certainty,
+  coordinates = {},
+  workingDirectory = ".",
+) {
   const dispatch = {
     ...persisted.record.dispatch,
     ...coordinates,
@@ -57,13 +64,26 @@ async function persistDispatch(store, persisted, certainty, coordinates = {}) {
     state: certainty === "submitted" ? "running" : "reconciliation_required",
     dispatch,
   };
+  const resolution = certainty === "submitted" ? "running" : "unknown";
+  const proof = await verifiedReconciliation(
+    {
+      ...persisted.session,
+      binding: { ...persisted.session.binding, ...coordinates },
+    },
+    persisted.record,
+    resolution,
+    "completed",
+    workingDirectory,
+  );
   const batch = commandCommit(persisted.session, record, [
+    { type: "reconciled", attempt: persisted.record.dispatch, resolution },
     { type: "dispatch", attempt: dispatch },
     { type: "status", state: record.state },
   ]);
   unwrap(
     await store.commit({
       ...batch,
+      providerFacts: [proof],
       session: {
         ...batch.session,
         binding: { ...persisted.session.binding, ...coordinates },
@@ -171,17 +191,23 @@ test(
     );
     assert.equal(firstIntent.record.state, "dispatching");
     assert.deepEqual(firstIntent.record.dispatch, first.attempt);
-    const started = await port.submit(
+    const started = await port.dispatch(
       admitted.binding,
       first.command,
       firstIntent.record.dispatch,
       budget(),
     );
     assert.equal(started.certainty, "submitted");
-    const running = await persistDispatch(store, firstIntent, "submitted", {
-      nativeRunId: started.binding.nativeRunId,
-      nativeRequestId: started.binding.nativeRequestId,
-    });
+    const running = await persistDispatch(
+      store,
+      firstIntent,
+      "submitted",
+      {
+        nativeRunId: started.binding.nativeRunId,
+        nativeRequestId: started.binding.nativeRequestId,
+      },
+      fixture.configuration.workingDirectory,
+    );
     const deliverCompleted = await completed;
 
     const steer = prompt(admitted.binding, "rejected-steer");
@@ -202,7 +228,7 @@ test(
     );
     assert.equal(steerIntent.record.state, "dispatching");
     assert.deepEqual(steerIntent.record.dispatch, steer.attempt);
-    const submission = await port.submit(
+    const submission = await port.dispatch(
       admitted.binding,
       steer.command,
       steerIntent.record.dispatch,
@@ -214,7 +240,7 @@ test(
     assert.equal(submission.certainty, "not_sent");
     assert.deepEqual(Object.keys(submission.error).sort(), ["code", "retry"]);
     assert.deepEqual(
-      await port.submit(
+      await port.dispatch(
         admitted.binding,
         steer.command,
         steerIntent.record.dispatch,
@@ -229,9 +255,15 @@ test(
       "same-attempt retry must not reach the native runtime",
     );
 
-    const durable = await persistDispatch(store, steerIntent, "unknown", {
-      nativeRunId: started.binding.nativeRunId,
-    });
+    const durable = await persistDispatch(
+      store,
+      steerIntent,
+      "unknown",
+      {
+        nativeRunId: started.binding.nativeRunId,
+      },
+      fixture.configuration.workingDirectory,
+    );
     assert.equal(durable.record.state, "reconciliation_required");
     assert.equal(
       durable.record.dispatch.attemptId,
@@ -378,7 +410,7 @@ test(
       await store.commit({
         ...invalidation,
         nowMs: 1,
-        reconciliations: [proof],
+        providerFacts: [proof],
       }),
     );
     const settledSteer = unwrap(
@@ -388,7 +420,7 @@ test(
     assert.deepEqual(settledSteer.failure, failure);
 
     const next = prompt(admitted.binding, "ordinary-after-rejection");
-    const nextSubmission = await port.submit(
+    const nextSubmission = await port.dispatch(
       admitted.binding,
       next.command,
       next.attempt,
@@ -465,6 +497,9 @@ test(
       accepted,
       missing.command.commandId,
       "unknown",
+      {},
+      undefined,
+      fixture.configuration.workingDirectory,
     );
     const proof = unwrap(
       await restored.reconcile(durable.session, durable.record, budget()),
@@ -529,7 +564,7 @@ test(
       await VerifiedProviderSession.open(port, fixture.configuration, budget()),
     );
     const first = prompt(admitted.binding, "contradiction-first");
-    const started = await port.submit(
+    const started = await port.dispatch(
       admitted.binding,
       first.command,
       first.attempt,
@@ -545,16 +580,16 @@ test(
       targetRunId: started.binding.nativeRunId,
     };
     steer.attempt.nativeRunId = started.binding.nativeRunId;
-    const submission = await port.submit(
+    const submission = await port.dispatch(
       admitted.binding,
       steer.command,
       steer.attempt,
       budget(),
     );
     deliverCompleted();
-    assert.equal(submission.certainty, "submitted");
+    assert.equal(submission.certainty, "acknowledged");
     assert.deepEqual(
-      await port.submit(
+      await port.dispatch(
         admitted.binding,
         steer.command,
         steer.attempt,

@@ -184,7 +184,7 @@ async function main() {
   async function run(adapter, binding, id, text, expected) {
     stage = "submit";
     detail = {};
-    const sent = await adapter.submit(
+    const sent = await adapter.dispatch(
       binding,
       smokeCommand(id, text, Date.now() + 120000),
       {

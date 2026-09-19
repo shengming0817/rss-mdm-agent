@@ -129,7 +129,7 @@ async function main() {
   async function turn(p, b, c) {
     stage = "submit";
     const attempt = fixtureAttempt(b, c),
-      sent = await p.submit(b, c, attempt, budget());
+      sent = await p.dispatch(b, c, attempt, budget());
     assert.equal(sent.certainty, "submitted");
     stage = "observe";
     const events = [];
@@ -239,6 +239,8 @@ async function main() {
       namespace: { ...config.namespace, sessionId: "controlled-smoke" },
       config: { id: "official-controlled", revision: "1" },
       permissions: "host_mediated",
+    };
+    const admission = {
       // Test admission tied to the exact already exercised composition. This is
       // not the consuming product's platform verifier or an execution permit.
       verifier: {
@@ -272,6 +274,7 @@ async function main() {
       },
     };
     const third = createDeepSeekAdapter({
+      tools: admission.tools,
       onDiagnostic: diagnose,
       resolveConfiguration: async () => ({
         configuration: controlled,
@@ -282,7 +285,12 @@ async function main() {
     });
     ports.push(third);
     const checked = unwrap(
-      await VerifiedProviderSession.open(third, controlled, budget(15000)),
+      await VerifiedProviderSession.open(
+        third,
+        controlled,
+        budget(15000),
+        admission,
+      ),
     );
     const request = {
       ...prompt(
@@ -292,7 +300,7 @@ async function main() {
       sessionId: controlled.namespace.sessionId,
     };
     stage = "controlled_submit";
-    const submitted = await third.submit(
+    const submitted = await third.dispatch(
       checked.binding,
       request,
       fixtureAttempt(checked.binding, request),
@@ -311,22 +319,24 @@ async function main() {
             custom: "yes",
           })),
         };
-        unwrap(
-          await third.respond(
-            event.binding,
-            {
-              ...prompt("answer", ""),
-              sessionId: controlled.namespace.sessionId,
-              input: {
-                type: "respond",
-                interactionId: event.interaction.interactionId,
-                generation: event.binding.generation,
-                answer,
-              },
-            },
-            budget(),
-          ),
+        const response = {
+          ...prompt("answer", ""),
+          sessionId: controlled.namespace.sessionId,
+          input: {
+            type: "respond",
+            interactionId: event.interaction.interactionId,
+            generation: event.binding.generation,
+            answer,
+          },
+        };
+        const acknowledged = await third.dispatch(
+          event.binding,
+          response,
+          fixtureAttempt(event.binding, response),
+          budget(),
         );
+        assert.equal(acknowledged.certainty, "acknowledged");
+        assert.equal(acknowledged.acknowledgement.type, "respond");
       }
       if (event.body?.type === "terminal") terminal = event.body.outcome;
     }

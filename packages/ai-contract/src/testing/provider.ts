@@ -74,7 +74,7 @@ export class ScriptedProvider implements ProviderAgentPort {
       },
     });
   }
-  async submit(
+  async dispatch(
     binding: Binding,
     command: Command,
     attempt: DispatchAttempt,
@@ -83,7 +83,6 @@ export class ScriptedProvider implements ProviderAgentPort {
     if (
       !this.configuration ||
       canonicalize(binding) !== canonicalize(this.binding) ||
-      command.input.type !== "prompt" ||
       attempt.observerGeneration !== binding.generation ||
       attempt.nativeSessionId !== binding.nativeSessionId ||
       attempt.nativeThreadId !== binding.nativeThreadId
@@ -92,6 +91,22 @@ export class ScriptedProvider implements ProviderAgentPort {
         certainty: "not_sent",
         error: { code: "stale_binding", retry: "never" },
       };
+    if (this.closed)
+      return {
+        certainty: "not_sent",
+        error: { code: "unavailable", retry: "never" },
+      };
+    if (command.input.type !== "prompt")
+      return command.input.type === "cancel"
+        ? {
+            certainty: "acknowledged",
+            binding,
+            acknowledgement: { type: "cancel", confirmation: "request_only" },
+          }
+        : {
+            certainty: "not_sent",
+            error: { code: "unavailable", retry: "never" },
+          };
     this.dispatched++;
     if (this.submission === "unknown")
       return { certainty: "unknown", correlationId: command.commandId };
@@ -106,22 +121,6 @@ export class ScriptedProvider implements ProviderAgentPort {
       nativeRequestId: `request-${command.commandId}`,
     };
     return { certainty: "submitted", binding: structuredClone(this.binding) };
-  }
-  async cancel(
-    binding: Binding,
-    _command: Command,
-    _budget: Budget,
-  ): Promise<Result<"request_only">> {
-    return !this.closed && canonicalize(binding) === canonicalize(this.binding)
-      ? ok("request_only")
-      : fail("stale_binding");
-  }
-  async respond(
-    _binding: Binding,
-    _command: Command,
-    _budget: Budget,
-  ): Promise<Result<void>> {
-    return fail("unavailable");
   }
   async *observe(
     binding: Binding,
@@ -192,7 +191,7 @@ export async function runProviderConformance(
           certainty: "intent",
         };
         const submission = await withinBudget(budget, (b) =>
-          port.submit(binding, command, attempt, b),
+          port.dispatch(binding, command, attempt, b),
         );
         assert.equal(submission.certainty, scenario);
         if (scenario === "unknown") {
@@ -255,21 +254,27 @@ export async function runProviderConformance(
             },
           };
           const result = await withinBudget(budget, (b) =>
-            port.cancel(submission.binding, cancellation, b),
+            port.dispatch(
+              submission.binding,
+              cancellation,
+              { ...attempt, attemptId: "control-attempt" },
+              b,
+            ),
           );
           if (
             capabilities.cancellation === "unsupported" ||
             capabilities.cancellation === "unknown"
           )
             assert.equal(
-              result.ok
-                ? result.value === "unsupported"
-                : result.error.code === "unsupported_capability",
+              result.certainty === "not_sent" &&
+                result.error.code === "unsupported_capability",
               true,
             );
           else
             assert.equal(
-              unwrap(result),
+              result.certainty === "acknowledged" &&
+                result.acknowledgement.type === "cancel" &&
+                result.acknowledgement.confirmation,
               "request_only",
               "a cancel request cannot acknowledge an unobserved terminal",
             );
@@ -339,6 +344,7 @@ export async function runProviderConformance(
                   );
                 } else if (
                   observation.type === "submitted" ||
+                  observation.type === "running" ||
                   observation.type === "interaction_unavailable"
                 ) {
                   decode(
@@ -350,7 +356,8 @@ export async function runProviderConformance(
                         sequence: count,
                         attemptId: observation.attemptId,
                         body:
-                          observation.type === "submitted"
+                          observation.type === "submitted" ||
+                          observation.type === "running"
                             ? { type: "status", state: "running" }
                             : {
                                 type: "interaction",
@@ -542,10 +549,21 @@ async function lateAdmission(
             assert.equal(
               (
                 await withinBudget(budget, (b) =>
-                  port.cancel(binding, fixtureCommand(), b),
+                  port.dispatch(
+                    binding,
+                    fixtureCommand(),
+                    {
+                      attemptId: "late",
+                      originGeneration: binding.generation,
+                      observerGeneration: binding.generation,
+                      nativeSessionId: binding.nativeSessionId,
+                      certainty: "intent",
+                    },
+                    b,
+                  ),
                 )
-              ).ok,
-              false,
+              ).certainty,
+              "not_sent",
               "late binding cannot operate after close",
             );
             const iterator = port

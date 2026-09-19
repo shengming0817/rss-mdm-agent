@@ -44,6 +44,8 @@ export interface CommandView {
   dispatch?: CommandRecord["dispatch"];
   outcome?: Outcome;
   failure?: Failure;
+  acknowledgement?: CommandRecord["acknowledgement"];
+  cancelledBy?: string;
   cancelDispatched?: Extract<
     Event["body"],
     { type: "cancel_dispatched" }
@@ -120,6 +122,11 @@ function order(
 }
 function event(view: SessionView, e: Event): void {
   const body = e.body;
+  if (body.type === "session_recovery_unavailable") {
+    view.sessionStatus = "recovery_required";
+    view.connection = "resync_required";
+    return;
+  }
   if (body.type === "session_retired") {
     view.sessionStatus = "retired";
     return;
@@ -137,11 +144,26 @@ function event(view: SessionView, e: Event): void {
   }
   const command = view.commands[e.commandId];
   if (!command) throw new ClientError("resync_required");
-  const settled =
-    command.state === "terminal" || command.state === "invalidated";
-  if (body.type === "terminal" || body.type === "invalidated") {
+  const settled = [
+    "terminal",
+    "invalidated",
+    "acknowledged",
+    "cancelled",
+  ].includes(command.state);
+  if (
+    body.type === "terminal" ||
+    body.type === "invalidated" ||
+    body.type === "acknowledged" ||
+    body.type === "cancelled"
+  ) {
     if (settled) return;
-    if (body.type === "terminal") {
+    if (body.type === "acknowledged") {
+      command.state = "acknowledged";
+      command.acknowledgement = body.acknowledgement;
+    } else if (body.type === "cancelled") {
+      command.state = "cancelled";
+      command.cancelledBy = body.cancelledBy;
+    } else if (body.type === "terminal") {
       command.state = "terminal";
       command.outcome = body.outcome;
     } else {
@@ -243,6 +265,7 @@ export function restoreSnapshot(
   pages: SnapshotPage[],
 ): void {
   for (const page of pages) for (const e of page.events) event(view, e);
+  if (pages.length) view.sessionStatus = pages[0].session.status;
   for (const page of pages) {
     for (const c of page.commands)
       view.commands[c.command.commandId] = {
@@ -252,6 +275,8 @@ export function restoreSnapshot(
         ...(c.dispatch ? { dispatch: structuredClone(c.dispatch) } : {}),
         ...(c.outcome ? { outcome: c.outcome } : {}),
         ...(c.failure ? { failure: c.failure } : {}),
+        ...(c.acknowledgement ? { acknowledgement: c.acknowledgement } : {}),
+        ...(c.cancelledBy ? { cancelledBy: c.cancelledBy } : {}),
       };
     for (const interaction of page.interactions)
       view.interactions[interaction.interactionId] =
@@ -271,7 +296,7 @@ export function applyUpdate(view: SessionView, item: Subscription): void {
     if (
       item.generation !== view.generation ||
       !view.commands[item.commandId] ||
-      ["terminal", "invalidated"].includes(
+      ["terminal", "invalidated", "acknowledged", "cancelled"].includes(
         view.commands[item.commandId]?.state ?? "",
       )
     )

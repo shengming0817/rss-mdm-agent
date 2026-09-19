@@ -40,6 +40,8 @@ export interface AccessOptions {
   sessionOptions: SessionOptions;
   limits?: Limits;
   timeoutMs?: number;
+  /** Durable queue lifetime, independent of a single request's admission budget. */
+  promptTtlMs?: number;
   /** Independent upper bound for settling owned work after cancellation. */
   shutdownTimeoutMs?: number;
   now?: () => number;
@@ -60,8 +62,9 @@ class PumpFailure extends Error {
     super(code);
   }
 }
+const requestError = (code: string) => new RequestError(-32001, code, { code });
 const fail = (code: string): never => {
-  throw new RequestError(-32001, code, { code });
+  throw requestError(code);
 };
 const value = <T>(result: Result<T>): T =>
   result.ok ? result.value : fail(result.error.code);
@@ -132,6 +135,7 @@ export function createAccessService(options: AccessOptions) {
   };
   const limits = options.limits ?? accessLimits,
     timeoutMs = options.timeoutMs ?? 30_000,
+    promptTtlMs = options.promptTtlMs ?? 86_400_000,
     now = options.now ?? Date.now,
     shutdownTimeoutMs = options.shutdownTimeoutMs ?? 5_000;
   if (
@@ -140,6 +144,12 @@ export function createAccessService(options: AccessOptions) {
     shutdownTimeoutMs > 2_147_483_647
   )
     throw new RangeError("invalid shutdownTimeoutMs");
+  if (
+    !Number.isSafeInteger(promptTtlMs) ||
+    promptTtlMs < 1 ||
+    promptTtlMs > 2_147_483_647
+  )
+    throw new RangeError("invalid promptTtlMs");
   const budget = (signal: AbortSignal): Budget => ({
     signal: AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]),
     timeoutMs,
@@ -194,7 +204,7 @@ export function createAccessService(options: AccessOptions) {
   ): Promise<void> {
     if (item.type === "resync_required") {
       for (const waiter of pump.waiters.values())
-        waiter.reject(new RequestError(-32001, "cursor_expired"));
+        waiter.reject(requestError("cursor_expired"));
       pump.waiters.clear();
       return;
     }
@@ -218,12 +228,36 @@ export function createAccessService(options: AccessOptions) {
     }
     const event = item.event,
       body = event.body;
+    if (body.type === "session_recovery_unavailable") {
+      for (const waiter of pump.waiters.values())
+        waiter.reject(requestError("reconciliation_required"));
+      pump.waiters.clear();
+      return;
+    }
     if (event.commandId === undefined) return;
-    if (body.type === "invalidated") {
+    if (body.type === "status" && body.state === "reconciliation_required") {
+      pump.waiters
+        .get(event.commandId)
+        ?.reject(requestError("reconciliation_required"));
+      pump.waiters.delete(event.commandId);
+      await standard(peer, id, {
+        sessionUpdate: "agent_message_chunk",
+        content: {
+          type: "text",
+          text: "Command delivery is uncertain. Reconcile this session before retrying.",
+        },
+      });
+    } else if (body.type === "cancelled") {
+      pump.terminal.add(event.commandId);
+      pump.waiters.get(event.commandId)?.resolve("cancelled");
+      pump.waiters.delete(event.commandId);
+    } else if (body.type === "acknowledged") {
+      pump.terminal.add(event.commandId);
+    } else if (body.type === "invalidated") {
       pump.terminal.add(event.commandId);
       pump.waiters
         .get(event.commandId)
-        ?.reject(new RequestError(-32001, body.failure.code));
+        ?.reject(requestError(body.failure.code));
       pump.waiters.delete(event.commandId);
       for (const key of pump.text.keys())
         if (key.startsWith(`${event.commandId}/`)) pump.text.delete(key);
@@ -276,7 +310,7 @@ export function createAccessService(options: AccessOptions) {
     if (!pump) return;
     pump.controller.abort();
     for (const waiter of pump.waiters.values())
-      waiter.reject(new RequestError(-32001, "unavailable"));
+      waiter.reject(requestError("unavailable"));
     pump.waiters.clear();
     peer.pumps.delete(id);
   };
@@ -566,7 +600,7 @@ export function createAccessService(options: AccessOptions) {
         kind: "command",
         sessionId: params.sessionId,
         commandId: crypto.randomUUID(),
-        expiresAtMs: now() + timeoutMs,
+        expiresAtMs: now() + promptTtlMs,
         input: { type: "prompt", policy: "queue_next", text },
       });
       const pump =
@@ -575,7 +609,7 @@ export function createAccessService(options: AccessOptions) {
       const controller = signal;
       let onAbort: () => void = () => {};
       const terminal = new Promise<Outcome>((resolve, reject) => {
-        onAbort = () => reject(new RequestError(-32001, "unavailable"));
+        onAbort = () => reject(requestError("unavailable"));
         controller.addEventListener("abort", onAbort, { once: true });
         pump.waiters.set(command.commandId, { resolve, reject });
       });
@@ -614,7 +648,7 @@ export function createAccessService(options: AccessOptions) {
           if (
             record.command.input.type !== "prompt" ||
             record.state === "terminal" ||
-            record.state === "invalidated"
+            ["invalidated", "acknowledged", "cancelled"].includes(record.state)
           )
             continue;
           const dispatch = record.dispatch;

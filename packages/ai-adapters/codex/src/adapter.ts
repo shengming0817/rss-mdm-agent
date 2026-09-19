@@ -192,16 +192,11 @@ export class CodexAdapter implements ProviderAgentPort {
         ),
         nextBudget(),
       );
-      const {
-        tools: expectedTools,
-        verifier: expectedVerifier,
-        ...expected
-      } = config;
-      const { tools, verifier, ...actual } = resolved.configuration;
       if (
-        !same(expected, actual) ||
-        tools !== expectedTools ||
-        verifier !== expectedVerifier
+        !same(config, resolved.configuration) ||
+        (config.permissions === "host_mediated"
+          ? !this.options.tools
+          : this.options.tools !== undefined)
       )
         return fail("permission_denied");
       if (
@@ -217,7 +212,7 @@ export class CodexAdapter implements ProviderAgentPort {
       if (this.closed || !live(nextBudget())) return fail("unavailable");
       if (config.permissions === "host_mediated") {
         this.bridge = new ToolBridge(
-          config.tools,
+          this.options.tools!,
           () =>
             this.initialized &&
             !this.closed &&
@@ -367,7 +362,6 @@ export class CodexAdapter implements ProviderAgentPort {
       return ok({
         binding: copy(this.binding),
         capabilities: {
-          queue: "unsupported",
           continuation: "across_processes",
           cancellation: "request_only",
           tools:
@@ -545,7 +539,70 @@ export class CodexAdapter implements ProviderAgentPort {
       throw new Error("invalid command");
     return value;
   }
-  async submit(
+  async dispatch(
+    binding: Binding,
+    command: Command,
+    attempt: DispatchAttempt,
+    budget: Budget,
+  ): Promise<Submission> {
+    if (command.input.type === "prompt") {
+      const result = await this.dispatchPrompt(
+        binding,
+        command,
+        attempt,
+        budget,
+      );
+      return command.input.policy === "steer" &&
+        result.certainty === "submitted"
+        ? {
+            certainty: "acknowledged",
+            binding: result.binding,
+            acknowledgement: { type: "steer" },
+          }
+        : result;
+    }
+    if (
+      !isId(attempt.attemptId) ||
+      attempt.certainty !== "intent" ||
+      (attempt.nativeRunId !== undefined &&
+        attempt.nativeRunId !== binding.nativeRunId) ||
+      (attempt.nativeRequestId !== undefined &&
+        attempt.nativeRequestId !== binding.nativeRequestId) ||
+      attempt.originGeneration !== binding.generation ||
+      attempt.observerGeneration !== binding.generation ||
+      attempt.nativeSessionId !== binding.nativeSessionId ||
+      attempt.nativeThreadId !== binding.nativeThreadId
+    )
+      return {
+        certainty: "not_sent",
+        error: { code: "stale_binding", retry: "never" },
+      };
+    const result =
+      command.input.type === "cancel"
+        ? await this.cancelRun(binding, command, budget)
+        : await this.answerQuestion(binding, command, budget);
+    if (!result.ok)
+      return result.error.retry === "reconcile_first"
+        ? { certainty: "unknown", correlationId: attempt.attemptId }
+        : { certainty: "not_sent", error: result.error };
+    if (result.value === "unsupported")
+      return {
+        certainty: "not_sent",
+        error: { code: "unsupported_capability", retry: "never" },
+      };
+    return {
+      certainty: "acknowledged",
+      binding: { ...binding },
+      acknowledgement:
+        command.input.type === "cancel"
+          ? {
+              type: "cancel",
+              confirmation: result.value as "request_only" | "already_terminal",
+            }
+          : { type: "respond" },
+    };
+  }
+  private async dispatchPrompt(
     binding: Binding,
     command: Command,
     attempt: DispatchAttempt,
@@ -696,7 +753,13 @@ export class CodexAdapter implements ProviderAgentPort {
       entry.confirmed = true;
       if (announce)
         this.observations.push({
-          type: "submitted",
+          ...(entry.command.input.type === "prompt" &&
+          entry.command.input.policy === "steer"
+            ? {
+                type: "acknowledged" as const,
+                acknowledgement: { type: "steer" as const },
+              }
+            : { type: "submitted" as const }),
           binding: copy(entry.binding),
           commandId: entry.command.commandId,
           attemptId: entry.dispatch.attemptId,
@@ -704,7 +767,11 @@ export class CodexAdapter implements ProviderAgentPort {
     }
     const terminal = this.completedTurns.get(turnId);
     if (announce && terminal && !entry.outcome) {
-      this.emit(entry, { type: "terminal", outcome: terminal });
+      if (
+        entry.command.input.type === "prompt" &&
+        entry.command.input.policy === "queue_next"
+      )
+        this.emit(entry, { type: "terminal", outcome: terminal });
       entry.outcome = terminal;
       entry.completedItems.clear();
     }
@@ -887,7 +954,11 @@ export class CodexAdapter implements ProviderAgentPort {
         entry.command.input.policy === "queue_next"
       )
         for (const item of turn.items) this.completeItem(entry, item);
-      this.emit(entry, { type: "terminal", outcome: terminal });
+      if (
+        entry.command.input.type === "prompt" &&
+        entry.command.input.policy === "queue_next"
+      )
+        this.emit(entry, { type: "terminal", outcome: terminal });
       entry.outcome = terminal;
       entry.completedItems.clear();
     }
@@ -934,7 +1005,7 @@ export class CodexAdapter implements ProviderAgentPort {
       for await (const record of this.nativeEvents.read(budget))
         yield { ...record, dropped: this.nativeEvents.dropped };
   }
-  async cancel(
+  private async cancelRun(
     binding: Binding,
     command: Command,
     budget: Budget,
@@ -976,7 +1047,7 @@ export class CodexAdapter implements ProviderAgentPort {
       return fail("unavailable", "reconcile_first");
     }
   }
-  async respond(
+  private async answerQuestion(
     _binding: Binding,
     _command: Command,
     _budget: Budget,
@@ -1134,6 +1205,16 @@ export class CodexAdapter implements ProviderAgentPort {
         entry.completedItems.clear();
       }
       this.replay();
+      if (
+        record.command.input.type === "prompt" &&
+        record.command.input.policy === "steer"
+      )
+        return ok({
+          ...base,
+          binding: copy(entry.binding),
+          status: "acknowledged",
+          acknowledgement: { type: "steer" },
+        });
       return terminal
         ? ok({
             ...base,
@@ -1172,9 +1253,7 @@ export class CodexAdapter implements ProviderAgentPort {
     if (this.instance) return this.instance;
     const agent: ProviderAgentPort = Object.freeze({
       createSession: this.createSession.bind(this),
-      submit: this.submit.bind(this),
-      cancel: this.cancel.bind(this),
-      respond: this.respond.bind(this),
+      dispatch: this.dispatch.bind(this),
       observe: this.observe.bind(this),
       reconcile: this.reconcile.bind(this),
       resume: this.resume.bind(this),

@@ -292,7 +292,12 @@ test(
     });
     const port = s.make();
     const admitted = unwrap(
-      await VerifiedProviderSession.open(port, s.configuration, budget()),
+      await VerifiedProviderSession.open(
+        port,
+        s.configuration,
+        budget(),
+        s.admission,
+      ),
     );
     await conversation(port, admitted, "hostile-native");
     assert.ok(s.requests.length >= 2);
@@ -328,6 +333,7 @@ test(
       s.make(),
       s.configuration,
       budget(),
+      s.admission,
     );
     assert.equal(result.ok, false);
     assert.equal(s.requests.length, 0);
@@ -356,6 +362,7 @@ test("restore rejects a compatible-looking thread without host lineage", async (
     previous,
     s.configuration,
     budget(),
+    s.admission,
   );
   assert.equal(result.ok, false);
   assert.equal(s.requests.length, 0);
@@ -398,7 +405,12 @@ for (const disposition of ["rejected", "returned"]) {
       });
       const port = s.make();
       const admitted = unwrap(
-        await VerifiedProviderSession.open(port, s.configuration, budget()),
+        await VerifiedProviderSession.open(
+          port,
+          s.configuration,
+          budget(),
+          s.admission,
+        ),
       );
       const result = await conversation(
         port,
@@ -442,6 +454,7 @@ test(
       port,
       s.configuration,
       budget(),
+      s.admission,
     );
     assert.equal(result.ok, false);
     assert.equal(s.requests.length, 0);
@@ -455,7 +468,12 @@ test(
     const s = await nativeFixture(t, { controlled: true });
     const firstPort = s.make();
     const admitted = unwrap(
-      await VerifiedProviderSession.open(firstPort, s.configuration, budget()),
+      await VerifiedProviderSession.open(
+        firstPort,
+        s.configuration,
+        budget(),
+        s.admission,
+      ),
     );
     const first = await conversation(
       firstPort,
@@ -481,6 +499,7 @@ test(
       previous,
       s.configuration,
       budget(),
+      s.admission,
     );
     assert.equal(result.ok, false);
     assert.equal(s.requests.length, 1);
@@ -518,7 +537,12 @@ test(
     try {
       const port = s.make();
       const admitted = unwrap(
-        await VerifiedProviderSession.open(port, s.configuration, budget()),
+        await VerifiedProviderSession.open(
+          port,
+          s.configuration,
+          budget(),
+          s.admission,
+        ),
       );
       await conversation(port, admitted, "hostile-path");
       await assert.rejects(access(marker));

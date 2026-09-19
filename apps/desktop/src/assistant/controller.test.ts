@@ -69,7 +69,7 @@ function setup(now = () => 100) {
   };
 }
 describe("assistant application ownership", () => {
-  it("keeps drafts writable while capabilities independently gate send, steer, cancel and resume", async () => {
+  it("queues through Host while provider capabilities independently gate steer, cancel and resume", async () => {
     const t = setup();
     await t.c.connect();
     await t.c.select("session-1");
@@ -95,12 +95,13 @@ describe("assistant application ownership", () => {
     t.emit();
     t.c.draft.value = "editable while busy";
     expect(t.c.busy.value).toBe(true);
-    expect(t.c.canSend.value).toBe(false);
+    expect(t.c.canSend.value).toBe(true);
     expect(t.c.canSteer.value).toBe(false);
     expect(t.c.canResume.value).toBe(false);
     await t.c.prompt();
-    expect(t.submit).not.toHaveBeenCalled();
-    t.view.capabilities.queue = "supported";
+    expect(t.submit.mock.calls[0][0].input.policy).toBe("queue_next");
+    t.submit.mockClear();
+    t.c.draft.value = "editable while busy";
     t.view.capabilities.steer = "supported";
     t.emit();
     await t.c.prompt("steer");
@@ -121,6 +122,13 @@ describe("assistant application ownership", () => {
     expect(t.c.canSteer.value).toBe(false);
     expect(t.c.canCancel.value).toBe(false);
     expect(t.c.canResume.value).toBe(true);
+    for (const settled of ["acknowledged", "cancelled"] as const) {
+      t.view.commands.p.state = settled;
+      t.emit();
+      expect(t.c.busy.value).toBe(false);
+      expect(t.c.canSteer.value).toBe(false);
+      expect(t.c.canCancel.value).toBe(false);
+    }
     t.c.dispose();
   });
   it("does not turn receipts into history and retries exactly the unknown command without erasing a newer draft", async () => {

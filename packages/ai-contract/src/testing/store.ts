@@ -6,6 +6,7 @@ import type {
   Result,
   SessionCommit,
   SessionRebind,
+  RecoveryUnavailable,
   SessionStore,
   Caller,
   Clock,
@@ -28,6 +29,7 @@ import {
   commitSession,
   createState,
   rebindSession,
+  recoverUnavailable,
   retireSession,
   canPrune,
   defaultLimits,
@@ -142,6 +144,14 @@ export class MemorySessionStore implements SessionStore {
     const result = this.apply(input.namespace, (s) => rebindSession(s, input));
     return result.ok ? this.session(input.namespace) : result;
   }
+  async recoverUnavailable(
+    input: RecoveryUnavailable,
+  ): Promise<Result<Session>> {
+    const result = this.apply(input.namespace, (s) =>
+      recoverUnavailable(s, input),
+    );
+    return result.ok ? this.session(input.namespace) : result;
+  }
   async snapshotPage(
     namespace: Namespace,
     query: PageQuery,
@@ -192,7 +202,7 @@ export class MemorySessionStore implements SessionStore {
             .map((s) => s.session)
             .filter(
               (s) =>
-                s.status === "active" &&
+                s.status !== "retired" &&
                 s.namespace.tenantId === caller.tenantId &&
                 s.namespace.principalId === caller.principalId &&
                 s.namespace.authorityId === caller.authorityId,

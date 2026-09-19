@@ -136,3 +136,28 @@ fn event_discriminators_select_the_actual_rust_variant() {
         }
     }
 }
+
+#[test]
+fn local_and_native_acknowledgements_have_distinct_schema_derived_variants() {
+    let fixtures: Value = serde_json::from_str(FIXTURES).unwrap();
+    let mut event = fixtures["valid"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["kind"] == "event" && v.get("attemptId").is_some())
+        .unwrap()
+        .clone();
+    event["body"] = serde_json::json!({"type":"acknowledged","acknowledgement":{"type":"cancel","confirmation":"request_only"}});
+    decode(&serde_json::to_vec(&event).unwrap(), &limits()).unwrap();
+    assert!(matches!(
+        serde_json::from_value::<ai_session_contract::Event>(event.clone()).unwrap(),
+        ai_session_contract::Event::Acknowledged { .. }
+    ));
+    event.as_object_mut().unwrap().remove("attemptId");
+    event["body"] = serde_json::json!({"type":"acknowledged","acknowledgement":{"type":"queued_cancelled","targetCommandId":"queued"}});
+    decode(&serde_json::to_vec(&event).unwrap(), &limits()).unwrap();
+    assert!(matches!(
+        serde_json::from_value::<ai_session_contract::Event>(event).unwrap(),
+        ai_session_contract::Event::AcknowledgedQueuedCancelled { .. }
+    ));
+}

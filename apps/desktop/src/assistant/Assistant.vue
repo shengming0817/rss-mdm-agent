@@ -56,6 +56,9 @@ const rows = computed(() => {
   }));
 });
 function commandStatus(command: CommandView) {
+  if (command.state === "cancelled") return "已取消排队，未发送给模型";
+  if (command.state === "acknowledged")
+    return "控制命令已确认；模型本轮状态见原始请求";
   if (command.state === "invalidated") return "本地命令失效；未确认模型终止";
   if (command.state === "terminal")
     return `模型本轮结束：${command.outcome ?? "未知"}；设备效果需独立查询`;
@@ -66,7 +69,13 @@ function commandStatus(command: CommandView) {
   return "AI 命令已接收 / 排队中";
 }
 function cancelNote(command: CommandView) {
-  switch (command.cancelDispatched) {
+  if (command.acknowledgement?.type === "queued_cancelled")
+    return "已取消排队，未发送给模型。";
+  switch (
+    command.acknowledgement?.type === "cancel"
+      ? command.acknowledgement.confirmation
+      : command.cancelDispatched
+  ) {
     case "request_only":
       return command.state === "terminal"
         ? "取消请求已发出；模型终止事实已记录。"
@@ -364,8 +373,8 @@ const cancellations = computed(() =>
             role="status"
           >
             AI 取消请求：{{
-              command.state === "terminal"
-                ? "请求流程结束"
+              command.state === "acknowledged"
+                ? "请求已确认"
                 : command.state === "invalidated"
                   ? "命令已失效，未确认模型停止"
                   : "已接收"
@@ -384,11 +393,7 @@ const cancellations = computed(() =>
             </button>
           </div>
           <p v-if="c.busy.value">
-            本轮运行期间可以继续编辑。{{
-              view.capabilities.queue === "supported"
-                ? "发送后进入下一轮队列。"
-                : "当前服务不支持排队。"
-            }}
+            本轮运行期间可以继续编辑，发送后进入下一轮队列。
           </p>
           <MessageComposer
             v-model="draft"

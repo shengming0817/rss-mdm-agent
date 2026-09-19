@@ -11,6 +11,7 @@ import {
   commandCommit,
   dispatchCommand,
   terminalCommit,
+  verifiedReconciliation,
   emptyCommit,
   unwrap,
 } from "../../packages/ai-contract/dist/testing/index.js";
@@ -163,12 +164,20 @@ test("steer observations use their own request; unresolved steer prevents cleari
     dispatch: { ...dispatching.dispatch, certainty: "submitted" },
   };
   unwrap(
-    await store.commit(
-      commandCommit(head, running, [
+    await store.commit({
+      ...commandCommit(head, running, [
+        {
+          type: "reconciled",
+          attempt: dispatching.dispatch,
+          resolution: "running",
+        },
         { type: "dispatch", attempt: running.dispatch },
         { type: "status", state: "running" },
       ]),
-    ),
+      providerFacts: [
+        await verifiedReconciliation(head, dispatching, "running"),
+      ],
+    }),
   );
   const host = new FakeHost(store);
   const observation = {
@@ -196,7 +205,7 @@ test("steer observations use their own request; unresolved steer prevents cleari
     false,
   );
   head = unwrap(await store.session(head.namespace));
-  unwrap(await store.commit(terminalCommit(head, started.record)));
+  unwrap(await store.commit(await terminalCommit(head, started.record)));
   head = unwrap(await store.session(head.namespace));
   const batch = emptyCommit(head);
   batch.session.binding = { ...session.binding };
@@ -205,7 +214,33 @@ test("steer observations use their own request; unresolved steer prevents cleari
     false,
     "steer still owns the active turn",
   );
-  unwrap(await store.commit(terminalCommit(head, running)));
+  const acknowledged = {
+    ...running,
+    state: "acknowledged",
+    acknowledgement: { type: "steer" },
+  };
+  unwrap(
+    await store.commit({
+      ...commandCommit(head, acknowledged, [
+        {
+          type: "reconciled",
+          attempt: running.dispatch,
+          resolution: "acknowledged",
+        },
+        { type: "acknowledged", acknowledgement: acknowledged.acknowledgement },
+      ]),
+      providerFacts: [
+        await verifiedReconciliation(
+          head,
+          running,
+          "acknowledged",
+          "completed",
+          ".",
+          { type: "steer" },
+        ),
+      ],
+    }),
+  );
   head = unwrap(await store.session(head.namespace));
   const clear = emptyCommit(head);
   clear.session.binding = { ...session.binding };

@@ -98,7 +98,11 @@ const wrongProvider:ResolvedClaudeConfiguration['configuration']['provider']='co
 createClaudeAdapter({resolveConfiguration:options.resolveConfiguration,permissionMode:'bypassPermissions'});
 await adapter.close({timeoutMs:100,signal:new AbortController().signal});`,
   );
-  for (const file of ["adapter.test.mjs", "native.test.mjs"]) {
+  for (const file of [
+    "adapter.test.mjs",
+    "native.test.mjs",
+    "model-fixture.mjs",
+  ]) {
     const source = readFileSync(
       join(root, "tests/ai-adapters/claude", file),
       "utf8",

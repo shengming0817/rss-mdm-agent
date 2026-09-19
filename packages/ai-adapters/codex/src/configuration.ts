@@ -4,6 +4,7 @@ import type {
   Binding,
   Budget,
   Clock,
+  ToolEndpoint,
   ProviderConfiguration,
 } from "@rss-mdm-agent/ai-contract";
 import { CODEX_VERSION, type LaunchSpec } from "./runtime.js";
@@ -31,6 +32,7 @@ export interface ResolvedCodexConfiguration {
   ownedHistory?: { nativeSessionId: string; nativeThreadId: string };
 }
 export interface CodexAdapterOptions {
+  readonly tools?: ToolEndpoint;
   resolveConfiguration(
     identity: Pick<
       ProviderConfiguration,

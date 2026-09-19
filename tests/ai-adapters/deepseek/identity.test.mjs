@@ -65,7 +65,7 @@ test("binding and attempt identity fence before native submission", async () => 
     { attemptId: "bad space" },
   ])
     assert.equal(
-      (await p.submit(b, cmd, { ...a, ...patch }, budget())).certainty,
+      (await p.dispatch(b, cmd, { ...a, ...patch }, budget())).certainty,
       "not_sent",
     );
   for (const patch of [
@@ -74,15 +74,15 @@ test("binding and attempt identity fence before native submission", async () => 
     { accountRef: "other" },
   ])
     assert.equal(
-      (await p.submit({ ...b, ...patch }, cmd, a, budget())).certainty,
+      (await p.dispatch({ ...b, ...patch }, cmd, a, budget())).certainty,
       "not_sent",
     );
   assert.equal(
-    (await p.submit(b, { ...cmd, sessionId: "foreign" }, a, budget()))
+    (await p.dispatch(b, { ...cmd, sessionId: "foreign" }, a, budget()))
       .certainty,
     "not_sent",
   );
-  assert.equal((await p.submit(b, cmd, a, budget())).certainty, "submitted");
+  assert.equal((await p.dispatch(b, cmd, a, budget())).certainty, "submitted");
   assert.equal((await p.createSession(c, budget())).ok, false);
   assert.equal((await p.resume(b, c, budget())).ok, false);
   await p.close(budget());
@@ -94,7 +94,7 @@ test("unknown correlation is attempt-specific, survives records and cannot autho
     b = admitted.binding,
     cmd = fixtureCommand(),
     a = fixtureAttempt(b, cmd);
-  const sent = await p.submit(b, cmd, a, budget());
+  const sent = await p.dispatch(b, cmd, a, budget());
   assert.equal(sent.certainty, "unknown");
   const record = {
     ...fixtureDispatchedRecord(b, cmd),
@@ -116,7 +116,7 @@ test("unknown correlation is attempt-specific, survives records and cannot autho
     "unknown",
   );
   assert.equal(
-    (await p.submit(b, cmd, { ...a, attemptId: "new-attempt" }, budget()))
+    (await p.dispatch(b, cmd, { ...a, attemptId: "new-attempt" }, budget()))
       .certainty,
     "not_sent",
   );

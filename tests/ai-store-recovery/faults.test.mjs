@@ -226,7 +226,9 @@ test("capacity fails explicitly; retirement retains an irreversible namespace to
     store,
     unwrap(await store.session(initial.namespace)),
   );
-  unwrap(await store.commit(terminalCommit(started.session, started.record)));
+  unwrap(
+    await store.commit(await terminalCommit(started.session, started.record)),
+  );
   const head = unwrap(await store.session(initial.namespace));
   unwrap(
     await store.retire(head.namespace, head.revision, head.binding.generation),

@@ -2,12 +2,26 @@ import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join, dirname, resolve } from "node:path";
 import ts from "typescript";
-const root = fileURLToPath(new URL("../packages/", import.meta.url));
+const root = fileURLToPath(new URL("../", import.meta.url));
 const allowed = {
-  "ai-contract": ["@noble/hashes", "canonicalize", "jsonc-parser"],
-  "ai-access": ["@rss-mdm-agent/ai-contract", "@agentclientprotocol/sdk"],
-  "ai-client": ["@rss-mdm-agent/ai-contract", "@agentclientprotocol/sdk"],
-  "ai-ui-bridge": [
+  "apps/ai-host": [
+    "@rss-mdm-agent/ai-contract",
+    "@rss-mdm-agent/ai-host",
+    "@rss-mdm-agent/ai-store-sqlite",
+    "@rss-mdm-agent/ai-access",
+    "@rss-mdm-agent/ai-adapter-claude",
+  ],
+  "packages/ai-host": ["@rss-mdm-agent/ai-contract"],
+  "packages/ai-contract": ["@noble/hashes", "canonicalize", "jsonc-parser"],
+  "packages/ai-access": [
+    "@rss-mdm-agent/ai-contract",
+    "@agentclientprotocol/sdk",
+  ],
+  "packages/ai-client": [
+    "@rss-mdm-agent/ai-contract",
+    "@agentclientprotocol/sdk",
+  ],
+  "packages/ai-ui-bridge": [
     "@rss-mdm-agent/ai-contract",
     "@rss-mdm-agent/ai-client",
     "@a2ui/lit",
@@ -17,9 +31,30 @@ const allowed = {
 };
 const errors = [];
 const serverFiles = new Map([
-  [join(root, "ai-contract/src/session.ts"), ["node:path", "node:crypto"]],
-  [join(root, "ai-contract/src/transitions.ts"), ["node:crypto"]],
+  [
+    join(root, "packages/ai-contract/src/session.ts"),
+    ["node:path", "node:crypto"],
+  ],
+  [join(root, "packages/ai-contract/src/transitions.ts"), ["node:crypto"]],
 ]);
+for (const [file, imports] of Object.entries({
+  "index.ts": ["node:crypto"],
+  "channel.ts": ["node:crypto", "node:stream"],
+  "bootstrap.ts": ["node:net", "node:child_process"],
+  "process.ts": [
+    "node:child_process",
+    "node:crypto",
+    "node:stream",
+    "node:url",
+  ],
+}))
+  serverFiles.set(join(root, "packages/ai-host/src", file), imports);
+for (const [file, imports] of Object.entries({
+  "index.ts": ["node:net", "node:stream", "node:fs/promises", "node:path"],
+  "configuration.ts": ["node:path"],
+  "private-file.ts": ["node:fs", "node:fs/promises", "node:path"],
+}))
+  serverFiles.set(join(root, "apps/ai-host/src", file), imports);
 const runtimeEdges = new Map();
 function walk(path) {
   return readdirSync(path, { withFileTypes: true }).flatMap((e) =>
@@ -36,6 +71,10 @@ for (const [name, dependencies] of Object.entries(allowed)) {
   if (
     JSON.stringify(Object.keys(manifest.dependencies ?? {}).sort()) !==
       JSON.stringify(dependencies.toSorted()) ||
+    (name === "apps/ai-host" &&
+      Object.values(manifest.dependencies ?? {}).some(
+        (value) => value !== "workspace:*",
+      )) ||
     manifest.optionalDependencies ||
     manifest.peerDependencies
   )
@@ -46,6 +85,9 @@ for (const [name, dependencies] of Object.entries(allowed)) {
       ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
     const check = (value, runtime = true) => {
       if (value.startsWith(".")) {
+        const target = resolve(dirname(file), value.replace(/\.js$/, ".ts"));
+        if (!target.startsWith(join(dir, "src") + "/"))
+          errors.push(`${name}: relative import escapes package`);
         if (runtime) {
           const edges = runtimeEdges.get(file) ?? [];
           edges.push(resolve(dirname(file), value.replace(/\.js$/, ".ts")));
@@ -54,7 +96,9 @@ for (const [name, dependencies] of Object.entries(allowed)) {
         return;
       }
       if (
-        name !== "ai-contract" &&
+        name !== "packages/ai-contract" &&
+        name !== "packages/ai-host" &&
+        name !== "apps/ai-host" &&
         [
           "@rss-mdm-agent/ai-contract/session",
           "@rss-mdm-agent/ai-contract/transitions",
@@ -101,7 +145,14 @@ for (const [name, dependencies] of Object.entries(allowed)) {
       ) {
         if (ts.isStringLiteralLike(node.arguments[0]))
           check(node.arguments[0].text);
-        else errors.push(`${name}: computed module import`);
+        else if (
+          !(
+            file === join(root, "packages/ai-host/src/bootstrap.ts") &&
+            node.expression.getText(ast) === "import" &&
+            node.arguments[0]?.getText(ast) === "input.artifact"
+          )
+        )
+          errors.push(`${name}: computed module import`);
       }
       ts.forEachChild(node, visit);
     }
@@ -122,7 +173,7 @@ function portable(file) {
     errors.push("ai-contract: browser entry reaches server runtime");
   for (const next of runtimeEdges.get(file) ?? []) portable(next);
 }
-portable(join(root, "ai-contract/src/index.ts"));
+portable(join(root, "packages/ai-contract/src/index.ts"));
 if (errors.length) throw new Error(errors.join("\n"));
 console.log(
   "PASS AI package boundaries; renderer browser closure is additionally built and executed by the isolated consumer",

@@ -8,6 +8,7 @@ import type {
   Binding,
   Budget,
   Clock,
+  ToolEndpoint,
   ProviderConfiguration,
 } from "@rss-mdm-agent/ai-contract";
 import { same } from "./support.js";
@@ -50,6 +51,7 @@ export interface ResolvedDeepSeekConfiguration {
   model: string;
 }
 export interface DeepSeekAdapterOptions {
+  readonly tools?: ToolEndpoint;
   resolveConfiguration(
     identity: Pick<Binding, "config" | "accountRef">,
     budget: Budget,
@@ -98,8 +100,6 @@ export function validateConfiguration(
     !resolved.apiKey ||
     !resolved.model ||
     !same(identity(c), identity(resolved.configuration)) ||
-    c.tools !== resolved.configuration.tools ||
-    c.verifier !== resolved.configuration.verifier ||
     !["tools_disabled", "host_mediated"].includes(c.permissions)
   )
     throw Error("invalid configuration");

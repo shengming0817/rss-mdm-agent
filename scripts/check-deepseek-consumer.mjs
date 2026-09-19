@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
+import { installArtifacts } from "./ai-host-artifacts.mjs";
 import { sourceState, sameCommittedSource } from "./source-state.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url)),
   start = sourceState(root),
@@ -91,8 +92,7 @@ try {
     join(directory, "consumer.ts"),
     readFileSync(join(root, "tests/ai-adapters/deepseek/consumer.ts")),
   );
-  run("pnpm", ["install", "--offline"]);
-  lockSha256 = hash(join(directory, "pnpm-lock.yaml"));
+  lockSha256 = installArtifacts(root, directory);
   run("pnpm", ["exec", "tsc"]);
   run("node", ["out/consumer.js"]);
   const manifest = JSON.parse(

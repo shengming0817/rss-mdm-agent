@@ -18,7 +18,7 @@ const store = opened.value;
 await store.close({ timeoutMs: 1000, signal: new AbortController().signal });
 ```
 
-验证并限定 Node **24.14.1** 内置 `node:sqlite` / SQLite **3.51.2**；其他 runtime 明确拒绝，不自动切换 driver。该 Node API 仍带 experimental 标记。包不依赖 native addon、模型 SDK、UI 或 Rust sidecar；peer `ai-contract` 固定0.1.0，组合根安装同一份契约 artifact。
+验证并限定 Node **24.14.1** 内置 `node:sqlite` / SQLite **3.51.2**；其他 runtime 明确拒绝，不自动切换 driver。该 Node API 仍带 experimental 标记。包不依赖 native addon、模型 SDK、UI 或 Rust sidecar；peer `ai-contract` 与 `ai-host` 固定0.1.0；仅消费后者的 `launch-fence` 入口，组合根安装同一份契约及生命周期 artifact。
 
 一个 Host 独占整个数据库。唯一长连接在访问 WAL 前设置 `locking_mode=EXCLUSIVE`，完成真实写事务后才返回成功；事务结束仍保留所有权。第二个进程、诊断连接或其他 Host 的打开请求会有界失败。关闭或进程死亡释放锁，随后新 Host 可打开。数据库必须放在本机文件系统，不能把网络共享文件当作多 Host 协调器。
 
@@ -85,3 +85,6 @@ SQLite 扩展结果码按低8位取得稳定 primary code，再投影到产品 F
 | 未知错误与其它 I/O 故障 | unavailable | never |
 
 损坏或未知 I/O 不触发盲目重放、自动删除或重建。双进程测试在 contender 内计量实际 open 耗时，对 busyTimeoutMs=50ms 要求 <1000ms 宽松上界，并验证明确的 unavailable/same_command；进程启动耗时不混入锁等待测量。重启后的 reconciliation 使用 A01 的 VerifiedProviderSession 实际调用凭证，不能再手写 not_submitted 结构授权重新派发。Id 验证直接使用 A01 从唯一 schema 编译的 isId，无复制正则。
+
+
+A03 的 `WorkerLaunchFenceStore` 独立于 `SessionStore`，SQLite 对象同时实现两者。`worker_launches` 启动 fence（namespace / launchId / artifact，registered 时附带 rootPid / pgid）。reserve 发生在原生 Session 创建前，故不持有 sessions 外键；登记和清除均按原 launchId CAS。它不赋予重启 Host 向旧 PID 发信号的权限。`recoverUnavailable` 在无法准入原生会话时原子保留旧身份与普通队列、冻结未决派发及旧回调。列表包括 active / recovery_required，recovery 排除 acknowledged / cancelled。保持 schema version 1，直接协同替换，无迁移或旧格式兼容分支。
