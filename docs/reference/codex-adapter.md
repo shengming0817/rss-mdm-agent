@@ -20,6 +20,6 @@
 
 固定真实进程测试提供原生流、恢复、fork、steer、取消、HTTP 错误、MCP 接入与旁路拒绝的证据；Responses 本地测试服务不是真实模型。独立消费/模型 smoke 的源码与产物摘要保存在可再生本地 receipt，最终结果随 PR 留痕。macOS arm64 之外的受控模式、真实模型和产品装配必须分别补证，不能从生成类型或一个平台外推。
 
-PR #1058 本轮修复新增核对：Rust std `process::Command` 的 PATH 查找与 `env_clear`；固定 Codex `core/src/git_info` 的原生命令查找；[tracing-appender non_blocking.rs](https://github.com/tokio-rs/tracing/blob/tracing-appender-0.2.3/tracing-appender/src/non_blocking.rs) 的 lossy/drop counter。采用封闭进程搜索路径、诊断丢弃计数与 A01 三端口，未引入对应 Rust 依赖。恶意 git shim 在真实 Git 工作目录/固定 app-server 上先复现、后拒绝执行。合入 develop 的 DeepSeek 启动器同类 PATH 继承一并封闭，三个 provider 均不继承宿主可执行搜索目录。
+PR #1058 本轮修复新增核对：Rust std `process::Command` 的 PATH 查找与 `env_clear`；固定 Codex `git-utils/src/operations.rs` 的原生命令查找；[tracing-appender non_blocking.rs](https://github.com/tokio-rs/tracing/blob/tracing-appender-0.2.3/tracing-appender/src/non_blocking.rs) 的 lossy/drop counter。采用封闭进程搜索路径、诊断丢弃计数与 A01 三端口，未引入对应 Rust 依赖。恶意 git shim 在真实 Git 工作目录/固定 app-server 上先复现、后拒绝执行。合入 develop 的 DeepSeek 启动器同类 PATH 继承一并封闭，三个 provider 均不继承宿主可执行搜索目录。
 
 真实模型 smoke 参考 [OpenAI Responses 回执](https://developers.openai.com/api/reference/typescript/resources/beta/subresources/responses/methods/create) 的 response.completed/model/id/status，仅将固定 TLS peer 实际返回的模型身份作为可信后端声明；不以请求模型名或模型回答自报身份。非官方转发网关不在该验收入口的信任范围。未提供明确凭据时 real_model 为 not_run，#2405 不自动关闭；本地替身的 nonce 连续性正反例只证明协议与脚本判定。
