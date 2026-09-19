@@ -66,12 +66,14 @@ export function packHost(root, directory, application = false) {
           typescript: versions.typescript,
           "@types/node": versions["@types/node"],
         },
-        pnpm: { overrides: dependencies },
       },
       null,
       2,
     ),
   );
-  writeFileSync(join(directory, "pnpm-workspace.yaml"), "packages: []\n");
+  writeFileSync(
+    join(directory, "pnpm-workspace.yaml"),
+    JSON.stringify({ packages: [], overrides: dependencies }, null, 2),
+  );
   return artifacts;
 }
