@@ -7,6 +7,46 @@ use std::sync::{Arc, Barrier};
 use support::*;
 
 #[test]
+fn execution_by_request_restores_exact_plan_and_checks_current_reader() {
+    let db = Database::new();
+    let host = TestHost::new(1);
+    let mut store = db.create();
+    host.prepare(&mut store);
+    drop(store);
+    let store = db.open();
+    let request = &host.plan.spec().request.request_id;
+    let restored = store.execution_by_request(request, &host).unwrap();
+    assert_eq!(restored.plan().digest(), host.plan.digest());
+    assert_eq!(restored.snapshot().revision, 1);
+    assert_eq!(store.trust_revision(&host.scope(), &host).unwrap(), Some(1));
+    let mut denied = host.clone();
+    denied.read = false;
+    assert!(matches!(
+        store.execution_by_request(request, &denied),
+        Err(Error::Denied)
+    ));
+    denied.denied.push(Access::ManageTrust);
+    assert_eq!(
+        store.trust_revision(&host.scope(), &denied),
+        Err(Error::Denied)
+    );
+    assert!(matches!(
+        store.execution_by_request(&RequestId::new("missing").unwrap(), &host),
+        Err(Error::NotFound)
+    ));
+    db.sql()
+        .execute(
+            "UPDATE executions SET plan=zeroblob(?1)",
+            [limits().plan.max_input_bytes + 1],
+        )
+        .unwrap();
+    assert!(matches!(
+        store.execution_by_request(request, &host),
+        Err(Error::Corrupt)
+    ));
+}
+
+#[test]
 fn initialize_and_reopen_preserve_authority_and_reject_implicit_creation() {
     let db = Database::new();
     let authority = plan().spec().request.authority.clone();

@@ -6,6 +6,35 @@ use execution_lifecycle::{self as lifecycle, Command, Execution};
 use rusqlite::{params, Connection};
 
 impl Store {
+    /// Restore by stable business request identity after reconnect or restart. The stored scope
+    /// is authenticated before any plan or state is returned. No dispatch action is recoverable.
+    pub fn execution_by_request(
+        &self,
+        request: &execution_contract::RequestId,
+        host: &impl Host,
+    ) -> Result<Execution, Error> {
+        let tx = self.conn.unchecked_transaction()?;
+        crate::database::ensure_current(&tx, &self.authority, self.limits)?;
+        let bytes: Vec<u8> = tx.query_row(
+            &format!(
+                "SELECT {} FROM executions WHERE request_id=?1",
+                bounded_blob("plan", self.limits.plan.max_input_bytes)
+            ),
+            [request.as_str()],
+            |row| row.get(0),
+        )?;
+        let spec = execution_contract::decode_plan(&bytes, &self.limits.plan)
+            .map_err(|_| Error::Corrupt)?;
+        let plan = FrozenPlan::freeze(spec, &self.limits.plan).map_err(|_| Error::Corrupt)?;
+        let scope = Scope::from_plan(&plan);
+        self.check_scope(&scope)?;
+        authorize(host, Access::ReadResult, &scope, None)?;
+        if &plan.spec().request.request_id != request {
+            return Err(Error::Corrupt);
+        }
+        Ok(load_execution(&tx, &scope, self.limits)?.1)
+    }
+
     /// Register one immutable bounded plan. No preparation, approval or runner action is implied.
     pub fn open_execution(
         &mut self,

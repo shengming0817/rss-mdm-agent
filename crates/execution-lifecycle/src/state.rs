@@ -59,6 +59,10 @@ impl Execution {
     pub fn snapshot(&self) -> &Snapshot {
         &self.snapshot
     }
+    /// Borrow the exact immutable plan restored with these facts; this grants no dispatch authority.
+    pub fn plan(&self) -> &FrozenPlan {
+        &self.plan
+    }
     /// Cumulative output across attempts, saturating at the integer ceiling.
     /// Saturation can only exhaust a budget, never replenish it.
     pub fn total_output_bytes(&self) -> u64 {
