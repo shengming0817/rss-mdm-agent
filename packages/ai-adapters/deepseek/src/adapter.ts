@@ -4,6 +4,7 @@ import {
   decode,
   fingerprint,
   isId,
+  withinBudget,
 } from "@rss-mdm-agent/ai-contract";
 import {
   providerIdentity,
@@ -174,134 +175,143 @@ export class DeepSeekAdapter implements ProviderAgentPort {
     previous?: Binding,
   ): Promise<Result<ProviderSessionBinding>> {
     try {
-      const c = {
-        ...configuration,
-        namespace: copy(configuration.namespace),
-        config: copy(configuration.config),
-      };
-      if (!liveBudget(budget)) return fail("unavailable");
-      const start = Date.now();
-      const remaining = () => ({
-        ...budget,
-        signal: AbortSignal.any([budget.signal, this.lifetime.signal]),
-        timeoutMs: Math.max(0, budget.timeoutMs - (Date.now() - start)),
-      });
-      const resolved = await bounded(
-        this.options.resolveConfiguration(
-          { config: copy(c.config), accountRef: c.accountRef },
-          remaining(),
-        ),
-        remaining(),
+      return await withinBudget(
+        () => budget,
+        async (scoped) => {
+          const c = {
+            ...configuration,
+            namespace: copy(configuration.namespace),
+            config: copy(configuration.config),
+          };
+          const start = Date.now();
+          const remaining = () => ({
+            ...scoped,
+            timeoutMs: Math.max(0, scoped.timeoutMs - (Date.now() - start)),
+          });
+          const resolved = await bounded(
+            this.options.resolveConfiguration(
+              { config: copy(c.config), accountRef: c.accountRef },
+              remaining(),
+            ),
+            remaining(),
+          );
+          if (this.closed || !liveBudget(remaining()))
+            return fail("unavailable");
+          try {
+            validateConfiguration(c, resolved);
+          } catch {
+            this.diagnose({
+              stage: "configuration",
+              reason: "configuration_rejected",
+            });
+            throw new NativeFault("configuration_rejected");
+          }
+          const prefix = sessionPrefix(c, resolved, COMPOSITION_ID);
+          const providerVersion = `harness-${HARNESS_VERSION}.${COMPOSITION_ID}`;
+          if (
+            previous &&
+            (previous.provider !== "deepseek" ||
+              previous.providerVersion !== providerVersion ||
+              previous.adapterVersion !== ADAPTER_VERSION ||
+              previous.workspaceId !== workspaceIdentity(c.workingDirectory) ||
+              previous.accountRef !== c.accountRef ||
+              !same(previous.config, c.config) ||
+              !previous.nativeSessionId.startsWith(prefix))
+          )
+            return fail("stale_binding");
+          const binding: Binding = {
+            provider: "deepseek",
+            providerVersion,
+            adapterVersion: ADAPTER_VERSION,
+            config: copy(c.config),
+            accountRef: c.accountRef,
+            workspaceId: workspaceIdentity(c.workingDirectory),
+            generation: randomUUID(),
+            nativeSessionId: previous?.nativeSessionId ?? prefix + randomUUID(),
+            ...(previous?.nativeRunId
+              ? { nativeRunId: previous.nativeRunId }
+              : {}),
+            ...(previous?.nativeRequestId
+              ? { nativeRequestId: previous.nativeRequestId }
+              : {}),
+          };
+          this.configuration = c;
+          this.resolved = { ...resolved, configuration: c };
+          this.binding = binding;
+          const runtime = this.factory();
+          this.runtime = runtime;
+          runtime.onEvent((e) => {
+            try {
+              this.event(e);
+            } catch {
+              this.invalidate();
+            }
+          });
+          void runtime.stopped.then(
+            () => {
+              if (!this.closed) this.invalidate();
+            },
+            () => {
+              if (!this.closed) this.invalidate();
+            },
+          );
+          if (this.closed) {
+            runtime.stop();
+            return fail("unavailable");
+          }
+          const result = await this.call(
+            "initialize",
+            {
+              nativeSessionId: binding.nativeSessionId,
+              workingDirectory: c.workingDirectory,
+              persistenceDirectory: resolved.persistenceDirectory,
+              scope: digest(identity(c)),
+              model: resolved.model,
+              apiKey: resolved.apiKey,
+              apiUrl: API_URL,
+              controlled: c.permissions === "host_mediated",
+              restore: !!previous,
+              composition: COMPOSITION_ID,
+              ...(previous?.nativeRequestId
+                ? { previousRequestId: previous.nativeRequestId }
+                : {}),
+            },
+            remaining(),
+          );
+          if (
+            this.closed ||
+            this.failed ||
+            !liveBudget(remaining()) ||
+            result.composition !== COMPOSITION_ID ||
+            result.nativeSessionId !== binding.nativeSessionId ||
+            result.activation !== ACTIVE_PROFILE_ID ||
+            result.observationOnly !== !!previous
+          )
+            throw new NativeFault("profile_drift");
+          this.restored = !!previous;
+          if (previous?.nativeRequestId && result.previousTerminal !== true)
+            this.unresolved.add(previous.nativeRequestId);
+          return ok({
+            binding: copy(binding),
+            capabilities: {
+              continuation: "across_processes",
+              cancellation: "request_only",
+              tools:
+                c.permissions === "host_mediated"
+                  ? "host_mediated"
+                  : "disabled",
+              queue: "unsupported",
+              steer: "unsupported",
+              fork: "unsupported",
+              subagent: "unsupported",
+              terminal: "unsupported",
+              structuredQuestion: "supported",
+              multimodal: "unsupported",
+            },
+          });
+        },
+        this.lifetime.signal,
       );
-      if (this.closed || !liveBudget(remaining())) return fail("unavailable");
-      try {
-        validateConfiguration(c, resolved);
-      } catch {
-        this.diagnose({
-          stage: "configuration",
-          reason: "configuration_rejected",
-        });
-        throw new NativeFault("configuration_rejected");
-      }
-      const prefix = sessionPrefix(c, resolved, COMPOSITION_ID);
-      const providerVersion = `harness-${HARNESS_VERSION}.${COMPOSITION_ID}`;
-      if (
-        previous &&
-        (previous.provider !== "deepseek" ||
-          previous.providerVersion !== providerVersion ||
-          previous.adapterVersion !== ADAPTER_VERSION ||
-          previous.workspaceId !== workspaceIdentity(c.workingDirectory) ||
-          previous.accountRef !== c.accountRef ||
-          !same(previous.config, c.config) ||
-          !previous.nativeSessionId.startsWith(prefix))
-      )
-        return fail("stale_binding");
-      const binding: Binding = {
-        provider: "deepseek",
-        providerVersion,
-        adapterVersion: ADAPTER_VERSION,
-        config: copy(c.config),
-        accountRef: c.accountRef,
-        workspaceId: workspaceIdentity(c.workingDirectory),
-        generation: randomUUID(),
-        nativeSessionId: previous?.nativeSessionId ?? prefix + randomUUID(),
-        ...(previous?.nativeRunId ? { nativeRunId: previous.nativeRunId } : {}),
-        ...(previous?.nativeRequestId
-          ? { nativeRequestId: previous.nativeRequestId }
-          : {}),
-      };
-      this.configuration = c;
-      this.resolved = { ...resolved, configuration: c };
-      this.binding = binding;
-      const runtime = this.factory();
-      this.runtime = runtime;
-      runtime.onEvent((e) => {
-        try {
-          this.event(e);
-        } catch {
-          this.invalidate();
-        }
-      });
-      void runtime.stopped.then(
-        () => {
-          if (!this.closed) this.invalidate();
-        },
-        () => {
-          if (!this.closed) this.invalidate();
-        },
-      );
-      if (this.closed) {
-        runtime.stop();
-        return fail("unavailable");
-      }
-      const result = await this.call(
-        "initialize",
-        {
-          nativeSessionId: binding.nativeSessionId,
-          workingDirectory: c.workingDirectory,
-          persistenceDirectory: resolved.persistenceDirectory,
-          scope: digest(identity(c)),
-          model: resolved.model,
-          apiKey: resolved.apiKey,
-          apiUrl: API_URL,
-          controlled: c.permissions === "host_mediated",
-          restore: !!previous,
-          composition: COMPOSITION_ID,
-          ...(previous?.nativeRequestId
-            ? { previousRequestId: previous.nativeRequestId }
-            : {}),
-        },
-        remaining(),
-      );
-      if (
-        this.closed ||
-        this.failed ||
-        !liveBudget(remaining()) ||
-        result.composition !== COMPOSITION_ID ||
-        result.nativeSessionId !== binding.nativeSessionId ||
-        result.activation !== ACTIVE_PROFILE_ID ||
-        result.observationOnly !== !!previous
-      )
-        throw new NativeFault("profile_drift");
-      this.restored = !!previous;
-      if (previous?.nativeRequestId && result.previousTerminal !== true)
-        this.unresolved.add(previous.nativeRequestId);
-      return ok({
-        binding: copy(binding),
-        capabilities: {
-          continuation: "across_processes",
-          cancellation: "request_only",
-          tools:
-            c.permissions === "host_mediated" ? "host_mediated" : "disabled",
-          queue: "unsupported",
-          steer: "unsupported",
-          fork: "unsupported",
-          subagent: "unsupported",
-          terminal: "unsupported",
-          structuredQuestion: "supported",
-          multimodal: "unsupported",
-        },
-      });
     } catch (error) {
       this.diagnose({
         stage: "initialize",
@@ -579,41 +589,43 @@ export class DeepSeekAdapter implements ProviderAgentPort {
       return;
     }
     const proposalId = e.callbackId,
-      b = {
-        timeoutMs: 30000,
-        signal: AbortSignal.any([
-          this.lifetime.signal,
-          AbortSignal.timeout(30000),
-        ]),
-      };
-    this.emit(t, { type: "tool_proposal", proposalId, ...copy(e.proposal) });
-    let value: {
-      disposition: "returned" | "rejected" | "unavailable";
-      text: string;
-    } = { disposition: "unavailable", text: "Tool unavailable" };
-    try {
-      const result = await bounded(
-        this.configuration.tools.propose(copy(e.proposal), b),
-        b,
-      );
-      if (
-        result.ok &&
-        ["returned", "rejected", "unavailable"].includes(
-          result.value.disposition,
-        ) &&
-        typeof result.value.text === "string"
-      )
-        value = copy(result.value);
-    } catch {
-      /* Native errors and secrets do not cross the port. */
-    }
-    if (this.closed || this.failed || t.outcome || this.active !== t) return;
-    try {
-      this.emit(t, { type: "tool_result", proposalId, ...value });
-      await this.call("tool_result", { callbackId: proposalId, value }, b);
-    } catch {
-      this.invalidate();
-    }
+      proposal = copy(e.proposal),
+      endpoint = this.configuration.tools;
+    await withinBudget(
+      () => ({ timeoutMs: 30000, signal: this.lifetime.signal }),
+      async (b) => {
+        this.emit(t, {
+          type: "tool_proposal",
+          proposalId,
+          ...proposal,
+        });
+        let value: {
+          disposition: "returned" | "rejected" | "unavailable";
+          text: string;
+        } = { disposition: "unavailable", text: "Tool unavailable" };
+        try {
+          const result = await bounded(endpoint.propose(proposal, b), b);
+          if (
+            result.ok &&
+            ["returned", "rejected", "unavailable"].includes(
+              result.value.disposition,
+            ) &&
+            typeof result.value.text === "string"
+          )
+            value = copy(result.value);
+        } catch {
+          /* Native errors and secrets do not cross the port. */
+        }
+        if (this.closed || this.failed || t.outcome || this.active !== t)
+          return;
+        try {
+          this.emit(t, { type: "tool_result", proposalId, ...value });
+          await this.call("tool_result", { callbackId: proposalId, value }, b);
+        } catch {
+          this.invalidate();
+        }
+      },
+    ).catch(() => this.invalidate());
   }
   private unavailable(t: Turn, id: string) {
     const c = t.callbacks.get(id);

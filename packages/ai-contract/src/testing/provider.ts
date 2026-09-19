@@ -85,7 +85,8 @@ export class ScriptedProvider implements ProviderAgentPort {
       canonicalize(binding) !== canonicalize(this.binding) ||
       command.input.type !== "prompt" ||
       attempt.observerGeneration !== binding.generation ||
-      attempt.nativeSessionId !== binding.nativeSessionId
+      attempt.nativeSessionId !== binding.nativeSessionId ||
+      attempt.nativeThreadId !== binding.nativeThreadId
     )
       return {
         certainty: "not_sent",
@@ -185,6 +186,9 @@ export async function runProviderConformance(
           originGeneration: binding.generation,
           observerGeneration: binding.generation,
           nativeSessionId: binding.nativeSessionId,
+          ...(binding.nativeThreadId
+            ? { nativeThreadId: binding.nativeThreadId }
+            : {}),
           certainty: "intent",
         };
         const submission = await withinBudget(budget, (b) =>

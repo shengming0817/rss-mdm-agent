@@ -19,13 +19,17 @@ export const nativeRuntime: RuntimeFactory = (options, prompts) => {
     options: {
       ...options,
       spawnClaudeCodeProcess: (spec) => {
-        const child = spawn(spec.command, spec.args, {
-          cwd: spec.cwd,
-          env: spec.env,
-          signal: spec.signal,
-          stdio: ["pipe", "pipe", "pipe"],
-          windowsHide: true,
-        });
+        const child = spawn(
+          spec.command === "node" ? process.execPath : spec.command,
+          spec.args,
+          {
+            cwd: spec.cwd,
+            env: spec.env,
+            signal: spec.signal,
+            stdio: ["pipe", "pipe", "pipe"],
+            windowsHide: true,
+          },
+        );
         child.stderr.resume(); // SDK diagnostics can contain prompts/credentials; never forward them.
         child.once("exit", () => stopped.resolve());
         child.once("error", () => {

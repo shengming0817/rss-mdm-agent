@@ -1,0 +1,37 @@
+{
+  "name": "@rss-mdm-agent/ai-adapter-codex",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "protocol-manifest.json",
+    "protocol-LICENSE",
+    "protocol-NOTICE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js"
+    }
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@rss-mdm-agent/ai-contract": "workspace:*",
+    "@openai/codex": "0.155.0",
+    "@modelcontextprotocol/sdk": "1.30.0"
+  }
+}

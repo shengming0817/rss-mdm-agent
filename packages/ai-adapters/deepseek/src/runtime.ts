@@ -19,10 +19,13 @@ import { bounded, copy, deferred, liveBudget } from "./support.js";
 /** One private fixed-operation IPC channel. The spawn seam is internal only. */
 export function nativeRuntime(spawn: typeof fork = fork): NativeRuntime {
   const env: Record<string, string> = {};
-  for (const key of ["PATH", "SystemRoot", "WINDIR", "TEMP", "TMP", "TMPDIR"])
+  for (const key of ["SystemRoot", "WINDIR", "TEMP", "TMP", "TMPDIR"])
     if (process.env[key]) env[key] = process.env[key]!;
   const home = mkdtempSync(join(tmpdir(), "rss-deepseek-"));
   env.DSH_HOME = home;
+  env.PATH =
+    process.platform === "win32" ? join(home, "empty-bin") : "/usr/bin:/bin";
+  env.NoDefaultCurrentDirectoryInExePath = "1";
   const stopped = deferred<void>();
   const pending = new Map<
     number,

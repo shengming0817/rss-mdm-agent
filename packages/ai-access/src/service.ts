@@ -596,7 +596,11 @@ export function createAccessService(options: AccessOptions) {
       const s = await session(peer, params.sessionId, signal);
       cancelPermissions(peer.caller, params.sessionId);
       let continuation: string | undefined;
-      const active: string[] = [];
+      const accepted: string[] = [],
+        turns = new Map<
+          string,
+          { commandId: string; policy: "queue_next" | "steer" }
+        >();
       do {
         const page = value(
           await host.snapshotPage(
@@ -606,17 +610,48 @@ export function createAccessService(options: AccessOptions) {
             budget(signal),
           ),
         );
-        for (const record of page.commands)
+        for (const record of page.commands) {
           if (
-            record.command.input.type === "prompt" &&
-            record.state !== "terminal" &&
-            (!record.dispatch ||
-              record.dispatch.nativeRunId === s.binding.nativeRunId)
+            record.command.input.type !== "prompt" ||
+            record.state === "terminal" ||
+            record.state === "invalidated"
           )
-            active.push(record.command.commandId);
+            continue;
+          const dispatch = record.dispatch;
+          if (!dispatch) {
+            if (record.state === "accepted")
+              accepted.push(record.command.commandId);
+            continue;
+          }
+          if (
+            dispatch.observerGeneration !== s.binding.generation ||
+            dispatch.nativeSessionId !== s.binding.nativeSessionId ||
+            dispatch.nativeThreadId !== s.binding.nativeThreadId ||
+            dispatch.nativeRunId !== s.binding.nativeRunId
+          )
+            continue;
+          const key = JSON.stringify([
+              dispatch.nativeSessionId,
+              dispatch.nativeThreadId ?? null,
+              dispatch.nativeRunId ?? null,
+            ]),
+            current = turns.get(key),
+            candidate = {
+              commandId: record.command.commandId,
+              policy: record.command.input.policy,
+            };
+          if (
+            !current ||
+            (current.policy === "steer" && candidate.policy === "queue_next")
+          )
+            turns.set(key, candidate);
+        }
         continuation = page.next;
       } while (continuation);
-      for (const targetCommandId of active) {
+      for (const targetCommandId of [
+        ...accepted,
+        ...[...turns.values()].map((turn) => turn.commandId),
+      ]) {
         await submit(
           peer,
           {

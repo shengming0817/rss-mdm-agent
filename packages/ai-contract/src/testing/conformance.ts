@@ -752,6 +752,13 @@ export async function dispatchCommand(
     originGeneration: session.binding.generation,
     observerGeneration: session.binding.generation,
     nativeSessionId: session.binding.nativeSessionId,
+    ...(session.binding.nativeThreadId
+      ? { nativeThreadId: session.binding.nativeThreadId }
+      : {}),
+    ...(record.command.input.type === "prompt" &&
+    record.command.input.policy === "steer"
+      ? { nativeRunId: record.command.input.targetRunId }
+      : {}),
     certainty: "intent",
   };
   const preparing: CommandRecord = {
