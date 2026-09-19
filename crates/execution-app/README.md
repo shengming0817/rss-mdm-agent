@@ -8,6 +8,7 @@ C19 的 Rust 组合根，连接 C06 能力、C07 唯一授权裁决、C08 批准
 - `submit(request, frozen_plan)` 保持原 request/plan/digest。相同业务请求返回现存状态，不重新准入、消费审批或派发；不同内容冲突。内部日志 ID 由 authority/request/阶段/命令确定性派生，没有第二套请求映射表。
 - `advance(request, command)` 是服务 owner 的显式新尝试，不是提交重放。能力预检 → 可信快照 CAS → 事务内当前能力/C07/C08 → 批准消费、意图、审计、回执原子提交 → 当前取消/预算/能力检查 → 消费一次性派发值。
 - `reconcile` 只获取可信 runner 的终止和独立效果事实，不产生新尝试。退出零不等于已核实；丢失 runner 记录保持 Unknown，不根据计划合成结果。首次派发值不能序列化、复制或从数据库恢复。
+- 未确认派发以 `DispatchUnconfirmed` 保存精确 attempt 与门控拒绝/runner 拒绝/投递未知/runner 错误的闭集原因；C18 审计在陈旧或拒绝事件上也保留它们。原因不替代终止/效果证据，不退款或触发重派。
 - `cancel` 先持久化取消再请求 stop；确认收到 stop 不等于已终止或已回滚。降级状态仍可读、取消和核对。
 - 交互 `open_interaction/interaction/respond` 使用 C04/C18，答案和管理员记录引用均不是执行批准；显式新尝试仍由可信 host 提供 C08 事实。交互回答不自动续跑任务。
 - `pull_results/confirm` 逐事件可靠投递，消费者先持久处理再确认；查询/确认不派发。`audit` 另需当前 ReadAudit 权限。

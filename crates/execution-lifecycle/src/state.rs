@@ -263,6 +263,12 @@ impl Execution {
                 a.dispatch = DispatchState::Dispatched;
             }
             Command::Cancel => next.cancel_requested = true,
+            Command::DispatchUnconfirmed { attempt_id, .. } => {
+                let a = current_attempt(&mut next, attempt_id)?;
+                if a.termination.is_none() {
+                    a.dispatch = a.dispatch.uncertain();
+                }
+            }
             Command::Recover => {
                 if let Some(a) = &mut next.attempt {
                     if a.termination.is_none() {

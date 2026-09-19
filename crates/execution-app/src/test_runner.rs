@@ -19,6 +19,8 @@ pub enum TestScenario {
     RejectBeforeDispatch,
     /// Lose the delivery acknowledgement and retain uncertainty.
     Unknown,
+    /// Return a closed runner error after receiving the first delivery, with no reliable facts.
+    Unavailable,
     /// Quiescent no-effect result, eligible for a separately authorized attempt.
     NoEffect,
 }
@@ -90,6 +92,9 @@ impl RunnerPort for DeterministicTestRunner {
                     assessment: None,
                 },
             );
+            if self.scenario == TestScenario::Unavailable {
+                return Err(Error::Unavailable);
+            }
             Ok(match self.scenario {
                 TestScenario::RejectBeforeDispatch => DispatchOutcome::NeverDispatched,
                 TestScenario::Unknown => DispatchOutcome::OutcomeUnknown,
@@ -121,8 +126,10 @@ impl RunnerPort for DeterministicTestRunner {
         if record.plan.digest() != plan.digest() {
             return Err(Error::Conflict);
         }
-        if record.scenario == TestScenario::Unknown
-            || (record.scenario == TestScenario::Wait && !record.cancelled)
+        if matches!(
+            record.scenario,
+            TestScenario::Unknown | TestScenario::Unavailable
+        ) || (record.scenario == TestScenario::Wait && !record.cancelled)
         {
             return Ok(None);
         }

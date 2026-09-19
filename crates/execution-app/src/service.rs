@@ -241,12 +241,28 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             drop(action);
             Ok(DispatchOutcome::OutcomeUnknown)
         };
-        let command = if matches!(outcome, Ok(DispatchOutcome::Accepted)) {
-            Command::Dispatched {
-                attempt_id: attempt.clone(),
-            }
+        let cause = if !gated {
+            Some(execution_lifecycle::DispatchCause::GateRejected)
         } else {
-            Command::Recover
+            match outcome {
+                Ok(DispatchOutcome::Accepted) => None,
+                Ok(DispatchOutcome::NeverDispatched) => {
+                    Some(execution_lifecycle::DispatchCause::RunnerRejected)
+                }
+                Ok(DispatchOutcome::OutcomeUnknown) => {
+                    Some(execution_lifecycle::DispatchCause::DeliveryUnknown)
+                }
+                Err(_) => Some(execution_lifecycle::DispatchCause::RunnerError),
+            }
+        };
+        let command = match cause {
+            None => Command::Dispatched {
+                attempt_id: attempt.clone(),
+            },
+            Some(cause) => Command::DispatchUnconfirmed {
+                attempt_id: attempt.clone(),
+                cause,
+            },
         };
         self.event(
             &execution,

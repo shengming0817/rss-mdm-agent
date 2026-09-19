@@ -166,6 +166,19 @@ pub struct AttemptSnapshot {
     /// Cumulative output including discarded bytes; final and immutable after termination.
     pub output_bytes: u64,
 }
+/// Closed first-delivery diagnostics. These are not observations of termination or effects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DispatchCause {
+    /// The current host gate no longer allowed first delivery.
+    GateRejected,
+    /// Runner reported rejection; reconciliation still needs authoritative evidence.
+    RunnerRejected,
+    /// Delivery or acknowledgement could not be established.
+    DeliveryUnknown,
+    /// Runner returned a closed error; provider text is never persisted here.
+    RunnerError,
+}
 /// Host commands. They never perform I/O or constitute dispatch permissions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
@@ -192,6 +205,14 @@ pub enum Command {
     Dispatched {
         /// Current attempt only.
         attempt_id: AttemptId,
+    },
+    /// Retain a first-delivery diagnostic while requiring reconciliation, never refunding an
+    /// attempt or treating a runner rejection report as proof of quiescence/no effect.
+    DispatchUnconfirmed {
+        /// Exact attempted delivery, retained in the audit even if stale or rejected.
+        attempt_id: AttemptId,
+        /// Static, value-free diagnosis distinct from a generic host restart.
+        cause: DispatchCause,
     },
     /// Request cancellation; does not terminate or roll back any effects.
     Cancel,

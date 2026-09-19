@@ -103,6 +103,7 @@ impl Store {
         });
         let access = match event.command {
             Command::Dispatched { .. }
+            | Command::DispatchUnconfirmed { .. }
             | Command::Observe { .. }
             | Command::Output { .. }
             | Command::Recover => Access::RunnerFact,
@@ -134,10 +135,14 @@ impl Store {
         audit.attempt_id = match &event.command {
             Command::BeginAttempt { attempt_id, .. }
             | Command::Dispatched { attempt_id }
+            | Command::DispatchUnconfirmed { attempt_id, .. }
             | Command::Observe { attempt_id, .. }
             | Command::Output { attempt_id, .. } => Some(attempt_id.clone()),
             Command::Prepare | Command::Wait | Command::Cancel | Command::Recover => None,
         };
+        if let Command::DispatchUnconfirmed { cause, .. } = &event.command {
+            audit.dispatch_cause = Some(*cause);
+        }
         let gate = if let Command::BeginAttempt { attempt_id, .. } = &event.command {
             audit.submitted_approvals = bindings.iter().map(ApprovalBindingAudit::from).collect();
             let Some(h) = head(&w.tx, scope, w.limits)? else {

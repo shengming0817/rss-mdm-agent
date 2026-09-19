@@ -320,6 +320,7 @@ impl Write<'_> {
 }
 pub(crate) fn empty_audit(reason: AuditReason) -> AuditRecord {
     AuditRecord {
+        dispatch_cause: None,
         event: None,
         attempt_id: None,
         reason,

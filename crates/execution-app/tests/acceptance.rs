@@ -600,3 +600,43 @@ fn same_observation_can_commit_after_a_concurrent_cancel_advances_revision() {
     assert_eq!(completed.evidence.len(), 2);
     assert_eq!(runner.dispatch_count(), 1);
 }
+
+#[test]
+fn unconfirmed_dispatch_audit_preserves_attempt_and_closed_cause_after_restart() {
+    use execution_lifecycle::DispatchCause;
+    for (scenario, gate_failure, expected) in [
+        (TestScenario::Complete, true, DispatchCause::GateRejected),
+        (
+            TestScenario::RejectBeforeDispatch,
+            false,
+            DispatchCause::RunnerRejected,
+        ),
+        (TestScenario::Unknown, false, DispatchCause::DeliveryUnknown),
+        (TestScenario::Unavailable, false, DispatchCause::RunnerError),
+    ] {
+        let db = Database::new();
+        let host = TestHost::new();
+        let p = plan();
+        let r = &p.spec().request.request_id;
+        if gate_failure {
+            host.state.lock().unwrap().block_capability_on = 3;
+        }
+        let runner = DeterministicTestRunner::new(id("test-runner"), scenario, 16).unwrap();
+        let mut app = open(&db, host.clone(), runner.clone(), Startup::CreateTest);
+        let accepted = app.submit(r, &p).unwrap();
+        assert_eq!(accepted.phase, TaskPhase::OutcomeUnknown);
+        drop(app);
+        let app = open(&db, host, runner, Startup::OpenTest);
+        let records = app.pull_results(r, &id("audit-consumer"), 64).unwrap();
+        let mut causes = vec![];
+        for receipt in records {
+            let audit = app.audit(r, &receipt.operation_id).unwrap();
+            if let Some(cause) = audit.dispatch_cause {
+                assert_eq!(audit.attempt_id, accepted.attempt_id);
+                assert_eq!(receipt.attempt_id, accepted.attempt_id);
+                causes.push(cause);
+            }
+        }
+        assert_eq!(causes, vec![expected]);
+    }
+}

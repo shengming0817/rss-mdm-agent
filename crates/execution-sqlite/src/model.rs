@@ -545,6 +545,9 @@ pub struct AuditRecord {
     pub event: Option<AuditEvent>,
     /// Exact submitted attempt, including rejected admission.
     pub attempt_id: Option<AttemptId>,
+    /// Exact first-delivery diagnosis, independent of subsequent lifecycle rejection/staleness.
+    /// Never proof of termination, no effect or permission to dispatch again.
+    pub dispatch_cause: Option<execution_lifecycle::DispatchCause>,
     /// Stable closed storage/core classification.
     pub reason: AuditReason,
     /// Protected trust head at evaluation, absent if unavailable.

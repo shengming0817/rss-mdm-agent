@@ -7,6 +7,46 @@ use std::sync::{Arc, Barrier};
 use support::*;
 
 #[test]
+fn dispatch_diagnostics_keep_submitted_attempt_and_cause_even_when_stale_or_rejected() {
+    for (revision, expected) in [(0, Outcome::Stale), (1, Outcome::Rejected)] {
+        let db = Database::new();
+        let host = TestHost::new(0);
+        let mut store = db.create();
+        host.prepare(&mut store);
+        let attempt = AttemptId::new("submitted-attempt").unwrap();
+        let command = event(
+            "diagnostic",
+            revision,
+            lifecycle::Command::DispatchUnconfirmed {
+                attempt_id: attempt.clone(),
+                cause: lifecycle::DispatchCause::RunnerError,
+            },
+        );
+        let result = store
+            .apply_execution(
+                &operation("diagnostic"),
+                &host.scope(),
+                &command,
+                &[],
+                &host,
+            )
+            .unwrap();
+        assert_eq!(result.receipt().outcome, expected);
+        assert_eq!(result.receipt().attempt_id, Some(attempt.clone()));
+        drop(store);
+        let audit = db
+            .open()
+            .audit(&host.scope(), &operation("diagnostic"), &host)
+            .unwrap();
+        assert_eq!(audit.attempt_id, Some(attempt));
+        assert_eq!(
+            audit.dispatch_cause,
+            Some(lifecycle::DispatchCause::RunnerError)
+        );
+    }
+}
+
+#[test]
 fn execution_by_request_restores_exact_plan_and_checks_current_reader() {
     let db = Database::new();
     let host = TestHost::new(1);
