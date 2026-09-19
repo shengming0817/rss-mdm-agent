@@ -1,22 +1,7 @@
 // @ts-nocheck
 // @generated from canonical schemas; do not edit.
-const helper0 = function ucs2length(str) {
-  const len = str.length;
-  let length = 0;
-  let pos = 0;
-  let value;
-  while (pos < len) {
-    length++;
-    value = str.charCodeAt(pos++);
-    if (value >= 0xd800 && value <= 0xdbff && pos < len) {
-      // high surrogate, and there is a next character
-      value = str.charCodeAt(pos);
-      if ((value & 0xfc00) === 0xdc00) pos++; // low surrogate
-    }
-  }
-  return length;
-};
-("use strict");
+
+"use strict";
 export const validate = validate20;
 export default validate20;
 const schema31 = {
@@ -759,8 +744,25 @@ const schema31 = {
               description:
                 "Required for the first pending event and equal to the newly committed Interaction request; forbidden on later lifecycle events.",
             },
+            expiresAtMs: {
+              $ref: "#/$defs/Counter",
+              description:
+                "Inclusive UTC epoch-millisecond deadline; later first acceptance is rejected.",
+            },
+            callbackLifetime: {
+              $ref: "#/$defs/CallbackLifetime",
+              description:
+                "generation_bound cannot survive callback loss; provider_resumable requires verified native restoration.",
+            },
           },
-          required: ["type", "interactionId", "status", "request"],
+          required: [
+            "type",
+            "interactionId",
+            "status",
+            "request",
+            "expiresAtMs",
+            "callbackLifetime",
+          ],
           additionalProperties: false,
           description:
             "Initial ordinary question publication; the matching Interaction is committed atomically.",
@@ -780,7 +782,37 @@ const schema31 = {
             },
             status: {
               type: "string",
-              enum: ["answered", "expired", "unavailable"],
+              const: "answered",
+              description:
+                "The first accepted response consumed this interaction.",
+            },
+            responseCommandId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Accepted response command which atomically consumed the interaction; present only when answered.",
+            },
+          },
+          required: ["type", "interactionId", "status", "responseCommandId"],
+          additionalProperties: false,
+          description:
+            "First accepted response identity, committed atomically with the receipt and Interaction.",
+        },
+        {
+          type: "object",
+          properties: {
+            type: {
+              type: "string",
+              const: "interaction",
+              description: "Closed variant discriminator.",
+            },
+            interactionId: {
+              $ref: "#/$defs/Id",
+              description:
+                "Single-use interaction identity within the namespace.",
+            },
+            status: {
+              type: "string",
+              enum: ["expired", "unavailable"],
               description:
                 "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss.",
             },
@@ -1000,8 +1032,7 @@ const schema31 = {
             "Accepted response command which atomically consumed the interaction; present only when answered.",
         },
         callbackLifetime: {
-          type: "string",
-          enum: ["generation_bound", "provider_resumable"],
+          $ref: "#/$defs/CallbackLifetime",
           description:
             "generation_bound cannot survive callback loss; provider_resumable requires verified native restoration.",
         },
@@ -1754,15 +1785,23 @@ const schema31 = {
           const: "v0.9.1",
         },
         catalogId: {
-          description: "Selected catalog identity.",
-          $ref: "#/$defs/Id",
+          type: "string",
+          const: "urn:rss-mdm-agent:a2ui:interaction",
+          description: "Fixed product catalog identity.",
         },
         catalogVersion: {
-          description: "Selected catalog revision.",
-          $ref: "#/$defs/Id",
+          type: "string",
+          const: "1",
+          description: "Fixed product catalog revision.",
         },
       },
       required: ["version", "catalogId", "catalogVersion"],
+    },
+    CallbackLifetime: {
+      type: "string",
+      enum: ["generation_bound", "provider_resumable"],
+      description:
+        "generation_bound cannot survive callback loss; provider_resumable requires verified native restoration.",
     },
   },
   $ref: "#/$defs/Negotiation",
@@ -1810,276 +1849,17 @@ const schema33 = {
       const: "v0.9.1",
     },
     catalogId: {
-      description: "Selected catalog identity.",
-      $ref: "#/$defs/Id",
+      type: "string",
+      const: "urn:rss-mdm-agent:a2ui:interaction",
+      description: "Fixed product catalog identity.",
     },
     catalogVersion: {
-      description: "Selected catalog revision.",
-      $ref: "#/$defs/Id",
+      type: "string",
+      const: "1",
+      description: "Fixed product catalog revision.",
     },
   },
   required: ["version", "catalogId", "catalogVersion"],
-};
-const schema34 = {
-  type: "string",
-  minLength: 1,
-  maxLength: 128,
-  pattern: "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
-  description:
-    "Opaque ASCII correlation identifier (1–128 characters); never an authentication credential.",
-};
-const func1 = helper0;
-const pattern4 = new RegExp("^[A-Za-z0-9][A-Za-z0-9._:/+-]*$", "u");
-function validate22(
-  data,
-  {
-    instancePath = "",
-    parentData,
-    parentDataProperty,
-    rootData = data,
-    dynamicAnchors = {},
-  } = {},
-) {
-  let vErrors = null;
-  let errors = 0;
-  const evaluated0 = validate22.evaluated;
-  if (evaluated0.dynamicProps) {
-    evaluated0.props = undefined;
-  }
-  if (evaluated0.dynamicItems) {
-    evaluated0.items = undefined;
-  }
-  if (errors === 0) {
-    if (data && typeof data == "object" && !Array.isArray(data)) {
-      let missing0;
-      if (
-        (data.version === undefined && (missing0 = "version")) ||
-        (data.catalogId === undefined && (missing0 = "catalogId")) ||
-        (data.catalogVersion === undefined && (missing0 = "catalogVersion"))
-      ) {
-        validate22.errors = [
-          {
-            instancePath,
-            schemaPath: "#/required",
-            keyword: "required",
-            params: { missingProperty: missing0 },
-            message: "must have required property '" + missing0 + "'",
-          },
-        ];
-        return false;
-      } else {
-        const _errs1 = errors;
-        for (const key0 in data) {
-          if (
-            !(
-              key0 === "version" ||
-              key0 === "catalogId" ||
-              key0 === "catalogVersion"
-            )
-          ) {
-            validate22.errors = [
-              {
-                instancePath,
-                schemaPath: "#/additionalProperties",
-                keyword: "additionalProperties",
-                params: { additionalProperty: key0 },
-                message: "must NOT have additional properties",
-              },
-            ];
-            return false;
-            break;
-          }
-        }
-        if (_errs1 === errors) {
-          if (data.version !== undefined) {
-            let data0 = data.version;
-            const _errs2 = errors;
-            if (typeof data0 !== "string") {
-              validate22.errors = [
-                {
-                  instancePath: instancePath + "/version",
-                  schemaPath: "#/properties/version/type",
-                  keyword: "type",
-                  params: { type: "string" },
-                  message: "must be string",
-                },
-              ];
-              return false;
-            }
-            if ("v0.9.1" !== data0) {
-              validate22.errors = [
-                {
-                  instancePath: instancePath + "/version",
-                  schemaPath: "#/properties/version/const",
-                  keyword: "const",
-                  params: { allowedValue: "v0.9.1" },
-                  message: "must be equal to constant",
-                },
-              ];
-              return false;
-            }
-            var valid0 = _errs2 === errors;
-          } else {
-            var valid0 = true;
-          }
-          if (valid0) {
-            if (data.catalogId !== undefined) {
-              let data1 = data.catalogId;
-              const _errs4 = errors;
-              const _errs5 = errors;
-              if (errors === _errs5) {
-                if (typeof data1 === "string") {
-                  if (func1(data1) > 128) {
-                    validate22.errors = [
-                      {
-                        instancePath: instancePath + "/catalogId",
-                        schemaPath: "#/$defs/Id/maxLength",
-                        keyword: "maxLength",
-                        params: { limit: 128 },
-                        message: "must NOT have more than 128 characters",
-                      },
-                    ];
-                    return false;
-                  } else {
-                    if (func1(data1) < 1) {
-                      validate22.errors = [
-                        {
-                          instancePath: instancePath + "/catalogId",
-                          schemaPath: "#/$defs/Id/minLength",
-                          keyword: "minLength",
-                          params: { limit: 1 },
-                          message: "must NOT have fewer than 1 characters",
-                        },
-                      ];
-                      return false;
-                    } else {
-                      if (!pattern4.test(data1)) {
-                        validate22.errors = [
-                          {
-                            instancePath: instancePath + "/catalogId",
-                            schemaPath: "#/$defs/Id/pattern",
-                            keyword: "pattern",
-                            params: {
-                              pattern: "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
-                            },
-                            message:
-                              'must match pattern "' +
-                              "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$" +
-                              '"',
-                          },
-                        ];
-                        return false;
-                      }
-                    }
-                  }
-                } else {
-                  validate22.errors = [
-                    {
-                      instancePath: instancePath + "/catalogId",
-                      schemaPath: "#/$defs/Id/type",
-                      keyword: "type",
-                      params: { type: "string" },
-                      message: "must be string",
-                    },
-                  ];
-                  return false;
-                }
-              }
-              var valid0 = _errs4 === errors;
-            } else {
-              var valid0 = true;
-            }
-            if (valid0) {
-              if (data.catalogVersion !== undefined) {
-                let data2 = data.catalogVersion;
-                const _errs7 = errors;
-                const _errs8 = errors;
-                if (errors === _errs8) {
-                  if (typeof data2 === "string") {
-                    if (func1(data2) > 128) {
-                      validate22.errors = [
-                        {
-                          instancePath: instancePath + "/catalogVersion",
-                          schemaPath: "#/$defs/Id/maxLength",
-                          keyword: "maxLength",
-                          params: { limit: 128 },
-                          message: "must NOT have more than 128 characters",
-                        },
-                      ];
-                      return false;
-                    } else {
-                      if (func1(data2) < 1) {
-                        validate22.errors = [
-                          {
-                            instancePath: instancePath + "/catalogVersion",
-                            schemaPath: "#/$defs/Id/minLength",
-                            keyword: "minLength",
-                            params: { limit: 1 },
-                            message: "must NOT have fewer than 1 characters",
-                          },
-                        ];
-                        return false;
-                      } else {
-                        if (!pattern4.test(data2)) {
-                          validate22.errors = [
-                            {
-                              instancePath: instancePath + "/catalogVersion",
-                              schemaPath: "#/$defs/Id/pattern",
-                              keyword: "pattern",
-                              params: {
-                                pattern: "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
-                              },
-                              message:
-                                'must match pattern "' +
-                                "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$" +
-                                '"',
-                            },
-                          ];
-                          return false;
-                        }
-                      }
-                    }
-                  } else {
-                    validate22.errors = [
-                      {
-                        instancePath: instancePath + "/catalogVersion",
-                        schemaPath: "#/$defs/Id/type",
-                        keyword: "type",
-                        params: { type: "string" },
-                        message: "must be string",
-                      },
-                    ];
-                    return false;
-                  }
-                }
-                var valid0 = _errs7 === errors;
-              } else {
-                var valid0 = true;
-              }
-            }
-          }
-        }
-      }
-    } else {
-      validate22.errors = [
-        {
-          instancePath,
-          schemaPath: "#/type",
-          keyword: "type",
-          params: { type: "object" },
-          message: "must be object",
-        },
-      ];
-      return false;
-    }
-  }
-  validate22.errors = vErrors;
-  return errors === 0;
-}
-validate22.evaluated = {
-  props: true,
-  dynamicProps: false,
-  dynamicItems: false,
 };
 function validate21(
   data,
@@ -2264,21 +2044,191 @@ function validate21(
                 }
                 if (valid0) {
                   if (data.a2ui !== undefined) {
+                    let data4 = data.a2ui;
                     const _errs10 = errors;
-                    if (
-                      !validate22(data.a2ui, {
-                        instancePath: instancePath + "/a2ui",
-                        parentData: data,
-                        parentDataProperty: "a2ui",
-                        rootData,
-                        dynamicAnchors,
-                      })
-                    ) {
-                      vErrors =
-                        vErrors === null
-                          ? validate22.errors
-                          : vErrors.concat(validate22.errors);
-                      errors = vErrors.length;
+                    const _errs11 = errors;
+                    if (errors === _errs11) {
+                      if (
+                        data4 &&
+                        typeof data4 == "object" &&
+                        !Array.isArray(data4)
+                      ) {
+                        let missing1;
+                        if (
+                          (data4.version === undefined &&
+                            (missing1 = "version")) ||
+                          (data4.catalogId === undefined &&
+                            (missing1 = "catalogId")) ||
+                          (data4.catalogVersion === undefined &&
+                            (missing1 = "catalogVersion"))
+                        ) {
+                          validate21.errors = [
+                            {
+                              instancePath: instancePath + "/a2ui",
+                              schemaPath: "#/$defs/A2uiNegotiation/required",
+                              keyword: "required",
+                              params: { missingProperty: missing1 },
+                              message:
+                                "must have required property '" +
+                                missing1 +
+                                "'",
+                            },
+                          ];
+                          return false;
+                        } else {
+                          const _errs13 = errors;
+                          for (const key1 in data4) {
+                            if (
+                              !(
+                                key1 === "version" ||
+                                key1 === "catalogId" ||
+                                key1 === "catalogVersion"
+                              )
+                            ) {
+                              validate21.errors = [
+                                {
+                                  instancePath: instancePath + "/a2ui",
+                                  schemaPath:
+                                    "#/$defs/A2uiNegotiation/additionalProperties",
+                                  keyword: "additionalProperties",
+                                  params: { additionalProperty: key1 },
+                                  message:
+                                    "must NOT have additional properties",
+                                },
+                              ];
+                              return false;
+                              break;
+                            }
+                          }
+                          if (_errs13 === errors) {
+                            if (data4.version !== undefined) {
+                              let data5 = data4.version;
+                              const _errs14 = errors;
+                              if (typeof data5 !== "string") {
+                                validate21.errors = [
+                                  {
+                                    instancePath:
+                                      instancePath + "/a2ui/version",
+                                    schemaPath:
+                                      "#/$defs/A2uiNegotiation/properties/version/type",
+                                    keyword: "type",
+                                    params: { type: "string" },
+                                    message: "must be string",
+                                  },
+                                ];
+                                return false;
+                              }
+                              if ("v0.9.1" !== data5) {
+                                validate21.errors = [
+                                  {
+                                    instancePath:
+                                      instancePath + "/a2ui/version",
+                                    schemaPath:
+                                      "#/$defs/A2uiNegotiation/properties/version/const",
+                                    keyword: "const",
+                                    params: { allowedValue: "v0.9.1" },
+                                    message: "must be equal to constant",
+                                  },
+                                ];
+                                return false;
+                              }
+                              var valid2 = _errs14 === errors;
+                            } else {
+                              var valid2 = true;
+                            }
+                            if (valid2) {
+                              if (data4.catalogId !== undefined) {
+                                let data6 = data4.catalogId;
+                                const _errs16 = errors;
+                                if (typeof data6 !== "string") {
+                                  validate21.errors = [
+                                    {
+                                      instancePath:
+                                        instancePath + "/a2ui/catalogId",
+                                      schemaPath:
+                                        "#/$defs/A2uiNegotiation/properties/catalogId/type",
+                                      keyword: "type",
+                                      params: { type: "string" },
+                                      message: "must be string",
+                                    },
+                                  ];
+                                  return false;
+                                }
+                                if (
+                                  "urn:rss-mdm-agent:a2ui:interaction" !== data6
+                                ) {
+                                  validate21.errors = [
+                                    {
+                                      instancePath:
+                                        instancePath + "/a2ui/catalogId",
+                                      schemaPath:
+                                        "#/$defs/A2uiNegotiation/properties/catalogId/const",
+                                      keyword: "const",
+                                      params: {
+                                        allowedValue:
+                                          "urn:rss-mdm-agent:a2ui:interaction",
+                                      },
+                                      message: "must be equal to constant",
+                                    },
+                                  ];
+                                  return false;
+                                }
+                                var valid2 = _errs16 === errors;
+                              } else {
+                                var valid2 = true;
+                              }
+                              if (valid2) {
+                                if (data4.catalogVersion !== undefined) {
+                                  let data7 = data4.catalogVersion;
+                                  const _errs18 = errors;
+                                  if (typeof data7 !== "string") {
+                                    validate21.errors = [
+                                      {
+                                        instancePath:
+                                          instancePath + "/a2ui/catalogVersion",
+                                        schemaPath:
+                                          "#/$defs/A2uiNegotiation/properties/catalogVersion/type",
+                                        keyword: "type",
+                                        params: { type: "string" },
+                                        message: "must be string",
+                                      },
+                                    ];
+                                    return false;
+                                  }
+                                  if ("1" !== data7) {
+                                    validate21.errors = [
+                                      {
+                                        instancePath:
+                                          instancePath + "/a2ui/catalogVersion",
+                                        schemaPath:
+                                          "#/$defs/A2uiNegotiation/properties/catalogVersion/const",
+                                        keyword: "const",
+                                        params: { allowedValue: "1" },
+                                        message: "must be equal to constant",
+                                      },
+                                    ];
+                                    return false;
+                                  }
+                                  var valid2 = _errs18 === errors;
+                                } else {
+                                  var valid2 = true;
+                                }
+                              }
+                            }
+                          }
+                        }
+                      } else {
+                        validate21.errors = [
+                          {
+                            instancePath: instancePath + "/a2ui",
+                            schemaPath: "#/$defs/A2uiNegotiation/type",
+                            keyword: "type",
+                            params: { type: "object" },
+                            message: "must be object",
+                          },
+                        ];
+                        return false;
+                      }
                     }
                     var valid0 = _errs10 === errors;
                   } else {

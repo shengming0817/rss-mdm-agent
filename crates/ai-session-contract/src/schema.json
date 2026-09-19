@@ -68,7 +68,7 @@
       "minLength": 1,
       "maxLength": 128,
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
-      "description": "Opaque ASCII correlation identifier (1–128 characters); never an authentication credential."
+      "description": "Opaque ASCII correlation identifier (1\u2013128 characters); never an authentication credential."
     },
     "Counter": {
       "type": "integer",
@@ -803,13 +803,23 @@
             "request": {
               "$ref": "#/$defs/InteractionRequest",
               "description": "Required for the first pending event and equal to the newly committed Interaction request; forbidden on later lifecycle events."
+            },
+            "expiresAtMs": {
+              "$ref": "#/$defs/Counter",
+              "description": "Inclusive UTC epoch-millisecond deadline; later first acceptance is rejected."
+            },
+            "callbackLifetime": {
+              "$ref": "#/$defs/CallbackLifetime",
+              "description": "generation_bound cannot survive callback loss; provider_resumable requires verified native restoration."
             }
           },
           "required": [
             "type",
             "interactionId",
             "status",
-            "request"
+            "request",
+            "expiresAtMs",
+            "callbackLifetime"
           ],
           "additionalProperties": false,
           "description": "Initial ordinary question publication; the matching Interaction is committed atomically."
@@ -828,8 +838,38 @@
             },
             "status": {
               "type": "string",
+              "const": "answered",
+              "description": "The first accepted response consumed this interaction."
+            },
+            "responseCommandId": {
+              "$ref": "#/$defs/Id",
+              "description": "Accepted response command which atomically consumed the interaction; present only when answered."
+            }
+          },
+          "required": [
+            "type",
+            "interactionId",
+            "status",
+            "responseCommandId"
+          ],
+          "additionalProperties": false,
+          "description": "First accepted response identity, committed atomically with the receipt and Interaction."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "interaction",
+              "description": "Closed variant discriminator."
+            },
+            "interactionId": {
+              "$ref": "#/$defs/Id",
+              "description": "Single-use interaction identity within the namespace."
+            },
+            "status": {
+              "type": "string",
               "enum": [
-                "answered",
                 "expired",
                 "unavailable"
               ],
@@ -1044,11 +1084,7 @@
           "description": "Accepted response command which atomically consumed the interaction; present only when answered."
         },
         "callbackLifetime": {
-          "type": "string",
-          "enum": [
-            "generation_bound",
-            "provider_resumable"
-          ],
+          "$ref": "#/$defs/CallbackLifetime",
           "description": "generation_bound cannot survive callback loss; provider_resumable requires verified native restoration."
         },
         "nativeCallbackId": {
@@ -1835,12 +1871,14 @@
           "const": "v0.9.1"
         },
         "catalogId": {
-          "description": "Selected catalog identity.",
-          "$ref": "#/$defs/Id"
+          "type": "string",
+          "const": "urn:rss-mdm-agent:a2ui:interaction",
+          "description": "Fixed product catalog identity."
         },
         "catalogVersion": {
-          "description": "Selected catalog revision.",
-          "$ref": "#/$defs/Id"
+          "type": "string",
+          "const": "1",
+          "description": "Fixed product catalog revision."
         }
       },
       "required": [
@@ -1848,6 +1886,14 @@
         "catalogId",
         "catalogVersion"
       ]
+    },
+    "CallbackLifetime": {
+      "type": "string",
+      "enum": [
+        "generation_bound",
+        "provider_resumable"
+      ],
+      "description": "generation_bound cannot survive callback loss; provider_resumable requires verified native restoration."
     }
   }
 }

@@ -104,6 +104,24 @@ document(source, "");
 for (const [offset, text] of edits.sort((a, b) => b[0] - a[0]))
   typescript = typescript.slice(0, offset) + text + typescript.slice(offset);
 const outputs = new Map();
+const catalogIdentity = Object.fromEntries(
+  Object.entries(schema.$defs.A2uiNegotiation.properties).map(
+    ([key, field]) => {
+      if (typeof field.const !== "string")
+        throw new Error(`Missing canonical catalog constant: ${key}`);
+      return [key, field.const];
+    },
+  ),
+);
+outputs.set(
+  "packages/ai-contract/src/identity.ts",
+  await format(
+    "// @generated from schema/runtime.schema.json. Do not edit.\n" +
+      `export const interactionCatalog = Object.freeze(${JSON.stringify(catalogIdentity)} as const);\n` +
+      `export const errorCodes = Object.freeze(${JSON.stringify(schema.$defs.ErrorCode.enum)} as const);\n`,
+    { parser: "typescript" },
+  ),
+);
 const { Ajv2020 } = require("ajv/dist/2020.js");
 const standalone = require("ajv/dist/standalone/index.js").default;
 const compileValidator = (schema, strict, referenced = []) => {

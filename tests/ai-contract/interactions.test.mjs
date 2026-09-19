@@ -74,6 +74,8 @@ function pending(session, rows) {
         type: "interaction",
         interactionId: row.interactionId,
         status: "pending",
+        expiresAtMs: row.expiresAtMs,
+        callbackLifetime: row.callbackLifetime,
         request: row.request,
       },
     })),
@@ -219,4 +221,21 @@ test("wire callback category accepts questions only and is mandatory", () => {
     assert.throws(() =>
       decode(JSON.stringify({ ...row, category }), fixtureLimits),
     );
+});
+
+test("pending events cannot disagree with the authoritative deadline or callback lifetime", async () => {
+  const { store, session } = await dispatched();
+  for (const patch of [
+    { expiresAtMs: 101 },
+    { callbackLifetime: "provider_resumable" },
+  ]) {
+    const batch = pending(session, [question(session)]);
+    Object.assign(batch.events[0].body, patch);
+    assert.equal((await store.commit(batch)).ok, false);
+    assert.equal(
+      unwrap(await store.snapshotPage(session.namespace, { limit: 256 }))
+        .interactions.length,
+      0,
+    );
+  }
 });

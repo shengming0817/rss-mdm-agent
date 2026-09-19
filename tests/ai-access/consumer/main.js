@@ -1,5 +1,13 @@
+import {
+  createSurfaceRenderer,
+  RuntimeSurface,
+} from "@rss-mdm-agent/ai-ui-bridge";
 import { createApp } from "vue";
-import { RuntimeClient, channelStream } from "@rss-mdm-agent/ai-client";
+import {
+  RuntimeClient,
+  channelStream,
+  ClientError,
+} from "@rss-mdm-agent/ai-client";
 import App from "./App.vue";
 const runtime = new RuntimeClient(
   channelStream({
@@ -31,5 +39,12 @@ const runtime = new RuntimeClient(
 );
 await runtime.initialize();
 await runtime.restore("session-1", 1);
+window.consumer = {
+  runtime,
+  now: 0,
+  createSurfaceRenderer,
+  RuntimeSurface,
+  createApp,
+  ClientError,
+};
 createApp(App, { runtime }).mount("#app");
-window.consumer = { runtime };

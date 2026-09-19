@@ -1,3 +1,4 @@
+import { interactionCatalog } from "./identity.js";
 import validAction from "./validate-action.js";
 import validNegotiation from "./validate-negotiation.js";
 import { decode, boundedJson, type Limits } from "./codec.js";
@@ -16,6 +17,25 @@ export function parseNegotiation(
   const value: unknown = JSON.parse(boundedJson(input, limits));
   if (!validNegotiation(value)) throw new Error("unsupported negotiation");
   return value as import("./wire.js").Negotiation;
+}
+/** Both peers enforce selection <= offer before storing negotiated capabilities. */
+export function selectNegotiation(
+  offered: import("./wire.js").Negotiation,
+  input: unknown,
+  limits: Limits,
+): import("./wire.js").Negotiation {
+  const selected = parseNegotiation(input, limits);
+  if (
+    (selected.cursorAttach && !offered.cursorAttach) ||
+    (selected.durableReceipts && !offered.durableReceipts) ||
+    (selected.a2ui &&
+      (!offered.a2ui ||
+        selected.a2ui.version !== offered.a2ui.version ||
+        selected.a2ui.catalogId !== offered.a2ui.catalogId ||
+        selected.a2ui.catalogVersion !== offered.a2ui.catalogVersion))
+  )
+    throw new Error("unsupported negotiation selection");
+  return selected;
 }
 /** ACP extension namespace. Advertise through capabilities._meta before calling methods. */
 export const extension = {
@@ -83,7 +103,7 @@ export async function resolveSurfaceAction(
     };
   };
   const action = message.action;
-  if (message.version !== "v0.9.1" || !action)
+  if (message.version !== interactionCatalog.version || !action)
     return fail("unsupported_version");
   if (
     caller.tenantId !== binding.namespace.tenantId ||

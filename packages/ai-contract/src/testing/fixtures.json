@@ -762,6 +762,50 @@
         }
       },
       "expiresAtMs": 100
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "event",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "eventId": "pending-golden",
+      "sequence": 1,
+      "commandId": "command-1",
+      "generation": "generation-1",
+      "body": {
+        "type": "interaction",
+        "interactionId": "question-golden",
+        "status": "pending",
+        "request": {
+          "question": "Choose"
+        },
+        "expiresAtMs": 100,
+        "callbackLifetime": "generation_bound"
+      }
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "event",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "eventId": "answered-golden",
+      "sequence": 1,
+      "commandId": "command-1",
+      "generation": "generation-1",
+      "body": {
+        "type": "interaction",
+        "interactionId": "question-golden",
+        "status": "answered",
+        "responseCommandId": "response-golden"
+      }
     }
   ],
   "invalid": [
@@ -906,6 +950,21 @@
       "name": "nested-command-hash-mismatch",
       "raw": "{\"schemaVersion\":2,\"kind\":\"snapshotPage\",\"snapshotId\":\"snapshot-1\",\"pageIndex\":0,\"session\":{\"schemaVersion\":2,\"kind\":\"session\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"revision\":0,\"lastSequence\":0,\"binding\":{\"provider\":\"fake\",\"providerVersion\":\"fixture-1\",\"adapterVersion\":\"fixture-1\",\"generation\":\"generation-1\",\"accountRef\":\"account-1\",\"nativeSessionId\":\"native-1\",\"config\":{\"id\":\"config-1\",\"revision\":\"1\"}},\"capabilities\":{\"continuation\":\"unsupported\",\"cancellation\":\"request_only\",\"tools\":\"disabled\",\"steer\":\"unsupported\",\"fork\":\"unsupported\",\"subagent\":\"unsupported\",\"terminal\":\"unsupported\",\"structuredQuestion\":\"unsupported\",\"multimodal\":\"unsupported\",\"queue\":\"unsupported\"},\"status\":\"active\"},\"cursor\":0,\"events\":[],\"commands\":[{\"schemaVersion\":2,\"kind\":\"commandRecord\",\"command\":{\"schemaVersion\":2,\"kind\":\"command\",\"sessionId\":\"session-1\",\"commandId\":\"command-1\",\"expiresAtMs\":1000,\"input\":{\"type\":\"prompt\",\"text\":\"fixture text\",\"policy\":\"queue_next\"}},\"receipt\":{\"schemaVersion\":2,\"kind\":\"receipt\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"commandId\":\"command-1\",\"contentHash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"acceptedAtMs\":0,\"retryUntilMs\":100,\"receiptUntilMs\":200,\"acceptedRevision\":1},\"state\":\"accepted\"}],\"interactions\":[],\"surfaces\":[]}",
       "code": "context"
+    },
+    {
+      "name": "interaction event missing expiresAtMs",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"event\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"eventId\":\"pending-golden\",\"sequence\":1,\"commandId\":\"command-1\",\"generation\":\"generation-1\",\"body\":{\"type\":\"interaction\",\"interactionId\":\"question-golden\",\"status\":\"pending\",\"request\":{\"question\":\"Choose\"},\"callbackLifetime\":\"generation_bound\"}}",
+      "code": "schema"
+    },
+    {
+      "name": "interaction event missing callbackLifetime",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"event\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"eventId\":\"pending-golden\",\"sequence\":1,\"commandId\":\"command-1\",\"generation\":\"generation-1\",\"body\":{\"type\":\"interaction\",\"interactionId\":\"question-golden\",\"status\":\"pending\",\"request\":{\"question\":\"Choose\"},\"expiresAtMs\":100}}",
+      "code": "schema"
+    },
+    {
+      "name": "interaction event missing responseCommandId",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"event\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"eventId\":\"answered-golden\",\"sequence\":1,\"commandId\":\"command-1\",\"generation\":\"generation-1\",\"body\":{\"type\":\"interaction\",\"interactionId\":\"question-golden\",\"status\":\"answered\"}}",
+      "code": "schema"
     }
   ],
   "commandHash": "273d2bc05c0cb23b02f666dff841b992d7839f7c43352570827c46ab4b6b0de7",

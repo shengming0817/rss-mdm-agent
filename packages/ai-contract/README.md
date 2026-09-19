@@ -60,7 +60,7 @@ Node 验证基线24.14.1 / pnpm11.4.0。主导出是生成类型、编解码、p
 
 `Interaction.nativeRequestId` 直接替换为必填 `nativeCallbackId`，同时必填 `request`；旧记录、旧字段和双字段输入均拒绝，不提供迁移、alias 或双读。`Binding` / dispatch 的 `nativeRequestId` 仅表示父 prompt/query 请求，原命令通过 `Interaction.commandId` 关联；一个父请求可有多个独立 callback。callback ID 在 namespace + generation 内唯一，不能换 interactionId 重复消费。
 
-`ProviderObservation` 新增 `type: "interaction"`，`interaction: ProviderInteraction` 从同一生成 wire 类型选取 callback ID、产品 interaction ID、期限、lifetime 和问题载荷。Host 先验证完整 binding 与 command dispatch，从可信会话补 namespace/generation/nativeRunId，再原子提交 pending Interaction 与同 ID/command/generation、内容相同的 interaction 事件。首次 pending 必须携带 request；其它状态事件不得携带 request。创建只接受已确认提交的活动命令，缺一侧或重复 pending 均拒绝。`request` 是有预算的、不可信 provider JSON，不是执行工具提案，也不是第二套 UI schema；A04 拥有展示适配。
+`ProviderObservation` 新增 `type: "interaction"`，`interaction: ProviderInteraction` 从同一生成 wire 类型选取 callback ID、产品 interaction ID、期限、lifetime 和问题载荷。Host 先验证完整 binding 与 command dispatch，从可信会话补 namespace/generation/nativeRunId，再原子提交 pending Interaction 与同 ID/command/generation、内容相同的 interaction 事件。首次 pending 必须携带与 Interaction 相等的 request、expiresAtMs 和 callbackLifetime；answered 必须携带相同 responseCommandId；其它状态事件不得携带 request。所有交互状态变化都必须有同批匹配事件。创建只接受已确认提交的活动命令，缺一侧或重复 pending 均拒绝。`request` 是有预算的、不可信 provider JSON，不是执行工具提案，也不是第二套 UI schema；A04 拥有展示适配。
 
 `respond(binding, command, budget)` 签名不变。Host 负责可信 Caller 与 Store 的单次接纳；adapter 通过 binding + interactionId 定位私有活回调并核验 generation/期限，不能从客户端提交的 ID 构造回调。回答不形成执行批准，执行工具与追问回调隔离。显示历史保留 request，但 generation_bound callback 丢失后必须 unavailable。
 
@@ -71,3 +71,5 @@ Node 验证基线24.14.1 / pnpm11.4.0。主导出是生成类型、编解码、p
 Interaction 的必填 `category: "question"` 仅允许普通用户追问；权限 callback 不属于普通 respond 生命周期，进入 ToolEndpoint/verifier 或拒绝。Provider 的 pending 发布只能使用专用 interaction observation。wire schema 按状态闭合：pending 必带 request，answered/expired/unavailable 禁带 request；旧格式直接拒绝，TS/Rust 由同一 schema 生成。
 
 A04 同 PR 的直接契约替换、分页/列表、明确终态与浏览器入口见[ACP–A2UI 开发](../../docs/guides/ai-access-development.md)。协商字段和全部产品扩展 DTO 从同一 schema 生成；通用包入口没有 Node fs/crypto，生成期编译静态校验器，运行期使用固定 noble 摘要。旧单次 snapshot API 不再提供。
+
+A2UI version/catalogId/catalogVersion 的声明在 runtime schema 的 A2uiNegotiation，生成的冻结 `interactionCatalog` 为运行时唯一入口；`selectNegotiation` 在双端限制 selection≤offer。Memory store 完成且未签发 continuation 的单页读视图立即释放；已签发 token 的视图保留至 TTL，支持原 token 的重复读取。

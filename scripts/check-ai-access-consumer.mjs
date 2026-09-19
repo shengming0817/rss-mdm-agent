@@ -58,9 +58,10 @@ try {
       },
     }),
   );
+  // Pin the offline browser toolchain to the workspace lock; refreshed registry metadata must not select an uncached/new native binary.
   writeFileSync(
     join(dir, "pnpm-workspace.yaml"),
-    `packages: []\nallowBuilds:\n  esbuild: true\noverrides: ${JSON.stringify(Object.fromEntries(packages.map((name) => [`@rss-mdm-agent/${name}`, dependencies[`@rss-mdm-agent/${name}`]])))}\n`,
+    `packages: []\nallowBuilds:\n  esbuild: true\noverrides: ${JSON.stringify({ rollup: "4.63.1", ...Object.fromEntries(packages.map((name) => [`@rss-mdm-agent/${name}`, dependencies[`@rss-mdm-agent/${name}`]])) })}\n`,
   );
   cpSync(join(root, "tests/ai-access/consumer"), dir, { recursive: true });
   writeFileSync(
@@ -229,6 +230,164 @@ export default defineConfig({plugins:[{name:'forbid-server-imports',enforce:'pre
   page.on("pageerror", (error) => failures.push(error.message));
   await page.goto(`http://127.0.0.1:${server.address().port}`);
   await page.getByText("Choose an option", { exact: true }).waitFor();
+  // Real Vue/Lit lifecycle seam with deterministic authoritative projection stimuli.
+  await page.evaluate(() => {
+    const api = window.consumer,
+      listeners = new Set();
+    const state = {
+      view: api.runtime.getSession("session-1"),
+      now: 0,
+      attempts: [],
+      errors: [],
+    };
+    const container = document.createElement("div");
+    container.id = "interaction-fixture";
+    document.body.append(container);
+    const runtime = {
+      getSession: () => structuredClone(state.view),
+      observe(fn) {
+        listeners.add(fn);
+        return () => listeners.delete(fn);
+      },
+      action(request) {
+        state.attempts.push(request);
+        return new Promise((resolve, reject) => {
+          state.resolve = resolve;
+          state.reject = reject;
+        });
+      },
+    };
+    state.update = (patch = {}) => {
+      Object.assign(state.view.interactions["question-1"], patch);
+      for (const fn of listeners) fn(structuredClone(state.view));
+    };
+    state.app = api.createApp(api.RuntimeSurface, {
+      runtime,
+      sessionId: "session-1",
+      instanceId: "surface-instance-1",
+      now: () => state.now,
+      onError: (error) =>
+        state.errors.push({ code: error.code, failure: error.failure }),
+    });
+    state.app.mount(container);
+    api.interactionTest = state;
+  });
+  const fixture = page.locator("#interaction-fixture");
+  await fixture.locator("a2ui-surface").waitFor();
+  // Deadline is inclusive and expires without any server notification or rerender.
+  await page.evaluate(() => {
+    const s = window.consumer.interactionTest;
+    s.now = 100;
+    s.update();
+  });
+  if (await fixture.locator("a2ui-surface").evaluate((e) => e.inert))
+    throw new Error("inclusive interaction deadline disabled too soon");
+  await page.evaluate(() => {
+    window.consumer.interactionTest.now = 101;
+  });
+  await page.waitForFunction(
+    () => document.querySelector("#interaction-fixture a2ui-surface")?.inert,
+  );
+  if (
+    await fixture
+      .getByRole("button", { name: "Retry response", exact: true })
+      .count()
+  )
+    throw new Error("expired question offered retry");
+  await page.evaluate(() => {
+    const s = window.consumer.interactionTest;
+    s.now = 0;
+    s.update();
+  });
+  await fixture.locator("a2ui-surface").getByRole("button").click();
+  await page.waitForFunction(
+    () => window.consumer.interactionTest.attempts.length === 1,
+  );
+  if (
+    (await page.evaluate(
+      () => window.consumer.interactionTest.attempts[0].expiresAtMs,
+    )) !== 100
+  )
+    throw new Error("action extended the authoritative interaction deadline");
+  // A response lost before the other client's winning event may offer retry only until that event arrives.
+  await page.evaluate(() =>
+    window.consumer.interactionTest.reject(
+      new window.consumer.ClientError("transport_failed"),
+    ),
+  );
+  await fixture
+    .getByRole("button", { name: "Retry response", exact: true })
+    .waitFor();
+  await page.evaluate(() =>
+    window.consumer.interactionTest.update({
+      status: "answered",
+      responseCommandId: "other-client",
+    }),
+  );
+  await fixture
+    .getByRole("button", { name: "Retry response", exact: true })
+    .waitFor({ state: "detached" });
+  if (await fixture.locator(".rss-ai-surface-error").count())
+    throw new Error("losing response retained an obsolete error");
+  // A late rejection after callback loss cannot recreate a retry affordance.
+  await page.evaluate(() =>
+    window.consumer.interactionTest.update({
+      status: "pending",
+      responseCommandId: undefined,
+    }),
+  );
+  await fixture.locator("a2ui-surface").getByRole("button").click();
+  await page.waitForFunction(
+    () => window.consumer.interactionTest.attempts.length === 2,
+  );
+  await page.evaluate(() => {
+    const s = window.consumer.interactionTest;
+    s.update({ status: "unavailable" });
+    s.reject(new window.consumer.ClientError("already_answered"));
+  });
+  await page.waitForFunction(
+    () => document.querySelector("#interaction-fixture a2ui-surface")?.inert,
+  );
+  if (
+    await fixture
+      .getByRole("button", { name: "Retry response", exact: true })
+      .count()
+  )
+    throw new Error("late response failure revived an invalid callback");
+  // A terminal RPC failure is also closed when the winning notification has not arrived yet.
+  await page.evaluate(() =>
+    window.consumer.interactionTest.update({ status: "pending" }),
+  );
+  await fixture.locator("a2ui-surface").getByRole("button").click();
+  await page.waitForFunction(
+    () => window.consumer.interactionTest.attempts.length === 3,
+  );
+  await page.evaluate(() =>
+    window.consumer.interactionTest.reject(
+      new window.consumer.ClientError("already_answered"),
+    ),
+  );
+  await fixture.locator(".rss-ai-surface-error").waitFor();
+  if (
+    await fixture
+      .getByRole("button", { name: "Retry response", exact: true })
+      .count()
+  )
+    throw new Error(
+      "terminal rejection offered retry without a winning notification",
+    );
+  const reported = await page.evaluate(() =>
+    window.consumer.interactionTest.errors.at(-1),
+  );
+  if (
+    reported.code !== "action_rejected" ||
+    reported.failure !== "already_answered"
+  )
+    throw new Error("renderer did not expose closed error codes");
+  await page.evaluate(() => {
+    window.consumer.interactionTest.app.unmount();
+    document.getElementById("interaction-fixture").remove();
+  });
   await page.locator("#fail-renderer").click();
   await page
     .locator("p[role=status]")
@@ -294,7 +453,7 @@ export default defineConfig({plugins:[{name:'forbid-server-imports',enforce:'pre
   await page.locator("a2ui-surface").waitFor({ state: "detached" });
   if (failures.length) throw new Error(failures.join("; "));
   console.log(
-    `PASS isolated Vue + official A2UI browser ${await browser.version()}: create/components/data/delete, literal HTML, load/replace recovery, remount, exact action retry`,
+    `PASS isolated Vue + official A2UI browser ${await browser.version()}: create/components/data/delete, literal HTML, load/replace recovery, remount, exact action retry, authoritative expiry, competing answer and late rejection`,
   );
   disconnect();
 } finally {

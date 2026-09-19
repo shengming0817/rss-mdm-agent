@@ -1,10 +1,17 @@
 import {
+  ClientError,
+  type ClientErrorCode,
+  type InteractionView,
+} from "@rss-mdm-agent/ai-client";
+import {
   RuntimeSurface,
   type RendererFactory,
   type SurfaceRendererHandle,
+  type RendererError,
 } from "@rss-mdm-agent/ai-ui-bridge";
 import type { Receipt } from "@rss-mdm-agent/ai-contract";
 const handle: SurfaceRendererHandle = {
+  canRetry: false,
   replace() {},
   clear() {},
   dispose() {},
@@ -21,7 +28,9 @@ export type TypedReceipt = Assert<
   NotAny<Parameters<NonNullable<Props["onReceipt"]>>[0]>
 >;
 export const handlers: Pick<Props, "onError" | "onReceipt"> = {
-  onError: (error: Error) => {
+  onError: (error: RendererError) => {
+    const code: string = error.code;
+    void code;
     const message: string = error.message;
     void message;
   },
@@ -30,3 +39,10 @@ export const handlers: Pick<Props, "onError" | "onReceipt"> = {
     void kind;
   },
 };
+
+export function recovery(
+  error: ClientError,
+  interaction: InteractionView,
+): ClientErrorCode | number {
+  return error.code === "expired" ? interaction.expiresAtMs : error.code;
+}

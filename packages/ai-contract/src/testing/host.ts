@@ -1,3 +1,4 @@
+import { interactionCatalog } from "../identity.js";
 import type {
   Budget,
   Caller,
@@ -52,9 +53,9 @@ export class FakeHost implements HostPort {
       return fail("unsupported_version");
     if (
       offered.a2ui &&
-      (offered.a2ui.version !== "v0.9.1" ||
-        !offered.a2ui.catalogId ||
-        !offered.a2ui.catalogVersion)
+      (offered.a2ui.version !== interactionCatalog.version ||
+        offered.a2ui.catalogId !== interactionCatalog.catalogId ||
+        offered.a2ui.catalogVersion !== interactionCatalog.catalogVersion)
     )
       return fail("unsupported_capability");
     return ok({ ...structuredClone(offered), durableReceipts: false });
@@ -394,6 +395,8 @@ export class FakeHost implements HostPort {
             type: "interaction",
             interactionId,
             status: "pending",
+            expiresAtMs: interaction.expiresAtMs,
+            callbackLifetime: interaction.callbackLifetime,
             request,
           },
         },

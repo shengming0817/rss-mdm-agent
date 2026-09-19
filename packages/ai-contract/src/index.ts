@@ -14,6 +14,7 @@ export {
   resolveSurfaceAction,
   projectDelta,
   parseNegotiation,
+  selectNegotiation,
 } from "./protocol.js";
 
 export { VerifiedProviderSession } from "./session.js";
@@ -26,3 +27,5 @@ export {
 } from "./a2ui.js";
 
 export { boundedStream } from "./stream.js";
+
+export { errorCodes } from "./identity.js";

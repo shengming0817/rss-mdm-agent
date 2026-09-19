@@ -3,12 +3,12 @@
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct A2uiNegotiation {
-    #[doc = "Selected catalog identity."]
+    #[doc = "Fixed product catalog identity."]
     #[serde(rename = "catalogId")]
-    pub catalog_id: Id,
-    #[doc = "Selected catalog revision."]
+    pub catalog_id: ::std::string::String,
+    #[doc = "Fixed product catalog revision."]
     #[serde(rename = "catalogVersion")]
-    pub catalog_version: Id,
+    pub catalog_version: ::std::string::String,
     #[doc = "Fixed upstream protocol version."]
     pub version: ::std::string::String,
 }
@@ -117,6 +117,58 @@ pub struct Binding {
     #[doc = "Pinned native provider implementation version."]
     #[serde(rename = "providerVersion")]
     pub provider_version: Id,
+}
+#[doc = "generation_bound cannot survive callback loss; provider_resumable requires verified native restoration."]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum CallbackLifetime {
+    #[serde(rename = "generation_bound")]
+    #[doc = "`GenerationBound` alternative; see the parent type's schema contract."]
+    GenerationBound,
+    #[serde(rename = "provider_resumable")]
+    #[doc = "`ProviderResumable` alternative; see the parent type's schema contract."]
+    ProviderResumable,
+}
+impl ::std::fmt::Display for CallbackLifetime {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::GenerationBound => f.write_str("generation_bound"),
+            Self::ProviderResumable => f.write_str("provider_resumable"),
+        }
+    }
+}
+impl ::std::str::FromStr for CallbackLifetime {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "generation_bound" => Ok(Self::GenerationBound),
+            "provider_resumable" => Ok(Self::ProviderResumable),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CallbackLifetime {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CallbackLifetime {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 #[doc = "Capabilities established for one exact provider binding, never execution authorization."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
@@ -1050,6 +1102,12 @@ pub enum EventBody {
     },
     #[doc = "`Variant6` alternative; see the parent type's schema contract."]
     Variant6 {
+        #[doc = "generation_bound cannot survive callback loss; provider_resumable requires verified native restoration."]
+        #[serde(rename = "callbackLifetime")]
+        callback_lifetime: CallbackLifetime,
+        #[doc = "Inclusive UTC epoch-millisecond deadline; later first acceptance is rejected."]
+        #[serde(rename = "expiresAtMs")]
+        expires_at_ms: Counter,
         #[doc = "Single-use interaction identity within the namespace."]
         #[serde(rename = "interactionId")]
         interaction_id: Id,
@@ -1066,22 +1124,36 @@ pub enum EventBody {
         #[doc = "Single-use interaction identity within the namespace."]
         #[serde(rename = "interactionId")]
         interaction_id: Id,
-        #[doc = "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."]
-        status: EventBodyVariant7Status,
+        #[doc = "Accepted response command which atomically consumed the interaction; present only when answered."]
+        #[serde(rename = "responseCommandId")]
+        response_command_id: Id,
+        #[doc = "The first accepted response consumed this interaction."]
+        status: ::std::string::String,
         #[doc = "Closed variant discriminator."]
         #[serde(rename = "type")]
         type_: ::std::string::String,
     },
     #[doc = "`Variant8` alternative; see the parent type's schema contract."]
     Variant8 {
-        #[doc = "Closed failure category and retry discipline."]
-        failure: Failure,
+        #[doc = "Single-use interaction identity within the namespace."]
+        #[serde(rename = "interactionId")]
+        interaction_id: Id,
+        #[doc = "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."]
+        status: EventBodyVariant8Status,
         #[doc = "Closed variant discriminator."]
         #[serde(rename = "type")]
         type_: ::std::string::String,
     },
     #[doc = "`Variant9` alternative; see the parent type's schema contract."]
     Variant9 {
+        #[doc = "Closed failure category and retry discipline."]
+        failure: Failure,
+        #[doc = "Closed variant discriminator."]
+        #[serde(rename = "type")]
+        type_: ::std::string::String,
+    },
+    #[doc = "`Variant10` alternative; see the parent type's schema contract."]
+    Variant10 {
         #[doc = "Full surface recovery state committed with this event."]
         surface: ::std::boxed::Box<SurfaceState>,
         #[doc = "Closed variant discriminator."]
@@ -1315,10 +1387,7 @@ impl<'de> ::serde::Deserialize<'de> for EventBodyVariant5Text {
     PartialEq,
     PartialOrd,
 )]
-pub enum EventBodyVariant7Status {
-    #[serde(rename = "answered")]
-    #[doc = "`Answered` alternative; see the parent type's schema contract."]
-    Answered,
+pub enum EventBodyVariant8Status {
     #[serde(rename = "expired")]
     #[doc = "`Expired` alternative; see the parent type's schema contract."]
     Expired,
@@ -1326,33 +1395,31 @@ pub enum EventBodyVariant7Status {
     #[doc = "`Unavailable` alternative; see the parent type's schema contract."]
     Unavailable,
 }
-impl ::std::fmt::Display for EventBodyVariant7Status {
+impl ::std::fmt::Display for EventBodyVariant8Status {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
-            Self::Answered => f.write_str("answered"),
             Self::Expired => f.write_str("expired"),
             Self::Unavailable => f.write_str("unavailable"),
         }
     }
 }
-impl ::std::str::FromStr for EventBodyVariant7Status {
+impl ::std::str::FromStr for EventBodyVariant8Status {
     type Err = self::error::ConversionError;
     fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         match value {
-            "answered" => Ok(Self::Answered),
             "expired" => Ok(Self::Expired),
             "unavailable" => Ok(Self::Unavailable),
             _ => Err("invalid value".into()),
         }
     }
 }
-impl ::std::convert::TryFrom<&str> for EventBodyVariant7Status {
+impl ::std::convert::TryFrom<&str> for EventBodyVariant8Status {
     type Error = self::error::ConversionError;
     fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
 }
-impl ::std::convert::TryFrom<::std::string::String> for EventBodyVariant7Status {
+impl ::std::convert::TryFrom<::std::string::String> for EventBodyVariant8Status {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
@@ -1591,7 +1658,7 @@ impl<'de> ::serde::Deserialize<'de> for InputText {
 pub struct Interaction {
     #[doc = "generation_bound cannot survive callback loss; provider_resumable requires verified native restoration."]
     #[serde(rename = "callbackLifetime")]
-    pub callback_lifetime: InteractionCallbackLifetime,
+    pub callback_lifetime: CallbackLifetime,
     #[doc = "Ordinary user question only; permission and execution callbacks are forbidden in this lifecycle."]
     pub category: ::std::string::String,
     #[doc = "Client-generated idempotency key; reuse only with identical canonical content."]
@@ -1631,58 +1698,6 @@ pub struct Interaction {
     pub schema_version: i64,
     #[doc = "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."]
     pub status: InteractionStatus,
-}
-#[doc = "generation_bound cannot survive callback loss; provider_resumable requires verified native restoration."]
-#[derive(
-    :: serde :: Deserialize,
-    :: serde :: Serialize,
-    Clone,
-    Copy,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
-)]
-pub enum InteractionCallbackLifetime {
-    #[serde(rename = "generation_bound")]
-    #[doc = "`GenerationBound` alternative; see the parent type's schema contract."]
-    GenerationBound,
-    #[serde(rename = "provider_resumable")]
-    #[doc = "`ProviderResumable` alternative; see the parent type's schema contract."]
-    ProviderResumable,
-}
-impl ::std::fmt::Display for InteractionCallbackLifetime {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        match *self {
-            Self::GenerationBound => f.write_str("generation_bound"),
-            Self::ProviderResumable => f.write_str("provider_resumable"),
-        }
-    }
-}
-impl ::std::str::FromStr for InteractionCallbackLifetime {
-    type Err = self::error::ConversionError;
-    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        match value {
-            "generation_bound" => Ok(Self::GenerationBound),
-            "provider_resumable" => Ok(Self::ProviderResumable),
-            _ => Err("invalid value".into()),
-        }
-    }
-}
-impl ::std::convert::TryFrom<&str> for InteractionCallbackLifetime {
-    type Error = self::error::ConversionError;
-    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-impl ::std::convert::TryFrom<::std::string::String> for InteractionCallbackLifetime {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: ::std::string::String,
-    ) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
 }
 #[doc = "Immutable untrusted provider question payload. Subject to whole-record JSON budgets; never authentication, permission or execution approval."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
@@ -2549,6 +2564,11 @@ impl std::fmt::Debug for Binding {
         f.write_str(concat!(stringify!(Binding), "([redacted])"))
     }
 }
+impl std::fmt::Debug for CallbackLifetime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(CallbackLifetime), "([redacted])"))
+    }
+}
 impl std::fmt::Debug for Capabilities {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(stringify!(Capabilities), "([redacted])"))
@@ -2681,9 +2701,9 @@ impl std::fmt::Debug for EventBodyVariant5Text {
         f.write_str(concat!(stringify!(EventBodyVariant5Text), "([redacted])"))
     }
 }
-impl std::fmt::Debug for EventBodyVariant7Status {
+impl std::fmt::Debug for EventBodyVariant8Status {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(concat!(stringify!(EventBodyVariant7Status), "([redacted])"))
+        f.write_str(concat!(stringify!(EventBodyVariant8Status), "([redacted])"))
     }
 }
 impl std::fmt::Debug for Failure {
@@ -2714,14 +2734,6 @@ impl std::fmt::Debug for InputText {
 impl std::fmt::Debug for Interaction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(stringify!(Interaction), "([redacted])"))
-    }
-}
-impl std::fmt::Debug for InteractionCallbackLifetime {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(concat!(
-            stringify!(InteractionCallbackLifetime),
-            "([redacted])"
-        ))
     }
 }
 impl std::fmt::Debug for InteractionRequest {

@@ -1,3 +1,4 @@
+import { ClientError } from "./errors.js";
 import {
   validateSurface,
   accessLimits,
@@ -12,6 +13,25 @@ import {
   type SurfaceState,
 } from "@rss-mdm-agent/ai-contract";
 
+export type InteractionView = Pick<
+  Interaction,
+  | "status"
+  | "request"
+  | "expiresAtMs"
+  | "callbackLifetime"
+  | "responseCommandId"
+  | "generation"
+>;
+const projectInteraction = (row: Interaction): InteractionView => ({
+  status: row.status,
+  request: row.request,
+  expiresAtMs: row.expiresAtMs,
+  callbackLifetime: row.callbackLifetime,
+  generation: row.generation,
+  ...(row.responseCommandId
+    ? { responseCommandId: row.responseCommandId }
+    : {}),
+});
 export interface SessionView {
   /** Identity of this attachment's snapshot, not a second live Host Session. */
   namespace: Session["namespace"];
@@ -23,7 +43,7 @@ export interface SessionView {
     string,
     { commandId: string; text: string; stable: boolean }
   >;
-  interactions: Record<string, Pick<Interaction, "status" | "request">>;
+  interactions: Record<string, InteractionView>;
   surfaces: Record<string, SurfaceState>;
   tools: Record<
     string,
@@ -81,7 +101,7 @@ function event(view: SessionView, e: Event): void {
     };
   } else if (body.type === "tool_result") {
     const tool = view.tools[messageKey(e.commandId, body.proposalId)];
-    if (!tool) throw new Error("tool result without proposal");
+    if (!tool) throw new ClientError("resync_required");
     tool.status = body.disposition === "returned" ? "completed" : "failed";
     tool.result = { disposition: body.disposition, text: body.text };
   } else if (body.type === "interaction") {
@@ -89,9 +109,17 @@ function event(view: SessionView, e: Event): void {
       view.interactions[body.interactionId] = {
         status: body.status,
         request: body.request,
+        expiresAtMs: body.expiresAtMs,
+        callbackLifetime: body.callbackLifetime,
+        generation: e.generation,
       };
-    else if (view.interactions[body.interactionId])
-      view.interactions[body.interactionId].status = body.status;
+    else {
+      const interaction = view.interactions[body.interactionId];
+      if (!interaction) throw new ClientError("resync_required");
+      interaction.status = body.status;
+      if (body.status === "answered")
+        interaction.responseCommandId = body.responseCommandId;
+    }
   } else if (body.type === "surface") {
     const surface = validateSurface(body.surface);
     const prior = view.surfaces[surface.surfaceInstanceId];
@@ -99,7 +127,7 @@ function event(view: SessionView, e: Event): void {
       prior &&
       (prior.status === "deleted" || surface.revision !== prior.revision + 1)
     )
-      throw new Error("surface revision");
+      throw new ClientError("resync_required");
     view.surfaces[surface.surfaceInstanceId] = surface;
     if (
       surface.status === "deleted" &&
@@ -109,20 +137,23 @@ function event(view: SessionView, e: Event): void {
   }
 }
 /** Scratch view is published only after every page passes the same-watermark check. */
-export function appendSnapshot(view: SessionView, page: SnapshotPage): void {
-  for (const e of page.events) event(view, e);
-  for (const c of page.commands)
-    view.commands[c.command.commandId] = {
-      state: c.state,
-      ...(c.outcome ? { outcome: c.outcome } : {}),
-    };
-  for (const interaction of page.interactions)
-    view.interactions[interaction.interactionId] = {
-      status: interaction.status,
-      request: interaction.request,
-    };
-  for (const surface of page.surfaces)
-    view.surfaces[surface.surfaceInstanceId] = validateSurface(surface);
+export function restoreSnapshot(
+  view: SessionView,
+  pages: SnapshotPage[],
+): void {
+  for (const page of pages) for (const e of page.events) event(view, e);
+  for (const page of pages) {
+    for (const c of page.commands)
+      view.commands[c.command.commandId] = {
+        state: c.state,
+        ...(c.outcome ? { outcome: c.outcome } : {}),
+      };
+    for (const interaction of page.interactions)
+      view.interactions[interaction.interactionId] =
+        projectInteraction(interaction);
+    for (const surface of page.surfaces)
+      view.surfaces[surface.surfaceInstanceId] = validateSurface(surface);
+  }
 }
 /** Single product reducer. Standard ACP notifications and receipts do not write this state. */
 export function applyUpdate(view: SessionView, item: Subscription): void {
@@ -172,7 +203,7 @@ export function applyUpdate(view: SessionView, item: Subscription): void {
     a.authorityId !== b.authorityId ||
     e.generation !== view.generation
   )
-    throw new Error("event binding");
+    throw new ClientError("resync_required");
   if (e.sequence <= view.cursor) return;
   if (e.sequence !== view.cursor + 1) {
     view.connection = "resync_required";

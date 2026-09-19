@@ -248,6 +248,7 @@ export class MemorySessionStore implements SessionStore {
           type: "interaction",
           interactionId: interaction.interactionId,
           status: "answered",
+          responseCommandId: interaction.responseCommandId!,
         },
       });
     const result = await this.commit({
@@ -504,6 +505,19 @@ export class MemorySessionStore implements SessionStore {
         )
       )
         return fail("content_conflict");
+      if (!old || !same(old, row)) {
+        const changes = batch.events.filter(
+          (event) =>
+            event.body.type === "interaction" &&
+            event.body.interactionId === row.interactionId,
+        );
+        if (
+          changes.length !== 1 ||
+          changes[0].body.type !== "interaction" ||
+          changes[0].body.status !== row.status
+        )
+          return fail("invalid_input");
+      }
       if (row.status === "answered") {
         const response = copy.commands.get(row.responseCommandId!);
         if (
@@ -533,10 +547,17 @@ export class MemorySessionStore implements SessionStore {
         if (
           state.interactions.has(row.interactionId) ||
           !interactionIds.has(row.interactionId) ||
-          !same(body.request, row.request)
+          !same(body.request, row.request) ||
+          body.expiresAtMs !== row.expiresAtMs ||
+          body.callbackLifetime !== row.callbackLifetime
         )
           return fail("invalid_input");
-      } else if ("request" in body) return fail("invalid_input");
+      } else if (
+        "request" in body ||
+        (body.status === "answered" &&
+          body.responseCommandId !== row.responseCommandId)
+      )
+        return fail("invalid_input");
     }
     for (const row of batch.deliveries) {
       if (
@@ -699,9 +720,13 @@ export class MemorySessionStore implements SessionStore {
       };
       try {
         boundedJson(page, fixtureLimits);
+        this.views.finish(id, !!page.next);
         return ok(page);
       } catch {
-        if (count <= 1) return fail("limit_exceeded");
+        if (count <= 1) {
+          this.views.finish(id, false);
+          return fail("limit_exceeded");
+        }
         count = Math.floor(count / 2);
       }
     }
@@ -749,9 +774,13 @@ export class MemorySessionStore implements SessionStore {
       };
       try {
         boundedJson(page, fixtureLimits);
+        this.views.finish(id, !!page.next);
         return ok(page);
       } catch {
-        if (count <= 1) return fail("limit_exceeded");
+        if (count <= 1) {
+          this.views.finish(id, false);
+          return fail("limit_exceeded");
+        }
         count = Math.floor(count / 2);
       }
     }

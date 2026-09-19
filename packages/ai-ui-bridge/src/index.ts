@@ -1,3 +1,6 @@
+import { RendererError } from "./errors.js";
+export { RendererError } from "./errors.js";
+export type { RendererErrorCode } from "./errors.js";
 import {
   defineComponent,
   h,
@@ -21,8 +24,12 @@ export const createSurfaceRenderer: RendererFactory = async (
   container,
   options,
 ) => {
-  const { SurfaceRenderer } = await import("./renderer.js");
-  return new SurfaceRenderer(container, options);
+  try {
+    const { SurfaceRenderer } = await import("./renderer.js");
+    return new SurfaceRenderer(container, options);
+  } catch {
+    throw new RendererError("renderer_load");
+  }
 };
 export function useSessionView(runtime: RuntimeClient, sessionId: string) {
   const view = shallowRef<SessionView | undefined>(
@@ -41,26 +48,33 @@ export const RuntimeSurface = defineComponent({
     runtime: { type: Object as PropType<RuntimeClient>, required: true },
     sessionId: { type: String, required: true },
     instanceId: { type: String, required: true },
+    now: { type: Function as PropType<() => number>, default: Date.now },
     rendererFactory: {
       type: Function as PropType<RendererFactory>,
       default: createSurfaceRenderer,
     },
   },
   emits: {
-    error: (_error: Error) => true,
+    error: (_error: RendererError) => true,
     receipt: (_receipt: Receipt) => true,
   },
   setup(props, { emit, expose }) {
     const container = shallowRef<HTMLElement>(),
       error = shallowRef(""),
+      stateNote = shallowRef(""),
       errorKind = shallowRef<"renderer" | "action">("renderer");
     let renderer: SurfaceRendererHandle | undefined,
       stop = () => {},
       mounted = false,
       epoch = 0,
       displayed = "";
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    const stopDeadline = () => {
+      clearTimeout(deadline);
+      deadline = undefined;
+    };
     const report = (
-      failure: Error,
+      failure: RendererError,
       kind: "renderer" | "action" = "renderer",
     ) => {
       errorKind.value = kind;
@@ -68,47 +82,82 @@ export const RuntimeSurface = defineComponent({
       emit("error", failure);
     };
     const update = (view?: SessionView) => {
+      stopDeadline();
       if (!renderer || !view) return;
       const surface = view.surfaces[props.instanceId];
       if (!surface) {
         renderer.clear();
+        error.value = "";
+        stateNote.value = "";
         displayed = "";
         return;
       }
-      const enabled =
+      const interaction = view.interactions[surface.interactionId];
+      const connected =
         view.connection === "attached" &&
-        view.interactions[surface.interactionId]?.status === "pending";
-      const key = `${surface.surfaceInstanceId}/${surface.revision}/${enabled}`;
+        view.generation === surface.generation;
+      const expired = !!interaction && props.now() > interaction.expiresAtMs;
+      stateNote.value =
+        interaction?.status === "answered"
+          ? "This question has already been answered."
+          : interaction?.status === "expired" ||
+              (interaction?.status === "pending" && expired)
+            ? "This question has expired."
+            : interaction?.status === "unavailable"
+              ? "This question is no longer available."
+              : view.connection !== "attached"
+                ? "Reconnect the session to respond."
+                : !connected || !interaction
+                  ? "This question is no longer available."
+                  : "";
+      if (interaction?.status === "pending" && !expired)
+        deadline = setTimeout(
+          () => update(props.runtime.getSession(props.sessionId)),
+          Math.min(
+            2_147_483_647,
+            Math.max(1, interaction.expiresAtMs - props.now() + 1),
+          ),
+        );
+      const key = JSON.stringify([
+        surface.surfaceInstanceId,
+        surface.revision,
+        connected,
+        interaction,
+        expired,
+      ]);
       if (displayed === key) return;
       try {
-        renderer.replace(surface, enabled);
+        renderer.replace(surface, interaction, connected);
         displayed = key;
-        if (errorKind.value !== "action") error.value = "";
+        if (errorKind.value !== "action" || !renderer.canRetry)
+          error.value = "";
       } catch {
         renderer.dispose();
         renderer = undefined;
-        report(
-          new Error(
-            "This card cannot be displayed. Use Retry card to reload it.",
-          ),
-        );
+        report(new RendererError("renderer_invalid"));
       }
     };
     const mount = async () => {
       if (!mounted || !container.value) return;
       const current = ++epoch;
       stop();
+      stopDeadline();
       renderer?.dispose();
       renderer = undefined;
       displayed = "";
       try {
         const created = await props.rendererFactory(container.value, {
+          now: props.now,
           onAction: async (request) => {
             const receipt = await props.runtime.action(request);
-            error.value = "";
-            emit("receipt", receipt);
+            if (current === epoch && mounted) {
+              error.value = "";
+              emit("receipt", receipt);
+            }
           },
-          onError: (failure) => report(failure, "action"),
+          onError: (failure) => {
+            if (current === epoch && mounted) report(failure, "action");
+          },
         });
         if (current !== epoch || !mounted) {
           created.dispose();
@@ -120,11 +169,7 @@ export const RuntimeSurface = defineComponent({
         });
         update(props.runtime.getSession(props.sessionId));
       } catch {
-        report(
-          new Error(
-            "Card renderer could not load. Text and standard permissions remain available.",
-          ),
-        );
+        report(new RendererError("renderer_load"));
       }
     };
     onMounted(() => {
@@ -139,14 +184,22 @@ export const RuntimeSurface = defineComponent({
       mounted = false;
       epoch++;
       stop();
+      stopDeadline();
       renderer?.dispose();
     });
     expose({ retry: () => renderer?.retry(), remount: mount });
     return () =>
       h("div", { class: "rss-ai-surface" }, [
         h("div", { ref: container }),
-        error.value ? h("p", { role: "status" }, error.value) : null,
+        stateNote.value ? h("p", { role: "status" }, stateNote.value) : null,
         error.value
+          ? h(
+              "p",
+              { role: "status", class: "rss-ai-surface-error" },
+              error.value,
+            )
+          : null,
+        error.value && (errorKind.value === "renderer" || renderer?.canRetry)
           ? h(
               "button",
               {

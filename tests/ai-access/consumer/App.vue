@@ -4,6 +4,7 @@ import {
   RuntimeSurface,
   createSurfaceRenderer,
 } from "@rss-mdm-agent/ai-ui-bridge";
+const window = globalThis.window;
 const props = defineProps({ runtime: { type: Object, required: true } });
 const mounted = ref(true),
   receipts = ref(0),
@@ -36,6 +37,9 @@ const factory = async (container, options) => {
         throw new Error("injected renderer failure");
       }
       renderer.replace(...args);
+    },
+    get canRetry() {
+      return renderer.canRetry;
     },
     clear: () => renderer.clear(),
     dispose: () => renderer.dispose(),
@@ -74,6 +78,7 @@ const factory = async (container, options) => {
     :key="cardVersion"
     :renderer-factory="factory"
     :runtime="runtime"
+    :now="() => window.consumer.now"
     session-id="session-1"
     instance-id="surface-instance-1"
     @receipt="receipts++"

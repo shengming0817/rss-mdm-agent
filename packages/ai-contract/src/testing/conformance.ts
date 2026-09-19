@@ -896,8 +896,15 @@ export function interactionEvent(
       type: "interaction",
       interactionId: row.interactionId,
       ...(row.status === "pending"
-        ? { status: "pending", request: row.request }
-        : { status: row.status }),
+        ? {
+            status: "pending",
+            request: row.request,
+            expiresAtMs: row.expiresAtMs,
+            callbackLifetime: row.callbackLifetime,
+          }
+        : row.status === "answered"
+          ? { status: "answered", responseCommandId: row.responseCommandId! }
+          : { status: row.status }),
     },
   };
 }
@@ -970,6 +977,8 @@ async function runCallbackConformance(store: SessionStore): Promise<void> {
                 type: "interaction",
                 interactionId: row.interactionId,
                 status: "pending",
+                expiresAtMs: row.expiresAtMs,
+                callbackLifetime: row.callbackLifetime,
                 ...(request === undefined ? {} : { request }),
               } as import("../wire.js").EventBody,
             },

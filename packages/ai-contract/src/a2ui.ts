@@ -2,12 +2,8 @@ import validateMessage from "./validate-surface.js";
 import { boundedJson, decode, type Limits } from "./codec.js";
 import type { SurfaceState } from "./wire.js";
 
-/** Product catalog is an explicitly restricted subset of the fixed upstream catalog. */
-export const interactionCatalog = {
-  version: "v0.9.1",
-  catalogId: "urn:rss-mdm-agent:a2ui:interaction",
-  catalogVersion: "1",
-} as const;
+import { interactionCatalog } from "./identity.js";
+export { interactionCatalog } from "./identity.js";
 export const accessLimits: Limits = {
   maxBytes: 262144,
   maxTextBytes: 131072,

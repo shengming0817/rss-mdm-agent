@@ -5,7 +5,13 @@ import type { PageQuery } from "../wire.js";
 export class ReadViews {
   private views = new Map<
     string,
-    { scope: string; expires: number; limit: number; value: unknown }
+    {
+      scope: string;
+      expires: number;
+      limit: number;
+      value: unknown;
+      continued: boolean;
+    }
   >();
   private tokens = new Map<
     string,
@@ -47,6 +53,7 @@ export class ReadViews {
       value = structuredClone(capture());
     this.views.set(id, {
       scope,
+      continued: false,
       expires: now + this.ttlMs,
       limit: query.limit,
       value,
@@ -63,6 +70,17 @@ export class ReadViews {
     const token = crypto.randomUUID();
     this.tokens.set(token, { id, offset, index });
     return token;
+  }
+  /** Preserve issued continuation tokens for retries, release unused captures. */
+  finish(id: string, hasContinuation: boolean): void {
+    const view = this.views.get(id);
+    if (!view) return;
+    view.continued ||= hasContinuation;
+    if (!view.continued) {
+      this.views.delete(id);
+      for (const [token, row] of this.tokens)
+        if (row.id === id) this.tokens.delete(token);
+    }
   }
   clear(): void {
     this.views.clear();

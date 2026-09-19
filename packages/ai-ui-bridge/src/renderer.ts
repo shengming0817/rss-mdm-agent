@@ -1,3 +1,5 @@
+import { ClientError, type InteractionView } from "@rss-mdm-agent/ai-client";
+import { RendererError } from "./errors.js";
 import "@a2ui/lit/v0_9";
 import {
   Catalog,
@@ -24,11 +26,16 @@ const catalog = new Catalog(
 );
 export interface RendererOptions {
   onAction(request: ActionRequest): Promise<void>;
-  onError(error: Error): void;
+  onError(error: RendererError): void;
   now?: () => number;
 }
 export interface SurfaceRendererHandle {
-  replace(input: SurfaceState, enabled?: boolean): void;
+  replace(
+    input: SurfaceState,
+    interaction: InteractionView | undefined,
+    connected: boolean,
+  ): void;
+  readonly canRetry: boolean;
   retry(): Promise<void>;
   clear(): void;
   dispose(): void;
@@ -39,20 +46,63 @@ export class SurfaceRenderer implements SurfaceRendererHandle {
   private pending?: ActionRequest;
   private sending = false;
   private disposed = false;
+  private interaction?: InteractionView;
+  private connected = false;
+  private now(): number {
+    return (this.options.now ?? Date.now)();
+  }
+  private pendingInteraction(): boolean {
+    return (
+      this.interaction?.status === "pending" &&
+      this.now() <= this.interaction.expiresAtMs
+    );
+  }
+  get canRetry(): boolean {
+    return (
+      !!this.pending &&
+      !this.disposed &&
+      this.connected &&
+      (this.pendingInteraction() ||
+        (this.interaction?.status === "answered" &&
+          this.interaction.responseCommandId ===
+            this.pending.metadata.commandId))
+    );
+  }
   constructor(
     private container: HTMLElement,
     private options: RendererOptions,
   ) {}
-  replace(input: SurfaceState, enabled = true): void {
-    if (this.disposed) throw new Error("renderer disposed");
-    const state = validateSurface(input);
+  replace(
+    input: SurfaceState,
+    interaction: InteractionView | undefined,
+    connected: boolean,
+  ): void {
+    if (this.disposed) throw new RendererError("renderer_disposed");
+    let state: SurfaceState;
+    try {
+      state = validateSurface(input);
+    } catch {
+      this.clear();
+      throw new RendererError("renderer_invalid");
+    }
+    this.interaction = interaction && structuredClone(interaction);
+    this.connected = connected;
+    const enabled =
+      connected &&
+      this.interaction?.generation === state.generation &&
+      this.pendingInteraction();
     const metadata = this.pending?.metadata;
     const pending =
       metadata &&
       metadata.sessionId === state.namespace.sessionId &&
       metadata.surfaceInstanceId === state.surfaceInstanceId &&
       metadata.surfaceRevision === state.revision &&
-      metadata.generation === state.generation
+      metadata.generation === state.generation &&
+      state.status === "active" &&
+      this.interaction?.generation === state.generation &&
+      (this.pendingInteraction() ||
+        (this.interaction?.status === "answered" &&
+          this.interaction.responseCommandId === metadata.commandId))
         ? this.pending
         : undefined;
     this.clear();
@@ -64,6 +114,7 @@ export class SurfaceRenderer implements SurfaceRendererHandle {
           this.disposed ||
           this.processor !== processor ||
           !enabled ||
+          !this.pendingInteraction() ||
           this.sending
         )
           return;
@@ -71,7 +122,7 @@ export class SurfaceRenderer implements SurfaceRendererHandle {
           await this.retry();
           return;
         }
-        const now = (this.options.now ?? Date.now)();
+        const now = this.now();
         this.pending = {
           schemaVersion: 2,
           kind: "actionRequest",
@@ -87,7 +138,7 @@ export class SurfaceRenderer implements SurfaceRendererHandle {
             nativeRunId: state.nativeRunId,
           },
           message: { version: interactionCatalog.version, action: message },
-          expiresAtMs: now + 30_000,
+          expiresAtMs: Math.min(now + 30_000, this.interaction!.expiresAtMs),
         };
         await this.retry();
       },
@@ -98,11 +149,11 @@ export class SurfaceRenderer implements SurfaceRendererHandle {
       processor.processMessages(state.messages as unknown as A2uiMessage[]);
       const model = processor.model.getSurface(state.surfaceId);
       if (state.status === "deleted") {
-        if (model) throw new Error("renderer deletion failed");
+        if (model) throw new RendererError("renderer_invalid");
         return;
       }
       if (!model || !model.componentsModel.get("root"))
-        throw new Error("renderer surface unavailable");
+        throw new RendererError("renderer_invalid");
       const element = document.createElement("a2ui-surface") as HTMLElement & {
         surface: typeof model;
       };
@@ -111,24 +162,39 @@ export class SurfaceRenderer implements SurfaceRendererHandle {
       this.container.replaceChildren(element);
     } catch {
       this.clear();
-      throw new Error(
-        "A2UI renderer unavailable; restore the session to retry",
-      );
+      throw new RendererError("renderer_invalid");
     }
   }
   /** Retry uses exactly the same command ID, expiry and action payload. */
   async retry(): Promise<void> {
-    if (!this.pending || this.sending || this.disposed) return;
-    const request = this.pending;
+    if (!this.canRetry || this.sending) return;
+    const request = this.pending!;
     this.sending = true;
     try {
       await this.options.onAction(structuredClone(request));
       if (this.pending === request) this.pending = undefined;
-    } catch {
-      if (this.pending === request)
-        this.options.onError(
-          new Error("Response was not accepted; retry or restore the session"),
-        );
+    } catch (error) {
+      if (this.pending === request) {
+        const failure =
+          error instanceof ClientError ? error.code : "request_failed";
+        const rejected = ![
+          "request_failed",
+          "transport_failed",
+          "transport_closed",
+          "revision_conflict",
+        ].includes(failure);
+        if (rejected) this.pending = undefined;
+        try {
+          this.options.onError(
+            new RendererError(
+              rejected ? "action_rejected" : "action_failed",
+              failure,
+            ),
+          );
+        } catch {
+          /* observer exceptions cannot change action ownership */
+        }
+      }
     } finally {
       this.sending = false;
     }

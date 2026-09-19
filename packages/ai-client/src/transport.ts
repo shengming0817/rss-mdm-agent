@@ -1,3 +1,4 @@
+import { ClientError, clientError } from "./errors.js";
 import {
   boundedJson,
   accessLimits,
@@ -34,27 +35,38 @@ export function channelStream(
   const close = () => {
     if (!closed) {
       closed = true;
-      dispose();
-      endRead();
+      try {
+        dispose();
+      } catch {
+        throw new ClientError("transport_failed");
+      } finally {
+        endRead();
+      }
     }
   };
   const readable = new ReadableStream<AnyMessage>(
     {
       start(controller) {
         endRead = () => controller.close();
-        dispose = channel.listen((message) => {
-          if (closed) return;
-          try {
-            if ((controller.desiredSize ?? 0) <= 0)
-              throw new Error("transport capacity");
-            controller.enqueue(JSON.parse(boundedJson(message, limits)));
-          } catch {
-            endRead = () => {};
-            controller.error(new Error("invalid transport message"));
-            close();
-          }
-        }, close);
-        if (closed) dispose();
+        try {
+          dispose = channel.listen((message) => {
+            if (closed) return;
+            try {
+              if ((controller.desiredSize ?? 0) <= 0)
+                throw new ClientError("transport_capacity");
+              controller.enqueue(JSON.parse(boundedJson(message, limits)));
+            } catch (error) {
+              endRead = () => {};
+              controller.error(clientError(error, "invalid_transport_message"));
+              close();
+            }
+          }, close);
+          if (closed) dispose();
+        } catch {
+          endRead = () => {};
+          controller.error(new ClientError("transport_failed"));
+          close();
+        }
       },
       cancel: () => {
         endRead = () => {};
@@ -65,12 +77,12 @@ export function channelStream(
   );
   const writable = new WritableStream<AnyMessage>({
     write: async (message) => {
-      if (closed) throw new Error("transport closed");
+      if (closed) throw new ClientError("transport_closed");
       try {
         await channel.send(JSON.parse(boundedJson(message, limits)));
       } catch (error) {
         close();
-        throw error;
+        throw clientError(error, "transport_failed");
       }
     },
     close,

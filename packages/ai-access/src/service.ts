@@ -16,6 +16,7 @@ import {
   extension,
   interactionCatalog,
   parseNegotiation,
+  selectNegotiation,
   resolveSurfaceAction,
   validateSurface,
   type AccessUpdate,
@@ -39,11 +40,14 @@ export interface AccessOptions {
   sessionOptions: SessionOptions;
   limits?: Limits;
   timeoutMs?: number;
+  /** Independent upper bound for settling owned work after cancellation. */
+  shutdownTimeoutMs?: number;
   now?: () => number;
   /** Closed, value-free diagnostics; never receives caller data or provider errors. */
   onDiagnostic?: (code: AccessDiagnostic) => void;
 }
 export type AccessDiagnostic =
+  | "cleanup_timeout"
   | "subscription_ended"
   | "subscription_failed"
   | "sequence_gap"
@@ -90,6 +94,7 @@ interface Peer {
   initialized: boolean;
   selected?: Negotiation;
   pumps: Map<string, Pump>;
+  resumes: Map<string, { attachmentId?: string }>;
 }
 
 /** ACP adapter only. Caller and Host come from the trusted composition root.
@@ -127,7 +132,14 @@ export function createAccessService(options: AccessOptions) {
   };
   const limits = options.limits ?? accessLimits,
     timeoutMs = options.timeoutMs ?? 30_000,
-    now = options.now ?? Date.now;
+    now = options.now ?? Date.now,
+    shutdownTimeoutMs = options.shutdownTimeoutMs ?? 5_000;
+  if (
+    !Number.isSafeInteger(shutdownTimeoutMs) ||
+    shutdownTimeoutMs < 0 ||
+    shutdownTimeoutMs > 2_147_483_647
+  )
+    throw new RangeError("invalid shutdownTimeoutMs");
   const budget = (signal: AbortSignal): Budget => ({
     signal: AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]),
     timeoutMs,
@@ -250,6 +262,7 @@ export function createAccessService(options: AccessOptions) {
     }
   }
   const stopPump = (peer: Peer, id: string) => {
+    peer.resumes.delete(id);
     const pump = peer.pumps.get(id);
     if (!pump) return;
     pump.controller.abort();
@@ -347,6 +360,47 @@ export function createAccessService(options: AccessOptions) {
     );
     return pump;
   };
+  async function resume(
+    peer: Peer,
+    id: string,
+    signal: AbortSignal,
+  ): Promise<Session> {
+    const previous = peer.pumps.get(id);
+    stopPump(peer, id);
+    const token = { attachmentId: previous?.attachmentId };
+    peer.resumes.set(id, token);
+    try {
+      const resumed = value(await host.resume(peer.caller, id, budget(signal)));
+      if (
+        peer.resumes.get(id) !== token ||
+        signal.aborted ||
+        lifetime.signal.aborted ||
+        peer.connection.signal.aborted
+      )
+        return fail("unavailable");
+      if (previous?.attachmentId)
+        await peer.connection.client.notify(extension.update, {
+          schemaVersion: 2,
+          kind: "accessUpdate",
+          sessionId: id,
+          attachmentId: previous.attachmentId,
+          update: { type: "resync_required" },
+        });
+      if (
+        peer.resumes.get(id) !== token ||
+        signal.aborted ||
+        lifetime.signal.aborted ||
+        peer.connection.signal.aborted
+      )
+        return fail("unavailable");
+      // A product client which detached first restores its own new attachment.
+      if (previous || !peer.selected)
+        startPump(peer, id, resumed.lastSequence, previous?.attachmentId);
+      return resumed;
+    } finally {
+      if (peer.resumes.get(id) === token) peer.resumes.delete(id);
+    }
+  }
   async function submit(peer: Peer, command: Command, signal: AbortSignal) {
     const method =
       command.input.type === "prompt"
@@ -362,6 +416,7 @@ export function createAccessService(options: AccessOptions) {
       caller: Object.freeze({ ...caller }),
       initialized: false,
       pumps: new Map(),
+      resumes: new Map(),
     } as Peer;
     const app = agent({ name: "rss-mdm-agent-ai-access" });
     app.onRequest("initialize", ({ params }) => {
@@ -391,7 +446,12 @@ export function createAccessService(options: AccessOptions) {
             n.a2ui.catalogVersion !== interactionCatalog.catalogVersion)
         )
           return fail("unsupported_capability");
-        peer.selected = parseNegotiation(value(host.negotiate(n)), limits);
+        const selection = value(host.negotiate(structuredClone(n)));
+        try {
+          peer.selected = selectNegotiation(n, selection, limits);
+        } catch {
+          return fail("unsupported_capability");
+        }
       }
       peer.initialized = true;
       return {
@@ -477,7 +537,7 @@ export function createAccessService(options: AccessOptions) {
     });
     app.onRequest("session/resume", async ({ params, signal }) => {
       ready(peer);
-      value(await host.resume(peer.caller, params.sessionId, budget(signal)));
+      await resume(peer, params.sessionId, signal);
       return {};
     });
     app.onRequest("session/prompt", async ({ params, signal }) => {
@@ -618,7 +678,9 @@ export function createAccessService(options: AccessOptions) {
     app.onRequest(extension.detach, parse("detachRequest"), ({ params }) => {
       ready(peer, true);
       if (
-        peer.pumps.get(params.sessionId)?.attachmentId === params.attachmentId
+        peer.pumps.get(params.sessionId)?.attachmentId ===
+          params.attachmentId ||
+        peer.resumes.get(params.sessionId)?.attachmentId === params.attachmentId
       )
         stopPump(peer, params.sessionId);
       return {};
@@ -628,9 +690,7 @@ export function createAccessService(options: AccessOptions) {
       parse("resumeRequest"),
       async ({ params, signal }) => {
         ready(peer, true);
-        return value(
-          await host.resume(peer.caller, params.sessionId, budget(signal)),
-        );
+        return resume(peer, params.sessionId, signal);
       },
     );
     app.onRequest(
@@ -764,10 +824,19 @@ export function createAccessService(options: AccessOptions) {
         for (const id of peer.pumps.keys()) stopPump(peer, id);
         peer.connection.close();
       }
-      closing = Promise.all([
-        ...tasks,
-        ...connections.map((peer) => peer.connection.closed),
-      ]).then(() => {});
+      closing = new Promise<void>((resolve) => {
+        const timer = setTimeout(() => {
+          diagnose("cleanup_timeout");
+          resolve();
+        }, shutdownTimeoutMs);
+        void Promise.allSettled([
+          ...tasks,
+          ...connections.map((peer) => peer.connection.closed),
+        ]).then(() => {
+          clearTimeout(timer);
+          resolve();
+        });
+      });
       return closing;
     },
   };

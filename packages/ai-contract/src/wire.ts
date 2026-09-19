@@ -211,6 +211,24 @@ export type EventBody =
       status: "pending";
       /** Required for the first pending event and equal to the newly committed Interaction request; forbidden on later lifecycle events. */
       request: InteractionRequest;
+      /** Inclusive UTC epoch-millisecond deadline; later first acceptance is rejected. */
+      expiresAtMs: Counter;
+      /** generation_bound cannot survive callback loss; provider_resumable requires verified native restoration. */
+      callbackLifetime: CallbackLifetime;
+    }
+  | {
+      /**
+       * Closed variant discriminator.
+       */
+      type: "interaction";
+      /** Single-use interaction identity within the namespace. */
+      interactionId: Id;
+      /**
+       * The first accepted response consumed this interaction.
+       */
+      status: "answered";
+      /** Accepted response command which atomically consumed the interaction; present only when answered. */
+      responseCommandId: Id;
     }
   | {
       /**
@@ -222,7 +240,7 @@ export type EventBody =
       /**
        * Explicit lifecycle state; missing native evidence cannot be inferred from transport loss.
        */
-      status: "answered" | "expired" | "unavailable";
+      status: "expired" | "unavailable";
     }
   | {
       /**
@@ -240,6 +258,10 @@ export type EventBody =
       /** Full surface recovery state committed with this event. */
       surface: SurfaceState;
     };
+/**
+ * generation_bound cannot survive callback loss; provider_resumable requires verified native restoration.
+ */
+export type CallbackLifetime = "generation_bound" | "provider_resumable";
 /**
  * Only supported enables an operation; unknown and unsupported fail closed.
  */
@@ -605,10 +627,8 @@ export interface Interaction {
   status: "pending" | "answered" | "expired" | "unavailable";
   /** Accepted response command which atomically consumed the interaction; present only when answered. */
   responseCommandId?: Id;
-  /**
-   * generation_bound cannot survive callback loss; provider_resumable requires verified native restoration.
-   */
-  callbackLifetime: "generation_bound" | "provider_resumable";
+  /** generation_bound cannot survive callback loss; provider_resumable requires verified native restoration. */
+  callbackLifetime: CallbackLifetime;
   /** Provider-owned callback identifier, immutable and unique within a session generation; distinct from the parent dispatch request. */
   nativeCallbackId: Id;
   /** Immutable untrusted question payload retained for display; does not restore a lost native callback or grant approval. */
@@ -895,6 +915,12 @@ export interface A2UiNegotiation {
    * Fixed upstream protocol version.
    */
   version: "v0.9.1";
-  catalogId: Id;
-  catalogVersion: Id;
+  /**
+   * Fixed product catalog identity.
+   */
+  catalogId: "urn:rss-mdm-agent:a2ui:interaction";
+  /**
+   * Fixed product catalog revision.
+   */
+  catalogVersion: "1";
 }
