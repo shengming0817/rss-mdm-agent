@@ -835,6 +835,36 @@ async function runCallbackConformance(store: SessionStore): Promise<void> {
     ).ok,
     false,
   );
+  for (const request of [
+    undefined,
+    { question: "different from the pending record" },
+  ]) {
+    const event = batch.events[0];
+    assert.equal(
+      (
+        await store.commit({
+          ...batch,
+          events: [
+            {
+              ...event,
+              body: {
+                type: "interaction",
+                interactionId: row.interactionId,
+                status: "pending",
+                ...(request === undefined ? {} : { request }),
+              },
+            },
+          ],
+        })
+      ).ok,
+      false,
+    );
+    const unchanged = unwrap(
+      await store.snapshot(seeded.session.namespace, 1024),
+    );
+    assert.equal(unchanged.interactions.length, 1);
+    assert.equal(unchanged.cursor, seeded.session.lastSequence);
+  }
   unwrap(await store.commit(batch));
   let head = unwrap(await store.session(seeded.session.namespace));
   const alias = { ...row, interactionId: "callback-alias" };
