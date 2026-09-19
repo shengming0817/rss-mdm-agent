@@ -4,11 +4,30 @@ use execution_lifecycle::{ObservationError, ObservationFacts, ObservationVerifie
 use execution_sqlite::{self as db, AccessRequest, AdmissionGate, Scope, TrustSnapshot};
 
 pub(crate) struct Host<'a, H> {
-    pub inner: &'a H,
-    pub binding: &'a Binding,
-    pub config: Option<AppConfig>,
-    pub plan: Option<&'a FrozenPlan>,
-    pub observation: Option<&'a ObservationFacts>,
+    inner: &'a H,
+    binding: &'a Binding,
+    config: Option<AppConfig>,
+    plan: Option<&'a FrozenPlan>,
+    observation: Option<&'a ObservationFacts>,
+}
+impl<'a, H> Host<'a, H> {
+    pub(crate) fn new(inner: &'a H, binding: &'a Binding, config: &Configuration) -> Self {
+        Self {
+            inner,
+            binding,
+            config: config.active().ok(),
+            plan: None,
+            observation: None,
+        }
+    }
+    pub(crate) fn with_plan(mut self, plan: Option<&'a FrozenPlan>) -> Self {
+        self.plan = plan;
+        self
+    }
+    pub(crate) fn with_observation(mut self, observation: Option<&'a ObservationFacts>) -> Self {
+        self.observation = observation;
+        self
+    }
 }
 pub(crate) fn capabilities(
     host: &impl AppHost,

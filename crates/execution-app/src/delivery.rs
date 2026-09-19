@@ -1,7 +1,7 @@
 use crate::{host::Host, service::operation, *};
 use execution_contract::{EventId, Id, RequestId};
 use execution_interaction::{Command, Interaction, Kind, Reference, Spec};
-use execution_sqlite::{AuditRecord, OperationRequestId, Receipt, Scope};
+use execution_sqlite::{AuditRecord, ExecutionAccess, OperationRequestId, Receipt, Scope};
 
 impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
     /// Open a bounded interaction bound by the service to the actual stored task. This records a
@@ -13,7 +13,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         kind: Kind,
         expires_at_unix_ms: u64,
     ) -> Result<Receipt, Error> {
-        let execution = self.load(request)?;
+        let execution = self.load(request, ExecutionAccess::Interact)?;
         let plan = execution.plan();
         let scope = Scope::from_plan(plan);
         let op = operation(plan, "interaction-open", id.as_str())?;
@@ -23,13 +23,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             kind,
             expires_at_unix_ms,
         };
-        let host = Host {
-            inner: &self.host,
-            binding: &self.binding,
-            config: self.config.active().ok(),
-            plan: Some(plan),
-            observation: None,
-        };
+        let host = Host::new(&self.host, &self.binding, &self.config).with_plan(Some(plan));
         Ok(self
             .store
             .open_interaction(&op, &scope, &spec, &host)?
@@ -38,7 +32,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
     }
     /// Read a pending or resolved interaction; no acknowledgement or execution is implied.
     pub fn interaction(&self, request: &RequestId, id: &Reference) -> Result<Interaction, Error> {
-        let execution = self.load(request)?;
+        let execution = self.load(request, ExecutionAccess::Result)?;
         Ok(self
             .store
             .interaction(&Scope::from_plan(execution.plan()), id, &self.adapter(None))?)
@@ -52,16 +46,10 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         id: &Reference,
         command: &Command,
     ) -> Result<Receipt, Error> {
-        let execution = self.load(request)?;
+        let execution = self.load(request, ExecutionAccess::Interact)?;
         let plan = execution.plan();
         let op = operation(plan, "interaction-response", operation_id.as_str())?;
-        let host = Host {
-            inner: &self.host,
-            binding: &self.binding,
-            config: self.config.active().ok(),
-            plan: Some(plan),
-            observation: None,
-        };
+        let host = Host::new(&self.host, &self.binding, &self.config).with_plan(Some(plan));
         Ok(self
             .store
             .apply_interaction(&op, &Scope::from_plan(plan), id, command, &host)?
@@ -75,7 +63,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         consumer: &Id,
         limit: usize,
     ) -> Result<Vec<Receipt>, Error> {
-        let execution = self.load(request)?;
+        let execution = self.load(request, ExecutionAccess::Delivery(consumer))?;
         Ok(self.store.pull_results(
             &Scope::from_plan(execution.plan()),
             consumer,
@@ -91,14 +79,8 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         consumer: &Id,
         event: &EventId,
     ) -> Result<(), Error> {
-        let execution = self.load(request)?;
-        let host = Host {
-            inner: &self.host,
-            binding: &self.binding,
-            config: self.config.active().ok(),
-            plan: None,
-            observation: None,
-        };
+        let execution = self.load(request, ExecutionAccess::Delivery(consumer))?;
+        let host = Host::new(&self.host, &self.binding, &self.config);
         Ok(self
             .store
             .confirm(&Scope::from_plan(execution.plan()), consumer, event, &host)?)
@@ -110,7 +92,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         request: &RequestId,
         operation: &OperationRequestId,
     ) -> Result<AuditRecord, Error> {
-        let execution = self.load(request)?;
+        let execution = self.load(request, ExecutionAccess::Audit)?;
         Ok(self.store.audit(
             &Scope::from_plan(execution.plan()),
             operation,

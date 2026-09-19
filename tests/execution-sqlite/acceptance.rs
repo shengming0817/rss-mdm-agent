@@ -55,14 +55,17 @@ fn execution_by_request_restores_exact_plan_and_checks_current_reader() {
     drop(store);
     let store = db.open();
     let request = &host.plan.spec().request.request_id;
-    let restored = store.execution_by_request(request, &host).unwrap();
+    let restored = store
+        .execution_by_request(request, ExecutionAccess::Result, &host)
+        .unwrap()
+        .execution;
     assert_eq!(restored.plan().digest(), host.plan.digest());
     assert_eq!(restored.snapshot().revision, 1);
     assert_eq!(store.trust_revision(&host.scope(), &host).unwrap(), Some(1));
     let mut denied = host.clone();
     denied.read = false;
     assert!(matches!(
-        store.execution_by_request(request, &denied),
+        store.execution_by_request(request, ExecutionAccess::Result, &denied),
         Err(Error::Denied)
     ));
     denied.denied.push(Access::ManageTrust);
@@ -71,7 +74,11 @@ fn execution_by_request_restores_exact_plan_and_checks_current_reader() {
         Err(Error::Denied)
     );
     assert!(matches!(
-        store.execution_by_request(&RequestId::new("missing").unwrap(), &host),
+        store.execution_by_request(
+            &RequestId::new("missing").unwrap(),
+            ExecutionAccess::Result,
+            &host
+        ),
         Err(Error::NotFound)
     ));
     db.sql()
@@ -81,7 +88,7 @@ fn execution_by_request_restores_exact_plan_and_checks_current_reader() {
         )
         .unwrap();
     assert!(matches!(
-        store.execution_by_request(request, &host),
+        store.execution_by_request(request, ExecutionAccess::Result, &host),
         Err(Error::Corrupt)
     ));
 }
@@ -1317,7 +1324,7 @@ fn each_endpoint_requires_its_exact_access_and_delivery_consumer() {
 }
 
 #[test]
-fn new_write_needs_only_write_permission_while_replay_needs_only_result_permission() {
+fn replay_accepts_original_action_or_independent_result_permission() {
     let db = Database::new();
     let mut store = db.create();
     let mut host = TestHost::new(0);
@@ -1326,12 +1333,12 @@ fn new_write_needs_only_write_permission_while_replay_needs_only_result_permissi
         .refresh_trust(&operation("trust"), &host.scope(), None, &host)
         .unwrap();
     assert_eq!(initial.receipt().outcome, Outcome::Changed);
-    assert_eq!(
+    assert!(matches!(
         store
             .refresh_trust(&operation("trust"), &host.scope(), None, &host)
-            .unwrap_err(),
-        Error::Denied
-    );
+            .unwrap(),
+        CommitOutcome::AlreadyCommitted(_)
+    ));
     host.read = true;
     host.write = false;
     assert!(matches!(

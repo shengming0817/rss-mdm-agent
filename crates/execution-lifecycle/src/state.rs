@@ -250,6 +250,8 @@ impl Execution {
                     runner: runner.clone(),
                     mode: *mode,
                     dispatch: DispatchState::Starting,
+                    dispatch_cause: None,
+                    stop_outcome: None,
                     termination: None,
                     assessment: None,
                     output_bytes: 0,
@@ -263,11 +265,18 @@ impl Execution {
                 a.dispatch = DispatchState::Dispatched;
             }
             Command::Cancel => next.cancel_requested = true,
-            Command::DispatchUnconfirmed { attempt_id, .. } => {
+            Command::DispatchUnconfirmed { attempt_id, cause } => {
                 let a = current_attempt(&mut next, attempt_id)?;
+                a.dispatch_cause = Some(*cause);
                 if a.termination.is_none() {
                     a.dispatch = a.dispatch.uncertain();
                 }
+            }
+            Command::StopReported {
+                attempt_id,
+                outcome,
+            } => {
+                current_attempt(&mut next, attempt_id)?.stop_outcome = Some(*outcome);
             }
             Command::Recover => {
                 if let Some(a) = &mut next.attempt {

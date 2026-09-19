@@ -6,7 +6,7 @@ C18 将执行、交互、批准消费和可靠结果放进同一受保护 SQLite
 
 Store 接收冻结计划、生命周期事件、交互命令与 operationRequestId，自己读取当前状态并调用核心。调用方不能提交自造 Snapshot、Transition、审计或批准计数。所有写入使用 BEGIN IMMEDIATE；SQLite 负责不同连接的竞争，进程内 mutex 不作为正确性条件。
 
-每个新操作先在事务内查询 operationRequestId。相同 scope/规范化命令返回原 Receipt；同 ID 不同内容或主体冲突。重放只要求当前结果读取权限，不重新申请执行批准、消耗次数或生成派发动作。操作、事件、交互命令与 attempt 历史键保留整个 authority 生命周期，没有删除幂等记录或导入旧库的 API。业务拒绝、Stale、Late、NotDue 等结果也有稳定回执；存储失败与未可信输入返回封闭错误码，不落半份业务结果。
+每个新操作先在事务内查询 operationRequestId。相同 scope/规范化命令返回原 Receipt；同 ID 不同内容或主体冲突。重放允许原动作权限或独立 ReadResult 权限读取安全回执，不重新申请执行批准、消耗次数或生成派发动作。操作、事件、交互命令与 attempt 历史键保留整个 authority 生命周期，没有删除幂等记录或导入旧库的 API。业务拒绝、Stale、Late、NotDue 等结果也有稳定回执；存储失败与未可信输入返回封闭错误码，不落半份业务结果。
 
 BeginAttempt 在同一事务内读取受保护计划、authority/批准修订和消费计数，通过 Host 获取完整 C07/C08 裁决，再复核可靠时间、精确绑定、版本、有效期、历史唯一键和 CAS。批准消费、Starting intent、状态、审计和结果同时提交。完整 C07/C08 裁决、规则 ID、profile→record 映射、时效、每份批准及消费前后计数单独保存在有特权读取权限的 AuditRecord。拒绝路径也保留提交引用与受保护记录，二者明确区分；AuditReason 使用闭集枚举和明确的 serde 映射，不持久化 Debug 文本。批准定义按 record/version 不可变；刷新不接受 used/revision，不能恢复次数。携带 attempt 的命令在校验前保存提交的 attempt；成功、拒绝、陈旧及回执重放均保持该关联，Receipt 从 AuditRecord 的同一字段派生。陈旧/重复核心结果同样持久化 lifecycle directive；它只表示下一步建议。
 
@@ -17,6 +17,8 @@ BeginAttempt 在同一事务内读取受保护计划、authority/批准修订和
 Host 是可信产品代码，不是 UI/模型 DTO。authorize 独立验证实际 caller、authority、actor、plan、consumer；Interact 还验证 responder、命令和回答引用。admit 使用同事务提供的 ApprovalVerifier，返回完整 AdmissionDecision 与 ApprovalDecision；无批准路径同样检查当前 authority revision。trusted_snapshot 验证签发权限、来源与撤销，返回完整快照；缺失记录不可用。可靠时钟不得回拨至已提交 watermark 之前；事务内回调须有界、不重入、不访问网络。
 
 Scope 来自完整 authority/actor/plan，包含企业 authority 的 tenant；声明 scope 不赋予权限。ReadResult、ReadAudit、Deliver 与 Execute 分离。没有正确 Host 的初始化、反序列化或查询不能赋予执行权限；本 crate 不防御恶意同进程 Host、本机管理员或内核失陷。
+
+`execution_by_request` 要求封闭 `ExecutionAccess`，Delivery 必须携带 consumer；解析出的完整 scope 仍由 Host 认证，不隐含 ReadResult。返回的 `ExecutionRecord` 在同一事务内包含 C09 状态与最近非陈旧准入投影（Admitted/Denied/ApprovalRequired）；投影来自原 receipt，不泄露审计详情，不新增表。`execution_receipt` 仅供 Execute 权限恢复执行命令，其他回执查询仍使用对应授权入口。stop 响应保留 attempt 和闭集 Acknowledged/Failed 审计，不代替终止/效果事实，也不占用终态证据预留额度。
 
 Receipt 同时作为可靠结果，不另建 outbox。pull_results(scope, consumer, limit) 按 sequence 返回该 consumer 最早的未确认结果，没有调用方游标；sequence 只用于排序，只有持久确认才推进投递。乱序/部分确认和重启不会跳过较早未确认记录；响应丢失直接重拉，业务方先持久化自己的处理结果再 confirm。确认幂等且不产生新的待确认事件；receipt 查询不受确认影响。Deliver 授权必须绑定消费方，不能让任意调用方确认别人的结果。投递语义为至少一次，消费方负责按 event_id 去重。
 

@@ -28,9 +28,6 @@ pub enum Error {
     /// Capability is blocked, unknown, unsupported or stale.
     #[error("required capability unavailable")]
     Capability,
-    /// C07/C08 rejected this attempt; this is not permission to retry it.
-    #[error("attempt admission rejected")]
-    AdmissionRejected,
     /// No conforming configuration is active. Reads and safe recovery remain available.
     #[error("new execution disabled")]
     Degraded,
@@ -46,6 +43,14 @@ pub enum Error {
     /// Corrupt, unsupported or inaccessible protected storage.
     #[error("protected execution storage unavailable")]
     Storage,
+    /// Read-only header diagnosis; no application/write handle was created.
+    #[error("database schema {found} is newer than supported schema {supported}")]
+    NewerSchema {
+        /// Version read without opening a writer.
+        found: u32,
+        /// Maximum supported schema.
+        supported: u32,
+    },
     /// Query the original operation; never allocate a replacement attempt.
     #[error("operation commit outcome unknown")]
     OutcomeUnknown,
@@ -112,6 +117,10 @@ pub enum Startup {
 pub enum TaskPhase {
     /// Registered without an admitted attempt; no execution permission is implied.
     Waiting,
+    /// Durable admission denial; replay does not turn it into a pending task.
+    AdmissionDenied,
+    /// An independently verified approval is required; an interaction answer is not approval.
+    ApprovalRequired,
     /// Intent committed, dispatch not confirmed.
     Accepted,
     /// Runner accepted the dispatch; no verified effect is implied.
@@ -147,6 +156,12 @@ pub struct ExecutionStatus {
     pub attempts: u32,
     /// Sticky cancellation request, independently of termination.
     pub cancel_requested: bool,
+    /// Latest durable, value-only admission decision, independent of prior attempt facts.
+    pub admission: Option<execution_sqlite::AdmissionStatus>,
+    /// First-delivery diagnosis; never evidence that execution had no effect.
+    pub dispatch_cause: Option<execution_lifecycle::DispatchCause>,
+    /// Last stop request response; independent of termination/effect evidence.
+    pub stop_outcome: Option<execution_lifecycle::StopOutcome>,
     /// Fixture assessment if recorded; Unknown is not success.
     pub assessment: Option<EffectAssessment>,
     /// Authorized evidence references only.

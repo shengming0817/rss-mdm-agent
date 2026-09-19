@@ -185,6 +185,61 @@ pub enum Access {
     /// Pull/ack events for this exact consumer identity.
     Deliver,
 }
+/// Exact purpose of request-based resolution. Delivery always carries a consumer; resolving a
+/// task never implicitly grants ReadResult or skips the eventual operation's own authorization.
+#[derive(Debug, Clone, Copy)]
+pub enum ExecutionAccess<'a> {
+    /// Submission response, including read-only replay of a previously registered task.
+    Submission,
+    /// Execute/cancel or retrieve this action's safe response.
+    Execute,
+    /// Service-owned runner reconciliation.
+    RunnerFact,
+    /// Interaction creation/answer; responder checks still occur at the write boundary.
+    Interact,
+    /// Ordinary task/result read.
+    Result,
+    /// Privileged audit read.
+    Audit,
+    /// Pull/confirm for this exact consumer.
+    Delivery(&'a Id),
+}
+impl ExecutionAccess<'_> {
+    pub(crate) fn authorize(self, scope: &Scope, host: &impl Host) -> Result<(), Error> {
+        let (access, consumer) = match self {
+            Self::Submission => (Access::Create, None),
+            Self::Execute => (Access::Execute, None),
+            Self::RunnerFact => (Access::RunnerFact, None),
+            Self::Interact => (Access::Interact, None),
+            Self::Result => (Access::ReadResult, None),
+            Self::Audit => (Access::ReadAudit, None),
+            Self::Delivery(consumer) => (Access::Deliver, Some(consumer)),
+        };
+        let result = crate::journal::authorize(host, access, scope, consumer);
+        if matches!(self, Self::Submission) && result == Err(Error::Denied) {
+            return crate::journal::authorize(host, Access::ReadResult, scope, None);
+        }
+        result
+    }
+}
+/// Value-only admission result; policy/rule/approver details remain in privileged audit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AdmissionStatus {
+    /// This admission committed an attempt, not an execution effect.
+    Admitted,
+    /// Current admission/commit conditions denied an attempt.
+    Denied,
+    /// Policy requires independently verified approval which is not satisfied.
+    ApprovalRequired,
+}
+/// A coherent protected task and its latest durable admission result, read in one transaction.
+pub struct ExecutionRecord {
+    /// Core state; restoration never creates a dispatch permission.
+    pub execution: execution_lifecycle::Execution,
+    /// Latest non-stale admission result, excluding all sensitive audit fields.
+    pub admission: Option<AdmissionStatus>,
+}
 /// Verification input for access checks. Host must not trust claims because they deserialize.
 pub struct AccessRequest<'a> {
     /// Requested capability.
@@ -340,6 +395,8 @@ pub struct Receipt {
     pub kind: OperationKind,
     /// Durable result, including unchanged/rejected business results.
     pub outcome: Outcome,
+    /// Safe admission projection, present only for a non-stale admission decision.
+    pub admission: Option<AdmissionStatus>,
     /// Aggregate/head revision at this operation.
     pub revision: u64,
     /// Exact submitted attempt for attempt-bearing commands; absent for other commands.
@@ -541,6 +598,8 @@ pub struct ProtectedApprovalAudit {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AuditRecord {
+    /// Stop acknowledgement/failure only; independent of termination and effect evidence.
+    pub stop_outcome: Option<execution_lifecycle::StopOutcome>,
     /// Existing C01 event, absent for trust-only operations before a plan exists.
     pub event: Option<AuditEvent>,
     /// Exact submitted attempt, including rejected admission.

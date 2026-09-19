@@ -70,6 +70,9 @@ impl Drop for Database {
 }
 
 pub struct State {
+    pub accesses: Option<Vec<Access>>,
+    pub consumer: Option<Id>,
+    pub capability_error: Option<execution_app::Error>,
     pub capability_hook: Option<(usize, Arc<dyn Fn() + Send + Sync>)>,
     pub read_hook: Option<Arc<dyn Fn() + Send + Sync>>,
     pub runner_facts: bool,
@@ -99,6 +102,9 @@ impl TestHost {
         let template = plan();
         Self {
             state: Arc::new(Mutex::new(State {
+                accesses: None,
+                consumer: None,
+                capability_error: None,
                 capability_hook: None,
                 read_hook: None,
                 runner_facts: true,
@@ -198,10 +204,18 @@ impl AppHost for TestHost {
             || (r.access == Access::ReadResult && !s.read)
             || (r.access == Access::ReadAudit && !s.audit)
             || (r.access == Access::RunnerFact && !s.runner_facts)
+            || s.accesses
+                .as_ref()
+                .is_some_and(|grants| !grants.contains(&r.access))
+            || (r.access == Access::Deliver
+                && s.consumer.as_ref().is_some_and(|id| r.consumer != Some(id)))
         {
             return Err(execution_sqlite::Error::Denied);
         }
-        let hook = if r.access == Access::ReadResult {
+        let hook = if matches!(
+            r.access,
+            Access::ReadResult | Access::Execute | Access::RunnerFact
+        ) {
             s.read_hook.take()
         } else {
             None
@@ -285,6 +299,9 @@ impl AppHost for TestHost {
         drop(s);
         if let Some(hook) = hook {
             hook();
+        }
+        if let Some(error) = self.state.lock().unwrap().capability_error {
+            return Err(error);
         }
         Ok(snapshot)
     }
