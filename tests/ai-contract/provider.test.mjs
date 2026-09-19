@@ -172,7 +172,11 @@ test("shared provider harness closes failed adapters with a fresh bounded signal
   abort.abort();
   await assert.rejects(
     runProviderConformance(() => port, configuration, budget),
-    primary,
+    (error) => {
+      assert.match(error.message, /permission_denied/);
+      assert.equal(error.message.includes(primary.message), false);
+      return true;
+    },
   );
   assert.equal(closed, true);
 });
@@ -481,5 +485,157 @@ test("independent provider instances cannot accept each other's binding", async 
   assert.equal(
     (await b.submit(second.binding, fixtureCommand(), budget())).certainty,
     "submitted",
+  );
+});
+
+test("verified resume re-admits the new incarnation and the exact endpoint", async () => {
+  const prior = fixtureSession().binding;
+  const facts = {
+    binding: { ...prior, generation: "resumed-generation" },
+    capabilities: {
+      ...fixtureSession().capabilities,
+      tools: "host_mediated",
+      continuation: "across_processes",
+    },
+  };
+  const tools = {
+    propose: async () => {
+      throw new Error("unused");
+    },
+  };
+  let verified = 0,
+    resumed = 0;
+  const config = {
+    ...configuration,
+    permissions: "host_mediated",
+    tools,
+    verifier: {
+      verify: async (session, endpoint) => {
+        verified++;
+        assert.deepEqual(session, facts);
+        assert.equal(endpoint, tools);
+        return {
+          ok: true,
+          value: { platform: "fixture", verificationRef: "resume-proof" },
+        };
+      },
+    },
+  };
+  const port = new ScriptedProvider();
+  port.resume = async (binding, actual, operationBudget) => {
+    resumed++;
+    assert.deepEqual(binding, prior);
+    assert.equal(actual.tools, tools);
+    assert.ok(operationBudget.timeoutMs > 0);
+    return { ok: true, value: facts };
+  };
+  const admitted = unwrap(
+    await VerifiedProviderSession.resume(port, prior, config, budget()),
+  );
+  assert.equal(resumed, 1);
+  assert.equal(verified, 1);
+  assert.equal(admitted.matches(facts.binding, tools), true);
+  assert.equal(admitted.matches(prior, tools), false);
+});
+
+for (const operation of ["open", "resume"])
+  test(`${operation} admission failure closes the unverified runtime`, async () => {
+    const prior = fixtureSession().binding;
+    const facts = {
+      binding: { ...prior, generation: "resumed-generation" },
+      capabilities: {
+        ...fixtureSession().capabilities,
+        tools: "host_mediated",
+        continuation: "across_processes",
+      },
+    };
+    for (const throws of [false, true]) {
+      let closed = 0;
+      const port = new ScriptedProvider();
+      port.createSession = port.resume = async () => ({
+        ok: true,
+        value: facts,
+      });
+      port.close = async (b) => {
+        closed++;
+        assert.equal(b.signal.aborted, false);
+        return { ok: true, value: { processStopped: true } };
+      };
+      const config = {
+        ...configuration,
+        permissions: "host_mediated",
+        tools: { propose: async () => {} },
+        verifier: {
+          verify: async () => {
+            if (throws) throw new Error("PRIVATE_CANARY");
+            return {
+              ok: false,
+              error: { code: "permission_denied", retry: "never" },
+            };
+          },
+        },
+      };
+      const result =
+        operation === "open"
+          ? await VerifiedProviderSession.open(port, config, budget())
+          : await VerifiedProviderSession.resume(port, prior, config, budget());
+      assert.equal(result.ok, false);
+      assert.equal(closed, 1);
+      assert.equal(JSON.stringify(result).includes("PRIVATE_CANARY"), false);
+    }
+  });
+
+test("verified resume rejects stale incarnation, foreign session and configuration", async () => {
+  const prior = fixtureSession().binding;
+  for (const patch of [
+    { generation: prior.generation },
+    { nativeSessionId: "foreign" },
+    { accountRef: "foreign" },
+  ]) {
+    let closed = 0;
+    const port = new ScriptedProvider();
+    port.resume = async () => ({
+      ok: true,
+      value: {
+        binding: { ...prior, generation: "new", ...patch },
+        capabilities: {
+          ...fixtureSession().capabilities,
+          continuation: "across_processes",
+        },
+      },
+    });
+    port.close = async () => {
+      closed++;
+      return { ok: true, value: { processStopped: true } };
+    };
+    assert.equal(
+      (
+        await VerifiedProviderSession.resume(
+          port,
+          prior,
+          configuration,
+          budget(),
+        )
+      ).ok,
+      false,
+    );
+    assert.equal(closed, 1);
+  }
+});
+
+test("verified resume requires across-process continuation capability", async () => {
+  const prior = fixtureSession().binding;
+  const port = new ScriptedProvider();
+  port.resume = async () => ({
+    ok: true,
+    value: {
+      binding: { ...prior, generation: "next" },
+      capabilities: fixtureSession().capabilities,
+    },
+  });
+  assert.equal(
+    (await VerifiedProviderSession.resume(port, prior, configuration, budget()))
+      .ok,
+    false,
   );
 });
