@@ -28,7 +28,7 @@ const admitted = await VerifiedProviderSession.open(port, configuration, budget)
 | 受控提案 | 仅增加 `host_propose({name,arguments})` → `ToolEndpoint.propose`，结果只是模型可见文本；无执行许可或 Rust Evidence 写入 |
 | 禁止能力 | shell、terminal、MCP、PTC、委派、动态插件、settings/热更新、workspace 指令执行均不装配；原生权限审批无 provider，默认拒绝 |
 | 静态约束 | 固定工具定义与来源，monotonic guard 拒绝嵌套/其它 Agent 调用；工具集合变化使 incarnation 失效 |
-| 耐久性 | 发布包 checkpoint policy 在模型调用和工具体前等待 flush；适配器另在发送终态前等待 flush |
+| 耐久性 | 新会话准入前先 flush 原生身份，支持零消息时关闭并冷恢复；发布包 checkpoint policy 在模型调用和工具体前等待 flush；适配器另在发送终态前等待 flush |
 
 恢复必须遵循 A01 流程：
 

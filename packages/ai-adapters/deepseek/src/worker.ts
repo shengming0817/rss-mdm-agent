@@ -177,6 +177,9 @@ async function initialize(i: Initialization) {
   admittedAgent = ctx.agents.get(SessionId(i.nativeSessionId));
   if ((!i.restore && !admittedSession) || !!admittedAgent === i.restore)
     throw Error("invalid activation");
+  // Admission must survive close even when no first prompt ever triggers the
+  // model checkpoint. Cold inspection remains strictly read-only.
+  if (!i.restore) await ctx.sessions.flush(admittedSession!);
   verify();
   initialized = true;
   return {

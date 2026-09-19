@@ -422,3 +422,37 @@ test("request checkpoint precedes HTTP dispatch; crash and synthetic interrupted
   assert.deepEqual(await files(env.dir), logs);
   assert.equal(env.requests.length, 1);
 });
+
+test("fresh admission checkpoints an empty session before immediate close and cold restore", async (t) => {
+  const env = await environment(t, (_body, res) => completion(res));
+  const p = env.port(),
+    admitted = unwrap(
+      await VerifiedProviderSession.open(p, env.config, budget()),
+    );
+  unwrap(await p.close(budget()));
+  const before = await files(env.dir);
+  assert.ok(
+    Object.keys(before).length > 0,
+    "admission must persist native session identity",
+  );
+  const second = env.port();
+  const restored = unwrap(
+    await VerifiedProviderSession.restore(
+      second,
+      {
+        ...fixtureSession(),
+        namespace: env.config.namespace,
+        binding: admitted.binding,
+        capabilities: admitted.capabilities,
+      },
+      env.config,
+      budget(),
+    ),
+  );
+  assert.equal(
+    restored.binding.nativeSessionId,
+    admitted.binding.nativeSessionId,
+  );
+  assert.deepEqual(await files(env.dir), before);
+  assert.equal(env.requests.length, 0);
+});
