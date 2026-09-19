@@ -750,6 +750,99 @@ test("unmatched buffered notifications do not loop during another turn ACK", asy
   );
 });
 
+test("typed item/started correlates and replays earlier deltas after a lost response", async (t) => {
+  const s = await setup(t);
+  const completed = turn("early-turn", "attempt-command-1");
+  s.fault((method) => {
+    if (method !== "turn/start") return;
+    s.emit("item/agentMessage/delta", {
+      threadId: "thread-1",
+      turnId: completed.id,
+      itemId: "early-message",
+      delta: "early",
+    });
+    s.emit("item/started", {
+      threadId: "thread-1",
+      turnId: completed.id,
+      item: completed.items[0],
+      startedAtMs: 1,
+    });
+    throw new Error("lost response");
+  });
+  const result = await s.adapter.submit(
+    s.admitted.binding,
+    fixtureCommand(),
+    s.attempt("command-1"),
+    budget(),
+  );
+  assert.equal(result.certainty, "submitted");
+  assert.equal(result.binding.nativeRunId, completed.id);
+  s.emit("turn/completed", { threadId: "thread-1", turn: completed });
+  const observations = [];
+  for await (const value of s.adapter.observe(s.admitted.binding, budget())) {
+    observations.push(value);
+    if (value.body?.type === "terminal") break;
+  }
+  const delta = observations.find((value) => value.type === "delta");
+  assert.equal(delta.text, "early");
+  assert.equal(delta.commandId, "command-1");
+  assert.equal(delta.binding.nativeRunId, completed.id);
+});
+
+test("typed notifications retain runtime rejection of malformed payloads", async (t) => {
+  for (const [method, payload] of [
+    ["item/agentMessage/delta", { itemId: "bad", delta: 42 }],
+    ["item/completed", { item: null }],
+    ["turn/completed", { turn: { id: "turn-1", status: "bogus", items: [] } }],
+  ]) {
+    const s = await setup(t);
+    const result = await s.adapter.submit(
+      s.admitted.binding,
+      fixtureCommand(),
+      s.attempt("command-1"),
+      budget(),
+    );
+    assert.equal(result.certainty, "submitted");
+    s.emit(method, { threadId: "thread-1", turnId: "turn-1", ...payload });
+    assert.ok(
+      s.calls.some((call) => call.method === "runtime/close"),
+      method,
+    );
+  }
+});
+
+test("unknown notification methods cannot confirm a lost submission", async (t) => {
+  const s = await setup(t);
+  s.fault((method, params) => {
+    if (method !== "turn/start") return;
+    s.emit("future/notification", {
+      threadId: "thread-1",
+      turnId: "foreign-turn",
+      item: {
+        type: "userMessage",
+        id: "foreign-item",
+        clientId: params.clientUserMessageId,
+        content: [],
+      },
+    });
+    throw new Error("lost response");
+  });
+  const result = await s.adapter.submit(
+    s.admitted.binding,
+    fixtureCommand(),
+    s.attempt("command-1"),
+    budget(),
+  );
+  assert.equal(result.certainty, "unknown");
+  const observations = [];
+  for await (const value of s.adapter.observe(s.admitted.binding, {
+    ...budget(),
+    timeoutMs: 20,
+  }))
+    observations.push(value);
+  assert.equal(observations.length, 0);
+});
+
 test("diagnostics redact all native payloads and unknown method strings", async (t) => {
   const s = await setup(t);
   s.emit("PRIVATE_METHOD_CANARY", {

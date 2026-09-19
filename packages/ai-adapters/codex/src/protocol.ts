@@ -20,10 +20,39 @@ import type { ListMcpServerStatusResponse } from "./protocol/v2/ListMcpServerSta
 import type { ConfigReadParams } from "./protocol/v2/ConfigReadParams.js";
 import type { ConfigReadResponse } from "./protocol/v2/ConfigReadResponse.js";
 import type { Budget } from "@rss-mdm-agent/ai-contract";
-import type { RpcConnection } from "./runtime.js";
+import type { NativeMessage, RpcConnection } from "./runtime.js";
+import type { AgentMessageDeltaNotification } from "./protocol/v2/AgentMessageDeltaNotification.js";
+import type { TurnCompletedNotification } from "./protocol/v2/TurnCompletedNotification.js";
+import type { ItemCompletedNotification } from "./protocol/v2/ItemCompletedNotification.js";
+import type { ItemStartedNotification } from "./protocol/v2/ItemStartedNotification.js";
 export type { Thread } from "./protocol/v2/Thread.js";
 export type { Turn } from "./protocol/v2/Turn.js";
 export type { ThreadItem } from "./protocol/v2/ThreadItem.js";
+interface Notifications {
+  "item/agentMessage/delta": AgentMessageDeltaNotification;
+  "turn/completed": TurnCompletedNotification;
+  "item/completed": ItemCompletedNotification;
+  "item/started": ItemStartedNotification;
+}
+export type NativeNotification = {
+  [K in keyof Notifications]: { method: K; params: Notifications[K] };
+}[keyof Notifications];
+/** ref: TypeScript Handbook, discriminated unions. Like rpc(), generated shapes
+ * constrain consumers; onNative still validates every consumed field at runtime. */
+export function nativeNotification(
+  message: NativeMessage,
+): NativeNotification | undefined {
+  if (message.id !== undefined) return undefined;
+  switch (message.method) {
+    case "item/agentMessage/delta":
+    case "turn/completed":
+    case "item/completed":
+    case "item/started":
+      return message as NativeNotification;
+    default:
+      return undefined;
+  }
+}
 interface Methods {
   initialize: [InitializeParams, InitializeResponse];
   "thread/start": [ThreadStartParams, ThreadStartResponse];

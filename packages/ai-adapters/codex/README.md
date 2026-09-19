@@ -50,9 +50,11 @@ pnpm check:codex-consumer
 pnpm smoke:codex --config-file /absolute/host-owned-config.json
 ```
 
-测试分为共享 Provider conformance/协议故障 fixture、固定真实进程 + 本地 Responses 流、真实进程权限旁路负测、仓外 tarball 独立消费，以及显式配置端点 smoke。前四项不需要真实模型凭据，不能冒充真实模型或完整产品验收。
+测试分为共享 Provider conformance/协议故障 fixture、固定真实进程 + 本地 Responses 流、真实进程权限旁路负测、仓外 tarball 独立消费，以及显式配置端点 smoke。前四项不需要真实模型凭据，不能冒充真实模型或完整产品验收。`tools_disabled` 用例在各平台运行；`host_mediated` 真实行为用例仅在 macOS arm64 运行，其他平台明确验证接纳返回 `unsupported_capability`。POSIX Git shim 负测不作为 Windows 进程证据；Windows 仍运行启动环境断言。
 
-smoke JSON 为 `{ "mode": "real_model", "apiUrl": "https://api.openai.com/v1", "apiKey": "HOST_SECRET", "model": "EXACT_RETURNED_MODEL_ID" }`，也支持对应 `RSS_CODEX_SMOKE_MODE/API_URL/API_KEY/MODEL` 环境变量。真实模型验收仅接受固定 OpenAI HTTPS origin；任意转发端点不能冒充可信模型。smoke 专属 relay 用内置信任根验证 TLS、拒绝 redirect，并核对这三轮实际 Responses 回执的 model、completed 状态及不同 response ID，记录脱敏摘要；配置中的精确模型 ID 必须与返回值一致，模型别名也不能静默替换。适配器本身仍支持可信 Host 配置的后端，但其真实模型身份需另外建立可信证明。本地替身必须显式选择 `local_fixture`。运行时生成随机 nonce，只在首轮提供；同进程与 cold resume 的后续 prompt 不带答案，比较完整文本。无配置记录 not_run，不读取个人账号配置。#2405 在可信真实模型证据闭合前保持未完成。
+#2405 的完成门是适配器独立验收：隔离目录中的固定 app-server、真实模型多轮与冷恢复、以及可注入的受控工具服务实验，不需要桌面、AI store 或 Rust 执行内核完成。#2413 消费这些组件和控制证据，负责最终桌面组合接线并重跑关键旁路及业务恢复场景；不会反向成为 #2405 的前置。缺少独立模型配置与缺少产品装配是不同的未覆盖项。
+
+smoke JSON 为 `{ "mode": "real_model", "apiUrl": "https://api.openai.com/v1", "apiKey": "HOST_SECRET", "model": "EXACT_RETURNED_MODEL_ID" }`，也支持对应 `RSS_CODEX_SMOKE_MODE/API_URL/API_KEY/MODEL` 环境变量。当前随包 smoke 脚本只为固定 OpenAI HTTPS origin 实现了身份取证；这不是 #2405 对模型供应商或直连方式的要求。其他可信后端可以交付独立等价证据，但只有可配置 URL 或自报模型名不构成身份取证。smoke 专属 relay 用内置信任根验证 TLS、拒绝 redirect，并核对这三轮实际 Responses 回执的 model、completed 状态及不同 response ID，记录脱敏摘要；配置中的精确模型 ID 必须与返回值一致，模型别名也不能静默替换。适配器本身仍支持可信 Host 配置的后端，但其真实模型身份需另外建立可信证明。本地替身必须显式选择 `local_fixture`。运行时生成随机 nonce，只在首轮提供；同进程与 cold resume 的后续 prompt 不带答案，比较完整文本。无配置记录 not_run，不读取个人账号配置。#2405 在可信真实模型证据闭合前保持未完成。
 
 被忽略的 `.local-ci-runs/codex-consumer.json` / `codex-smoke.json` 记录源码 SHA、lock/产物摘要、固定运行时、平台和进程退出事实。源码不干净、行为失败、退出未确认或 real_model 身份验证失败都不能报告 passed；receipt 不包含密钥、端点原文、个人路径或对话原文。真实模型 smoke 由提供明确配置的独立运行补证；C20 产品装配和业务执行不在这些脚本的证明范围。
 

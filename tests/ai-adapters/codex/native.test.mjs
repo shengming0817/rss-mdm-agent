@@ -11,6 +11,8 @@ import {
   conversation,
   prompt,
   reply,
+  hostMediatedSupported,
+  hostMediatedTest,
 } from "./helpers.mjs";
 
 test(
@@ -248,7 +250,7 @@ test(
 
 test(
   "fixed app-server: required HTTP MCP connects with the exact inert resource and proposal catalog",
-  { timeout: 40000 },
+  { timeout: 40000, ...hostMediatedTest },
   async (t) => {
     const s = await nativeFixture(t, { controlled: true }),
       port = s.make();
@@ -272,5 +274,27 @@ test(
         "read_mcp_resource",
       ].sort(),
     );
+  },
+);
+
+test(
+  "unsupported platforms reject host_mediated before native startup",
+  { skip: hostMediatedSupported },
+  async (t) => {
+    const s = await nativeFixture(t, { controlled: true });
+    let resolved = false;
+    s.options.resolveConfiguration = async () => {
+      resolved = true;
+      throw new Error("must not resolve");
+    };
+    const result = await VerifiedProviderSession.open(
+      s.make(),
+      s.configuration,
+      budget(),
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, "unsupported_capability");
+    assert.equal(resolved, false);
+    assert.equal(s.requests.length, 0);
   },
 );

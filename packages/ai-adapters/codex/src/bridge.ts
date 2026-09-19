@@ -103,7 +103,14 @@ export class ToolBridge {
           return toolResult("unavailable", "Host proposal unavailable");
         try {
           boundedJson(input, limits);
-          const budget = { timeoutMs: 30000, signal: this.abort.signal };
+          // ref: node:globals AbortSignal.any/timeout; the Host receives the same deadline as the waiter.
+          const budget = {
+            timeoutMs: 30000,
+            signal: AbortSignal.any([
+              this.abort.signal,
+              AbortSignal.timeout(30000),
+            ]),
+          };
           const result = await bounded(
             this.endpoint.propose(
               {
@@ -114,7 +121,7 @@ export class ToolBridge {
             ),
             budget,
           );
-          if (!result.ok || this.abort.signal.aborted)
+          if (!result.ok || budget.signal.aborted)
             throw new Error("unavailable");
           boundedJson(result.value, limits);
           if (

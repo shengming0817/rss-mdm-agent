@@ -11,6 +11,14 @@ import {
   fixtureSession,
 } from "../../../packages/ai-contract/dist/testing/index.js";
 
+export const hostMediatedSupported =
+  process.platform === "darwin" && process.arch === "arm64";
+export const hostMediatedTest = {
+  skip: hostMediatedSupported
+    ? false
+    : "host_mediated is verified only on darwin-arm64",
+};
+
 export const budget = () => ({
   timeoutMs: 20000,
   signal: new AbortController().signal,

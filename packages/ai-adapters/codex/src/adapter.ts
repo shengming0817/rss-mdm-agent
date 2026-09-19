@@ -43,7 +43,13 @@ import {
   type RuntimeFactory,
 } from "./runtime.js";
 import { HOST_SERVER, HOST_TOOL, ToolBridge } from "./bridge.js";
-import { rpc, type Thread, type Turn, type ThreadItem } from "./protocol.js";
+import {
+  rpc,
+  nativeNotification,
+  type Thread,
+  type Turn,
+  type ThreadItem,
+} from "./protocol.js";
 import {
   bounded,
   copy,
@@ -752,11 +758,26 @@ export class CodexAdapter implements ProviderAgentPort {
         dropped: 0,
       });
     if (!this.binding || this.failed) return;
-    const params = message.params as any;
+    const notification = nativeNotification(message);
+    if (!notification) return;
+    const params = notification.params;
     if (!params || params.threadId !== this.binding.nativeThreadId) return;
-    const turnId = params.turnId ?? params.turn?.id;
+    const turnId =
+      notification.method === "turn/completed"
+        ? notification.params.turn?.id
+        : notification.params.turnId;
     if (!isId(turnId)) return;
-    const item: ThreadItem | undefined = params.item;
+    const item =
+      notification.method === "item/completed" ||
+      notification.method === "item/started"
+        ? notification.params.item
+        : undefined;
+    if (
+      (notification.method === "item/completed" ||
+        notification.method === "item/started") &&
+      (!item || !isId(item.id) || typeof item.type !== "string")
+    )
+      throw new Error("invalid native item");
     if (item?.type === "userMessage" && typeof item.clientId === "string") {
       const entry = [...this.attempts.values()].find(
         (a) => a.dispatch.attemptId === item.clientId,
@@ -775,32 +796,24 @@ export class CodexAdapter implements ProviderAgentPort {
         a.command.input.policy === "queue_next",
     );
     if (!owner) {
+      const bytes = Buffer.byteLength(boundedJson(message, limits));
       if (
-        [
-          "item/agentMessage/delta",
-          "item/completed",
-          "item/started",
-          "turn/completed",
-        ].includes(message.method)
-      ) {
-        const bytes = Buffer.byteLength(boundedJson(message, limits));
-        if (
-          this.uncorrelated.length >= 128 ||
-          this.uncorrelatedBytes + bytes > 4 * 1024 * 1024
-        )
-          throw new Error("uncorrelated event limit");
-        this.uncorrelated.push(copy(message));
-        this.uncorrelatedBytes += bytes;
-      }
+        this.uncorrelated.length >= 128 ||
+        this.uncorrelatedBytes + bytes > 4 * 1024 * 1024
+      )
+        throw new Error("uncorrelated event limit");
+      this.uncorrelated.push(copy(message));
+      this.uncorrelatedBytes += bytes;
       return;
     }
-    if (message.method === "turn/completed") {
-      validTurn(params.turn);
-      this.finishTurn(params.turn);
+    if (notification.method === "turn/completed") {
+      validTurn(notification.params.turn);
+      this.finishTurn(notification.params.turn);
       return;
     }
     if (owner.outcome) return;
-    if (message.method === "item/agentMessage/delta") {
+    if (notification.method === "item/agentMessage/delta") {
+      const params = notification.params;
       if (
         !isId(params.itemId) ||
         typeof params.delta !== "string" ||
@@ -815,8 +828,8 @@ export class CodexAdapter implements ProviderAgentPort {
         messageId: params.itemId,
         text: params.delta,
       });
-    } else if (message.method === "item/completed" && item)
-      this.completeItem(owner, item);
+    } else if (notification.method === "item/completed")
+      this.completeItem(owner, notification.params.item);
   }
   private completeItem(entry: Attempt, item: ThreadItem): void {
     if (!isId(item.id) || entry.completedItems.has(item.id)) return;

@@ -40,7 +40,7 @@
     "generate:codex-protocol": "node scripts/generate-codex-protocol.mjs",
     "check:codex-protocol": "node scripts/generate-codex-protocol.mjs --check",
     "build:ai-codex": "pnpm build:ai-contract && pnpm --filter @rss-mdm-agent/ai-adapter-codex build",
-    "test:ai-codex": "pnpm build:ai-codex && node --test tests/ai-adapters/codex/*.test.mjs",
+    "test:ai-codex": "pnpm build:ai-codex && tsc --noEmit --strict --skipLibCheck --module NodeNext --target ES2022 tests/ai-adapters/codex/protocol.types.ts && node --test tests/ai-adapters/codex/*.test.mjs",
     "check:codex-consumer": "node scripts/check-codex-consumer.mjs",
     "smoke:codex": "node scripts/smoke-codex.mjs"
   },

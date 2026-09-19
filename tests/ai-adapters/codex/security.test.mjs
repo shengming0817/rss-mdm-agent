@@ -3,7 +3,7 @@ import test from "node:test";
 import { spawnSync } from "node:child_process";
 import { access, mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { ToolBridge } from "../../../packages/ai-adapters/codex/dist/bridge.js";
 import { createTestAdapter } from "../../../packages/ai-adapters/codex/dist/testing.js";
@@ -16,7 +16,13 @@ import {
   fixtureSession,
   unwrap,
 } from "../../../packages/ai-contract/dist/testing/index.js";
-import { nativeFixture, budget, reply, conversation } from "./helpers.mjs";
+import {
+  nativeFixture,
+  budget,
+  reply,
+  conversation,
+  hostMediatedTest,
+} from "./helpers.mjs";
 
 const adapterRequire = createRequire(
   new URL("../../../packages/ai-adapters/codex/package.json", import.meta.url),
@@ -69,6 +75,66 @@ const customToolCall = (callId, name, input) => ({
   output_index: 0,
   item: { type: "custom_tool_call", call_id: callId, name, input },
 });
+
+test(
+  "MCP proposal deadline aborts Host work without poisoning later requests",
+  { timeout: 40000 },
+  async (t) => {
+    const received = [];
+    let entered;
+    const bridge = new ToolBridge(
+      {
+        propose: async (proposal, requestBudget) => {
+          received.push(requestBudget.signal);
+          entered?.();
+          if (proposal.name === "fast")
+            return {
+              ok: true,
+              value: { disposition: "returned", text: "done" },
+            };
+          await new Promise((resolve) =>
+            requestBudget.signal.addEventListener("abort", resolve, {
+              once: true,
+            }),
+          );
+          return { ok: false, error: { code: "unavailable", retry: "never" } };
+        },
+      },
+      () => true,
+    );
+    await bridge.start(budget());
+    t.after(() => bridge.close(budget()));
+    const client = new Client({ name: "deadline-test", version: "1" });
+    await client.connect(
+      new StreamableHTTPClientTransport(new URL(bridge.url), {
+        requestInit: { headers: { authorization: `Bearer ${bridge.token}` } },
+      }),
+    );
+    t.after(() => client.close());
+    const call = (name) =>
+      client.callTool({ name: "propose", arguments: { name, arguments: {} } });
+    assert.equal((await call("slow")).isError, true);
+    assert.equal(
+      received[0].aborted,
+      true,
+      "deadline must reach the running Host proposal",
+    );
+    assert.equal((await call("fast")).isError, false);
+    assert.equal(received[1].aborted, false);
+    const started = new Promise((resolve) => {
+      entered = resolve;
+    });
+    const closing = call("close").catch(() => undefined);
+    await started;
+    await bridge.close(budget());
+    await closing;
+    assert.equal(
+      received[2].aborted,
+      true,
+      "close must abort pending Host work",
+    );
+  },
+);
 const names = (body) =>
   (body.tools ?? [])
     .flatMap((tool) =>
@@ -157,7 +223,10 @@ test(
             response: { id: "response-hostile" },
           },
           functionCall("shell-call", "exec_command", {
-            cmd: `/usr/bin/touch ${JSON.stringify(marker)}`,
+            cmd:
+              process.platform === "win32"
+                ? `cmd /d /c type nul > ${JSON.stringify(marker)}`
+                : `/usr/bin/touch ${JSON.stringify(marker)}`,
           }),
           customToolCall(
             "patch-call",
@@ -246,7 +315,7 @@ test("restore rejects a compatible-looking thread without host lineage", async (
 for (const disposition of ["rejected", "returned"]) {
   test(
     `fixed app-server routes MCP propose ${disposition} through the only host endpoint`,
-    { timeout: 60000 },
+    { timeout: 60000, ...hostMediatedTest },
     async (t) => {
       const calls = [];
       const s = await nativeFixture(t, {
@@ -315,7 +384,7 @@ const badMcpRuntime = (spec) =>
 
 test(
   "fixed app-server fails closed when required MCP authentication fails during start (runtime fault seam)",
-  { timeout: 40000 },
+  { timeout: 40000, ...hostMediatedTest },
   async (t) => {
     const s = await nativeFixture(t, { controlled: true });
     const port = createTestAdapter(s.options, badMcpRuntime);
@@ -332,7 +401,7 @@ test(
 
 test(
   "fixed app-server fails closed when required MCP authentication fails during owned resume (runtime fault seam)",
-  { timeout: 80000 },
+  { timeout: 80000, ...hostMediatedTest },
   async (t) => {
     const s = await nativeFixture(t, { controlled: true });
     const firstPort = s.make();
@@ -370,13 +439,21 @@ test(
 );
 
 test(
-  "fixed app-server never resolves git from the inherited hostile PATH",
-  { timeout: 30000 },
+  "fixed app-server never resolves git from the inherited hostile POSIX PATH",
+  {
+    timeout: 30000,
+    skip:
+      process.platform === "win32"
+        ? "POSIX executable shim; Windows launch environment is checked by configuration tests"
+        : false,
+  },
   async (t) => {
     const s = await nativeFixture(t);
     assert.equal(
-      spawnSync("/usr/bin/git", ["init", s.configuration.workingDirectory])
-        .status,
+      spawnSync(process.platform === "win32" ? "git" : "/usr/bin/git", [
+        "init",
+        s.configuration.workingDirectory,
+      ]).status,
       0,
     );
     const bin = join(s.root, "hostile-bin"),
@@ -388,7 +465,7 @@ test(
       { mode: 0o700 },
     );
     const original = process.env.PATH;
-    process.env.PATH = `${bin}:${original}`;
+    process.env.PATH = `${bin}${delimiter}${original ?? ""}`;
     try {
       const port = s.make();
       const admitted = unwrap(

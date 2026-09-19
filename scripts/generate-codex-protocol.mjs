@@ -55,6 +55,7 @@ async function main() {
       "AgentMessageDeltaNotification",
       "TurnCompletedNotification",
       "ItemCompletedNotification",
+      "ItemStartedNotification",
     ].map((name) => `v2/${name}`),
   ];
   try {
