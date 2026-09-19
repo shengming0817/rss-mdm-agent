@@ -12,6 +12,7 @@ import {
   restoredSession,
   emptyCommit,
   commandCommit,
+  verifiedReconciliation,
 } from "../../packages/ai-contract/dist/testing/index.js";
 import { harness, budget } from "./support.mjs";
 const worker = fileURLToPath(new URL("./worker.mjs", import.meta.url));
@@ -61,7 +62,15 @@ test("an idle Host excludes a second process; SIGKILL releases ownership without
   try {
     assert.deepEqual(await owner.line, { stage: "idle-owner" });
     const contender = start({ path, mode: "open", scenario: "probe" });
-    assert.equal((await contender.line).ok, false);
+    const result = await contender.line;
+    assert.deepEqual(
+      { ok: result.ok, error: result.error },
+      { ok: false, error: { code: "unavailable", retry: "same_command" } },
+    );
+    assert.ok(
+      result.elapsedMs < 1000,
+      `50ms busy wait exceeded bounded margin: ${result.elapsedMs}`,
+    );
     assert.deepEqual(await contender.exited, { code: 0, signal: null });
   } finally {
     await owner.kill();
@@ -249,12 +258,7 @@ for (const scenario of [
           ...proofCommit,
           nowMs: 1,
           reconciliations: [
-            {
-              commandId: "command-1",
-              attemptId: dispatch.attemptId,
-              binding: third.binding,
-              status: "not_submitted",
-            },
+            await verifiedReconciliation(third, latest, "not_submitted"),
           ],
         }),
       );

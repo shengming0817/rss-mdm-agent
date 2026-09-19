@@ -5,7 +5,7 @@
   "license": "MIT",
   "packageManager": "pnpm@11.4.0",
   "engines": {
-    "node": ">=24"
+    "node": "24.14.1"
   },
   "scripts": {
     "dev": "pnpm --filter @rss-mdm-agent/desktop dev",

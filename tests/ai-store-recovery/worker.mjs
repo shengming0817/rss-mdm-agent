@@ -20,13 +20,14 @@ if (config.scenario === "migration-before-commit") {
     return exec.call(this, sql);
   };
 }
+const start = performance.now();
 const result = openSqliteStore({
   path: config.path,
   mode: config.mode,
   busyTimeoutMs: 50,
 });
 if (!result.ok) {
-  tell(result);
+  tell({ ...result, elapsedMs: performance.now() - start });
   process.exit(0);
 }
 const store = result.value,

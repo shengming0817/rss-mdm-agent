@@ -6,12 +6,14 @@ import {
   mkdirSync,
   openSync,
   realpathSync,
+  readFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, basename } from "node:path";
 import {
   boundedJson,
   decode,
   ContractError,
+  isId,
   type AcceptCommand,
   type Budget,
   type CommandRecord,
@@ -90,8 +92,6 @@ const tables = [
   "deliveries",
 ] as const;
 type Table = (typeof tables)[number];
-const idValid = (v: unknown): v is string =>
-  typeof v === "string" && /^[A-Za-z0-9][A-Za-z0-9._:/+\-]{0,127}$/.test(v);
 const counter = (v: unknown): v is number =>
   Number.isSafeInteger(v) && Number(v) >= 0;
 const nsValues = (n: Namespace): string[] => {
@@ -99,18 +99,43 @@ const nsValues = (n: Namespace): string[] => {
   return [n.tenantId, n.principalId, n.authorityId, n.sessionId];
 };
 function errorResult(error: unknown): Result<never> {
-  if (error instanceof SchemaError) return fail("unsupported_version");
+  if (error instanceof SchemaError) return fail(error.code);
   if (error instanceof ContractError)
     return fail(error.code === "limit" ? "limit_exceeded" : "invalid_input");
   if (error instanceof InputError) return fail(error.code);
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "errcode" in error &&
-    Number(error.errcode) === 13
-  )
-    return fail("limit_exceeded");
-  return fail("unavailable", "same_command");
+  if (typeof error === "object" && error !== null) {
+    const native = error as { errcode?: unknown; code?: unknown };
+    if (
+      typeof native.errcode === "number" &&
+      Number.isSafeInteger(native.errcode)
+    ) {
+      // SQLite extended result codes preserve the primary reason in the low byte.
+      switch (native.errcode & 255) {
+        case 5:
+        case 6:
+          return fail("unavailable", "same_command");
+        case 11:
+        case 26:
+          return fail("storage_corrupt");
+        case 13:
+          return fail("limit_exceeded");
+        case 3:
+        case 8:
+        case 23:
+          return fail("permission_denied");
+      }
+    }
+    if (native.code === "EACCES" || native.code === "EPERM")
+      return fail("permission_denied");
+    if (
+      ["ENOENT", "EEXIST", "ENOTDIR", "EISDIR", "EINVAL"].includes(
+        String(native.code),
+      )
+    )
+      return fail("invalid_input");
+  }
+  // Unknown I/O failures may have ambiguous effects; never encourage blind retry.
+  return fail("unavailable");
 }
 class InputError extends Error {
   constructor(
@@ -187,7 +212,13 @@ function pageLimit(db: DatabaseSync, maxBytes: number): number {
 export function openSqliteStore(options: StoreOptions): Result<SessionStore> {
   let db: DatabaseSync | undefined;
   try {
-    if (process.versions.node !== "24.14.1") return fail("unsupported_version");
+    if (
+      process.versions.node !==
+      JSON.parse(
+        readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+      ).engines.node
+    )
+      return fail("unsupported_version");
     const limits = bounds(options),
       path = privatePath(options);
     if (options.mode === "open") {
@@ -219,7 +250,7 @@ export function openSqliteStore(options: StoreOptions): Result<SessionStore> {
     // Recheck under the writer lock before any persistent PRAGMA change.
     if (options.mode === "open") initialize(db, false);
     if (db.prepare("PRAGMA journal_mode=WAL").get()!.journal_mode !== "wal")
-      throw new SchemaError();
+      throw new SchemaError("unsupported_version");
     db.exec("PRAGMA wal_autocheckpoint=256");
     db.exec(`PRAGMA journal_size_limit=${limits.maxDatabaseBytes}`);
     db.exec(`PRAGMA max_page_count=${pages}`);
@@ -227,7 +258,7 @@ export function openSqliteStore(options: StoreOptions): Result<SessionStore> {
       db.prepare("SELECT sqlite_version() AS version").get()!.version !==
       "3.51.2"
     )
-      throw new SchemaError();
+      throw new SchemaError("unsupported_version");
     if (options.mode === "create") initialize(db, true);
     return ok(new SqliteSessionStore(db, limits));
   } catch (error) {
@@ -244,12 +275,13 @@ class SqliteSessionStore implements SessionStore {
   readonly #bounds: Bounds;
   readonly #owned = new Map<string, string>();
   #closed = false;
+  #closing = false;
   constructor(db: DatabaseSync, limits: Bounds) {
     this.#db = db;
     this.#bounds = limits;
   }
   #query<T>(action: () => Result<T>): Result<T> {
-    if (this.#closed) return fail("unavailable");
+    if (this.#closing || this.#closed) return fail("unavailable");
     try {
       return action();
     } catch (error) {
@@ -267,9 +299,14 @@ class SqliteSessionStore implements SessionStore {
         try {
           if (this.#db.isTransaction) this.#db.exec("ROLLBACK");
         } catch {
-          this.#db.close();
-          this.#closed = true;
-          this.#owned.clear();
+          this.#closing = true;
+          try {
+            this.#db.close();
+            this.#closed = true;
+            this.#owned.clear();
+          } catch {
+            /* cleanup remains retryable through close */
+          }
         }
         return errorResult(error);
       }
@@ -277,9 +314,14 @@ class SqliteSessionStore implements SessionStore {
   }
   #decode<T extends WireRecord>(json: unknown, kind: T["kind"]): T {
     if (typeof json !== "string") throw new SchemaError();
-    const row = decode(json, defaultLimits);
-    if (row.kind !== kind) throw new SchemaError();
-    return row as T;
+    try {
+      const row = decode(json, defaultLimits);
+      if (row.kind !== kind) throw new SchemaError();
+      return row as T;
+    } catch (error) {
+      if (error instanceof ContractError && error.code === "limit") throw error;
+      throw new SchemaError();
+    }
   }
   #session(n: Namespace): Session {
     const row = this.#db
@@ -478,7 +520,7 @@ class SqliteSessionStore implements SessionStore {
   async command(n: Namespace, id: Id): Promise<Result<CommandRecord>> {
     return this.#query(() => {
       this.#session(n);
-      if (!idValid(id)) return fail("invalid_input");
+      if (!isId(id)) return fail("invalid_input");
       const row = this.#db
         .prepare(`SELECT json FROM commands WHERE ${whereScope} AND id=?`)
         .get(...nsValues(n), id);
@@ -490,7 +532,7 @@ class SqliteSessionStore implements SessionStore {
   async surface(n: Namespace, id: Id): Promise<Result<SurfaceBinding>> {
     return this.#query(() => {
       if (this.#session(n).status !== "active") return fail("session_gone");
-      if (!idValid(id)) return fail("invalid_input");
+      if (!isId(id)) return fail("invalid_input");
       const row = this.#db
         .prepare(`SELECT json FROM surfaces WHERE ${whereScope} AND id=?`)
         .get(...nsValues(n), id);
@@ -619,11 +661,7 @@ class SqliteSessionStore implements SessionStore {
       } catch {
         return fail("invalid_input");
       }
-      if (
-        !Array.isArray(cursor) ||
-        cursor.length !== 5 ||
-        !cursor.every(idValid)
-      )
+      if (!Array.isArray(cursor) || cursor.length !== 5 || !cursor.every(isId))
         return fail("invalid_input");
     }
     const filter =
@@ -732,9 +770,20 @@ class SqliteSessionStore implements SessionStore {
       return ok(rows.length);
     });
   }
-  async close(_budget: Budget): Promise<Result<void>> {
+  async close(budget: Budget): Promise<Result<void>> {
     if (this.#closed) return ok(undefined);
+    this.#closing = true;
+    if (
+      !Number.isSafeInteger(budget?.timeoutMs) ||
+      budget.timeoutMs < 1 ||
+      budget.timeoutMs > 2147483647 ||
+      !(budget.signal instanceof AbortSignal)
+    )
+      return fail("invalid_input");
+    if (budget.signal.aborted) return fail("unavailable", "same_command");
     try {
+      // DatabaseSync cannot be preempted by an event-loop timer. Once entered,
+      // native close runs to completion; only success means the lock was released.
       this.#db.close();
       this.#closed = true;
       this.#owned.clear();

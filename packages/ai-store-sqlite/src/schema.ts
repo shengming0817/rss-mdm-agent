@@ -71,14 +71,7 @@ export function validateExisting(db: DatabaseSync): void {
     Number(db.prepare("PRAGMA application_id").get()!.application_id) !==
       applicationId
   )
-    throw new SchemaError();
-  const metadata = db.prepare("SELECT version,checksum FROM schema_meta").all();
-  if (
-    metadata.length !== 1 ||
-    metadata[0].version !== version ||
-    metadata[0].checksum !== checksum
-  )
-    throw new SchemaError();
+    throw new SchemaError("unsupported_version");
   const actual = db
     .prepare(
       "SELECT sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY name",
@@ -87,6 +80,13 @@ export function validateExisting(db: DatabaseSync): void {
     .map((r) => normalize(String(r.sql)))
     .sort();
   if (JSON.stringify(actual) !== JSON.stringify(normalizedStatements))
+    throw new SchemaError();
+  const metadata = db.prepare("SELECT version,checksum FROM schema_meta").all();
+  if (
+    metadata.length !== 1 ||
+    metadata[0].version !== version ||
+    metadata[0].checksum !== checksum
+  )
     throw new SchemaError();
   if (
     db.prepare("PRAGMA quick_check(1)").get()!.quick_check !== "ok" ||
@@ -105,7 +105,7 @@ export function initialize(db: DatabaseSync, create: boolean): void {
       ? current !== 0 || app !== 0
       : current !== version || app !== applicationId
   )
-    throw new SchemaError();
+    throw new SchemaError("unsupported_version");
   db.exec("BEGIN IMMEDIATE");
   try {
     if (create) {
@@ -130,7 +130,11 @@ export function initialize(db: DatabaseSync, create: boolean): void {
   }
 }
 export class SchemaError extends Error {
-  constructor() {
-    super("AI SQLite: unsupported or invalid schema");
+  constructor(
+    readonly code:
+      | "unsupported_version"
+      | "storage_corrupt" = "storage_corrupt",
+  ) {
+    super(`AI SQLite: ${code}`);
   }
 }

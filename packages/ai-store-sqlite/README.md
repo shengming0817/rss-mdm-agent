@@ -65,3 +65,23 @@ make ci CI_BASE=origin/develop
 WAL 使用 `synchronous=FULL`，按 SQLite 的文件系统同步契约请求提交耐久性。SIGKILL 测试证明进程崩溃恢复；没有执行真实断电、存储控制器故障、网络文件系统或真实模型/OS 工具隔离验收，不能以进程测试替代这些证据。
 
 固定源码对标、来源取舍与许可见[来源记录](https://dev.azure.com/shengming0923/rss/_git/rss-mdm-agent?path=%2Fdocs%2Freference%2Fai-store-sqlite.md&version=GCeb7aa3c52bd91bd764eead511d58a11b78fea716)。
+
+## 关闭与错误边界
+
+仓库与包的 engines 都精确声明 Node 24.14.1。`make ci` 在执行检查前读取根 package.json 并拒绝其他 Node 版本；包打开时读取自身 manifest 检查同一版本，独立安装不依赖仓库文件。
+
+`close(budget)` 首先停止新操作，再校验预算与预先触发的 AbortSignal。取消或原生关闭失败不会被报告为成功；连接可能仍持锁，调用方必须用新预算重试 close。只有实际 DatabaseSync.close 返回成功才进入 closed 并释放内存 ownership；随后重复关闭幂等。同步 SQLite 原生 I/O 不能被 JavaScript timer 或 AbortSignal 抢占，timeoutMs 不构成原生关闭的硬截止保证；没有虚构 Worker 隔离或超时即已释放锁的承诺。验证覆盖预取消仍持锁、停止读写、关闭失败与新预算重试后的再次打开。
+
+SQLite 扩展结果码按低8位取得稳定 primary code，再投影到产品 Failure；不保留 SQL、文件路径或原生异常文本。
+
+| 原因 | code | retry |
+| --- | --- | --- |
+| BUSY / LOCKED（含扩展码） | unavailable | same_command |
+| CORRUPT / NOTADB、已确认本产品 schema 的对象/元数据/完整性损坏、持久 wire 非法 | storage_corrupt | never |
+| FULL | limit_exceeded | never |
+| PERM / READONLY / AUTH、EACCES / EPERM | permission_denied | never |
+| 路径缺失、create 已存在、错误路径种类 | invalid_input | never |
+| 外部 application ID、未知 schema 版本、未验证 runtime | unsupported_version | never |
+| 未知错误与其它 I/O 故障 | unavailable | never |
+
+损坏或未知 I/O 不触发盲目重放、自动删除或重建。双进程测试在 contender 内计量实际 open 耗时，对 busyTimeoutMs=50ms 要求 <1000ms 宽松上界，并验证明确的 unavailable/same_command；进程启动耗时不混入锁等待测量。重启后的 reconciliation 使用 A01 的 VerifiedProviderSession 实际调用凭证，不能再手写 not_submitted 结构授权重新派发。Id 验证直接使用 A01 从唯一 schema 编译的 isId，无复制正则。

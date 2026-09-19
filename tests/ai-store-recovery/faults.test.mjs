@@ -198,7 +198,7 @@ test("missing tables refuse open", async (t) => {
   const raw = new DatabaseSync(path);
   raw.exec("DROP TABLE deliveries");
   raw.close();
-  assert.equal(h.open(path, "open").error.code, "unsupported_version");
+  assert.equal(h.open(path, "open").error.code, "storage_corrupt");
 });
 test("capacity fails explicitly; retirement retains an irreversible namespace tombstone", async (t) => {
   const h = harness(t),
@@ -263,7 +263,7 @@ test("orphaned rows fail integrity checks without rewriting the database", async
   const raw = new DatabaseSync(path);
   raw.exec("PRAGMA foreign_keys=OFF; DELETE FROM commands");
   raw.close();
-  assert.equal(h.open(path, "open").error.code, "unsupported_version");
+  assert.equal(h.open(path, "open").error.code, "storage_corrupt");
 });
 test("query byte budgets and invalid cursors fail with value-free errors", async (t) => {
   const h = harness(t),
