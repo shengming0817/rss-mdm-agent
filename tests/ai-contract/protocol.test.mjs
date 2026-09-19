@@ -8,6 +8,11 @@ import {
   fixtures,
   fixtureLimits,
   FakeHost,
+  MemorySessionStore,
+  seedSurface,
+  emptyCommit,
+  acceptance,
+  unwrap,
 } from "../../packages/ai-contract/dist/testing/index.js";
 const require = createRequire(
   new URL("../../packages/ai-contract/package.json", import.meta.url),
@@ -31,9 +36,14 @@ test("published ACP PromptResponse accepts final stop reason, never a durable re
   );
   assert.equal(validator({ stopReason: "accepted" }), false);
 });
-test("official A2UI action binds exact surface/run/revision; payload claims grant nothing", () => {
-  const surface = fixtures.valid.find((v) => v.kind === "surface"),
-    meta = fixtures.valid.find((v) => v.kind === "surfaceAction");
+test("official A2UI action binds exact surface/run/revision; payload claims grant nothing", async () => {
+  const store = new MemorySessionStore();
+  const { surface } = await seedSurface(store);
+  const meta = {
+    ...fixtures.valid.find((v) => v.kind === "surfaceAction"),
+    interactionId: surface.interactionId,
+    surfaceRevision: surface.revision,
+  };
   const action = {
     version: "v0.9.1",
     action: {
@@ -44,27 +54,37 @@ test("official A2UI action binds exact surface/run/revision; payload claims gran
       context: { approved: true, actor: "model-claim" },
     },
   };
-  const result = resolveSurfaceAction(
+  const result = await resolveSurfaceAction(
+    store,
     fixtureCaller,
-    surface,
     meta,
     action,
     fixtureLimits,
   );
-  for (const [binding, metadata] of [
-    [fixtures.valid[0], meta],
-    [surface, fixtures.valid[0]],
-  ])
-    assert.equal(
-      resolveSurfaceAction(
+  assert.equal(
+    (
+      await resolveSurfaceAction(
+        store,
         fixtureCaller,
-        binding,
-        metadata,
+        fixtures.valid[0],
         action,
         fixtureLimits,
-      ).error.code,
-      "invalid_input",
-    );
+      )
+    ).error.code,
+    "invalid_input",
+  );
+  assert.equal(
+    (
+      await resolveSurfaceAction(
+        { surface: async () => ({ ok: true, value: fixtures.valid[0] }) },
+        fixtureCaller,
+        meta,
+        action,
+        fixtureLimits,
+      )
+    ).error.code,
+    "invalid_input",
+  );
   assert.equal(result.ok, true);
   assert.deepEqual(result.value.answer, action.action.context);
   for (const patch of [
@@ -75,24 +95,28 @@ test("official A2UI action binds exact surface/run/revision; payload claims gran
     { nativeRunId: "different" },
   ])
     assert.equal(
-      resolveSurfaceAction(
-        fixtureCaller,
-        surface,
-        { ...meta, ...patch },
-        action,
-        fixtureLimits,
+      (
+        await resolveSurfaceAction(
+          store,
+          fixtureCaller,
+          { ...meta, ...patch },
+          action,
+          fixtureLimits,
+        )
       ).error.code,
       "stale_binding",
     );
   assert.equal(
-    resolveSurfaceAction(
-      { ...fixtureCaller, tenantId: "other" },
-      surface,
-      meta,
-      action,
-      fixtureLimits,
+    (
+      await resolveSurfaceAction(
+        store,
+        { ...fixtureCaller, tenantId: "other" },
+        meta,
+        action,
+        fixtureLimits,
+      )
     ).error.code,
-    "permission_denied",
+    "session_gone",
   );
 });
 test("negotiation permits basic ACP without A2UI and rejects unselected versions", () => {
@@ -107,9 +131,14 @@ test("negotiation permits basic ACP without A2UI and rejects unselected versions
   assert.equal(host.negotiate({ ...basic, contractVersion: 1 }).ok, false);
 });
 
-test("A2UI constructed inputs are bounded before upstream validation", () => {
-  const surface = fixtures.valid.find((v) => v.kind === "surface");
-  const meta = fixtures.valid.find((v) => v.kind === "surfaceAction");
+test("A2UI constructed inputs are bounded before upstream validation", async () => {
+  const store = new MemorySessionStore();
+  const { surface } = await seedSurface(store);
+  const meta = {
+    ...fixtures.valid.find((v) => v.kind === "surfaceAction"),
+    interactionId: surface.interactionId,
+    surfaceRevision: surface.revision,
+  };
   const circular = {};
   circular.self = circular;
   const accessor = {};
@@ -139,8 +168,15 @@ test("A2UI constructed inputs are bounded before upstream validation", () => {
       },
     };
     assert.equal(
-      resolveSurfaceAction(fixtureCaller, surface, meta, action, fixtureLimits)
-        .error.code,
+      (
+        await resolveSurfaceAction(
+          store,
+          fixtureCaller,
+          meta,
+          action,
+          fixtureLimits,
+        )
+      ).error.code,
       "invalid_input",
     );
   }
@@ -176,4 +212,58 @@ test("fixed upstream surface lifecycle and basic catalog schemas form a complete
     }),
     false,
   );
+});
+
+test("surface deleted between resolution and response acceptance rejects the action", async () => {
+  const store = new MemorySessionStore();
+  const seeded = await seedSurface(store),
+    { surface } = seeded;
+  const meta = {
+    ...fixtures.valid.find((v) => v.kind === "surfaceAction"),
+    interactionId: surface.interactionId,
+    surfaceRevision: 0,
+  };
+  const action = {
+    version: "v0.9.1",
+    action: {
+      name: surface.eventName,
+      surfaceId: surface.surfaceId,
+      sourceComponentId: surface.sourceComponentId,
+      timestamp: "2026-09-18T00:00:00Z",
+      context: { choice: "allow" },
+    },
+  };
+  const resolved = unwrap(
+    await resolveSurfaceAction(
+      store,
+      fixtureCaller,
+      meta,
+      action,
+      fixtureLimits,
+    ),
+  );
+  unwrap(
+    await store.commit({
+      ...emptyCommit(seeded.session),
+      surfaces: [{ ...surface, revision: 1, status: "deleted" }],
+    }),
+  );
+  assert.equal(
+    (
+      await resolveSurfaceAction(
+        store,
+        fixtureCaller,
+        meta,
+        action,
+        fixtureLimits,
+      )
+    ).error.code,
+    "unavailable",
+  );
+  const head = unwrap(await store.session(seeded.session.namespace));
+  const answer = {
+    ...seeded.answer,
+    input: { ...seeded.answer.input, surface: resolved.surface },
+  };
+  assert.equal((await store.accept(acceptance(head, answer))).ok, false);
 });

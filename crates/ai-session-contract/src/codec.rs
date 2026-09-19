@@ -56,6 +56,11 @@ fn serde_error<E: serde::de::Error>(code: Diagnostic) -> E {
 }
 fn from_serde(e: serde_json::Error) -> ContractError {
     let message = e.to_string();
+    // serde_json classifies parser-level float overflow as Syntax before visiting.
+    // Match only its value-free diagnostic, preserving other syntax errors.
+    if e.is_syntax() && message.starts_with("number out of range at line ") {
+        return error(Diagnostic::Number);
+    }
     let code = message
         .strip_prefix("ai-v2:")
         .and_then(|s| serde_json::from_str(s.split(" at line ").next().unwrap_or(s)).ok())

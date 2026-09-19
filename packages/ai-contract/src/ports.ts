@@ -35,11 +35,23 @@ export interface Clock {
   now(): number;
 }
 export type Result<T> = { ok: true; value: T } | { ok: false; error: Failure };
-/** Claims alone cannot open this profile. A trusted adapter verifier provides exact evidence. */
-export interface ControlledToolEvidence {
+/** Atomic provider result: capabilities describe this exact incarnation. */
+export interface ProviderSessionBinding {
   readonly binding: Binding;
-  readonly platform: string;
-  readonly verificationRef: Id;
+  readonly capabilities: Capabilities;
+}
+/** Trusted composition-owned platform verifier, never supplied by model/wire input. */
+export interface ControlledToolVerifier {
+  verify(
+    session: ProviderSessionBinding,
+    tools: ToolEndpoint,
+    budget: Budget,
+  ): Promise<
+    Result<{
+      platform: string;
+      verificationRef: Id;
+    }>
+  >;
 }
 export interface Negotiation {
   readonly contractVersion: 2;
@@ -70,33 +82,43 @@ export interface ToolEndpoint {
     }>
   >;
 }
-export interface ProviderConfiguration {
+interface ProviderConfigurationBase {
+  readonly provider: Id;
   readonly config: ConfigRef;
   readonly accountRef: Id;
   readonly workingDirectory: string;
-  readonly permissions: "tools_disabled" | "host_mediated";
-  readonly tools?: ToolEndpoint;
+}
+export type ProviderConfiguration = ProviderConfigurationBase &
+  (
+    | {
+        readonly permissions: "tools_disabled";
+        readonly tools?: never;
+        readonly verifier?: never;
+      }
+    | {
+        readonly permissions: "host_mediated";
+        readonly tools: ToolEndpoint;
+        readonly verifier: ControlledToolVerifier;
+      }
+  );
+export interface MessageDelta {
+  readonly commandId: Id;
+  readonly messageId: Id;
+  readonly text: string;
 }
 export type ProviderObservation =
   | { type: "event"; binding: Binding; commandId: Id; body: Event["body"] }
-  | {
-      type: "delta";
-      binding: Binding;
-      commandId: Id;
-      messageId: Id;
-      text: string;
-    };
+  | ({ type: "delta"; binding: Binding } & MessageDelta);
 export type Submission =
   | { certainty: "submitted"; binding: Binding }
   | { certainty: "not_sent"; error: Failure }
   | { certainty: "unknown"; correlationId: Id };
 /** A01 contract only: each adapter owns its SDK, process and native context. */
 export interface ProviderAgentPort {
-  initialize(
+  createSession(
     configuration: ProviderConfiguration,
     budget: Budget,
-  ): Promise<Result<Capabilities>>;
-  createSession(budget: Budget): Promise<Result<Binding>>;
+  ): Promise<Result<ProviderSessionBinding>>;
   submit(
     binding: Binding,
     command: Command,
@@ -125,10 +147,6 @@ export interface ProviderAgentPort {
     }>
   >;
   resume?(binding: Binding, budget: Budget): Promise<Result<Binding>>;
-  verifyControlledTools?(
-    binding: Binding,
-    budget: Budget,
-  ): Promise<Result<ControlledToolEvidence>>;
   close(budget: Budget): Promise<Result<{ processStopped: boolean }>>;
 }
 export interface Snapshot {
@@ -141,10 +159,15 @@ export interface Snapshot {
 }
 export type Subscription =
   | { type: "event"; event: Event }
-  | { type: "delta"; commandId: Id; generation: Id; text: string }
+  | ({ type: "delta"; generation: Id } & MessageDelta)
   | { type: "resync_required" };
+/** Close stops admission, ends subscriptions/workers, then closes provider and store.
+ * It is idempotent; failed cleanup may be retried with a fresh budget. */
+export interface Closeable {
+  close(budget: Budget): Promise<Result<void>>;
+}
 /** Acceptance is durable only when backed by a real store; testing exports explicitly simulate it. */
-export interface HostPort {
+export interface HostPort extends Closeable {
   negotiate(offered: Negotiation): Result<Negotiation>;
   createSession(
     caller: Caller,
@@ -204,10 +227,14 @@ export interface Page<T> {
   readonly next?: Id;
 }
 /** One logical session coordinator; no distributed worker/lease promise. */
-export interface SessionStore {
+export interface SessionStore extends Closeable {
   create(session: Session): Promise<Result<void>>;
   session(namespace: Namespace): Promise<Result<Session>>;
   accept(input: AcceptCommand): Promise<Result<Receipt>>;
+  surface(
+    namespace: Namespace,
+    instanceId: Id,
+  ): Promise<Result<SurfaceBinding>>;
   command(namespace: Namespace, commandId: Id): Promise<Result<CommandRecord>>;
   commit(batch: SessionCommit): Promise<Result<void>>;
   snapshot(namespace: Namespace, limit: number): Promise<Result<Snapshot>>;
@@ -216,12 +243,12 @@ export interface SessionStore {
     after: Counter,
     limit: number,
   ): Promise<Result<readonly Event[]>>;
-  recovery(limit: number, after?: Id): Promise<Page<CommandRecord>>;
+  recovery(limit: number, after?: Id): Promise<Result<Page<CommandRecord>>>;
   deliveries(
     limit: number,
     nowMs: Counter,
     after?: Id,
-  ): Promise<Page<Delivery>>;
+  ): Promise<Result<Page<Delivery>>>;
   retire(
     namespace: Namespace,
     expectedRevision: Counter,
@@ -229,5 +256,5 @@ export interface SessionStore {
   ): Promise<Result<void>>;
   /** Delete retired sessions only after all receipts expire and delivery is settled.
    * Missing/retired namespaces never implicitly recreate a session. */
-  pruneRetired(nowMs: Counter): Promise<number>;
+  pruneRetired(nowMs: Counter): Promise<Result<number>>;
 }

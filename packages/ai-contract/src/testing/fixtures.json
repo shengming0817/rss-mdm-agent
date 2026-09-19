@@ -151,7 +151,8 @@
       "eventName": "respond",
       "catalogId": "catalog-1",
       "catalogVersion": "1",
-      "a2uiVersion": "v0.9.1"
+      "a2uiVersion": "v0.9.1",
+      "status": "active"
     },
     {
       "schemaVersion": 2,
@@ -618,6 +619,16 @@
       "name": "lone_surrogate",
       "raw": "{\"schemaVersion\":2,\"kind\":\"command\",\"sessionId\":\"session-1\",\"commandId\":\"command-1\",\"expiresAtMs\":1000,\"input\":{\"type\":\"prompt\",\"text\":\"\\ud800\",\"policy\":\"queue_next\"}}",
       "code": "encoding"
+    },
+    {
+      "name": "positive-exponent-overflow",
+      "raw": "{\"schemaVersion\":2,\"expiresAtMs\":1e400}",
+      "code": "number"
+    },
+    {
+      "name": "negative-exponent-overflow",
+      "raw": "{\"schemaVersion\":2,\"expiresAtMs\":-1e400}",
+      "code": "number"
     }
   ],
   "commandHash": "273d2bc05c0cb23b02f666dff841b992d7839f7c43352570827c46ab4b6b0de7",

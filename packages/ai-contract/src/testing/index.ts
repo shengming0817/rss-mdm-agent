@@ -4,6 +4,8 @@ export { FakeHost } from "./host.js";
 export {
   runStoreConformance,
   seedInteraction,
+  seedSurface,
+  terminalCommit,
   fixtureCaller,
   fixtureSession,
   fixtureCommand,

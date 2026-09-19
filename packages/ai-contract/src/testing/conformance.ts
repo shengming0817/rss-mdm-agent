@@ -1,4 +1,13 @@
 import assert from "node:assert/strict";
+import {
+  withinBudget,
+  boundedPort,
+  withCleanup,
+  closeAll,
+  defaultBudget,
+  type BudgetFactory,
+} from "./budget.js";
+import { fixtures } from "./fixtures.js";
 import { deliveryFingerprint } from "../codec.js";
 import { fixtureLimits } from "./store.js";
 import type {
@@ -8,7 +17,7 @@ import type {
   SessionCommit,
   Result,
 } from "../ports.js";
-import type { Command, Session } from "../wire.js";
+import type { Command, CommandRecord, Session } from "../wire.js";
 export const fixtureCaller: Caller = {
   tenantId: "tenant-1",
   principalId: "user-1",
@@ -99,8 +108,24 @@ export function emptyCommit(session: Session): SessionCommit {
  * and process faults must be supplied separately by the adapter's own harness. */
 export async function runStoreConformance(
   create: () => Promise<SessionStore> | SessionStore,
+  budget: BudgetFactory = defaultBudget,
+): Promise<void> {
+  const stores: SessionStore[] = [];
+  await withCleanup(
+    () =>
+      runStoreScenarios(async () => {
+        const store = await withinBudget(budget, create);
+        stores.push(store);
+        return boundedPort(store, budget);
+      }),
+    () => closeAll(stores, budget),
+  );
+}
+async function runStoreScenarios(
+  create: () => Promise<SessionStore>,
 ): Promise<void> {
   await runStoreBoundaries(create);
+  await runSurfaceConformance(await create());
   const store = await create(),
     s = fixtureSession(),
     input = acceptance(s);
@@ -148,6 +173,23 @@ export async function runStoreConformance(
   const accepted = unwrap(
     await store.command(s.namespace, input.command.commandId),
   );
+  assert.equal(
+    (
+      await store.commit({
+        ...emptyCommit(current),
+        commands: [{ ...accepted, state: "terminal", outcome: "completed" }],
+      })
+    ).ok,
+    false,
+  );
+  assert.deepEqual(await store.recovery(0), {
+    ok: false,
+    error: { code: "invalid_input", retry: "never" },
+  });
+  assert.deepEqual(await store.deliveries(0, 0), {
+    ok: false,
+    error: { code: "invalid_input", retry: "never" },
+  });
   const dispatch = {
     generation: s.binding.generation,
     nativeSessionId: s.binding.nativeSessionId,
@@ -168,7 +210,7 @@ export async function runStoreConformance(
   );
   const unknown = unwrap(await store.session(s.namespace));
   assert.equal(
-    (await store.recovery(10)).items[0].state,
+    unwrap(await store.recovery(10)).items[0].state,
     "reconciliation_required",
   );
   assert.equal(
@@ -176,24 +218,61 @@ export async function runStoreConformance(
     false,
     "unknown submission cannot return to accepted",
   );
+  for (const events of [
+    [],
+    [
+      {
+        ...terminalCommit(unknown, { ...accepted, dispatch }).events[0],
+        generation: "stale",
+      },
+    ],
+    [
+      {
+        ...terminalCommit(unknown, { ...accepted, dispatch }).events[0],
+        body: { type: "terminal" as const, outcome: "failed" as const },
+      },
+    ],
+  ]) {
+    const batch = terminalCommit(unknown, { ...accepted, dispatch });
+    assert.equal(
+      (
+        await store.commit({
+          ...batch,
+          session: {
+            ...batch.session,
+            lastSequence: unknown.lastSequence + events.length,
+          },
+          events,
+        })
+      ).ok,
+      false,
+    );
+  }
   unwrap(
-    await store.commit({
-      ...emptyCommit(unknown),
-      commands: [{ ...accepted, state: "terminal", outcome: "completed" }],
-    }),
+    await store.commit(terminalCommit(unknown, { ...accepted, dispatch })),
   );
   const terminal = unwrap(await store.session(s.namespace));
   unwrap(
     await store.retire(s.namespace, terminal.revision, s.binding.generation),
   );
-  assert.equal(await store.pruneRetired(200), 0);
-  assert.equal(await store.pruneRetired(201), 1);
+  assert.equal(unwrap(await store.pruneRetired(200)), 0);
+  assert.equal(unwrap(await store.pruneRetired(201)), 1);
   assert.equal((await store.accept(input)).ok, false);
   assert.equal(
     (await store.create(s)).ok,
     false,
     "retired namespace cannot be resurrected",
   );
+  unwrap(await store.close(defaultBudget()));
+  assert.deepEqual(await store.recovery(1), {
+    ok: false,
+    error: { code: "unavailable", retry: "never" },
+  });
+  assert.deepEqual(await store.deliveries(1, 0), {
+    ok: false,
+    error: { code: "unavailable", retry: "never" },
+  });
+  assert.equal((await store.create(fixtureSession())).ok, false);
 }
 
 /** Prepare a real dispatched callback using only the public store port. */
@@ -356,9 +435,13 @@ async function runStoreBoundaries(
     );
   unwrap(
     await coordinatesStore.commit({
-      ...emptyCommit(bound),
-      session: { ...bound, revision: bound.revision + 1, binding: s.binding },
-      commands: [{ ...running, state: "terminal", outcome: "completed" }],
+      ...terminalCommit(bound, running),
+      session: {
+        ...bound,
+        revision: bound.revision + 1,
+        lastSequence: bound.lastSequence + 1,
+        binding: s.binding,
+      },
     }),
   );
   for (const status of ["pending", "unavailable"] as const) {
@@ -502,8 +585,8 @@ async function runStoreBoundaries(
     for (let i = 0; i < 3; i++) {
       const page =
         kind === "recovery"
-          ? await store.recovery(1, after)
-          : await store.deliveries(1, 0, after);
+          ? unwrap(await store.recovery(1, after))
+          : unwrap(await store.deliveries(1, 0, after));
       assert.equal(page.items.length, 1);
       const row = page.items[0];
       keys.push(
@@ -514,4 +597,142 @@ async function runStoreBoundaries(
     }
     assert.equal(new Set(keys).size, 3);
   }
+}
+
+/** Native terminal evidence and the matching state projection form one commit. */
+export function terminalCommit(
+  session: Session,
+  record: CommandRecord,
+): SessionCommit {
+  return {
+    ...emptyCommit(session),
+    session: {
+      ...session,
+      revision: session.revision + 1,
+      lastSequence: session.lastSequence + 1,
+    },
+    commands: [{ ...record, state: "terminal", outcome: "completed" }],
+    events: [
+      {
+        schemaVersion: 2,
+        kind: "event",
+        namespace: session.namespace,
+        eventId: `terminal-${record.command.commandId}`,
+        sequence: session.lastSequence + 1,
+        generation: session.binding.generation,
+        commandId: record.command.commandId,
+        body: { type: "terminal", outcome: "completed" },
+      },
+    ],
+  };
+}
+export async function seedSurface(store: SessionStore) {
+  const seeded = await seedInteraction(store);
+  const template = fixtures.valid.find((v) => v.kind === "surface")!;
+  const surface = {
+    ...template,
+    namespace: seeded.session.namespace,
+    generation: seeded.interaction.generation,
+    nativeRunId: seeded.interaction.nativeRunId!,
+    interactionId: seeded.interaction.interactionId,
+    revision: 0,
+    status: "active" as const,
+  };
+  unwrap(
+    await store.commit({ ...emptyCommit(seeded.session), surfaces: [surface] }),
+  );
+  return {
+    ...seeded,
+    surface,
+    session: unwrap(await store.session(seeded.session.namespace)),
+  };
+}
+async function runSurfaceConformance(store: SessionStore): Promise<void> {
+  const seeded = await seedSurface(store),
+    { surface } = seeded;
+  for (const patch of [
+    { revision: 0 },
+    { revision: 2 },
+    { revision: 1, sourceComponentId: "different" },
+    { revision: 1, interactionId: "different" },
+  ])
+    assert.equal(
+      (
+        await store.commit({
+          ...emptyCommit(seeded.session),
+          surfaces: [{ ...surface, ...patch }],
+        })
+      ).ok,
+      false,
+    );
+  const updated = { ...surface, revision: 1 };
+  unwrap(
+    await store.commit({ ...emptyCommit(seeded.session), surfaces: [updated] }),
+  );
+  const head = unwrap(await store.session(seeded.session.namespace));
+  assert.equal(seeded.answer.input.type, "respond");
+  if (seeded.answer.input.type !== "respond")
+    throw new Error("fixture response required");
+  const answer: Command = {
+    ...seeded.answer,
+    input: {
+      ...seeded.answer.input,
+      surface: { instanceId: surface.surfaceInstanceId, revision: 0 },
+    },
+  };
+  assert.equal((await store.accept(acceptance(head, answer))).ok, false);
+  assert.equal(
+    (await store.accept(acceptance(head, seeded.answer))).ok,
+    false,
+    "surface cannot be omitted",
+  );
+  unwrap(
+    await store.commit({
+      ...emptyCommit(head),
+      surfaces: [{ ...updated, revision: 2, status: "deleted" }],
+    }),
+  );
+  const deleted = unwrap(await store.session(head.namespace));
+  assert.equal(
+    unwrap(await store.surface(head.namespace, surface.surfaceInstanceId))
+      .status,
+    "deleted",
+  );
+  assert.equal(
+    unwrap(await store.snapshot(head.namespace, 1024)).interactions[0].status,
+    "unavailable",
+  );
+  assert.equal(
+    (
+      await store.accept(
+        acceptance(deleted, {
+          ...seeded.answer,
+          input: {
+            ...seeded.answer.input,
+            surface: { instanceId: surface.surfaceInstanceId, revision: 2 },
+          },
+        }),
+      )
+    ).ok,
+    false,
+  );
+  assert.equal(
+    (
+      await store.commit({
+        ...emptyCommit(deleted),
+        surfaces: [{ ...updated, revision: 3 }],
+      })
+    ).ok,
+    false,
+    "tombstone cannot resurrect",
+  );
+  assert.equal(
+    (
+      await store.surface(
+        { ...head.namespace, tenantId: "other" },
+        surface.surfaceInstanceId,
+      )
+    ).ok,
+    false,
+  );
 }

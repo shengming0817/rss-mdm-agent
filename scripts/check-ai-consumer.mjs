@@ -73,15 +73,21 @@ try {
   writeFileSync(
     join(dir, "consumer.ts"),
     `import assert from 'node:assert/strict';
-import {decode,fingerprint,type HostPort,type ProviderAgentPort,type SessionStore} from '@rss-mdm-agent/ai-contract';
+import {decode,fingerprint,type HostPort,type ProviderAgentPort,type SessionStore,type ProviderConfiguration,type Subscription,VerifiedProviderSession} from '@rss-mdm-agent/ai-contract';
 import {FakeHost,MemorySessionStore,ScriptedProvider,fixtures,fixtureLimits,runStoreConformance,runProviderConformance,runHostConformance} from '@rss-mdm-agent/ai-contract/testing';
+// @ts-expect-error Controlled mode cannot omit its verifier and ToolEndpoint.
+const invalidConfiguration:ProviderConfiguration={provider:'fake',config:{id:'c',revision:'1'},accountRef:'a',workingDirectory:'.',permissions:'host_mediated'};
+// @ts-expect-error Admission cannot be built from serialized fields.
+const forged:VerifiedProviderSession={binding:{},capabilities:{}};
+// @ts-expect-error Every subscription delta retains its message identity.
+const missingMessage:Subscription={type:'delta',commandId:'c',generation:'g',text:'x'};
 const host:HostPort=new FakeHost();const provider:ProviderAgentPort=new ScriptedProvider();const store:SessionStore=new MemorySessionStore();
 const value=decode(JSON.stringify(fixtures.valid[0]),fixtureLimits);assert.equal(value.kind,'command');if(value.kind==='command')assert.equal(fingerprint(value,fixtureLimits),fixtures.commandHash);
 await runStoreConformance(()=>new MemorySessionStore());
-await runProviderConformance(scenario=>{const port=new ScriptedProvider();port.submission=scenario;return port;},{config:{id:'config-1',revision:'1'},accountRef:'account-1',workingDirectory:'.',permissions:'tools_disabled'},{timeoutMs:1000,signal:AbortSignal.timeout(1000)});
+await runProviderConformance(scenario=>{const port=new ScriptedProvider();port.submission=scenario;return port;},{provider:'fake',config:{id:'config-1',revision:'1'},accountRef:'account-1',workingDirectory:'.',permissions:'tools_disabled'},()=>({timeoutMs:1000,signal:new AbortController().signal}));
 await runHostConformance(()=>new FakeHost());
 assert.equal(host.negotiate({contractVersion:2,acp:1,durableReceipts:false,cursorAttach:false}).ok,true);
-assert.ok(store);console.log('Isolated AI tarball consumer: types, wire, Host and conformance passed');`,
+await host.close({timeoutMs:1000,signal:new AbortController().signal});await store.close({timeoutMs:1000,signal:new AbortController().signal});await provider.close({timeoutMs:1000,signal:new AbortController().signal});assert.ok(store);console.log('Isolated AI tarball consumer: types, wire, Host and conformance passed');`,
   );
   run("pnpm", ["install", "--offline"]);
   run("pnpm", ["exec", "tsc"]);

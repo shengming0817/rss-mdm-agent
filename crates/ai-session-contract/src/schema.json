@@ -351,6 +351,10 @@
               "type": "object",
               "additionalProperties": true,
               "description": "Untrusted JSON response data; cannot carry approval authority."
+            },
+            "surface": {
+              "$ref": "#/$defs/SurfaceReference",
+              "description": "Mandatory for an interaction associated with a surface; cannot bypass deleted/stale state."
             }
           },
           "required": ["type", "interactionId", "generation", "answer"],
@@ -1004,6 +1008,11 @@
           "type": "string",
           "const": "v0.9.1",
           "description": "Exact negotiated upstream A2UI version."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "deleted"],
+          "description": "Persisted lifecycle; deleted is a permanent tombstone for this instance."
         }
       },
       "required": [
@@ -1020,7 +1029,8 @@
         "eventName",
         "catalogId",
         "catalogVersion",
-        "a2uiVersion"
+        "a2uiVersion",
+        "status"
       ],
       "additionalProperties": false,
       "description": "Product association for an upstream A2UI surface instance; catalog/renderer retain upstream ownership."
@@ -1080,6 +1090,22 @@
       ],
       "additionalProperties": false,
       "description": "Product metadata accompanying an unchanged upstream action; association does not grant permission."
+    },
+    "SurfaceReference": {
+      "type": "object",
+      "properties": {
+        "instanceId": {
+          "$ref": "#/$defs/Id",
+          "description": "Exact product surface instance associated with this response."
+        },
+        "revision": {
+          "$ref": "#/$defs/Counter",
+          "description": "Current surface revision checked atomically during response acceptance."
+        }
+      },
+      "required": ["instanceId", "revision"],
+      "additionalProperties": false,
+      "description": "Surface revision checked atomically when accepting an action response."
     }
   }
 }

@@ -8,4 +8,6 @@ export {
   ContractError,
 } from "./codec.js";
 export type { Limits, Diagnostic } from "./codec.js";
-export { extension, resolveSurfaceAction } from "./protocol.js";
+export { extension, resolveSurfaceAction, projectDelta } from "./protocol.js";
+
+export { VerifiedProviderSession } from "./session.js";

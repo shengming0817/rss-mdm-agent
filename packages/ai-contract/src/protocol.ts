@@ -1,7 +1,13 @@
 import { readFileSync } from "node:fs";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { decode, boundedJson, type Limits } from "./codec.js";
-import type { Caller, Result } from "./ports.js";
+import type {
+  Caller,
+  Result,
+  SessionStore,
+  ProviderObservation,
+  Subscription,
+} from "./ports.js";
 import type { SurfaceAction, SurfaceBinding } from "./wire.js";
 const actionSchema = JSON.parse(
   readFileSync(
@@ -24,35 +30,46 @@ export const extension = {
 /** Product association only; the upstream action context remains untrusted tool data.
  * Timestamp is an upstream annotation, never an expiry/authority source. The access
  * adapter owns transport byte limits and official renderer/catalog validation. */
-export function resolveSurfaceAction(
+export async function resolveSurfaceAction(
+  store: SessionStore,
   caller: Caller,
-  binding: SurfaceBinding,
   metadata: SurfaceAction,
   standard: unknown,
   limits: Limits,
-): Result<{
-  interactionId: string;
-  commandId: string;
-  answer: Record<string, unknown>;
-}> {
+): Promise<
+  Result<{
+    interactionId: string;
+    commandId: string;
+    answer: Record<string, unknown>;
+    surface: { instanceId: string; revision: number };
+  }>
+> {
   const fail = (code: import("./wire.js").ErrorCode): Result<never> => ({
     ok: false,
     error: { code, retry: "never" },
   });
+  let binding: SurfaceBinding;
   try {
-    const checkedBinding = decode(boundedJson(binding, limits), limits);
     const checkedMetadata = decode(boundedJson(metadata, limits), limits);
-    if (
-      checkedBinding.kind !== "surface" ||
-      checkedMetadata.kind !== "surfaceAction"
-    )
-      return fail("invalid_input");
-    binding = checkedBinding;
+    if (checkedMetadata.kind !== "surfaceAction") return fail("invalid_input");
     metadata = checkedMetadata;
     standard = JSON.parse(boundedJson(standard, limits));
   } catch {
     return fail("invalid_input");
   }
+  const current = await store.surface(
+    { ...caller, sessionId: metadata.sessionId },
+    metadata.surfaceInstanceId,
+  );
+  if (!current.ok) return current;
+  try {
+    const checked = decode(boundedJson(current.value, limits), limits);
+    if (checked.kind !== "surface") return fail("invalid_input");
+    binding = checked;
+  } catch {
+    return fail("invalid_input");
+  }
+  if (binding.status !== "active") return fail("unavailable");
   if (!validAction(standard)) return fail("invalid_input");
   const message = standard as {
     version: string;
@@ -115,6 +132,23 @@ export function resolveSurfaceAction(
       interactionId: binding.interactionId,
       commandId: metadata.commandId,
       answer: structuredClone(action.context),
+      surface: {
+        instanceId: binding.surfaceInstanceId,
+        revision: binding.revision,
+      },
     },
+  };
+}
+
+/** Projection only; the Host verifies provider binding/command association before publishing. */
+export function projectDelta(
+  observation: Extract<ProviderObservation, { type: "delta" }>,
+): Extract<Subscription, { type: "delta" }> {
+  return {
+    type: "delta",
+    generation: observation.binding.generation,
+    commandId: observation.commandId,
+    messageId: observation.messageId,
+    text: observation.text,
   };
 }

@@ -1294,6 +1294,9 @@ pub enum Input {
             skip_serializing_if = "::std::option::Option::is_none"
         )]
         native_run_id: ::std::option::Option<Id>,
+        #[doc = "Mandatory for an interaction associated with a surface; cannot bypass deleted/stale state."]
+        #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+        surface: ::std::option::Option<SurfaceReference>,
     },
 }
 #[doc = "queue_next serializes later work; steer must match the currently active native run."]
@@ -1919,12 +1922,76 @@ pub struct SurfaceBinding {
     #[doc = "Exact upstream source component allowed to emit this action."]
     #[serde(rename = "sourceComponentId")]
     pub source_component_id: Id,
+    #[doc = "Persisted lifecycle; deleted is a permanent tombstone for this instance."]
+    pub status: SurfaceBindingStatus,
     #[doc = "Upstream A2UI surface identifier."]
     #[serde(rename = "surfaceId")]
     pub surface_id: Id,
     #[doc = "Fresh product identity for each surface creation; deletion permanently invalidates old actions."]
     #[serde(rename = "surfaceInstanceId")]
     pub surface_instance_id: Id,
+}
+#[doc = "Persisted lifecycle; deleted is a permanent tombstone for this instance."]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum SurfaceBindingStatus {
+    #[serde(rename = "active")]
+    #[doc = "`Active` alternative; see the parent type's schema contract."]
+    Active,
+    #[serde(rename = "deleted")]
+    #[doc = "`Deleted` alternative; see the parent type's schema contract."]
+    Deleted,
+}
+impl ::std::fmt::Display for SurfaceBindingStatus {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Active => f.write_str("active"),
+            Self::Deleted => f.write_str("deleted"),
+        }
+    }
+}
+impl ::std::str::FromStr for SurfaceBindingStatus {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "active" => Ok(Self::Active),
+            "deleted" => Ok(Self::Deleted),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for SurfaceBindingStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for SurfaceBindingStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Surface revision checked atomically when accepting an action response."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct SurfaceReference {
+    #[doc = "Exact product surface instance associated with this response."]
+    #[serde(rename = "instanceId")]
+    pub instance_id: Id,
+    #[doc = "Current surface revision checked atomically during response acceptance."]
+    pub revision: Counter,
 }
 #[doc = "Product reliability records only. No record authenticates a caller, grants approval or proves business execution. Standard ACP/A2UI schemas retain their upstream owners."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
@@ -2232,6 +2299,16 @@ impl std::fmt::Debug for SurfaceAction {
 impl std::fmt::Debug for SurfaceBinding {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(stringify!(SurfaceBinding), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for SurfaceBindingStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(SurfaceBindingStatus), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for SurfaceReference {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(SurfaceReference), "([redacted])"))
     }
 }
 impl std::fmt::Debug for WireRecord {

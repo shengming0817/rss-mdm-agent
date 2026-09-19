@@ -9,21 +9,31 @@ import type {
   SessionStore,
   Snapshot,
   Subscription,
+  ProviderObservation,
 } from "../ports.js";
 import type { Command, Event, Receipt, Session } from "../wire.js";
 import { fail, ok, MemorySessionStore } from "./store.js";
+import canonicalize from "canonicalize";
+import { projectDelta } from "../protocol.js";
+import { VerifiedProviderSession } from "../session.js";
+import { ScriptedProvider } from "./provider.js";
+import { withinBudget } from "./budget.js";
 import { decode } from "../codec.js";
 import { fixtureLimits } from "./store.js";
-/** Script-driven acceptance/subscription fake. No provider, dispatcher, timer or durable storage. */
+/** Script-driven acceptance/subscription fake with scripted ports only. No process, dispatcher or durable storage. */
 export class FakeHost implements HostPort {
   readonly evidence = "fake_host" as const;
   private next = 0;
+  private closed = false;
+  private providers: ScriptedProvider[] = [];
+  private deltaQueues = new Map<() => void, Subscription[]>();
   private listeners = new Map<string, Set<() => void>>();
   constructor(
     readonly store: SessionStore = new MemorySessionStore(),
     readonly clock: Clock = { now: () => 0 },
   ) {}
   negotiate(offered: Negotiation): Result<Negotiation> {
+    if (this.closed) return fail("unavailable");
     if (offered.contractVersion !== 2 || offered.acp !== 1)
       return fail("unsupported_version");
     if (
@@ -40,9 +50,27 @@ export class FakeHost implements HostPort {
     options: SessionOptions,
     budget: Budget,
   ): Promise<Result<Session>> {
-    if (budget.signal.aborted) return fail("unavailable");
+    if (this.closed || budget.signal.aborted) return fail("unavailable");
     if (options.profile === "controlled_tools")
       return fail("permission_denied");
+    const provider = new ScriptedProvider();
+    const admitted = await VerifiedProviderSession.open(
+      provider,
+      {
+        provider: options.provider,
+        config: options.config,
+        accountRef: options.accountRef,
+        workingDirectory: ".",
+        permissions: "tools_disabled",
+      },
+      budget,
+    );
+    if (!admitted.ok) return admitted;
+    this.providers.push(provider);
+    if (this.closed) {
+      await provider.close(budget);
+      return fail("unavailable");
+    }
     const session: Session = {
       schemaVersion: 2,
       kind: "session",
@@ -50,26 +78,8 @@ export class FakeHost implements HostPort {
       revision: 0,
       lastSequence: 0,
       status: "active",
-      binding: {
-        provider: options.provider,
-        providerVersion: "fixture-1",
-        adapterVersion: "fixture-1",
-        generation: `generation-${this.next}`,
-        accountRef: options.accountRef,
-        config: options.config,
-        nativeSessionId: `native-${this.next}`,
-      },
-      capabilities: {
-        continuation: "unsupported",
-        cancellation: "request_only",
-        tools: "disabled",
-        steer: "unsupported",
-        fork: "unsupported",
-        subagent: "unsupported",
-        terminal: "unsupported",
-        structuredQuestion: "unsupported",
-        multimodal: "unsupported",
-      },
+      binding: admitted.value.binding,
+      capabilities: admitted.value.capabilities,
     };
     const result = await this.store.create(session);
     return result.ok ? ok(session) : result;
@@ -106,7 +116,7 @@ export class FakeHost implements HostPort {
     command: Command,
     budget: Budget,
   ): Promise<Result<Receipt>> {
-    if (budget.signal.aborted) return fail("unavailable");
+    if (this.closed || budget.signal.aborted) return fail("unavailable");
     try {
       decode(JSON.stringify(command), fixtureLimits);
     } catch {
@@ -163,10 +173,68 @@ export class FakeHost implements HostPort {
     sessionId: string,
     _budget: Budget,
   ): Promise<Result<Snapshot>> {
+    if (this.closed || _budget.signal.aborted)
+      return Promise.resolve(fail("unavailable"));
     return this.store.snapshot(
       { ...caller, sessionId },
       _budget.maxSnapshotRecords ?? 1024,
     );
+  }
+  async close(budget: Budget): Promise<Result<void>> {
+    this.closed = true;
+    for (const sessionId of this.listeners.keys()) this.notify(sessionId);
+    this.listeners.clear();
+    this.deltaQueues.clear();
+    try {
+      return await withinBudget(
+        () => budget,
+        async (b) => {
+          let failed = false;
+          for (const provider of this.providers) {
+            try {
+              const result = await provider.close(b);
+              failed ||= !result.ok || !result.value.processStopped;
+            } catch {
+              failed = true;
+            }
+          }
+          try {
+            const result = await this.store.close(b);
+            failed ||= !result.ok;
+          } catch {
+            failed = true;
+          }
+          return failed ? fail("unavailable", "same_command") : ok(undefined);
+        },
+      );
+    } catch {
+      return fail("unavailable", "same_command");
+    }
+  }
+  /** Explicit scripted stimulus; never a native provider/security proof. */
+  async publishDelta(
+    caller: Caller,
+    sessionId: string,
+    observation: Extract<ProviderObservation, { type: "delta" }>,
+  ): Promise<Result<void>> {
+    if (this.closed) return fail("unavailable");
+    const namespace = { ...caller, sessionId };
+    const session = await this.store.session(namespace);
+    if (!session.ok) return session;
+    if (
+      canonicalize(session.value.binding) !== canonicalize(observation.binding)
+    )
+      return fail("stale_binding");
+    const command = await this.store.command(namespace, observation.commandId);
+    if (!command.ok) return command;
+    for (const wake of this.listeners.get(sessionId) ?? []) {
+      const queue = this.deltaQueues.get(wake)!;
+      if (queue.length >= 1024)
+        queue.splice(0, queue.length, { type: "resync_required" });
+      else queue.push(projectDelta(observation));
+      wake();
+    }
+    return ok(undefined);
   }
   /** Script harness calls this after committing fixture events, not to dispatch a provider. */
   notify(sessionId: string): void {
@@ -178,6 +246,7 @@ export class FakeHost implements HostPort {
     after: number,
     budget: Budget,
   ): AsyncIterable<Subscription> {
+    if (this.closed) return;
     let wake: (() => void) | undefined,
       changed = false;
     const onChange = () => {
@@ -185,33 +254,40 @@ export class FakeHost implements HostPort {
       wake?.();
     };
     const set = this.listeners.get(sessionId) ?? new Set();
+    const deltas: Subscription[] = [];
+    this.deltaQueues.set(onChange, deltas);
     set.add(onChange);
     this.listeners.set(sessionId, set);
     budget.signal.addEventListener("abort", onChange);
     try {
-      while (!budget.signal.aborted) {
+      while (!this.closed && !budget.signal.aborted) {
         changed = false;
         const page = await this.store.events(
           { ...caller, sessionId },
           after,
           1024,
         );
+        if (this.closed || budget.signal.aborted) return;
         if (!page.ok) {
           yield { type: "resync_required" };
           return;
         }
         for (const event of page.value) {
+          if (this.closed || budget.signal.aborted) return;
           after = event.sequence;
           yield { type: "event", event };
         }
+        while (deltas.length && !this.closed && !budget.signal.aborted)
+          yield deltas.shift()!;
         if (page.value.length === 1024) continue;
-        if (!changed && !budget.signal.aborted)
+        if (!changed && !this.closed && !budget.signal.aborted)
           await new Promise<void>((resolve) => {
             wake = resolve;
           });
         wake = undefined;
       }
     } finally {
+      this.deltaQueues.delete(onChange);
       set.delete(onChange);
       if (!set.size) this.listeners.delete(sessionId);
       budget.signal.removeEventListener("abort", onChange);

@@ -1,15 +1,19 @@
 import assert from "node:assert/strict";
-import type { Binding, Capabilities, Command, CommandRecord } from "../wire.js";
+import canonicalize from "canonicalize";
+import { withinBudget, withCleanup, type BudgetFactory } from "./budget.js";
+import type { Binding, Command, CommandRecord } from "../wire.js";
 import type {
   Budget,
   ProviderAgentPort,
   ProviderConfiguration,
+  ProviderSessionBinding,
   ProviderObservation,
   Result,
   Submission,
 } from "../ports.js";
 import { fixtureSession, fixtureCommand, unwrap } from "./conformance.js";
 import { ok, fail, fixtureLimits } from "./store.js";
+import { VerifiedProviderSession } from "../session.js";
 import { fingerprint } from "../codec.js";
 /** Scripted provider contract double. Never spawns a process or executes a tool. */
 export class ScriptedProvider implements ProviderAgentPort {
@@ -19,24 +23,28 @@ export class ScriptedProvider implements ProviderAgentPort {
   observations: ProviderObservation[] = [];
   submission: "submitted" | "unknown" | "not_sent" = "submitted";
   dispatched = 0;
-  async initialize(
+  private incarnation = 0;
+  async createSession(
     configuration: ProviderConfiguration,
     _budget: Budget,
-  ): Promise<Result<Capabilities>> {
-    if (configuration.permissions !== "tools_disabled")
+  ): Promise<Result<ProviderSessionBinding>> {
+    if (
+      configuration.provider !== "fake" ||
+      configuration.permissions !== "tools_disabled"
+    )
       return fail("unsupported_capability");
     this.configuration = configuration;
     this.binding = {
-      ...this.binding,
-      config: configuration.config,
+      ...fixtureSession().binding,
+      generation: `generation-${++this.incarnation}`,
+      nativeSessionId: `native-${this.incarnation}`,
+      config: structuredClone(configuration.config),
       accountRef: configuration.accountRef,
     };
-    return ok(fixtureSession().capabilities);
-  }
-  async createSession(_budget: Budget): Promise<Result<Binding>> {
-    return this.configuration
-      ? ok(structuredClone(this.binding))
-      : fail("unavailable");
+    return ok({
+      binding: structuredClone(this.binding),
+      capabilities: fixtureSession().capabilities,
+    });
   }
   async submit(
     binding: Binding,
@@ -45,7 +53,7 @@ export class ScriptedProvider implements ProviderAgentPort {
   ): Promise<Submission> {
     if (
       !this.configuration ||
-      JSON.stringify(binding) !== JSON.stringify(this.binding) ||
+      canonicalize(binding) !== canonicalize(this.binding) ||
       command.input.type !== "prompt"
     )
       return {
@@ -72,7 +80,7 @@ export class ScriptedProvider implements ProviderAgentPort {
     _command: Command,
     _budget: Budget,
   ): Promise<Result<"request_only">> {
-    return binding.generation === this.binding.generation
+    return canonicalize(binding) === canonicalize(this.binding)
       ? ok("request_only")
       : fail("stale_binding");
   }
@@ -87,9 +95,10 @@ export class ScriptedProvider implements ProviderAgentPort {
     binding: Binding,
     budget: Budget,
   ): AsyncIterable<ProviderObservation> {
+    if (canonicalize(binding) !== canonicalize(this.binding)) return;
     for (const event of this.observations) {
       if (budget.signal.aborted) return;
-      if (event.binding.generation === binding.generation)
+      if (canonicalize(event.binding) === canonicalize(binding))
         yield structuredClone(event);
     }
   }
@@ -98,7 +107,9 @@ export class ScriptedProvider implements ProviderAgentPort {
     _record: CommandRecord,
     _budget: Budget,
   ): Promise<Result<{ status: "unknown"; binding: Binding }>> {
-    return ok({ status: "unknown", binding: structuredClone(binding) });
+    return canonicalize(binding) === canonicalize(this.binding)
+      ? ok({ status: "unknown", binding: structuredClone(binding) })
+      : fail("stale_binding");
   }
   async close(_budget: Budget): Promise<Result<{ processStopped: boolean }>> {
     this.configuration = undefined;
@@ -113,116 +124,138 @@ export async function runProviderConformance(
     scenario: "submitted" | "unknown",
   ) => ProviderAgentPort | Promise<ProviderAgentPort>,
   configuration: ProviderConfiguration,
-  budget: Budget,
+  budget: BudgetFactory,
 ): Promise<void> {
   for (const scenario of ["submitted", "unknown"] as const) {
-    const port = await create(scenario);
-    let failure: unknown;
-    try {
-      const capabilities = unwrap(await port.initialize(configuration, budget));
-      const binding = unwrap(await port.createSession(budget));
-      assert.deepEqual(binding.config, configuration.config);
-      assert.equal(binding.accountRef, configuration.accountRef);
-      const command = fixtureCommand();
-      const submission = await port.submit(binding, command, budget);
-      assert.equal(submission.certainty, scenario);
-      if (scenario === "unknown") {
-        assert.equal(submission.certainty, "unknown");
-        if (submission.certainty !== "unknown")
-          throw new Error("expected unknown");
-        assert.ok(submission.correlationId);
-        const record: CommandRecord = {
-          schemaVersion: 2,
-          kind: "commandRecord",
-          command,
-          receipt: {
+    const port = await withinBudget(budget, () => create(scenario));
+    await withCleanup(
+      async () => {
+        const { binding, capabilities } = unwrap(
+          await withinBudget(budget, (b) =>
+            VerifiedProviderSession.open(port, configuration, b),
+          ),
+        );
+        assert.deepEqual(binding.config, configuration.config);
+        assert.equal(binding.accountRef, configuration.accountRef);
+        const command = fixtureCommand();
+        const submission = await withinBudget(budget, (b) =>
+          port.submit(binding, command, b),
+        );
+        assert.equal(submission.certainty, scenario);
+        if (scenario === "unknown") {
+          assert.equal(submission.certainty, "unknown");
+          if (submission.certainty !== "unknown")
+            throw new Error("expected unknown");
+          assert.ok(submission.correlationId);
+          const record: CommandRecord = {
             schemaVersion: 2,
-            kind: "receipt",
-            namespace: fixtureSession().namespace,
-            commandId: command.commandId,
-            contentHash: fingerprint(command, fixtureLimits),
-            acceptedAtMs: 0,
-            retryUntilMs: 100,
-            receiptUntilMs: 200,
-            acceptedRevision: 1,
-          },
-          state: "reconciliation_required",
-          dispatch: {
-            generation: binding.generation,
-            nativeSessionId: binding.nativeSessionId,
-            certainty: "unknown",
-          },
-        };
-        const reconciled = unwrap(
-          await port.reconcile(binding, record, budget),
-        );
-        assert.equal(reconciled.status, "unknown");
-        assert.equal(reconciled.outcome, undefined);
-        assert.deepEqual(reconciled.binding, binding);
-      } else {
-        if (submission.certainty !== "submitted")
-          throw new Error("expected submission");
-        const cancellation: Command = {
-          ...command,
-          commandId: "cancel-1",
-          input: {
-            type: "cancel",
-            targetCommandId: command.commandId,
-            generation: submission.binding.generation,
-            ...(submission.binding.nativeRunId
-              ? { nativeRunId: submission.binding.nativeRunId }
-              : {}),
-          },
-        };
-        const result = await port.cancel(
-          submission.binding,
-          cancellation,
-          budget,
-        );
-        if (
-          capabilities.cancellation === "unsupported" ||
-          capabilities.cancellation === "unknown"
-        )
-          assert.equal(
-            result.ok
-              ? result.value === "unsupported"
-              : result.error.code === "unsupported_capability",
-            true,
+            kind: "commandRecord",
+            command,
+            receipt: {
+              schemaVersion: 2,
+              kind: "receipt",
+              namespace: fixtureSession().namespace,
+              commandId: command.commandId,
+              contentHash: fingerprint(command, fixtureLimits),
+              acceptedAtMs: 0,
+              retryUntilMs: 100,
+              receiptUntilMs: 200,
+              acceptedRevision: 1,
+            },
+            state: "reconciliation_required",
+            dispatch: {
+              generation: binding.generation,
+              nativeSessionId: binding.nativeSessionId,
+              certainty: "unknown",
+            },
+          };
+          const reconciled = unwrap(
+            await withinBudget(budget, (b) =>
+              port.reconcile(binding, record, b),
+            ),
           );
-        else
-          assert.equal(
-            unwrap(result),
-            "request_only",
-            "a cancel request cannot acknowledge an unobserved terminal",
+          assert.equal(reconciled.status, "unknown");
+          assert.equal(reconciled.outcome, undefined);
+          assert.deepEqual(reconciled.binding, binding);
+        } else {
+          if (submission.certainty !== "submitted")
+            throw new Error("expected submission");
+          const cancellation: Command = {
+            ...command,
+            commandId: "cancel-1",
+            input: {
+              type: "cancel",
+              targetCommandId: command.commandId,
+              generation: submission.binding.generation,
+              ...(submission.binding.nativeRunId
+                ? { nativeRunId: submission.binding.nativeRunId }
+                : {}),
+            },
+          };
+          const result = await withinBudget(budget, (b) =>
+            port.cancel(submission.binding, cancellation, b),
           );
-      }
-      for await (const observation of port.observe(
-        submission.certainty === "submitted" ? submission.binding : binding,
-        budget,
-      )) {
-        assert.equal(observation.commandId, command.commandId);
-        assert.equal(observation.binding.generation, binding.generation);
+          if (
+            capabilities.cancellation === "unsupported" ||
+            capabilities.cancellation === "unknown"
+          )
+            assert.equal(
+              result.ok
+                ? result.value === "unsupported"
+                : result.error.code === "unsupported_capability",
+              true,
+            );
+          else
+            assert.equal(
+              unwrap(result),
+              "request_only",
+              "a cancel request cannot acknowledge an unobserved terminal",
+            );
+        }
+        let iterator: AsyncIterator<ProviderObservation> | undefined;
+        await withCleanup(
+          () =>
+            withinBudget(budget, async (b) => {
+              iterator = port
+                .observe(
+                  submission.certainty === "submitted"
+                    ? submission.binding
+                    : binding,
+                  b,
+                )
+                [Symbol.asyncIterator]();
+              let count = 0;
+              while (true) {
+                const item: IteratorResult<ProviderObservation> =
+                  await iterator.next();
+                if (item.done) break;
+                assert.ok(++count <= 1024, "bounded observation count");
+                const observation: ProviderObservation = item.value;
+                assert.equal(observation.commandId, command.commandId);
+                assert.equal(
+                  observation.binding.generation,
+                  binding.generation,
+                );
+                assert.equal(
+                  observation.type === "event" &&
+                    observation.body.type === "terminal",
+                  false,
+                  "fixture has no native terminal",
+                );
+              }
+            }),
+          async () => {
+            await withinBudget(budget, () => iterator?.return?.());
+          },
+        );
+      },
+      async () => {
         assert.equal(
-          observation.type === "event" && observation.body.type === "terminal",
-          false,
-          "fixture has no native terminal",
+          unwrap(await withinBudget(budget, (b) => port.close(b)))
+            .processStopped,
+          true,
         );
-      }
-    } catch (error) {
-      failure = error;
-    } finally {
-      try {
-        const cleanup = { timeoutMs: 1000, signal: AbortSignal.timeout(1000) };
-        assert.equal(unwrap(await port.close(cleanup)).processStopped, true);
-      } catch (error) {
-        failure = failure
-          ? new AggregateError(
-              [failure, error],
-              "provider conformance and cleanup failed",
-            )
-          : error;
-      }
-    }
-    if (failure) throw failure;
+      },
+    );
   }
 }

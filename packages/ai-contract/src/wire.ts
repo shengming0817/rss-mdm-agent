@@ -70,6 +70,8 @@ export type Input =
       answer: {
         [k: string]: unknown;
       };
+      /** Mandatory for an interaction associated with a surface; cannot bypass deleted/stale state. */
+      surface?: SurfaceReference;
     };
 /**
  * accepted persists intent; dispatching persists dispatch intent; running has native confirmation; terminal has a definite outcome; reconciliation_required forbids blind resubmission.
@@ -230,6 +232,15 @@ export interface Command {
   expiresAtMs: Counter;
   /** Complete command content included in its canonical fingerprint. */
   input: Input;
+}
+/**
+ * Surface revision checked atomically when accepting an action response.
+ */
+export interface SurfaceReference {
+  /** Exact product surface instance associated with this response. */
+  instanceId: Id;
+  /** Current surface revision checked atomically during response acceptance. */
+  revision: Counter;
 }
 /**
  * Immutable acceptance fact. Only an actual committed store makes it durable; it is not a model terminal.
@@ -553,6 +564,10 @@ export interface SurfaceBinding {
    * Exact negotiated upstream A2UI version.
    */
   a2uiVersion: "v0.9.1";
+  /**
+   * Persisted lifecycle; deleted is a permanent tombstone for this instance.
+   */
+  status: "active" | "deleted";
 }
 /**
  * Product metadata accompanying an unchanged upstream action; association does not grant permission.

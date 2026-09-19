@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   MemorySessionStore,
   seedInteraction,
+  seedSurface,
   runStoreConformance,
   fixtureSession,
   fixtureCommand,
@@ -55,5 +56,108 @@ test("snapshot retains stable history and fails explicitly at its output bound",
   assert.equal(
     (await store.snapshot(s.namespace, 1)).error.code,
     "limit_exceeded",
+  );
+});
+
+test("terminal cannot be committed without matching provider evidence", async () => {
+  const store = new MemorySessionStore(),
+    session = fixtureSession();
+  unwrap(await store.create(session));
+  unwrap(await store.accept(acceptance(session)));
+  const head = unwrap(await store.session(session.namespace));
+  const record = unwrap(await store.command(session.namespace, "command-1"));
+  assert.equal(
+    (
+      await store.commit({
+        ...emptyCommit(head),
+        commands: [{ ...record, state: "terminal", outcome: "completed" }],
+      })
+    ).ok,
+    false,
+  );
+});
+
+test("paged store errors use Result and all store operations reject after close", async () => {
+  const store = new MemorySessionStore();
+  assert.deepEqual(await store.recovery(0), {
+    ok: false,
+    error: { code: "invalid_input", retry: "never" },
+  });
+  assert.deepEqual(await store.deliveries(0, 0), {
+    ok: false,
+    error: { code: "invalid_input", retry: "never" },
+  });
+  assert.equal(typeof store.close, "function");
+  unwrap(
+    await store.close({
+      timeoutMs: 1000,
+      signal: new AbortController().signal,
+    }),
+  );
+  assert.deepEqual(await store.recovery(1), {
+    ok: false,
+    error: { code: "unavailable", retry: "never" },
+  });
+  assert.equal((await store.create(fixtureSession())).ok, false);
+});
+
+test("pagination preserves transient storage failure and retry advice", async () => {
+  const store = new MemorySessionStore();
+  for (const operation of [
+    () => store.recovery(1),
+    () => store.deliveries(1, 0),
+  ]) {
+    store.failNextQuery = true;
+    assert.deepEqual(await operation(), {
+      ok: false,
+      error: { code: "unavailable", retry: "same_command" },
+    });
+    assert.equal((await operation()).ok, true);
+  }
+});
+
+test("Store conformance closes failed stores and retains cleanup errors", async () => {
+  const primary = new Error("read failed"),
+    cleanup = new Error("close failed");
+  const store = new MemorySessionStore();
+  store.create = async () => {
+    throw primary;
+  };
+  store.close = async () => {
+    throw cleanup;
+  };
+  await assert.rejects(
+    runStoreConformance(() => store),
+    (error) =>
+      error instanceof AggregateError &&
+      error.errors[0] === primary &&
+      error.errors[1].errors[0] === cleanup,
+  );
+});
+
+test("surface response and deletion cannot be smuggled into one commit", async () => {
+  const store = new MemorySessionStore();
+  const seeded = await seedSurface(store);
+  const commit = store.commit.bind(store);
+  store.commit = (batch) =>
+    commit({
+      ...batch,
+      surfaces: [{ ...seeded.surface, status: "deleted", revision: 1 }],
+    });
+  const answer = {
+    ...seeded.answer,
+    input: {
+      ...seeded.answer.input,
+      surface: { instanceId: seeded.surface.surfaceInstanceId, revision: 0 },
+    },
+  };
+  assert.equal(
+    (await store.accept(acceptance(seeded.session, answer))).ok,
+    false,
+  );
+  assert.equal(
+    unwrap(await store.snapshot(seeded.session.namespace, 1024)).interactions[0]
+      .status,
+    "pending",
   );
 });

@@ -1,4 +1,12 @@
 import assert from "node:assert/strict";
+import {
+  withinBudget,
+  boundedPort,
+  withCleanup,
+  closeAll,
+  defaultBudget,
+  type BudgetFactory,
+} from "./budget.js";
 import type { HostPort, SessionOptions } from "../ports.js";
 import { fixtureCaller, fixtureCommand, unwrap } from "./conformance.js";
 const options: SessionOptions = {
@@ -12,8 +20,15 @@ const budget = () => ({ timeoutMs: 1000, signal: AbortSignal.timeout(1000) });
  * provider and clock at zero. The same boundary suite applies to real Host coordinators. */
 export async function runHostConformance(
   create: () => HostPort | Promise<HostPort>,
+  factory: BudgetFactory = defaultBudget,
 ): Promise<void> {
-  const host = await create();
+  const host = await withinBudget(factory, create);
+  await withCleanup(
+    () => runHostScenarios(boundedPort(host, factory)),
+    () => closeAll([host], factory),
+  );
+}
+async function runHostScenarios(host: HostPort): Promise<void> {
   unwrap(
     host.negotiate({
       contractVersion: 2,
@@ -21,6 +36,16 @@ export async function runHostConformance(
       durableReceipts: true,
       cursorAttach: true,
     }),
+  );
+  assert.equal(
+    (
+      await host.createSession(
+        fixtureCaller,
+        { ...options, profile: "controlled_tools" },
+        budget(),
+      )
+    ).ok,
+    false,
   );
   const session = unwrap(
     await host.createSession(fixtureCaller, options, budget()),
@@ -144,4 +169,27 @@ export async function runHostConformance(
       .commands[0].state,
     "accepted",
   );
+  const head = unwrap(
+    await host.snapshot(fixtureCaller, command.sessionId, budget()),
+  );
+  const waiting = host
+    .subscribe(fixtureCaller, command.sessionId, head.cursor, budget())
+    [Symbol.asyncIterator]();
+  const pending = waiting.next();
+  unwrap(await host.close(budget()));
+  assert.equal(
+    (await pending).done,
+    true,
+    "close terminates pending subscriptions",
+  );
+  assert.equal(
+    (await host.createSession(fixtureCaller, options, budget())).ok,
+    false,
+  );
+  assert.equal((await host.submit(fixtureCaller, command, budget())).ok, false);
+  assert.equal(
+    (await host.snapshot(fixtureCaller, command.sessionId, budget())).ok,
+    false,
+  );
+  unwrap(await host.close(budget()));
 }

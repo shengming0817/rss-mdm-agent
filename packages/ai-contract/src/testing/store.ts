@@ -8,6 +8,7 @@ import {
 } from "../codec.js";
 import type {
   AcceptCommand,
+  Budget,
   Page,
   Result,
   SessionCommit,
@@ -22,6 +23,7 @@ import type {
   Id,
   Namespace,
   Session,
+  SurfaceBinding,
 } from "../wire.js";
 export const fixtureLimits = {
   maxBytes: 262144,
@@ -56,11 +58,15 @@ interface State {
 /** Deterministic contract test double. No disk, crash durability, locks, workers or leases. */
 export class MemorySessionStore implements SessionStore {
   readonly evidence = "memory_test_double" as const;
+  private closed = false;
   private states = new Map<string, State>();
   private retiredIds = new Set<string>();
   /** Inject a transaction failure before publication, without partially mutating state. */
   failNextCommit = false;
+  /** Inject a transient read failure for pagination error conformance. */
+  failNextQuery = false;
   async create(session: Session): Promise<Result<void>> {
+    if (this.closed) return fail("unavailable");
     try {
       valid(session);
     } catch {
@@ -86,10 +92,27 @@ export class MemorySessionStore implements SessionStore {
     return ok(undefined);
   }
   async session(namespace: Namespace): Promise<Result<Session>> {
+    if (this.closed) return fail("unavailable");
     const state = this.states.get(namespaceKey(namespace));
     return state ? ok(clone(state.session)) : fail("session_gone");
   }
+  async surface(
+    namespace: Namespace,
+    instanceId: Id,
+  ): Promise<Result<SurfaceBinding>> {
+    if (this.closed) return fail("unavailable");
+    const state = this.states.get(namespaceKey(namespace));
+    if (!state || state.session.status !== "active")
+      return fail("session_gone");
+    const row = state.surfaces.get(instanceId);
+    return row ? ok(clone(row)) : fail("stale_binding");
+  }
+  async close(_budget: Budget): Promise<Result<void>> {
+    this.closed = true;
+    return ok(undefined);
+  }
   async command(namespace: Namespace, id: Id): Promise<Result<CommandRecord>> {
+    if (this.closed) return fail("unavailable");
     const state = this.states.get(namespaceKey(namespace));
     if (!state) return fail("session_gone");
     const c = state.commands.get(id);
@@ -98,6 +121,7 @@ export class MemorySessionStore implements SessionStore {
   async accept(
     input: AcceptCommand,
   ): Promise<Result<import("../wire.js").Receipt>> {
+    if (this.closed) return fail("unavailable");
     const state = this.states.get(namespaceKey(input.namespace));
     if (!state) return fail("session_gone");
     try {
@@ -163,6 +187,20 @@ export class MemorySessionStore implements SessionStore {
     if (input.command.input.type === "respond") {
       const request = input.command.input;
       const interaction = state.interactions.get(request.interactionId);
+      const linked = [...state.surfaces.values()].filter(
+        (row) => row.interactionId === request.interactionId,
+      );
+      if (linked.length || request.surface) {
+        const surface =
+          request.surface && state.surfaces.get(request.surface.instanceId);
+        if (
+          !surface ||
+          surface.interactionId !== request.interactionId ||
+          surface.revision !== request.surface!.revision
+        )
+          return fail("stale_binding");
+        if (surface.status !== "active") return fail("unavailable");
+      }
       if (!interaction || interaction.status === "unavailable")
         return fail("unavailable");
       if (
@@ -209,6 +247,7 @@ export class MemorySessionStore implements SessionStore {
     return ok(undefined);
   }
   async commit(batch: SessionCommit): Promise<Result<void>> {
+    if (this.closed) return fail("unavailable");
     const state = this.states.get(namespaceKey(batch.namespace));
     if (!state) return fail("session_gone");
     const check = this.check(
@@ -304,6 +343,21 @@ export class MemorySessionStore implements SessionStore {
             old.dispatch.nativeRequestId !== c.dispatch.nativeRequestId))
       )
         return fail("stale_binding");
+      if (c.state === "terminal" && old?.state !== "terminal") {
+        if (
+          !old?.dispatch ||
+          !c.dispatch ||
+          !same(old.dispatch, c.dispatch) ||
+          !batch.events.some(
+            (event) =>
+              event.commandId === c.command.commandId &&
+              event.generation === c.dispatch!.generation &&
+              event.body.type === "terminal" &&
+              event.body.outcome === c.outcome,
+          )
+        )
+          return fail("invalid_input");
+      }
       copy.commands.set(c.command.commandId, clone(c));
     }
     const oldBinding = state.session.binding,
@@ -351,6 +405,19 @@ export class MemorySessionStore implements SessionStore {
         !copy.commands.has(event.commandId)
       )
         return fail("invalid_input");
+      if (event.body.type === "terminal") {
+        const record = copy.commands.get(event.commandId)!;
+        if (
+          record.state !== "terminal" ||
+          record.outcome !== event.body.outcome ||
+          !record.dispatch ||
+          !batch.commands.some(
+            (c) => c.command.commandId === event.commandId,
+          ) ||
+          state.commands.get(event.commandId)?.state === "terminal"
+        )
+          return fail("invalid_input");
+      }
       ids.add(event.eventId);
       copy.events.push(clone(event));
     }
@@ -412,14 +479,60 @@ export class MemorySessionStore implements SessionStore {
         return fail("content_conflict");
       copy.deliveries.set(row.operationId, clone(row));
     }
+    const surfaceIds = new Set<Id>();
     for (const row of batch.surfaces) {
+      const interaction = copy.interactions.get(row.interactionId);
       if (
+        surfaceIds.has(row.surfaceInstanceId) ||
         namespaceKey(row.namespace) !== namespaceKey(batch.namespace) ||
         row.generation !== batch.expectedGeneration ||
-        !copy.interactions.has(row.interactionId)
+        !interaction ||
+        row.generation !== interaction.generation ||
+        row.nativeRunId !== interaction.nativeRunId
+      )
+        return fail("invalid_input");
+      surfaceIds.add(row.surfaceInstanceId);
+      const old = copy.surfaces.get(row.surfaceInstanceId);
+      if (old) {
+        const { revision: _a, status: _b, ...identity } = old;
+        const { revision: _c, status: _d, ...nextIdentity } = row;
+        if (!same(identity, nextIdentity)) return fail("stale_binding");
+        if (old.status === "deleted" || row.revision !== old.revision + 1)
+          return fail("revision_conflict", "same_command");
+      } else if (
+        row.status !== "active" ||
+        row.revision !== 0 ||
+        interaction.status !== "pending"
       )
         return fail("invalid_input");
       copy.surfaces.set(row.surfaceInstanceId, clone(row));
+      if (row.status === "deleted" && interaction.status === "pending")
+        copy.interactions.set(interaction.interactionId, {
+          ...interaction,
+          status: "unavailable",
+        });
+    }
+    // A direct commit must satisfy the same surface fence as accept(), including
+    // a deletion or revision change carried by this very batch.
+    for (const interaction of batch.interactions) {
+      if (interaction.status !== "answered") continue;
+      const response = copy.commands.get(interaction.responseCommandId!)!
+        .command.input;
+      if (response.type !== "respond") return fail("invalid_input");
+      const linked = [...copy.surfaces.values()].filter(
+        (row) => row.interactionId === interaction.interactionId,
+      );
+      if (linked.length || response.surface) {
+        const surface =
+          response.surface && copy.surfaces.get(response.surface.instanceId);
+        if (
+          !surface ||
+          surface.status !== "active" ||
+          surface.interactionId !== interaction.interactionId ||
+          surface.revision !== response.surface!.revision
+        )
+          return fail("stale_binding");
+      }
     }
     if (this.failNextCommit) {
       this.failNextCommit = false;
@@ -433,6 +546,7 @@ export class MemorySessionStore implements SessionStore {
     namespace: Namespace,
     limit: number = 1024,
   ): Promise<Result<Snapshot>> {
+    if (this.closed) return fail("unavailable");
     const s = this.states.get(namespaceKey(namespace));
     if (!s) return fail("session_gone");
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1024)
@@ -461,6 +575,7 @@ export class MemorySessionStore implements SessionStore {
     after: Counter,
     limit: number,
   ): Promise<Result<readonly Event[]>> {
+    if (this.closed) return fail("unavailable");
     const s = this.states.get(namespaceKey(namespace));
     if (!s) return fail("session_gone");
     if (
@@ -475,7 +590,15 @@ export class MemorySessionStore implements SessionStore {
       clone(s.events.filter((e) => e.sequence > after).slice(0, limit)),
     );
   }
-  async recovery(limit: number, after?: Id): Promise<Page<CommandRecord>> {
+  async recovery(
+    limit: number,
+    after?: Id,
+  ): Promise<Result<Page<CommandRecord>>> {
+    if (this.closed) return fail("unavailable");
+    if (this.failNextQuery) {
+      this.failNextQuery = false;
+      return fail("unavailable", "same_command");
+    }
     return this.page(
       [...this.states.values()]
         .flatMap((s) => [...s.commands.values()])
@@ -489,7 +612,13 @@ export class MemorySessionStore implements SessionStore {
     limit: number,
     nowMs: Counter,
     after?: Id,
-  ): Promise<Page<Delivery>> {
+  ): Promise<Result<Page<Delivery>>> {
+    if (this.closed) return fail("unavailable");
+    if (this.failNextQuery) {
+      this.failNextQuery = false;
+      return fail("unavailable", "same_command");
+    }
+    if (!Number.isSafeInteger(nowMs) || nowMs < 0) return fail("invalid_input");
     return this.page(
       [...this.states.values()]
         .flatMap((s) => [...s.deliveries.values()])
@@ -504,23 +633,31 @@ export class MemorySessionStore implements SessionStore {
     key: (row: T) => string,
     limit: number,
     after?: string,
-  ): Page<T> {
+  ): Result<Page<T>> {
     if (!Number.isInteger(limit) || limit < 1 || limit > 1024)
-      throw new ContractError("configuration");
+      return fail("invalid_input");
+    if (
+      after !== undefined &&
+      (typeof after !== "string" || after.length < 1 || after.length > 2048)
+    )
+      return fail("invalid_input");
     const sorted = rows
       .sort((a, b) => (key(a) < key(b) ? -1 : 1))
       .filter((r) => after === undefined || key(r) > after);
     const items = sorted.slice(0, limit);
-    return clone({
-      items,
-      ...(sorted.length > limit ? { next: key(items.at(-1)!) } : {}),
-    });
+    return ok(
+      clone({
+        items,
+        ...(sorted.length > limit ? { next: key(items.at(-1)!) } : {}),
+      }),
+    );
   }
   async retire(
     namespace: Namespace,
     revision: Counter,
     generation: Id,
   ): Promise<Result<void>> {
+    if (this.closed) return fail("unavailable");
     const s = this.states.get(namespaceKey(namespace));
     if (!s) return fail("session_gone");
     const check = this.check(s, revision, generation);
@@ -533,7 +670,8 @@ export class MemorySessionStore implements SessionStore {
     s.session = { ...s.session, status: "retired", revision: revision + 1 };
     return ok(undefined);
   }
-  async pruneRetired(nowMs: Counter): Promise<number> {
+  async pruneRetired(nowMs: Counter): Promise<Result<number>> {
+    if (this.closed) return fail("unavailable");
     let n = 0;
     for (const [key, s] of this.states) {
       if (
@@ -548,6 +686,6 @@ export class MemorySessionStore implements SessionStore {
         n++;
       }
     }
-    return n;
+    return ok(n);
   }
 }
