@@ -3,6 +3,7 @@ export type * from "./wire.js";
 export type * from "./ports.js";
 export {
   decode,
+  boundedJson,
   fingerprint,
   deliveryFingerprint,
   ContractError,

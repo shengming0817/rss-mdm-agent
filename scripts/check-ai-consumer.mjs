@@ -73,7 +73,7 @@ try {
   writeFileSync(
     join(dir, "consumer.ts"),
     `import assert from 'node:assert/strict';
-import {decode,fingerprint,type HostPort,type ProviderAgentPort,type SessionStore,type ProviderConfiguration,type Subscription,type ProviderInteraction,VerifiedProviderSession} from '@rss-mdm-agent/ai-contract';
+import {decode,boundedJson,fingerprint,type HostPort,type ProviderAgentPort,type SessionStore,type ProviderConfiguration,type Subscription,type ProviderInteraction,VerifiedProviderSession} from '@rss-mdm-agent/ai-contract';
 import {FakeHost,MemorySessionStore,ScriptedProvider,fixtures,fixtureLimits,runStoreConformance,runProviderConformance,runHostConformance} from '@rss-mdm-agent/ai-contract/testing';
 // @ts-expect-error Controlled mode cannot omit its verifier and ToolEndpoint.
 const invalidConfiguration:ProviderConfiguration={provider:'fake',config:{id:'c',revision:'1'},accountRef:'a',workingDirectory:'.',permissions:'host_mediated'};
@@ -85,6 +85,7 @@ const question:ProviderInteraction={interactionId:'question',nativeCallbackId:'c
 // @ts-expect-error Legacy parent request field is forbidden even with a valid callback.
 const oldQuestion:ProviderInteraction={interactionId:'question',nativeCallbackId:'callback',nativeRequestId:'request',expiresAtMs:1,callbackLifetime:'generation_bound',request:{}};
 assert.equal(question.nativeCallbackId,'callback');
+assert.throws(()=>boundedJson({get secret(){throw new Error('accessor must not run');}},fixtureLimits),{code:'encoding'});
 const host:HostPort=new FakeHost();const provider:ProviderAgentPort=new ScriptedProvider();const store:SessionStore=new MemorySessionStore();
 const value=decode(JSON.stringify(fixtures.valid[0]),fixtureLimits);assert.equal(value.kind,'command');if(value.kind==='command')assert.equal(fingerprint(value,fixtureLimits),fixtures.commandHash);
 await runStoreConformance(()=>new MemorySessionStore());
