@@ -256,6 +256,7 @@ test(
       command("question"),
       async (event, binding) => {
         callbacks++;
+        assert.equal(event.interaction.category, "question");
         assert.notEqual(
           event.interaction.nativeCallbackId,
           binding.nativeRequestId,

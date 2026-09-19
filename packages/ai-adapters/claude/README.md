@@ -62,7 +62,7 @@ PreToolUse 对未知工具拒绝，对受控问题/桥强制 ask；canUseTool �
 provenance。没有 permission bypass、自动持久 permission rule 或“普通回答就是批准”。
 原生 slash prompt 与 expansion 禁用，防止会话/权限模式被命令改变。
 
-Interaction 的 `nativeCallbackId` 来自 SDK `requestId`，与父 prompt UUID 独立；callback
+Interaction 固定 `category: "question"`，只有问题可进入普通 respond。`nativeCallbackId` 来自 SDK `requestId`，与父 prompt UUID 独立；callback
 只驻留内存，最多 32 个/turn，默认 120 秒（可设 1–600000ms）。回应严格为
 `{ answers: { '<question>': '<answer>' } }`，必须覆盖全部原问题；额外权限字段拒绝。
 重复相同响应 command 幂等，不同响应返回 already_answered；过期、signal abort、关闭和
@@ -94,6 +94,16 @@ pnpm smoke:claude           # 显式真实模型；读取环境 URL + 单一凭�
 实现为本仓 TypeScript 重写，未复制 prmonitor 代码。对标
 `prmonitor@4dcc87264ad740da6559824e0a8b04a1c2914d4b` 的 Claude CLI 生命周期/来源边界；
 其 Rust CLI 调用、PR 业务、Tauri/SQLite、旧 bypass/自动批准方式均未迁入。
+
+| 固定参考文件 | 本包落点与改写边界 |
+|---|---|
+| `src-tauri/src/review/engines/claude/engine.rs`、`manager.rs` | `src/adapter.ts`：仅对标生命周期/续接差异；改为 A01 port 和原生 SDK，无 review 任务语义 |
+| `src-tauri/src/review/engines/claude/process.rs` | `src/runtime.ts`：进程结束证据概念；不复制 CLI 参数/stdio 解析或旧权限设置 |
+| `src-tauri/src/review/session.rs` | Host 展示与原生 context 分离的参考；不迁移旧 session store，SDK 自有 transcript |
+
+SDK `createSdkMcpServer` 在固定版本对 Zod record 的 bundled schema 转换会失败；桥参数
+使用等价的开放 object schema，真实 SDK 首轮工具清单与调用测试覆盖该接缝。`alwaysLoad`
+只保证唯一桥及时进入模型工具集，不增加自动许可。
 
 一手固定参考：[@anthropic-ai/claude-agent-sdk@0.3.277 sdk.d.ts](https://unpkg.com/@anthropic-ai/claude-agent-sdk@0.3.277/sdk.d.ts)
 的 Query、Options、SDKMessage、CanUseTool、PreToolUse、SpawnOptions；

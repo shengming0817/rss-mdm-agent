@@ -116,6 +116,7 @@ export class Interactions {
       binding: copy(binding),
       commandId: command.commandId,
       interaction: {
+        category: "question",
         interactionId,
         nativeCallbackId: options.requestId,
         expiresAtMs: expiresAt,
