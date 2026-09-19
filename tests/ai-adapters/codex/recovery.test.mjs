@@ -152,10 +152,7 @@ test(
     );
     assert.equal(record.state, "reconciliation_required");
     assert.equal(record.dispatch.attemptId, pending.attempt.attemptId);
-    assert.equal(
-      record.dispatch.nativeRunId,
-      submission.binding.nativeRunId,
-    );
+    assert.equal(record.dispatch.nativeRunId, submission.binding.nativeRunId);
     assert.equal(
       record.dispatch.nativeRequestId,
       submission.binding.nativeRequestId,
@@ -217,7 +214,11 @@ test(
     assert.equal(settled.state, "terminal");
     assert.equal(settled.outcome, "cancelled");
     assert.equal(settled.dispatch.attemptId, pending.attempt.attemptId);
-    assert.equal(first.requests.length, 1, "recovery must not resend the prompt");
+    assert.equal(
+      first.requests.length,
+      1,
+      "recovery must not resend the prompt",
+    );
     assert.equal(
       recoveryRuntime.methods.filter((method) => method === "thread/resume")
         .length,
