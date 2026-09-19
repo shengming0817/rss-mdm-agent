@@ -29,9 +29,12 @@ if (
 )
   throw new Error("SDK package version does not match pinned dependency");
 export const PROVIDER_VERSION = `claude-agent-sdk-${SDK_VERSION}/claude-code-${CLI_VERSION}`;
+export type ClaudeConfiguration = ProviderConfiguration & {
+  readonly provider: "claude";
+};
 /** Secrets come from trusted composition, never a command or serialized binding. */
 export interface ResolvedClaudeConfiguration {
-  configuration: ProviderConfiguration;
+  configuration: ClaudeConfiguration;
   configurationDirectory: string;
   apiUrl: string;
   credential: { type: "api_key" | "auth_token"; value: string };

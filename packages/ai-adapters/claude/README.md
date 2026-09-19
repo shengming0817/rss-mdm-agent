@@ -26,7 +26,8 @@ const session = await VerifiedProviderSession.open(adapter, configuration, budge
 ```
 
 `resolveTrustedSecret` 是组合根自己的函数。resolver 不得从模型内容、普通 Command 或未经认证的
-JSON 取得凭据。支持 `api_key` 或 `auth_token` 二选一，分别进入子进程
+JSON 取得凭据。`ClaudeConfiguration` 将 provider 固定为 claude，resolver 不能返回其他引擎。
+支持 `api_key` 或 `auth_token` 二选一，分别进入子进程
 `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN`；URL 仅允许 HTTPS 或本机 HTTP 测试端点。
 凭据不进入 Binding、observation、诊断、版本引用。原生配置目录由组合根按账号/配置隔离，
 须持久保留用于恢复、限制本机访问；本包不读取用户全局 Claude 配置。
@@ -35,6 +36,9 @@ JSON 取得凭据。支持 `api_key` 或 `auth_token` 二选一，分别进入�
 
 - `createSession` 为 `query` 显式指定 UUID；`resume` 只使用指定的 `nativeSessionId`，
   校验固定 provider/adapter 版本并生成新 generation，不使用目录的“最近会话”。
+  Host 调用 `VerifiedProviderSession.resume(adapter, priorBinding, configuration, budget)`，
+  显式消费当前配置并对新 generation 重新验证；返回新的名义准入，旧证据不能复用。
+  adapter 的原始 resume 只返回待验证的 binding+capabilities，不能代替这个入口。
 - 一次只派发一个 turn。Host 持有持久 command ledger 与 `queue_next` 队列；忙时返回
   `not_sent/same_command`。本包保留有界进程内 command 身份，不声明持久接纳。
 - 本地 input 入队不是提交确认。原生回显/带匹配 prompt UUID 的回复才确认 submitted。
@@ -54,7 +58,7 @@ JSON 取得凭据。支持 `api_key` 或 `auth_token` 二选一，分别进入�
 它只转交不可信提案与结果，不能签发批准/执行许可。
 
 `host_mediated` 必须由组合根提供 ToolEndpoint 与可信 verifier，并通过
-`VerifiedProviderSession.open` 准入。verifier 的证据必须适用于当前版本、平台、配置和
+`VerifiedProviderSession.open` / `VerifiedProviderSession.resume` 准入。verifier 的证据必须适用于当前版本、平台、配置和
 incarnation；测试 verifier 不能用于生产。SDK 策略限制不是 OS 沙箱证明。
 
 设置来源、skills、plugins、MCP 配置和 child env 显式收窄；没有任意 SDK options 透传。
@@ -86,6 +90,8 @@ pnpm smoke:claude           # 配置端点 smoke；读取环境 URL + 单一凭�
 （未配置时为 provider_default）、结果与未覆盖项，不记录密钥、私有 URL 或对话原文。
 证据类型为 real-sdk-configured-endpoint-smoke；兼容端点或代理的响应本身无法证明
 上游实际模型身份，backendIdentityVerified 始终为 false，不据此宣称真实 Claude 后端验证。
+失败证据保留闭合的阶段和 Result/Submission/Outcome 分类。关闭未确认时最多用新预算
+重试一次；仍未停止则保留运行目录，并在 receipt 标记清理状态，避免删除仍在使用的目录。
 交付证据要求已提交且干净的源码。完整本地 CI 不需要模型凭据，只运行确定性模型传输。
 
 固定传输测试证明真实 SDK streaming、同进程/跨进程上下文、取消/HTTP 错误、AskUserQuestion 往返和

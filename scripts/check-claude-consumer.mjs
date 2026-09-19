@@ -88,10 +88,12 @@ try {
   );
   writeFileSync(
     join(directory, "consumer.ts"),
-    `import {createClaudeAdapter,type ClaudeAdapterOptions} from '@rss-mdm-agent/ai-adapter-claude';
+    `import {createClaudeAdapter,type ClaudeAdapterOptions,type ResolvedClaudeConfiguration} from '@rss-mdm-agent/ai-adapter-claude';
 import type {ProviderAgentPort} from '@rss-mdm-agent/ai-contract';
 const options:ClaudeAdapterOptions={resolveConfiguration:async()=>{throw new Error('not configured');}};
 const adapter:ProviderAgentPort=createClaudeAdapter(options);
+// @ts-expect-error A Claude resolver cannot claim another provider.
+const wrongProvider:ResolvedClaudeConfiguration['configuration']['provider']='codex';
 // @ts-expect-error SDK permission bypass is not a product option.
 createClaudeAdapter({resolveConfiguration:options.resolveConfiguration,permissionMode:'bypassPermissions'});
 await adapter.close({timeoutMs:100,signal:new AbortController().signal});`,

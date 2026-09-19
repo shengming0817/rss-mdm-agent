@@ -98,8 +98,9 @@ export class ClaudeAdapter implements ProviderAgentPort {
     return this.open(configuration, budget);
   }
   private async open(
-    requested: ProviderConfiguration | Binding,
+    requested: ProviderConfiguration,
     budget: Budget,
+    previous?: Binding,
   ): Promise<Result<ProviderSessionBinding>> {
     if (!liveBudget(budget)) return fail("unavailable", "same_command");
     const deadline = Date.now() + budget.timeoutMs;
@@ -113,10 +114,15 @@ export class ClaudeAdapter implements ProviderAgentPort {
     const epoch = ++this.epoch;
     try {
       // Capture admission identities before calling external configuration code.
-      const request =
-        "workingDirectory" in requested
-          ? { ...requested, config: copy(requested.config) }
-          : copy(requested);
+      const request = { ...requested, config: copy(requested.config) };
+      const prior = previous ? copy(previous) : undefined;
+      if (
+        prior &&
+        (prior.provider !== request.provider ||
+          !same(prior.config, request.config) ||
+          prior.accountRef !== request.accountRef)
+      )
+        return fail("stale_binding");
       const identity = copy({
         config: request.config,
         accountRef: request.accountRef,
@@ -128,7 +134,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
       const config = {
         ...supplied.configuration,
         config: copy(supplied.configuration.config),
-      } as ProviderConfiguration;
+      };
       const resolved = {
         ...supplied,
         configuration: config,
@@ -160,13 +166,13 @@ export class ClaudeAdapter implements ProviderAgentPort {
             config.verifier !== undefined
       )
         return fail("permission_denied");
-      const resume = "nativeSessionId" in request;
+      const resume = prior !== undefined;
       if (
         resume &&
-        (request.providerVersion !== PROVIDER_VERSION ||
-          request.adapterVersion !== ADAPTER_VERSION ||
+        (prior.providerVersion !== PROVIDER_VERSION ||
+          prior.adapterVersion !== ADAPTER_VERSION ||
           !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
-            request.nativeSessionId,
+            prior.nativeSessionId,
           ))
       )
         return fail("unsupported_version");
@@ -177,7 +183,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
         config: identity.config,
         accountRef: identity.accountRef,
         generation: randomUUID(),
-        nativeSessionId: resume ? request.nativeSessionId : randomUUID(),
+        nativeSessionId: resume ? prior.nativeSessionId : randomUUID(),
       };
       const input = new Queue<SDKUserMessage>(1),
         abort = new AbortController(),
@@ -799,10 +805,13 @@ export class ClaudeAdapter implements ProviderAgentPort {
       ...(turn.outcome ? { outcome: turn.outcome } : {}),
     });
   }
-  async resume(binding: Binding, budget: Budget): Promise<Result<Binding>> {
+  async resume(
+    binding: Binding,
+    configuration: ProviderConfiguration,
+    budget: Budget,
+  ): Promise<Result<ProviderSessionBinding>> {
     try {
-      const result = await this.open(copy(binding), budget);
-      return result.ok ? ok(result.value.binding) : result;
+      return await this.open(configuration, budget, copy(binding));
     } catch {
       return fail("invalid_input");
     }

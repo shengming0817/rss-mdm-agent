@@ -169,7 +169,12 @@ export interface ProviderAgentPort {
       outcome?: import("./wire.js").Outcome;
     }>
   >;
-  resume?(binding: Binding, budget: Budget): Promise<Result<Binding>>;
+  /** Restore native context with explicit current configuration; admission is renewed per generation. */
+  resume?(
+    binding: Binding,
+    configuration: ProviderConfiguration,
+    budget: Budget,
+  ): Promise<Result<ProviderSessionBinding>>;
   close(budget: Budget): Promise<Result<{ processStopped: boolean }>>;
 }
 export interface Snapshot {

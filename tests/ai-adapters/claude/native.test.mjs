@@ -28,6 +28,29 @@ const unwrap = (result) => {
   assert.equal(result.ok, true, JSON.stringify(result));
   return result.value;
 };
+async function closeFixture(adapters, server, directory) {
+  const failures = [];
+  try {
+    for (const adapter of adapters) {
+      try {
+        assert.equal(
+          unwrap(await adapter.close(budget())).processStopped,
+          true,
+        );
+      } catch {
+        failures.push("provider close failed");
+      }
+    }
+  } finally {
+    try {
+      server.closeAllConnections();
+      await new Promise((r) => server.close(r));
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }
+  assert.deepEqual(failures, []);
+}
 async function fixture(t, replies, controlled = false) {
   const directory = mkdtempSync(join(tmpdir(), "rss-claude-native-"));
   const cwd = join(directory, "project"),
@@ -35,7 +58,8 @@ async function fixture(t, replies, controlled = false) {
   mkdirSync(cwd);
   mkdirSync(configDirectory, { mode: 0o700 });
   const requests = [],
-    tools = [];
+    tools = [],
+    verifications = [];
   const server = createServer(async (req, res) => {
     try {
       let data = "";
@@ -143,13 +167,16 @@ async function fixture(t, replies, controlled = false) {
             },
           },
           verifier: {
-            verify: async () => ({
-              ok: true,
-              value: {
-                platform: "native-sdk-fixture",
-                verificationRef: "test-only-containment",
-              },
-            }),
+            verify: async (session, endpoint) => {
+              verifications.push({ session, endpoint });
+              return {
+                ok: true,
+                value: {
+                  platform: "native-sdk-fixture",
+                  verificationRef: "test-only-containment",
+                },
+              };
+            },
           },
         }
       : { permissions: "tools_disabled" }),
@@ -165,19 +192,14 @@ async function fixture(t, replies, controlled = false) {
       }),
     });
   const adapters = [];
-  t.after(async () => {
-    for (const adapter of adapters)
-      assert.equal(unwrap(await adapter.close(budget())).processStopped, true);
-    server.closeAllConnections();
-    await new Promise((r) => server.close(r));
-    rmSync(directory, { recursive: true, force: true });
-  });
+  t.after(() => closeFixture(adapters, server, directory));
   return {
     configuration,
     cwd,
     configDirectory,
     requests,
     tools,
+    verifications,
     create: () => {
       const adapter = create();
       adapters.push(adapter);
@@ -222,7 +244,14 @@ test(
     );
     assert.equal(unwrap(await adapter.close(budget())).processStopped, true);
     const resumed = f.create(),
-      binding = unwrap(await resumed.resume(second.binding, budget()));
+      binding = unwrap(
+        await VerifiedProviderSession.resume(
+          resumed,
+          second.binding,
+          f.configuration,
+          budget(),
+        ),
+      ).binding;
     assert.equal(binding.nativeSessionId, second.binding.nativeSessionId);
     assert.notEqual(binding.generation, second.binding.generation);
     assert.equal(binding.nativeRequestId, undefined);
@@ -477,5 +506,116 @@ test(
     );
     assert.equal(state.status, "terminal");
     assert.equal(state.outcome, "failed");
+  },
+);
+
+test("fixture teardown cleans sidecars even when provider close fails", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "rss-native-cleanup-"));
+  let closed = 0;
+  const server = {
+    closeAllConnections: () => {
+      closed++;
+    },
+    close: (callback) => {
+      closed++;
+      callback();
+    },
+  };
+  await assert.rejects(
+    closeFixture(
+      [
+        {
+          close: async () => ({
+            ok: false,
+            error: { code: "unavailable", retry: "same_command" },
+          }),
+        },
+      ],
+      server,
+      directory,
+    ),
+  );
+  assert.equal(closed, 2);
+  assert.equal(existsSync(directory), false);
+});
+
+test(
+  "real SDK controlled cold resume requires new incarnation admission",
+  { timeout: 60000 },
+  async (t) => {
+    const f = await fixture(
+      t,
+      [
+        text("controlled-history"),
+        [
+          {
+            type: "tool_use",
+            id: "tool_resume",
+            name: "mcp__rss_host__propose",
+            input: { name: "resume-proposal", arguments: {} },
+          },
+        ],
+        text("resumed"),
+      ],
+      true,
+    );
+    const first = f.create();
+    const original = unwrap(
+      await VerifiedProviderSession.open(first, f.configuration, budget()),
+    );
+    const finished = await run(
+      first,
+      original.binding,
+      command("before-resume"),
+    );
+    assert.equal(unwrap(await first.close(budget())).processStopped, true);
+    const second = f.create();
+    const resumed = unwrap(
+      await VerifiedProviderSession.resume(
+        second,
+        finished.binding,
+        f.configuration,
+        budget(),
+      ),
+    );
+    assert.equal(f.verifications.length, 2);
+    assert.notEqual(
+      f.verifications[0].session.binding.generation,
+      f.verifications[1].session.binding.generation,
+    );
+    assert.equal(resumed.matches(resumed.binding, f.configuration.tools), true);
+    assert.equal(
+      original.matches(resumed.binding, f.configuration.tools),
+      false,
+    );
+    assert.equal(f.verifications[1].endpoint, f.configuration.tools);
+    await run(second, resumed.binding, command("after-resume"));
+    assert.deepEqual(f.tools, [{ name: "resume-proposal", arguments: {} }]);
+    assert.ok(
+      JSON.stringify(f.requests[1].messages).includes("controlled-history"),
+    );
+    assert.equal(unwrap(await second.close(budget())).processStopped, true);
+    f.configuration.verifier.verify = async () => ({
+      ok: false,
+      error: { code: "permission_denied", retry: "never" },
+    });
+    const denied = f.create();
+    assert.equal(
+      (
+        await VerifiedProviderSession.resume(
+          denied,
+          resumed.binding,
+          f.configuration,
+          budget(),
+        )
+      ).ok,
+      false,
+    );
+    assert.equal(unwrap(await denied.close(budget())).processStopped, true);
+    assert.equal(
+      f.requests.length,
+      3,
+      "rejected admission must not send another prompt",
+    );
   },
 );

@@ -545,6 +545,7 @@ test("invalid resume input returns a value-free Result", async () => {
       generation: "bad",
       nativeRequestId: undefined,
     },
+    configuration,
     budget(),
   );
   assert.equal(result.ok, false);

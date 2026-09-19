@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,5 +31,56 @@ test("malformed smoke credentials never enter parser diagnostics", () => {
     assert.equal(result.stderr.includes(path), false);
   } finally {
     rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("smoke diagnostics retain only closed stage and port classifications", async () => {
+  const { describeFailure } = await import("../../../scripts/smoke-claude.mjs");
+  assert.deepEqual(
+    describeFailure("submit", {
+      certainty: "unknown",
+      code: "unavailable",
+      retry: "reconcile_first",
+      message: "PRIVATE_CANARY",
+    }),
+    {
+      stage: "submit",
+      certainty: "unknown",
+      code: "unavailable",
+      retry: "reconcile_first",
+    },
+  );
+  assert.deepEqual(
+    describeFailure("terminal", { outcome: "failed", code: "PRIVATE_CANARY" }),
+    { stage: "terminal", outcome: "failed" },
+  );
+});
+
+test("smoke cleanup retries with a fresh budget and retains a live runtime directory", async () => {
+  const { closeAdapters } = await import("../../../scripts/smoke-claude.mjs");
+  for (const eventuallyStops of [true, false]) {
+    const directory = mkdtempSync(join(tmpdir(), "rss-smoke-cleanup-"));
+    const signals = [];
+    const adapter = {
+      close: async (b) => {
+        signals.push(b.signal);
+        return signals.length === 2 && eventuallyStops
+          ? { ok: true, value: { processStopped: true } }
+          : {
+              ok: false,
+              error: { code: "unavailable", retry: "same_command" },
+            };
+      },
+    };
+    try {
+      const result = await closeAdapters([adapter], directory);
+      assert.equal(result.processesStopped, eventuallyStops);
+      assert.equal(signals.length, 2);
+      assert.notEqual(signals[0], signals[1]);
+      assert.equal(existsSync(directory), !eventuallyStops);
+      assert.equal(result.directoryRemoved, eventuallyStops);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   }
 });
