@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { mkdtemp, mkdir, rm, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -688,5 +690,61 @@ test("reconcile replay overflow fails closed and stops the incarnation", async (
   assert.equal(
     s.calls.some((call) => call.method === "runtime/close"),
     true,
+  );
+});
+
+// A requeue regression blocks the JS event loop, so the parent owns the time limit.
+test("unmatched buffered notifications do not loop during another turn ACK", async (t) => {
+  if (process.env.RSS_CODEX_REPLAY_CHILD !== "1") {
+    const child = spawnSync(
+      process.execPath,
+      [
+        "--test",
+        "--test-name-pattern=^unmatched buffered notifications",
+        fileURLToPath(import.meta.url),
+      ],
+      {
+        env: { ...process.env, RSS_CODEX_REPLAY_CHILD: "1" },
+        encoding: "utf8",
+        timeout: 5000,
+        maxBuffer: 256 * 1024,
+      },
+    );
+    assert.equal(
+      child.status,
+      0,
+      child.error?.message ?? child.stdout + child.stderr,
+    );
+    return;
+  }
+  const s = await setup(t, { nativeDiagnostics: false });
+  s.emit("item/agentMessage/delta", {
+    threadId: "thread-1",
+    turnId: "unmatched",
+    itemId: "old-item",
+    delta: "unattributed",
+  });
+  const submitted = await s.adapter.submit(
+    s.admitted.binding,
+    fixtureCommand(),
+    s.attempt("command-1"),
+    budget(),
+  );
+  assert.equal(submitted.certainty, "submitted");
+  s.thread.turns[0].status = "completed";
+  s.emit("turn/completed", { threadId: "thread-1", turn: s.thread.turns[0] });
+  const observed = [];
+  for await (const item of s.adapter.observe(s.admitted.binding, {
+    ...budget(),
+    timeoutMs: 20,
+  }))
+    observed.push(item);
+  assert.equal(
+    observed.some((v) => v.body?.type === "terminal"),
+    true,
+  );
+  assert.equal(
+    observed.some((v) => v.type === "delta"),
+    false,
   );
 });
