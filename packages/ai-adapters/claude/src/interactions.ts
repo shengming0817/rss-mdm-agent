@@ -1,4 +1,4 @@
-import { fingerprint } from "@rss-mdm-agent/ai-contract";
+import { fingerprint, isId } from "@rss-mdm-agent/ai-contract";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type {
@@ -11,7 +11,7 @@ import type {
   ProviderObservation,
   Result,
 } from "@rss-mdm-agent/ai-contract";
-import { copy, deferred, fail, id, limits, ok, same } from "./support.js";
+import { copy, deferred, fail, limits, ok, same } from "./support.js";
 const questionSchema = z.object({
   questions: z
     .array(
@@ -54,6 +54,7 @@ export class Interactions {
   constructor(
     private now: () => number,
     private ttl: number,
+    private attemptId: string,
     private emit: (event: ProviderObservation) => void,
   ) {}
   ask(
@@ -66,8 +67,8 @@ export class Interactions {
     if (
       !parsed.success ||
       options.signal.aborted ||
-      !id(options.requestId) ||
-      !id(options.toolUseID) ||
+      !isId(options.requestId) ||
+      !isId(options.toolUseID) ||
       this.nativeIds.has(options.requestId) ||
       this.callbacks.size >= 32
     )
@@ -101,10 +102,11 @@ export class Interactions {
         callback.status = "unavailable";
         callback.settle(denied());
         this.emit({
-          type: "event",
+          type: "interaction_unavailable",
+          attemptId: this.attemptId,
           binding: copy(binding),
           commandId: command.commandId,
-          body: { type: "interaction", interactionId, status: "unavailable" },
+          interactionId,
         });
       },
     };
@@ -117,6 +119,7 @@ export class Interactions {
     });
     this.emit({
       type: "interaction",
+      attemptId: this.attemptId,
       binding: copy(binding),
       commandId: command.commandId,
       interaction: {
@@ -147,7 +150,7 @@ export class Interactions {
         ? ok(undefined)
         : fail("already_answered");
     if (callback.status !== "pending") return fail("unavailable");
-    if (this.now() >= callback.expiresAt) {
+    if (this.now() > callback.expiresAt) {
       callback.invalidate();
       return fail("expired");
     }

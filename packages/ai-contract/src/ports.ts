@@ -14,6 +14,8 @@ import type {
   Session,
   SurfaceBinding,
   ConfigRef,
+  DispatchAttempt,
+  Outcome,
 } from "./wire.js";
 /** Supplied by authenticated ingress, never decoded from model/tool/action content.
  * This port does not authenticate its caller; the composition root owns that proof. */
@@ -83,6 +85,7 @@ export interface ToolEndpoint {
   >;
 }
 interface ProviderConfigurationBase {
+  readonly namespace: Namespace;
   readonly provider: Id;
   readonly config: ConfigRef;
   readonly accountRef: Id;
@@ -118,12 +121,32 @@ export type ProviderInteraction = Pick<
   | "callbackLifetime"
   | "request"
 >;
-export type ProviderObservation =
+export type ProviderEventBody = Extract<
+  Event["body"],
+  {
+    type:
+      | "text"
+      | "terminal"
+      | "tool_proposal"
+      | "tool_result"
+      | "error"
+      | "cancel_dispatched"
+      | "surface";
+  }
+>;
+export type ProviderObservation = { readonly attemptId: Id } & (
+  | { type: "submitted"; binding: Binding; commandId: Id }
+  | {
+      type: "interaction_unavailable";
+      binding: Binding;
+      commandId: Id;
+      interactionId: Id;
+    }
   | {
       type: "event";
       binding: Binding;
       commandId: Id;
-      body: Exclude<Event["body"], { type: "interaction"; status: "pending" }>;
+      body: ProviderEventBody;
     }
   | ({ type: "delta"; binding: Binding } & MessageDelta)
   | {
@@ -131,12 +154,15 @@ export type ProviderObservation =
       binding: Binding;
       commandId: Id;
       interaction: ProviderInteraction;
-    };
+    }
+);
 export type Submission =
   | { certainty: "submitted"; binding: Binding }
   | { certainty: "not_sent"; error: Failure }
   | { certainty: "unknown"; correlationId: Id };
-/** A01 contract only: each adapter owns its SDK, process and native context. */
+/** Each port instance owns one admitted session incarnation. Open/restore consume
+ * it once; failure closes that instance. Close is idempotent, retryable and must
+ * also clean up creation/resume work that settles after abort. */
 export interface ProviderAgentPort {
   createSession(
     configuration: ProviderConfiguration,
@@ -145,6 +171,7 @@ export interface ProviderAgentPort {
   submit(
     binding: Binding,
     command: Command,
+    attempt: DispatchAttempt,
     budget: Budget,
   ): Promise<Submission>;
   cancel(
@@ -162,14 +189,7 @@ export interface ProviderAgentPort {
     binding: Binding,
     record: CommandRecord,
     budget: Budget,
-  ): Promise<
-    Result<{
-      status: "running" | "terminal" | "not_submitted" | "unknown";
-      binding: Binding;
-      outcome?: import("./wire.js").Outcome;
-    }>
-  >;
-  /** Restore native context with explicit current configuration; admission is renewed per generation. */
+  ): Promise<Result<Reconciliation>>;
   resume?(
     binding: Binding,
     configuration: ProviderConfiguration,
@@ -231,6 +251,10 @@ export interface HostPort extends Closeable {
 }
 /** Atomic batch, checked against both revision and generation. No external await inside a transaction. */
 export interface SessionCommit {
+  /** Verified provider reconciliation observations; consumed by the same transition rules. */
+  readonly reconciliations?: readonly import("./session.js").VerifiedReconciliation[];
+  /** Required for retry eligibility and local expiry transitions. */
+  readonly nowMs?: Counter;
   readonly namespace: Namespace;
   readonly expectedRevision: Counter;
   readonly expectedGeneration: Id;
@@ -250,9 +274,11 @@ export interface AcceptCommand {
   readonly retention: Retention;
   readonly event: Event;
 }
+/** Opaque process-independent continuation, 1–2048 characters; not a wire Id. */
+export type StoreCursor = string;
 export interface Page<T> {
   readonly items: readonly T[];
-  readonly next?: Id;
+  readonly next?: StoreCursor;
 }
 /** One logical session coordinator; no distributed worker/lease promise. */
 export interface SessionStore extends Closeable {
@@ -265,17 +291,21 @@ export interface SessionStore extends Closeable {
   ): Promise<Result<SurfaceBinding>>;
   command(namespace: Namespace, commandId: Id): Promise<Result<CommandRecord>>;
   commit(batch: SessionCommit): Promise<Result<void>>;
+  rebind(input: SessionRebind): Promise<Result<Session>>;
   snapshot(namespace: Namespace, limit: number): Promise<Result<Snapshot>>;
   events(
     namespace: Namespace,
     after: Counter,
     limit: number,
   ): Promise<Result<readonly Event[]>>;
-  recovery(limit: number, after?: Id): Promise<Result<Page<CommandRecord>>>;
+  recovery(
+    limit: number,
+    after?: StoreCursor,
+  ): Promise<Result<Page<CommandRecord>>>;
   deliveries(
     limit: number,
     nowMs: Counter,
-    after?: Id,
+    after?: StoreCursor,
   ): Promise<Result<Page<Delivery>>>;
   retire(
     namespace: Namespace,
@@ -285,4 +315,23 @@ export interface SessionStore extends Closeable {
   /** Delete retired sessions only after all receipts expire and delivery is settled.
    * Missing/retired namespaces never implicitly recreate a session. */
   pruneRetired(nowMs: Counter): Promise<Result<number>>;
+}
+
+/** Bound to the original attempt and the current observer; unknown is not permission to send. */
+export type Reconciliation = {
+  readonly commandId: Id;
+  readonly attemptId: Id;
+  readonly binding: Binding;
+} & (
+  | { readonly status: "running" | "unknown"; readonly outcome?: never }
+  | { readonly status: "terminal"; readonly outcome: Outcome }
+  | { readonly status: "not_submitted"; readonly outcome?: never }
+);
+/** A trusted resume result, never a wire-decoded capability assertion. */
+export interface SessionRebind {
+  readonly namespace: Namespace;
+  readonly expectedRevision: Counter;
+  readonly expectedGeneration: Id;
+  readonly restored: import("./session.js").VerifiedProviderSession;
+  readonly eventId: Id;
 }

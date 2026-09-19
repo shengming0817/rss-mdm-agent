@@ -3,6 +3,7 @@ export type * from "./wire.js";
 export type * from "./ports.js";
 export {
   decode,
+  isId,
   boundedJson,
   fingerprint,
   deliveryFingerprint,
@@ -11,4 +12,6 @@ export {
 export type { Limits, Diagnostic } from "./codec.js";
 export { extension, resolveSurfaceAction, projectDelta } from "./protocol.js";
 
-export { VerifiedProviderSession } from "./session.js";
+export { VerifiedProviderSession, workspaceIdentity } from "./session.js";
+
+export type { AdmissionResult, VerifiedReconciliation } from "./session.js";

@@ -122,6 +122,12 @@ async function main() {
     config: { id: "model-smoke", revision: "1" },
     accountRef: "model-smoke",
     workingDirectory: join(directory, "project"),
+    namespace: {
+      tenantId: "model-smoke",
+      principalId: "model-smoke",
+      authorityId: "model-smoke",
+      sessionId: "smoke-session",
+    },
     permissions: "tools_disabled",
   };
   const create = () =>
@@ -165,6 +171,13 @@ async function main() {
         commandId: id,
         expiresAtMs: Date.now() + 120000,
         input: { type: "prompt", text, policy: "queue_next" },
+      },
+      {
+        attemptId: `attempt-${id}`,
+        originGeneration: binding.generation,
+        observerGeneration: binding.generation,
+        nativeSessionId: binding.nativeSessionId,
+        certainty: "intent",
       },
       budget(),
     );
@@ -223,9 +236,18 @@ async function main() {
     adapters.push(resumed);
     stage = "resume";
     detail = {};
-    const rebound = await VerifiedProviderSession.resume(
+    const rebound = await VerifiedProviderSession.restore(
       resumed,
-      second,
+      {
+        schemaVersion: 2,
+        kind: "session",
+        namespace: configuration.namespace,
+        revision: 0,
+        lastSequence: 0,
+        status: "active",
+        binding: second,
+        capabilities: opened.value.capabilities,
+      },
       configuration,
       budget(30000),
     );

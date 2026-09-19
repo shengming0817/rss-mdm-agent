@@ -12,6 +12,10 @@ import {
   decode,
   boundedJson,
   fingerprint,
+  workspaceIdentity,
+  isId,
+  type DispatchAttempt,
+  type Reconciliation,
   type Binding,
   type Budget,
   type Command,
@@ -39,7 +43,6 @@ import {
   copy,
   deferred,
   fail,
-  id,
   limits,
   liveBudget,
   ok,
@@ -50,6 +53,7 @@ const bridge = "mcp__rss_host__propose";
 interface Turn {
   command: Pick<Command, "sessionId" | "commandId">;
   hash: string;
+  attempt: DispatchAttempt;
   binding: Binding;
   inputBinding: Binding;
   queue: Queue<ProviderObservation>;
@@ -79,6 +83,7 @@ interface Session {
 export class ClaudeAdapter implements ProviderAgentPort {
   private session?: Session;
   private opening = false;
+  private closed = false;
   private epoch = 0;
   private readonly now: () => number;
   private readonly ttl: number;
@@ -102,7 +107,8 @@ export class ClaudeAdapter implements ProviderAgentPort {
     budget: Budget,
     previous?: Binding,
   ): Promise<Result<ProviderSessionBinding>> {
-    if (!liveBudget(budget)) return fail("unavailable", "same_command");
+    if (this.closed || !liveBudget(budget))
+      return fail("unavailable", "same_command");
     const deadline = Date.now() + budget.timeoutMs;
     const remaining = (): Budget => ({
       ...budget,
@@ -114,13 +120,18 @@ export class ClaudeAdapter implements ProviderAgentPort {
     const epoch = ++this.epoch;
     try {
       // Capture admission identities before calling external configuration code.
-      const request = { ...requested, config: copy(requested.config) };
+      const request = {
+        ...requested,
+        namespace: copy(requested.namespace),
+        config: copy(requested.config),
+      };
       const prior = previous ? copy(previous) : undefined;
       if (
         prior &&
         (prior.provider !== request.provider ||
           !same(prior.config, request.config) ||
-          prior.accountRef !== request.accountRef)
+          prior.accountRef !== request.accountRef ||
+          prior.workspaceId !== workspaceIdentity(request.workingDirectory))
       )
         return fail("stale_binding");
       const identity = copy({
@@ -133,6 +144,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
       );
       const config = {
         ...supplied.configuration,
+        namespace: copy(supplied.configuration.namespace),
         config: copy(supplied.configuration.config),
       };
       const resolved = {
@@ -150,6 +162,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
       )
         return fail("stale_binding");
       if (
+        !same(request.namespace, config.namespace) ||
         request.workingDirectory !== config.workingDirectory ||
         request.permissions !== config.permissions ||
         request.tools !== config.tools ||
@@ -177,6 +190,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
         return fail("unsupported_version");
       const binding: Binding = {
         provider: "claude",
+        workspaceId: workspaceIdentity(config.workingDirectory),
         providerVersion: PROVIDER_VERSION,
         adapterVersion: ADAPTER_VERSION,
         config: identity.config,
@@ -275,9 +289,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
                 "propose",
                 "Submit an untrusted business proposal to the Host. This never grants approval.",
                 {
-                  name: z
-                    .string()
-                    .regex(/^[A-Za-z0-9][A-Za-z0-9._:/+\-]{0,127}$/),
+                  name: z.string().refine(isId),
                   // SDK 0.3.277's bundled schema converter cannot list a Zod 4
                   // record here; an open object preserves the same JSON payload.
                   arguments: z.object({}).catchall(z.unknown()),
@@ -436,6 +448,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
   async submit(
     binding: Binding,
     command: Command,
+    attempt: DispatchAttempt,
     budget: Budget,
   ): Promise<Submission> {
     const denied = (
@@ -448,16 +461,37 @@ export class ClaudeAdapter implements ProviderAgentPort {
     let c: Command;
     try {
       c = this.checked(command);
+      const attemptEvent = {
+        schemaVersion: 2,
+        kind: "event",
+        namespace: this.session?.configuration.namespace,
+        eventId: "validate-attempt",
+        sequence: 1,
+        generation: binding.generation,
+        commandId: c.commandId,
+        attemptId: attempt.attemptId,
+        body: { type: "dispatch", attempt },
+      };
+      decode(boundedJson(attemptEvent, limits), limits);
     } catch {
       return denied("invalid_input");
     }
     const s = this.session;
     if (!s || s.closing || s.failed || !liveBudget(budget))
       return denied("unavailable", "same_command");
+    if (
+      c.sessionId !== s.configuration.namespace.sessionId ||
+      attempt.certainty !== "intent" ||
+      attempt.originGeneration !== binding.generation ||
+      attempt.observerGeneration !== binding.generation ||
+      attempt.nativeSessionId !== binding.nativeSessionId
+    )
+      return denied("stale_binding");
     const prior = s.turns.get(c.commandId);
     if (prior) {
       if (!same(binding, prior.inputBinding) && !same(binding, prior.binding))
         return denied("stale_binding");
+      if (!same(prior.attempt, attempt)) return denied("stale_binding");
       if (prior.hash !== fingerprint(c, limits))
         return denied("content_conflict");
       return prior.accepted
@@ -476,6 +510,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
     const turn: Turn = {
       command: { sessionId: c.sessionId, commandId: c.commandId },
       hash: fingerprint(c, limits),
+      attempt: copy(attempt),
       binding: live,
       inputBinding: copy(binding),
       queue: new Queue(1024, 2 * 1024 * 1024, s.displayBudget),
@@ -486,13 +521,18 @@ export class ClaudeAdapter implements ProviderAgentPort {
       observing: false,
       interactions: undefined!,
     };
-    turn.interactions = new Interactions(this.now, this.ttl, (event) => {
-      try {
-        turn.queue.push(event);
-      } catch {
-        this.lost(s);
-      }
-    });
+    turn.interactions = new Interactions(
+      this.now,
+      this.ttl,
+      attempt.attemptId,
+      (event) => {
+        try {
+          turn.queue.push(event);
+        } catch {
+          this.lost(s);
+        }
+      },
+    );
     s.active = turn;
     s.turns.set(c.commandId, turn);
     try {
@@ -517,6 +557,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
   ): void {
     turn.queue.push({
       type: "event",
+      attemptId: turn.attempt.attemptId,
       binding: copy(turn.binding),
       commandId: turn.command.commandId,
       body,
@@ -528,7 +569,12 @@ export class ClaudeAdapter implements ProviderAgentPort {
       turn.uncertain = false;
       s.binding = copy(turn.binding);
       turn.acceptance.resolve(true);
-      this.emit(turn, { type: "status", state: "running" });
+      turn.queue.push({
+        type: "submitted",
+        attemptId: turn.attempt.attemptId,
+        binding: copy(turn.binding),
+        commandId: turn.command.commandId,
+      });
     }
   }
   private async pump(s: Session): Promise<void> {
@@ -595,7 +641,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
     }
     if (m.type === "assistant") {
       if (!turn.accepted) return;
-      if (!id(m.message.id)) throw new Error("invalid message id");
+      if (!isId(m.message.id)) throw new Error("invalid message id");
       for (const part of m.message.content)
         if (part.type === "text")
           this.emit(turn, {
@@ -606,7 +652,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
     } else if (m.type === "stream_event") {
       if (!turn.accepted) return;
       if (m.event.type === "message_start") {
-        if (!id(m.event.message.id)) throw new Error("invalid message id");
+        if (!isId(m.event.message.id)) throw new Error("invalid message id");
         turn.streamMessageId = m.event.message.id;
       } else if (
         m.event.type === "content_block_delta" &&
@@ -615,6 +661,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
         if (!turn.streamMessageId) throw new Error("missing message id");
         turn.queue.push({
           type: "delta",
+          attemptId: turn.attempt.attemptId,
           binding: copy(turn.binding),
           commandId: turn.command.commandId,
           messageId: turn.streamMessageId,
@@ -660,6 +707,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
         try {
           turn.queue.push({
             type: "event",
+            attemptId: turn.attempt.attemptId,
             binding: copy(turn.accepted ? turn.binding : turn.inputBinding),
             commandId: turn.command.commandId,
             body: {
@@ -703,7 +751,8 @@ export class ClaudeAdapter implements ProviderAgentPort {
     command: Command,
     budget: Budget,
   ): Promise<Result<"request_only" | "already_terminal">> {
-    if (!liveBudget(budget)) return fail("unavailable", "same_command");
+    if (this.closed || !liveBudget(budget))
+      return fail("unavailable", "same_command");
     let c: Command;
     try {
       c = this.checked(command);
@@ -758,7 +807,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
     budget: Budget,
   ): AsyncIterable<ProviderObservation> {
     const turn = this.turn(binding);
-    if (!turn || turn.observing) return;
+    if (this.closed || !turn || turn.observing) return;
     turn.observing = true;
     try {
       for await (const item of turn.queue.read(budget)) yield item;
@@ -770,39 +819,45 @@ export class ClaudeAdapter implements ProviderAgentPort {
     binding: Binding,
     record: CommandRecord,
     budget: Budget,
-  ): Promise<
-    Result<{
-      status: "running" | "terminal" | "not_submitted" | "unknown";
-      binding: Binding;
-      outcome?: Outcome;
-    }>
-  > {
-    if (!liveBudget(budget)) return fail("unavailable", "same_command");
+  ): Promise<Result<Reconciliation>> {
+    if (this.closed || !liveBudget(budget))
+      return fail("unavailable", "same_command");
     const s = this.session;
-    if (
-      !s ||
-      (!same(binding, s.binding) &&
-        !this.turn(binding) &&
-        !same(binding, s.turns.get(record.command.commandId)?.inputBinding))
-    )
-      return fail("stale_binding");
-    const turn = s.turns.get(record.command.commandId);
-    if (!turn) return ok({ status: "unknown", binding: copy(binding) });
     try {
+      decode(boundedJson(record, limits), limits);
+      if (
+        !s ||
+        !record.dispatch ||
+        ["terminal", "invalidated"].includes(record.state) ||
+        !same(record.receipt.namespace, s.configuration.namespace) ||
+        record.dispatch.observerGeneration !== binding.generation ||
+        record.dispatch.nativeSessionId !== binding.nativeSessionId ||
+        (!same(binding, s.binding) &&
+          !this.turn(binding) &&
+          !same(binding, s.turns.get(record.command.commandId)?.inputBinding))
+      )
+        return fail("stale_binding");
+      const evidence = {
+        commandId: record.command.commandId,
+        attemptId: record.dispatch.attemptId,
+        binding: copy(binding),
+      };
+      const turn = s.turns.get(record.command.commandId);
+      if (!turn) return ok({ ...evidence, status: "unknown" });
+      if (turn.attempt.attemptId !== record.dispatch.attemptId)
+        return fail("stale_binding");
       if (turn.hash !== fingerprint(record.command, limits))
         return fail("content_conflict");
+      evidence.binding = copy(turn.accepted ? turn.binding : binding);
+      return turn.outcome
+        ? ok({ ...evidence, status: "terminal", outcome: turn.outcome })
+        : ok({
+            ...evidence,
+            status: turn.accepted && !turn.uncertain ? "running" : "unknown",
+          });
     } catch {
       return fail("invalid_input");
     }
-    return ok({
-      status: turn.outcome
-        ? "terminal"
-        : turn.accepted && !turn.uncertain
-          ? "running"
-          : "unknown",
-      binding: copy(turn.accepted ? turn.binding : binding),
-      ...(turn.outcome ? { outcome: turn.outcome } : {}),
-    });
   }
   async resume(
     binding: Binding,
@@ -816,12 +871,10 @@ export class ClaudeAdapter implements ProviderAgentPort {
     }
   }
   async close(budget: Budget): Promise<Result<{ processStopped: boolean }>> {
+    this.closed = true;
     ++this.epoch;
     const s = this.session;
-    if (!s)
-      return this.opening
-        ? fail("unavailable", "same_command")
-        : ok({ processStopped: true });
+    if (!s) return ok({ processStopped: true });
     if (!s.closing) this.stop(s);
     try {
       await bounded(s.runtime.stopped, budget);

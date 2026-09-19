@@ -73,12 +73,13 @@ try {
   writeFileSync(
     join(dir, "consumer.ts"),
     `import assert from 'node:assert/strict';
-import {decode,boundedJson,fingerprint,type HostPort,type ProviderAgentPort,type SessionStore,type ProviderConfiguration,type Subscription,type ProviderInteraction,type ProviderObservation,VerifiedProviderSession} from '@rss-mdm-agent/ai-contract';
-import {FakeHost,MemorySessionStore,ScriptedProvider,fixtures,fixtureLimits,runStoreConformance,runProviderConformance,runHostConformance} from '@rss-mdm-agent/ai-contract/testing';
-// @ts-expect-error Resume must atomically return capabilities with its binding.
+import {decode,boundedJson,fingerprint,type HostPort,type ProviderAgentPort,type SessionStore,type ProviderConfiguration,type Subscription,type ProviderInteraction,type ProviderObservation,type ProviderEventBody,VerifiedProviderSession} from '@rss-mdm-agent/ai-contract';
+import {createState,acceptCommand,type SessionState} from '@rss-mdm-agent/ai-contract/transitions';
+import {fixtureSession,acceptance,unwrap,FakeHost,MemorySessionStore,ScriptedProvider,fixtures,fixtureLimits,runStoreConformance,runProviderConformance,runHostConformance} from '@rss-mdm-agent/ai-contract/testing';
+// @ts-expect-error Resume must return capabilities with binding.
 const invalidResume:NonNullable<ProviderAgentPort['resume']>=async()=>({ok:true,value:{} as import('@rss-mdm-agent/ai-contract').Binding});
 // @ts-expect-error Controlled mode cannot omit its verifier and ToolEndpoint.
-const invalidConfiguration:ProviderConfiguration={provider:'fake',config:{id:'c',revision:'1'},accountRef:'a',workingDirectory:'.',permissions:'host_mediated'};
+const invalidConfiguration:ProviderConfiguration={provider:'fake',config:{id:'c',revision:'1'},accountRef:'a',namespace:fixtureSession().namespace,workingDirectory:'.',permissions:'host_mediated'};
 // @ts-expect-error Admission cannot be built from serialized fields.
 const forged:VerifiedProviderSession={binding:{},capabilities:{}};
 // @ts-expect-error Every subscription delta retains its message identity.
@@ -90,12 +91,15 @@ const oldQuestion:ProviderInteraction={category:'question',interactionId:'questi
 const permission:ProviderInteraction={...question,category:'tool_permission'};
 // @ts-expect-error Initial pending callbacks cannot bypass their dedicated observation.
 const pending:ProviderObservation={type:'event',binding:{} as any,commandId:'c',body:{type:'interaction',interactionId:'q',status:'pending',request:{}}};
+// @ts-expect-error Provider cannot manufacture a host/store lifecycle event.
+const internalEvent:ProviderEventBody={type:'session_retired'};
 assert.equal(question.nativeCallbackId,'callback');
 assert.throws(()=>boundedJson({get secret(){throw new Error('accessor must not run');}},fixtureLimits),{code:'encoding'});
+const state:SessionState=unwrap(createState(fixtureSession()));assert.equal(unwrap(acceptCommand(state,acceptance(state.session))).state.commands.size,1);
 const host:HostPort=new FakeHost();const provider:ProviderAgentPort=new ScriptedProvider();const store:SessionStore=new MemorySessionStore();
 const value=decode(JSON.stringify(fixtures.valid[0]),fixtureLimits);assert.equal(value.kind,'command');if(value.kind==='command')assert.equal(fingerprint(value,fixtureLimits),fixtures.commandHash);
 await runStoreConformance(()=>new MemorySessionStore());
-await runProviderConformance(scenario=>{const port=new ScriptedProvider();port.submission=scenario;return port;},{provider:'fake',config:{id:'config-1',revision:'1'},accountRef:'account-1',workingDirectory:'.',permissions:'tools_disabled'},()=>({timeoutMs:1000,signal:new AbortController().signal}));
+await runProviderConformance(scenario=>{const port=new ScriptedProvider();port.submission=scenario;return port;},{provider:'fake',config:{id:'config-1',revision:'1'},accountRef:'account-1',namespace:fixtureSession().namespace,workingDirectory:'.',permissions:'tools_disabled'},()=>({timeoutMs:1000,signal:new AbortController().signal}));
 await runHostConformance(()=>new FakeHost());
 assert.equal(host.negotiate({contractVersion:2,acp:1,durableReceipts:false,cursorAttach:false}).ok,true);
 await host.close({timeoutMs:1000,signal:new AbortController().signal});await store.close({timeoutMs:1000,signal:new AbortController().signal});await provider.close({timeoutMs:1000,signal:new AbortController().signal});assert.ok(store);console.log('Isolated AI tarball consumer: types, wire, Host and conformance passed');`,

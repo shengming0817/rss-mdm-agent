@@ -138,12 +138,6 @@ test("Store conformance closes failed stores and retains cleanup errors", async 
 test("surface response and deletion cannot be smuggled into one commit", async () => {
   const store = new MemorySessionStore();
   const seeded = await seedSurface(store);
-  const commit = store.commit.bind(store);
-  store.commit = (batch) =>
-    commit({
-      ...batch,
-      surfaces: [{ ...seeded.surface, status: "deleted", revision: 1 }],
-    });
   const answer = {
     ...seeded.answer,
     input: {
@@ -151,8 +145,25 @@ test("surface response and deletion cannot be smuggled into one commit", async (
       surface: { instanceId: seeded.surface.surfaceInstanceId, revision: 0 },
     },
   };
+  const shadow = new MemorySessionStore();
+  await seedSurface(shadow);
+  unwrap(await shadow.accept(acceptance(seeded.session, answer)));
+  const next = unwrap(await shadow.snapshot(seeded.session.namespace, 1024));
   assert.equal(
-    (await store.accept(acceptance(seeded.session, answer))).ok,
+    (
+      await store.commit({
+        ...emptyCommit(seeded.session),
+        session: next.session,
+        commands: next.commands.filter(
+          (c) => c.command.commandId === answer.commandId,
+        ),
+        interactions: next.interactions,
+        events: next.events.filter(
+          (e) => e.sequence > seeded.session.lastSequence,
+        ),
+        surfaces: [{ ...seeded.surface, status: "deleted", revision: 1 }],
+      })
+    ).ok,
     false,
   );
   assert.equal(

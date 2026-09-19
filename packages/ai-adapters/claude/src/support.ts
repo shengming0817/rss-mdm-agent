@@ -22,9 +22,6 @@ export const liveBudget = (budget: Budget): boolean =>
   Number.isSafeInteger(budget.timeoutMs) &&
   budget.timeoutMs > 0 &&
   budget.timeoutMs <= 2147483647;
-export const id = (value: unknown): value is string =>
-  typeof value === "string" &&
-  /^[A-Za-z0-9][A-Za-z0-9._:/+\-]{0,127}$/.test(value);
 export function same(a: unknown, b: unknown): boolean {
   const sort = (v: any): any =>
     Array.isArray(v)

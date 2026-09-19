@@ -1,13 +1,46 @@
+import { createHash } from "node:crypto";
+import { resolve } from "node:path";
 import canonicalize from "canonicalize";
-import type { Binding, Capabilities } from "./wire.js";
+import { withinBudget } from "./budget.js";
+import { boundedJson, decode } from "./codec.js";
+import type {
+  Binding,
+  Capabilities,
+  Session,
+  Failure,
+  Namespace,
+  CommandRecord,
+  Id,
+} from "./wire.js";
 import type {
   Budget,
   ProviderAgentPort,
   ProviderConfiguration,
   Result,
   ToolEndpoint,
+  Reconciliation,
 } from "./ports.js";
 
+/** Logical workspace path identity, never a filesystem containment proof. */
+export function workspaceIdentity(directory: string): string {
+  if (
+    typeof directory !== "string" ||
+    !directory ||
+    directory.length > 32768 ||
+    directory.includes("\0")
+  )
+    throw new TypeError("invalid workspace");
+  return createHash("sha256").update(resolve(directory)).digest("hex");
+}
+
+export type AdmissionResult =
+  | { ok: true; value: VerifiedProviderSession }
+  | { ok: false; error: Failure; cleanupError?: Failure };
+const usedPorts = new WeakSet<ProviderAgentPort>();
+const unavailable = (): Failure => ({
+  code: "unavailable",
+  retry: "same_command",
+});
 const authority = Symbol("verified provider session");
 const denied = (): Result<never> => ({
   ok: false,
@@ -15,23 +48,70 @@ const denied = (): Result<never> => ({
 });
 const same = (a: unknown, b: unknown) => canonicalize(a) === canonicalize(b);
 
+/** Stable observer identity; run/request coordinates may advance within it. */
+export const providerIdentity = ({
+  nativeRunId: _run,
+  nativeRequestId: _request,
+  ...identity
+}: Binding) => identity;
+const proofBrand: unique symbol = Symbol("verified reconciliation");
+/** Process-local evidence minted only by an admitted provider call. */
+export interface VerifiedReconciliation {
+  readonly [proofBrand]: true;
+  readonly commandId: Id;
+  readonly observation: Reconciliation;
+}
+const observations = new WeakMap<
+  VerifiedReconciliation,
+  {
+    session: Pick<Session, "namespace" | "binding">;
+    record: CommandRecord;
+    observation: Reconciliation;
+  }
+>();
+/** Internal transition check; structural copies cannot recover the private evidence. */
+export function reconciliationFor(
+  proof: VerifiedReconciliation,
+  session: Session,
+  record: CommandRecord,
+): Reconciliation | undefined {
+  const evidence = observations.get(proof);
+  return evidence &&
+    same(evidence.session, {
+      namespace: session.namespace,
+      binding: session.binding,
+    }) &&
+    same(evidence.record, record)
+    ? structuredClone(evidence.observation)
+    : undefined;
+}
+
 /** Nominal, process-local admission evidence. JSON and structural casts cannot mint it.
  * The injected verifier is trusted code owned by the composition root; its actual
  * platform containment proof remains adapter-owned. */
 export class VerifiedProviderSession {
   readonly #binding: Binding;
+  readonly #namespace: Namespace;
+  readonly #port: ProviderAgentPort;
   readonly #capabilities: Capabilities;
   readonly #tools?: ToolEndpoint;
+  readonly #previous?: Pick<Session, "namespace" | "binding">;
   private constructor(
     token: symbol,
+    port: ProviderAgentPort,
+    namespace: Namespace,
     binding: Binding,
     capabilities: Capabilities,
     tools?: ToolEndpoint,
+    previous?: Pick<Session, "namespace" | "binding">,
   ) {
     if (token !== authority) throw new TypeError("unverified provider session");
     this.#binding = structuredClone(binding);
+    this.#namespace = structuredClone(namespace);
+    this.#port = port;
     this.#capabilities = structuredClone(capabilities);
     this.#tools = tools;
+    this.#previous = previous && structuredClone(previous);
     Object.freeze(this);
   }
   get binding(): Binding {
@@ -43,140 +123,305 @@ export class VerifiedProviderSession {
   matches(binding: Binding, tools?: ToolEndpoint): boolean {
     return same(this.#binding, binding) && this.#tools === tools;
   }
-  static async open(
-    port: ProviderAgentPort,
-    configuration: ProviderConfiguration,
-    budget: Budget,
-  ): Promise<Result<VerifiedProviderSession>> {
-    return this.admit(port, configuration, budget);
+  /** Only the resume path can establish this link. */
+  restores(previous: Session): boolean {
+    return (
+      this.#previous !== undefined &&
+      same(
+        { namespace: previous.namespace, binding: previous.binding },
+        this.#previous,
+      )
+    );
   }
-  static async resume(
+  /** Reconcile the exact stored attempt through this admitted instance. No caller-supplied observation is accepted. */
+  async reconcile(
+    session: Session,
+    record: CommandRecord,
+    budget: Budget,
+  ): Promise<Result<VerifiedReconciliation>> {
+    try {
+      const head = structuredClone(session),
+        original = structuredClone(record);
+      const limits = {
+        maxBytes: 262144,
+        maxTextBytes: 131072,
+        maxDepth: 32,
+        maxNodes: 16384,
+      };
+      decode(boundedJson(head, limits), limits);
+      decode(boundedJson(original, limits), limits);
+      if (
+        head.status !== "active" ||
+        !original.dispatch ||
+        ["terminal", "invalidated"].includes(original.state) ||
+        !same(head.namespace, this.#namespace) ||
+        !same(original.receipt.namespace, this.#namespace) ||
+        original.command.sessionId !== this.#namespace.sessionId ||
+        !same(
+          providerIdentity(head.binding),
+          providerIdentity(this.#binding),
+        ) ||
+        original.dispatch.observerGeneration !== this.#binding.generation ||
+        original.dispatch.nativeSessionId !== this.#binding.nativeSessionId
+      )
+        return denied();
+      return await withinBudget(
+        () => budget,
+        async (b) => {
+          const response = await this.#port.reconcile(
+            structuredClone(head.binding),
+            structuredClone(original),
+            b,
+          );
+          if (!response.ok) return response;
+          const observed: Reconciliation = JSON.parse(
+            boundedJson(response.value, limits),
+          );
+          const keys = [
+            "attemptId",
+            "binding",
+            "commandId",
+            "status",
+            ...(observed.status === "terminal" ? ["outcome"] : []),
+          ].sort();
+          if (
+            b.signal.aborted ||
+            !same(Object.keys(observed).sort(), keys) ||
+            observed.commandId !== original.command.commandId ||
+            observed.attemptId !== original.dispatch!.attemptId ||
+            !["unknown", "running", "terminal", "not_submitted"].includes(
+              observed.status,
+            ) ||
+            !same(
+              providerIdentity(observed.binding),
+              providerIdentity(head.binding),
+            ) ||
+            (["nativeRunId", "nativeRequestId"] as const).some(
+              (k) =>
+                original.dispatch![k] !== undefined &&
+                observed.binding[k] !== original.dispatch![k],
+            )
+          )
+            return denied();
+          decode(
+            boundedJson({ ...head, binding: observed.binding }, limits),
+            limits,
+          );
+          if (observed.status === "terminal")
+            decode(
+              boundedJson(
+                {
+                  ...original,
+                  state: "terminal",
+                  dispatch: { ...original.dispatch, certainty: "submitted" },
+                  outcome: observed.outcome,
+                },
+                limits,
+              ),
+              limits,
+            );
+          const proof: VerifiedReconciliation = Object.freeze({
+            [proofBrand]: true as const,
+            commandId: observed.commandId,
+            get observation() {
+              return structuredClone(observed);
+            },
+          });
+          observations.set(proof, {
+            session: { namespace: head.namespace, binding: head.binding },
+            record: original,
+            observation: observed,
+          });
+          return { ok: true as const, value: proof };
+        },
+      );
+    } catch {
+      return { ok: false, error: unavailable() };
+    }
+  }
+  static restore(
     port: ProviderAgentPort,
-    binding: Binding,
+    previous: Session,
     configuration: ProviderConfiguration,
     budget: Budget,
-  ): Promise<Result<VerifiedProviderSession>> {
-    if (!port.resume)
-      return {
-        ok: false,
-        error: { code: "unsupported_capability", retry: "never" },
-      };
-    return this.admit(port, configuration, budget, binding);
+  ): Promise<AdmissionResult> {
+    return this.admit(port, configuration, budget, previous);
+  }
+  static open(
+    port: ProviderAgentPort,
+    configuration: ProviderConfiguration,
+    budget: Budget,
+  ): Promise<AdmissionResult> {
+    return this.admit(port, configuration, budget);
   }
   private static async admit(
     port: ProviderAgentPort,
     configuration: ProviderConfiguration,
     budget: Budget,
-    prior?: Binding,
-  ): Promise<Result<VerifiedProviderSession>> {
-    if (
-      budget.signal.aborted ||
-      !Number.isSafeInteger(budget.timeoutMs) ||
-      budget.timeoutMs <= 0
-    )
+    previous?: Session,
+  ): Promise<AdmissionResult> {
+    // Each instance belongs to one admission. Refusing a second call never closes
+    // the first successful session, including simultaneous calls.
+    if (usedPorts.has(port) || typeof port.close !== "function")
       return denied();
-    const deadline = Date.now() + budget.timeoutMs;
-    const remaining = (): Budget => ({
-      ...budget,
-      timeoutMs: deadline - Date.now(),
-    });
-    let opened = false,
-      admitted = false;
+    usedPorts.add(port);
+    let result: Result<VerifiedProviderSession>;
     try {
-      const controlled = configuration.permissions === "host_mediated";
-      if (
-        controlled
-          ? typeof configuration.tools?.propose !== "function" ||
-            typeof configuration.verifier?.verify !== "function"
-          : configuration.permissions !== "tools_disabled" ||
-            configuration.tools !== undefined ||
-            configuration.verifier !== undefined
-      )
-        return denied();
-      // Snapshot caller-owned identities before any external await. New and resumed
-      // incarnations use the same verifier and endpoint admission funnel.
-      const request = {
+      const prior = previous && structuredClone(previous);
+      const settings = {
         ...configuration,
+        namespace: structuredClone(configuration.namespace),
+        workingDirectory: resolve(configuration.workingDirectory),
         config: structuredClone(configuration.config),
       };
-      const tools = request.tools,
-        verifier = request.verifier;
-      const previous = prior ? structuredClone(prior) : undefined;
-      if (
-        previous &&
-        (previous.provider !== request.provider ||
-          !same(previous.config, request.config) ||
-          previous.accountRef !== request.accountRef)
-      )
-        return denied();
-      const initialized = previous
-        ? await port.resume!(
-            structuredClone(previous),
-            { ...request, config: structuredClone(request.config) },
-            remaining(),
-          )
-        : await port.createSession(
-            { ...request, config: structuredClone(request.config) },
-            remaining(),
-          );
-      if (!initialized.ok) return initialized;
-      opened = true;
-      const { binding, capabilities } = structuredClone(initialized.value);
-      if (
-        binding.provider !== request.provider ||
-        !same(binding.config, request.config) ||
-        binding.accountRef !== request.accountRef ||
-        capabilities.tools !== (controlled ? "host_mediated" : "disabled") ||
-        (previous &&
-          (capabilities.continuation !== "across_processes" ||
-            binding.nativeSessionId !== previous.nativeSessionId ||
-            binding.generation === previous.generation))
-      )
-        return denied();
-      if (budget.signal.aborted || remaining().timeoutMs <= 0) return denied();
-      if (controlled) {
-        const checked = await verifier!.verify(
+      result = await withinBudget(
+        () => budget,
+        (b) => this.initialize(port, settings, b, prior),
+      );
+    } catch {
+      result = { ok: false, error: unavailable() };
+    }
+    if (result.ok) return result;
+    try {
+      const closed = await withinBudget(
+        () => ({
+          timeoutMs:
+            Number.isSafeInteger(budget.timeoutMs) && budget.timeoutMs > 0
+              ? Math.min(budget.timeoutMs, 10000)
+              : 1000,
+          signal: new AbortController().signal,
+        }),
+        (b) => port.close(b),
+      );
+      if (!closed.ok) return { ...result, cleanupError: closed.error };
+      if (!closed.value.processStopped)
+        return { ...result, cleanupError: unavailable() };
+    } catch {
+      return { ...result, cleanupError: unavailable() };
+    }
+    return result;
+  }
+  private static async initialize(
+    port: ProviderAgentPort,
+    configuration: ProviderConfiguration,
+    budget: Budget,
+    previous?: Session,
+  ): Promise<Result<VerifiedProviderSession>> {
+    if (budget.signal.aborted) return denied();
+    const workspaceId = workspaceIdentity(configuration.workingDirectory);
+    if (
+      previous &&
+      (previous.binding.workspaceId !== workspaceId ||
+        !same(previous.namespace, configuration.namespace))
+    )
+      return denied();
+    const controlled = configuration.permissions === "host_mediated";
+    if (
+      controlled
+        ? typeof configuration.tools?.propose !== "function" ||
+          typeof configuration.verifier?.verify !== "function"
+        : configuration.permissions !== "tools_disabled" ||
+          configuration.tools !== undefined ||
+          configuration.verifier !== undefined
+    )
+      return denied();
+    // Snapshot caller-owned identity before any external await. Endpoint/verifier identities
+    // are captured separately, so concurrent caller mutation cannot switch the verifier.
+    const namespace = structuredClone(configuration.namespace);
+    const config = structuredClone(configuration.config),
+      accountRef = configuration.accountRef,
+      provider = configuration.provider;
+    const tools = configuration.tools,
+      verifier = configuration.verifier;
+    if (previous && !port.resume) return denied();
+    const settings = {
+      ...configuration,
+      namespace: structuredClone(namespace),
+      config: structuredClone(config),
+      accountRef,
+    };
+    const initialized = previous
+      ? await port.resume!(structuredClone(previous.binding), settings, budget)
+      : await port.createSession(settings, budget);
+    if (!initialized.ok) return initialized;
+    const { binding, capabilities } = structuredClone(initialized.value);
+    try {
+      const limits = {
+        maxBytes: 65536,
+        maxTextBytes: 32768,
+        maxDepth: 16,
+        maxNodes: 2048,
+      };
+      decode(
+        boundedJson(
           {
-            binding: structuredClone(binding),
-            capabilities: structuredClone(capabilities),
+            schemaVersion: 2,
+            kind: "session",
+            namespace,
+            revision: 0,
+            lastSequence: 0,
+            status: "active",
+            binding,
+            capabilities,
           },
-          tools!,
-          remaining(),
-        );
-        if (!checked.ok) return checked;
-        if (!checked.value.platform || !checked.value.verificationRef)
-          return denied();
-      }
-      if (budget.signal.aborted || remaining().timeoutMs <= 0) return denied();
-      const value = new VerifiedProviderSession(
+          limits,
+        ),
+        limits,
+      );
+    } catch {
+      return denied();
+    }
+    if (
+      binding.workspaceId !== workspaceId ||
+      binding.provider !== provider ||
+      !same(binding.config, config) ||
+      binding.accountRef !== accountRef ||
+      capabilities.tools !== (controlled ? "host_mediated" : "disabled")
+    )
+      return denied();
+    if (previous) {
+      const prior = previous.binding;
+      if (
+        binding.workspaceId !== prior.workspaceId ||
+        binding.generation === prior.generation ||
+        binding.provider !== prior.provider ||
+        binding.providerVersion !== prior.providerVersion ||
+        binding.adapterVersion !== prior.adapterVersion ||
+        binding.accountRef !== prior.accountRef ||
+        !same(binding.config, prior.config) ||
+        binding.nativeSessionId !== prior.nativeSessionId ||
+        capabilities.continuation !== "across_processes"
+      )
+        return denied();
+    }
+    if (controlled) {
+      const checked = await verifier!.verify(
+        {
+          binding: structuredClone(binding),
+          capabilities: structuredClone(capabilities),
+        },
+        tools!,
+        budget,
+      );
+      if (!checked.ok) return checked;
+      if (!checked.value.platform || !checked.value.verificationRef)
+        return denied();
+    }
+    if (budget.signal.aborted) return denied();
+    return {
+      ok: true,
+      value: new VerifiedProviderSession(
         authority,
+        port,
+        namespace,
         binding,
         capabilities,
         tools,
-      );
-      admitted = true;
-      return { ok: true, value };
-    } catch {
-      return denied();
-    } finally {
-      if (opened && !admitted) {
-        // Admission failure never exposes a live unverified session. Cleanup gets
-        // its own bounded budget even if the caller's operation was aborted.
-        const timeoutMs = Math.min(budget.timeoutMs, 15000);
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        try {
-          await Promise.race([
-            port.close({ timeoutMs, signal: AbortSignal.timeout(timeoutMs) }),
-            new Promise<void>((resolve) => {
-              timer = setTimeout(resolve, timeoutMs);
-            }),
-          ]);
-        } catch {
-          /* The caller still owns the port and may retry close. */
-        } finally {
-          clearTimeout(timer);
-        }
-      }
-    }
+        previous && {
+          namespace: previous.namespace,
+          binding: previous.binding,
+        },
+      ),
+    };
   }
 }

@@ -82,7 +82,8 @@
         "config": {
           "id": "config-1",
           "revision": "1"
-        }
+        },
+        "workspaceId": "fixture-workspace"
       },
       "capabilities": {
         "continuation": "unsupported",
@@ -186,8 +187,9 @@
       "body": {
         "type": "text",
         "messageId": "m-1",
-        "text": "\u4f60\u597d <script> inert"
-      }
+        "text": "你好 <script> inert"
+      },
+      "attemptId": "attempt-command-1"
     },
     {
       "schemaVersion": 2,
@@ -205,7 +207,8 @@
       "body": {
         "type": "cancel_dispatched",
         "confirmation": "request_only"
-      }
+      },
+      "attemptId": "attempt-command-1"
     },
     {
       "schemaVersion": 2,
@@ -233,7 +236,8 @@
             }
           ]
         }
-      }
+      },
+      "attemptId": "attempt-command-1"
     },
     {
       "schemaVersion": 2,
@@ -251,7 +255,8 @@
       "body": {
         "type": "terminal",
         "outcome": "interrupted"
-      }
+      },
+      "attemptId": "attempt-command-1"
     },
     {
       "schemaVersion": 2,
@@ -348,11 +353,13 @@
       },
       "state": "dispatching",
       "dispatch": {
-        "generation": "generation-1",
         "nativeSessionId": "native-1",
         "nativeRunId": "run-1",
         "nativeRequestId": "request-1",
-        "certainty": "submitted"
+        "certainty": "submitted",
+        "attemptId": "attempt-command-1",
+        "originGeneration": "generation-1",
+        "observerGeneration": "generation-1"
       }
     },
     {
@@ -388,11 +395,13 @@
       },
       "state": "running",
       "dispatch": {
-        "generation": "generation-1",
         "nativeSessionId": "native-1",
         "nativeRunId": "run-1",
         "nativeRequestId": "request-1",
-        "certainty": "submitted"
+        "certainty": "submitted",
+        "attemptId": "attempt-command-1",
+        "originGeneration": "generation-1",
+        "observerGeneration": "generation-1"
       }
     },
     {
@@ -428,11 +437,13 @@
       },
       "state": "reconciliation_required",
       "dispatch": {
-        "generation": "generation-1",
         "nativeSessionId": "native-1",
         "nativeRunId": "run-1",
         "nativeRequestId": "request-1",
-        "certainty": "unknown"
+        "certainty": "unknown",
+        "attemptId": "attempt-command-1",
+        "originGeneration": "generation-1",
+        "observerGeneration": "generation-1"
       }
     },
     {
@@ -467,7 +478,14 @@
         "acceptedRevision": 1
       },
       "state": "terminal",
-      "outcome": "completed"
+      "outcome": "completed",
+      "dispatch": {
+        "attemptId": "attempt-command-1",
+        "originGeneration": "generation-1",
+        "observerGeneration": "generation-1",
+        "nativeSessionId": "native-1",
+        "certainty": "submitted"
+      }
     },
     {
       "schemaVersion": 2,
@@ -485,7 +503,8 @@
       "body": {
         "type": "status",
         "state": "running"
-      }
+      },
+      "attemptId": "attempt-command-1"
     },
     {
       "schemaVersion": 2,
@@ -505,7 +524,8 @@
         "proposalId": "p-1",
         "disposition": "returned",
         "text": "not execution evidence"
-      }
+      },
+      "attemptId": "attempt-command-1"
     },
     {
       "schemaVersion": 2,
@@ -524,7 +544,331 @@
         "type": "interaction",
         "interactionId": "i-1",
         "status": "unavailable"
+      },
+      "attemptId": "attempt-command-1"
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "commandRecord",
+      "command": {
+        "schemaVersion": 2,
+        "kind": "command",
+        "sessionId": "session-1",
+        "commandId": "command-1",
+        "expiresAtMs": 1000,
+        "input": {
+          "type": "prompt",
+          "text": "fixture text",
+          "policy": "queue_next"
+        }
+      },
+      "receipt": {
+        "schemaVersion": 2,
+        "kind": "receipt",
+        "namespace": {
+          "tenantId": "tenant-1",
+          "principalId": "user-1",
+          "authorityId": "authority-1",
+          "sessionId": "session-1"
+        },
+        "commandId": "command-1",
+        "contentHash": "273d2bc05c0cb23b02f666dff841b992d7839f7c43352570827c46ab4b6b0de7",
+        "acceptedAtMs": 0,
+        "retryUntilMs": 100,
+        "receiptUntilMs": 200,
+        "acceptedRevision": 1
+      },
+      "state": "invalidated",
+      "failure": {
+        "code": "stale_binding",
+        "retry": "never"
       }
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "event",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "eventId": "new-event-0",
+      "sequence": 1,
+      "commandId": "command-1",
+      "generation": "generation-1",
+      "body": {
+        "type": "invalidated",
+        "failure": {
+          "code": "stale_binding",
+          "retry": "never"
+        }
+      }
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "event",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "eventId": "new-event-1",
+      "sequence": 1,
+      "commandId": "command-1",
+      "generation": "generation-1",
+      "body": {
+        "type": "dispatch",
+        "attempt": {
+          "attemptId": "attempt-command-1",
+          "originGeneration": "generation-1",
+          "observerGeneration": "generation-1",
+          "nativeSessionId": "native-1",
+          "certainty": "submitted"
+        }
+      },
+      "attemptId": "attempt-command-1"
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "event",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "eventId": "new-event-2",
+      "sequence": 1,
+      "commandId": "command-1",
+      "generation": "generation-1",
+      "body": {
+        "type": "reconciled",
+        "attempt": {
+          "attemptId": "attempt-command-1",
+          "originGeneration": "generation-1",
+          "observerGeneration": "generation-1",
+          "nativeSessionId": "native-1",
+          "certainty": "submitted"
+        },
+        "resolution": "running"
+      },
+      "attemptId": "attempt-command-1"
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "event",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "eventId": "new-event-3",
+      "sequence": 1,
+      "commandId": "command-1",
+      "generation": "generation-1",
+      "body": {
+        "type": "reconciled",
+        "attempt": {
+          "attemptId": "attempt-command-1",
+          "originGeneration": "generation-1",
+          "observerGeneration": "generation-1",
+          "nativeSessionId": "native-1",
+          "certainty": "submitted"
+        },
+        "resolution": "terminal"
+      },
+      "attemptId": "attempt-command-1"
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "event",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "eventId": "new-event-4",
+      "sequence": 1,
+      "commandId": "command-1",
+      "generation": "generation-1",
+      "body": {
+        "type": "reconciled",
+        "attempt": {
+          "attemptId": "attempt-command-1",
+          "originGeneration": "generation-1",
+          "observerGeneration": "generation-1",
+          "nativeSessionId": "native-1",
+          "certainty": "submitted"
+        },
+        "resolution": "not_submitted"
+      },
+      "attemptId": "attempt-command-1"
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "event",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "eventId": "new-event-5",
+      "sequence": 1,
+      "commandId": "command-1",
+      "generation": "generation-1",
+      "body": {
+        "type": "reconciled",
+        "attempt": {
+          "attemptId": "attempt-command-1",
+          "originGeneration": "generation-1",
+          "observerGeneration": "generation-1",
+          "nativeSessionId": "native-1",
+          "certainty": "submitted"
+        },
+        "resolution": "unknown"
+      },
+      "attemptId": "attempt-command-1"
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "event",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "eventId": "new-event-6",
+      "sequence": 1,
+      "generation": "generation-1",
+      "body": {
+        "type": "session_rebound",
+        "previousGeneration": "previous-generation"
+      }
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "event",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "eventId": "new-event-7",
+      "sequence": 1,
+      "commandId": "command-1",
+      "generation": "generation-1",
+      "body": {
+        "type": "surface_invalidated",
+        "surfaceInstanceId": "surface-instance-1",
+        "revision": 1
+      },
+      "attemptId": "attempt-command-1"
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "event",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "eventId": "new-event-8",
+      "sequence": 1,
+      "generation": "generation-1",
+      "body": {
+        "type": "session_retired"
+      }
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "event",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "eventId": "new-event-9",
+      "sequence": 1,
+      "commandId": "command-1",
+      "generation": "generation-1",
+      "body": {
+        "type": "surface",
+        "operation": "create",
+        "surfaceInstanceId": "surface-instance-1",
+        "revision": 0,
+        "payload": {
+          "version": "v0.9.1",
+          "createSurface": {
+            "surfaceId": "surface-1",
+            "catalogId": "basic"
+          }
+        }
+      },
+      "attemptId": "attempt-command-1"
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "event",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "eventId": "new-event-10",
+      "sequence": 1,
+      "commandId": "command-1",
+      "generation": "generation-1",
+      "body": {
+        "type": "surface",
+        "operation": "update",
+        "surfaceInstanceId": "surface-instance-1",
+        "revision": 0,
+        "payload": {
+          "version": "v0.9.1",
+          "updateComponents": {
+            "surfaceId": "surface-1",
+            "components": []
+          }
+        }
+      },
+      "attemptId": "attempt-command-1"
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "event",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "eventId": "new-event-11",
+      "sequence": 1,
+      "commandId": "command-1",
+      "generation": "generation-1",
+      "body": {
+        "type": "surface",
+        "operation": "delete",
+        "surfaceInstanceId": "surface-instance-1",
+        "revision": 0,
+        "payload": {
+          "version": "v0.9.1",
+          "deleteSurface": {
+            "surfaceId": "surface-1"
+          }
+        }
+      },
+      "attemptId": "attempt-command-1"
     }
   ],
   "invalid": [
@@ -658,6 +1002,31 @@
     {
       "name": "unclassified_callback",
       "raw": "{\"schemaVersion\":2,\"kind\":\"interaction\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"interactionId\":\"i-1\",\"commandId\":\"command-1\",\"generation\":\"generation-1\",\"expiresAtMs\":100,\"status\":\"pending\",\"callbackLifetime\":\"generation_bound\",\"nativeCallbackId\":\"r-1\",\"request\":{\"question\":\"Choose an option\",\"options\":[\"a\",\"b\"]}}",
+      "code": "schema"
+    },
+    {
+      "name": "accepted-with-dispatch",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"commandRecord\",\"command\":{\"schemaVersion\":2,\"kind\":\"command\",\"sessionId\":\"session-1\",\"commandId\":\"command-1\",\"expiresAtMs\":1000,\"input\":{\"type\":\"prompt\",\"text\":\"fixture text\",\"policy\":\"queue_next\"}},\"receipt\":{\"schemaVersion\":2,\"kind\":\"receipt\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"commandId\":\"command-1\",\"contentHash\":\"273d2bc05c0cb23b02f666dff841b992d7839f7c43352570827c46ab4b6b0de7\",\"acceptedAtMs\":0,\"retryUntilMs\":100,\"receiptUntilMs\":200,\"acceptedRevision\":1},\"state\":\"accepted\",\"dispatch\":{\"attemptId\":\"attempt-command-1\",\"originGeneration\":\"generation-1\",\"observerGeneration\":\"generation-1\",\"nativeSessionId\":\"native-1\",\"certainty\":\"submitted\"}}",
+      "code": "schema"
+    },
+    {
+      "name": "invalidated-with-outcome",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"commandRecord\",\"command\":{\"schemaVersion\":2,\"kind\":\"command\",\"sessionId\":\"session-1\",\"commandId\":\"command-1\",\"expiresAtMs\":1000,\"input\":{\"type\":\"prompt\",\"text\":\"fixture text\",\"policy\":\"queue_next\"}},\"receipt\":{\"schemaVersion\":2,\"kind\":\"receipt\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"commandId\":\"command-1\",\"contentHash\":\"273d2bc05c0cb23b02f666dff841b992d7839f7c43352570827c46ab4b6b0de7\",\"acceptedAtMs\":0,\"retryUntilMs\":100,\"receiptUntilMs\":200,\"acceptedRevision\":1},\"state\":\"invalidated\",\"failure\":{\"code\":\"stale_binding\",\"retry\":\"never\"},\"outcome\":\"completed\"}",
+      "code": "schema"
+    },
+    {
+      "name": "terminal-without-attempt",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"commandRecord\",\"command\":{\"schemaVersion\":2,\"kind\":\"command\",\"sessionId\":\"session-1\",\"commandId\":\"command-1\",\"expiresAtMs\":1000,\"input\":{\"type\":\"prompt\",\"text\":\"fixture text\",\"policy\":\"queue_next\"}},\"receipt\":{\"schemaVersion\":2,\"kind\":\"receipt\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"commandId\":\"command-1\",\"contentHash\":\"273d2bc05c0cb23b02f666dff841b992d7839f7c43352570827c46ab4b6b0de7\",\"acceptedAtMs\":0,\"retryUntilMs\":100,\"receiptUntilMs\":200,\"acceptedRevision\":1},\"state\":\"terminal\",\"outcome\":\"completed\"}",
+      "code": "schema"
+    },
+    {
+      "name": "text-missing-attempt",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"event\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"eventId\":\"event-1\",\"sequence\":1,\"commandId\":\"command-1\",\"generation\":\"generation-1\",\"body\":{\"type\":\"text\",\"messageId\":\"m-1\",\"text\":\"\\u4f60\\u597d <script> inert\"}}",
+      "code": "schema"
+    },
+    {
+      "name": "session-event-with-command",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"event\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"eventId\":\"event-1\",\"sequence\":1,\"commandId\":\"command-1\",\"generation\":\"generation-1\",\"body\":{\"type\":\"session_retired\"},\"attemptId\":\"attempt-command-1\"}",
       "code": "schema"
     }
   ],

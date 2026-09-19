@@ -28,3 +28,7 @@ prmonitor 固定 `4dcc87264ad740da6559824e0a8b04a1c2914d4b`、rss-mdm 固定 `58
 A2UI 为固定 v0.9.1 官方 schema snapshot，没有声称对应已发布 Git tag 或已完成真实互操作。Node 验证基线24.14.1、pnpm11.4.0；其余依赖版本和完整性由 Cargo.lock/pnpm-lock 持有。源码生成、fixtures、隔离消费是 T1；SQLite crash/rollback、真实 provider、进程与工具隔离的 T2 证据由后续 owner 提供。
 
 PR #1036 修复参考：ref: Node.js lib/internal/abort_controller.js（本地 Node24.14.1 内置源码的 AbortSignal.timeout/any）；signal 只发取消通知，conformance 另持有有界 watchdog 并保留清理错误。ref: serde_json src/error.rs@1.0.151（[一手源码](https://github.com/serde-rs/json/blob/v1.0.151/src/error.rs)），parser-level NumberOutOfRange 属于 Syntax，映射为公共 number 诊断并由共享正/负指数溢出 golden 固定。ref: TypeScript lib/tsc.js@5.6.2（本地固定包的 classPrivateFieldGet helper）；私有字段提供 nominal admission 边界，运行时构造另核验模块私有 token。新增 surface.status/response.surface 从唯一 schema 再生成 Rust/TS，没有手改生成物。
+
+## A02 前置契约补充
+
+参考 [Pi SQLite session backend](https://github.com/earendil-works/pi/blob/d981de1229ef899957bbe968bc8dcda02a21f477/packages/session-backends/sqlite-node/src/index.ts) 的同步数据库事务边界，将领域状态转换抽为生产同步函数供内存与 SQLite adapter 共用；未复制 Pi 源码或存储格式。新的 DispatchAttempt/observerGeneration、名义恢复证据与 surface 稳定事件是本产品契约，既有格式直接替换，不提供历史导入。

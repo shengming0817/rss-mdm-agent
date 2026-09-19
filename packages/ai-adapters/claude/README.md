@@ -9,6 +9,7 @@ import { createClaudeAdapter } from '@rss-mdm-agent/ai-adapter-claude';
 import { VerifiedProviderSession } from '@rss-mdm-agent/ai-contract';
 
 const configuration = {
+  namespace: { tenantId:'tenant', principalId:'principal', authorityId:'authority', sessionId:'session' },
   provider: 'claude', config: { id: 'tenant-config', revision: '1' },
   accountRef: 'account-ref', workingDirectory: '/absolute/workspace',
   permissions: 'tools_disabled',
@@ -36,7 +37,7 @@ JSON 取得凭据。`ClaudeConfiguration` 将 provider 固定为 claude，resolv
 
 - `createSession` 为 `query` 显式指定 UUID；`resume` 只使用指定的 `nativeSessionId`，
   校验固定 provider/adapter 版本并生成新 generation，不使用目录的“最近会话”。
-  Host 调用 `VerifiedProviderSession.resume(adapter, priorBinding, configuration, budget)`，
+  Host 调用 `VerifiedProviderSession.restore(adapter, previousSession, configuration, budget)`，
   显式消费当前配置并对新 generation 重新验证；返回新的名义准入，旧证据不能复用。
   adapter 的原始 resume 只返回待验证的 binding+capabilities，不能代替这个入口。
 - 一次只派发一个 turn。Host 持有持久 command ledger 与 `queue_next` 队列；忙时返回
@@ -58,7 +59,7 @@ JSON 取得凭据。`ClaudeConfiguration` 将 provider 固定为 claude，resolv
 它只转交不可信提案与结果，不能签发批准/执行许可。
 
 `host_mediated` 必须由组合根提供 ToolEndpoint 与可信 verifier，并通过
-`VerifiedProviderSession.open` / `VerifiedProviderSession.resume` 准入。verifier 的证据必须适用于当前版本、平台、配置和
+`VerifiedProviderSession.open` / `VerifiedProviderSession.restore` 准入。verifier 的证据必须适用于当前版本、平台、配置和
 incarnation；测试 verifier 不能用于生产。SDK 策略限制不是 OS 沙箱证明。
 
 设置来源、skills、plugins、MCP 配置和 child env 显式收窄；没有任意 SDK options 透传。
@@ -125,3 +126,6 @@ SDK `createSdkMcpServer` 在固定版本对 Zod record 的 bundled schema 转换
 [sdk.mjs](https://unpkg.com/@anthropic-ai/claude-agent-sdk@0.3.277/sdk.mjs) 的进程、MCP 与回调实现。
 本包新代码 MIT；Anthropic SDK/CLI 保留其自身商业许可及使用条款，未重标为 MIT。
 lock 固定 SDK 及平台包版本；pnpm release-age 例外仅列这些精确版本，未关闭全局供应链检查。
+
+
+A01 恢复契约升级后，submit 显式接收 Host 已持久化的 DispatchAttempt；重复调用必须保持原 attempt。所有观察含 attemptId，reconcile 接收完整 CommandRecord 并返回同一命令/attempt 的闭合结果；Host 通过 VerifiedProviderSession.reconcile 获取 store 可消费的 nominal 证据。原生 echo 使用 submitted 观察，callback 丢失使用 interaction_unavailable 观察；adapter 不直接发布 Host 的 status/interaction 生命周期事件。Binding 持久化 workspaceId，resolver 必须与准入 namespace 和工作目录一致；每个 adapter 实例在 close 后永久停止准入，冷恢复使用新实例。

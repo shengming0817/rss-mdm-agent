@@ -53,7 +53,9 @@ export class FakeHost implements HostPort {
     if (this.closed || budget.signal.aborted) return fail("unavailable");
     if (options.profile === "controlled_tools")
       return fail("permission_denied");
+    const namespace = { ...caller, sessionId: `fake-session-${++this.next}` };
     const provider = new ScriptedProvider();
+    this.providers.push(provider);
     const admitted = await VerifiedProviderSession.open(
       provider,
       {
@@ -61,12 +63,12 @@ export class FakeHost implements HostPort {
         config: options.config,
         accountRef: options.accountRef,
         workingDirectory: ".",
+        namespace,
         permissions: "tools_disabled",
       },
       budget,
     );
     if (!admitted.ok) return admitted;
-    this.providers.push(provider);
     if (this.closed) {
       await provider.close(budget);
       return fail("unavailable");
@@ -74,7 +76,7 @@ export class FakeHost implements HostPort {
     const session: Session = {
       schemaVersion: 2,
       kind: "session",
-      namespace: { ...caller, sessionId: `fake-session-${++this.next}` },
+      namespace,
       revision: 0,
       lastSequence: 0,
       status: "active",
@@ -227,6 +229,19 @@ export class FakeHost implements HostPort {
       return fail("stale_binding");
     const command = await this.store.command(namespace, observation.commandId);
     if (!command.ok) return command;
+    const record = command.value,
+      dispatch = record.dispatch;
+    if (
+      !dispatch ||
+      !["dispatching", "running"].includes(record.state) ||
+      dispatch.certainty !== "submitted" ||
+      dispatch.attemptId !== observation.attemptId ||
+      dispatch.observerGeneration !== observation.binding.generation ||
+      dispatch.nativeSessionId !== observation.binding.nativeSessionId ||
+      dispatch.nativeRunId !== observation.binding.nativeRunId ||
+      dispatch.nativeRequestId !== observation.binding.nativeRequestId
+    )
+      return fail("stale_binding");
     for (const wake of this.listeners.get(sessionId) ?? []) {
       const queue = this.deltaQueues.get(wake)!;
       if (queue.length >= 1024)
