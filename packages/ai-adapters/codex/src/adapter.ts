@@ -874,7 +874,7 @@ export class CodexAdapter implements CodexAdapterPort {
     }
   }
   private replay(): void {
-    while (this.uncorrelated.length) {
+    for (let remaining = this.uncorrelated.length; remaining > 0; remaining--) {
       const message = this.uncorrelated.shift()!;
       this.uncorrelatedBytes -= Buffer.byteLength(boundedJson(message, limits));
       this.onNative(message, true);
