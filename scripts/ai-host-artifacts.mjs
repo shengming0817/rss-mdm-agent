@@ -7,8 +7,8 @@ import { load } from "js-yaml";
 const sourceDirectory = (name) =>
   name === "ai-host-app"
     ? "apps/ai-host"
-    : name === "ai-adapter-claude"
-      ? "packages/ai-adapters/claude"
+    : name.startsWith("ai-adapter-")
+      ? `packages/ai-adapters/${name.slice("ai-adapter-".length)}`
       : `packages/${name}`;
 export function run(command, args, cwd) {
   const result = spawnSync(command, args, {
@@ -92,7 +92,7 @@ export function packHost(root, directory, application = false) {
 }
 
 /** Materialize a deployment lock, prove every edge against the source lock, then freeze install. */
-export function installHost(root, directory, production = false) {
+export function installArtifacts(root, directory, production = false) {
   const source = load(readFileSync(join(root, "pnpm-lock.yaml"), "utf8"));
   // Seed pnpm with the locked external resolutions; only local tarball identities are new.
   writeFileSync(

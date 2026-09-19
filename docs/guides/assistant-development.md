@@ -49,3 +49,5 @@ pnpm test
 - ref: [Vue v3.5.13 packages/reactivity/src/computed.ts](https://github.com/vuejs/core/blob/v3.5.13/packages/reactivity/src/computed.ts)：computed 依赖显式响应式输入，时间经共享 ref 更新。
 
 完整验收在已提交源码上执行本仓 `make ci CI_BASE=origin/develop`，结果绑定 SHA、lock 与运行环境；不将 #2413 的真实产品装配宣称为本项已完成。
+
+AI 命令队列由 Host 持有，普通 prompt 在当前轮运行时仍可排队，不读取 provider queue capability。客户端分别呈现 acknowledged 控制确认、cancelled 未派发排队取消与普通 prompt 的模型终态；已结算控制命令不占用 busy 状态。

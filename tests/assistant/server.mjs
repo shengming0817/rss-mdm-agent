@@ -25,7 +25,6 @@ export async function startFixture() {
     undefined,
     { now: Date.now },
     {
-      queue: "supported",
       steer: "supported",
       structuredQuestion: "supported",
       continuation: "same_process",

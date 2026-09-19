@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
 import {
   packHost,
-  installHost,
+  installArtifacts,
   run,
   runtimeArtifact,
 } from "./ai-host-artifacts.mjs";
@@ -53,7 +53,7 @@ try {
   rmSync(directory, { recursive: true, force: true });
   mkdirSync(directory, { recursive: true });
   artifacts = packHost(root, directory, true);
-  deploymentLockSha256 = installHost(root, directory, true);
+  deploymentLockSha256 = installArtifacts(root, directory, true);
   run("/usr/bin/tar", ["-xzf", archive, "-C", scratch], root);
   mkdirSync(join(directory, "bin"));
   copyFileSync(

@@ -123,7 +123,9 @@ export function createAssistant(
     commands.value.some(
       (c) =>
         c.command.input.type === "prompt" &&
-        !["terminal", "invalidated"].includes(c.state),
+        !["terminal", "invalidated", "acknowledged", "cancelled"].includes(
+          c.state,
+        ),
     ),
   );
   const active = computed(() =>
@@ -131,15 +133,16 @@ export function createAssistant(
       (c) =>
         c.command.input.type === "prompt" &&
         c.dispatch &&
-        !["terminal", "invalidated"].includes(c.state),
+        !["terminal", "invalidated", "acknowledged", "cancelled"].includes(
+          c.state,
+        ),
     ),
   );
   const canSend = computed(
     () =>
       live(view.value) &&
       !state.pending.has(state.selected) &&
-      !state.sending.has(state.selected) &&
-      (!busy.value || view.value?.capabilities.queue === "supported"),
+      !state.sending.has(state.selected),
   );
   const canSteer = computed(
     () =>
@@ -163,7 +166,9 @@ export function createAssistant(
         (c) =>
           c.command.input.type === "cancel" &&
           c.command.input.targetCommandId === active.value?.command.commandId &&
-          !["terminal", "invalidated"].includes(c.state),
+          !["terminal", "invalidated", "acknowledged", "cancelled"].includes(
+            c.state,
+          ),
       ) &&
       !state.pending.has(state.selected) &&
       !state.sending.has(state.selected),

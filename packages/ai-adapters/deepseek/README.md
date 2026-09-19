@@ -53,3 +53,5 @@ const admitted = await VerifiedProviderSession.open(port, configuration, budget)
 manifest 仅声明实际源码 import 的直接运行 roots；版本为精确值，Harness 版本由 SessionController root 派生。完整解析闭包及 integrity 由 pnpm-lock.yaml 持有，frozen install 校验其 freshness；启动验证已安装的直接 roots，源码检查防止无 import 能力重新混入 direct dependencies。上游 peer 依赖出现在 lock 中不表示该能力已装配。
 
 公共 `ProviderConfiguration` 仅含可序列化身份与配置；受控工具通过 adapter options 的 `tools` 注入，并将同一个 endpoint 与可信 verifier 作为 `ProviderAdmission` 显式传入 `VerifiedProviderSession.open/restore/fork`。所有命令共用带 attempt 的 `dispatch`；cancel/respond（以及支持的 steer）成功返回 `acknowledged`，不生成模型 outcome。原生核实证据经 `SessionCommit.providerFacts` 原子提交。
+
+独立 tarball 消费使用源码 lock 中的固定外部解析及依赖边，校验部署 lock 后 frozen offline 安装，不从本机 registry metadata 另选传递版本。
