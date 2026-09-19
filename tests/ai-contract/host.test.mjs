@@ -170,3 +170,31 @@ test("Host conformance preserves both body and close errors", async () => {
       error.errors[1].errors[0] === cleanup,
   );
 });
+
+test("separate Host sessions cannot exchange provider observations", async () => {
+  const host = new FakeHost();
+  try {
+    const a = unwrap(
+      await host.createSession(fixtureCaller, options, budget()),
+    );
+    const b = unwrap(
+      await host.createSession(fixtureCaller, options, budget()),
+    );
+    const command = { ...fixtureCommand(), sessionId: b.namespace.sessionId };
+    unwrap(await host.submit(fixtureCaller, command, budget()));
+    assert.equal(
+      (
+        await host.publishDelta(fixtureCaller, b.namespace.sessionId, {
+          type: "delta",
+          binding: a.binding,
+          commandId: command.commandId,
+          messageId: "m",
+          text: "wrong session",
+        })
+      ).error.code,
+      "stale_binding",
+    );
+  } finally {
+    await host.close(budget());
+  }
+});

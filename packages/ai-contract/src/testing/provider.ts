@@ -15,6 +15,7 @@ import { fixtureSession, fixtureCommand, unwrap } from "./conformance.js";
 import { ok, fail, fixtureLimits } from "./store.js";
 import { VerifiedProviderSession } from "../session.js";
 import { fingerprint } from "../codec.js";
+let nextProviderInstance = 0;
 /** Scripted provider contract double. Never spawns a process or executes a tool. */
 export class ScriptedProvider implements ProviderAgentPort {
   readonly evidence = "scripted_provider" as const;
@@ -23,6 +24,7 @@ export class ScriptedProvider implements ProviderAgentPort {
   observations: ProviderObservation[] = [];
   submission: "submitted" | "unknown" | "not_sent" = "submitted";
   dispatched = 0;
+  private readonly instance = ++nextProviderInstance;
   private incarnation = 0;
   async createSession(
     configuration: ProviderConfiguration,
@@ -36,8 +38,8 @@ export class ScriptedProvider implements ProviderAgentPort {
     this.configuration = configuration;
     this.binding = {
       ...fixtureSession().binding,
-      generation: `generation-${++this.incarnation}`,
-      nativeSessionId: `native-${this.incarnation}`,
+      generation: `generation-${this.instance}-${++this.incarnation}`,
+      nativeSessionId: `native-${this.instance}-${this.incarnation}`,
       config: structuredClone(configuration.config),
       accountRef: configuration.accountRef,
     };

@@ -371,3 +371,19 @@ for (const operation of [
     }
   });
 }
+
+test("independent provider instances cannot accept each other's binding", async () => {
+  const a = new ScriptedProvider(),
+    b = new ScriptedProvider();
+  const first = unwrap(await a.createSession(configuration, budget()));
+  const second = unwrap(await b.createSession(configuration, budget()));
+  assert.notDeepEqual(first.binding, second.binding);
+  assert.equal(
+    (await b.submit(first.binding, fixtureCommand(), budget())).certainty,
+    "not_sent",
+  );
+  assert.equal(
+    (await b.submit(second.binding, fixtureCommand(), budget())).certainty,
+    "submitted",
+  );
+});
