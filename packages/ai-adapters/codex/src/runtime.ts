@@ -8,9 +8,35 @@ import {
   type Budget,
   type Result,
 } from "@rss-mdm-agent/ai-contract";
-import { bounded, live, limits, ok, fail } from "./support.js";
+import {
+  bounded,
+  live,
+  limits,
+  NativeNotSubmittedError,
+  ok,
+  fail,
+} from "./support.js";
 
 export const CODEX_VERSION = "0.155.0";
+export { NativeNotSubmittedError } from "./support.js";
+export function classifyNativeRejection(
+  method: string,
+  error: unknown,
+): NativeNotSubmittedError | undefined {
+  if (
+    CODEX_VERSION !== "0.155.0" ||
+    method !== "turn/steer" ||
+    !error ||
+    typeof error !== "object" ||
+    Array.isArray(error) ||
+    JSON.stringify(Object.keys(error).sort()) !==
+      JSON.stringify(["code", "message"]) ||
+    (error as { code?: unknown }).code !== -32600 ||
+    (error as { message?: unknown }).message !== "no active turn to steer"
+  )
+    return undefined;
+  return new NativeNotSubmittedError();
+}
 export interface LaunchSpec {
   cwd: string;
   env: Record<string, string>;
@@ -71,7 +97,11 @@ class StdioConnection implements RpcConnection {
   private child: ChildProcessWithoutNullStreams;
   private pending = new Map<
     number,
-    { resolve(value: unknown): void; reject(error: Error): void }
+    {
+      method: string;
+      resolve(value: unknown): void;
+      reject(error: Error): void;
+    }
   >();
   private handler?: (message: NativeMessage) => void;
   private buffered: NativeMessage[] = [];
@@ -154,8 +184,14 @@ class StdioConnection implements RpcConnection {
       const waiting = this.pending.get(value.id);
       if (!waiting) return; // Timed-out RPCs are reconciled through native history.
       this.pending.delete(value.id);
-      if ("error" in value) waiting.reject(new Error("native RPC rejected"));
-      else waiting.resolve(value.result);
+      if ("error" in value) {
+        const definitive =
+          JSON.stringify(Object.keys(value).sort()) ===
+          JSON.stringify(["error", "id"])
+            ? classifyNativeRejection(waiting.method, value.error)
+            : undefined;
+        waiting.reject(definitive ?? new Error("native RPC rejected"));
+      } else waiting.resolve(value.result);
     }
   }
   private write(message: unknown): void {
@@ -174,16 +210,17 @@ class StdioConnection implements RpcConnection {
       throw new Error("RPC budget unavailable");
     const id = ++this.sequence;
     const response = new Promise<unknown>((resolve, reject) =>
-      this.pending.set(id, { resolve, reject }),
+      this.pending.set(id, { method, resolve, reject }),
     );
     // Attach the rejection observer before writing or waiting so exit never rejects unobserved.
     const result = bounded(response, budget);
     try {
       this.write({ id, method, params });
       return await result;
-    } catch {
+    } catch (error) {
       this.pending.get(id)?.reject(new Error("RPC unavailable"));
       await result.catch(() => {});
+      if (error instanceof NativeNotSubmittedError) throw error;
       throw new Error("RPC unavailable");
     } finally {
       this.pending.delete(id);

@@ -47,6 +47,7 @@ import {
   fail,
   limits,
   live,
+  NativeNotSubmittedError,
   ok,
   Queue,
   same,
@@ -89,9 +90,15 @@ interface Attempt {
   dispatch: DispatchAttempt;
   binding: Binding;
   confirmed: boolean;
+  notSubmitted?: true;
   outcome?: Outcome;
   completedItems: Set<string>;
 }
+const dispatchIdentity = ({
+  certainty: _certainty,
+  correlationId: _correlationId,
+  ...identity
+}: DispatchAttempt) => identity;
 const scope = (budget: Budget) => {
   const deadline = Date.now() + budget.timeoutMs;
   return () => ({
@@ -593,9 +600,11 @@ export class CodexAdapter implements CodexAdapterPort {
         existing.dispatch.attemptId !== attempt.attemptId
       )
         return rejected("content_conflict");
-      return existing.confirmed
-        ? { certainty: "submitted", binding: copy(existing.binding) }
-        : { certainty: "unknown", correlationId: attempt.attemptId };
+      return existing.notSubmitted
+        ? rejected("unavailable")
+        : existing.confirmed
+          ? { certainty: "submitted", binding: copy(existing.binding) }
+          : { certainty: "unknown", correlationId: attempt.attemptId };
     }
     if (
       this.attempts.size >= 1024 ||
@@ -607,7 +616,9 @@ export class CodexAdapter implements CodexAdapterPort {
       )
     )
       return rejected("limit_exceeded");
-    const unsettled = [...this.attempts.values()].filter((a) => !a.outcome);
+    const unsettled = [...this.attempts.values()].filter(
+      (a) => !a.outcome && !a.notSubmitted,
+    );
     const steering = input.input.policy === "steer";
     if (steering) {
       if (
@@ -676,7 +687,17 @@ export class CodexAdapter implements CodexAdapterPort {
       }
       this.replay();
       return { certainty: "submitted", binding: copy(entry.binding) };
-    } catch {
+    } catch (error) {
+      if (
+        steering &&
+        error instanceof NativeNotSubmittedError &&
+        !entry.confirmed &&
+        !entry.outcome
+      ) {
+        entry.notSubmitted = true;
+        entry.completedItems.clear();
+        return rejected("unavailable");
+      }
       if (acknowledged) this.breakIncarnation();
       return entry.confirmed
         ? { certainty: "submitted", binding: copy(entry.binding) }
@@ -760,7 +781,7 @@ export class CodexAdapter implements CodexAdapterPort {
       const entry = [...this.attempts.values()].find(
         (a) => a.dispatch.attemptId === item.clientId,
       );
-      if (entry) {
+      if (entry && !entry.notSubmitted) {
         this.confirm(entry, turnId);
         if (!replay) this.replay();
       }
@@ -768,6 +789,7 @@ export class CodexAdapter implements CodexAdapterPort {
     const owner = [...this.attempts.values()].find(
       (a) =>
         a.confirmed &&
+        !a.notSubmitted &&
         a.binding.nativeRunId === turnId &&
         a.command.input.type === "prompt" &&
         a.command.input.policy === "queue_next",
@@ -863,6 +885,7 @@ export class CodexAdapter implements CodexAdapterPort {
       if (
         entry.binding.nativeRunId !== turn.id ||
         !entry.confirmed ||
+        entry.notSubmitted ||
         entry.outcome
       )
         continue;
@@ -887,7 +910,7 @@ export class CodexAdapter implements CodexAdapterPort {
     if (this.failed) return;
     this.failed = true;
     for (const entry of this.attempts.values()) {
-      if (entry.outcome) continue;
+      if (entry.outcome || entry.notSubmitted) continue;
       try {
         this.emit(entry, {
           type: "error",
@@ -1033,16 +1056,6 @@ export class CodexAdapter implements CodexAdapterPort {
       !isId(dispatch.attemptId)
     )
       return fail("stale_binding");
-    const history = await this.readHistory(binding, budget);
-    if (!history.ok) return history;
-    const matches = history.value.filter((turn) =>
-      turn.items.some(
-        (item) =>
-          item.type === "userMessage" && item.clientId === dispatch.attemptId,
-      ),
-    );
-    if (matches.length > 1) return fail("content_conflict");
-    const found = matches[0];
     const observedBinding: Binding = {
       ...this.binding!,
       ...(dispatch.nativeRunId ? { nativeRunId: dispatch.nativeRunId } : {}),
@@ -1055,6 +1068,34 @@ export class CodexAdapter implements CodexAdapterPort {
       attemptId: dispatch.attemptId,
       binding: observedBinding,
     };
+    const remembered = this.attempts.get(record.command.commandId);
+    if (
+      remembered &&
+      (remembered.dispatch.attemptId !== dispatch.attemptId ||
+        !same(remembered.command, record.command))
+    )
+      return fail("content_conflict");
+    if (
+      remembered?.notSubmitted &&
+      (!["intent", "unknown"].includes(dispatch.certainty) ||
+        !same(
+          dispatchIdentity(remembered.dispatch),
+          dispatchIdentity(dispatch),
+        ))
+    )
+      return fail("stale_binding");
+    if (remembered?.notSubmitted)
+      return ok({ ...base, status: "not_submitted" });
+    const history = await this.readHistory(binding, budget);
+    if (!history.ok) return history;
+    const matches = history.value.filter((turn) =>
+      turn.items.some(
+        (item) =>
+          item.type === "userMessage" && item.clientId === dispatch.attemptId,
+      ),
+    );
+    if (matches.length > 1) return fail("content_conflict");
+    const found = matches[0];
     if (!found) return ok({ ...base, status: "unknown" });
     if (
       (dispatch.nativeRunId && dispatch.nativeRunId !== found.id) ||
@@ -1062,7 +1103,7 @@ export class CodexAdapter implements CodexAdapterPort {
         dispatch.nativeRequestId !== dispatch.attemptId)
     )
       return fail("stale_binding");
-    const entry = this.attempts.get(record.command.commandId) ?? {
+    const entry = remembered ?? {
       command: copy(record.command),
       dispatch: copy(dispatch),
       binding: { ...observedBinding, nativeRequestId: dispatch.attemptId },

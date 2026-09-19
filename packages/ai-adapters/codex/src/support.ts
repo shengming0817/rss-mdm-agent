@@ -16,6 +16,13 @@ export const fail = (
   retry: Failure["retry"] = "never",
 ): Result<never> => ({ ok: false, error: { code, retry } });
 export const copy = <T>(value: T): T => JSON.parse(boundedJson(value, limits));
+/** Internal proof that the fixed native runtime rejected before accepting input. */
+export class NativeNotSubmittedError extends Error {
+  constructor() {
+    super("native request was not submitted");
+    this.name = "NativeNotSubmittedError";
+  }
+}
 export function same(a: unknown, b: unknown): boolean {
   const sort = (value: any): any =>
     Array.isArray(value)
@@ -48,7 +55,14 @@ export function bounded<T>(work: PromiseLike<T>, budget: Budget): Promise<T> {
     const abort = () => finish(() => reject(new Error("budget exhausted")));
     Promise.resolve(work).then(
       (v) => finish(() => resolve(v)),
-      () => finish(() => reject(new Error("provider unavailable"))),
+      (error) =>
+        finish(() =>
+          reject(
+            error instanceof NativeNotSubmittedError
+              ? error
+              : new Error("provider unavailable"),
+          ),
+        ),
     );
     if (!live(budget)) return abort();
     budget.signal.addEventListener("abort", abort, { once: true });
