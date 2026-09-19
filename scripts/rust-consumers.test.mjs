@@ -24,6 +24,7 @@ const names = [
   "execution-approval",
   "execution-lifecycle",
   "execution-sqlite",
+  "execution-app",
   "service-catalog",
   "script-plan",
   "software-plan",
@@ -403,7 +404,7 @@ test("catalog permits its canonical value owner but not arbitrary or misnamed lo
   }
 });
 
-test("only the SQLite adapter permits its exact runtime closure", () => {
+test("only the SQLite adapter and application permit their exact runtime closure", () => {
   for (const dependency of [
     "rusqlite",
     "libsqlite3-sys",
@@ -430,7 +431,7 @@ test("only the SQLite adapter permits its exact runtime closure", () => {
       const report = checkRustConsumers(root, execute);
       for (const consumer of report.consumers) {
         const allowed =
-          consumer.name === "execution-sqlite" &&
+          ["execution-sqlite", "execution-app"].includes(consumer.name) &&
           ["rusqlite", "libsqlite3-sys"].includes(dependency);
         assert.equal(
           consumer.passed,

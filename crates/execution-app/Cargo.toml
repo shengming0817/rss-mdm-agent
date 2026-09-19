@@ -1,0 +1,27 @@
+[package]
+name = "execution-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+execution-contract = { path = "../execution-contract" }
+execution-capability = { path = "../execution-capability" }
+execution-admission = { path = "../execution-admission" }
+execution-approval = { path = "../execution-approval" }
+execution-lifecycle = { path = "../execution-lifecycle" }
+execution-interaction = { path = "../execution-interaction" }
+execution-sqlite = { path = "../execution-sqlite" }
+serde.workspace = true
+serde_json.workspace = true
+serde_json_canonicalizer.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+rusqlite.workspace = true
+
+[lints.clippy]
+cognitive_complexity = "warn"
