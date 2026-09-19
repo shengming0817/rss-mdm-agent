@@ -73,7 +73,7 @@ try {
   writeFileSync(
     join(dir, "consumer.ts"),
     `import assert from 'node:assert/strict';
-import { decode, boundedJson, fingerprint, type HostPort, type ProviderAgentPort, type SessionStore, type ProviderConfiguration, type Subscription, type ProviderInteraction, type ProviderObservation, type ProviderEventBody } from '@rss-mdm-agent/ai-contract';
+import { decode, boundedJson, fingerprint, withinBudget, type HostPort, type ProviderAgentPort, type SessionStore, type ProviderConfiguration, type Subscription, type ProviderInteraction, type ProviderObservation, type ProviderEventBody } from '@rss-mdm-agent/ai-contract';
 import { VerifiedProviderSession } from '@rss-mdm-agent/ai-contract/session';
 import {createState,acceptCommand,type SessionState} from '@rss-mdm-agent/ai-contract/transitions';
 import {fixtureSession,acceptance,unwrap,FakeHost,MemorySessionStore,ScriptedProvider,fixtures,fixtureLimits,runStoreConformance,runProviderConformance,runHostConformance} from '@rss-mdm-agent/ai-contract/testing';
@@ -95,6 +95,9 @@ const pending:ProviderObservation={type:'event',binding:{} as any,commandId:'c',
 // @ts-expect-error Provider cannot manufacture a host/store lifecycle event.
 const internalEvent:ProviderEventBody={type:'session_retired'};
 assert.equal(question.nativeCallbackId,'callback');
+const caller = new AbortController();const scoped:AbortSignal[]=[];
+assert.equal(await withinBudget(()=>({timeoutMs:1000,signal:caller.signal}),b=>{scoped.push(b.signal);return 42;}),42);
+assert.equal(scoped[0].aborted,true);assert.equal(caller.signal.aborted,false);
 assert.throws(()=>boundedJson({get secret(){throw new Error('accessor must not run');}},fixtureLimits),{code:'encoding'});
 const state:SessionState=unwrap(createState(fixtureSession()));assert.equal(unwrap(acceptCommand(state,acceptance(state.session))).state.commands.size,1);
 const host:HostPort=new FakeHost();const provider:ProviderAgentPort=new ScriptedProvider();const store:SessionStore=new MemorySessionStore();

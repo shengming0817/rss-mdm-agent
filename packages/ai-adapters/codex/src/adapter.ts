@@ -1,0 +1,1208 @@
+import { randomUUID } from "node:crypto";
+import { join } from "node:path";
+import {
+  boundedJson,
+  decode,
+  isId,
+  type Binding,
+  type Budget,
+  type Command,
+  type CommandRecord,
+  type DispatchAttempt,
+  type Failure,
+  type Outcome,
+  type ProviderAgentPort,
+  type ProviderInstance,
+  type ProviderForkRequest,
+  type ProviderForkResult,
+  type ProviderDiagnostic,
+  type ProviderConfiguration,
+  type ProviderObservation,
+  type ProviderSessionBinding,
+  type Reconciliation,
+  type Result,
+  type Submission,
+} from "@rss-mdm-agent/ai-contract";
+import {
+  providerIdentity,
+  workspaceIdentity,
+} from "@rss-mdm-agent/ai-contract/session";
+import {
+  ADAPTER_VERSION,
+  CodexConfigurationFailure,
+  compatible,
+  launchSpec,
+  type CodexAdapterOptions,
+  type CodexConfiguration,
+  type ResolvedCodexConfiguration,
+} from "./configuration.js";
+import {
+  CODEX_VERSION,
+  type NativeMessage,
+  type RpcConnection,
+  type RuntimeFactory,
+} from "./runtime.js";
+import { HOST_SERVER, HOST_TOOL, ToolBridge } from "./bridge.js";
+import {
+  rpc,
+  nativeNotification,
+  type Thread,
+  type Turn,
+  type ThreadItem,
+} from "./protocol.js";
+import {
+  bounded,
+  copy,
+  fail,
+  limits,
+  live,
+  NativeNotSubmittedError,
+  ok,
+  Queue,
+  same,
+} from "./support.js";
+
+interface Attempt {
+  command: Command;
+  dispatch: DispatchAttempt;
+  binding: Binding;
+  confirmed: boolean;
+  notSubmitted?: true;
+  outcome?: Outcome;
+  completedItems: Set<string>;
+}
+const dispatchIdentity = ({
+  certainty: _certainty,
+  correlationId: _correlationId,
+  ...identity
+}: DispatchAttempt) => identity;
+const scope = (budget: Budget) => {
+  const deadline = Date.now() + budget.timeoutMs;
+  return () => ({
+    signal: budget.signal,
+    timeoutMs: Math.max(0, deadline - Date.now()),
+  });
+};
+const outcome = (turn: Turn): Outcome | undefined =>
+  (
+    ({
+      completed: "completed",
+      interrupted: "cancelled",
+      failed: "failed",
+    }) as const
+  )[turn.status as "completed" | "interrupted" | "failed"];
+function validTurn(value: any): asserts value is Turn {
+  if (
+    !value ||
+    !isId(value.id) ||
+    !["inProgress", "completed", "interrupted", "failed"].includes(
+      value.status,
+    ) ||
+    !Array.isArray(value.items)
+  )
+    throw new Error("invalid native turn");
+  for (const item of value.items)
+    if (!item || !isId(item.id) || typeof item.type !== "string")
+      throw new Error("invalid native item");
+}
+
+/** One native incarnation. Host owns durable commands, retries and verified recovery. */
+export class CodexAdapter implements ProviderAgentPort {
+  private started = false;
+  private closed = false;
+  private failed = false;
+  private initialized = false;
+  private connection?: RpcConnection;
+  private bridge?: ToolBridge;
+  private binding?: Binding;
+  private configuration?: CodexConfiguration;
+  private resolved?: ResolvedCodexConfiguration;
+  private attempts = new Map<string, Attempt>();
+  private observations = new Queue<ProviderObservation>();
+  private nativeEvents = new Queue<ProviderDiagnostic>(true);
+  private uncorrelated: NativeMessage[] = [];
+  private uncorrelatedBytes = 0;
+  private retainedAttemptBytes = 0;
+  private completedTurns = new Map<string, Outcome>();
+  private creationAttempted = false;
+  private forkSource?: ProviderForkRequest;
+  constructor(
+    private readonly options: CodexAdapterOptions,
+    private readonly runtime: RuntimeFactory,
+  ) {}
+
+  createSession(
+    configuration: ProviderConfiguration,
+    budget: Budget,
+  ): Promise<Result<ProviderSessionBinding>> {
+    return this.initialize(configuration, budget);
+  }
+  resume(
+    binding: Binding,
+    configuration: ProviderConfiguration,
+    budget: Budget,
+  ): Promise<Result<ProviderSessionBinding>> {
+    if (!compatible(binding)) return Promise.resolve(fail("stale_binding"));
+    return this.initialize(configuration, budget, copy(binding));
+  }
+  private async initialize(
+    configuration: ProviderConfiguration,
+    budget: Budget,
+    previous?: Binding,
+  ): Promise<Result<ProviderSessionBinding>> {
+    if (this.started || this.closed || !live(budget))
+      return fail("unavailable");
+    this.started = true;
+    const nextBudget = scope(budget);
+    try {
+      if (
+        configuration.provider !== "codex" ||
+        !["tools_disabled", "host_mediated"].includes(configuration.permissions)
+      )
+        return fail("invalid_input");
+      if (
+        configuration.permissions === "host_mediated" &&
+        (process.platform !== "darwin" || process.arch !== "arm64")
+      )
+        return fail("unsupported_capability");
+      const config = {
+        ...configuration,
+        namespace: copy(configuration.namespace),
+        config: copy(configuration.config),
+      } as CodexConfiguration;
+      const source = previous ?? this.forkSource?.binding;
+      if (
+        source &&
+        (!compatible(source) ||
+          source.accountRef !== config.accountRef ||
+          !same(source.config, config.config) ||
+          source.workspaceId !== workspaceIdentity(config.workingDirectory))
+      )
+        return fail("stale_binding");
+      const resolved = await bounded(
+        this.options.resolveConfiguration(
+          {
+            namespace: copy(config.namespace),
+            provider: config.provider,
+            config: copy(config.config),
+            accountRef: config.accountRef,
+            ...(source ? { history: copy(source) } : {}),
+          },
+          nextBudget(),
+        ),
+        nextBudget(),
+      );
+      const {
+        tools: expectedTools,
+        verifier: expectedVerifier,
+        ...expected
+      } = config;
+      const { tools, verifier, ...actual } = resolved.configuration;
+      if (
+        !same(expected, actual) ||
+        tools !== expectedTools ||
+        verifier !== expectedVerifier
+      )
+        return fail("permission_denied");
+      if (
+        source &&
+        !same(resolved.ownedHistory, {
+          nativeSessionId: source.nativeSessionId,
+          nativeThreadId: source.nativeThreadId,
+        })
+      )
+        return fail("permission_denied");
+      this.configuration = config;
+      this.resolved = { ...resolved, configuration: config };
+      if (this.closed || !live(nextBudget())) return fail("unavailable");
+      if (config.permissions === "host_mediated") {
+        this.bridge = new ToolBridge(
+          config.tools,
+          () =>
+            this.initialized &&
+            !this.closed &&
+            !this.failed &&
+            [...this.attempts.values()].some(
+              (a) =>
+                a.confirmed &&
+                !a.outcome &&
+                a.command.input.type === "prompt" &&
+                a.command.input.policy === "queue_next",
+            ),
+        );
+        await this.bridge.start(nextBudget());
+      }
+      const launch = await launchSpec(this.resolved, this.bridge);
+      if (this.closed || !live(nextBudget())) return fail("unavailable");
+      const connection = (this.connection = this.runtime(launch.spec));
+      connection.listen((message) => {
+        try {
+          this.onNative(message);
+        } catch {
+          this.breakIncarnation();
+        }
+      });
+      void connection.stopped.then(() => {
+        if (!this.closed) this.breakIncarnation();
+        this.observations.end();
+        this.nativeEvents.end();
+      });
+      const handshake = await rpc(
+        connection,
+        "initialize",
+        {
+          clientInfo: {
+            name: "rss_mdm_codex",
+            title: "RSS Codex adapter",
+            version: ADAPTER_VERSION,
+          },
+          capabilities: { experimentalApi: true, requestAttestation: false },
+        },
+        nextBudget(),
+      );
+      if (
+        handshake.codexHome !== resolved.nativeDirectory ||
+        typeof handshake.userAgent !== "string" ||
+        !handshake.userAgent.includes(CODEX_VERSION)
+      )
+        return fail("unsupported_version");
+      connection.notify("initialized");
+      await this.checkConfiguration(
+        launch.settings,
+        launch.overrides,
+        nextBudget(),
+      );
+      const params = {
+        model: resolved.model,
+        modelProvider: "rss_host_model",
+        cwd: config.workingDirectory,
+        approvalPolicy: "on-request" as const,
+        sandbox: "read-only" as const,
+        config: { ...launch.settings, ...launch.overrides } as any,
+        runtimeWorkspaceRoots: [],
+      };
+      let response;
+      if (previous) {
+        response = await rpc(
+          connection,
+          "thread/resume",
+          { ...params, threadId: previous.nativeThreadId!, excludeTurns: true },
+          nextBudget(),
+        );
+      } else if (this.forkSource) {
+        const history = await this.readNativeHistory(
+          this.forkSource.binding.nativeThreadId!,
+          nextBudget(),
+        );
+        if (!history.ok) return history;
+        if (
+          !history.value.some(
+            (turn) =>
+              turn.id === this.forkSource!.throughTurnId && outcome(turn),
+          )
+        )
+          return fail("permission_denied");
+        this.creationAttempted = true;
+        response = await rpc(
+          connection,
+          "thread/fork",
+          {
+            ...params,
+            threadId: this.forkSource.binding.nativeThreadId!,
+            lastTurnId: this.forkSource.throughTurnId,
+            excludeTurns: true,
+          },
+          nextBudget(),
+        );
+      } else {
+        this.creationAttempted = true;
+        response = await rpc(
+          connection,
+          "thread/start",
+          { ...params, dynamicTools: [], environments: [], ephemeral: false },
+          nextBudget(),
+        );
+      }
+      const thread = response.thread;
+      this.checkThread(thread, source !== undefined);
+      if (
+        previous &&
+        (thread.id !== previous.nativeThreadId ||
+          thread.sessionId !== previous.nativeSessionId)
+      )
+        return fail("stale_binding");
+      if (
+        this.forkSource &&
+        (thread.id === this.forkSource.binding.nativeThreadId ||
+          thread.forkedFromId !== this.forkSource.binding.nativeThreadId)
+      )
+        return fail("stale_binding");
+      if (
+        response.approvalPolicy !== "on-request" ||
+        response.sandbox.type !== "readOnly" ||
+        response.sandbox.networkAccess !== false ||
+        !same(response.instructionSources, [])
+      )
+        return fail("permission_denied");
+      this.binding = {
+        provider: "codex",
+        providerVersion: CODEX_VERSION,
+        adapterVersion: ADAPTER_VERSION,
+        generation: randomUUID(),
+        workspaceId: workspaceIdentity(config.workingDirectory),
+        accountRef: config.accountRef,
+        config: copy(config.config),
+        nativeSessionId: thread.sessionId,
+        nativeThreadId: thread.id,
+      };
+      await this.checkConfiguration(
+        launch.settings,
+        launch.overrides,
+        nextBudget(),
+      );
+      await this.checkMcp(nextBudget());
+      if (this.closed || this.failed || !live(nextBudget()))
+        return fail("unavailable");
+      this.initialized = true;
+      return ok({
+        binding: copy(this.binding),
+        capabilities: {
+          queue: "unsupported",
+          continuation: "across_processes",
+          cancellation: "request_only",
+          tools:
+            config.permissions === "host_mediated"
+              ? "host_mediated"
+              : "disabled",
+          steer: "supported",
+          fork: "supported",
+          subagent: "unsupported",
+          terminal: "unsupported",
+          structuredQuestion: "unsupported",
+          multimodal: "unsupported",
+        },
+      });
+    } catch (error) {
+      if (error instanceof CodexConfigurationFailure) return fail(error.code);
+      return fail("unavailable", "same_command");
+    }
+  }
+  private async checkConfiguration(
+    settings: Record<string, unknown>,
+    overrides: Record<string, unknown>,
+    budget: Budget,
+  ): Promise<void> {
+    const result = await rpc(
+      this.connection!,
+      "config/read",
+      { includeLayers: true, cwd: this.configuration!.workingDirectory },
+      budget,
+    );
+    if (!Array.isArray(result.layers))
+      throw new CodexConfigurationFailure("permission_denied");
+    let user = 0,
+      flags = 0;
+    for (const layer of result.layers) {
+      if (layer.disabledReason)
+        throw new CodexConfigurationFailure("permission_denied");
+      if (
+        layer.name.type === "user" &&
+        layer.name.file ===
+          join(this.resolved!.nativeDirectory, "config.toml") &&
+        layer.name.profile === null &&
+        same(layer.config, settings)
+      )
+        user++;
+      else if (
+        layer.name.type === "sessionFlags" &&
+        same(layer.config, overrides) &&
+        Object.keys(overrides).length
+      )
+        flags++;
+      else if (layer.name.type === "system" && same(layer.config, {})) {
+        /* Empty system policy contributes no settings. */
+      } else throw new CodexConfigurationFailure("permission_denied");
+    }
+    if (user !== 1 || flags !== (Object.keys(overrides).length ? 1 : 0))
+      throw new CodexConfigurationFailure("permission_denied");
+    const effective = result.config as any;
+    if (
+      effective.approval_policy !== "on-request" ||
+      effective.sandbox_mode !== "read-only" ||
+      effective.web_search !== "disabled"
+    )
+      throw new CodexConfigurationFailure("permission_denied");
+    const expected = (overrides.mcp_servers ?? settings.mcp_servers) as Record<
+      string,
+      unknown
+    >;
+    if (
+      !same(
+        Object.keys(effective.mcp_servers ?? {}).sort(),
+        Object.keys(expected).sort(),
+      )
+    )
+      throw new CodexConfigurationFailure("permission_denied");
+    for (const [name, fields] of Object.entries(expected))
+      for (const [key, value] of Object.entries(fields as object))
+        if (!same(effective.mcp_servers[name]?.[key], value))
+          throw new CodexConfigurationFailure("permission_denied");
+  }
+  private checkThread(thread: Thread, restored: boolean): void {
+    // 0.155.0 resume/fork reconstitute the local environment even when the owned
+    // source selected none. Every turn explicitly selects none again.
+    const environments =
+      same(thread?.environments, []) ||
+      (restored &&
+        same(thread?.environments, [
+          {
+            environmentId: "local",
+            cwd: this.configuration!.workingDirectory,
+            runtimeWorkspaceRoots: [],
+          },
+        ]));
+    if (
+      !thread ||
+      !isId(thread.id) ||
+      !isId(thread.sessionId) ||
+      thread.parentThreadId !== null ||
+      thread.cwd !== this.configuration!.workingDirectory ||
+      thread.cliVersion !== CODEX_VERSION ||
+      !environments
+    )
+      throw new Error("foreign native thread");
+  }
+  private async checkMcp(budget: Budget): Promise<void> {
+    const nextBudget = scope(budget),
+      servers: any[] = [],
+      cursors = new Set<string>();
+    let cursor: string | undefined;
+    do {
+      const page = await rpc(
+        this.connection!,
+        "mcpServerStatus/list",
+        {
+          threadId: this.binding!.nativeThreadId!,
+          detail: "full",
+          limit: 32,
+          ...(cursor ? { cursor } : {}),
+        },
+        nextBudget(),
+      );
+      if (
+        !Array.isArray(page.data) ||
+        page.data.length > 32 ||
+        servers.length + page.data.length > 32
+      )
+        throw new Error("MCP inventory limit");
+      servers.push(...page.data);
+      cursor = page.nextCursor ?? undefined;
+      if (cursor) {
+        if (cursors.has(cursor) || cursors.size >= 8)
+          throw new Error("MCP cursor limit");
+        cursors.add(cursor);
+      }
+    } while (cursor);
+    if (!this.bridge) {
+      if (servers.length) throw new Error("unexpected tools");
+      return;
+    }
+    const server = servers[0];
+    if (
+      servers.length !== 1 ||
+      server.name !== HOST_SERVER ||
+      server.runtimeStatus !== "connected" ||
+      server.toolsError !== null ||
+      !same(Object.keys(server.tools), [HOST_TOOL.name]) ||
+      !same(server.tools.propose.inputSchema, HOST_TOOL.inputSchema) ||
+      !same(server.resources, []) ||
+      !same(server.resourceTemplates, [])
+    )
+      throw new Error("unverified MCP catalog");
+  }
+  private owns(binding: Binding): boolean {
+    return (
+      !!this.binding &&
+      same(providerIdentity(binding), providerIdentity(this.binding))
+    );
+  }
+  private ready(binding: Binding, budget: Budget): boolean {
+    return (
+      this.initialized &&
+      !this.closed &&
+      !this.failed &&
+      live(budget) &&
+      this.owns(binding)
+    );
+  }
+  private checked(command: Command): Command {
+    const value = decode(boundedJson(command, limits), limits);
+    if (
+      value.kind !== "command" ||
+      value.sessionId !== this.configuration!.namespace.sessionId ||
+      value.expiresAtMs < (this.options.clock?.now() ?? Date.now())
+    )
+      throw new Error("invalid command");
+    return value;
+  }
+  async submit(
+    binding: Binding,
+    command: Command,
+    attempt: DispatchAttempt,
+    budget: Budget,
+  ): Promise<Submission> {
+    const rejected = (code: Failure["code"]): Submission => ({
+      certainty: "not_sent",
+      error: { code, retry: "never" },
+    });
+    if (!this.ready(binding, budget)) return rejected("stale_binding");
+    let input: Command;
+    try {
+      input = this.checked(command);
+    } catch {
+      return rejected("invalid_input");
+    }
+    if (input.input.type !== "prompt")
+      return rejected("unsupported_capability");
+    if (
+      !isId(attempt.attemptId) ||
+      attempt.certainty !== "intent" ||
+      attempt.originGeneration !== binding.generation ||
+      attempt.observerGeneration !== binding.generation ||
+      attempt.nativeSessionId !== binding.nativeSessionId ||
+      attempt.nativeThreadId !== binding.nativeThreadId
+    )
+      return rejected("stale_binding");
+    const existing = this.attempts.get(input.commandId);
+    if (existing) {
+      if (
+        !same(existing.command, input) ||
+        existing.dispatch.attemptId !== attempt.attemptId
+      )
+        return rejected("content_conflict");
+      return existing.notSubmitted
+        ? rejected("unavailable")
+        : existing.confirmed
+          ? { certainty: "submitted", binding: copy(existing.binding) }
+          : { certainty: "unknown", correlationId: attempt.attemptId };
+    }
+    if (
+      this.attempts.size >= 1024 ||
+      this.retainedAttemptBytes +
+        Buffer.byteLength(boundedJson(input, limits)) >
+        4 * 1024 * 1024 ||
+      [...this.attempts.values()].some(
+        (a) => a.dispatch.attemptId === attempt.attemptId,
+      )
+    )
+      return rejected("limit_exceeded");
+    const unsettled = [...this.attempts.values()].filter(
+      (a) => !a.outcome && !a.notSubmitted,
+    );
+    const steering = input.input.policy === "steer";
+    if (steering) {
+      if (
+        attempt.nativeRunId !== input.input.targetRunId ||
+        !unsettled.some(
+          (a) =>
+            a.confirmed &&
+            a.binding.nativeRunId === input.input.targetRunId &&
+            a.command.input.type === "prompt" &&
+            a.command.input.policy === "queue_next",
+        )
+      )
+        return rejected("stale_binding");
+    } else if (unsettled.length || attempt.nativeRunId !== undefined)
+      return rejected("reconciliation_required");
+    const entry: Attempt = {
+      command: copy(input),
+      dispatch: copy(attempt),
+      binding: {
+        ...this.binding!,
+        ...(steering ? { nativeRunId: input.input.targetRunId } : {}),
+      },
+      confirmed: false,
+      completedItems: new Set(),
+    };
+    this.attempts.set(input.commandId, entry);
+    this.retainedAttemptBytes += Buffer.byteLength(boundedJson(input, limits));
+    let acknowledged = false;
+    try {
+      const prompt = [
+        { type: "text" as const, text: input.input.text, text_elements: [] },
+      ];
+      if (steering) {
+        const result = await rpc(
+          this.connection!,
+          "turn/steer",
+          {
+            threadId: binding.nativeThreadId!,
+            expectedTurnId: input.input.targetRunId!,
+            clientUserMessageId: attempt.attemptId,
+            input: prompt,
+          },
+          budget,
+        );
+        acknowledged = true;
+        if (result.turnId !== input.input.targetRunId)
+          throw new Error("unexpected steer turn");
+        this.confirm(entry, result.turnId);
+      } else {
+        const result = await rpc(
+          this.connection!,
+          "turn/start",
+          {
+            threadId: binding.nativeThreadId!,
+            clientUserMessageId: attempt.attemptId,
+            input: prompt,
+            environments: [],
+            runtimeWorkspaceRoots: [],
+          },
+          budget,
+        );
+        acknowledged = true;
+        validTurn(result.turn);
+        this.confirm(entry, result.turn.id);
+        if (outcome(result.turn)) this.finishTurn(result.turn);
+      }
+      this.replay();
+      return { certainty: "submitted", binding: copy(entry.binding) };
+    } catch (error) {
+      if (
+        steering &&
+        error instanceof NativeNotSubmittedError &&
+        !entry.confirmed &&
+        !entry.outcome
+      ) {
+        entry.notSubmitted = true;
+        entry.completedItems.clear();
+        return rejected("unavailable");
+      }
+      if (acknowledged) this.breakIncarnation();
+      return entry.confirmed
+        ? { certainty: "submitted", binding: copy(entry.binding) }
+        : { certainty: "unknown", correlationId: attempt.attemptId };
+    }
+  }
+  private confirm(entry: Attempt, turnId: string, announce = true): void {
+    if (
+      !isId(turnId) ||
+      (entry.binding.nativeRunId && entry.binding.nativeRunId !== turnId)
+    )
+      throw new Error("changed turn identity");
+    entry.binding.nativeRunId = turnId;
+    entry.binding.nativeRequestId = entry.dispatch.attemptId;
+    if (!entry.confirmed) {
+      entry.confirmed = true;
+      if (announce)
+        this.observations.push({
+          type: "submitted",
+          binding: copy(entry.binding),
+          commandId: entry.command.commandId,
+          attemptId: entry.dispatch.attemptId,
+        });
+    }
+    const terminal = this.completedTurns.get(turnId);
+    if (announce && terminal && !entry.outcome) {
+      this.emit(entry, { type: "terminal", outcome: terminal });
+      entry.outcome = terminal;
+      entry.completedItems.clear();
+    }
+  }
+  private emit(
+    entry: Attempt,
+    body: Extract<ProviderObservation, { type: "event" }>["body"],
+  ): void {
+    // Validate the stable product boundary; native payloads never enter diagnostics.
+    decode(
+      boundedJson(
+        {
+          schemaVersion: 3,
+          kind: "event",
+          namespace: this.configuration!.namespace,
+          eventId: "validation",
+          sequence: 1,
+          generation: entry.binding.generation,
+          commandId: entry.command.commandId,
+          attemptId: entry.dispatch.attemptId,
+          body,
+        },
+        limits,
+      ),
+      limits,
+    );
+    this.observations.push({
+      type: "event",
+      binding: copy(entry.binding),
+      commandId: entry.command.commandId,
+      attemptId: entry.dispatch.attemptId,
+      body,
+    });
+  }
+  private onNative(message: NativeMessage, replay = false): void {
+    if (this.closed) return;
+    if (message.id !== undefined) {
+      this.connection!.reject(message.id);
+      return;
+    }
+    if (this.options.nativeDiagnostics && this.binding && !replay)
+      this.nativeEvents.push({
+        kind:
+          message.method === "item/agentMessage/delta"
+            ? "text_delta"
+            : message.method === "item/completed"
+              ? "item_completed"
+              : message.method === "turn/completed"
+                ? "turn_completed"
+                : "other",
+        dropped: 0,
+      });
+    if (!this.binding || this.failed) return;
+    const notification = nativeNotification(message);
+    if (!notification) return;
+    const params = notification.params;
+    if (!params || params.threadId !== this.binding.nativeThreadId) return;
+    const turnId =
+      notification.method === "turn/completed"
+        ? notification.params.turn?.id
+        : notification.params.turnId;
+    if (!isId(turnId)) return;
+    const item =
+      notification.method === "item/completed" ||
+      notification.method === "item/started"
+        ? notification.params.item
+        : undefined;
+    if (
+      (notification.method === "item/completed" ||
+        notification.method === "item/started") &&
+      (!item || !isId(item.id) || typeof item.type !== "string")
+    )
+      throw new Error("invalid native item");
+    if (item?.type === "userMessage" && typeof item.clientId === "string") {
+      const entry = [...this.attempts.values()].find(
+        (a) => a.dispatch.attemptId === item.clientId,
+      );
+      if (entry && !entry.notSubmitted) {
+        this.confirm(entry, turnId);
+        if (!replay) this.replay();
+      }
+    }
+    const owner = [...this.attempts.values()].find(
+      (a) =>
+        a.confirmed &&
+        !a.notSubmitted &&
+        a.binding.nativeRunId === turnId &&
+        a.command.input.type === "prompt" &&
+        a.command.input.policy === "queue_next",
+    );
+    if (!owner) {
+      const bytes = Buffer.byteLength(boundedJson(message, limits));
+      if (
+        this.uncorrelated.length >= 128 ||
+        this.uncorrelatedBytes + bytes > 4 * 1024 * 1024
+      )
+        throw new Error("uncorrelated event limit");
+      this.uncorrelated.push(copy(message));
+      this.uncorrelatedBytes += bytes;
+      return;
+    }
+    if (notification.method === "turn/completed") {
+      validTurn(notification.params.turn);
+      this.finishTurn(notification.params.turn);
+      return;
+    }
+    if (owner.outcome) return;
+    if (notification.method === "item/agentMessage/delta") {
+      const params = notification.params;
+      if (
+        !isId(params.itemId) ||
+        typeof params.delta !== "string" ||
+        Buffer.byteLength(params.delta) > 65536
+      )
+        throw new Error("invalid delta");
+      this.observations.push({
+        type: "delta",
+        binding: copy(owner.binding),
+        commandId: owner.command.commandId,
+        attemptId: owner.dispatch.attemptId,
+        messageId: params.itemId,
+        text: params.delta,
+      });
+    } else if (notification.method === "item/completed")
+      this.completeItem(owner, notification.params.item);
+  }
+  private completeItem(entry: Attempt, item: ThreadItem): void {
+    if (!isId(item.id) || entry.completedItems.has(item.id)) return;
+    if (entry.completedItems.size >= 8192) throw new Error("turn item limit");
+    if (item.type === "agentMessage")
+      this.emit(entry, { type: "text", messageId: item.id, text: item.text });
+    else if (item.type === "mcpToolCall") {
+      const args = item.arguments as any;
+      if (
+        item.server === HOST_SERVER &&
+        item.tool === HOST_TOOL.name &&
+        args &&
+        isId(args.name) &&
+        args.arguments &&
+        typeof args.arguments === "object"
+      ) {
+        this.emit(entry, {
+          type: "tool_proposal",
+          proposalId: item.id,
+          name: args.name,
+          arguments: args.arguments,
+        });
+        const result = (item.result?.structuredContent as any)?.rssHostResult;
+        const known =
+          result &&
+          same(Object.keys(result).sort(), ["disposition", "text"]) &&
+          ["returned", "rejected", "unavailable"].includes(
+            result.disposition,
+          ) &&
+          typeof result.text === "string";
+        this.emit(entry, {
+          type: "tool_result",
+          proposalId: item.id,
+          disposition: known ? result.disposition : "unavailable",
+          text: known ? result.text : "Host proposal unavailable",
+        });
+      }
+    }
+    entry.completedItems.add(item.id);
+  }
+  private finishTurn(turn: Turn): void {
+    const terminal = outcome(turn);
+    if (!terminal) return;
+    this.completedTurns.set(turn.id, terminal);
+    for (const entry of this.attempts.values()) {
+      if (
+        entry.binding.nativeRunId !== turn.id ||
+        !entry.confirmed ||
+        entry.notSubmitted ||
+        entry.outcome
+      )
+        continue;
+      if (
+        entry.command.input.type === "prompt" &&
+        entry.command.input.policy === "queue_next"
+      )
+        for (const item of turn.items) this.completeItem(entry, item);
+      this.emit(entry, { type: "terminal", outcome: terminal });
+      entry.outcome = terminal;
+      entry.completedItems.clear();
+    }
+  }
+  private replay(): void {
+    for (let remaining = this.uncorrelated.length; remaining > 0; remaining--) {
+      const message = this.uncorrelated.shift()!;
+      this.uncorrelatedBytes -= Buffer.byteLength(boundedJson(message, limits));
+      this.onNative(message, true);
+    }
+  }
+  private breakIncarnation(): void {
+    if (this.failed) return;
+    this.failed = true;
+    for (const entry of this.attempts.values()) {
+      if (entry.outcome || entry.notSubmitted) continue;
+      try {
+        this.emit(entry, {
+          type: "error",
+          failure: { code: "unavailable", retry: "reconcile_first" },
+        });
+      } catch {
+        break;
+      }
+    }
+    this.observations.end();
+    this.nativeEvents.end();
+    void this.connection?.close({
+      timeoutMs: 1000,
+      signal: new AbortController().signal,
+    });
+  }
+  async *observe(
+    binding: Binding,
+    budget: Budget,
+  ): AsyncIterable<ProviderObservation> {
+    if (this.owns(binding)) yield* this.observations.read(budget);
+  }
+  async *diagnostics(
+    binding: Binding,
+    budget: Budget,
+  ): AsyncIterable<ProviderDiagnostic> {
+    if (this.options.nativeDiagnostics && this.owns(binding))
+      for await (const record of this.nativeEvents.read(budget))
+        yield { ...record, dropped: this.nativeEvents.dropped };
+  }
+  async cancel(
+    binding: Binding,
+    command: Command,
+    budget: Budget,
+  ): Promise<Result<"request_only" | "already_terminal" | "unsupported">> {
+    if (!this.ready(binding, budget)) return fail("stale_binding");
+    let input: Command;
+    try {
+      input = this.checked(command);
+    } catch {
+      return fail("invalid_input");
+    }
+    if (
+      input.input.type !== "cancel" ||
+      input.input.generation !== binding.generation
+    )
+      return fail("stale_binding");
+    const target = this.attempts.get(input.input.targetCommandId);
+    if (
+      !target ||
+      (input.input.nativeRunId !== undefined &&
+        input.input.nativeRunId !== target.binding.nativeRunId)
+    )
+      return fail("stale_binding");
+    if (target.outcome) return ok("already_terminal");
+    if (!target.confirmed || !target.binding.nativeRunId)
+      return fail("reconciliation_required", "reconcile_first");
+    try {
+      await rpc(
+        this.connection!,
+        "turn/interrupt",
+        {
+          threadId: binding.nativeThreadId!,
+          turnId: target.binding.nativeRunId,
+        },
+        budget,
+      );
+      return ok("request_only");
+    } catch {
+      return fail("unavailable", "reconcile_first");
+    }
+  }
+  async respond(
+    _binding: Binding,
+    _command: Command,
+    _budget: Budget,
+  ): Promise<Result<void>> {
+    return fail("unsupported_capability");
+  }
+  async readHistory(
+    binding: Binding,
+    budget: Budget,
+  ): Promise<Result<readonly Turn[]>> {
+    if (!this.ready(binding, budget)) return fail("stale_binding");
+    return this.readNativeHistory(binding.nativeThreadId!, budget);
+  }
+  private async readNativeHistory(
+    threadId: string,
+    budget: Budget,
+  ): Promise<Result<readonly Turn[]>> {
+    try {
+      const nextBudget = scope(budget),
+        turns: Turn[] = [],
+        cursors = new Set<string>();
+      let cursor: string | undefined,
+        bytes = 0;
+      do {
+        const page = await rpc(
+          this.connection!,
+          "thread/turns/list",
+          {
+            threadId,
+            limit: 32,
+            itemsView: "full",
+            sortDirection: "asc",
+            ...(cursor ? { cursor } : {}),
+          },
+          nextBudget(),
+        );
+        if (
+          !Array.isArray(page.data) ||
+          page.data.length > 32 ||
+          turns.length + page.data.length > 1024
+        )
+          return fail("limit_exceeded");
+        for (const turn of page.data) {
+          validTurn(turn);
+          if (turn.itemsView !== "full")
+            throw new Error("incomplete native history");
+          bytes += Buffer.byteLength(boundedJson(turn, limits));
+        }
+        if (bytes > 4 * 1024 * 1024) return fail("limit_exceeded");
+        turns.push(...page.data);
+        cursor = page.nextCursor ?? undefined;
+        if (cursor) {
+          if (cursors.has(cursor) || cursors.size >= 64)
+            throw new Error("history cursor limit");
+          cursors.add(cursor);
+        }
+      } while (cursor);
+      return ok(turns.map(copy));
+    } catch {
+      return fail("unavailable", "reconcile_first");
+    }
+  }
+  async reconcile(
+    binding: Binding,
+    record: CommandRecord,
+    budget: Budget,
+  ): Promise<Result<Reconciliation>> {
+    if (!this.ready(binding, budget)) return fail("stale_binding");
+    const dispatch = record.dispatch;
+    if (
+      !dispatch ||
+      dispatch.nativeSessionId !== binding.nativeSessionId ||
+      dispatch.nativeThreadId !== binding.nativeThreadId ||
+      dispatch.observerGeneration !== binding.generation ||
+      !same(record.receipt.namespace, this.configuration!.namespace) ||
+      record.command.sessionId !== this.configuration!.namespace.sessionId ||
+      !isId(dispatch.attemptId)
+    )
+      return fail("stale_binding");
+    const observedBinding: Binding = {
+      ...this.binding!,
+      ...(dispatch.nativeRunId ? { nativeRunId: dispatch.nativeRunId } : {}),
+      ...(dispatch.nativeRequestId
+        ? { nativeRequestId: dispatch.nativeRequestId }
+        : {}),
+    };
+    const base = {
+      commandId: record.command.commandId,
+      attemptId: dispatch.attemptId,
+      binding: observedBinding,
+    };
+    const remembered = this.attempts.get(record.command.commandId);
+    if (
+      remembered &&
+      (remembered.dispatch.attemptId !== dispatch.attemptId ||
+        !same(remembered.command, record.command))
+    )
+      return fail("content_conflict");
+    if (
+      remembered?.notSubmitted &&
+      (!["intent", "unknown"].includes(dispatch.certainty) ||
+        !same(
+          dispatchIdentity(remembered.dispatch),
+          dispatchIdentity(dispatch),
+        ))
+    )
+      return fail("stale_binding");
+    if (remembered?.notSubmitted)
+      return ok({ ...base, status: "not_submitted" });
+    const history = await this.readHistory(binding, budget);
+    if (!history.ok) return history;
+    const matches = history.value.filter((turn) =>
+      turn.items.some(
+        (item) =>
+          item.type === "userMessage" && item.clientId === dispatch.attemptId,
+      ),
+    );
+    if (matches.length > 1) return fail("content_conflict");
+    const found = matches[0];
+    if (!found) return ok({ ...base, status: "unknown" });
+    if (
+      (dispatch.nativeRunId && dispatch.nativeRunId !== found.id) ||
+      (dispatch.nativeRequestId &&
+        dispatch.nativeRequestId !== dispatch.attemptId)
+    )
+      return fail("stale_binding");
+    const entry = remembered ?? {
+      command: copy(record.command),
+      dispatch: copy(dispatch),
+      binding: { ...observedBinding, nativeRequestId: dispatch.attemptId },
+      confirmed: false,
+      completedItems: new Set<string>(),
+    };
+    if (
+      entry.dispatch.attemptId !== dispatch.attemptId ||
+      !same(entry.command, record.command)
+    )
+      return fail("content_conflict");
+    if (!this.attempts.has(record.command.commandId)) {
+      const bytes = Buffer.byteLength(boundedJson(record.command, limits));
+      if (
+        this.attempts.size >= 1024 ||
+        this.retainedAttemptBytes + bytes > 4 * 1024 * 1024
+      )
+        return fail("limit_exceeded");
+      this.retainedAttemptBytes += bytes;
+    }
+    try {
+      this.attempts.set(record.command.commandId, entry);
+      this.confirm(entry, found.id, false);
+      const terminal = outcome(found);
+      // The Host commits the nominal reconciliation proof; recovery does not replay stable history.
+      if (terminal) {
+        entry.outcome = terminal;
+        entry.completedItems.clear();
+      }
+      this.replay();
+      return terminal
+        ? ok({
+            ...base,
+            binding: copy(entry.binding),
+            status: "terminal",
+            outcome: terminal,
+          })
+        : ok({ ...base, binding: copy(entry.binding), status: "running" });
+    } catch {
+      this.breakIncarnation();
+      return fail("unavailable", "reconcile_first");
+    }
+  }
+  async forkSession(
+    request: ProviderForkRequest,
+    configuration: ProviderConfiguration,
+    budget: Budget,
+  ): Promise<ProviderForkResult> {
+    if (this.started || this.closed || !isId(request.throughTurnId))
+      return {
+        certainty: "not_created",
+        error: { code: "invalid_input", retry: "never" },
+      };
+    this.forkSource = copy(request);
+    const result = await this.initialize(configuration, budget);
+    return result.ok
+      ? { certainty: "created", value: result.value, source: copy(request) }
+      : {
+          certainty: this.creationAttempted ? "unknown" : "not_created",
+          error: result.error,
+        };
+  }
+  /** Actual object boundaries prevent accidental access to native history/DTOs. */
+  private instance?: ProviderInstance;
+  ports(): ProviderInstance {
+    if (this.instance) return this.instance;
+    const agent: ProviderAgentPort = Object.freeze({
+      createSession: this.createSession.bind(this),
+      submit: this.submit.bind(this),
+      cancel: this.cancel.bind(this),
+      respond: this.respond.bind(this),
+      observe: this.observe.bind(this),
+      reconcile: this.reconcile.bind(this),
+      resume: this.resume.bind(this),
+      close: this.close.bind(this),
+    });
+    return (this.instance = Object.freeze({
+      agent,
+      extensions: Object.freeze({
+        fork: Object.freeze({ forkSession: this.forkSession.bind(this) }),
+      }),
+      diagnostics: Object.freeze({ observe: this.diagnostics.bind(this) }),
+    }));
+  }
+  async close(budget: Budget): Promise<Result<{ processStopped: boolean }>> {
+    this.closed = true;
+    this.initialized = false;
+    this.bridge?.quiesce();
+    this.observations.end();
+    this.nativeEvents.end();
+    const nextBudget = scope(budget);
+    const stopped = this.connection
+      ? await this.connection.close(nextBudget())
+      : ok({ processStopped: true });
+    try {
+      await this.bridge?.close(nextBudget());
+    } catch {
+      return fail("unavailable", "same_command");
+    }
+    return stopped;
+  }
+}

@@ -2,7 +2,10 @@ use crate::database::bounded_blob;
 use crate::{journal::*, trust::*, *};
 use execution_approval::ProfileApproval;
 use execution_contract::{AuditEvent, Decision, EventId, EvidenceRefs, FrozenPlan, Id, V1};
-use execution_lifecycle::{self as lifecycle, Command, Execution};
+use execution_lifecycle::{
+    self as lifecycle, Command, CommandEvent, EventRecord, Execution, ObservationEvent,
+    ObservationVerifier,
+};
 use rusqlite::{params, Connection, OptionalExtension};
 
 impl Store {
@@ -121,17 +124,63 @@ impl Store {
         );
         w.finish(Outcome::Changed, 0, audit)
     }
-    /// Apply one event through historical deduplication, core evaluation and atomic persistence.
-    /// BeginAttempt obtains decisions lazily from Host only after receipt replay is ruled out.
-    /// Never pass the returned action to an outbox or reconstruct it after a lost response.
-    pub fn apply_execution(
+    /// Apply a host command through historical deduplication and atomic persistence.
+    /// BeginAttempt obtains decisions lazily after receipt replay is ruled out.
+    /// Never reconstruct the returned dispatch action after a lost response.
+    /// ```compile_fail
+    /// use execution_sqlite::{Store, Scope, OperationRequestId, Host};
+    /// use execution_lifecycle::ObservationEvent;
+    /// fn wrong(store: &mut Store, op: &OperationRequestId, scope: &Scope, event: &ObservationEvent, host: &impl Host) {
+    ///     store.apply_command(op, scope, event, &[], host);
+    /// }
+    /// ```
+    pub fn apply_command(
         &mut self,
         op: &OperationRequestId,
         scope: &Scope,
-        event: &lifecycle::Event,
+        event: &CommandEvent,
         bindings: &[ProfileApproval],
         host: &impl Host,
     ) -> Result<CommitOutcome, Error> {
+        self.apply_input(op, scope, Input::Command(event, bindings), host)
+    }
+    /// Verify and record an observation under RunnerFact authorization.
+    /// Replay, revision and attempt checks precede verification; no approval inputs apply.
+    /// ```compile_fail
+    /// use execution_sqlite::{Store, Scope, OperationRequestId, Host};
+    /// use execution_lifecycle::{CommandEvent, ObservationVerifier};
+    /// fn wrong(store: &mut Store, op: &OperationRequestId, scope: &Scope, event: &CommandEvent, host: &impl Host, verifier: &dyn ObservationVerifier) {
+    ///     store.apply_observation(op, scope, event, host, verifier);
+    /// }
+    /// ```
+    /// ```compile_fail
+    /// use execution_sqlite::{Store, Scope, OperationRequestId, Host};
+    /// use execution_lifecycle::ObservationEvent;
+    /// fn missing(store: &mut Store, op: &OperationRequestId, scope: &Scope, event: &ObservationEvent, host: &impl Host) {
+    ///     store.apply_observation(op, scope, event, host);
+    /// }
+    /// ```
+    pub fn apply_observation(
+        &mut self,
+        op: &OperationRequestId,
+        scope: &Scope,
+        event: &ObservationEvent,
+        host: &impl Host,
+        verifier: &dyn ObservationVerifier,
+    ) -> Result<CommitOutcome, Error> {
+        self.apply_input(op, scope, Input::Observation(event, verifier), host)
+    }
+    fn apply_input(
+        &mut self,
+        op: &OperationRequestId,
+        scope: &Scope,
+        input: Input<'_>,
+        host: &impl Host,
+    ) -> Result<CommitOutcome, Error> {
+        let (event, bindings) = match &input {
+            Input::Command(e, bindings) => (EventRecord::Command((*e).clone()), *bindings),
+            Input::Observation(e, _) => (EventRecord::Observation((*e).clone()), &[][..]),
+        };
         if bindings.len() > self.limits.max_approvals {
             return Err(Error::Capacity);
         }
@@ -144,20 +193,25 @@ impl Store {
                 &b.1.revision,
             ))
         });
-        let access = match event.command {
-            Command::Dispatched { .. }
-            | Command::DispatchUnconfirmed { .. }
-            | Command::StopReported { .. }
-            | Command::Observe { .. }
-            | Command::Output { .. }
-            | Command::Recover => Access::RunnerFact,
-            _ => Access::Execute,
+        let access = match &event {
+            EventRecord::Observation(_) => Access::RunnerFact,
+            EventRecord::Command(e) => match e.command {
+                Command::Dispatched { .. }
+                | Command::DispatchUnconfirmed { .. }
+                | Command::StopReported { .. }
+                | Command::Output { .. }
+                | Command::Recover => Access::RunnerFact,
+                Command::Prepare
+                | Command::Wait
+                | Command::BeginAttempt { .. }
+                | Command::Cancel => Access::Execute,
+            },
         };
         let mut w = match self.start(
             op,
             scope,
             OperationKind::Execution,
-            &(event, refs),
+            &(&event, refs),
             access,
             host,
         )? {
@@ -168,7 +222,7 @@ impl Store {
         // The unique historical key remains after last_event changes and after log retention.
         w.tx.execute(
             "INSERT INTO event_keys VALUES(?1,?2,?3)",
-            params![event.id.as_str(), scope.key(), op.as_str()],
+            params![event.id().as_str(), scope.key(), op.as_str()],
         )?;
         let mut audit = plan_audit(
             &w,
@@ -176,22 +230,36 @@ impl Store {
             Decision::Proposed {},
             AuditReason::ExecutionEvent,
         );
-        audit.attempt_id = match &event.command {
-            Command::BeginAttempt { attempt_id, .. }
-            | Command::Dispatched { attempt_id }
-            | Command::DispatchUnconfirmed { attempt_id, .. }
-            | Command::StopReported { attempt_id, .. }
-            | Command::Observe { attempt_id, .. }
-            | Command::Output { attempt_id, .. } => Some(attempt_id.clone()),
-            Command::Prepare | Command::Wait | Command::Cancel | Command::Recover => None,
+        audit.attempt_id = match &event {
+            EventRecord::Observation(e) => Some(e.attempt_id.clone()),
+            EventRecord::Command(e) => match &e.command {
+                Command::BeginAttempt { attempt_id, .. }
+                | Command::Dispatched { attempt_id }
+                | Command::DispatchUnconfirmed { attempt_id, .. }
+                | Command::StopReported { attempt_id, .. }
+                | Command::Output { attempt_id, .. } => Some(attempt_id.clone()),
+                Command::Prepare | Command::Wait | Command::Cancel | Command::Recover => None,
+            },
         };
-        if let Command::DispatchUnconfirmed { cause, .. } = &event.command {
+        if let EventRecord::Command(CommandEvent {
+            command: Command::DispatchUnconfirmed { cause, .. },
+            ..
+        }) = &event
+        {
             audit.dispatch_cause = Some(*cause);
         }
-        if let Command::StopReported { outcome, .. } = &event.command {
+        if let EventRecord::Command(CommandEvent {
+            command: Command::StopReported { outcome, .. },
+            ..
+        }) = &event
+        {
             audit.stop_outcome = Some(*outcome);
         }
-        let gate = if let Command::BeginAttempt { attempt_id, .. } = &event.command {
+        let gate = if let EventRecord::Command(CommandEvent {
+            command: Command::BeginAttempt { attempt_id, .. },
+            ..
+        }) = &event
+        {
             audit.submitted_approvals = bindings.iter().map(ApprovalBindingAudit::from).collect();
             let Some(h) = head(&w.tx, scope, w.limits)? else {
                 audit.reason = AuditReason::TrustUnavailable;
@@ -229,7 +297,13 @@ impl Store {
             }
             None
         };
-        let evaluation = match current.evaluate(event.clone(), w.now, host) {
+        let result = match input {
+            Input::Command(event, _) => current.evaluate(event.clone(), w.now),
+            Input::Observation(event, verifier) => {
+                current.evaluate_observation(event.clone(), w.now, verifier)
+            }
+        };
+        let evaluation = match result {
             Ok(value) => value,
             Err(error) => {
                 audit.reason = AuditReason::LifecycleError(error);
@@ -256,20 +330,27 @@ impl Store {
             audit.consumptions = consume(&w, &plan, attempt_id, &gate, &h)?;
             audit.event.as_mut().expect("plan audit").decision = Decision::Admitted {};
         }
-        if let Command::Observe {
+        if let EventRecord::Observation(ObservationEvent {
             attempt_id,
             evidence,
-        } = &event.command
+            ..
+        }) = &event
         {
             audit.event.as_mut().expect("plan audit").decision = Decision::Observed {
                 attempt_id: attempt_id.clone(),
                 evidence: EvidenceRefs::new(vec![evidence.clone()]).map_err(|_| Error::Corrupt)?,
             };
         }
-        if !matches!(event.command, Command::BeginAttempt { .. }) {
+        if !matches!(
+            event,
+            EventRecord::Command(CommandEvent {
+                command: Command::BeginAttempt { .. },
+                ..
+            })
+        ) {
             audit.reason = AuditReason::Lifecycle(evaluation.directive);
         }
-        let reserve = terminal_reserve(current.snapshot(), next, reserve, &event.command);
+        let reserve = terminal_reserve(current.snapshot(), next, reserve, &event);
         let changed = w.tx.execute("UPDATE executions SET snapshot=?1,revision=?2,reserve=?3 WHERE scope=?4 AND revision=?5",
             params![w.bounded(next)?, integer(next.revision)?, reserve, scope.key(), integer(transition.expected_revision())?])?;
         if changed != 1 {
@@ -290,6 +371,10 @@ impl Store {
         let tx = self.read(scope, Access::ReadResult, None, host)?;
         Ok(load_execution(&tx, scope, self.limits)?.1)
     }
+}
+enum Input<'a> {
+    Command(&'a CommandEvent, &'a [ProfileApproval]),
+    Observation(&'a ObservationEvent, &'a dyn ObservationVerifier),
 }
 fn load_execution(
     conn: &Connection,
@@ -316,11 +401,17 @@ fn terminal_reserve(
     old: &lifecycle::Snapshot,
     next: &lifecycle::Snapshot,
     mut reserve: u8,
-    command: &Command,
+    event: &EventRecord,
 ) -> u8 {
     // Five bounded obligations: cancel, uncertainty, termination, initial and final assessment.
     // Repeated reports cannot spend the same reservation twice. New attempts must reserve again.
-    if matches!(command, Command::BeginAttempt { .. }) {
+    if matches!(
+        event,
+        EventRecord::Command(CommandEvent {
+            command: Command::BeginAttempt { .. },
+            ..
+        })
+    ) {
         return 31;
     }
     if !old.cancel_requested && next.cancel_requested {

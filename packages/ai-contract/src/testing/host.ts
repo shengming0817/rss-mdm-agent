@@ -28,7 +28,7 @@ import type {
 import { fail, ok, MemorySessionStore, namespaceKey } from "./store.js";
 import canonicalize from "canonicalize";
 import { projectDelta } from "../protocol.js";
-import { VerifiedProviderSession } from "../session.js";
+import { VerifiedProviderSession, providerIdentity } from "../session.js";
 import { ScriptedProvider } from "./provider.js";
 import { withinBudget } from "./budget.js";
 import { decode } from "../codec.js";
@@ -478,7 +478,8 @@ export class FakeHost implements HostPort {
     const session = await this.store.session(namespace);
     if (!session.ok) return session;
     if (
-      canonicalize(session.value.binding) !== canonicalize(observation.binding)
+      canonicalize(providerIdentity(session.value.binding)) !==
+      canonicalize(providerIdentity(observation.binding))
     )
       return fail("stale_binding");
     const command = await this.store.command(namespace, observation.commandId);
@@ -492,6 +493,7 @@ export class FakeHost implements HostPort {
       dispatch.attemptId !== observation.attemptId ||
       dispatch.observerGeneration !== observation.binding.generation ||
       dispatch.nativeSessionId !== observation.binding.nativeSessionId ||
+      dispatch.nativeThreadId !== observation.binding.nativeThreadId ||
       dispatch.nativeRunId !== observation.binding.nativeRunId ||
       dispatch.nativeRequestId !== observation.binding.nativeRequestId
     )

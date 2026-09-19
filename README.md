@@ -13,6 +13,7 @@
 - [自助目录核心](crates/service-catalog/README.md)：人/AI同源参数、精确选择与非授权状态说明。
 - [脚本计划](crates/script-plan/README.md)与[软件计划](crates/software-plan/README.md)：原生脚本编译和单步软件核实决策。
 - [批准核心](crates/execution-approval/README.md)与[生命周期核心](crates/execution-lifecycle/README.md)：精确批准消费意图、取消/退出/核实与有界恢复。
+- [DeepSeek Harness](packages/ai-adapters/deepseek/README.md)：原生 Gateway、逐尝试派发、只读恢复和受控工具桥。
 - [AI SQLite](packages/ai-store-sqlite/README.md)：产品会话持久化、恢复与单 Host 独占；真实 AI Host/引擎接线另行交付。
 - [执行 SQLite](crates/execution-sqlite/README.md)：受保护原子接纳、批准消费、幂等回执与可靠结果；显式测试 authority。
 - [无 UI 执行应用服务](crates/execution-app/README.md)：能力/准入/审批/生命周期组装、Test runner、恢复与配置接缝；尚未接入桌面/AI 或生产 runner。

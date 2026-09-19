@@ -15,6 +15,8 @@ C19 的 Rust 组合根，连接 C06 能力、C07 唯一授权裁决、C08 批准
 
 任务定位携带封闭的 `ExecutionAccess`：执行/取消使用 Execute，核对使用 RunnerFact，交互写入使用 Interact，投递/确认携带精确 consumer，审计使用 ReadAudit；不会附加 ReadResult。普通 `status/interaction` 仍需 ReadResult。内部 RunnerFact/ManageTrust 是可信服务权限，不由调用 DTO 授予。已提交操作的安全回执允许原动作权限或独立 ReadResult 权限读取；只读重放不重新申请执行批准。
 
+普通命令通过 C18 `apply_command` 提交；只有观察路径创建携带当前可信 runner 事实的验证器，调用 `apply_observation`。普通 Host 不持有可选观察槽，观察提交保留当前 revision 对操作身份的绑定。
+
 准入拒绝是持久业务结果：C18 在原回执内生成 `AdmissionStatus`，应用在同一读取事务中恢复生命周期与最近准入投影。首次、重放和重启均返回 Denied/ApprovalRequired，而非瞬时错误后变回 Waiting；批准人、规则与完整裁决仍只在特权审计中。已有 attempt 的事实和新的准入结果分别呈现。
 
 `ExecutionApp` 由服务生命周期持有，调用均同步、有界；UI 窗口或模型调用只拥有请求/响应，不能拥有执行 future。owner 独立调度 `reconcile`，新尝试则使用显式稳定 command ID。S1 没有常驻 OS 服务安装器、通用 worker 框架或任意 exec/PTY 接口。

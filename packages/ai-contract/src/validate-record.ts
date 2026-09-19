@@ -157,6 +157,11 @@ const schema31 = {
           description:
             "SHA-256 identity of the normalized absolute workspace path. Filesystem containment remains owned by the provider adapter and composition root.",
         },
+        nativeThreadId: {
+          $ref: "#/$defs/Id",
+          description:
+            "Provider-owned thread identity within the native session tree; required when the provider exposes distinct threads.",
+        },
       },
       required: [
         "provider",
@@ -2498,6 +2503,11 @@ const schema31 = {
           $ref: "#/$defs/Id",
           description:
             "Append-once native lookup key returned for ambiguous submission.",
+        },
+        nativeThreadId: {
+          $ref: "#/$defs/Id",
+          description:
+            "Provider-owned thread identity within the native session tree; required when the provider exposes distinct threads.",
         },
       },
       required: [
@@ -6187,7 +6197,7 @@ const schema58 = {
   description:
     "Closed command lifecycle; acceptance is immutable, local invalidation does not assert a model terminal.",
 };
-const schema67 = {
+const schema68 = {
   type: "string",
   enum: [
     "completed",
@@ -6243,6 +6253,11 @@ const schema59 = {
       $ref: "#/$defs/Id",
       description:
         "Append-once native lookup key returned for ambiguous submission.",
+    },
+    nativeThreadId: {
+      $ref: "#/$defs/Id",
+      description:
+        "Provider-owned thread identity within the native session tree; required when the provider exposes distinct threads.",
     },
   },
   required: [
@@ -6301,18 +6316,7 @@ function validate36(
       } else {
         const _errs1 = errors;
         for (const key0 in data) {
-          if (
-            !(
-              key0 === "nativeSessionId" ||
-              key0 === "nativeRunId" ||
-              key0 === "nativeRequestId" ||
-              key0 === "certainty" ||
-              key0 === "attemptId" ||
-              key0 === "originGeneration" ||
-              key0 === "observerGeneration" ||
-              key0 === "correlationId"
-            )
-          ) {
+          if (!func22.call(schema59.properties, key0)) {
             validate36.errors = [
               {
                 instancePath,
@@ -6855,6 +6859,81 @@ function validate36(
                         } else {
                           var valid0 = true;
                         }
+                        if (valid0) {
+                          if (data.nativeThreadId !== undefined) {
+                            let data8 = data.nativeThreadId;
+                            const _errs25 = errors;
+                            const _errs26 = errors;
+                            if (errors === _errs26) {
+                              if (typeof data8 === "string") {
+                                if (func1(data8) > 128) {
+                                  validate36.errors = [
+                                    {
+                                      instancePath:
+                                        instancePath + "/nativeThreadId",
+                                      schemaPath: "#/$defs/Id/maxLength",
+                                      keyword: "maxLength",
+                                      params: { limit: 128 },
+                                      message:
+                                        "must NOT have more than 128 characters",
+                                    },
+                                  ];
+                                  return false;
+                                } else {
+                                  if (func1(data8) < 1) {
+                                    validate36.errors = [
+                                      {
+                                        instancePath:
+                                          instancePath + "/nativeThreadId",
+                                        schemaPath: "#/$defs/Id/minLength",
+                                        keyword: "minLength",
+                                        params: { limit: 1 },
+                                        message:
+                                          "must NOT have fewer than 1 characters",
+                                      },
+                                    ];
+                                    return false;
+                                  } else {
+                                    if (!pattern4.test(data8)) {
+                                      validate36.errors = [
+                                        {
+                                          instancePath:
+                                            instancePath + "/nativeThreadId",
+                                          schemaPath: "#/$defs/Id/pattern",
+                                          keyword: "pattern",
+                                          params: {
+                                            pattern:
+                                              "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
+                                          },
+                                          message:
+                                            'must match pattern "' +
+                                            "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$" +
+                                            '"',
+                                        },
+                                      ];
+                                      return false;
+                                    }
+                                  }
+                                }
+                              } else {
+                                validate36.errors = [
+                                  {
+                                    instancePath:
+                                      instancePath + "/nativeThreadId",
+                                    schemaPath: "#/$defs/Id/type",
+                                    keyword: "type",
+                                    params: { type: "string" },
+                                    message: "must be string",
+                                  },
+                                ];
+                                return false;
+                              }
+                            }
+                            var valid0 = _errs25 === errors;
+                          } else {
+                            var valid0 = true;
+                          }
+                        }
                       }
                     }
                   }
@@ -6885,7 +6964,7 @@ validate36.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema68 = {
+const schema69 = {
   type: "object",
   properties: {
     code: {
@@ -6902,7 +6981,7 @@ const schema68 = {
   additionalProperties: false,
   description: "Value-free failure and explicit retry discipline.",
 };
-const schema69 = {
+const schema70 = {
   type: "string",
   enum: [
     "invalid_input",
@@ -6924,7 +7003,7 @@ const schema69 = {
   description:
     "Closed value-free error category; diagnostics never include model text or credentials.",
 };
-const schema70 = {
+const schema71 = {
   type: "string",
   enum: ["same_command", "reconcile_first", "never"],
   description:
@@ -7023,7 +7102,7 @@ function validate49(
                   instancePath: instancePath + "/code",
                   schemaPath: "#/$defs/ErrorCode/enum",
                   keyword: "enum",
-                  params: { allowedValues: schema69.enum },
+                  params: { allowedValues: schema70.enum },
                   message: "must be equal to one of the allowed values",
                 },
               ];
@@ -7061,7 +7140,7 @@ function validate49(
                     instancePath: instancePath + "/retry",
                     schemaPath: "#/$defs/Retry/enum",
                     keyword: "enum",
-                    params: { allowedValues: schema70.enum },
+                    params: { allowedValues: schema71.enum },
                     message: "must be equal to one of the allowed values",
                   },
                 ];
@@ -8191,7 +8270,7 @@ function validate31(
                                 instancePath: instancePath + "/outcome",
                                 schemaPath: "#/$defs/Outcome/enum",
                                 keyword: "enum",
-                                params: { allowedValues: schema67.enum },
+                                params: { allowedValues: schema68.enum },
                                 message:
                                   "must be equal to one of the allowed values",
                               };
@@ -8834,7 +8913,7 @@ function validate31(
   return errors === 0;
 }
 validate31.evaluated = { dynamicProps: true, dynamicItems: false };
-const schema71 = {
+const schema72 = {
   oneOf: [
     {
       type: "object",
@@ -10158,19 +10237,19 @@ const schema71 = {
   description:
     "Closed stable events. Session events have no command, attempt observations name their exact attempt.",
 };
-const schema116 = {
+const schema117 = {
   type: "object",
   additionalProperties: true,
   description:
     "Immutable untrusted provider question payload. Subject to whole-record JSON budgets; never authentication, permission or execution approval.",
 };
-const schema118 = {
+const schema119 = {
   type: "string",
   enum: ["generation_bound"],
   description:
     "A live-generation callback. Restore preserves display history but always makes the previous callback unavailable.",
 };
-const schema155 = {
+const schema156 = {
   type: "object",
   properties: {
     schemaVersion: {
@@ -10331,7 +10410,7 @@ function validate73(
       } else {
         const _errs1 = errors;
         for (const key0 in data) {
-          if (!func22.call(schema155.properties, key0)) {
+          if (!func22.call(schema156.properties, key0)) {
             validate73.errors = [
               {
                 instancePath,
@@ -11227,7 +11306,7 @@ function validate73(
                                               keyword: "enum",
                                               params: {
                                                 allowedValues:
-                                                  schema155.properties.status
+                                                  schema156.properties.status
                                                     .enum,
                                               },
                                               message:
@@ -11415,7 +11494,7 @@ function validate52(
       } else {
         const _errs3 = errors;
         for (const key0 in data) {
-          if (!func22.call(schema71.oneOf[0].properties, key0)) {
+          if (!func22.call(schema72.oneOf[0].properties, key0)) {
             const err1 = {
               instancePath,
               schemaPath: "#/oneOf/0/additionalProperties",
@@ -12919,7 +12998,7 @@ function validate52(
         } else {
           const _errs62 = errors;
           for (const key4 in data) {
-            if (!func22.call(schema71.oneOf[2].properties, key4)) {
+            if (!func22.call(schema72.oneOf[2].properties, key4)) {
               const err65 = {
                 instancePath,
                 schemaPath: "#/oneOf/2/additionalProperties",
@@ -13489,7 +13568,7 @@ function validate52(
                                             keyword: "enum",
                                             params: {
                                               allowedValues:
-                                                schema71.oneOf[2].properties
+                                                schema72.oneOf[2].properties
                                                   .body.properties.state.enum,
                                             },
                                             message:
@@ -13683,7 +13762,7 @@ function validate52(
           } else {
             const _errs92 = errors;
             for (const key6 in data) {
-              if (!func22.call(schema71.oneOf[3].properties, key6)) {
+              if (!func22.call(schema72.oneOf[3].properties, key6)) {
                 const err98 = {
                   instancePath,
                   schemaPath: "#/oneOf/3/additionalProperties",
@@ -14261,7 +14340,7 @@ function validate52(
                                                 "#/$defs/Outcome/enum",
                                               keyword: "enum",
                                               params: {
-                                                allowedValues: schema67.enum,
+                                                allowedValues: schema68.enum,
                                               },
                                               message:
                                                 "must be equal to one of the allowed values",
@@ -14456,7 +14535,7 @@ function validate52(
             } else {
               const _errs123 = errors;
               for (const key8 in data) {
-                if (!func22.call(schema71.oneOf[4].properties, key8)) {
+                if (!func22.call(schema72.oneOf[4].properties, key8)) {
                   const err131 = {
                     instancePath,
                     schemaPath: "#/oneOf/4/additionalProperties",
@@ -15047,7 +15126,7 @@ function validate52(
                                                 keyword: "enum",
                                                 params: {
                                                   allowedValues:
-                                                    schema71.oneOf[4].properties
+                                                    schema72.oneOf[4].properties
                                                       .body.properties
                                                       .confirmation.enum,
                                                 },
@@ -15245,7 +15324,7 @@ function validate52(
               } else {
                 const _errs153 = errors;
                 for (const key10 in data) {
-                  if (!func22.call(schema71.oneOf[5].properties, key10)) {
+                  if (!func22.call(schema72.oneOf[5].properties, key10)) {
                     const err164 = {
                       instancePath,
                       schemaPath: "#/oneOf/5/additionalProperties",
@@ -16241,7 +16320,7 @@ function validate52(
                 } else {
                   const _errs190 = errors;
                   for (const key12 in data) {
-                    if (!func22.call(schema71.oneOf[6].properties, key12)) {
+                    if (!func22.call(schema72.oneOf[6].properties, key12)) {
                       const err204 = {
                         instancePath,
                         schemaPath: "#/oneOf/6/additionalProperties",
@@ -16965,7 +17044,7 @@ function validate52(
                                                       keyword: "enum",
                                                       params: {
                                                         allowedValues:
-                                                          schema71.oneOf[6]
+                                                          schema72.oneOf[6]
                                                             .properties.body
                                                             .properties
                                                             .disposition.enum,
@@ -17240,7 +17319,7 @@ function validate52(
                   } else {
                     const _errs225 = errors;
                     for (const key14 in data) {
-                      if (!func22.call(schema71.oneOf[7].properties, key14)) {
+                      if (!func22.call(schema72.oneOf[7].properties, key14)) {
                         const err243 = {
                           instancePath,
                           schemaPath: "#/oneOf/7/additionalProperties",
@@ -18241,7 +18320,7 @@ function validate52(
                                                               keyword: "enum",
                                                               params: {
                                                                 allowedValues:
-                                                                  schema118.enum,
+                                                                  schema119.enum,
                                                               },
                                                               message:
                                                                 "must be equal to one of the allowed values",
@@ -18459,7 +18538,7 @@ function validate52(
                     } else {
                       const _errs268 = errors;
                       for (const key16 in data) {
-                        if (!func22.call(schema71.oneOf[8].properties, key16)) {
+                        if (!func22.call(schema72.oneOf[8].properties, key16)) {
                           const err286 = {
                             instancePath,
                             schemaPath: "#/oneOf/8/additionalProperties",
@@ -19610,7 +19689,7 @@ function validate52(
                         const _errs304 = errors;
                         for (const key18 in data) {
                           if (
-                            !func22.call(schema71.oneOf[9].properties, key18)
+                            !func22.call(schema72.oneOf[9].properties, key18)
                           ) {
                             const err327 = {
                               instancePath,
@@ -20414,7 +20493,7 @@ function validate52(
                                                             keyword: "enum",
                                                             params: {
                                                               allowedValues:
-                                                                schema71
+                                                                schema72
                                                                   .oneOf[9]
                                                                   .properties
                                                                   .body
@@ -22195,7 +22274,7 @@ function validate52(
                               for (const key24 in data) {
                                 if (
                                   !func22.call(
-                                    schema71.oneOf[12].properties,
+                                    schema72.oneOf[12].properties,
                                     key24,
                                   )
                                 ) {
@@ -23134,7 +23213,7 @@ function validate52(
                                 for (const key26 in data) {
                                   if (
                                     !func22.call(
-                                      schema71.oneOf[13].properties,
+                                      schema72.oneOf[13].properties,
                                       key26,
                                     )
                                   ) {
@@ -23932,7 +24011,7 @@ function validate52(
                                                                         "enum",
                                                                       params: {
                                                                         allowedValues:
-                                                                          schema71
+                                                                          schema72
                                                                             .oneOf[13]
                                                                             .properties
                                                                             .body
@@ -24216,7 +24295,7 @@ function validate52(
                                   for (const key28 in data) {
                                     if (
                                       !func22.call(
-                                        schema71.oneOf[14].properties,
+                                        schema72.oneOf[14].properties,
                                         key28,
                                       )
                                     ) {
@@ -26947,7 +27026,7 @@ function validate52(
   return errors === 0;
 }
 validate52.evaluated = { dynamicProps: true, dynamicItems: false };
-const schema174 = {
+const schema175 = {
   type: "object",
   properties: {
     schemaVersion: {
@@ -27005,7 +27084,7 @@ const schema174 = {
   description:
     "Logical session state and stable event watermark committed at one revision.",
 };
-const schema177 = {
+const schema178 = {
   type: "object",
   properties: {
     provider: { $ref: "#/$defs/Id", description: "Provider adapter identity." },
@@ -27052,6 +27131,11 @@ const schema177 = {
       description:
         "SHA-256 identity of the normalized absolute workspace path. Filesystem containment remains owned by the provider adapter and composition root.",
     },
+    nativeThreadId: {
+      $ref: "#/$defs/Id",
+      description:
+        "Provider-owned thread identity within the native session tree; required when the provider exposes distinct threads.",
+    },
   },
   required: [
     "provider",
@@ -27067,7 +27151,7 @@ const schema177 = {
   description:
     "Provider context identity. Version, configuration, account and generation bind every capability and callback.",
 };
-const schema184 = {
+const schema185 = {
   type: "object",
   properties: {
     id: {
@@ -27344,7 +27428,7 @@ function validate81(
       } else {
         const _errs1 = errors;
         for (const key0 in data) {
-          if (!func22.call(schema177.properties, key0)) {
+          if (!func22.call(schema178.properties, key0)) {
             validate81.errors = [
               {
                 instancePath,
@@ -28008,6 +28092,82 @@ function validate81(
                             } else {
                               var valid0 = true;
                             }
+                            if (valid0) {
+                              if (data.nativeThreadId !== undefined) {
+                                let data10 = data.nativeThreadId;
+                                const _errs30 = errors;
+                                const _errs31 = errors;
+                                if (errors === _errs31) {
+                                  if (typeof data10 === "string") {
+                                    if (func1(data10) > 128) {
+                                      validate81.errors = [
+                                        {
+                                          instancePath:
+                                            instancePath + "/nativeThreadId",
+                                          schemaPath: "#/$defs/Id/maxLength",
+                                          keyword: "maxLength",
+                                          params: { limit: 128 },
+                                          message:
+                                            "must NOT have more than 128 characters",
+                                        },
+                                      ];
+                                      return false;
+                                    } else {
+                                      if (func1(data10) < 1) {
+                                        validate81.errors = [
+                                          {
+                                            instancePath:
+                                              instancePath + "/nativeThreadId",
+                                            schemaPath: "#/$defs/Id/minLength",
+                                            keyword: "minLength",
+                                            params: { limit: 1 },
+                                            message:
+                                              "must NOT have fewer than 1 characters",
+                                          },
+                                        ];
+                                        return false;
+                                      } else {
+                                        if (!pattern4.test(data10)) {
+                                          validate81.errors = [
+                                            {
+                                              instancePath:
+                                                instancePath +
+                                                "/nativeThreadId",
+                                              schemaPath: "#/$defs/Id/pattern",
+                                              keyword: "pattern",
+                                              params: {
+                                                pattern:
+                                                  "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
+                                              },
+                                              message:
+                                                'must match pattern "' +
+                                                "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$" +
+                                                '"',
+                                            },
+                                          ];
+                                          return false;
+                                        }
+                                      }
+                                    }
+                                  } else {
+                                    validate81.errors = [
+                                      {
+                                        instancePath:
+                                          instancePath + "/nativeThreadId",
+                                        schemaPath: "#/$defs/Id/type",
+                                        keyword: "type",
+                                        params: { type: "string" },
+                                        message: "must be string",
+                                      },
+                                    ];
+                                    return false;
+                                  }
+                                }
+                                var valid0 = _errs30 === errors;
+                              } else {
+                                var valid0 = true;
+                              }
+                            }
                           }
                         }
                       }
@@ -28040,7 +28200,7 @@ validate81.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema190 = {
+const schema192 = {
   type: "object",
   properties: {
     continuation: {
@@ -28111,7 +28271,7 @@ const schema190 = {
   description:
     "Capabilities established for one exact provider binding, never execution authorization.",
 };
-const schema191 = {
+const schema193 = {
   type: "string",
   enum: ["supported", "unsupported", "unknown"],
   description:
@@ -28165,7 +28325,7 @@ function validate85(
       } else {
         const _errs1 = errors;
         for (const key0 in data) {
-          if (!func22.call(schema190.properties, key0)) {
+          if (!func22.call(schema192.properties, key0)) {
             validate85.errors = [
               {
                 instancePath,
@@ -28209,7 +28369,7 @@ function validate85(
                   schemaPath: "#/properties/continuation/enum",
                   keyword: "enum",
                   params: {
-                    allowedValues: schema190.properties.continuation.enum,
+                    allowedValues: schema192.properties.continuation.enum,
                   },
                   message: "must be equal to one of the allowed values",
                 },
@@ -28250,7 +28410,7 @@ function validate85(
                     schemaPath: "#/properties/cancellation/enum",
                     keyword: "enum",
                     params: {
-                      allowedValues: schema190.properties.cancellation.enum,
+                      allowedValues: schema192.properties.cancellation.enum,
                     },
                     message: "must be equal to one of the allowed values",
                   },
@@ -28291,7 +28451,7 @@ function validate85(
                       schemaPath: "#/properties/tools/enum",
                       keyword: "enum",
                       params: {
-                        allowedValues: schema190.properties.tools.enum,
+                        allowedValues: schema192.properties.tools.enum,
                       },
                       message: "must be equal to one of the allowed values",
                     },
@@ -28330,7 +28490,7 @@ function validate85(
                         instancePath: instancePath + "/steer",
                         schemaPath: "#/$defs/CapabilityState/enum",
                         keyword: "enum",
-                        params: { allowedValues: schema191.enum },
+                        params: { allowedValues: schema193.enum },
                         message: "must be equal to one of the allowed values",
                       },
                     ];
@@ -28368,7 +28528,7 @@ function validate85(
                           instancePath: instancePath + "/fork",
                           schemaPath: "#/$defs/CapabilityState/enum",
                           keyword: "enum",
-                          params: { allowedValues: schema191.enum },
+                          params: { allowedValues: schema193.enum },
                           message: "must be equal to one of the allowed values",
                         },
                       ];
@@ -28406,7 +28566,7 @@ function validate85(
                             instancePath: instancePath + "/subagent",
                             schemaPath: "#/$defs/CapabilityState/enum",
                             keyword: "enum",
-                            params: { allowedValues: schema191.enum },
+                            params: { allowedValues: schema193.enum },
                             message:
                               "must be equal to one of the allowed values",
                           },
@@ -28445,7 +28605,7 @@ function validate85(
                               instancePath: instancePath + "/terminal",
                               schemaPath: "#/$defs/CapabilityState/enum",
                               keyword: "enum",
-                              params: { allowedValues: schema191.enum },
+                              params: { allowedValues: schema193.enum },
                               message:
                                 "must be equal to one of the allowed values",
                             },
@@ -28486,7 +28646,7 @@ function validate85(
                                   instancePath + "/structuredQuestion",
                                 schemaPath: "#/$defs/CapabilityState/enum",
                                 keyword: "enum",
-                                params: { allowedValues: schema191.enum },
+                                params: { allowedValues: schema193.enum },
                                 message:
                                   "must be equal to one of the allowed values",
                               },
@@ -28525,7 +28685,7 @@ function validate85(
                                   instancePath: instancePath + "/multimodal",
                                   schemaPath: "#/$defs/CapabilityState/enum",
                                   keyword: "enum",
-                                  params: { allowedValues: schema191.enum },
+                                  params: { allowedValues: schema193.enum },
                                   message:
                                     "must be equal to one of the allowed values",
                                 },
@@ -28564,7 +28724,7 @@ function validate85(
                                     instancePath: instancePath + "/queue",
                                     schemaPath: "#/$defs/CapabilityState/enum",
                                     keyword: "enum",
-                                    params: { allowedValues: schema191.enum },
+                                    params: { allowedValues: schema193.enum },
                                     message:
                                       "must be equal to one of the allowed values",
                                   },
@@ -28958,7 +29118,7 @@ function validate79(
                                 keyword: "enum",
                                 params: {
                                   allowedValues:
-                                    schema174.properties.status.enum,
+                                    schema175.properties.status.enum,
                                 },
                                 message:
                                   "must be equal to one of the allowed values",
@@ -29000,7 +29160,7 @@ validate79.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema198 = {
+const schema200 = {
   type: "object",
   properties: {
     schemaVersion: {
@@ -29145,7 +29305,7 @@ function validate88(
       } else {
         const _errs1 = errors;
         for (const key0 in data) {
-          if (!func22.call(schema198.properties, key0)) {
+          if (!func22.call(schema200.properties, key0)) {
             validate88.errors = [
               {
                 instancePath,
@@ -29620,7 +29780,7 @@ function validate88(
                                   keyword: "enum",
                                   params: {
                                     allowedValues:
-                                      schema198.properties.status.enum,
+                                      schema200.properties.status.enum,
                                   },
                                   message:
                                     "must be equal to one of the allowed values",
@@ -29733,7 +29893,7 @@ function validate88(
                                       schemaPath:
                                         "#/$defs/CallbackLifetime/enum",
                                       keyword: "enum",
-                                      params: { allowedValues: schema118.enum },
+                                      params: { allowedValues: schema119.enum },
                                       message:
                                         "must be equal to one of the allowed values",
                                     },
@@ -29928,7 +30088,7 @@ validate88.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema208 = {
+const schema210 = {
   type: "object",
   properties: {
     schemaVersion: {
@@ -30052,7 +30212,7 @@ function validate91(
       } else {
         const _errs1 = errors;
         for (const key0 in data) {
-          if (!func22.call(schema208.properties, key0)) {
+          if (!func22.call(schema210.properties, key0)) {
             validate91.errors = [
               {
                 instancePath,
@@ -30433,7 +30593,7 @@ function validate91(
                                 keyword: "enum",
                                 params: {
                                   allowedValues:
-                                    schema208.properties.retry.enum,
+                                    schema210.properties.retry.enum,
                                 },
                                 message:
                                   "must be equal to one of the allowed values",
@@ -30475,7 +30635,7 @@ function validate91(
                                   keyword: "enum",
                                   params: {
                                     allowedValues:
-                                      schema208.properties.status.enum,
+                                      schema210.properties.status.enum,
                                   },
                                   message:
                                     "must be equal to one of the allowed values",
@@ -30665,7 +30825,7 @@ validate91.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema214 = {
+const schema216 = {
   type: "object",
   properties: {
     schemaVersion: {
@@ -30777,7 +30937,7 @@ function validate95(
       } else {
         const _errs1 = errors;
         for (const key0 in data) {
-          if (!func22.call(schema214.properties, key0)) {
+          if (!func22.call(schema216.properties, key0)) {
             validate95.errors = [
               {
                 instancePath,
@@ -31375,7 +31535,7 @@ validate95.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema222 = {
+const schema224 = {
   type: "object",
   properties: {
     schemaVersion: {
@@ -31492,7 +31652,7 @@ function validate97(
       } else {
         const _errs1 = errors;
         for (const key0 in data) {
-          if (!func22.call(schema222.properties, key0)) {
+          if (!func22.call(schema224.properties, key0)) {
             validate97.errors = [
               {
                 instancePath,
@@ -32084,7 +32244,7 @@ validate97.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema227 = {
+const schema229 = {
   type: "object",
   properties: {
     schemaVersion: {
@@ -32382,7 +32542,7 @@ validate104.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema229 = {
+const schema231 = {
   type: "object",
   properties: {
     schemaVersion: {
@@ -32409,7 +32569,7 @@ const schema229 = {
   required: ["schemaVersion", "kind", "sessionId", "query"],
   additionalProperties: false,
 };
-const schema231 = {
+const schema233 = {
   type: "object",
   properties: {
     limit: {
@@ -32872,7 +33032,7 @@ validate107.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema233 = {
+const schema235 = {
   type: "object",
   properties: {
     schemaVersion: {
@@ -33068,7 +33228,7 @@ validate111.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema234 = {
+const schema236 = {
   type: "object",
   properties: {
     schemaVersion: {
@@ -33456,7 +33616,7 @@ validate114.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema238 = {
+const schema240 = {
   type: "object",
   properties: {
     schemaVersion: {
@@ -33776,7 +33936,7 @@ validate116.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema241 = {
+const schema243 = {
   type: "object",
   properties: {
     schemaVersion: {
@@ -34021,7 +34181,7 @@ validate118.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema243 = {
+const schema245 = {
   type: "object",
   properties: {
     schemaVersion: {
@@ -34324,7 +34484,7 @@ validate120.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema245 = {
+const schema247 = {
   type: "object",
   properties: {
     schemaVersion: {
@@ -34356,7 +34516,7 @@ const schema245 = {
   required: ["schemaVersion", "kind", "sessionId", "attachmentId", "update"],
   additionalProperties: false,
 };
-const schema248 = {
+const schema250 = {
   oneOf: [
     {
       type: "object",
@@ -35394,7 +35554,7 @@ validate123.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema252 = {
+const schema254 = {
   type: "object",
   properties: {
     schemaVersion: {

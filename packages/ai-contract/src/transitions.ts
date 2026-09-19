@@ -352,7 +352,8 @@ function reduceCommit(
       return fail("invalid_input");
     if (
       c.dispatch &&
-      c.dispatch.observerGeneration !== batch.expectedGeneration
+      (c.dispatch.observerGeneration !== batch.expectedGeneration ||
+        c.dispatch.nativeThreadId !== state.session.binding.nativeThreadId)
     )
       return fail("stale_binding");
     if (resolution) {
@@ -365,6 +366,7 @@ function reduceCommit(
           providerIdentity(state.session.binding),
         ) ||
         resolution.binding.nativeSessionId !== old.dispatch.nativeSessionId ||
+        resolution.binding.nativeThreadId !== old.dispatch.nativeThreadId ||
         ["nativeRunId", "nativeRequestId"].some((key) => {
           const k = key as "nativeRunId" | "nativeRequestId";
           return (
@@ -420,6 +422,8 @@ function reduceCommit(
         return fail("content_conflict");
     }
     if (old?.dispatch && c.dispatch) {
+      if (old.dispatch.nativeThreadId !== c.dispatch.nativeThreadId)
+        return fail("stale_binding");
       for (const key of [
         "attemptId",
         "originGeneration",
@@ -461,6 +465,38 @@ function reduceCommit(
       )
         return fail("invalid_input");
       if (batch.nowMs! > dispatchDeadline(state, c)) return fail("expired");
+      if (
+        c.command.input.type === "prompt" &&
+        c.command.input.policy === "queue_next" &&
+        [...state.commands.values()].some(
+          (record) =>
+            record.command.commandId !== id &&
+            record.command.input.type === "prompt" &&
+            record.dispatch &&
+            !isSettled(record),
+        )
+      )
+        return fail("content_conflict");
+      if (
+        c.command.input.type === "prompt" &&
+        c.command.input.policy === "steer"
+      ) {
+        const target = c.command.input.targetRunId;
+        if (
+          state.session.capabilities.steer !== "supported" ||
+          target !== state.session.binding.nativeRunId ||
+          c.dispatch.nativeRunId !== target ||
+          ![...state.commands.values()].some(
+            (record) =>
+              record.command.input.type === "prompt" &&
+              record.command.input.policy === "queue_next" &&
+              !isSettled(record) &&
+              record.dispatch?.certainty === "submitted" &&
+              record.dispatch.nativeRunId === target,
+          )
+        )
+          return fail("stale_binding");
+      }
       attemptIds.add(c.dispatch.attemptId);
     } else if (old?.dispatch && resolution?.status !== "not_submitted")
       return fail("invalid_input");
@@ -533,6 +569,17 @@ function reduceCommit(
   }
   if ([...reconciliations.keys()].some((id) => !commandIds.has(id)))
     return fail("invalid_input");
+  // Acceptance may queue many prompts, but an unresolved dispatch owns the turn.
+  if (
+    [...copy.commands.values()].filter(
+      (record) =>
+        record.command.input.type === "prompt" &&
+        record.command.input.policy === "queue_next" &&
+        record.dispatch !== undefined &&
+        !isSettled(record),
+    ).length > 1
+  )
+    return fail("content_conflict");
   const oldBinding = state.session.binding,
     nextBinding = batch.session.binding;
   const coordinatesMatch = (
@@ -561,8 +608,14 @@ function reduceCommit(
       )
         return fail("stale_binding");
     } else {
-      const original = records.filter((c) =>
-        coordinatesMatch(c.dispatch, oldBinding),
+      const original = records.filter(
+        (c) =>
+          c.dispatch !== undefined &&
+          c.dispatch.nativeSessionId === oldBinding.nativeSessionId &&
+          c.dispatch.nativeThreadId === oldBinding.nativeThreadId &&
+          (oldBinding.nativeRunId !== undefined
+            ? c.dispatch.nativeRunId === oldBinding.nativeRunId
+            : coordinatesMatch(c.dispatch, oldBinding)),
       );
       if (
         !original.length ||

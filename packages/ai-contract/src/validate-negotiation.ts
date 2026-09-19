@@ -117,6 +117,11 @@ const schema31 = {
           description:
             "SHA-256 identity of the normalized absolute workspace path. Filesystem containment remains owned by the provider adapter and composition root.",
         },
+        nativeThreadId: {
+          $ref: "#/$defs/Id",
+          description:
+            "Provider-owned thread identity within the native session tree; required when the provider exposes distinct threads.",
+        },
       },
       required: [
         "provider",
@@ -2458,6 +2463,11 @@ const schema31 = {
           $ref: "#/$defs/Id",
           description:
             "Append-once native lookup key returned for ambiguous submission.",
+        },
+        nativeThreadId: {
+          $ref: "#/$defs/Id",
+          description:
+            "Provider-owned thread identity within the native session tree; required when the provider exposes distinct threads.",
         },
       },
       required: [

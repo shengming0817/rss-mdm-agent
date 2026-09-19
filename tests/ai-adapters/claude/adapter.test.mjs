@@ -151,6 +151,9 @@ test("explicit native session and restricted SDK configuration; close proves exi
   assert.equal(h.options.permissionMode, "default");
   assert.equal(h.options.env.ANTHROPIC_API_KEY, "fixture-secret");
   assert.equal(h.options.env.ANTHROPIC_AUTH_TOKEN, undefined);
+  assert.notEqual(h.options.env.PATH, process.env.PATH);
+  if (process.platform !== "win32")
+    assert.equal(h.options.env.PATH, "/usr/bin:/bin");
   assert.equal(unwrap(await h.adapter.close(budget())).processStopped, true);
 });
 test("submit waits for native acceptance; deltas and terminal retain prompt identity", async () => {

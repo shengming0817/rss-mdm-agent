@@ -335,3 +335,38 @@ export interface SessionRebind {
   readonly restored: import("./session.js").VerifiedProviderSession;
   readonly eventId: Id;
 }
+
+/** Provider-owned native operation on a fresh, Host-owned child incarnation. */
+export interface ProviderForkRequest {
+  readonly namespace: Namespace;
+  readonly binding: Binding;
+  readonly throughTurnId: Id;
+}
+export type ProviderForkResult =
+  | {
+      certainty: "created";
+      value: ProviderSessionBinding;
+      source: ProviderForkRequest;
+    }
+  | { certainty: "not_created" | "unknown"; error: Failure };
+export interface ProviderForkPort {
+  forkSession(
+    request: ProviderForkRequest,
+    configuration: ProviderConfiguration,
+    budget: Budget,
+  ): Promise<ProviderForkResult>;
+}
+/** Closed metadata only. No native method names, identifiers, paths or payloads. */
+export interface ProviderDiagnostic {
+  readonly kind: "text_delta" | "item_completed" | "turn_completed" | "other";
+  readonly dropped: number;
+}
+export interface ProviderDiagnosticsPort {
+  observe(binding: Binding, budget: Budget): AsyncIterable<ProviderDiagnostic>;
+}
+/** Extensions cannot create, admit, persist or dispose another provider instance. */
+export interface ProviderInstance {
+  readonly agent: ProviderAgentPort;
+  readonly extensions: { readonly fork?: ProviderForkPort };
+  readonly diagnostics: ProviderDiagnosticsPort;
+}

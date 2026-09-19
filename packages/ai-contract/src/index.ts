@@ -18,7 +18,11 @@ export {
   selectNegotiation,
 } from "./protocol.js";
 
-export type { AdmissionResult, VerifiedReconciliation } from "./session.js";
+export type {
+  AdmissionResult,
+  ForkAdmissionResult,
+  VerifiedReconciliation,
+} from "./session.js";
 
 export {
   interactionCatalog,
@@ -28,5 +32,6 @@ export {
 } from "./a2ui.js";
 
 export { boundedStream } from "./stream.js";
+export { withinBudget } from "./budget.js";
 
 export { errorCodes } from "./identity.js";

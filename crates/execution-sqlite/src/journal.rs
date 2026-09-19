@@ -20,7 +20,8 @@ pub(crate) fn decode<T: DeserializeOwned>(bytes: &[u8], max: usize) -> Result<T,
 }
 pub(crate) fn hash(value: &impl Serialize) -> Result<String, Error> {
     let bytes = serde_json_canonicalizer::to_vec(value).map_err(|_| Error::Corrupt)?;
-    let digest = Sha256::digest([b"execution-sqlite/v1\0".as_slice(), &bytes].concat());
+    let domain = format!("execution-sqlite/v{}\0", crate::database::SCHEMA_VERSION);
+    let digest = Sha256::digest([domain.as_bytes(), &bytes].concat());
     Ok(format!("{digest:x}"))
 }
 pub(crate) fn integer(value: u64) -> Result<i64, Error> {
