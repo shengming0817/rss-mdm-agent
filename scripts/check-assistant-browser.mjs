@@ -7,7 +7,7 @@ import {
   surfaceCommit,
 } from "../packages/ai-contract/dist/testing/index.js";
 const fixture = await startFixture();
-let browser;
+let browser, page;
 try {
   await fixture.seed();
   browser = await chromium.launch({
@@ -18,8 +18,8 @@ try {
         ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
         : undefined),
   });
-  const page = await browser.newPage(),
-    errors = [];
+  page = await browser.newPage();
+  const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(fixture.url);
   await page.getByRole("button", { name: "AI 助手", exact: true }).click();
@@ -51,6 +51,20 @@ try {
     ),
   );
   await page.getByText("模型正在处理", { exact: true }).waitFor();
+  const liveSession = unwrap(
+    await fixture.host.store.session({ ...fixture.caller, sessionId }),
+  );
+  unwrap(
+    await fixture.host.publishDelta(fixture.caller, sessionId, {
+      type: "delta",
+      attemptId: `attempt-${command.commandId}`,
+      commandId: command.commandId,
+      binding: liveSession.binding,
+      messageId: "transient",
+      text: "临时片段",
+    }),
+  );
+  await page.getByText("临时片段", { exact: true }).waitFor();
   assert.equal(await composer.isEnabled(), true, "busy run permits editing");
   await composer.fill("排队下一轮");
   await page.getByRole("button", { name: "发送", exact: true }).click();
@@ -71,6 +85,15 @@ try {
   // Keep a draft and active subscriptions across both session and product navigation changes.
   await composer.fill("保留草稿");
   await page.getByRole("button", { name: "新建会话", exact: true }).click();
+  await page
+    .locator('.assistant-sessions button[aria-current="true"]')
+    .filter({ hasText: "fake-session-26" })
+    .waitFor();
+  assert.equal(
+    await page.getByText("临时片段", { exact: true }).count(),
+    0,
+    "a different logical session cannot display the old delta",
+  );
   await fixture.question(sessionId, command.commandId, "background-question");
   await page.getByText("后台会话有待回答提问：", { exact: false }).waitFor();
   const permission = fixture.permission(sessionId);
@@ -136,7 +159,43 @@ try {
     true,
     "renderer failure leaves ordinary conversation usable",
   );
+  await degraded
+    .locator(".question-readonly")
+    .getByText("诊断 · 选择下一步", { exact: true })
+    .waitFor();
+  assert.match(
+    await degraded.locator(".question-readonly").innerText(),
+    /继续检查/,
+  );
+  assert.equal(
+    await degraded.locator(".rss-ai-surface button[type=submit]").count(),
+    0,
+  );
   await degraded.close();
+  const invalid = await browser.newPage();
+  await invalid.route("**/ai-ui-bridge/dist/renderer.js*", (route) =>
+    route.fulfill({
+      contentType: "text/javascript",
+      body: 'export class SurfaceRenderer { replace(){throw new Error("invalid component")} dispose(){} }',
+    }),
+  );
+  await invalid.goto(fixture.url);
+  await invalid.getByRole("button", { name: "AI 助手", exact: true }).click();
+  await invalid.getByRole("button", { name: "加载更多会话" }).click();
+  await invalid.getByRole("button", { name: new RegExp(sessionId) }).click();
+  await invalid
+    .locator(".question-readonly")
+    .getByText("诊断 · 选择下一步", { exact: true })
+    .waitFor();
+  assert.match(
+    await invalid.locator(".question-readonly").innerText(),
+    /继续检查/,
+  );
+  assert.equal(
+    await invalid.locator(".rss-ai-surface button[type=submit]").count(),
+    0,
+  );
+  await invalid.close();
   const noA2ui = await browser.newPage(),
     negotiate = fixture.host.negotiate.bind(fixture.host);
   fixture.host.negotiate = (offer) => {
@@ -231,6 +290,22 @@ try {
   await page
     .getByText("执行器已接收，设备效果尚未确认", { exact: true })
     .waitFor();
+  // Cross the 64-event snapshot page boundary without overflowing the fixture channel.
+  for (let offset = 0; offset < 70; offset += 10) {
+    unwrap(
+      await fixture.host.advance(
+        fixture.caller,
+        sessionId,
+        command.commandId,
+        Array.from({ length: 10 }, (_, n) => ({
+          type: "text",
+          messageId: `history-${offset + n}`,
+          text: `稳定历史块 ${offset + n}`,
+        })),
+      ),
+    );
+    await page.getByText(`稳定历史块 ${offset + 9}`, { exact: true }).waitFor();
+  }
   unwrap(
     await fixture.host.advance(fixture.caller, sessionId, command.commandId, [
       {
@@ -253,6 +328,27 @@ try {
       { type: "terminal", outcome: "completed" },
     ]),
   );
+  await page.waitForFunction(
+    ({ id, commandId }) => {
+      const v = window.assistantRuntime.getSession(id);
+      return (
+        v?.connection === "resync_required" ||
+        v?.commands[commandId]?.state === "terminal"
+      );
+    },
+    { id: sessionId, commandId: command.commandId },
+  );
+  if (
+    await page.evaluate(
+      (id) =>
+        window.assistantRuntime.getSession(id).connection === "resync_required",
+      sessionId,
+    )
+  ) {
+    await page
+      .getByRole("button", { name: "重新读取历史", exact: true })
+      .click();
+  }
   await page
     .getByText("模型本轮结束：completed；设备效果需独立查询", { exact: false })
     .waitFor();
@@ -273,7 +369,18 @@ try {
   await page.getByText("设备效果未知，需要可信核对", { exact: true }).waitFor();
   fixture.setExecution("approvalRequired");
   await page.getByRole("button", { name: "读取执行详情" }).click();
-  await page.getByText("等待管理员批准", { exact: true }).waitFor();
+  await page
+    .getByText("执行服务记录：需要管理员批准", { exact: true })
+    .waitFor();
+  for (const [ms, note] of [
+    [500, "计划尚未生效"],
+    [1000, "计划在有效期内"],
+    [2000, "计划已过期"],
+  ]) {
+    await page.clock.setFixedTime(new Date(ms));
+    await page.locator(".plan-validity").filter({ hasText: note }).waitFor();
+  }
+  await page.clock.setFixedTime(new Date());
   await page.getByRole("button", { name: "软件中心", exact: true }).click();
   await page.getByRole("button", { name: "AI 助手", exact: true }).click();
   assert.equal(await composer.inputValue(), "保留草稿");
@@ -299,15 +406,90 @@ try {
     1,
     "stable replay deduplicates",
   );
-  if (process.env.ASSISTANT_SCREENSHOT)
+  assert.equal(
+    await page.getByText("稳定历史块 0", { exact: true }).count(),
+    1,
+  );
+  assert.equal(
+    await page.getByText("稳定历史块 69", { exact: true }).count(),
+    1,
+  );
+  assert.equal(
+    await page.getByText("临时片段", { exact: true }).count(),
+    0,
+    "terminal drops uncommitted deltas",
+  );
+  let resumes = 0;
+  const resume = fixture.host.resume.bind(fixture.host);
+  fixture.host.resume = async (...args) => {
+    resumes++;
+    return resume(...args);
+  };
+  await page
+    .getByRole("button", { name: "恢复原模型上下文", exact: true })
+    .click();
+  await page.waitForFunction(
+    (id) =>
+      window.assistantRuntime.getSession(id)?.connection === "attached" &&
+      [...document.querySelectorAll("button")].some(
+        (b) => b.textContent.trim() === "恢复原模型上下文" && !b.disabled,
+      ),
+    sessionId,
+  );
+  assert.equal(
+    resumes,
+    1,
+    "same-process native resume goes through Host independently of history restore",
+  );
+  assert.equal(await page.locator('[role="alert"]').count(), 0);
+  await page.getByText("稳定历史块 69", { exact: true }).waitFor();
+  await page
+    .getByRole("button", { name: "分离当前会话视图", exact: true })
+    .click();
+  await page.getByText("连接：当前会话已分离", { exact: true }).waitFor();
+  assert.equal(
+    await page.locator(".composer button[type=submit]").isDisabled(),
+    true,
+  );
+  await page.getByRole("button", { name: "重新读取历史", exact: true }).click();
+  await page.getByText("稳定历史块 69", { exact: true }).waitFor();
+  if (process.env.ASSISTANT_SCREENSHOT) {
+    await page
+      .locator(".shell > .body > main")
+      .evaluate((element) => (element.scrollTop = 0));
     await page.screenshot({
       path: process.env.ASSISTANT_SCREENSHOT,
       fullPage: true,
     });
+  }
   assert.deepEqual(errors, []);
   console.log(
     "PASS assistant product navigation, caller pagination, busy queue/steer, multi-window questions, permission abort, A2UI lifecycle, trusted execution and reconnect",
   );
+} catch (error) {
+  if (page && !page.isClosed())
+    console.error(
+      await page.evaluate(() => ({
+        facts: document.querySelector(".assistant-facts")?.textContent,
+        alerts: [...document.querySelectorAll('[role="alert"]')].map(
+          (n) => n.textContent,
+        ),
+        views: ["fake-session-25", "fake-session-26"].map((id) => {
+          const v = window.assistantRuntime?.getSession(id);
+          return (
+            v && {
+              id,
+              generation: v.generation,
+              connection: v.connection,
+              commands: Object.fromEntries(
+                Object.entries(v.commands).map(([id, c]) => [id, c.state]),
+              ),
+            }
+          );
+        }),
+      })),
+    );
+  throw error;
 } finally {
   await browser?.close();
   await fixture.close();

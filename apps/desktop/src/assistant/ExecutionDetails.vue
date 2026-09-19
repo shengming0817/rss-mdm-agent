@@ -1,6 +1,18 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import type { ExecutionTaskDetails, TaskPhase } from "./execution-types";
-defineProps<{ details: ExecutionTaskDetails }>();
+const props = defineProps<{ details: ExecutionTaskDetails; now: number }>();
+const validity = computed(() =>
+  props.now < props.details.plan.validity.notBeforeUnixMs
+    ? "计划尚未生效"
+    : props.now >= props.details.plan.validity.expiresAtUnixMs
+      ? "计划已过期"
+      : "计划在有效期内",
+);
+const instant = (ms: number) =>
+  ms >= -8_640_000_000_000_000 && ms <= 8_640_000_000_000_000
+    ? new Date(ms).toISOString()
+    : `${ms} Unix ms（超出本机日期格式范围）`;
 function phase(value: TaskPhase): string {
   switch (value) {
     case "waiting":
@@ -8,7 +20,7 @@ function phase(value: TaskPhase): string {
     case "admissionDenied":
       return "执行准入被拒绝";
     case "approvalRequired":
-      return "等待管理员批准";
+      return "执行服务记录：需要管理员批准";
     case "accepted":
       return "执行意图已记录，尚未确认派发";
     case "running":
@@ -34,6 +46,12 @@ const text = (value: unknown) => JSON.stringify(value, null, 2);
       {{ details.status.mode === "test" ? "S1 测试执行器" : "真实执行器" }}
     </h3>
     <p class="execution-phase">{{ phase(details.status.phase) }}</p>
+    <p class="plan-validity">
+      {{ validity }}（按本机时间判断；实际准入由执行服务核验）。
+    </p>
+    <p v-if="validity !== '计划在有效期内'">
+      这是已读取的冻结计划与历史阶段；请重新读取详情，必要时获取新冻结计划。不要据此重复派发。
+    </p>
     <p v-if="details.status.mode === 'test'">
       测试结果不代表真实设备变更或生产接线完成。
     </p>
@@ -80,7 +98,8 @@ const text = (value: unknown) => JSON.stringify(value, null, 2);
       </dd>
       <dt>有效期</dt>
       <dd>
-        <pre>{{ text(details.plan.validity) }}</pre>
+        生效：{{ instant(details.plan.validity.notBeforeUnixMs) }}<br />
+        到期（不含）：{{ instant(details.plan.validity.expiresAtUnixMs) }}
       </dd>
       <dt>累计预算</dt>
       <dd>

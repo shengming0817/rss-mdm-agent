@@ -163,6 +163,7 @@ export function checkSource(file, source) {
         "JSON",
       ],
       "apps/desktop/src/assistant/ExecutionDetails.vue": ["JSON"],
+      "apps/desktop/src/assistant/QuestionCard.vue": ["JSON"],
     };
     for (const value of assistantGlobals[file] ?? []) globals.add(value);
     function staticText(node, seen = new Set()) {

@@ -28,7 +28,7 @@ export async function startFixture() {
       queue: "supported",
       steer: "supported",
       structuredQuestion: "supported",
-      continuation: "across_processes",
+      continuation: "same_process",
     },
   );
   const service = createAccessService({

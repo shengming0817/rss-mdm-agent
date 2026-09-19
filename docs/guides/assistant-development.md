@@ -9,7 +9,7 @@ pnpm install --frozen-lockfile
 pnpm dev:assistant-fixture
 ```
 
-打开脚本打印的 loopback URL。该入口在 `tests/assistant`，加载同一个产品 App；没有独立演示页或产品失败后的 fake fallback。它使用 FakeHost 和普通会话/协议接缝，不连接真实模型、不执行 OS 操作。执行面板输入生成 fixture 的原始请求编号 `request-1`；fixture 的状态源是 Rust `execution-app`、实际 SQLite 和 S1 测试 runner。fixture API / HTTP transport 仅存在于测试目录，普通桌面 bundle 不包含它们。
+打开脚本打印的 loopback URL。开发入口先检查 Rust 生成绑定与 fixture 是否漂移。该入口在 `tests/assistant`，加载同一个产品 App；没有独立演示页或产品失败后的 fake fallback。它使用仅支持同进程恢复的 FakeHost 和普通会话/协议接缝，不连接真实模型、不执行 OS 操作。执行面板输入生成 fixture 的原始请求编号 `request-1`；fixture 的状态源是 Rust `execution-app`、实际 SQLite 和 S1 测试 runner。fixture API / HTTP transport 仅存在于测试目录，普通桌面 bundle 不包含它们。
 
 ```sh
 pnpm build
@@ -23,9 +23,9 @@ pnpm test
 
 - 会话只保存 ai-client 发布的投影。列表仅保留 namespace/status；命令携带原输入和 dispatch，临时 delta 不充当持久文本。稳定事件按 sequence/identity 排序，恢复和实时走同一个 reducer，不按时间或内容去重。
 - queue/steer/cancel/resume 按当前 generation 的能力与运行坐标开放。运行中输入仍可编辑；未知接纳保留同一 commandId、截止时间和完整 payload，重试不创建新命令。回执只证明接纳，不产生乐观消息或模型终态。
-- 普通问题保留原 command/run/generation；标准权限保留 AbortSignal 回调，失效后关闭。A2UI 仅通过 RuntimeSurface 的官方 catalog/action 接缝回答。已回答、过期、旧 generation、删除 surface 均不能继续提交。
+- 普通问题保留原 command/run/generation；标准权限保留 AbortSignal 回调，失效后关闭。A2UI 仅通过 RuntimeSurface 的官方 catalog/action 接缝回答。已回答、过期、旧 generation、删除 surface 均不能继续提交。renderer 故障保留只读问题、选项和有界卡片内容；未知问题格式保留转义后的有界原始内容，不开放提交。
 - 分离视图、AI 取消和设备执行事实独立。重新读取历史不恢复模型上下文；明确的 resume 不能新建 native session 冒充恢复。断线保留可见历史，不自动取消或重新派发。重新建立认证连接清空旧 caller 的展示和草稿。
-- 执行面板只接收 `ExecutionApp::task_details` 的授权结果。一次 ReadResult + binding 复核获得同一 ExecutionRecord 的状态和冻结摘要；模型伪造 approved、管理员身份或设备目标只留在对话区域。这里没有批准签发或执行提交接缝。摘要字段排除秘密、参数、进程输入和特权审计。Rust 是类型唯一声明源，`node scripts/check-execution-bindings.mjs --write` 更新绑定与五种真实 S1 fixtures。
+- 执行面板只接收 `ExecutionApp::task_details` 的授权结果。一次 ReadResult + binding 复核获得同一 ExecutionRecord 的状态和冻结摘要；模型伪造 approved、管理员身份或设备目标只留在对话区域。有效期按本机时间标明尚未生效、有效或已过期，实际准入仍由执行服务核验；过期的批准阶段只作为历史记录。这里没有批准签发或执行提交接缝。摘要字段排除秘密、参数、进程输入和特权审计。Rust 是类型唯一声明源，`node scripts/check-execution-bindings.mjs --write` 更新绑定与五种真实 S1 fixtures。
 
 ## 直接版本切换
 

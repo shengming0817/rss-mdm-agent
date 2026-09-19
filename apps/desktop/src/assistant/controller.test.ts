@@ -6,8 +6,7 @@ import {
   type SessionView,
 } from "@rss-mdm-agent/ai-client";
 import { createAssistant } from "./controller";
-import { emptyView } from "../../../../packages/ai-client/src/projection";
-import { fixtureSession } from "../../../../packages/ai-contract/src/testing/conformance";
+import { fixtureSession } from "@rss-mdm-agent/ai-contract/testing";
 import fixtures from "../../../../tests/assistant/execution-fixtures.json";
 import type { ExecutionTaskDetails } from "./execution-types";
 function setup() {
@@ -15,7 +14,20 @@ function setup() {
     listener: (view: SessionView) => void = () => {},
     options: ClientOptions = {};
   const session = fixtureSession(),
-    view = emptyView(session, 0);
+    view: SessionView = {
+      namespace: session.namespace,
+      generation: session.binding.generation,
+      cursor: 0,
+      capabilities: session.capabilities,
+      sessionStatus: session.status,
+      timeline: [],
+      connection: "attached",
+      commands: {},
+      messages: {},
+      interactions: {},
+      surfaces: {},
+      tools: {},
+    };
   view.connection = "attached";
   const submit = vi.fn().mockResolvedValue({ kind: "receipt" });
   const client = {
@@ -225,6 +237,80 @@ describe("assistant application ownership", () => {
     await t.c.taskDetails("forbidden");
     expect(t.c.state.task).toBeUndefined();
     expect(t.c.state.taskError).toBe("无法读取授权执行详情");
+    t.c.dispose();
+  });
+  it("clears only each recovered operation's diagnosis", async () => {
+    const t = setup();
+    await t.c.connect();
+    vi.mocked(t.client.listSessions).mockRejectedValueOnce(
+      new ClientError("unavailable"),
+    );
+    vi.mocked(t.client.createSession).mockRejectedValueOnce(
+      new ClientError("invalid_input"),
+    );
+    await t.c.list(false);
+    await t.c.create();
+    expect(t.c.state.listError).toBe("unavailable");
+    expect(t.c.state.createError).toBe("invalid_input");
+    await t.c.list(false);
+    expect(t.c.state.listError).toBe("");
+    expect(t.c.state.createError).toBe("invalid_input");
+    await t.c.create();
+    expect(t.c.state.createError).toBe("");
+    t.c.state.views.clear();
+    vi.mocked(t.client.restore).mockRejectedValueOnce(
+      new ClientError("unavailable"),
+    );
+    await t.c.select("session-1");
+    expect(t.c.state.errors.get("session-1")).toBe("unavailable");
+    await t.c.select("session-1");
+    expect(t.c.state.errors.has("session-1")).toBe(false);
+    t.c.dispose();
+  });
+  it("finishes reconnect and disposal even if the transport disposer throws", async () => {
+    const t = setup();
+    await t.c.connect();
+    await t.c.select("session-1");
+    t.c.draft.value = "private";
+    const pending = t.options().requestPermission!(
+      {
+        sessionId: "session-1",
+        toolCall: { toolCallId: "call", title: "tool" },
+        options: [],
+      },
+      new AbortController().signal,
+    );
+    vi.mocked(t.client.close).mockImplementation(() => {
+      throw new Error("private raw failure");
+    });
+    await t.c.connect();
+    expect(await pending).toEqual({ outcome: { outcome: "cancelled" } });
+    expect(t.c.state.views.size).toBe(0);
+    expect(t.c.draft.value).toBe("");
+    expect(t.c.state.cleanupError).toBe("cleanup_failed");
+    expect(() => t.c.dispose()).not.toThrow();
+    expect(t.c.runtime.value).toBeUndefined();
+    expect(t.c.state.connection).toBe("disconnected");
+  });
+  it("distinguishes detach, active runs, retired sessions and unavailable continuation", async () => {
+    const t = setup();
+    await t.c.connect();
+    await t.c.select("session-1");
+    t.view.capabilities.continuation = "unknown";
+    t.emit();
+    expect(t.c.resumeReason.value).toBe("unknown");
+    t.view.capabilities.continuation = "unsupported";
+    t.emit();
+    expect(t.c.resumeReason.value).toBe("unsupported");
+    t.view.capabilities.continuation = "across_processes";
+    t.view.connection = "detached";
+    t.emit();
+    expect(t.c.sessionConnection.value).toBe("detached");
+    expect(t.c.resumeReason.value).toBe("not-attached");
+    t.view.connection = "attached";
+    t.view.sessionStatus = "retired";
+    t.emit();
+    expect(t.c.resumeReason.value).toBe("retired");
     t.c.dispose();
   });
 });

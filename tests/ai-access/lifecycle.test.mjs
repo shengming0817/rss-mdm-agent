@@ -245,7 +245,10 @@ test("product receipt, paged recovery and late delta use only the shared stable 
   );
   const recovered = await runtime.restore(id, 1);
   assert.equal(recovered.commands[prompt.commandId].outcome, "max_tokens");
-  assert.equal(recovered.messages[JSON.stringify([prompt.commandId, "m"])].text, "stable");
+  assert.equal(
+    recovered.messages[JSON.stringify([prompt.commandId, "m"])].text,
+    "stable",
+  );
   assert.equal((await runtime.resume(id)).namespace.sessionId, id);
   assert.equal((await runtime.listSessions({ limit: 1 })).items.length, 1);
 });

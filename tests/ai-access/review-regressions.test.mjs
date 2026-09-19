@@ -375,8 +375,15 @@ test("RuntimeClient preserves tool state and content across live updates and sna
       },
     ]),
   );
-  await until(() => r.getSession(id).tools[JSON.stringify(["tools", "read"])]?.status === "pending");
-  assert.equal((await r.restore(id, 1)).tools[JSON.stringify(["tools", "read"])].status, "pending");
+  await until(
+    () =>
+      r.getSession(id).tools[JSON.stringify(["tools", "read"])]?.status ===
+      "pending",
+  );
+  assert.equal(
+    (await r.restore(id, 1)).tools[JSON.stringify(["tools", "read"])].status,
+    "pending",
+  );
   unwrap(
     await host.advance(fixtureCaller, id, "tools", [
       {
@@ -388,12 +395,19 @@ test("RuntimeClient preserves tool state and content across live updates and sna
       { type: "terminal", outcome: "completed" },
     ]),
   );
-  await until(() => r.getSession(id).tools[JSON.stringify(["tools", "read"])].status === "failed");
+  await until(
+    () =>
+      r.getSession(id).tools[JSON.stringify(["tools", "read"])].status ===
+      "failed",
+  );
   assert.deepEqual(
     (await r.restore(id, 1)).tools[JSON.stringify(["tools", "read"])],
     r.getSession(id).tools[JSON.stringify(["tools", "read"])],
   );
-  assert.equal(r.getSession(id).tools[JSON.stringify(["tools", "read"])].result.text, "not allowed");
+  assert.equal(
+    r.getSession(id).tools[JSON.stringify(["tools", "read"])].result.text,
+    "not allowed",
+  );
 });
 
 // PR 1049: each case exercises a public seam with an adversarial but valid owner.

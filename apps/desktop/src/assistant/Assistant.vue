@@ -17,6 +17,27 @@ const timer = setInterval(() => {
   clock.value = Date.now();
 }, 1000);
 onBeforeUnmount(() => clearInterval(timer));
+const connectionLabel = new Map([
+  ["connected", "已连接"],
+  ["attached", "已连接"],
+  ["detached", "当前会话已分离"],
+  ["resync_required", "需要重新读取"],
+  ["connecting", "正在连接"],
+  ["disconnected", "AI 服务未连接"],
+]);
+const resumeLabel = new Map([
+  ["available", ""],
+  ["run-active", "当前模型运行尚未结束，暂不能恢复原上下文"],
+  ["not-attached", "请先连接并重新读取当前会话"],
+  ["retired", "会话已结束，原上下文不可恢复"],
+  ["unsupported", "当前服务不支持恢复原模型上下文"],
+  ["unknown", "当前服务尚未确认原上下文恢复能力"],
+]);
+const retryLabel = new Map([
+  ["same_command", "仅可核对并重试原命令，勿新建重复命令"],
+  ["reconcile_first", "先恢复历史并核对，再决定后续操作"],
+  ["never", "此命令不可重试"],
+]);
 const taskId = ref("");
 const rows = computed(() => {
   const v = view.value;
@@ -33,6 +54,9 @@ const rows = computed(() => {
     tool: tools.get(item.key),
     interaction: interactions.get(item.key),
     surface: surfaces.get(item.key),
+    surfaceInteraction: interactions.get(
+      surfaces.get(item.key)?.interactionId ?? "",
+    ),
   }));
 });
 function commandStatus(command: CommandView) {
@@ -48,7 +72,9 @@ function commandStatus(command: CommandView) {
 function cancelNote(command: CommandView) {
   switch (command.cancelDispatched) {
     case "request_only":
-      return "取消已发送给模型；等待模型终止事实。";
+      return command.state === "terminal"
+        ? "取消请求已发出；模型终止事实已记录。"
+        : "取消已发送给模型；等待模型终止事实。";
     case "already_terminal":
       return "取消请求返回模型已终止；设备效果仍需独立核对。";
     case "unsupported":
@@ -65,6 +91,11 @@ function hasSurface(item: TimelineItem) {
     (surface) => surface.interactionId === item.key,
   );
 }
+const diagnostics = computed(() =>
+  Object.values(view.value?.commands ?? {}).filter(
+    (command) => command.failure,
+  ),
+);
 const cancellations = computed(() =>
   Object.values(view.value?.commands ?? {}).filter(
     (command) => command.command.input.type === "cancel",
@@ -84,23 +115,26 @@ const cancellations = computed(() =>
       >
     </div>
     <div class="assistant-facts" role="status">
-      <span
-        >连接：{{
-          s.connection === "connected"
-            ? view?.connection === "resync_required"
-              ? "需要重新读取"
-              : "已连接"
-            : s.connection === "connecting"
-              ? "正在连接"
-              : "AI 服务未连接"
-        }}</span
-      >
+      <span>连接：{{ connectionLabel.get(c.sessionConnection.value) }}</span>
       <span>AI：{{ c.busy.value ? "本轮处理中" : "空闲 / 历史可读" }}</span>
       <span
         >设备：{{ s.task ? "来自独立执行服务" : "尚未读取可信执行结果" }}</span
       >
     </div>
-    <p v-if="s.error" role="alert">连接或列表读取失败：{{ s.error }}</p>
+    <p v-if="s.error" role="alert">连接失败：{{ s.error }}</p>
+    <p v-if="s.listError" role="alert">
+      会话列表读取失败：{{ s.listError }}
+      <button
+        :disabled="s.listing || s.connection !== 'connected'"
+        @click="c.list(false)"
+      >
+        重读会话列表
+      </button>
+    </p>
+    <p v-if="s.createError" role="alert">新建会话失败：{{ s.createError }}</p>
+    <p v-if="s.cleanupError" role="alert">
+      连接清理未确认：{{ s.cleanupError }}；本地会话已释放。
+    </p>
     <div v-if="s.connection !== 'connected'" class="notice">
       <p>连接恢复不会自动重发命令，也不证明原模型或设备执行已停止。</p>
       <button :disabled="s.connection === 'connecting'" @click="c.connect">
@@ -186,7 +220,9 @@ const cancellations = computed(() =>
             >
               分离当前会话视图</button
             ><span v-if="!c.canResume.value"
-              >当前无法恢复原上下文；历史记录仍可查看</span
+              >{{
+                resumeLabel.get(c.resumeReason.value)
+              }}；历史记录仍可查看</span
             >
           </div>
           <p v-if="s.errors.get(s.selected)" role="alert">
@@ -220,8 +256,8 @@ const cancellations = computed(() =>
                 />
                 <p class="command-state">
                   {{ commandStatus(row.command) }} {{ cancelNote(row.command) }}
-                </p></template
-              >
+                </p>
+              </template>
               <template v-else-if="row.message"
                 ><MessageStream
                   :items="[
@@ -250,6 +286,7 @@ const cancellations = computed(() =>
                 "
                 :interaction="row.interaction"
                 :enabled="questionEnabled(row.key)"
+                :now="clock"
                 @answer="c.respond(row.key, $event)"
               />
               <RuntimeSurface
@@ -264,12 +301,62 @@ const cancellations = computed(() =>
                 :runtime="runtime"
                 :session-id="view.namespace.sessionId"
                 :instance-id="row.key"
-              />
-              <p v-else-if="row.surface">
-                当前连接不支持交互卡片；普通文本与历史记录仍可读取。
-              </p>
+              >
+                <template #fallback>
+                  <QuestionCard
+                    v-if="row.surfaceInteraction"
+                    :interaction="row.surfaceInteraction"
+                    :enabled="false"
+                    :read-only="true"
+                    :now="clock"
+                  />
+                  <details>
+                    <summary>只读卡片内容（最多 8192 字符）</summary>
+                    <pre>{{
+                      JSON.stringify(row.surface.messages, null, 2).slice(
+                        0,
+                        8192,
+                      )
+                    }}</pre>
+                  </details>
+                </template>
+              </RuntimeSurface>
+              <div v-else-if="row.surface">
+                <p>当前连接不支持交互卡片；普通文本与历史记录仍可读取。</p>
+                <QuestionCard
+                  v-if="row.surfaceInteraction"
+                  :interaction="row.surfaceInteraction"
+                  :enabled="false"
+                  :read-only="true"
+                  :now="clock"
+                />
+              </div>
             </article>
           </div>
+          <section
+            v-if="diagnostics.length"
+            class="command-failures"
+            aria-label="AI 命令诊断"
+          >
+            <h3>AI 命令诊断</h3>
+            <template
+              v-for="command in diagnostics"
+              :key="command.command.commandId"
+            >
+              <p v-if="command.failure" role="status">
+                {{
+                  command.command.input.type === "prompt"
+                    ? "消息"
+                    : command.command.input.type === "cancel"
+                      ? "取消"
+                      : "回答"
+                }}
+                {{ command.command.commandId }}：{{ command.failure.code }}。{{
+                  retryLabel.get(command.failure.retry)
+                }}；该诊断不证明模型已终止。
+              </p>
+            </template>
+          </section>
           <p
             v-for="command in cancellations"
             :key="command.command.commandId"
@@ -325,7 +412,7 @@ const cancellations = computed(() =>
           </button>
         </form>
         <p v-if="s.taskError" role="alert">{{ s.taskError }}</p>
-        <ExecutionDetails v-if="s.task" :details="s.task" />
+        <ExecutionDetails v-if="s.task" :details="s.task" :now="clock" />
       </aside>
     </div>
   </section>

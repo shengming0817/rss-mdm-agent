@@ -41,6 +41,9 @@ export function createAssistant(
     a2ui: false,
     selected: "",
     error: "",
+    listError: "",
+    createError: "",
+    cleanupError: "",
     next: undefined as string | undefined,
     listing: false,
     opening: false,
@@ -121,16 +124,26 @@ export function createAssistant(
       !state.pending.has(state.selected) &&
       !state.sending.has(state.selected),
   );
-  const canResume = computed(
-    () =>
-      live(view.value) &&
-      ["same_process", "across_processes"].includes(
-        view.value!.capabilities.continuation,
-      ) &&
-      !commands.value.some(
-        (c) => c.state === "running" || c.state === "dispatching",
-      ),
+  const sessionConnection = computed(() =>
+    state.connection !== "connected"
+      ? state.connection
+      : (view.value?.connection ?? "connected"),
   );
+  const resumeReason = computed(() => {
+    const v = view.value;
+    if (v?.sessionStatus === "retired") return "retired";
+    if (!live(v)) return "not-attached";
+    if (v!.capabilities.continuation === "unknown") return "unknown";
+    if (v!.capabilities.continuation === "unsupported") return "unsupported";
+    if (
+      commands.value.some(
+        (c) => c.state === "running" || c.state === "dispatching",
+      )
+    )
+      return "run-active";
+    return "available";
+  });
+  const canResume = computed(() => resumeReason.value === "available");
   const background = computed(() =>
     [...state.views.values()]
       .filter(
@@ -183,12 +196,30 @@ export function createAssistant(
         : { outcome: { outcome: "cancelled" } },
     );
   }
+  function closeClient(client?: RuntimeClient, current = epoch) {
+    try {
+      client?.close();
+    } catch {
+      if (current === epoch) state.cleanupError = "cleanup_failed";
+    }
+  }
+  function release() {
+    const client = runtime.value;
+    runtime.value = undefined;
+    const disposeObserver = stop;
+    stop = () => {};
+    try {
+      disposeObserver();
+    } catch {
+      state.cleanupError = "cleanup_failed";
+    }
+    clearPermissions();
+    closeClient(client);
+  }
   async function connect() {
     const current = ++epoch;
-    stop();
-    runtime.value?.close();
-    runtime.value = undefined;
-    clearPermissions();
+    state.cleanupError = "";
+    release();
     taskEpoch++;
     state.task = undefined;
     state.taskLoading = false;
@@ -202,6 +233,8 @@ export function createAssistant(
     state.selected = "";
     state.next = undefined;
     state.error = "";
+    state.listError = "";
+    state.createError = "";
     state.listing = false;
     state.opening = false;
     state.connection = services ? "connecting" : "disconnected";
@@ -217,12 +250,12 @@ export function createAssistant(
       });
       candidate = connected.runtime;
       if (current !== epoch) {
-        candidate.close();
+        closeClient(candidate, current);
         return;
       }
       const negotiated = await candidate.initialize();
       if (current !== epoch) {
-        candidate.close();
+        closeClient(candidate, current);
         return;
       }
       runtime.value = markRaw(candidate);
@@ -246,17 +279,20 @@ export function createAssistant(
       });
       await list(false);
     } catch (error) {
-      candidate?.close();
       if (current === epoch) {
+        if (runtime.value) release();
+        else closeClient(candidate, current);
+        clearPermissions();
         state.connection = "disconnected";
         state.error = fail(error);
-      }
+      } else closeClient(candidate, current);
     }
   }
   async function list(more = true) {
     if (!runtime.value || state.listing || (more && !state.next)) return;
     const current = epoch;
     state.listing = true;
+    state.listError = "";
     try {
       const page = await runtime.value.listSessions({
         limit: 20,
@@ -272,7 +308,7 @@ export function createAssistant(
         });
       state.next = page.next;
     } catch (error) {
-      if (current === epoch) state.error = fail(error);
+      if (current === epoch) state.listError = fail(error);
     } finally {
       if (current === epoch) state.listing = false;
     }
@@ -282,9 +318,13 @@ export function createAssistant(
     state.selected = id;
     if (state.views.get(id)?.connection === "attached") return;
     const current = epoch;
+    state.errors.delete(id);
     try {
       const next = await runtime.value.restore(id);
-      if (current === epoch) state.views.set(id, next);
+      if (current === epoch) {
+        state.views.set(id, next);
+        state.errors.delete(id);
+      }
     } catch (error) {
       if (current === epoch) state.errors.set(id, fail(error));
     }
@@ -293,6 +333,7 @@ export function createAssistant(
     if (!runtime.value || state.opening) return;
     const current = epoch;
     state.opening = true;
+    state.createError = "";
     try {
       const next = await runtime.value.createSession();
       if (current !== epoch) return;
@@ -300,7 +341,7 @@ export function createAssistant(
       state.selected = next.namespace.sessionId;
       await list(false);
     } catch (error) {
-      if (current === epoch) state.error = fail(error);
+      if (current === epoch) state.createError = fail(error);
     } finally {
       if (current === epoch) state.opening = false;
     }
@@ -476,9 +517,11 @@ export function createAssistant(
   function dispose() {
     epoch++;
     taskEpoch++;
-    stop();
-    clearPermissions();
-    runtime.value?.close();
+    release();
+    state.connection = "disconnected";
+    state.opening = false;
+    state.listing = false;
+    state.taskLoading = false;
   }
   return {
     state,
@@ -491,6 +534,8 @@ export function createAssistant(
     canSteer,
     canCancel,
     canResume,
+    sessionConnection,
+    resumeReason,
     background,
     connect,
     list,

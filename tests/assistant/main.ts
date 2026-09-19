@@ -3,7 +3,7 @@ import { createApp } from "vue";
 import {
   RuntimeClient,
   channelStream,
-} from "../../packages/ai-client/src/index";
+} from "../../packages/ai-client/dist/index.js";
 import App from "../../apps/desktop/src/App.vue";
 import "../../packages/ui/dist/style.css";
 import "../../apps/desktop/src/style.css";

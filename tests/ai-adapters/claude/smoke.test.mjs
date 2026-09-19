@@ -6,6 +6,27 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+test("live smoke commands and resume sessions use the current public wire without credentials", async () => {
+  const { smokeCommand, smokeSession } = await import(
+    "../../../scripts/smoke-claude.mjs"
+  );
+  const { decode, accessLimits } = await import(
+    "../../../packages/ai-contract/dist/index.js"
+  );
+  const { fixtureSession } = await import(
+    "../../../packages/ai-contract/dist/testing/index.js"
+  );
+  const session = fixtureSession();
+  const command = smokeCommand("smoke-turn", "smoke text", 1000);
+  const restored = smokeSession(
+    session.namespace,
+    session.binding,
+    session.capabilities,
+  );
+  assert.equal(decode(JSON.stringify(command), accessLimits).schemaVersion, 3);
+  assert.equal(decode(JSON.stringify(restored), accessLimits).schemaVersion, 3);
+});
+
 test("malformed smoke credentials never enter parser diagnostics", () => {
   const directory = mkdtempSync(join(tmpdir(), "rss-smoke-privacy-"));
   try {

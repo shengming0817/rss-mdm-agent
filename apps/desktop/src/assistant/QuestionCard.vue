@@ -2,9 +2,17 @@
 import { computed, reactive } from "vue";
 import { questions } from "@rss-mdm-agent/ai-ui-bridge";
 import type { InteractionView } from "@rss-mdm-agent/ai-client";
-const props = defineProps<{ interaction: InteractionView; enabled: boolean }>();
+const props = defineProps<{
+  interaction: InteractionView;
+  enabled: boolean;
+  readOnly?: boolean;
+  now?: number;
+}>();
 const emit = defineEmits<{ answer: [answers: Record<string, string>] }>();
 const rows = computed(() => questions(props.interaction.request));
+const summary = computed(() =>
+  JSON.stringify(props.interaction.request, null, 2).slice(0, 8192),
+);
 const answers = reactive(new Map<string, string>());
 const choices = reactive(new Map<string, string[]>());
 function choose(question: string, value: string, multi: boolean) {
@@ -29,7 +37,7 @@ const complete = computed(() =>
     <h3>AI 提问</h3>
     <p>回答仅用于继续对话；设备执行授权由执行服务独立判断。</p>
     <form
-      v-if="rows"
+      v-if="rows && !readOnly"
       @submit.prevent="
         enabled && complete && emit('answer', Object.fromEntries(answers))
       "
@@ -59,12 +67,27 @@ const complete = computed(() =>
       </fieldset>
       <button type="submit" :disabled="!enabled || !complete">提交回答</button>
     </form>
-    <p v-else>暂不支持此提问格式。请联系服务提供方。</p>
+    <div v-else class="question-readonly">
+      <p>只读问题内容；当前卡片无法提交回答。</p>
+      <template v-if="rows">
+        <section v-for="row in rows" :key="row.question">
+          <h4>{{ row.header }} · {{ row.question }}</h4>
+          <ul>
+            <li v-for="option in row.options" :key="option.label">
+              {{ option.label }} · {{ option.description }}
+            </li>
+          </ul>
+        </section>
+      </template>
+      <pre v-else>{{ summary }}</pre>
+    </div>
     <p v-if="!enabled" role="status">
       {{
         interaction.status === "answered"
           ? "已回答"
-          : interaction.status === "expired"
+          : interaction.status === "expired" ||
+              (interaction.status === "pending" &&
+                (now ?? 0) > interaction.expiresAtMs)
             ? "已过期"
             : interaction.status === "unavailable"
               ? "此提问已失效"
