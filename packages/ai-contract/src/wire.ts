@@ -195,9 +195,23 @@ export type EventBody =
       /** Single-use interaction identity within the namespace. */
       interactionId: Id;
       /**
+       * First publication of an ordinary user question.
+       */
+      status: "pending";
+      /** Required for the first pending event and equal to the newly committed Interaction request; forbidden on later lifecycle events. */
+      request: InteractionRequest;
+    }
+  | {
+      /**
+       * Closed variant discriminator.
+       */
+      type: "interaction";
+      /** Single-use interaction identity within the namespace. */
+      interactionId: Id;
+      /**
        * Explicit lifecycle state; missing native evidence cannot be inferred from transport loss.
        */
-      status: "pending" | "answered" | "expired" | "unavailable";
+      status: "answered" | "expired" | "unavailable";
     }
   | {
       /**
@@ -319,7 +333,7 @@ export interface Dispatch {
   nativeSessionId: Id;
   /** Provider-owned model-turn/run identifier, required when the provider exposes it. */
   nativeRunId?: Id;
-  /** Provider-owned request/callback identifier; cannot be rebound after dispatch. */
+  /** Provider-owned parent prompt/query request identifier; cannot be rebound after dispatch. Callback identities belong to Interaction. */
   nativeRequestId?: Id;
   /**
    * submitted has native acceptance; unknown requires reconciliation; not_sent has evidence no submission occurred.
@@ -359,6 +373,12 @@ export interface Event {
   generation: Id;
   /** Stable observation committed before publication. */
   body: EventBody;
+}
+/**
+ * Immutable untrusted provider question payload. Subject to whole-record JSON budgets; never authentication, permission or execution approval.
+ */
+export interface InteractionRequest {
+  [k: string]: unknown;
 }
 /**
  * Logical session state and stable event watermark committed at one revision.
@@ -407,7 +427,7 @@ export interface Binding {
   config: ConfigRef;
   /** Provider-owned model-turn/run identifier, required when the provider exposes it. */
   nativeRunId?: Id;
-  /** Provider-owned request/callback identifier; cannot be rebound after dispatch. */
+  /** Provider-owned parent prompt/query request identifier; cannot be rebound after dispatch. Callback identities belong to Interaction. */
   nativeRequestId?: Id;
 }
 /**
@@ -474,8 +494,6 @@ export interface Interaction {
   generation: Id;
   /** Provider-owned model-turn/run identifier, required when the provider exposes it. */
   nativeRunId?: Id;
-  /** Provider-owned request/callback identifier; cannot be rebound after dispatch. */
-  nativeRequestId: Id;
   /** Inclusive UTC epoch-millisecond deadline; later first acceptance is rejected. */
   expiresAtMs: Counter;
   /**
@@ -488,6 +506,14 @@ export interface Interaction {
    * generation_bound cannot survive callback loss; provider_resumable requires verified native restoration.
    */
   callbackLifetime: "generation_bound" | "provider_resumable";
+  /** Provider-owned callback identifier, immutable and unique within a session generation; distinct from the parent dispatch request. */
+  nativeCallbackId: Id;
+  /** Immutable untrusted question payload retained for display; does not restore a lost native callback or grant approval. */
+  request: InteractionRequest;
+  /**
+   * Ordinary user question only; permission and execution callbacks are forbidden in this lifecycle.
+   */
+  category: "question";
 }
 /**
  * Reliable cross-service outbox record bound to an immutable event and target.

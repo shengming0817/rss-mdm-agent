@@ -14,7 +14,7 @@ import type {
 import { fixtureSession, fixtureCommand, unwrap } from "./conformance.js";
 import { ok, fail, fixtureLimits } from "./store.js";
 import { VerifiedProviderSession } from "../session.js";
-import { fingerprint } from "../codec.js";
+import { boundedJson, decode, fingerprint } from "../codec.js";
 let nextProviderInstance = 0;
 /** Scripted provider contract double. Never spawns a process or executes a tool. */
 export class ScriptedProvider implements ProviderAgentPort {
@@ -232,12 +232,83 @@ export async function runProviderConformance(
                   await iterator.next();
                 if (item.done) break;
                 assert.ok(++count <= 1024, "bounded observation count");
-                const observation: ProviderObservation = item.value;
-                assert.equal(observation.commandId, command.commandId);
-                assert.equal(
-                  observation.binding.generation,
-                  binding.generation,
+                // Check the entire untrusted envelope before projecting it into wire.
+                const observation: ProviderObservation = JSON.parse(
+                  boundedJson(item.value, fixtureLimits),
                 );
+                assert.equal(observation.commandId, command.commandId);
+                assert.deepEqual(
+                  observation.binding,
+                  submission.certainty === "submitted"
+                    ? submission.binding
+                    : binding,
+                );
+                const context = {
+                  schemaVersion: 2,
+                  namespace: fixtureSession().namespace,
+                  commandId: command.commandId,
+                  generation: observation.binding.generation,
+                };
+                if (observation.type === "interaction") {
+                  decode(
+                    boundedJson(
+                      {
+                        ...observation.interaction,
+                        ...context,
+                        kind: "interaction",
+                        status: "pending",
+                        ...(observation.binding.nativeRunId
+                          ? { nativeRunId: observation.binding.nativeRunId }
+                          : {}),
+                      },
+                      fixtureLimits,
+                    ),
+                    fixtureLimits,
+                  );
+                  assert.deepEqual(
+                    Object.keys(observation.interaction).sort(),
+                    [
+                      "callbackLifetime",
+                      "category",
+                      "expiresAtMs",
+                      "interactionId",
+                      "nativeCallbackId",
+                      "request",
+                    ],
+                  );
+                } else {
+                  assert.equal(
+                    observation.type === "event" &&
+                      observation.body.type === "interaction" &&
+                      String(observation.body.status) === "pending",
+                    false,
+                    "pending callbacks require the dedicated question observation",
+                  );
+                  assert.ok(
+                    observation.type === "event" ||
+                      observation.type === "delta",
+                  );
+                  decode(
+                    boundedJson(
+                      {
+                        ...context,
+                        kind: "event",
+                        eventId: "fixture-event",
+                        sequence: count,
+                        body:
+                          observation.type === "event"
+                            ? observation.body
+                            : {
+                                type: "text",
+                                messageId: observation.messageId,
+                                text: observation.text,
+                              },
+                      },
+                      fixtureLimits,
+                    ),
+                    fixtureLimits,
+                  );
+                }
                 assert.equal(
                   observation.type === "event" &&
                     observation.body.type === "terminal",

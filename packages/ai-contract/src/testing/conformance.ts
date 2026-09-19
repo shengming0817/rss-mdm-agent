@@ -126,6 +126,7 @@ async function runStoreScenarios(
 ): Promise<void> {
   await runStoreBoundaries(create);
   await runSurfaceConformance(await create());
+  await runCallbackConformance(await create());
   const store = await create(),
     s = fixtureSession(),
     input = acceptance(s);
@@ -288,14 +289,16 @@ export async function seedInteraction(
   const interaction: import("../wire.js").Interaction = {
     schemaVersion: 2,
     kind: "interaction",
+    category: "question",
     namespace: session.namespace,
     interactionId: "question-1",
     commandId: "command-1",
     generation: session.binding.generation,
-    nativeRequestId: "request-1",
+    nativeCallbackId: "callback-1",
+    request: { question: "Choose an option", options: ["a", "b"] },
     nativeRunId: "run-1",
     expiresAtMs: 100,
-    status,
+    status: "pending",
     callbackLifetime: "generation_bound",
   };
   unwrap(
@@ -309,14 +312,36 @@ export async function seedInteraction(
             generation: interaction.generation,
             nativeSessionId: session.binding.nativeSessionId,
             nativeRunId: interaction.nativeRunId,
-            nativeRequestId: interaction.nativeRequestId,
+            nativeRequestId: "parent-request-1",
             certainty: "submitted",
           },
         },
       ],
+      session: {
+        ...current,
+        revision: current.revision + 1,
+        lastSequence: current.lastSequence + 1,
+      },
       interactions: [interaction],
+      events: [interactionEvent(current, interaction)],
     }),
   );
+  if (status === "unavailable") {
+    const head = unwrap(await store.session(session.namespace));
+    interaction.status = status;
+    unwrap(
+      await store.commit({
+        ...emptyCommit(head),
+        session: {
+          ...head,
+          revision: head.revision + 1,
+          lastSequence: head.lastSequence + 1,
+        },
+        interactions: [interaction],
+        events: [interactionEvent(head, interaction)],
+      }),
+    );
+  }
   const answer: Command = {
     ...fixtureCommand("answer-1"),
     input: {
@@ -450,7 +475,8 @@ async function runStoreBoundaries(
     for (const patch of [
       { commandId: "other" },
       { nativeRunId: "other" },
-      { nativeRequestId: "other" },
+      { nativeCallbackId: "other" },
+      { request: { question: "different" } },
       { expiresAtMs: 101 },
       { callbackLifetime: "provider_resumable" as const },
     ])
@@ -734,5 +760,156 @@ async function runSurfaceConformance(store: SessionStore): Promise<void> {
       )
     ).ok,
     false,
+  );
+}
+
+/** Stable projection for deterministic store fixtures; no callback or execution authority. */
+export function interactionEvent(
+  session: Session,
+  row: import("../wire.js").Interaction,
+): import("../wire.js").Event {
+  return {
+    schemaVersion: 2,
+    kind: "event",
+    namespace: session.namespace,
+    eventId: `interaction-${row.interactionId}-${row.status}`,
+    sequence: session.lastSequence + 1,
+    commandId: row.commandId,
+    generation: row.generation,
+    body: {
+      type: "interaction",
+      interactionId: row.interactionId,
+      ...(row.status === "pending"
+        ? { status: "pending", request: row.request }
+        : { status: row.status }),
+    },
+  };
+}
+
+/** Every store consumer proves callback identity separately from its parent prompt. */
+async function runCallbackConformance(store: SessionStore): Promise<void> {
+  const seeded = await seedInteraction(store);
+  const observation: Extract<
+    import("../ports.js").ProviderObservation,
+    { type: "interaction" }
+  > = {
+    type: "interaction",
+    binding: {
+      ...seeded.session.binding,
+      nativeRunId: seeded.interaction.nativeRunId,
+    },
+    commandId: seeded.interaction.commandId,
+    interaction: {
+      category: "question",
+      interactionId: "question-2",
+      nativeCallbackId: "callback-2",
+      expiresAtMs: 100,
+      callbackLifetime: "generation_bound",
+      request: { question: "Second independent question" },
+    },
+  };
+  const row: import("../wire.js").Interaction = {
+    schemaVersion: 2,
+    kind: "interaction",
+    namespace: seeded.session.namespace,
+    commandId: observation.commandId,
+    generation: observation.binding.generation,
+    nativeRunId: observation.binding.nativeRunId,
+    status: "pending",
+    ...observation.interaction,
+  };
+  const batch = {
+    ...emptyCommit(seeded.session),
+    session: {
+      ...seeded.session,
+      revision: seeded.session.revision + 1,
+      lastSequence: seeded.session.lastSequence + 1,
+    },
+    interactions: [row],
+    events: [interactionEvent(seeded.session, row)],
+  };
+  assert.equal((await store.commit({ ...batch, interactions: [] })).ok, false);
+  assert.equal(
+    (
+      await store.commit({
+        ...emptyCommit(seeded.session),
+        interactions: [row],
+      })
+    ).ok,
+    false,
+  );
+  for (const request of [
+    undefined,
+    { question: "different from the pending record" },
+  ]) {
+    const event = batch.events[0];
+    assert.equal(
+      (
+        await store.commit({
+          ...batch,
+          events: [
+            {
+              ...event,
+              body: {
+                type: "interaction",
+                interactionId: row.interactionId,
+                status: "pending",
+                ...(request === undefined ? {} : { request }),
+              } as import("../wire.js").EventBody,
+            },
+          ],
+        })
+      ).ok,
+      false,
+    );
+    const unchanged = unwrap(
+      await store.snapshot(seeded.session.namespace, 1024),
+    );
+    assert.equal(unchanged.interactions.length, 1);
+    assert.equal(unchanged.cursor, seeded.session.lastSequence);
+  }
+  unwrap(await store.commit(batch));
+  let head = unwrap(await store.session(seeded.session.namespace));
+  const alias = { ...row, interactionId: "callback-alias" };
+  assert.equal(
+    (
+      await store.commit({
+        ...emptyCommit(head),
+        session: {
+          ...head,
+          revision: head.revision + 1,
+          lastSequence: head.lastSequence + 1,
+        },
+        interactions: [alias],
+        events: [interactionEvent(head, alias)],
+      })
+    ).ok,
+    false,
+  );
+  for (const interaction of [row, seeded.interaction]) {
+    head = unwrap(await store.session(head.namespace));
+    unwrap(
+      await store.accept(
+        acceptance(head, {
+          ...fixtureCommand(`answer-${interaction.interactionId}`),
+          input: {
+            type: "respond",
+            interactionId: interaction.interactionId,
+            generation: interaction.generation,
+            nativeRunId: interaction.nativeRunId,
+            answer: { choice: "a" },
+          },
+        }),
+      ),
+    );
+  }
+  const snapshot = unwrap(await store.snapshot(head.namespace, 1024));
+  assert.equal(snapshot.interactions.length, 2);
+  assert.ok(snapshot.interactions.every((row) => row.status === "answered"));
+  assert.deepEqual(
+    snapshot.interactions.find(
+      (row) => row.interactionId === observation.interaction.interactionId,
+    )?.request,
+    observation.interaction.request,
   );
 }
