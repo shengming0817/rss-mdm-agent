@@ -9,6 +9,7 @@ publish = false
 [dependencies]
 execution-contract = { path = "../execution-contract" }
 thiserror.workspace = true
+schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 

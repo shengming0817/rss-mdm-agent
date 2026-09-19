@@ -230,7 +230,7 @@ async function main() {
       const sent = await adapter.submit(
         binding,
         {
-          schemaVersion: 2,
+          schemaVersion: 3,
           kind: "command",
           sessionId: configuration.namespace.sessionId,
           commandId: id,
@@ -311,7 +311,7 @@ async function main() {
       await VerifiedProviderSession.restore(
         resumed,
         {
-          schemaVersion: 2,
+          schemaVersion: 3,
           kind: "session",
           namespace: configuration.namespace,
           revision: 0,

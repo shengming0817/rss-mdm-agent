@@ -368,7 +368,7 @@ export class DeepSeekAdapter implements ProviderAgentPort {
       decode(
         boundedJson(
           {
-            schemaVersion: 2,
+            schemaVersion: 3,
             kind: "event",
             namespace: this.configuration!.namespace,
             eventId: "validate",

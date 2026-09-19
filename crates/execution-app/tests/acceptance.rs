@@ -7,6 +7,61 @@ fn command(value: &str) -> CommandId {
 }
 
 #[test]
+fn task_details_are_authorized_frozen_and_redacted() {
+    let db = Database::new();
+    let host = TestHost::new();
+    let runner = DeterministicTestRunner::new(id("test-runner"), TestScenario::Wait, 16).unwrap();
+    let p = plan();
+    let r = &p.spec().request.request_id;
+    let mut app = open(&db, host.clone(), runner.clone(), Startup::CreateTest);
+    app.submit(r, &p).unwrap();
+    let details = app.task_details(r).unwrap();
+    assert_eq!(details.status, app.status(r).unwrap());
+    assert_eq!(&details.plan.plan_digest, p.digest());
+    assert_eq!(details.plan.target, p.spec().request.target);
+    assert_eq!(details.plan.run_as, p.spec().run_as);
+    let json = serde_json::to_string(&details).unwrap();
+    for field in [
+        "parameters",
+        "argv",
+        "cwd",
+        "env",
+        "stdin",
+        "initiator",
+        "delegation",
+        "approvalBindings",
+        "readPaths",
+        "writePaths",
+    ] {
+        assert!(!json.contains(&format!("\"{field}\":")), "{field}");
+    }
+    drop(app);
+    let app = open(&db, host.clone(), runner, Startup::OpenTest);
+    assert_eq!(app.task_details(r).unwrap().plan, details.plan);
+    host.state.lock().unwrap().read = false;
+    assert_eq!(app.task_details(r).unwrap_err(), Error::Denied);
+    host.state.lock().unwrap().read = true;
+    host.state.lock().unwrap().accesses = Some(vec![execution_sqlite::Access::ReadAudit]);
+    assert_eq!(app.task_details(r).unwrap_err(), Error::Denied);
+}
+
+#[test]
+fn task_details_recheck_current_binding_after_authorized_record_read() {
+    let db = Database::new();
+    let host = TestHost::new();
+    let runner = DeterministicTestRunner::new(id("test-runner"), TestScenario::Wait, 16).unwrap();
+    let p = plan();
+    let r = &p.spec().request.request_id;
+    let mut app = open(&db, host.clone(), runner, Startup::CreateTest);
+    app.submit(r, &p).unwrap();
+    let changed = host.clone();
+    host.state.lock().unwrap().read_hook = Some(std::sync::Arc::new(move || {
+        changed.state.lock().unwrap().actor = ActorId::new("different-actor").unwrap();
+    }));
+    assert_eq!(app.task_details(r).unwrap_err(), Error::Denied);
+}
+
+#[test]
 fn action_permissions_do_not_require_result_reading() {
     let db = Database::new();
     let host = TestHost::new();

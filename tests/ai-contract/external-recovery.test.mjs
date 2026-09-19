@@ -121,7 +121,7 @@ test("raw reconciliation cannot reset an ambiguous attempt", async () => {
     "unknown",
   );
   const accepted = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "commandRecord",
     command: record.command,
     receipt: record.receipt,
@@ -133,7 +133,6 @@ test("raw reconciliation cannot reset an ambiguous attempt", async () => {
       attempt: record.dispatch,
       resolution: "not_submitted",
     },
-    { type: "status", state: "accepted" },
   ]);
   batch.events[0].attemptId = record.dispatch.attemptId;
   const result = await store.commit({

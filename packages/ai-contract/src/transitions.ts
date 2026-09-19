@@ -102,7 +102,7 @@ function reduceAcceptance(
 ): Result<{ state: SessionState; receipt: import("./wire.js").Receipt }> {
   try {
     valid(input.command, limits);
-    valid(input.event, limits);
+    if (!isId(input.eventId)) return fail("invalid_input");
   } catch {
     return fail("invalid_input");
   }
@@ -143,7 +143,7 @@ function reduceAcceptance(
   );
   if (!check.ok) return check;
   const receipt: import("./wire.js").Receipt = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "receipt",
     namespace: clone(input.namespace),
     commandId: input.command.commandId,
@@ -157,7 +157,7 @@ function reduceAcceptance(
     acceptedRevision: state.session.revision + 1,
   };
   const record: CommandRecord = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "commandRecord",
     command: clone(input.command),
     receipt,
@@ -214,12 +214,21 @@ function reduceAcceptance(
       },
       commands: [record],
       events: [
-        input.event,
+        {
+          schemaVersion: 3,
+          kind: "event",
+          namespace: clone(input.namespace),
+          eventId: input.eventId,
+          sequence: state.session.lastSequence + 1,
+          commandId: input.command.commandId,
+          generation: state.session.binding.generation,
+          body: { type: "command_accepted", command: clone(input.command) },
+        },
         ...interactions.map((row, i) => ({
-          schemaVersion: 2 as const,
+          schemaVersion: 3 as const,
           kind: "event" as const,
           namespace: input.namespace,
-          eventId: eventId(input.event.eventId, `answer-${i}`),
+          eventId: eventId(input.eventId, `answer-${i}`),
           sequence: state.session.lastSequence + 2 + i,
           commandId: row.commandId,
           attemptId: state.commands.get(row.commandId)!.dispatch!.attemptId,
@@ -546,11 +555,13 @@ function reduceCommit(
     if (
       (!old || old.state !== c.state) &&
       !["terminal", "invalidated"].includes(c.state) &&
+      !(c.state === "accepted" && resolution?.status === "not_submitted") &&
       !batch.events.some(
         (e) =>
           e.commandId === id &&
-          e.body.type === "status" &&
-          e.body.state === c.state,
+          (e.body.type === "command_accepted"
+            ? !old && c.state === "accepted" && same(e.body.command, c.command)
+            : e.body.type === "status" && e.body.state === c.state),
       )
     )
       return fail("invalid_input");
@@ -646,10 +657,27 @@ function reduceCommit(
     )
       return fail("content_conflict");
     if (
-      ["dispatch", "reconciled", "invalidated", "status"].includes(
-        event.body.type,
-      ) &&
+      [
+        "command_accepted",
+        "dispatch",
+        "reconciled",
+        "invalidated",
+        "status",
+      ].includes(event.body.type) &&
       !commandIds.has(event.commandId)
+    )
+      return fail("invalid_input");
+    if (
+      event.body.type === "command_accepted" &&
+      (!accepting ||
+        prior ||
+        source.state !== "accepted" ||
+        !same(event.body.command, source.command) ||
+        batch.events.filter(
+          (e) =>
+            e.commandId === event.commandId &&
+            e.body.type === "command_accepted",
+        ).length !== 1)
     )
       return fail("invalid_input");
     if (event.body.type === "status" && event.body.state !== source.state)
@@ -974,7 +1002,7 @@ function reduceRebind(
     label: string,
   ) => {
     const event = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       kind: "event",
       namespace: input.namespace,
       eventId: eventId(input.eventId, label),
@@ -1004,7 +1032,7 @@ function reduceRebind(
         observerGeneration: binding.generation,
       };
       copy.commands.set(id, {
-        schemaVersion: 2,
+        schemaVersion: 3,
         kind: "commandRecord",
         command: c.command,
         receipt: c.receipt,
@@ -1104,7 +1132,7 @@ function reduceRetirement(
     lastSequence: copy.session.lastSequence + 1,
   };
   const event: Event = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "event",
     namespace: copy.session.namespace,
     eventId: eventId(

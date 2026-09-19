@@ -228,20 +228,14 @@ for (const scenario of [
         observerGeneration: "crash-third",
       });
       const accepted = {
-        schemaVersion: 2,
+        schemaVersion: 3,
         kind: "commandRecord",
         command: record.command,
         receipt: record.receipt,
         state: "accepted",
       };
       assert.equal(
-        (
-          await reopened.commit(
-            commandCommit(third, accepted, [
-              { type: "status", state: "accepted" },
-            ]),
-          )
-        ).ok,
+        (await reopened.commit(commandCommit(third, accepted, []))).ok,
         false,
         "crash uncertainty never authorizes resubmission",
       );
@@ -251,7 +245,6 @@ for (const scenario of [
           attempt: latest.dispatch,
           resolution: "not_submitted",
         },
-        { type: "status", state: "accepted" },
       ]);
       proofCommit.events[0].attemptId = dispatch.attemptId;
       unwrap(

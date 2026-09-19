@@ -119,7 +119,7 @@ async function main() {
     return p;
   };
   const prompt = (id, text) => ({
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "command",
     sessionId: config.namespace.sessionId,
     commandId: id,
@@ -167,7 +167,7 @@ async function main() {
     assert.equal(unwrap(await first.close(budget(10000))).processStopped, true);
     stage = "restore";
     const previous = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       kind: "session",
       namespace: config.namespace,
       revision: 0,
@@ -186,11 +186,11 @@ async function main() {
         ),
       );
     const record = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       kind: "commandRecord",
       command,
       receipt: {
-        schemaVersion: 2,
+        schemaVersion: 3,
         kind: "receipt",
         namespace: config.namespace,
         commandId: command.commandId,

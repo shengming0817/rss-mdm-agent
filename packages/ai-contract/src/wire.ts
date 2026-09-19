@@ -105,9 +105,9 @@ export type Input =
 export type CommandRecord =
   | {
       /**
-       * Exact product wire version; V1 is rejected without migration or fallback.
+       * Exact product wire version; V1 and V2 are rejected without migration or fallback.
        */
-      schemaVersion: 2;
+      schemaVersion: 3;
       /**
        * Closed product record discriminator.
        */
@@ -126,9 +126,9 @@ export type CommandRecord =
     }
   | {
       /**
-       * Exact product wire version; V1 is rejected without migration or fallback.
+       * Exact product wire version; V1 and V2 are rejected without migration or fallback.
        */
-      schemaVersion: 2;
+      schemaVersion: 3;
       /**
        * Closed product record discriminator.
        */
@@ -148,9 +148,9 @@ export type CommandRecord =
     }
   | {
       /**
-       * Exact product wire version; V1 is rejected without migration or fallback.
+       * Exact product wire version; V1 and V2 are rejected without migration or fallback.
        */
-      schemaVersion: 2;
+      schemaVersion: 3;
       /**
        * Closed product record discriminator.
        */
@@ -170,9 +170,9 @@ export type CommandRecord =
     }
   | {
       /**
-       * Exact product wire version; V1 is rejected without migration or fallback.
+       * Exact product wire version; V1 and V2 are rejected without migration or fallback.
        */
-      schemaVersion: 2;
+      schemaVersion: 3;
       /**
        * Closed product record discriminator.
        */
@@ -193,9 +193,9 @@ export type CommandRecord =
     }
   | {
       /**
-       * Exact product wire version; V1 is rejected without migration or fallback.
+       * Exact product wire version; V1 and V2 are rejected without migration or fallback.
        */
-      schemaVersion: 2;
+      schemaVersion: 3;
       /**
        * Closed product record discriminator.
        */
@@ -215,9 +215,9 @@ export type CommandRecord =
     }
   | {
       /**
-       * Exact product wire version; V1 is rejected without migration or fallback.
+       * Exact product wire version; V1 and V2 are rejected without migration or fallback.
        */
-      schemaVersion: 2;
+      schemaVersion: 3;
       /**
        * Closed product record discriminator.
        */
@@ -274,9 +274,9 @@ export type Retry = "same_command" | "reconcile_first" | "never";
 export type Event =
   | {
       /**
-       * Exact product wire version; V1 is rejected without migration or fallback.
+       * Exact product wire version; V1 and V2 are rejected without migration or fallback.
        */
-      schemaVersion: 2;
+      schemaVersion: 3;
       /**
        * Closed product record discriminator.
        */
@@ -311,9 +311,9 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; V1 is rejected without migration or fallback.
+       * Exact product wire version; V1 and V2 are rejected without migration or fallback.
        */
-      schemaVersion: 2;
+      schemaVersion: 3;
       /**
        * Closed product record discriminator.
        */
@@ -329,25 +329,23 @@ export type Event =
       /** Original command identity within the trusted namespace. */
       commandId: Id;
       /**
-       * status variant; all fields are data, never authentication or execution authority.
+       * Immutable command accepted atomically with its receipt; never a model terminal.
        */
       body: {
         /**
-         * Closed variant discriminator.
+         * Closed event discriminator.
          */
-        type: "status";
-        /**
-         * Closed command lifecycle projection.
-         */
-        state: "accepted";
+        type: "command_accepted";
+        /** Complete immutable original command, committed atomically with its receipt. */
+        command: Command;
       };
       attemptId?: never;
     }
   | {
       /**
-       * Exact product wire version; V1 is rejected without migration or fallback.
+       * Exact product wire version; V1 and V2 are rejected without migration or fallback.
        */
-      schemaVersion: 2;
+      schemaVersion: 3;
       /**
        * Closed product record discriminator.
        */
@@ -380,9 +378,9 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; V1 is rejected without migration or fallback.
+       * Exact product wire version; V1 and V2 are rejected without migration or fallback.
        */
-      schemaVersion: 2;
+      schemaVersion: 3;
       /**
        * Closed product record discriminator.
        */
@@ -413,9 +411,9 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; V1 is rejected without migration or fallback.
+       * Exact product wire version; V1 and V2 are rejected without migration or fallback.
        */
-      schemaVersion: 2;
+      schemaVersion: 3;
       /**
        * Closed product record discriminator.
        */
@@ -448,9 +446,9 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; V1 is rejected without migration or fallback.
+       * Exact product wire version; V1 and V2 are rejected without migration or fallback.
        */
-      schemaVersion: 2;
+      schemaVersion: 3;
       /**
        * Closed product record discriminator.
        */
@@ -489,9 +487,9 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; V1 is rejected without migration or fallback.
+       * Exact product wire version; V1 and V2 are rejected without migration or fallback.
        */
-      schemaVersion: 2;
+      schemaVersion: 3;
       /**
        * Closed product record discriminator.
        */
@@ -530,9 +528,9 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; V1 is rejected without migration or fallback.
+       * Exact product wire version; V1 and V2 are rejected without migration or fallback.
        */
-      schemaVersion: 2;
+      schemaVersion: 3;
       /**
        * Closed product record discriminator.
        */
@@ -573,9 +571,9 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; V1 is rejected without migration or fallback.
+       * Exact product wire version; V1 and V2 are rejected without migration or fallback.
        */
-      schemaVersion: 2;
+      schemaVersion: 3;
       /**
        * Closed product record discriminator.
        */
@@ -612,9 +610,9 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; V1 is rejected without migration or fallback.
+       * Exact product wire version; V1 and V2 are rejected without migration or fallback.
        */
-      schemaVersion: 2;
+      schemaVersion: 3;
       /**
        * Closed product record discriminator.
        */
@@ -649,9 +647,9 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; V1 is rejected without migration or fallback.
+       * Exact product wire version; V1 and V2 are rejected without migration or fallback.
        */
-      schemaVersion: 2;
+      schemaVersion: 3;
       /**
        * Closed product record discriminator.
        */
@@ -681,9 +679,9 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; V1 is rejected without migration or fallback.
+       * Exact product wire version; V1 and V2 are rejected without migration or fallback.
        */
-      schemaVersion: 2;
+      schemaVersion: 3;
       /**
        * Closed product record discriminator.
        */
@@ -713,9 +711,9 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; V1 is rejected without migration or fallback.
+       * Exact product wire version; V1 and V2 are rejected without migration or fallback.
        */
-      schemaVersion: 2;
+      schemaVersion: 3;
       /**
        * Closed product record discriminator.
        */
@@ -746,9 +744,9 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; V1 is rejected without migration or fallback.
+       * Exact product wire version; V1 and V2 are rejected without migration or fallback.
        */
-      schemaVersion: 2;
+      schemaVersion: 3;
       /**
        * Closed product record discriminator.
        */
@@ -783,9 +781,9 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; V1 is rejected without migration or fallback.
+       * Exact product wire version; V1 and V2 are rejected without migration or fallback.
        */
-      schemaVersion: 2;
+      schemaVersion: 3;
       /**
        * Closed product record discriminator.
        */
@@ -813,9 +811,9 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; V1 is rejected without migration or fallback.
+       * Exact product wire version; V1 and V2 are rejected without migration or fallback.
        */
-      schemaVersion: 2;
+      schemaVersion: 3;
       /**
        * Closed product record discriminator.
        */
@@ -844,9 +842,9 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; V1 is rejected without migration or fallback.
+       * Exact product wire version; V1 and V2 are rejected without migration or fallback.
        */
-      schemaVersion: 2;
+      schemaVersion: 3;
       /**
        * Closed product record discriminator.
        */
@@ -926,9 +924,9 @@ export type Subscription =
  */
 export interface Command {
   /**
-   * Exact product wire version; V1 is rejected without migration or fallback.
+   * Exact product wire version; V1 and V2 are rejected without migration or fallback.
    */
-  schemaVersion: 2;
+  schemaVersion: 3;
   /**
    * Closed product record discriminator.
    */
@@ -956,9 +954,9 @@ export interface SurfaceReference {
  */
 export interface Receipt {
   /**
-   * Exact product wire version; V1 is rejected without migration or fallback.
+   * Exact product wire version; V1 and V2 are rejected without migration or fallback.
    */
-  schemaVersion: 2;
+  schemaVersion: 3;
   /**
    * Closed product record discriminator.
    */
@@ -1038,9 +1036,9 @@ export interface InteractionRequest {
  */
 export interface SurfaceState {
   /**
-   * Exact product wire version; V1 is rejected without migration or fallback.
+   * Exact product wire version; V1 and V2 are rejected without migration or fallback.
    */
-  schemaVersion: 2;
+  schemaVersion: 3;
   /**
    * Closed product record discriminator.
    */
@@ -1089,9 +1087,9 @@ export interface SurfaceState {
  */
 export interface Session {
   /**
-   * Exact product wire version; V1 is rejected without migration or fallback.
+   * Exact product wire version; V1 and V2 are rejected without migration or fallback.
    */
-  schemaVersion: 2;
+  schemaVersion: 3;
   /**
    * Closed product record discriminator.
    */
@@ -1187,9 +1185,9 @@ export interface Capabilities {
  */
 export interface Interaction {
   /**
-   * Exact product wire version; V1 is rejected without migration or fallback.
+   * Exact product wire version; V1 and V2 are rejected without migration or fallback.
    */
-  schemaVersion: 2;
+  schemaVersion: 3;
   /**
    * Closed product record discriminator.
    */
@@ -1228,9 +1226,9 @@ export interface Interaction {
  */
 export interface Delivery {
   /**
-   * Exact product wire version; V1 is rejected without migration or fallback.
+   * Exact product wire version; V1 and V2 are rejected without migration or fallback.
    */
-  schemaVersion: 2;
+  schemaVersion: 3;
   /**
    * Closed product record discriminator.
    */
@@ -1265,9 +1263,9 @@ export interface Delivery {
  */
 export interface SurfaceAction {
   /**
-   * Exact product wire version; V1 is rejected without migration or fallback.
+   * Exact product wire version; V1 and V2 are rejected without migration or fallback.
    */
-  schemaVersion: 2;
+  schemaVersion: 3;
   /**
    * Closed product record discriminator.
    */
@@ -1291,7 +1289,7 @@ export interface SnapshotPage {
   /**
    * Exact product contract version; no legacy readers.
    */
-  schemaVersion: 2;
+  schemaVersion: 3;
   /**
    * Closed record discriminator.
    */
@@ -1327,7 +1325,7 @@ export interface SessionPage {
   /**
    * Exact product contract version; no legacy readers.
    */
-  schemaVersion: 2;
+  schemaVersion: 3;
   /**
    * Closed record discriminator.
    */
@@ -1343,7 +1341,7 @@ export interface SnapshotRequest {
   /**
    * Exact product contract version; no legacy readers.
    */
-  schemaVersion: 2;
+  schemaVersion: 3;
   /**
    * Closed record discriminator.
    */
@@ -1365,7 +1363,7 @@ export interface ListRequest {
   /**
    * Exact product contract version; no legacy readers.
    */
-  schemaVersion: 2;
+  schemaVersion: 3;
   /**
    * Closed record discriminator.
    */
@@ -1377,7 +1375,7 @@ export interface AttachRequest {
   /**
    * Exact product contract version; no legacy readers.
    */
-  schemaVersion: 2;
+  schemaVersion: 3;
   /**
    * Closed record discriminator.
    */
@@ -1393,7 +1391,7 @@ export interface DetachRequest {
   /**
    * Exact product contract version; no legacy readers.
    */
-  schemaVersion: 2;
+  schemaVersion: 3;
   /**
    * Closed record discriminator.
    */
@@ -1407,7 +1405,7 @@ export interface ResumeRequest {
   /**
    * Exact product contract version; no legacy readers.
    */
-  schemaVersion: 2;
+  schemaVersion: 3;
   /**
    * Closed record discriminator.
    */
@@ -1419,7 +1417,7 @@ export interface ActionRequest {
   /**
    * Exact product contract version; no legacy readers.
    */
-  schemaVersion: 2;
+  schemaVersion: 3;
   /**
    * Closed record discriminator.
    */
@@ -1439,7 +1437,7 @@ export interface AccessUpdate {
   /**
    * Exact product contract version; no legacy readers.
    */
-  schemaVersion: 2;
+  schemaVersion: 3;
   /**
    * Closed record discriminator.
    */
@@ -1455,7 +1453,7 @@ export interface AttachReceipt {
   /**
    * Exact product contract version; no legacy readers.
    */
-  schemaVersion: 2;
+  schemaVersion: 3;
   /**
    * Closed record discriminator.
    */
@@ -1475,7 +1473,7 @@ export interface Negotiation {
   /**
    * Exact product contract version.
    */
-  contractVersion: 2;
+  contractVersion: 3;
   /**
    * Exact ACP protocol version.
    */

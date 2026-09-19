@@ -242,7 +242,7 @@ async function fillObservationQueue(s, count = 511) {
 }
 
 const reconciliationRecord = (s, command, attempt) => ({
-  schemaVersion: 2,
+  schemaVersion: 3,
   kind: "commandRecord",
   command,
   receipt: { namespace: s.configuration.namespace },
@@ -358,7 +358,7 @@ test("lost submit response is reconciled by clientId; no blind second start", as
   );
   assert.equal(s.calls.filter((v) => v.method === "turn/start").length, 1);
   const record = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "commandRecord",
     command,
     receipt: { namespace: s.configuration.namespace },
@@ -385,7 +385,7 @@ test("missing native history is unknown and reverse dynamic/approval calls canno
   });
   await s.adapter.submit(s.admitted.binding, command, attempt, budget());
   const record = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "commandRecord",
     command,
     receipt: { namespace: s.configuration.namespace },

@@ -460,7 +460,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
     try {
       c = this.checked(command);
       const attemptEvent = {
-        schemaVersion: 2,
+        schemaVersion: 3,
         kind: "event",
         namespace: this.session?.configuration.namespace,
         eventId: "validate-attempt",

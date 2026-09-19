@@ -43,6 +43,7 @@ const steps = [
   ["DeepSeek Harness adapter", "pnpm", ["test:ai-deepseek"]],
   ["DeepSeek packed consumer", "pnpm", ["check:deepseek-consumer"]],
   ["frontend build", "pnpm", ["build"]],
+  ["assistant product acceptance", "pnpm", ["check:assistant"]],
   ["types", "pnpm", ["typecheck"]],
   ["frontend format", "pnpm", ["format:check"]],
   ["components", "pnpm", ["test"]],

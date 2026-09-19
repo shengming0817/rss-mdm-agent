@@ -270,7 +270,7 @@ export interface AcceptCommand {
   readonly expectedGeneration: Id;
   readonly nowMs: Counter;
   readonly retention: Retention;
-  readonly event: Event;
+  readonly eventId: Id;
 }
 /** Opaque process-independent continuation, 1–2048 characters; not a wire Id. */
 export type StoreCursor = string;

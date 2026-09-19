@@ -462,11 +462,23 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
     pub fn status(&self, request: &RequestId) -> Result<ExecutionStatus, Error> {
         self.status_for(request, ExecutionAccess::Result)
     }
+    /// Authorized coherent task details from one protected record; no privileged audit read.
+    pub fn task_details(&self, request: &RequestId) -> Result<crate::ExecutionTaskDetails, Error> {
+        self.details_for(request, ExecutionAccess::Result)
+    }
     fn status_for(
         &self,
         request: &RequestId,
         access: ExecutionAccess<'_>,
     ) -> Result<ExecutionStatus, Error> {
+        self.details_for(request, access)
+            .map(|details| details.status)
+    }
+    fn details_for(
+        &self,
+        request: &RequestId,
+        access: ExecutionAccess<'_>,
+    ) -> Result<crate::ExecutionTaskDetails, Error> {
         let record = self
             .store
             .execution_by_request(request, access, &self.adapter(None))?;
@@ -510,7 +522,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                 Phase::Cancelled => TaskPhase::Cancelled,
             }
         };
-        Ok(ExecutionStatus {
+        let status = ExecutionStatus {
             operation_request_id: request.clone(),
             plan_id: s.plan_id.clone(),
             plan_digest: s.plan_digest.clone(),
@@ -529,6 +541,10 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                 .flat_map(|a| a.termination.iter().chain(a.assessment.iter()))
                 .map(|o| o.evidence.clone())
                 .collect(),
+        };
+        Ok(crate::ExecutionTaskDetails {
+            status,
+            plan: crate::FrozenPlanSummary::from_plan(execution.plan()),
         })
     }
     /// Current service configuration health.

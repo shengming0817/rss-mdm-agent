@@ -717,7 +717,7 @@ export class CodexAdapter implements ProviderAgentPort {
     decode(
       boundedJson(
         {
-          schemaVersion: 2,
+          schemaVersion: 3,
           kind: "event",
           namespace: this.configuration!.namespace,
           eventId: "validation",

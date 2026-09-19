@@ -42,7 +42,7 @@ try {
   assert.ok(admitted.ok);
   assert.equal((await first.close(budget())).ok, true);
   const previous: Session = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "session",
     namespace: config.namespace,
     revision: 0,

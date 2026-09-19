@@ -25,7 +25,7 @@ const binding = {
   workspaceId: "workspace",
 };
 const session = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   kind: "session",
   namespace,
   revision: 1,
@@ -45,10 +45,10 @@ const session = {
   status: "active",
 };
 const prompt = (commandId, policy, state, dispatch) => ({
-  schemaVersion: 2,
+  schemaVersion: 3,
   kind: "commandRecord",
   command: {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "command",
     sessionId: namespace.sessionId,
     commandId,
@@ -61,7 +61,7 @@ const prompt = (commandId, policy, state, dispatch) => ({
     },
   },
   receipt: {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "receipt",
     namespace,
     commandId,

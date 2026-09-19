@@ -76,7 +76,10 @@ export class Interactions {
     const request = parsed.data;
     if (
       new Set(request.questions.map((q) => q.question)).size !==
-      request.questions.length
+        request.questions.length ||
+      request.questions.some(
+        (q) => new Set(q.options.map((o) => o.label)).size !== q.options.length,
+      )
     )
       return Promise.resolve(denied());
     const interactionId = randomUUID(),

@@ -11,6 +11,8 @@ Owner repository：rss-mdm-agent。任务容器：[EPIC #2392](https://dev.azure
 C05 经用户扩大范围：提取独立 Vue UI 包和可启动的 Tauri 桌面基础壳，采用根级 `apps/`、`packages/`、`crates/` 组织。
 C15 桌面自助页面通过受限 IPC 消费 Rust 内存固定测试服务；浏览器使用同源只读快照。页面不接入模型、持久化或真实执行，旧展示入口直接替换。C15 仅拥有测试服务接缝，C16 拥有会话页面，正式执行桥接与共同闭环仍归 C20；具体启动与验证见[桌面指南](../guides/desktop-development.md)。
 
+C16 在同一应用壳直接增加 AI 助手导航，消费公共 ai-client / ai-ui-bridge。固定 Host 测试装配复用同一 App；普通启动尚未注入真实 AI 服务时显示未连接。执行详情来自 Rust execution-app 的单次授权记录读取，冻结计划摘要及 TypeScript 类型由 Rust 生成，S1 结果持续标识测试。AI wire V3 与 AI SQLite schema v2 直接替换旧版，不迁移或双读；正式端到端装配仍归 C20。页面与故障验收见[助手指南](../guides/assistant-development.md)。
+
 ## 1. 产品定位与完成边界
 
 用户可以不使用 AI 完成已授权的软件和工具操作，也可以让 AI 发现同一目录、建议操作并在委托范围内调用。
@@ -243,7 +245,7 @@ AI请求与手动请求都不能自行取得可执行capability。运行模式�
 
 C03 的当前实现见[目录核心](../../crates/service-catalog/README.md)与[后端对齐](../guides/202609130000-2396-service-catalog.md)：一个格式与参数规则可显式演进，未知语义拒绝；新增目录内容无需修改核心。选择保留目录/资源摘要、变体、参数和要求；上下架/期限绑定快照，外部展示说明绑定精确选择和目标。核心不计算能力或授权，缺少后续 owner 接线时不能声称执行闭环完成。
 
-C01 执行契约保持自身版本与 Rust owner；A01 将 C02 完整替换为 AI Runtime V2，单一 JSON Schema 生成两端绑定，TS 拥有 Provider/Host/SessionStore ports。契约、安全解码与隔离消费见[契约开发说明](../guides/contracts-development.md)及 [AI Runtime 契约](../../packages/ai-contract/README.md)。数据校验和角色声明不产生可信主体、批准或执行证据。V1 不兼容，无历史命令导入、alias 或双写。历史 C02 交付由 Git/PR 保留。
+C01 执行契约保持自身版本与 Rust owner；A01 将 C02 完整替换为 AI Runtime；当前 wire 为 V3，单一 JSON Schema 生成两端绑定，TS 拥有 Provider/Host/SessionStore ports。契约、安全解码与隔离消费见[契约开发说明](../guides/contracts-development.md)及 [AI Runtime 契约](../../packages/ai-contract/README.md)。数据校验和角色声明不产生可信主体、批准或执行证据。V1/V2 不兼容，无历史命令导入、alias 或双写。历史 C02 交付由 Git/PR 保留。
 
 范围基线 `ai-runtime-20260918`：北向 ACP + A2UI，不使用 AG-UI；原生引擎拥有模型上下文，TS AI Host 拥有产品会话、命令接纳及展示/交互投影，Rust 执行服务拥有业务执行权威。TS 不直接写 Rust 批准、intent 或结果表。A01 提供公共契约、fake Host 和 conformance；A04 提供标准 ACP 接入、统一客户端投影及 Vue/Lit renderer 接缝，开发与独立消费见[ACP–A2UI 开发](../guides/ai-access-development.md)。Codex/Claude 原生适配器已在独立包落地，见 [app-server adapter](../../packages/ai-adapters/codex/README.md) 与 [SDK adapter](../../packages/ai-adapters/claude/README.md)。Codex 固定0.155.0直接接入原生协议，实现基础对话、恢复、steer；显式终态fork通过 A01 受控扩展及 Host 准入接缝提供，子会话持久化与产品接入归 A03。动态工具与子代理不支持。C12/#2405 尚未完成可信真实模型身份与连续性验收，不能由本地替身通过或本 PR 合并推定完成。真实进程/本地模型传输、真实模型端点、平台受控工具和C20装配分别提供证据。A02 的 [AI SQLite adapter](../../packages/ai-store-sqlite/README.md)提供真实事务、独占与恢复存储；A03 与最终产品装配仍由各自任务交付；这些脚本验证不替代真实 provider 的独立验收。
 
