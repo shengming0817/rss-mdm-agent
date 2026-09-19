@@ -16,6 +16,66 @@ import {
 } from "../../../packages/ai-adapters/codex/dist/runtime.js";
 import { budget, conversation, nativeFixture, prompt } from "./helpers.mjs";
 
+async function persistIntent(store, session, command, attempt) {
+  const accepted = unwrap(
+    await store.command(session.namespace, command.commandId),
+  );
+  const record = {
+    schemaVersion: 2,
+    kind: "commandRecord",
+    command: accepted.command,
+    receipt: accepted.receipt,
+    state: "dispatching",
+    dispatch: structuredClone(attempt),
+  };
+  unwrap(
+    await store.commit({
+      ...commandCommit(session, record, [
+        { type: "dispatch", attempt: record.dispatch },
+        { type: "status", state: "dispatching" },
+      ]),
+      nowMs: 1,
+    }),
+  );
+  return {
+    session: unwrap(await store.session(session.namespace)),
+    record,
+  };
+}
+
+async function persistDispatch(store, persisted, certainty, coordinates = {}) {
+  const dispatch = {
+    ...persisted.record.dispatch,
+    ...coordinates,
+    certainty,
+    ...(certainty === "unknown"
+      ? { correlationId: `lookup-${persisted.record.command.commandId}` }
+      : {}),
+  };
+  const record = {
+    ...persisted.record,
+    state: certainty === "submitted" ? "running" : "reconciliation_required",
+    dispatch,
+  };
+  const batch = commandCommit(persisted.session, record, [
+    { type: "dispatch", attempt: dispatch },
+    { type: "status", state: record.state },
+  ]);
+  unwrap(
+    await store.commit({
+      ...batch,
+      session: {
+        ...batch.session,
+        binding: { ...persisted.session.binding, ...coordinates },
+      },
+    }),
+  );
+  return {
+    session: unwrap(await store.session(persisted.session.namespace)),
+    record,
+  };
+}
+
 test("runtime recognizes only the fixed steer not-submitted rejection", () => {
   const exact = classifyNativeRejection("turn/steer", {
     code: -32600,
@@ -103,23 +163,25 @@ test(
     const first = prompt(admitted.binding, "first-before-steer-race");
     unwrap(await store.accept(acceptance(session, first.command)));
     const firstAccepted = unwrap(await store.session(session.namespace));
+    const firstIntent = await persistIntent(
+      store,
+      firstAccepted,
+      first.command,
+      first.attempt,
+    );
+    assert.equal(firstIntent.record.state, "dispatching");
+    assert.deepEqual(firstIntent.record.dispatch, first.attempt);
     const started = await port.submit(
       admitted.binding,
       first.command,
-      first.attempt,
+      firstIntent.record.dispatch,
       budget(),
     );
     assert.equal(started.certainty, "submitted");
-    const running = await dispatchCommand(
-      store,
-      firstAccepted,
-      first.command.commandId,
-      "submitted",
-      {
-        nativeRunId: started.binding.nativeRunId,
-        nativeRequestId: started.binding.nativeRequestId,
-      },
-    );
+    const running = await persistDispatch(store, firstIntent, "submitted", {
+      nativeRunId: started.binding.nativeRunId,
+      nativeRequestId: started.binding.nativeRequestId,
+    });
     const deliverCompleted = await completed;
 
     const steer = prompt(admitted.binding, "rejected-steer");
@@ -130,10 +192,20 @@ test(
       targetRunId: started.binding.nativeRunId,
     };
     steer.attempt.nativeRunId = started.binding.nativeRunId;
+    unwrap(await store.accept(acceptance(running.session, steer.command)));
+    const steerAccepted = unwrap(await store.session(session.namespace));
+    const steerIntent = await persistIntent(
+      store,
+      steerAccepted,
+      steer.command,
+      steer.attempt,
+    );
+    assert.equal(steerIntent.record.state, "dispatching");
+    assert.deepEqual(steerIntent.record.dispatch, steer.attempt);
     const submission = await port.submit(
       admitted.binding,
       steer.command,
-      steer.attempt,
+      steerIntent.record.dispatch,
       budget(),
     );
     deliverCompleted();
@@ -145,7 +217,7 @@ test(
       await port.submit(
         admitted.binding,
         steer.command,
-        steer.attempt,
+        steerIntent.record.dispatch,
         budget(),
       ),
       submission,
@@ -157,14 +229,13 @@ test(
       "same-attempt retry must not reach the native runtime",
     );
 
-    unwrap(await store.accept(acceptance(running.session, steer.command)));
-    const accepted = unwrap(await store.session(session.namespace));
-    const durable = await dispatchCommand(
-      store,
-      accepted,
-      steer.command.commandId,
-      "unknown",
-      { nativeRunId: started.binding.nativeRunId },
+    const durable = await persistDispatch(store, steerIntent, "unknown", {
+      nativeRunId: started.binding.nativeRunId,
+    });
+    assert.equal(durable.record.state, "reconciliation_required");
+    assert.equal(
+      durable.record.dispatch.attemptId,
+      steerIntent.record.dispatch.attemptId,
     );
     const proof = unwrap(
       await admitted.reconcile(durable.session, durable.record, budget()),
