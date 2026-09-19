@@ -9,8 +9,8 @@ prmonitor 固定 `4dcc87264ad740da6559824e0a8b04a1c2914d4b`、rss-mdm 固定 `58
 | 原 owner/载体 | 本次处置 |
 | --- | --- |
 | C02 model.rs/capability.rs/value.rs 的手写 wire 与 Rust→schema | 删除；产品 schema 位于 ai-contract，由固定生成链投影 Rust/TS |
-| C02 arguments.rs/validation.rs/error.rs | 以 V2 codec 重写，保留预算、重复键、安全诊断和信任边界；无旧 API alias |
-| C02 V1 fixtures/旧 schema example | 删除；Rust/TS 共用 V2 fixtures 和新独立 consumer |
+| C02 arguments.rs/validation.rs/error.rs | 以 V3 codec 重写，保留预算、重复键、安全诊断和信任边界；无旧 API alias |
+| C02 V1 fixtures/旧 schema example | 删除；Rust/TS 共用 V3 fixtures 和新独立 consumer |
 | C02 历史交付 | Git/PR 和原来源记录保留；当前没有 V1 reader、迁移器或双写 |
 | Rust 执行契约、批准、生命周期 | 职责保持，不迁移到 TS，不建立第二套执行权威 |
 

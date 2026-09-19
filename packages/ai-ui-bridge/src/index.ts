@@ -1,4 +1,6 @@
 import { RendererError } from "./errors.js";
+export { questions } from "./questions.js";
+export type { Question } from "./questions.js";
 export { RendererError } from "./errors.js";
 export type { RendererErrorCode } from "./errors.js";
 import {

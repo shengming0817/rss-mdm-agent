@@ -113,7 +113,8 @@ pub enum Startup {
 }
 
 /// Safe presentation of C09 facts, not a second persisted state machine.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub enum TaskPhase {
     /// Registered without an admitted attempt; no execution permission is implied.
     Waiting,
@@ -138,7 +139,8 @@ pub enum TaskPhase {
 }
 
 /// Authorized value-only task projection. Never includes launch, parameters or raw output.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct ExecutionStatus {
     /// Original reliable business identity.
     pub operation_request_id: RequestId,

@@ -237,7 +237,7 @@ export async function runRecoveryConformance(
     false,
   );
   const accepted: CommandRecord = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "commandRecord",
     command: rebound.command,
     receipt: rebound.receipt,
@@ -249,7 +249,6 @@ export async function runRecoveryConformance(
       attempt: rebound.dispatch!,
       resolution: "not_submitted",
     },
-    { type: "status", state: "accepted" },
   ]);
   // Reconciliation events retain the attempt even though the next state has none.
   const retry = {
@@ -450,7 +449,7 @@ async function failureAndDelivery(store: SessionStore) {
   let head = unwrap(await store.session(initial.namespace));
   const event = unwrap(await store.events(initial.namespace, 0, 1))[0];
   const delivery: import("../wire.js").Delivery = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "delivery",
     namespace: initial.namespace,
     operationId: "delivery-1",

@@ -10,13 +10,13 @@
   "scripts": {
     "dev": "pnpm --filter @rss-mdm-agent/desktop dev",
     "dev:web": "pnpm --filter @rss-mdm-agent/desktop dev:web",
-    "build": "pnpm --filter @rss-mdm-agent/ui build && pnpm --filter @rss-mdm-agent/desktop build",
+    "build": "pnpm build:ai-access && pnpm --filter @rss-mdm-agent/ui build && pnpm --filter @rss-mdm-agent/desktop build",
     "desktop:build": "pnpm --filter @rss-mdm-agent/desktop desktop:build",
     "test": "vitest run",
     "typecheck": "vue-tsc --noEmit -p tsconfig.json",
     "check:boundaries": "node --test scripts/boundaries.test.mjs",
     "check:consumer": "node scripts/check-consumer.mjs",
-    "format:check": "prettier --check packages/ui/runtime.ts packages/ui/src packages/ui/tests apps/desktop/src scripts packages/ai-contract/src tests/ai-contract packages/ai-access/src packages/ai-client/src packages/ai-ui-bridge/src tests/ai-access packages/ai-adapters/claude/src tests/ai-adapters/claude packages/ai-store-sqlite/src tests/ai-store-recovery",
+    "format:check": "prettier --check packages/ui/runtime.ts packages/ui/src packages/ui/tests apps/desktop/src scripts packages/ai-contract/src tests/ai-contract packages/ai-access/src packages/ai-client/src packages/ai-ui-bridge/src tests/ai-access packages/ai-adapters/claude/src tests/ai-adapters/claude packages/ai-store-sqlite/src tests/ai-store-recovery tests/assistant",
     "generate:ai-contract": "node scripts/generate-ai-contract.mjs",
     "check:ai-contract": "node scripts/generate-ai-contract.mjs --check",
     "build:ai-contract": "pnpm --filter @rss-mdm-agent/ai-contract build",
@@ -32,7 +32,9 @@
     "smoke:claude": "node scripts/smoke-claude.mjs",
     "build:ai-store": "pnpm build:ai-contract && pnpm --filter @rss-mdm-agent/ai-store-sqlite build",
     "test:ai-store": "pnpm build:ai-store && node --test tests/ai-store-recovery/*.test.mjs",
-    "check:ai-store-consumer": "node scripts/check-ai-store-consumer.mjs"
+    "check:ai-store-consumer": "node scripts/check-ai-store-consumer.mjs",
+    "dev:assistant-fixture": "pnpm build:ai-access && pnpm --filter @rss-mdm-agent/ui build && node tests/assistant/server.mjs --serve",
+    "check:assistant": "node scripts/check-execution-bindings.mjs && node scripts/check-assistant-browser.mjs"
   },
   "devDependencies": {
     "@types/node": "24.3.0",

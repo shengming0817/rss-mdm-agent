@@ -3,6 +3,8 @@ import {
   validateSurface,
   accessLimits,
   type CommandRecord,
+  type Command,
+  type Capabilities,
   type Failure,
   type Event,
   type Interaction,
@@ -15,6 +17,8 @@ import {
 
 export type InteractionView = Pick<
   Interaction,
+  | "commandId"
+  | "nativeRunId"
   | "status"
   | "request"
   | "expiresAtMs"
@@ -23,6 +27,8 @@ export type InteractionView = Pick<
   | "generation"
 >;
 const projectInteraction = (row: Interaction): InteractionView => ({
+  commandId: row.commandId,
+  ...(row.nativeRunId ? { nativeRunId: row.nativeRunId } : {}),
   status: row.status,
   request: row.request,
   expiresAtMs: row.expiresAtMs,
@@ -32,16 +38,32 @@ const projectInteraction = (row: Interaction): InteractionView => ({
     ? { responseCommandId: row.responseCommandId }
     : {}),
 });
+export interface CommandView {
+  command: Command;
+  state: CommandRecord["state"];
+  dispatch?: CommandRecord["dispatch"];
+  outcome?: Outcome;
+  failure?: Failure;
+  cancelDispatched?: Extract<
+    Event["body"],
+    { type: "cancel_dispatched" }
+  >["confirmation"];
+}
+export interface TimelineItem {
+  kind: "prompt" | "message" | "tool" | "interaction" | "surface";
+  key: string;
+  sequence: number;
+}
 export interface SessionView {
   /** Identity of this attachment's snapshot, not a second live Host Session. */
   namespace: Session["namespace"];
   generation: string;
   cursor: number;
+  capabilities: Capabilities;
+  sessionStatus: Session["status"];
+  timeline: TimelineItem[];
   connection: "attached" | "detached" | "resync_required";
-  commands: Record<
-    string,
-    { state: CommandRecord["state"]; outcome?: Outcome; failure?: Failure }
-  >;
+  commands: Record<string, CommandView>;
   messages: Record<
     string,
     { commandId: string; text: string; stable: boolean }
@@ -64,12 +86,15 @@ export interface SessionView {
   >;
 }
 const messageKey = (command: string, message: string) =>
-  `${command}/${message}`;
+  JSON.stringify([command, message]);
 export function emptyView(session: Session, cursor: number): SessionView {
   return {
     namespace: structuredClone(session.namespace),
     generation: session.binding.generation,
     cursor,
+    capabilities: structuredClone(session.capabilities),
+    sessionStatus: session.status,
+    timeline: [],
     connection: "detached",
     commands: Object.create(null),
     messages: Object.create(null),
@@ -78,59 +103,117 @@ export function emptyView(session: Session, cursor: number): SessionView {
     tools: Object.create(null),
   };
 }
+function order(
+  view: SessionView,
+  kind: TimelineItem["kind"],
+  key: string,
+  sequence: number,
+) {
+  const prior = view.timeline.find(
+    (item) => item.kind === kind && item.key === key,
+  );
+  if (prior) {
+    // A temporary block obtains its durable position only on a stable event.
+    if (!Number.isInteger(prior.sequence)) prior.sequence = sequence;
+  } else view.timeline.push({ kind, key, sequence });
+  view.timeline.sort((a, b) => a.sequence - b.sequence);
+}
 function event(view: SessionView, e: Event): void {
-  // Session-level events have no command; snapshot metadata owns session identity.
-  if (e.commandId === undefined) return;
   const body = e.body;
-  if (body.type === "terminal") {
-    view.commands[e.commandId] = { state: "terminal", outcome: body.outcome };
-    for (const [key, message] of Object.entries(view.messages))
-      if (message.commandId === e.commandId && !message.stable)
-        delete view.messages[key];
-  } else if (body.type === "invalidated") {
+  if (body.type === "session_retired") {
+    view.sessionStatus = "retired";
+    return;
+  }
+  if (e.commandId === undefined) return;
+  if (body.type === "command_accepted") {
+    if (view.commands[e.commandId]) throw new ClientError("resync_required");
     view.commands[e.commandId] = {
-      state: "invalidated",
-      failure: body.failure,
+      command: structuredClone(body.command),
+      state: "accepted",
     };
+    if (body.command.input.type === "prompt")
+      order(view, "prompt", e.commandId, e.sequence);
+    return;
+  }
+  const command = view.commands[e.commandId];
+  if (!command) throw new ClientError("resync_required");
+  const settled =
+    command.state === "terminal" || command.state === "invalidated";
+  if (body.type === "terminal" || body.type === "invalidated") {
+    if (settled) return;
+    if (body.type === "terminal") {
+      command.state = "terminal";
+      command.outcome = body.outcome;
+    } else {
+      command.state = "invalidated";
+      command.failure = body.failure;
+    }
     for (const [key, message] of Object.entries(view.messages))
-      if (message.commandId === e.commandId && !message.stable)
+      if (message.commandId === e.commandId && !message.stable) {
         delete view.messages[key];
+        view.timeline = view.timeline.filter(
+          (item) => item.kind !== "message" || item.key !== key,
+        );
+      }
   } else if (body.type === "status") {
-    if (
-      !["terminal", "invalidated"].includes(
-        view.commands[e.commandId]?.state ?? "",
-      )
-    )
-      view.commands[e.commandId] = { state: body.state };
+    if (!settled) command.state = body.state;
+  } else if (body.type === "dispatch" || body.type === "reconciled") {
+    if (settled) return;
+    if (body.type === "reconciled" && body.resolution === "not_submitted") {
+      command.state = "accepted";
+      delete command.dispatch;
+    } else command.dispatch = structuredClone(body.attempt);
+  } else if (body.type === "cancel_dispatched") {
+    command.cancelDispatched = body.confirmation;
+  } else if (body.type === "error") {
+    if (!settled) command.failure = body.failure;
   } else if (body.type === "text") {
-    view.messages[messageKey(e.commandId, body.messageId)] = {
+    if (settled) return;
+    const key = messageKey(e.commandId, body.messageId);
+    view.messages[key] = {
       commandId: e.commandId,
       text: body.text,
       stable: true,
     };
+    order(view, "message", key, e.sequence);
   } else if (body.type === "tool_proposal") {
-    view.tools[messageKey(e.commandId, body.proposalId)] = {
+    if (settled) return;
+    const key = messageKey(e.commandId, body.proposalId);
+    view.tools[key] = {
       commandId: e.commandId,
       proposalId: body.proposalId,
       name: body.name,
       arguments: body.arguments,
       status: "pending",
     };
+    order(view, "tool", key, e.sequence);
   } else if (body.type === "tool_result") {
+    if (settled) return;
     const tool = view.tools[messageKey(e.commandId, body.proposalId)];
     if (!tool) throw new ClientError("resync_required");
     tool.status = body.disposition === "returned" ? "completed" : "failed";
     tool.result = { disposition: body.disposition, text: body.text };
   } else if (body.type === "interaction") {
-    if (body.status === "pending")
+    if (body.status === "pending") {
+      if (
+        settled ||
+        !command.dispatch ||
+        command.dispatch.attemptId !== e.attemptId
+      )
+        throw new ClientError("resync_required");
       view.interactions[body.interactionId] = {
+        commandId: e.commandId,
+        ...(command.dispatch.nativeRunId
+          ? { nativeRunId: command.dispatch.nativeRunId }
+          : {}),
         status: body.status,
         request: body.request,
         expiresAtMs: body.expiresAtMs,
         callbackLifetime: body.callbackLifetime,
         generation: e.generation,
       };
-    else {
+      order(view, "interaction", body.interactionId, e.sequence);
+    } else {
       const interaction = view.interactions[body.interactionId];
       if (!interaction) throw new ClientError("resync_required");
       interaction.status = body.status;
@@ -138,14 +221,15 @@ function event(view: SessionView, e: Event): void {
         interaction.responseCommandId = body.responseCommandId;
     }
   } else if (body.type === "surface") {
-    const surface = validateSurface(body.surface);
-    const prior = view.surfaces[surface.surfaceInstanceId];
+    const surface = validateSurface(body.surface),
+      prior = view.surfaces[surface.surfaceInstanceId];
     if (
       prior &&
       (prior.status !== "active" || surface.revision !== prior.revision + 1)
     )
       throw new ClientError("resync_required");
     view.surfaces[surface.surfaceInstanceId] = surface;
+    order(view, "surface", surface.surfaceInstanceId, e.sequence);
     if (
       surface.status !== "active" &&
       view.interactions[surface.interactionId]?.status === "pending"
@@ -162,7 +246,10 @@ export function restoreSnapshot(
   for (const page of pages) {
     for (const c of page.commands)
       view.commands[c.command.commandId] = {
+        ...view.commands[c.command.commandId],
+        command: structuredClone(c.command),
         state: c.state,
+        ...(c.dispatch ? { dispatch: structuredClone(c.dispatch) } : {}),
         ...(c.outcome ? { outcome: c.outcome } : {}),
         ...(c.failure ? { failure: c.failure } : {}),
       };
@@ -206,6 +293,7 @@ export function applyUpdate(view: SessionView, item: Subscription): void {
       view.connection = "resync_required";
       return;
     }
+    order(view, "message", key, view.cursor + 0.5);
     view.messages[key] = {
       commandId: item.commandId,
       text,

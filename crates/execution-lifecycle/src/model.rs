@@ -2,7 +2,7 @@ use execution_contract::{AttemptId, Digest, EventId, EvidenceRef, FrozenPlan, Id
 use serde::{Deserialize, Serialize};
 
 /// Explicit execution provenance; test effects never become real effects.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum ExecutionMode {
     /// Explicit fixture runner only.
@@ -46,7 +46,7 @@ impl DispatchState {
     }
 }
 /// Verified assessment of the whole controlled attempt, not text from tool output.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum EffectAssessment {
     /// Quiescent attempt has no side effects or pending external work.
@@ -171,7 +171,7 @@ pub struct AttemptSnapshot {
     pub output_bytes: u64,
 }
 /// Closed first-delivery diagnostics. These are not observations of termination or effects.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum DispatchCause {
     /// Required capability or its independently verified freshness is unavailable.
@@ -200,7 +200,7 @@ pub enum DispatchCause {
     RunnerError,
 }
 /// Closed stop request diagnostics. Neither variant is a termination/effect observation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum StopOutcome {
     /// The runner acknowledged the stop request, not termination.
@@ -346,7 +346,7 @@ pub enum Phase {
     Cancelled,
 }
 /// Explicit reason a validity or cumulative budget bound prevents work.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum LimitReason {
     /// Plan validity has not begun.

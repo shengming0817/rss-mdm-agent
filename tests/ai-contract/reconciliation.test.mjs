@@ -43,7 +43,6 @@ function reset(session, record, proof) {
       attempt: record.dispatch,
       resolution: "not_submitted",
     },
-    { type: "status", state: "accepted" },
   ]);
   batch.events[0].attemptId = record.dispatch.attemptId;
   return { ...batch, nowMs: 1, reconciliations: [proof] };

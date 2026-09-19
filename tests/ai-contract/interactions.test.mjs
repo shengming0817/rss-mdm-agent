@@ -25,7 +25,7 @@ async function dispatched() {
 }
 function question(session, id = "question-1", callback = "callback-1") {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "interaction",
     category: "question",
     namespace: session.namespace,
@@ -49,7 +49,7 @@ function pending(session, rows) {
     },
     interactions: rows,
     events: rows.map((row, index) => ({
-      schemaVersion: 2,
+      schemaVersion: 3,
       kind: "event",
       namespace: session.namespace,
       eventId: `pending-${row.interactionId}`,

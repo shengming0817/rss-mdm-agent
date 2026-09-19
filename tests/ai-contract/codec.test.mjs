@@ -12,14 +12,14 @@ const limits = {
   maxNodes: 4096,
 };
 const command = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   kind: "command",
   sessionId: "s1",
   commandId: "c1",
   expiresAtMs: 1000,
   input: { type: "prompt", text: "hello", policy: "queue_next" },
 };
-test("V2 command round trips without a Rust, UI or provider runtime", () => {
+test("V3 command round trips without a Rust, UI or provider runtime", () => {
   assert.deepEqual(decode(JSON.stringify(command), limits), command);
 });
 test("old formats, duplicate keys and excess authority fields fail closed", () => {

@@ -38,6 +38,7 @@ const steps = [
   ["Claude SDK adapter", "pnpm", ["test:ai-claude"]],
   ["Claude packed consumer", "pnpm", ["check:claude-consumer"]],
   ["frontend build", "pnpm", ["build"]],
+  ["assistant product acceptance", "pnpm", ["check:assistant"]],
   ["types", "pnpm", ["typecheck"]],
   ["frontend format", "pnpm", ["format:check"]],
   ["components", "pnpm", ["test"]],

@@ -57,3 +57,7 @@ cargo run -p execution-app --example execution-app-consumer --locked -- crates/e
 直接读取 kube-rs 固定 revision [`f3619c349faebb4af25df013498af5f2bb85d1f5` 的 `kube-runtime/src/controller/mod.rs`](https://github.com/kube-rs/kube/blob/f3619c349faebb4af25df013498af5f2bb85d1f5/kube-runtime/src/controller/mod.rs)，借鉴显式调谐建议与实际调度分离；本实现无上游源码复制或依赖，不引入 Kubernetes 资源模型、隐式自动重试或 worker。一次性权限与 SQLite 原子性直接消费仓内 C09/C18，无第二份机制。目标新源码沿用本仓 MIT。
 
 本轮分权与诊断设计另读取 [Kubernetes v1.34.0 authorizer/interfaces.go](https://github.com/kubernetes/kubernetes/blob/v1.34.0/staging/src/k8s.io/apiserver/pkg/authorization/authorizer/interfaces.go) 的动作/资源属性、[apimachinery v0.34.0 types.go](https://github.com/kubernetes/apimachinery/blob/v0.34.0/pkg/apis/meta/v1/types.go) 的状态/原因分离，以及 [Axum 0.8.4 extract/state.rs](https://github.com/tokio-rs/axum/blob/axum-v0.8.4/axum/src/extract/state.rs) 的集中上下文与窄状态提取。仅借鉴模式，不复制代码、不新增依赖；Host 私有字段只经一个构造入口初始化。
+
+## 授权任务详情
+
+`task_details(request_id)` 以 ReadResult 一次读取 ExecutionRecord，并再次核对当前 authority/actor/device binding，返回同一记录的 `ExecutionStatus` 和 `FrozenPlanSummary`。`status` 与它共享投影；不需要 ReadAudit，也不暴露 parameters、argv、cwd、env、stdin、路径/网络明细或批准记录。摘要包括原 plan ID/digest、目标、运行身份、精确资源/制品/解释器、策略版本、有效期、预算与访问数量。`scripts/check-execution-bindings.mjs` 从 Rust 的序列化 schema 生成桌面类型，同时用真实 SQLite + DeterministicTestRunner 生成 running、approvalRequired、outcomeUnknown、testCompleted、cancelled 五种 fixture；没有手写并行执行 DTO。

@@ -223,7 +223,7 @@ impl ExecutionAccess<'_> {
     }
 }
 /// Value-only admission result; policy/rule/approver details remain in privileged audit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum AdmissionStatus {
     /// This admission committed an attempt, not an execution effect.

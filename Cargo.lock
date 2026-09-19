@@ -828,6 +828,7 @@ dependencies = [
  "execution-lifecycle",
  "execution-sqlite",
  "rusqlite",
+ "schemars 1.2.2",
  "serde",
  "serde_json",
  "serde_json_canonicalizer",
@@ -883,6 +884,7 @@ name = "execution-lifecycle"
 version = "0.1.0"
 dependencies = [
  "execution-contract",
+ "schemars 1.2.2",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
@@ -917,6 +919,7 @@ dependencies = [
  "execution-interaction",
  "execution-lifecycle",
  "rusqlite",
+ "schemars 1.2.2",
  "serde",
  "serde_json",
  "serde_json_canonicalizer",

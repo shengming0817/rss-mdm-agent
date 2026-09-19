@@ -1,4 +1,4 @@
-//! Isolated V2 consumer: no Tauri, Node, provider, database or code generation.
+//! Isolated V3 consumer: no Tauri, Node, provider, database or code generation.
 use ai_session_contract::{decode, encode, fingerprint, Event, Limits};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::args().nth(1).ok_or("fixture path required")?;
@@ -36,6 +36,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let command: ai_session_contract::Command =
         serde_json::from_value(fixtures["valid"][0].clone())?;
     assert_eq!(fingerprint(&command, &limits)?, fixtures["commandHash"]);
-    println!("V2 independent consumer: shared wire golden and command identity passed; no engine invoked");
+    println!("V3 independent consumer: shared wire golden and command identity passed; no engine invoked");
     Ok(())
 }

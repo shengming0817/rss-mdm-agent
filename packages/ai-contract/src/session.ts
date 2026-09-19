@@ -355,7 +355,7 @@ export class VerifiedProviderSession {
       decode(
         boundedJson(
           {
-            schemaVersion: 2,
+            schemaVersion: 3,
             kind: "session",
             namespace,
             revision: 0,

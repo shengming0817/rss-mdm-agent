@@ -261,7 +261,7 @@ test("Fake Host never advertises durable receipts from an in-memory implementati
     assert.equal(
       unwrap(
         host.negotiate({
-          contractVersion: 2,
+          contractVersion: 3,
           acp: 1,
           cursorAttach: true,
           durableReceipts,
@@ -342,7 +342,7 @@ test("resume detaches the old generation before Host changes it, then rebuilds f
   assert.equal("session" in resumed, false);
   assert.equal(states.includes("resync_required"), false);
   await r.submit({
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "command",
     sessionId: id,
     commandId: "after-resume",
@@ -358,7 +358,7 @@ test("RuntimeClient preserves tool state and content across live updates and sna
     r = await runtime(t, service);
   const id = (await r.createSession()).namespace.sessionId;
   await r.submit({
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "command",
     sessionId: id,
     commandId: "tools",
@@ -375,8 +375,8 @@ test("RuntimeClient preserves tool state and content across live updates and sna
       },
     ]),
   );
-  await until(() => r.getSession(id).tools["tools/read"]?.status === "pending");
-  assert.equal((await r.restore(id, 1)).tools["tools/read"].status, "pending");
+  await until(() => r.getSession(id).tools[JSON.stringify(["tools", "read"])]?.status === "pending");
+  assert.equal((await r.restore(id, 1)).tools[JSON.stringify(["tools", "read"])].status, "pending");
   unwrap(
     await host.advance(fixtureCaller, id, "tools", [
       {
@@ -388,12 +388,12 @@ test("RuntimeClient preserves tool state and content across live updates and sna
       { type: "terminal", outcome: "completed" },
     ]),
   );
-  await until(() => r.getSession(id).tools["tools/read"].status === "failed");
+  await until(() => r.getSession(id).tools[JSON.stringify(["tools", "read"])].status === "failed");
   assert.deepEqual(
-    (await r.restore(id, 1)).tools["tools/read"],
-    r.getSession(id).tools["tools/read"],
+    (await r.restore(id, 1)).tools[JSON.stringify(["tools", "read"])],
+    r.getSession(id).tools[JSON.stringify(["tools", "read"])],
   );
-  assert.equal(r.getSession(id).tools["tools/read"].result.text, "not allowed");
+  assert.equal(r.getSession(id).tools[JSON.stringify(["tools", "read"])].result.text, "not allowed");
 });
 
 // PR 1049: each case exercises a public seam with an adversarial but valid owner.
@@ -450,7 +450,7 @@ for (const extended of [false, true])
     await agent.request(
       extended ? extension.resume : "session/resume",
       extended
-        ? { schemaVersion: 2, kind: "resumeRequest", sessionId: id }
+        ? { schemaVersion: 3, kind: "resumeRequest", sessionId: id }
         : { sessionId: id, cwd: "/", mcpServers: [] },
     );
     await until(() => subscriptions.length === 2);
@@ -623,7 +623,7 @@ test("F9 snapshot and live interaction projections preserve authoritative expiry
   const r = await runtime(t, service);
   const id = (await r.createSession()).namespace.sessionId;
   await r.submit({
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "command",
     sessionId: id,
     commandId: "question",
@@ -658,7 +658,7 @@ test("F10 answered projection identifies the first response across live and rest
     await host.respond(
       fixtureCaller,
       {
-        schemaVersion: 2,
+        schemaVersion: 3,
         kind: "command",
         sessionId: id,
         commandId: "winning-response",
@@ -711,7 +711,7 @@ test("F3 detach while resume is pending cannot resurrect the old attachment", as
     };
   };
   const result = r.connection.agent.request(extension.resume, {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "resumeRequest",
     sessionId: id,
   });
@@ -753,7 +753,7 @@ test("F1 selection may disable offered booleans, never enable unoffered ones", a
     "../../packages/ai-contract/dist/index.js"
   );
   const offer = {
-    contractVersion: 2,
+    contractVersion: 3,
     acp: 1,
     cursorAttach: false,
     durableReceipts: false,

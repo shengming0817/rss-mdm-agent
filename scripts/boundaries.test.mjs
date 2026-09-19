@@ -77,6 +77,28 @@ test("desktop source and manifests cannot acquire host or network capabilities",
     [],
   );
 });
+test("assistant only consumes public AI client and bridge; no provider, Host or transport implementation", () => {
+  const file = "apps/desktop/src/assistant/controller.ts";
+  assert.deepEqual(
+    checkSource(
+      file,
+      `import { ClientError } from '@rss-mdm-agent/ai-client'; import { questions } from '@rss-mdm-agent/ai-ui-bridge';`,
+    ),
+    [],
+  );
+  for (const source of [
+    `import x from '@agentclientprotocol/sdk'`,
+    `import x from '@rss-mdm-agent/ai-contract/testing'`,
+    `import x from '@rss-mdm-agent/ai-access'`,
+    `import x from '@anthropic-ai/claude-agent-sdk'`,
+    `fetch('/send')`,
+    `new WebSocket('ws://localhost')`,
+    `import x from '../../../../tests/assistant/server.mjs'`,
+    `const x = globalThis['fetch']`,
+    `const x = globalThis[key]`,
+  ])
+    assert.ok(checkSource(file, source).length, source);
+});
 test("alternative HTML sinks are rejected in Vue templates and scripts", () => {
   for (const source of [
     `<script setup>document.body.insertAdjacentHTML('beforeend', input)</script>`,
@@ -124,7 +146,7 @@ test("tree scan covers desktop files and both production manifests", () => {
     assert.ok(errors.includes("UI production dependencies must be Vue only"));
     assert.ok(
       errors.includes(
-        "desktop production dependencies must be UI, Vue and pinned Tauri core only",
+        "desktop production dependencies must be UI, public AI client/bridge, Vue and pinned Tauri core only",
       ),
     );
   } finally {

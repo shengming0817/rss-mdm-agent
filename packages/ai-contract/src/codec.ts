@@ -47,7 +47,7 @@ function checkLimits(limits: Limits): void {
       throw new ContractError("configuration");
   if (limits.maxDepth > 64) throw new ContractError("configuration");
 }
-/** Decode strict bounded V2 JSON. Schema validity does not establish authority. */
+/** Decode strict bounded V3 JSON. Schema validity does not establish authority. */
 export function decode(input: string | Uint8Array, limits: Limits): WireRecord {
   checkLimits(limits);
   if (
@@ -129,7 +129,7 @@ export function decode(input: string | Uint8Array, limits: Limits): WireRecord {
     value &&
     typeof value === "object" &&
     "schemaVersion" in value &&
-    value.schemaVersion !== 2
+    value.schemaVersion !== 3
   )
     throw new ContractError("version");
   if (!valid(value)) throw new ContractError("schema");
@@ -137,6 +137,14 @@ export function decode(input: string | Uint8Array, limits: Limits): WireRecord {
   return value as WireRecord;
 }
 function checkContext(value: WireRecord): void {
+  if (value.kind === "event" && value.body.type === "command_accepted") {
+    checkContext(value.body.command);
+    if (
+      value.commandId !== value.body.command.commandId ||
+      value.namespace.sessionId !== value.body.command.sessionId
+    )
+      throw new ContractError("context");
+  }
   if (value.kind === "snapshotPage") {
     if (value.cursor !== value.session.lastSequence)
       throw new ContractError("context");

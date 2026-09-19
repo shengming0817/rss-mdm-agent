@@ -49,7 +49,7 @@ export class FakeHost implements HostPort {
   ) {}
   negotiate(offered: Negotiation): Result<Negotiation> {
     if (this.closed) return fail("unavailable");
-    if (offered.contractVersion !== 2 || offered.acp !== 1)
+    if (offered.contractVersion !== 3 || offered.acp !== 1)
       return fail("unsupported_version");
     if (
       offered.a2ui &&
@@ -89,7 +89,7 @@ export class FakeHost implements HostPort {
       return fail("unavailable");
     }
     const session: Session = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       kind: "session",
       namespace,
       revision: 0,
@@ -191,16 +191,6 @@ export class FakeHost implements HostPort {
         if (!target.ok) return target;
       }
     }
-    const event: Event = {
-      schemaVersion: 2,
-      kind: "event",
-      namespace,
-      eventId: `accepted-${command.commandId}`,
-      sequence: s.lastSequence + 1,
-      commandId: command.commandId,
-      generation: s.binding.generation,
-      body: { type: "status", state: "accepted" },
-    };
     const result = await this.store.accept({
       namespace,
       command,
@@ -208,7 +198,7 @@ export class FakeHost implements HostPort {
       expectedGeneration: s.binding.generation,
       nowMs: this.clock.now(),
       retention: { retryWindowMs: 1000, receiptWindowMs: 2000 },
-      event,
+      eventId: `accepted-${command.commandId}`,
     });
     if (result.ok) this.notify(s.namespace);
     return result;
@@ -302,9 +292,16 @@ export class FakeHost implements HostPort {
       record = row.value;
     if (!record.dispatch) {
       try {
-        await dispatchCommand(this.store, s, commandId, "submitted", {
-          nativeRunId: `run-${commandId}`,
-        });
+        await dispatchCommand(
+          this.store,
+          s,
+          commandId,
+          "submitted",
+          {
+            nativeRunId: `run-${commandId}`,
+          },
+          this.clock.now(),
+        );
       } catch {
         return fail("invalid_input");
       }
@@ -329,7 +326,7 @@ export class FakeHost implements HostPort {
     const events: Event[] = bodies.map(
       (body, index) =>
         ({
-          schemaVersion: 2,
+          schemaVersion: 3,
           kind: "event",
           namespace,
           eventId: `script-${s.lastSequence + index + 1}`,
@@ -349,7 +346,7 @@ export class FakeHost implements HostPort {
         if (row.commandId === commandId && row.status === "pending") {
           interactions.push({ ...row, status: "unavailable" });
           events.push({
-            schemaVersion: 2,
+            schemaVersion: 3,
             kind: "event",
             namespace,
             eventId: `script-${s.lastSequence + events.length + 1}`,
@@ -380,7 +377,7 @@ export class FakeHost implements HostPort {
           };
           surfaces.push(surface);
           events.push({
-            schemaVersion: 2,
+            schemaVersion: 3,
             kind: "event",
             namespace,
             eventId: `script-${s.lastSequence + events.length + 1}`,
@@ -423,7 +420,7 @@ export class FakeHost implements HostPort {
     if (!found.ok) return found;
     const s = found.value;
     const interaction: Interaction = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       kind: "interaction",
       category: "question",
       namespace,
@@ -447,7 +444,7 @@ export class FakeHost implements HostPort {
       interactions: [interaction],
       events: [
         {
-          schemaVersion: 2,
+          schemaVersion: 3,
           kind: "event",
           namespace,
           eventId: `question-${interactionId}`,

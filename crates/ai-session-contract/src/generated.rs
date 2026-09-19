@@ -238,7 +238,7 @@ impl ::std::convert::From<AccessUpdateSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for AccessUpdateSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
+        if ![3_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -336,7 +336,7 @@ impl ::std::convert::From<ActionRequestSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for ActionRequestSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
+        if ![3_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -435,7 +435,7 @@ impl ::std::convert::From<AttachReceiptSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for AttachReceiptSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
+        if ![3_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -534,7 +534,7 @@ impl ::std::convert::From<AttachRequestSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for AttachRequestSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
+        if ![3_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -918,7 +918,7 @@ pub struct Command {
     pub input: Input,
     #[doc = "Closed product record discriminator."]
     pub kind: CommandKind,
-    #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+    #[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
     #[serde(rename = "schemaVersion")]
     pub schema_version: CommandSchemaVersion,
     #[doc = "Logical session identifier, never reusable after retirement."]
@@ -985,7 +985,7 @@ pub enum CommandRecord {
         kind: CommandRecordKind,
         #[doc = "Immutable original committed acceptance fact."]
         receipt: Receipt,
-        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: CommandRecordSchemaVersion,
     },
@@ -1000,7 +1000,7 @@ pub enum CommandRecord {
         kind: CommandRecordKind,
         #[doc = "Immutable original committed acceptance fact."]
         receipt: Receipt,
-        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: CommandRecordSchemaVersion,
     },
@@ -1015,7 +1015,7 @@ pub enum CommandRecord {
         kind: CommandRecordKind,
         #[doc = "Immutable original committed acceptance fact."]
         receipt: Receipt,
-        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: CommandRecordSchemaVersion,
     },
@@ -1032,7 +1032,7 @@ pub enum CommandRecord {
         outcome: Outcome,
         #[doc = "Immutable original committed acceptance fact."]
         receipt: Receipt,
-        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: CommandRecordSchemaVersion,
     },
@@ -1047,7 +1047,7 @@ pub enum CommandRecord {
         kind: CommandRecordKind,
         #[doc = "Immutable original committed acceptance fact."]
         receipt: Receipt,
-        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: CommandRecordSchemaVersion,
     },
@@ -1062,7 +1062,7 @@ pub enum CommandRecord {
         kind: CommandRecordKind,
         #[doc = "Immutable original committed acceptance fact."]
         receipt: Receipt,
-        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: CommandRecordSchemaVersion,
     },
@@ -1114,7 +1114,7 @@ impl ::std::convert::TryFrom<::std::string::String> for CommandRecordKind {
         value.parse()
     }
 }
-#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+#[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct CommandRecordSchemaVersion(i64);
@@ -1132,7 +1132,7 @@ impl ::std::convert::From<CommandRecordSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for CommandRecordSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
+        if ![3_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -1148,7 +1148,7 @@ impl<'de> ::serde::Deserialize<'de> for CommandRecordSchemaVersion {
             .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
     }
 }
-#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+#[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct CommandSchemaVersion(i64);
@@ -1166,7 +1166,7 @@ impl ::std::convert::From<CommandSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for CommandSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
+        if ![3_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -1258,7 +1258,7 @@ pub struct Delivery {
     pub operation_id: Id,
     #[doc = "Explicit retry discipline; uncertainty never authorizes blind resubmission."]
     pub retry: DeliveryRetry,
-    #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+    #[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
     #[serde(rename = "schemaVersion")]
     pub schema_version: DeliverySchemaVersion,
     #[doc = "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."]
@@ -1422,7 +1422,7 @@ impl ::std::convert::TryFrom<::std::string::String> for DeliveryRetry {
         value.parse()
     }
 }
-#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+#[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct DeliverySchemaVersion(i64);
@@ -1440,7 +1440,7 @@ impl ::std::convert::From<DeliverySchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for DeliverySchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
+        if ![3_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -1594,7 +1594,7 @@ impl ::std::convert::From<DetachRequestSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for DetachRequestSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
+        if ![3_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -1844,16 +1844,16 @@ pub enum Event {
         kind: EventTextKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventTextSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`StatusAccepted` alternative; see the parent type's schema contract."]
-    StatusAccepted {
+    #[doc = "`CommandAccepted` alternative; see the parent type's schema contract."]
+    CommandAccepted {
         #[doc = "`body` member; see its generated type and parent schema."]
-        body: EventStatusAcceptedBody,
+        body: EventCommandAcceptedBody,
         #[doc = "Original command identity within the trusted namespace."]
         #[serde(rename = "commandId")]
         command_id: Id,
@@ -1863,12 +1863,12 @@ pub enum Event {
         #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
         generation: Id,
         #[doc = "Closed product record discriminator."]
-        kind: EventStatusAcceptedKind,
+        kind: EventCommandAcceptedKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
-        schema_version: EventStatusAcceptedSchemaVersion,
+        schema_version: EventCommandAcceptedSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
@@ -1891,7 +1891,7 @@ pub enum Event {
         kind: EventStatusDispatchingRunningReconciliationRequiredKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventStatusDispatchingRunningReconciliationRequiredSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -1916,7 +1916,7 @@ pub enum Event {
         kind: EventTerminalKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventTerminalSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -1941,7 +1941,7 @@ pub enum Event {
         kind: EventCancelDispatchedKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventCancelDispatchedSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -1966,7 +1966,7 @@ pub enum Event {
         kind: EventToolProposalKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventToolProposalSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -1991,7 +1991,7 @@ pub enum Event {
         kind: EventToolResultKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventToolResultSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -2016,7 +2016,7 @@ pub enum Event {
         kind: EventInteractionPendingKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventInteractionPendingSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -2041,7 +2041,7 @@ pub enum Event {
         kind: EventInteractionAnsweredKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventInteractionAnsweredSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -2066,7 +2066,7 @@ pub enum Event {
         kind: EventInteractionExpiredUnavailableKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventInteractionExpiredUnavailableSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -2088,7 +2088,7 @@ pub enum Event {
         kind: EventErrorKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventErrorSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -2110,7 +2110,7 @@ pub enum Event {
         kind: EventInvalidatedKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventInvalidatedSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -2135,7 +2135,7 @@ pub enum Event {
         kind: EventDispatchKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventDispatchSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -2160,7 +2160,7 @@ pub enum Event {
         kind: EventReconciledKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventReconciledSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -2185,7 +2185,7 @@ pub enum Event {
         kind: EventSurfaceKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventSurfaceSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -2204,7 +2204,7 @@ pub enum Event {
         kind: EventSessionReboundKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventSessionReboundSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -2223,7 +2223,7 @@ pub enum Event {
         kind: EventSessionRetiredKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventSessionRetiredSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -2391,7 +2391,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventCancelDispatchedKin
         value.parse()
     }
 }
-#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+#[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventCancelDispatchedSchemaVersion(i64);
@@ -2409,7 +2409,7 @@ impl ::std::convert::From<EventCancelDispatchedSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventCancelDispatchedSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
+        if ![3_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -2417,6 +2417,144 @@ impl ::std::convert::TryFrom<i64> for EventCancelDispatchedSchemaVersion {
     }
 }
 impl<'de> ::serde::Deserialize<'de> for EventCancelDispatchedSchemaVersion {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
+#[doc = "Immutable command accepted atomically with its receipt; never a model terminal."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct EventCommandAcceptedBody {
+    #[doc = "Complete immutable original command, committed atomically with its receipt."]
+    pub command: Command,
+    #[doc = "Closed event discriminator."]
+    #[serde(rename = "type")]
+    pub type_: EventCommandAcceptedBodyType,
+}
+#[doc = "Closed event discriminator."]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum EventCommandAcceptedBodyType {
+    #[serde(rename = "command_accepted")]
+    #[doc = "`CommandAccepted` alternative; see the parent type's schema contract."]
+    CommandAccepted,
+}
+impl ::std::fmt::Display for EventCommandAcceptedBodyType {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::CommandAccepted => f.write_str("command_accepted"),
+        }
+    }
+}
+impl ::std::str::FromStr for EventCommandAcceptedBodyType {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "command_accepted" => Ok(Self::CommandAccepted),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for EventCommandAcceptedBodyType {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for EventCommandAcceptedBodyType {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Closed product record discriminator."]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum EventCommandAcceptedKind {
+    #[serde(rename = "event")]
+    #[doc = "`Event` alternative; see the parent type's schema contract."]
+    Event,
+}
+impl ::std::fmt::Display for EventCommandAcceptedKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Event => f.write_str("event"),
+        }
+    }
+}
+impl ::std::str::FromStr for EventCommandAcceptedKind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "event" => Ok(Self::Event),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for EventCommandAcceptedKind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for EventCommandAcceptedKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
+#[derive(:: serde :: Serialize, Clone)]
+#[serde(transparent)]
+pub struct EventCommandAcceptedSchemaVersion(i64);
+impl ::std::ops::Deref for EventCommandAcceptedSchemaVersion {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::std::convert::From<EventCommandAcceptedSchemaVersion> for i64 {
+    fn from(value: EventCommandAcceptedSchemaVersion) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::TryFrom<i64> for EventCommandAcceptedSchemaVersion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if ![3_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for EventCommandAcceptedSchemaVersion {
     fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
     where
         D: ::serde::Deserializer<'de>,
@@ -2529,7 +2667,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventDispatchKind {
         value.parse()
     }
 }
-#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+#[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventDispatchSchemaVersion(i64);
@@ -2547,7 +2685,7 @@ impl ::std::convert::From<EventDispatchSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventDispatchSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
+        if ![3_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -2667,7 +2805,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventErrorKind {
         value.parse()
     }
 }
-#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+#[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventErrorSchemaVersion(i64);
@@ -2685,7 +2823,7 @@ impl ::std::convert::From<EventErrorSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventErrorSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
+        if ![3_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -2858,7 +2996,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventInteractionAnswered
         value.parse()
     }
 }
-#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+#[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventInteractionAnsweredSchemaVersion(i64);
@@ -2876,7 +3014,7 @@ impl ::std::convert::From<EventInteractionAnsweredSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventInteractionAnsweredSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
+        if ![3_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -3053,7 +3191,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventInteractionExpiredU
         value.parse()
     }
 }
-#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+#[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventInteractionExpiredUnavailableSchemaVersion(i64);
@@ -3071,7 +3209,7 @@ impl ::std::convert::From<EventInteractionExpiredUnavailableSchemaVersion> for i
 impl ::std::convert::TryFrom<i64> for EventInteractionExpiredUnavailableSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
+        if ![3_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -3249,7 +3387,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventInteractionPendingK
         value.parse()
     }
 }
-#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+#[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventInteractionPendingSchemaVersion(i64);
@@ -3267,7 +3405,7 @@ impl ::std::convert::From<EventInteractionPendingSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventInteractionPendingSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
+        if ![3_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -3387,7 +3525,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventInvalidatedKind {
         value.parse()
     }
 }
-#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+#[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventInvalidatedSchemaVersion(i64);
@@ -3405,7 +3543,7 @@ impl ::std::convert::From<EventInvalidatedSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventInvalidatedSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
+        if ![3_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -3589,7 +3727,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventReconciledKind {
         value.parse()
     }
 }
-#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+#[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventReconciledSchemaVersion(i64);
@@ -3607,7 +3745,7 @@ impl ::std::convert::From<EventReconciledSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventReconciledSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
+        if ![3_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -3728,7 +3866,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventSessionReboundKind 
         value.parse()
     }
 }
-#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+#[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventSessionReboundSchemaVersion(i64);
@@ -3746,7 +3884,7 @@ impl ::std::convert::From<EventSessionReboundSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventSessionReboundSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
+        if ![3_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -3864,7 +4002,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventSessionRetiredKind 
         value.parse()
     }
 }
-#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+#[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventSessionRetiredSchemaVersion(i64);
@@ -3882,7 +4020,7 @@ impl ::std::convert::From<EventSessionRetiredSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventSessionRetiredSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
+        if ![3_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -3890,191 +4028,6 @@ impl ::std::convert::TryFrom<i64> for EventSessionRetiredSchemaVersion {
     }
 }
 impl<'de> ::serde::Deserialize<'de> for EventSessionRetiredSchemaVersion {
-    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
-    where
-        D: ::serde::Deserializer<'de>,
-    {
-        Self::try_from(<i64>::deserialize(deserializer)?)
-            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
-    }
-}
-#[doc = "status variant; all fields are data, never authentication or execution authority."]
-#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
-#[serde(deny_unknown_fields)]
-pub struct EventStatusAcceptedBody {
-    #[doc = "Closed command lifecycle projection."]
-    pub state: EventStatusAcceptedBodyState,
-    #[doc = "Closed variant discriminator."]
-    #[serde(rename = "type")]
-    pub type_: EventStatusAcceptedBodyType,
-}
-#[doc = "Closed command lifecycle projection."]
-#[derive(
-    :: serde :: Deserialize,
-    :: serde :: Serialize,
-    Clone,
-    Copy,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
-)]
-pub enum EventStatusAcceptedBodyState {
-    #[serde(rename = "accepted")]
-    #[doc = "`Accepted` alternative; see the parent type's schema contract."]
-    Accepted,
-}
-impl ::std::fmt::Display for EventStatusAcceptedBodyState {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        match *self {
-            Self::Accepted => f.write_str("accepted"),
-        }
-    }
-}
-impl ::std::str::FromStr for EventStatusAcceptedBodyState {
-    type Err = self::error::ConversionError;
-    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        match value {
-            "accepted" => Ok(Self::Accepted),
-            _ => Err("invalid value".into()),
-        }
-    }
-}
-impl ::std::convert::TryFrom<&str> for EventStatusAcceptedBodyState {
-    type Error = self::error::ConversionError;
-    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-impl ::std::convert::TryFrom<::std::string::String> for EventStatusAcceptedBodyState {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: ::std::string::String,
-    ) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-#[doc = "Closed variant discriminator."]
-#[derive(
-    :: serde :: Deserialize,
-    :: serde :: Serialize,
-    Clone,
-    Copy,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
-)]
-pub enum EventStatusAcceptedBodyType {
-    #[serde(rename = "status")]
-    #[doc = "`Status` alternative; see the parent type's schema contract."]
-    Status,
-}
-impl ::std::fmt::Display for EventStatusAcceptedBodyType {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        match *self {
-            Self::Status => f.write_str("status"),
-        }
-    }
-}
-impl ::std::str::FromStr for EventStatusAcceptedBodyType {
-    type Err = self::error::ConversionError;
-    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        match value {
-            "status" => Ok(Self::Status),
-            _ => Err("invalid value".into()),
-        }
-    }
-}
-impl ::std::convert::TryFrom<&str> for EventStatusAcceptedBodyType {
-    type Error = self::error::ConversionError;
-    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-impl ::std::convert::TryFrom<::std::string::String> for EventStatusAcceptedBodyType {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: ::std::string::String,
-    ) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-#[doc = "Closed product record discriminator."]
-#[derive(
-    :: serde :: Deserialize,
-    :: serde :: Serialize,
-    Clone,
-    Copy,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
-)]
-pub enum EventStatusAcceptedKind {
-    #[serde(rename = "event")]
-    #[doc = "`Event` alternative; see the parent type's schema contract."]
-    Event,
-}
-impl ::std::fmt::Display for EventStatusAcceptedKind {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        match *self {
-            Self::Event => f.write_str("event"),
-        }
-    }
-}
-impl ::std::str::FromStr for EventStatusAcceptedKind {
-    type Err = self::error::ConversionError;
-    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        match value {
-            "event" => Ok(Self::Event),
-            _ => Err("invalid value".into()),
-        }
-    }
-}
-impl ::std::convert::TryFrom<&str> for EventStatusAcceptedKind {
-    type Error = self::error::ConversionError;
-    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-impl ::std::convert::TryFrom<::std::string::String> for EventStatusAcceptedKind {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: ::std::string::String,
-    ) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
-#[derive(:: serde :: Serialize, Clone)]
-#[serde(transparent)]
-pub struct EventStatusAcceptedSchemaVersion(i64);
-impl ::std::ops::Deref for EventStatusAcceptedSchemaVersion {
-    type Target = i64;
-    fn deref(&self) -> &i64 {
-        &self.0
-    }
-}
-impl ::std::convert::From<EventStatusAcceptedSchemaVersion> for i64 {
-    fn from(value: EventStatusAcceptedSchemaVersion) -> Self {
-        value.0
-    }
-}
-impl ::std::convert::TryFrom<i64> for EventStatusAcceptedSchemaVersion {
-    type Error = self::error::ConversionError;
-    fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
-            Err("invalid value".into())
-        } else {
-            Ok(Self(value))
-        }
-    }
-}
-impl<'de> ::serde::Deserialize<'de> for EventStatusAcceptedSchemaVersion {
     fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
     where
         D: ::serde::Deserializer<'de>,
@@ -4252,7 +4205,7 @@ impl ::std::convert::TryFrom<::std::string::String>
         value.parse()
     }
 }
-#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+#[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventStatusDispatchingRunningReconciliationRequiredSchemaVersion(i64);
@@ -4274,7 +4227,7 @@ impl ::std::convert::TryFrom<i64>
 {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
+        if ![3_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -4396,7 +4349,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventSurfaceKind {
         value.parse()
     }
 }
-#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+#[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventSurfaceSchemaVersion(i64);
@@ -4414,7 +4367,7 @@ impl ::std::convert::From<EventSurfaceSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventSurfaceSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
+        if ![3_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -4534,7 +4487,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventTerminalKind {
         value.parse()
     }
 }
-#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+#[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventTerminalSchemaVersion(i64);
@@ -4552,7 +4505,7 @@ impl ::std::convert::From<EventTerminalSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventTerminalSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
+        if ![3_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -4725,7 +4678,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventTextKind {
         value.parse()
     }
 }
-#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+#[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventTextSchemaVersion(i64);
@@ -4743,7 +4696,7 @@ impl ::std::convert::From<EventTextSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventTextSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
+        if ![3_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -4868,7 +4821,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventToolProposalKind {
         value.parse()
     }
 }
-#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+#[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventToolProposalSchemaVersion(i64);
@@ -4886,7 +4839,7 @@ impl ::std::convert::From<EventToolProposalSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventToolProposalSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
+        if ![3_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -5118,7 +5071,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventToolResultKind {
         value.parse()
     }
 }
-#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+#[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventToolResultSchemaVersion(i64);
@@ -5136,7 +5089,7 @@ impl ::std::convert::From<EventToolResultSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventToolResultSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
+        if ![3_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -5418,7 +5371,7 @@ pub struct Interaction {
         skip_serializing_if = "::std::option::Option::is_none"
     )]
     pub response_command_id: ::std::option::Option<Id>,
-    #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+    #[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
     #[serde(rename = "schemaVersion")]
     pub schema_version: InteractionSchemaVersion,
     #[doc = "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."]
@@ -5542,7 +5495,7 @@ impl ::std::convert::From<::serde_json::Map<::std::string::String, ::serde_json:
         Self(value)
     }
 }
-#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+#[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct InteractionSchemaVersion(i64);
@@ -5560,7 +5513,7 @@ impl ::std::convert::From<InteractionSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for InteractionSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
+        if ![3_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -5715,7 +5668,7 @@ impl ::std::convert::From<ListRequestSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for ListRequestSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
+        if ![3_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -5819,7 +5772,7 @@ impl ::std::convert::From<NegotiationContractVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for NegotiationContractVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
+        if ![3_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -5943,7 +5896,7 @@ pub struct Receipt {
     #[doc = "Inclusive same-command retry deadline, no later than command expiry."]
     #[serde(rename = "retryUntilMs")]
     pub retry_until_ms: Counter,
-    #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+    #[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
     #[serde(rename = "schemaVersion")]
     pub schema_version: ReceiptSchemaVersion,
 }
@@ -6046,7 +5999,7 @@ impl ::std::convert::TryFrom<::std::string::String> for ReceiptKind {
         value.parse()
     }
 }
-#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+#[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct ReceiptSchemaVersion(i64);
@@ -6064,7 +6017,7 @@ impl ::std::convert::From<ReceiptSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for ReceiptSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
+        if ![3_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -6158,7 +6111,7 @@ impl ::std::convert::From<ResumeRequestSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for ResumeRequestSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
+        if ![3_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -6248,7 +6201,7 @@ pub struct Session {
     pub namespace: Namespace,
     #[doc = "Monotonic CAS revision of this product record."]
     pub revision: Counter,
-    #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+    #[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
     #[serde(rename = "schemaVersion")]
     pub schema_version: SessionSchemaVersion,
     #[doc = "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."]
@@ -6381,7 +6334,7 @@ impl ::std::convert::From<SessionPageSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for SessionPageSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
+        if ![3_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -6397,7 +6350,7 @@ impl<'de> ::serde::Deserialize<'de> for SessionPageSchemaVersion {
             .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
     }
 }
-#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+#[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct SessionSchemaVersion(i64);
@@ -6415,7 +6368,7 @@ impl ::std::convert::From<SessionSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for SessionSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
+        if ![3_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -6579,7 +6532,7 @@ impl ::std::convert::From<SnapshotPageSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for SnapshotPageSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
+        if ![3_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -6675,7 +6628,7 @@ impl ::std::convert::From<SnapshotRequestSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for SnapshotRequestSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
+        if ![3_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -6736,7 +6689,7 @@ pub struct SurfaceAction {
     #[doc = "Provider-owned model-turn/run identifier, required when the provider exposes it."]
     #[serde(rename = "nativeRunId")]
     pub native_run_id: Id,
-    #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+    #[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
     #[serde(rename = "schemaVersion")]
     pub schema_version: SurfaceActionSchemaVersion,
     #[doc = "Logical session identifier, never reusable after retirement."]
@@ -6796,7 +6749,7 @@ impl ::std::convert::TryFrom<::std::string::String> for SurfaceActionKind {
         value.parse()
     }
 }
-#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+#[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct SurfaceActionSchemaVersion(i64);
@@ -6814,7 +6767,7 @@ impl ::std::convert::From<SurfaceActionSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for SurfaceActionSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
+        if ![3_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -6872,7 +6825,7 @@ pub struct SurfaceState {
     pub native_run_id: Id,
     #[doc = "Monotonic CAS revision of this product record."]
     pub revision: Counter,
-    #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+    #[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
     #[serde(rename = "schemaVersion")]
     pub schema_version: SurfaceStateSchemaVersion,
     #[doc = "Exact upstream source component allowed to emit this action."]
@@ -6981,7 +6934,7 @@ impl ::std::convert::TryFrom<::std::string::String> for SurfaceStateKind {
         value.parse()
     }
 }
-#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+#[doc = "Exact product wire version; V1 and V2 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct SurfaceStateSchemaVersion(i64);
@@ -6999,7 +6952,7 @@ impl ::std::convert::From<SurfaceStateSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for SurfaceStateSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
+        if ![3_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -7531,6 +7484,38 @@ impl std::fmt::Debug for EventCancelDispatchedSchemaVersion {
         ))
     }
 }
+impl std::fmt::Debug for EventCommandAcceptedBody {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(EventCommandAcceptedBody),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for EventCommandAcceptedBodyType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(EventCommandAcceptedBodyType),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for EventCommandAcceptedKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(EventCommandAcceptedKind),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for EventCommandAcceptedSchemaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(EventCommandAcceptedSchemaVersion),
+            "([redacted])"
+        ))
+    }
+}
 impl std::fmt::Debug for EventDispatchBody {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(stringify!(EventDispatchBody), "([redacted])"))
@@ -7799,40 +7784,6 @@ impl std::fmt::Debug for EventSessionRetiredSchemaVersion {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(
             stringify!(EventSessionRetiredSchemaVersion),
-            "([redacted])"
-        ))
-    }
-}
-impl std::fmt::Debug for EventStatusAcceptedBody {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(concat!(stringify!(EventStatusAcceptedBody), "([redacted])"))
-    }
-}
-impl std::fmt::Debug for EventStatusAcceptedBodyState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(concat!(
-            stringify!(EventStatusAcceptedBodyState),
-            "([redacted])"
-        ))
-    }
-}
-impl std::fmt::Debug for EventStatusAcceptedBodyType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(concat!(
-            stringify!(EventStatusAcceptedBodyType),
-            "([redacted])"
-        ))
-    }
-}
-impl std::fmt::Debug for EventStatusAcceptedKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(concat!(stringify!(EventStatusAcceptedKind), "([redacted])"))
-    }
-}
-impl std::fmt::Debug for EventStatusAcceptedSchemaVersion {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(concat!(
-            stringify!(EventStatusAcceptedSchemaVersion),
             "([redacted])"
         ))
     }
