@@ -90,6 +90,63 @@ const dispatch = (attemptId, nativeRequestId, overrides = {}) => ({
   ...overrides,
 });
 
+async function cancel(t, activeSession, records) {
+  const cancellations = [];
+  const host = {
+    async snapshotPage() {
+      return {
+        ok: true,
+        value: {
+          session: activeSession,
+          cursor: 0,
+          events: [],
+          commands: records,
+          interactions: [],
+          surfaces: [],
+        },
+      };
+    },
+    async cancel(_caller, command) {
+      cancellations.push(command);
+      return { ok: true, value: { kind: "receipt" } };
+    },
+    async *subscribe(_caller, _sessionId, _after, budget) {
+      await new Promise((resolve) =>
+        budget.signal.addEventListener("abort", resolve, { once: true }),
+      );
+    },
+    async close() {
+      return { ok: true, value: undefined };
+    },
+  };
+  const service = createAccessService({
+    host,
+    sessionOptions: {
+      provider: activeSession.binding.provider,
+      accountRef: "account",
+      config: { id: "cfg", revision: "1" },
+      profile: "conversation",
+    },
+    now: () => 0,
+    timeoutMs: 1_000,
+  });
+  t.after(() => service.close());
+  const [server, transport] = localTransportPair();
+  service.connect(server, fixtureCaller);
+  const connection = client().connect(transport);
+  t.after(() => connection.close());
+  await connection.agent.request("initialize", {
+    protocolVersion: 1,
+    clientCapabilities: {},
+  });
+  await connection.agent.notify("session/cancel", {
+    sessionId: activeSession.namespace.sessionId,
+  });
+  for (let i = 0; i < 100 && cancellations.length === 0; i++)
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  return cancellations;
+}
+
 test("ACP cancel sends one request per Codex turn and preserves unsubmitted prompts", async (t) => {
   const records = [
     prompt("accepted", "queue_next", "accepted"),
@@ -128,60 +185,7 @@ test("ACP cancel sends one request per Codex turn and preserves unsubmitted prom
     ),
     prompt("invalidated", "queue_next", "invalidated"),
   ];
-  const cancellations = [];
-  const host = {
-    async snapshotPage() {
-      return {
-        ok: true,
-        value: {
-          session,
-          cursor: 0,
-          events: [],
-          commands: records,
-          interactions: [],
-          surfaces: [],
-        },
-      };
-    },
-    async cancel(_caller, command) {
-      cancellations.push(command);
-      return { ok: true, value: { kind: "receipt" } };
-    },
-    async *subscribe(_caller, _sessionId, _after, budget) {
-      await new Promise((resolve) =>
-        budget.signal.addEventListener("abort", resolve, { once: true }),
-      );
-    },
-    async close() {
-      return { ok: true, value: undefined };
-    },
-  };
-  const service = createAccessService({
-    host,
-    sessionOptions: {
-      provider: "codex",
-      accountRef: "account",
-      config: { id: "cfg", revision: "1" },
-      profile: "conversation",
-    },
-    now: () => 0,
-    timeoutMs: 1_000,
-  });
-  t.after(() => service.close());
-  const [server, transport] = localTransportPair();
-  service.connect(server, fixtureCaller);
-  const connection = client().connect(transport);
-  t.after(() => connection.close());
-  await connection.agent.request("initialize", {
-    protocolVersion: 1,
-    clientCapabilities: {},
-  });
-
-  await connection.agent.notify("session/cancel", {
-    sessionId: namespace.sessionId,
-  });
-  for (let i = 0; i < 100 && cancellations.length === 0; i++)
-    await new Promise((resolve) => setTimeout(resolve, 5));
+  const cancellations = await cancel(t, session, records);
 
   assert.deepEqual(
     cancellations.map((command) => command.input.targetCommandId).sort(),
@@ -194,4 +198,21 @@ test("ACP cancel sends one request per Codex turn and preserves unsubmitted prom
         command.input.nativeRunId === binding.nativeRunId,
     ),
   );
+});
+
+test("ACP cancel preserves providers without a native run identifier", async (t) => {
+  const noRun = { ...binding, provider: "claude" };
+  delete noRun.nativeRunId;
+  delete noRun.nativeThreadId;
+  const activeSession = { ...session, binding: noRun };
+  const attempt = dispatch("a-no-run", "request-no-run", {
+    nativeRunId: undefined,
+    nativeThreadId: undefined,
+  });
+  const cancellations = await cancel(t, activeSession, [
+    prompt("no-run", "queue_next", "running", attempt),
+  ]);
+  assert.equal(cancellations.length, 1);
+  assert.equal(cancellations[0].input.targetCommandId, "no-run");
+  assert.equal(cancellations[0].input.nativeRunId, undefined);
 });

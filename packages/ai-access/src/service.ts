@@ -627,14 +627,13 @@ export function createAccessService(options: AccessOptions) {
             dispatch.observerGeneration !== s.binding.generation ||
             dispatch.nativeSessionId !== s.binding.nativeSessionId ||
             dispatch.nativeThreadId !== s.binding.nativeThreadId ||
-            dispatch.nativeRunId === undefined ||
             dispatch.nativeRunId !== s.binding.nativeRunId
           )
             continue;
           const key = JSON.stringify([
               dispatch.nativeSessionId,
               dispatch.nativeThreadId ?? null,
-              dispatch.nativeRunId,
+              dispatch.nativeRunId ?? null,
             ]),
             current = turns.get(key),
             candidate = {
