@@ -186,8 +186,9 @@
       "body": {
         "type": "text",
         "messageId": "m-1",
-        "text": "\u4f60\u597d <script> inert"
-      }
+        "text": "你好 <script> inert"
+      },
+      "attemptId": "attempt-command-1"
     },
     {
       "schemaVersion": 2,
@@ -205,7 +206,8 @@
       "body": {
         "type": "cancel_dispatched",
         "confirmation": "request_only"
-      }
+      },
+      "attemptId": "attempt-command-1"
     },
     {
       "schemaVersion": 2,
@@ -233,7 +235,8 @@
             }
           ]
         }
-      }
+      },
+      "attemptId": "attempt-command-1"
     },
     {
       "schemaVersion": 2,
@@ -251,7 +254,8 @@
       "body": {
         "type": "terminal",
         "outcome": "interrupted"
-      }
+      },
+      "attemptId": "attempt-command-1"
     },
     {
       "schemaVersion": 2,
@@ -348,11 +352,13 @@
       },
       "state": "dispatching",
       "dispatch": {
-        "generation": "generation-1",
         "nativeSessionId": "native-1",
         "nativeRunId": "run-1",
         "nativeRequestId": "request-1",
-        "certainty": "submitted"
+        "certainty": "submitted",
+        "attemptId": "attempt-command-1",
+        "originGeneration": "generation-1",
+        "observerGeneration": "generation-1"
       }
     },
     {
@@ -388,11 +394,13 @@
       },
       "state": "running",
       "dispatch": {
-        "generation": "generation-1",
         "nativeSessionId": "native-1",
         "nativeRunId": "run-1",
         "nativeRequestId": "request-1",
-        "certainty": "submitted"
+        "certainty": "submitted",
+        "attemptId": "attempt-command-1",
+        "originGeneration": "generation-1",
+        "observerGeneration": "generation-1"
       }
     },
     {
@@ -428,11 +436,13 @@
       },
       "state": "reconciliation_required",
       "dispatch": {
-        "generation": "generation-1",
         "nativeSessionId": "native-1",
         "nativeRunId": "run-1",
         "nativeRequestId": "request-1",
-        "certainty": "unknown"
+        "certainty": "unknown",
+        "attemptId": "attempt-command-1",
+        "originGeneration": "generation-1",
+        "observerGeneration": "generation-1"
       }
     },
     {
@@ -467,7 +477,14 @@
         "acceptedRevision": 1
       },
       "state": "terminal",
-      "outcome": "completed"
+      "outcome": "completed",
+      "dispatch": {
+        "attemptId": "attempt-command-1",
+        "originGeneration": "generation-1",
+        "observerGeneration": "generation-1",
+        "nativeSessionId": "native-1",
+        "certainty": "submitted"
+      }
     },
     {
       "schemaVersion": 2,
@@ -485,7 +502,8 @@
       "body": {
         "type": "status",
         "state": "running"
-      }
+      },
+      "attemptId": "attempt-command-1"
     },
     {
       "schemaVersion": 2,
@@ -505,7 +523,8 @@
         "proposalId": "p-1",
         "disposition": "returned",
         "text": "not execution evidence"
-      }
+      },
+      "attemptId": "attempt-command-1"
     },
     {
       "schemaVersion": 2,
@@ -524,7 +543,8 @@
         "type": "interaction",
         "interactionId": "i-1",
         "status": "unavailable"
-      }
+      },
+      "attemptId": "attempt-command-1"
     }
   ],
   "invalid": [

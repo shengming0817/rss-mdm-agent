@@ -322,30 +322,100 @@ pub struct Command {
     #[serde(rename = "sessionId")]
     pub session_id: Id,
 }
-#[doc = "Single inbox/dispatch ledger; no second provider queue owns the same command."]
+#[doc = "Closed command lifecycle; acceptance is immutable, local invalidation does not assert a model terminal."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
-#[serde(deny_unknown_fields)]
-pub struct CommandRecord {
-    #[doc = "Immutable original command."]
-    pub command: Command,
-    #[doc = "Native correlation persisted before/with dispatch; never reconstructed from UI history."]
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub dispatch: ::std::option::Option<Dispatch>,
-    #[doc = "Closed failure category and retry discipline."]
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub failure: ::std::option::Option<Failure>,
-    #[doc = "Closed product record discriminator."]
-    pub kind: ::std::string::String,
-    #[doc = "Definite model-turn result; no implication about business side effects."]
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub outcome: ::std::option::Option<Outcome>,
-    #[doc = "Immutable original committed acceptance fact."]
-    pub receipt: Receipt,
-    #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
-    #[serde(rename = "schemaVersion")]
-    pub schema_version: i64,
-    #[doc = "Explicit command lifecycle state; terminal and reconciliation transitions require matching evidence."]
-    pub state: CommandState,
+#[serde(tag = "state", deny_unknown_fields)]
+pub enum CommandRecord {
+    #[serde(rename = "accepted")]
+    #[doc = "`Accepted` alternative; see the parent type's schema contract."]
+    Accepted {
+        #[doc = "Immutable original command."]
+        command: Command,
+        #[doc = "Closed product record discriminator."]
+        kind: ::std::string::String,
+        #[doc = "Immutable original committed acceptance fact."]
+        receipt: Receipt,
+        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[serde(rename = "schemaVersion")]
+        schema_version: i64,
+    },
+    #[serde(rename = "dispatching")]
+    #[doc = "`Dispatching` alternative; see the parent type's schema contract."]
+    Dispatching {
+        #[doc = "Immutable original command."]
+        command: Command,
+        #[doc = "Original attempt and append-once native correlation coordinates."]
+        dispatch: DispatchAttempt,
+        #[doc = "Closed product record discriminator."]
+        kind: ::std::string::String,
+        #[doc = "Immutable original committed acceptance fact."]
+        receipt: Receipt,
+        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[serde(rename = "schemaVersion")]
+        schema_version: i64,
+    },
+    #[serde(rename = "running")]
+    #[doc = "`Running` alternative; see the parent type's schema contract."]
+    Running {
+        #[doc = "Immutable original command."]
+        command: Command,
+        #[doc = "Original attempt and append-once native correlation coordinates."]
+        dispatch: DispatchAttempt,
+        #[doc = "Closed product record discriminator."]
+        kind: ::std::string::String,
+        #[doc = "Immutable original committed acceptance fact."]
+        receipt: Receipt,
+        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[serde(rename = "schemaVersion")]
+        schema_version: i64,
+    },
+    #[serde(rename = "terminal")]
+    #[doc = "`Terminal` alternative; see the parent type's schema contract."]
+    Terminal {
+        #[doc = "Immutable original command."]
+        command: Command,
+        #[doc = "Original attempt and append-once native correlation coordinates."]
+        dispatch: DispatchAttempt,
+        #[doc = "Closed product record discriminator."]
+        kind: ::std::string::String,
+        #[doc = "Explicitly observed model terminal outcome."]
+        outcome: Outcome,
+        #[doc = "Immutable original committed acceptance fact."]
+        receipt: Receipt,
+        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[serde(rename = "schemaVersion")]
+        schema_version: i64,
+    },
+    #[serde(rename = "reconciliation_required")]
+    #[doc = "`ReconciliationRequired` alternative; see the parent type's schema contract."]
+    ReconciliationRequired {
+        #[doc = "Immutable original command."]
+        command: Command,
+        #[doc = "Original attempt and append-once native correlation coordinates."]
+        dispatch: DispatchAttempt,
+        #[doc = "Closed product record discriminator."]
+        kind: ::std::string::String,
+        #[doc = "Immutable original committed acceptance fact."]
+        receipt: Receipt,
+        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[serde(rename = "schemaVersion")]
+        schema_version: i64,
+    },
+    #[serde(rename = "invalidated")]
+    #[doc = "`Invalidated` alternative; see the parent type's schema contract."]
+    Invalidated {
+        #[doc = "Immutable original command."]
+        command: Command,
+        #[doc = "Local failure without asserting a model terminal."]
+        failure: Failure,
+        #[doc = "Closed product record discriminator."]
+        kind: ::std::string::String,
+        #[doc = "Immutable original committed acceptance fact."]
+        receipt: Receipt,
+        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[serde(rename = "schemaVersion")]
+        schema_version: i64,
+    },
 }
 #[doc = "accepted persists intent; dispatching persists dispatch intent; running has native confirmation; terminal has a definite outcome; reconciliation_required forbids blind resubmission."]
 #[derive(
@@ -375,6 +445,9 @@ pub enum CommandState {
     #[serde(rename = "reconciliation_required")]
     #[doc = "`ReconciliationRequired` alternative; see the parent type's schema contract."]
     ReconciliationRequired,
+    #[serde(rename = "invalidated")]
+    #[doc = "`Invalidated` alternative; see the parent type's schema contract."]
+    Invalidated,
 }
 impl ::std::fmt::Display for CommandState {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -384,6 +457,7 @@ impl ::std::fmt::Display for CommandState {
             Self::Running => f.write_str("running"),
             Self::Terminal => f.write_str("terminal"),
             Self::ReconciliationRequired => f.write_str("reconciliation_required"),
+            Self::Invalidated => f.write_str("invalidated"),
         }
     }
 }
@@ -396,6 +470,7 @@ impl ::std::str::FromStr for CommandState {
             "running" => Ok(Self::Running),
             "terminal" => Ok(Self::Terminal),
             "reconciliation_required" => Ok(Self::ReconciliationRequired),
+            "invalidated" => Ok(Self::Invalidated),
             _ => Err("invalid value".into()),
         }
     }
@@ -664,14 +739,21 @@ impl ::std::convert::TryFrom<::std::string::String> for DeliveryStatus {
         value.parse()
     }
 }
-#[doc = "Persisted native correlation and certainty; unknown requires reconciliation before any further send."]
+#[doc = "One active dispatch attempt. Origin identity is immutable; unknown native coordinates may be filled once. Only verified rebind changes observerGeneration."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
-pub struct Dispatch {
-    #[doc = "submitted has native acceptance; unknown requires reconciliation; not_sent has evidence no submission occurred."]
-    pub certainty: DispatchCertainty,
-    #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
-    pub generation: Id,
+pub struct DispatchAttempt {
+    #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
+    #[serde(rename = "attemptId")]
+    pub attempt_id: Id,
+    #[doc = "intent is stored before native submission; submitted has native acceptance; unknown requires reconciliation."]
+    pub certainty: DispatchAttemptCertainty,
+    #[doc = "Append-once native lookup key returned for ambiguous submission."]
+    #[serde(
+        rename = "correlationId",
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    pub correlation_id: ::std::option::Option<Id>,
     #[doc = "Provider-owned parent prompt/query request identifier; cannot be rebound after dispatch. Callback identities belong to Interaction."]
     #[serde(
         rename = "nativeRequestId",
@@ -687,8 +769,14 @@ pub struct Dispatch {
     #[doc = "Provider-owned context session identifier; history alone cannot recreate it."]
     #[serde(rename = "nativeSessionId")]
     pub native_session_id: Id,
+    #[doc = "Current verified provider incarnation permitted to observe this attempt."]
+    #[serde(rename = "observerGeneration")]
+    pub observer_generation: Id,
+    #[doc = "Immutable provider incarnation that originated this attempt."]
+    #[serde(rename = "originGeneration")]
+    pub origin_generation: Id,
 }
-#[doc = "submitted has native acceptance; unknown requires reconciliation; not_sent has evidence no submission occurred."]
+#[doc = "intent is stored before native submission; submitted has native acceptance; unknown requires reconciliation."]
 #[derive(
     :: serde :: Deserialize,
     :: serde :: Serialize,
@@ -700,10 +788,10 @@ pub struct Dispatch {
     PartialEq,
     PartialOrd,
 )]
-pub enum DispatchCertainty {
-    #[serde(rename = "not_sent")]
-    #[doc = "`NotSent` alternative; see the parent type's schema contract."]
-    NotSent,
+pub enum DispatchAttemptCertainty {
+    #[serde(rename = "intent")]
+    #[doc = "`Intent` alternative; see the parent type's schema contract."]
+    Intent,
     #[serde(rename = "submitted")]
     #[doc = "`Submitted` alternative; see the parent type's schema contract."]
     Submitted,
@@ -711,33 +799,33 @@ pub enum DispatchCertainty {
     #[doc = "`Unknown` alternative; see the parent type's schema contract."]
     Unknown,
 }
-impl ::std::fmt::Display for DispatchCertainty {
+impl ::std::fmt::Display for DispatchAttemptCertainty {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
-            Self::NotSent => f.write_str("not_sent"),
+            Self::Intent => f.write_str("intent"),
             Self::Submitted => f.write_str("submitted"),
             Self::Unknown => f.write_str("unknown"),
         }
     }
 }
-impl ::std::str::FromStr for DispatchCertainty {
+impl ::std::str::FromStr for DispatchAttemptCertainty {
     type Err = self::error::ConversionError;
     fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         match value {
-            "not_sent" => Ok(Self::NotSent),
+            "intent" => Ok(Self::Intent),
             "submitted" => Ok(Self::Submitted),
             "unknown" => Ok(Self::Unknown),
             _ => Err("invalid value".into()),
         }
     }
 }
-impl ::std::convert::TryFrom<&str> for DispatchCertainty {
+impl ::std::convert::TryFrom<&str> for DispatchAttemptCertainty {
     type Error = self::error::ConversionError;
     fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
 }
-impl ::std::convert::TryFrom<::std::string::String> for DispatchCertainty {
+impl ::std::convert::TryFrom<::std::string::String> for DispatchAttemptCertainty {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
@@ -857,144 +945,494 @@ impl ::std::convert::TryFrom<::std::string::String> for ErrorCode {
         value.parse()
     }
 }
-#[doc = "Committed stable event in one namespace; token deltas are excluded from durable ordering."]
-#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
-#[serde(deny_unknown_fields)]
-pub struct Event {
-    #[doc = "Stable observation committed before publication."]
-    pub body: EventBody,
-    #[doc = "Client-generated idempotency key; reuse only with identical canonical content."]
-    #[serde(rename = "commandId")]
-    pub command_id: Id,
-    #[doc = "Stable unique event identifier within the namespace."]
-    #[serde(rename = "eventId")]
-    pub event_id: Id,
-    #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
-    pub generation: Id,
-    #[doc = "Closed product record discriminator."]
-    pub kind: ::std::string::String,
-    #[doc = "Trusted storage isolation scope; not copied from model or action content."]
-    pub namespace: Namespace,
-    #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
-    #[serde(rename = "schemaVersion")]
-    pub schema_version: i64,
-    #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
-    pub sequence: Counter,
-}
-#[doc = "Stable product observation. Tool proposals and results are untrusted and cannot issue execution authority."]
+#[doc = "Closed stable events. Session events have no command, attempt observations name their exact attempt."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(untagged, deny_unknown_fields)]
-pub enum EventBody {
+pub enum Event {
     #[doc = "`Variant0` alternative; see the parent type's schema contract."]
     Variant0 {
-        #[doc = "Stable product message correlation identifier."]
-        #[serde(rename = "messageId")]
-        message_id: Id,
-        #[doc = "Untrusted model/user text subject to the whole-envelope budgets."]
-        text: EventBodyVariant0Text,
-        #[doc = "Closed variant discriminator."]
-        #[serde(rename = "type")]
-        type_: ::std::string::String,
+        #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
+        #[serde(rename = "attemptId")]
+        attempt_id: Id,
+        #[doc = "`body` member; see its generated type and parent schema."]
+        body: EventVariant0Body,
+        #[doc = "Original command identity within the trusted namespace."]
+        #[serde(rename = "commandId")]
+        command_id: Id,
+        #[doc = "Stable unique event identifier within the namespace."]
+        #[serde(rename = "eventId")]
+        event_id: Id,
+        #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
+        generation: Id,
+        #[doc = "Closed product record discriminator."]
+        kind: ::std::string::String,
+        #[doc = "Trusted storage isolation scope; not copied from model or action content."]
+        namespace: Namespace,
+        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[serde(rename = "schemaVersion")]
+        schema_version: i64,
+        #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
+        sequence: Counter,
     },
     #[doc = "`Variant1` alternative; see the parent type's schema contract."]
     Variant1 {
-        #[doc = "Explicit command lifecycle state; terminal and reconciliation transitions require matching evidence."]
-        state: CommandState,
-        #[doc = "Closed variant discriminator."]
-        #[serde(rename = "type")]
-        type_: ::std::string::String,
+        #[doc = "`body` member; see its generated type and parent schema."]
+        body: EventVariant1Body,
+        #[doc = "Original command identity within the trusted namespace."]
+        #[serde(rename = "commandId")]
+        command_id: Id,
+        #[doc = "Stable unique event identifier within the namespace."]
+        #[serde(rename = "eventId")]
+        event_id: Id,
+        #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
+        generation: Id,
+        #[doc = "Closed product record discriminator."]
+        kind: ::std::string::String,
+        #[doc = "Trusted storage isolation scope; not copied from model or action content."]
+        namespace: Namespace,
+        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[serde(rename = "schemaVersion")]
+        schema_version: i64,
+        #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
+        sequence: Counter,
     },
     #[doc = "`Variant2` alternative; see the parent type's schema contract."]
     Variant2 {
-        #[doc = "Definite model-turn result; no implication about business side effects."]
-        outcome: Outcome,
-        #[doc = "Closed variant discriminator."]
-        #[serde(rename = "type")]
-        type_: ::std::string::String,
+        #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
+        #[serde(rename = "attemptId")]
+        attempt_id: Id,
+        #[doc = "`body` member; see its generated type and parent schema."]
+        body: EventVariant2Body,
+        #[doc = "Original command identity within the trusted namespace."]
+        #[serde(rename = "commandId")]
+        command_id: Id,
+        #[doc = "Stable unique event identifier within the namespace."]
+        #[serde(rename = "eventId")]
+        event_id: Id,
+        #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
+        generation: Id,
+        #[doc = "Closed product record discriminator."]
+        kind: ::std::string::String,
+        #[doc = "Trusted storage isolation scope; not copied from model or action content."]
+        namespace: Namespace,
+        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[serde(rename = "schemaVersion")]
+        schema_version: i64,
+        #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
+        sequence: Counter,
     },
     #[doc = "`Variant3` alternative; see the parent type's schema contract."]
     Variant3 {
-        #[doc = "Cancellation request transport confirmation only; does not manufacture a model terminal."]
-        confirmation: EventBodyVariant3Confirmation,
-        #[doc = "Closed variant discriminator."]
-        #[serde(rename = "type")]
-        type_: ::std::string::String,
+        #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
+        #[serde(rename = "attemptId")]
+        attempt_id: Id,
+        #[doc = "`body` member; see its generated type and parent schema."]
+        body: EventVariant3Body,
+        #[doc = "Original command identity within the trusted namespace."]
+        #[serde(rename = "commandId")]
+        command_id: Id,
+        #[doc = "Stable unique event identifier within the namespace."]
+        #[serde(rename = "eventId")]
+        event_id: Id,
+        #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
+        generation: Id,
+        #[doc = "Closed product record discriminator."]
+        kind: ::std::string::String,
+        #[doc = "Trusted storage isolation scope; not copied from model or action content."]
+        namespace: Namespace,
+        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[serde(rename = "schemaVersion")]
+        schema_version: i64,
+        #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
+        sequence: Counter,
     },
     #[doc = "`Variant4` alternative; see the parent type's schema contract."]
     Variant4 {
-        #[doc = "Untrusted tool JSON arguments, including keys, count toward product budgets."]
-        arguments: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
-        #[doc = "Provider tool name; not an approved execution action."]
-        name: Id,
-        #[doc = "Untrusted tool proposal correlation identifier."]
-        #[serde(rename = "proposalId")]
-        proposal_id: Id,
-        #[doc = "Closed variant discriminator."]
-        #[serde(rename = "type")]
-        type_: ::std::string::String,
+        #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
+        #[serde(rename = "attemptId")]
+        attempt_id: Id,
+        #[doc = "`body` member; see its generated type and parent schema."]
+        body: EventVariant4Body,
+        #[doc = "Original command identity within the trusted namespace."]
+        #[serde(rename = "commandId")]
+        command_id: Id,
+        #[doc = "Stable unique event identifier within the namespace."]
+        #[serde(rename = "eventId")]
+        event_id: Id,
+        #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
+        generation: Id,
+        #[doc = "Closed product record discriminator."]
+        kind: ::std::string::String,
+        #[doc = "Trusted storage isolation scope; not copied from model or action content."]
+        namespace: Namespace,
+        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[serde(rename = "schemaVersion")]
+        schema_version: i64,
+        #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
+        sequence: Counter,
     },
     #[doc = "`Variant5` alternative; see the parent type's schema contract."]
     Variant5 {
-        #[doc = "Protocol tool-result disposition, not authoritative business execution status."]
-        disposition: EventBodyVariant5Disposition,
-        #[doc = "Untrusted tool proposal correlation identifier."]
-        #[serde(rename = "proposalId")]
-        proposal_id: Id,
-        #[doc = "Untrusted model/user text subject to the whole-envelope budgets."]
-        text: EventBodyVariant5Text,
-        #[doc = "Closed variant discriminator."]
-        #[serde(rename = "type")]
-        type_: ::std::string::String,
+        #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
+        #[serde(rename = "attemptId")]
+        attempt_id: Id,
+        #[doc = "`body` member; see its generated type and parent schema."]
+        body: EventVariant5Body,
+        #[doc = "Original command identity within the trusted namespace."]
+        #[serde(rename = "commandId")]
+        command_id: Id,
+        #[doc = "Stable unique event identifier within the namespace."]
+        #[serde(rename = "eventId")]
+        event_id: Id,
+        #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
+        generation: Id,
+        #[doc = "Closed product record discriminator."]
+        kind: ::std::string::String,
+        #[doc = "Trusted storage isolation scope; not copied from model or action content."]
+        namespace: Namespace,
+        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[serde(rename = "schemaVersion")]
+        schema_version: i64,
+        #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
+        sequence: Counter,
     },
     #[doc = "`Variant6` alternative; see the parent type's schema contract."]
     Variant6 {
-        #[doc = "Single-use interaction identity within the namespace."]
-        #[serde(rename = "interactionId")]
-        interaction_id: Id,
-        #[doc = "Required for the first pending event and equal to the newly committed Interaction request; forbidden on later lifecycle events."]
-        request: InteractionRequest,
-        #[doc = "First publication of an ordinary user question."]
-        status: ::std::string::String,
-        #[doc = "Closed variant discriminator."]
-        #[serde(rename = "type")]
-        type_: ::std::string::String,
+        #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
+        #[serde(rename = "attemptId")]
+        attempt_id: Id,
+        #[doc = "`body` member; see its generated type and parent schema."]
+        body: EventVariant6Body,
+        #[doc = "Original command identity within the trusted namespace."]
+        #[serde(rename = "commandId")]
+        command_id: Id,
+        #[doc = "Stable unique event identifier within the namespace."]
+        #[serde(rename = "eventId")]
+        event_id: Id,
+        #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
+        generation: Id,
+        #[doc = "Closed product record discriminator."]
+        kind: ::std::string::String,
+        #[doc = "Trusted storage isolation scope; not copied from model or action content."]
+        namespace: Namespace,
+        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[serde(rename = "schemaVersion")]
+        schema_version: i64,
+        #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
+        sequence: Counter,
     },
     #[doc = "`Variant7` alternative; see the parent type's schema contract."]
     Variant7 {
-        #[doc = "Single-use interaction identity within the namespace."]
-        #[serde(rename = "interactionId")]
-        interaction_id: Id,
-        #[doc = "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."]
-        status: EventBodyVariant7Status,
-        #[doc = "Closed variant discriminator."]
-        #[serde(rename = "type")]
-        type_: ::std::string::String,
+        #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
+        #[serde(rename = "attemptId")]
+        attempt_id: Id,
+        #[doc = "`body` member; see its generated type and parent schema."]
+        body: EventVariant7Body,
+        #[doc = "Original command identity within the trusted namespace."]
+        #[serde(rename = "commandId")]
+        command_id: Id,
+        #[doc = "Stable unique event identifier within the namespace."]
+        #[serde(rename = "eventId")]
+        event_id: Id,
+        #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
+        generation: Id,
+        #[doc = "Closed product record discriminator."]
+        kind: ::std::string::String,
+        #[doc = "Trusted storage isolation scope; not copied from model or action content."]
+        namespace: Namespace,
+        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[serde(rename = "schemaVersion")]
+        schema_version: i64,
+        #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
+        sequence: Counter,
     },
     #[doc = "`Variant8` alternative; see the parent type's schema contract."]
     Variant8 {
-        #[doc = "Closed failure category and retry discipline."]
-        failure: Failure,
-        #[doc = "Closed variant discriminator."]
-        #[serde(rename = "type")]
-        type_: ::std::string::String,
+        #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
+        #[serde(rename = "attemptId")]
+        attempt_id: Id,
+        #[doc = "`body` member; see its generated type and parent schema."]
+        body: EventVariant8Body,
+        #[doc = "Original command identity within the trusted namespace."]
+        #[serde(rename = "commandId")]
+        command_id: Id,
+        #[doc = "Stable unique event identifier within the namespace."]
+        #[serde(rename = "eventId")]
+        event_id: Id,
+        #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
+        generation: Id,
+        #[doc = "Closed product record discriminator."]
+        kind: ::std::string::String,
+        #[doc = "Trusted storage isolation scope; not copied from model or action content."]
+        namespace: Namespace,
+        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[serde(rename = "schemaVersion")]
+        schema_version: i64,
+        #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
+        sequence: Counter,
     },
+    #[doc = "`Variant9` alternative; see the parent type's schema contract."]
+    Variant9 {
+        #[doc = "`body` member; see its generated type and parent schema."]
+        body: EventVariant9Body,
+        #[doc = "Original command identity within the trusted namespace."]
+        #[serde(rename = "commandId")]
+        command_id: Id,
+        #[doc = "Stable unique event identifier within the namespace."]
+        #[serde(rename = "eventId")]
+        event_id: Id,
+        #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
+        generation: Id,
+        #[doc = "Closed product record discriminator."]
+        kind: ::std::string::String,
+        #[doc = "Trusted storage isolation scope; not copied from model or action content."]
+        namespace: Namespace,
+        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[serde(rename = "schemaVersion")]
+        schema_version: i64,
+        #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
+        sequence: Counter,
+    },
+    #[doc = "`Variant10` alternative; see the parent type's schema contract."]
+    Variant10 {
+        #[doc = "`body` member; see its generated type and parent schema."]
+        body: EventVariant10Body,
+        #[doc = "Original command identity within the trusted namespace."]
+        #[serde(rename = "commandId")]
+        command_id: Id,
+        #[doc = "Stable unique event identifier within the namespace."]
+        #[serde(rename = "eventId")]
+        event_id: Id,
+        #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
+        generation: Id,
+        #[doc = "Closed product record discriminator."]
+        kind: ::std::string::String,
+        #[doc = "Trusted storage isolation scope; not copied from model or action content."]
+        namespace: Namespace,
+        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[serde(rename = "schemaVersion")]
+        schema_version: i64,
+        #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
+        sequence: Counter,
+    },
+    #[doc = "`Variant11` alternative; see the parent type's schema contract."]
+    Variant11 {
+        #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
+        #[serde(rename = "attemptId")]
+        attempt_id: Id,
+        #[doc = "`body` member; see its generated type and parent schema."]
+        body: EventVariant11Body,
+        #[doc = "Original command identity within the trusted namespace."]
+        #[serde(rename = "commandId")]
+        command_id: Id,
+        #[doc = "Stable unique event identifier within the namespace."]
+        #[serde(rename = "eventId")]
+        event_id: Id,
+        #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
+        generation: Id,
+        #[doc = "Closed product record discriminator."]
+        kind: ::std::string::String,
+        #[doc = "Trusted storage isolation scope; not copied from model or action content."]
+        namespace: Namespace,
+        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[serde(rename = "schemaVersion")]
+        schema_version: i64,
+        #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
+        sequence: Counter,
+    },
+    #[doc = "`Variant12` alternative; see the parent type's schema contract."]
+    Variant12 {
+        #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
+        #[serde(rename = "attemptId")]
+        attempt_id: Id,
+        #[doc = "`body` member; see its generated type and parent schema."]
+        body: EventVariant12Body,
+        #[doc = "Original command identity within the trusted namespace."]
+        #[serde(rename = "commandId")]
+        command_id: Id,
+        #[doc = "Stable unique event identifier within the namespace."]
+        #[serde(rename = "eventId")]
+        event_id: Id,
+        #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
+        generation: Id,
+        #[doc = "Closed product record discriminator."]
+        kind: ::std::string::String,
+        #[doc = "Trusted storage isolation scope; not copied from model or action content."]
+        namespace: Namespace,
+        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[serde(rename = "schemaVersion")]
+        schema_version: i64,
+        #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
+        sequence: Counter,
+    },
+    #[doc = "`Variant13` alternative; see the parent type's schema contract."]
+    Variant13 {
+        #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
+        #[serde(rename = "attemptId")]
+        attempt_id: Id,
+        #[doc = "`body` member; see its generated type and parent schema."]
+        body: EventVariant13Body,
+        #[doc = "Original command identity within the trusted namespace."]
+        #[serde(rename = "commandId")]
+        command_id: Id,
+        #[doc = "Stable unique event identifier within the namespace."]
+        #[serde(rename = "eventId")]
+        event_id: Id,
+        #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
+        generation: Id,
+        #[doc = "Closed product record discriminator."]
+        kind: ::std::string::String,
+        #[doc = "Trusted storage isolation scope; not copied from model or action content."]
+        namespace: Namespace,
+        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[serde(rename = "schemaVersion")]
+        schema_version: i64,
+        #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
+        sequence: Counter,
+    },
+    #[doc = "`Variant14` alternative; see the parent type's schema contract."]
+    Variant14 {
+        #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
+        #[serde(rename = "attemptId")]
+        attempt_id: Id,
+        #[doc = "`body` member; see its generated type and parent schema."]
+        body: EventVariant14Body,
+        #[doc = "Original command identity within the trusted namespace."]
+        #[serde(rename = "commandId")]
+        command_id: Id,
+        #[doc = "Stable unique event identifier within the namespace."]
+        #[serde(rename = "eventId")]
+        event_id: Id,
+        #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
+        generation: Id,
+        #[doc = "Closed product record discriminator."]
+        kind: ::std::string::String,
+        #[doc = "Trusted storage isolation scope; not copied from model or action content."]
+        namespace: Namespace,
+        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[serde(rename = "schemaVersion")]
+        schema_version: i64,
+        #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
+        sequence: Counter,
+    },
+    #[doc = "`Variant15` alternative; see the parent type's schema contract."]
+    Variant15 {
+        #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
+        #[serde(rename = "attemptId")]
+        attempt_id: Id,
+        #[doc = "`body` member; see its generated type and parent schema."]
+        body: EventVariant15Body,
+        #[doc = "Original command identity within the trusted namespace."]
+        #[serde(rename = "commandId")]
+        command_id: Id,
+        #[doc = "Stable unique event identifier within the namespace."]
+        #[serde(rename = "eventId")]
+        event_id: Id,
+        #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
+        generation: Id,
+        #[doc = "Closed product record discriminator."]
+        kind: ::std::string::String,
+        #[doc = "Trusted storage isolation scope; not copied from model or action content."]
+        namespace: Namespace,
+        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[serde(rename = "schemaVersion")]
+        schema_version: i64,
+        #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
+        sequence: Counter,
+    },
+    #[doc = "`Variant16` alternative; see the parent type's schema contract."]
+    Variant16 {
+        #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
+        #[serde(rename = "attemptId")]
+        attempt_id: Id,
+        #[doc = "`body` member; see its generated type and parent schema."]
+        body: EventVariant16Body,
+        #[doc = "Original command identity within the trusted namespace."]
+        #[serde(rename = "commandId")]
+        command_id: Id,
+        #[doc = "Stable unique event identifier within the namespace."]
+        #[serde(rename = "eventId")]
+        event_id: Id,
+        #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
+        generation: Id,
+        #[doc = "Closed product record discriminator."]
+        kind: ::std::string::String,
+        #[doc = "Trusted storage isolation scope; not copied from model or action content."]
+        namespace: Namespace,
+        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[serde(rename = "schemaVersion")]
+        schema_version: i64,
+        #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
+        sequence: Counter,
+    },
+    #[doc = "`Variant17` alternative; see the parent type's schema contract."]
+    Variant17 {
+        #[doc = "`body` member; see its generated type and parent schema."]
+        body: EventVariant17Body,
+        #[doc = "Stable unique event identifier within the namespace."]
+        #[serde(rename = "eventId")]
+        event_id: Id,
+        #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
+        generation: Id,
+        #[doc = "Closed product record discriminator."]
+        kind: ::std::string::String,
+        #[doc = "Trusted storage isolation scope; not copied from model or action content."]
+        namespace: Namespace,
+        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[serde(rename = "schemaVersion")]
+        schema_version: i64,
+        #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
+        sequence: Counter,
+    },
+    #[doc = "`Variant18` alternative; see the parent type's schema contract."]
+    Variant18 {
+        #[doc = "`body` member; see its generated type and parent schema."]
+        body: EventVariant18Body,
+        #[doc = "Stable unique event identifier within the namespace."]
+        #[serde(rename = "eventId")]
+        event_id: Id,
+        #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
+        generation: Id,
+        #[doc = "Closed product record discriminator."]
+        kind: ::std::string::String,
+        #[doc = "Trusted storage isolation scope; not copied from model or action content."]
+        namespace: Namespace,
+        #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+        #[serde(rename = "schemaVersion")]
+        schema_version: i64,
+        #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
+        sequence: Counter,
+    },
+}
+#[doc = "text variant; all fields are data, never authentication or execution authority."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct EventVariant0Body {
+    #[doc = "Stable product message correlation identifier."]
+    #[serde(rename = "messageId")]
+    pub message_id: Id,
+    #[doc = "Untrusted model/user text subject to the whole-envelope budgets."]
+    pub text: EventVariant0BodyText,
+    #[doc = "Closed variant discriminator."]
+    #[serde(rename = "type")]
+    pub type_: ::std::string::String,
 }
 #[doc = "Untrusted model/user text subject to the whole-envelope budgets."]
 #[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[serde(transparent)]
-pub struct EventBodyVariant0Text(::std::string::String);
-impl ::std::ops::Deref for EventBodyVariant0Text {
+pub struct EventVariant0BodyText(::std::string::String);
+impl ::std::ops::Deref for EventVariant0BodyText {
     type Target = ::std::string::String;
     fn deref(&self) -> &::std::string::String {
         &self.0
     }
 }
-impl ::std::convert::From<EventBodyVariant0Text> for ::std::string::String {
-    fn from(value: EventBodyVariant0Text) -> Self {
+impl ::std::convert::From<EventVariant0BodyText> for ::std::string::String {
+    fn from(value: EventVariant0BodyText) -> Self {
         value.0
     }
 }
-impl ::std::str::FromStr for EventBodyVariant0Text {
+impl ::std::str::FromStr for EventVariant0BodyText {
     type Err = self::error::ConversionError;
     fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         if value.chars().count() > 65536usize {
@@ -1003,13 +1441,13 @@ impl ::std::str::FromStr for EventBodyVariant0Text {
         Ok(Self(value.to_string()))
     }
 }
-impl ::std::convert::TryFrom<&str> for EventBodyVariant0Text {
+impl ::std::convert::TryFrom<&str> for EventVariant0BodyText {
     type Error = self::error::ConversionError;
     fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
 }
-impl ::std::convert::TryFrom<::std::string::String> for EventBodyVariant0Text {
+impl ::std::convert::TryFrom<::std::string::String> for EventVariant0BodyText {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
@@ -1017,7 +1455,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventBodyVariant0Text {
         value.parse()
     }
 }
-impl<'de> ::serde::Deserialize<'de> for EventBodyVariant0Text {
+impl<'de> ::serde::Deserialize<'de> for EventVariant0BodyText {
     fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
     where
         D: ::serde::Deserializer<'de>,
@@ -1028,6 +1466,327 @@ impl<'de> ::serde::Deserialize<'de> for EventBodyVariant0Text {
                 <D::Error as ::serde::de::Error>::custom(e.to_string())
             })
     }
+}
+#[doc = "Stable event data; never execution or authentication authority."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct EventVariant10Body {
+    #[doc = "Local failure without asserting a model terminal."]
+    pub failure: Failure,
+    #[doc = "Closed event discriminator."]
+    #[serde(rename = "type")]
+    pub type_: ::std::string::String,
+}
+#[doc = "Stable event data; never execution or authentication authority."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct EventVariant11Body {
+    #[doc = "Complete dispatch identity retained for replay and reconciliation."]
+    pub attempt: DispatchAttempt,
+    #[doc = "Closed event discriminator."]
+    #[serde(rename = "type")]
+    pub type_: ::std::string::String,
+}
+#[doc = "Stable event data; never execution or authentication authority."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct EventVariant12Body {
+    #[doc = "Complete dispatch identity retained for replay and reconciliation."]
+    pub attempt: DispatchAttempt,
+    #[doc = "Provider observation bound to this attempt and its current observer."]
+    pub resolution: EventVariant12BodyResolution,
+    #[doc = "Closed event discriminator."]
+    #[serde(rename = "type")]
+    pub type_: ::std::string::String,
+}
+#[doc = "Provider observation bound to this attempt and its current observer."]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum EventVariant12BodyResolution {
+    #[serde(rename = "running")]
+    #[doc = "`Running` alternative; see the parent type's schema contract."]
+    Running,
+    #[serde(rename = "terminal")]
+    #[doc = "`Terminal` alternative; see the parent type's schema contract."]
+    Terminal,
+    #[serde(rename = "not_submitted")]
+    #[doc = "`NotSubmitted` alternative; see the parent type's schema contract."]
+    NotSubmitted,
+    #[serde(rename = "unknown")]
+    #[doc = "`Unknown` alternative; see the parent type's schema contract."]
+    Unknown,
+}
+impl ::std::fmt::Display for EventVariant12BodyResolution {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Running => f.write_str("running"),
+            Self::Terminal => f.write_str("terminal"),
+            Self::NotSubmitted => f.write_str("not_submitted"),
+            Self::Unknown => f.write_str("unknown"),
+        }
+    }
+}
+impl ::std::str::FromStr for EventVariant12BodyResolution {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "running" => Ok(Self::Running),
+            "terminal" => Ok(Self::Terminal),
+            "not_submitted" => Ok(Self::NotSubmitted),
+            "unknown" => Ok(Self::Unknown),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for EventVariant12BodyResolution {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for EventVariant12BodyResolution {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Stable event data; never execution or authentication authority."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct EventVariant13Body {
+    #[doc = "Upstream surface lifecycle operation paired with its projection."]
+    pub operation: ::std::string::String,
+    #[doc = "Original bounded upstream A2UI payload, preserved for display recovery."]
+    pub payload: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+    #[doc = "Surface revision advanced atomically with the event watermark."]
+    pub revision: Counter,
+    #[doc = "Product surface incarnation, never resurrected after removal."]
+    #[serde(rename = "surfaceInstanceId")]
+    pub surface_instance_id: Id,
+    #[doc = "Closed event discriminator."]
+    #[serde(rename = "type")]
+    pub type_: ::std::string::String,
+}
+#[doc = "Stable event data; never execution or authentication authority."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct EventVariant14Body {
+    #[doc = "Upstream surface lifecycle operation paired with its projection."]
+    pub operation: ::std::string::String,
+    #[doc = "Original bounded upstream A2UI payload, preserved for display recovery."]
+    pub payload: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+    #[doc = "Surface revision advanced atomically with the event watermark."]
+    pub revision: Counter,
+    #[doc = "Product surface incarnation, never resurrected after removal."]
+    #[serde(rename = "surfaceInstanceId")]
+    pub surface_instance_id: Id,
+    #[doc = "Closed event discriminator."]
+    #[serde(rename = "type")]
+    pub type_: ::std::string::String,
+}
+#[doc = "Stable event data; never execution or authentication authority."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct EventVariant15Body {
+    #[doc = "Upstream surface lifecycle operation paired with its projection."]
+    pub operation: ::std::string::String,
+    #[doc = "Original bounded upstream A2UI payload, preserved for display recovery."]
+    pub payload: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+    #[doc = "Surface revision advanced atomically with the event watermark."]
+    pub revision: Counter,
+    #[doc = "Product surface incarnation, never resurrected after removal."]
+    #[serde(rename = "surfaceInstanceId")]
+    pub surface_instance_id: Id,
+    #[doc = "Closed event discriminator."]
+    #[serde(rename = "type")]
+    pub type_: ::std::string::String,
+}
+#[doc = "Stable event data; never execution or authentication authority."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct EventVariant16Body {
+    #[doc = "Surface revision advanced atomically with the event watermark."]
+    pub revision: Counter,
+    #[doc = "Product surface incarnation, never resurrected after removal."]
+    #[serde(rename = "surfaceInstanceId")]
+    pub surface_instance_id: Id,
+    #[doc = "Closed event discriminator."]
+    #[serde(rename = "type")]
+    pub type_: ::std::string::String,
+}
+#[doc = "Stable event data; never execution or authentication authority."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct EventVariant17Body {
+    #[doc = "Prior provider incarnation invalidated by this verified handoff."]
+    #[serde(rename = "previousGeneration")]
+    pub previous_generation: Id,
+    #[doc = "Closed event discriminator."]
+    #[serde(rename = "type")]
+    pub type_: ::std::string::String,
+}
+#[doc = "Stable event data; never execution or authentication authority."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct EventVariant18Body {
+    #[doc = "Closed event discriminator."]
+    #[serde(rename = "type")]
+    pub type_: ::std::string::String,
+}
+#[doc = "status variant; all fields are data, never authentication or execution authority."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct EventVariant1Body {
+    #[doc = "Closed command lifecycle projection."]
+    pub state: EventVariant1BodyState,
+    #[doc = "Closed variant discriminator."]
+    #[serde(rename = "type")]
+    pub type_: ::std::string::String,
+}
+#[doc = "Closed command lifecycle projection."]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum EventVariant1BodyState {
+    #[serde(rename = "accepted")]
+    #[doc = "`Accepted` alternative; see the parent type's schema contract."]
+    Accepted,
+}
+impl ::std::fmt::Display for EventVariant1BodyState {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Accepted => f.write_str("accepted"),
+        }
+    }
+}
+impl ::std::str::FromStr for EventVariant1BodyState {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "accepted" => Ok(Self::Accepted),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for EventVariant1BodyState {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for EventVariant1BodyState {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "status variant; all fields are data, never authentication or execution authority."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct EventVariant2Body {
+    #[doc = "Closed command lifecycle projection."]
+    pub state: EventVariant2BodyState,
+    #[doc = "Closed variant discriminator."]
+    #[serde(rename = "type")]
+    pub type_: ::std::string::String,
+}
+#[doc = "Closed command lifecycle projection."]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum EventVariant2BodyState {
+    #[serde(rename = "dispatching")]
+    #[doc = "`Dispatching` alternative; see the parent type's schema contract."]
+    Dispatching,
+    #[serde(rename = "running")]
+    #[doc = "`Running` alternative; see the parent type's schema contract."]
+    Running,
+    #[serde(rename = "reconciliation_required")]
+    #[doc = "`ReconciliationRequired` alternative; see the parent type's schema contract."]
+    ReconciliationRequired,
+}
+impl ::std::fmt::Display for EventVariant2BodyState {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Dispatching => f.write_str("dispatching"),
+            Self::Running => f.write_str("running"),
+            Self::ReconciliationRequired => f.write_str("reconciliation_required"),
+        }
+    }
+}
+impl ::std::str::FromStr for EventVariant2BodyState {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "dispatching" => Ok(Self::Dispatching),
+            "running" => Ok(Self::Running),
+            "reconciliation_required" => Ok(Self::ReconciliationRequired),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for EventVariant2BodyState {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for EventVariant2BodyState {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "terminal variant; all fields are data, never authentication or execution authority."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct EventVariant3Body {
+    #[doc = "Definite model-turn result; no implication about business side effects."]
+    pub outcome: Outcome,
+    #[doc = "Closed variant discriminator."]
+    #[serde(rename = "type")]
+    pub type_: ::std::string::String,
+}
+#[doc = "cancel_dispatched variant; all fields are data, never authentication or execution authority."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct EventVariant4Body {
+    #[doc = "Cancellation request transport confirmation only; does not manufacture a model terminal."]
+    pub confirmation: EventVariant4BodyConfirmation,
+    #[doc = "Closed variant discriminator."]
+    #[serde(rename = "type")]
+    pub type_: ::std::string::String,
 }
 #[doc = "Cancellation request transport confirmation only; does not manufacture a model terminal."]
 #[derive(
@@ -1041,7 +1800,7 @@ impl<'de> ::serde::Deserialize<'de> for EventBodyVariant0Text {
     PartialEq,
     PartialOrd,
 )]
-pub enum EventBodyVariant3Confirmation {
+pub enum EventVariant4BodyConfirmation {
     #[serde(rename = "request_only")]
     #[doc = "`RequestOnly` alternative; see the parent type's schema contract."]
     RequestOnly,
@@ -1052,7 +1811,7 @@ pub enum EventBodyVariant3Confirmation {
     #[doc = "`Unsupported` alternative; see the parent type's schema contract."]
     Unsupported,
 }
-impl ::std::fmt::Display for EventBodyVariant3Confirmation {
+impl ::std::fmt::Display for EventVariant4BodyConfirmation {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::RequestOnly => f.write_str("request_only"),
@@ -1061,7 +1820,7 @@ impl ::std::fmt::Display for EventBodyVariant3Confirmation {
         }
     }
 }
-impl ::std::str::FromStr for EventBodyVariant3Confirmation {
+impl ::std::str::FromStr for EventVariant4BodyConfirmation {
     type Err = self::error::ConversionError;
     fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         match value {
@@ -1072,19 +1831,49 @@ impl ::std::str::FromStr for EventBodyVariant3Confirmation {
         }
     }
 }
-impl ::std::convert::TryFrom<&str> for EventBodyVariant3Confirmation {
+impl ::std::convert::TryFrom<&str> for EventVariant4BodyConfirmation {
     type Error = self::error::ConversionError;
     fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
 }
-impl ::std::convert::TryFrom<::std::string::String> for EventBodyVariant3Confirmation {
+impl ::std::convert::TryFrom<::std::string::String> for EventVariant4BodyConfirmation {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
+}
+#[doc = "tool_proposal variant; all fields are data, never authentication or execution authority."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct EventVariant5Body {
+    #[doc = "Untrusted tool JSON arguments, including keys, count toward product budgets."]
+    pub arguments: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+    #[doc = "Provider tool name; not an approved execution action."]
+    pub name: Id,
+    #[doc = "Untrusted tool proposal correlation identifier."]
+    #[serde(rename = "proposalId")]
+    pub proposal_id: Id,
+    #[doc = "Closed variant discriminator."]
+    #[serde(rename = "type")]
+    pub type_: ::std::string::String,
+}
+#[doc = "tool_result variant; all fields are data, never authentication or execution authority."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct EventVariant6Body {
+    #[doc = "Protocol tool-result disposition, not authoritative business execution status."]
+    pub disposition: EventVariant6BodyDisposition,
+    #[doc = "Untrusted tool proposal correlation identifier."]
+    #[serde(rename = "proposalId")]
+    pub proposal_id: Id,
+    #[doc = "Untrusted model/user text subject to the whole-envelope budgets."]
+    pub text: EventVariant6BodyText,
+    #[doc = "Closed variant discriminator."]
+    #[serde(rename = "type")]
+    pub type_: ::std::string::String,
 }
 #[doc = "Protocol tool-result disposition, not authoritative business execution status."]
 #[derive(
@@ -1098,7 +1887,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventBodyVariant3Confirm
     PartialEq,
     PartialOrd,
 )]
-pub enum EventBodyVariant5Disposition {
+pub enum EventVariant6BodyDisposition {
     #[serde(rename = "returned")]
     #[doc = "`Returned` alternative; see the parent type's schema contract."]
     Returned,
@@ -1109,7 +1898,7 @@ pub enum EventBodyVariant5Disposition {
     #[doc = "`Unavailable` alternative; see the parent type's schema contract."]
     Unavailable,
 }
-impl ::std::fmt::Display for EventBodyVariant5Disposition {
+impl ::std::fmt::Display for EventVariant6BodyDisposition {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Returned => f.write_str("returned"),
@@ -1118,7 +1907,7 @@ impl ::std::fmt::Display for EventBodyVariant5Disposition {
         }
     }
 }
-impl ::std::str::FromStr for EventBodyVariant5Disposition {
+impl ::std::str::FromStr for EventVariant6BodyDisposition {
     type Err = self::error::ConversionError;
     fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         match value {
@@ -1129,13 +1918,13 @@ impl ::std::str::FromStr for EventBodyVariant5Disposition {
         }
     }
 }
-impl ::std::convert::TryFrom<&str> for EventBodyVariant5Disposition {
+impl ::std::convert::TryFrom<&str> for EventVariant6BodyDisposition {
     type Error = self::error::ConversionError;
     fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
 }
-impl ::std::convert::TryFrom<::std::string::String> for EventBodyVariant5Disposition {
+impl ::std::convert::TryFrom<::std::string::String> for EventVariant6BodyDisposition {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
@@ -1146,19 +1935,19 @@ impl ::std::convert::TryFrom<::std::string::String> for EventBodyVariant5Disposi
 #[doc = "Untrusted model/user text subject to the whole-envelope budgets."]
 #[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[serde(transparent)]
-pub struct EventBodyVariant5Text(::std::string::String);
-impl ::std::ops::Deref for EventBodyVariant5Text {
+pub struct EventVariant6BodyText(::std::string::String);
+impl ::std::ops::Deref for EventVariant6BodyText {
     type Target = ::std::string::String;
     fn deref(&self) -> &::std::string::String {
         &self.0
     }
 }
-impl ::std::convert::From<EventBodyVariant5Text> for ::std::string::String {
-    fn from(value: EventBodyVariant5Text) -> Self {
+impl ::std::convert::From<EventVariant6BodyText> for ::std::string::String {
+    fn from(value: EventVariant6BodyText) -> Self {
         value.0
     }
 }
-impl ::std::str::FromStr for EventBodyVariant5Text {
+impl ::std::str::FromStr for EventVariant6BodyText {
     type Err = self::error::ConversionError;
     fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         if value.chars().count() > 65536usize {
@@ -1167,13 +1956,13 @@ impl ::std::str::FromStr for EventBodyVariant5Text {
         Ok(Self(value.to_string()))
     }
 }
-impl ::std::convert::TryFrom<&str> for EventBodyVariant5Text {
+impl ::std::convert::TryFrom<&str> for EventVariant6BodyText {
     type Error = self::error::ConversionError;
     fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
 }
-impl ::std::convert::TryFrom<::std::string::String> for EventBodyVariant5Text {
+impl ::std::convert::TryFrom<::std::string::String> for EventVariant6BodyText {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
@@ -1181,7 +1970,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventBodyVariant5Text {
         value.parse()
     }
 }
-impl<'de> ::serde::Deserialize<'de> for EventBodyVariant5Text {
+impl<'de> ::serde::Deserialize<'de> for EventVariant6BodyText {
     fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
     where
         D: ::serde::Deserializer<'de>,
@@ -1192,6 +1981,34 @@ impl<'de> ::serde::Deserialize<'de> for EventBodyVariant5Text {
                 <D::Error as ::serde::de::Error>::custom(e.to_string())
             })
     }
+}
+#[doc = "Initial ordinary question publication; the matching Interaction is committed atomically."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct EventVariant7Body {
+    #[doc = "Single-use interaction identity within the namespace."]
+    #[serde(rename = "interactionId")]
+    pub interaction_id: Id,
+    #[doc = "Required for the first pending event and equal to the newly committed Interaction request; forbidden on later lifecycle events."]
+    pub request: InteractionRequest,
+    #[doc = "First publication of an ordinary user question."]
+    pub status: ::std::string::String,
+    #[doc = "Closed variant discriminator."]
+    #[serde(rename = "type")]
+    pub type_: ::std::string::String,
+}
+#[doc = "Question lifecycle transition; cannot republish or replace its request."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct EventVariant8Body {
+    #[doc = "Single-use interaction identity within the namespace."]
+    #[serde(rename = "interactionId")]
+    pub interaction_id: Id,
+    #[doc = "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."]
+    pub status: EventVariant8BodyStatus,
+    #[doc = "Closed variant discriminator."]
+    #[serde(rename = "type")]
+    pub type_: ::std::string::String,
 }
 #[doc = "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."]
 #[derive(
@@ -1205,7 +2022,7 @@ impl<'de> ::serde::Deserialize<'de> for EventBodyVariant5Text {
     PartialEq,
     PartialOrd,
 )]
-pub enum EventBodyVariant7Status {
+pub enum EventVariant8BodyStatus {
     #[serde(rename = "answered")]
     #[doc = "`Answered` alternative; see the parent type's schema contract."]
     Answered,
@@ -1216,7 +2033,7 @@ pub enum EventBodyVariant7Status {
     #[doc = "`Unavailable` alternative; see the parent type's schema contract."]
     Unavailable,
 }
-impl ::std::fmt::Display for EventBodyVariant7Status {
+impl ::std::fmt::Display for EventVariant8BodyStatus {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Answered => f.write_str("answered"),
@@ -1225,7 +2042,7 @@ impl ::std::fmt::Display for EventBodyVariant7Status {
         }
     }
 }
-impl ::std::str::FromStr for EventBodyVariant7Status {
+impl ::std::str::FromStr for EventVariant8BodyStatus {
     type Err = self::error::ConversionError;
     fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         match value {
@@ -1236,19 +2053,29 @@ impl ::std::str::FromStr for EventBodyVariant7Status {
         }
     }
 }
-impl ::std::convert::TryFrom<&str> for EventBodyVariant7Status {
+impl ::std::convert::TryFrom<&str> for EventVariant8BodyStatus {
     type Error = self::error::ConversionError;
     fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
 }
-impl ::std::convert::TryFrom<::std::string::String> for EventBodyVariant7Status {
+impl ::std::convert::TryFrom<::std::string::String> for EventVariant8BodyStatus {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
+}
+#[doc = "error variant; all fields are data, never authentication or execution authority."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct EventVariant9Body {
+    #[doc = "Closed failure category and retry discipline."]
+    pub failure: Failure,
+    #[doc = "Closed variant discriminator."]
+    #[serde(rename = "type")]
+    pub type_: ::std::string::String,
 }
 #[doc = "Value-free failure and explicit retry discipline."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
@@ -2024,7 +2851,7 @@ pub struct SurfaceBinding {
     #[doc = "Exact upstream source component allowed to emit this action."]
     #[serde(rename = "sourceComponentId")]
     pub source_component_id: Id,
-    #[doc = "Persisted lifecycle; deleted is a permanent tombstone for this instance."]
+    #[doc = "Deleted is an upstream deletion; invalidated is a product-side loss of action authority. Neither may reactivate."]
     pub status: SurfaceBindingStatus,
     #[doc = "Upstream A2UI surface identifier."]
     #[serde(rename = "surfaceId")]
@@ -2033,7 +2860,7 @@ pub struct SurfaceBinding {
     #[serde(rename = "surfaceInstanceId")]
     pub surface_instance_id: Id,
 }
-#[doc = "Persisted lifecycle; deleted is a permanent tombstone for this instance."]
+#[doc = "Deleted is an upstream deletion; invalidated is a product-side loss of action authority. Neither may reactivate."]
 #[derive(
     :: serde :: Deserialize,
     :: serde :: Serialize,
@@ -2052,12 +2879,16 @@ pub enum SurfaceBindingStatus {
     #[serde(rename = "deleted")]
     #[doc = "`Deleted` alternative; see the parent type's schema contract."]
     Deleted,
+    #[serde(rename = "invalidated")]
+    #[doc = "`Invalidated` alternative; see the parent type's schema contract."]
+    Invalidated,
 }
 impl ::std::fmt::Display for SurfaceBindingStatus {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Active => f.write_str("active"),
             Self::Deleted => f.write_str("deleted"),
+            Self::Invalidated => f.write_str("invalidated"),
         }
     }
 }
@@ -2067,6 +2898,7 @@ impl ::std::str::FromStr for SurfaceBindingStatus {
         match value {
             "active" => Ok(Self::Active),
             "deleted" => Ok(Self::Deleted),
+            "invalidated" => Ok(Self::Invalidated),
             _ => Err("invalid value".into()),
         }
     }
@@ -2100,23 +2932,23 @@ pub struct SurfaceReference {
 #[serde(untagged)]
 pub enum WireRecord {
     #[doc = "`Command` alternative; see the parent type's schema contract."]
-    Command(Command),
+    Command(#[doc = "`` member; see its generated type and parent schema."] Command),
     #[doc = "`Receipt` alternative; see the parent type's schema contract."]
-    Receipt(Receipt),
+    Receipt(#[doc = "`` member; see its generated type and parent schema."] Receipt),
     #[doc = "`CommandRecord` alternative; see the parent type's schema contract."]
-    CommandRecord(CommandRecord),
+    CommandRecord(#[doc = "`` member; see its generated type and parent schema."] CommandRecord),
     #[doc = "`Event` alternative; see the parent type's schema contract."]
-    Event(Event),
+    Event(#[doc = "`` member; see its generated type and parent schema."] Event),
     #[doc = "`Session` alternative; see the parent type's schema contract."]
-    Session(Session),
+    Session(#[doc = "`` member; see its generated type and parent schema."] Session),
     #[doc = "`Interaction` alternative; see the parent type's schema contract."]
-    Interaction(Interaction),
+    Interaction(#[doc = "`` member; see its generated type and parent schema."] Interaction),
     #[doc = "`Delivery` alternative; see the parent type's schema contract."]
-    Delivery(Delivery),
+    Delivery(#[doc = "`` member; see its generated type and parent schema."] Delivery),
     #[doc = "`SurfaceBinding` alternative; see the parent type's schema contract."]
-    SurfaceBinding(SurfaceBinding),
+    SurfaceBinding(#[doc = "`` member; see its generated type and parent schema."] SurfaceBinding),
     #[doc = "`SurfaceAction` alternative; see the parent type's schema contract."]
-    SurfaceAction(SurfaceAction),
+    SurfaceAction(#[doc = "`` member; see its generated type and parent schema."] SurfaceAction),
 }
 impl ::std::convert::From<Command> for WireRecord {
     fn from(value: Command) -> Self {
@@ -2270,14 +3102,17 @@ impl std::fmt::Debug for DeliveryStatus {
         f.write_str(concat!(stringify!(DeliveryStatus), "([redacted])"))
     }
 }
-impl std::fmt::Debug for Dispatch {
+impl std::fmt::Debug for DispatchAttempt {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(concat!(stringify!(Dispatch), "([redacted])"))
+        f.write_str(concat!(stringify!(DispatchAttempt), "([redacted])"))
     }
 }
-impl std::fmt::Debug for DispatchCertainty {
+impl std::fmt::Debug for DispatchAttemptCertainty {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(concat!(stringify!(DispatchCertainty), "([redacted])"))
+        f.write_str(concat!(
+            stringify!(DispatchAttemptCertainty),
+            "([redacted])"
+        ))
     }
 }
 impl std::fmt::Debug for ErrorCode {
@@ -2290,40 +3125,148 @@ impl std::fmt::Debug for Event {
         f.write_str(concat!(stringify!(Event), "([redacted])"))
     }
 }
-impl std::fmt::Debug for EventBody {
+impl std::fmt::Debug for EventVariant0Body {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(concat!(stringify!(EventBody), "([redacted])"))
+        f.write_str(concat!(stringify!(EventVariant0Body), "([redacted])"))
     }
 }
-impl std::fmt::Debug for EventBodyVariant0Text {
+impl std::fmt::Debug for EventVariant0BodyText {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(concat!(stringify!(EventBodyVariant0Text), "([redacted])"))
+        f.write_str(concat!(stringify!(EventVariant0BodyText), "([redacted])"))
     }
 }
-impl std::fmt::Debug for EventBodyVariant3Confirmation {
+impl std::fmt::Debug for EventVariant10Body {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(EventVariant10Body), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for EventVariant11Body {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(EventVariant11Body), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for EventVariant12Body {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(EventVariant12Body), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for EventVariant12BodyResolution {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(
-            stringify!(EventBodyVariant3Confirmation),
+            stringify!(EventVariant12BodyResolution),
             "([redacted])"
         ))
     }
 }
-impl std::fmt::Debug for EventBodyVariant5Disposition {
+impl std::fmt::Debug for EventVariant13Body {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(EventVariant13Body), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for EventVariant14Body {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(EventVariant14Body), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for EventVariant15Body {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(EventVariant15Body), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for EventVariant16Body {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(EventVariant16Body), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for EventVariant17Body {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(EventVariant17Body), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for EventVariant18Body {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(EventVariant18Body), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for EventVariant1Body {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(EventVariant1Body), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for EventVariant1BodyState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(EventVariant1BodyState), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for EventVariant2Body {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(EventVariant2Body), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for EventVariant2BodyState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(EventVariant2BodyState), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for EventVariant3Body {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(EventVariant3Body), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for EventVariant4Body {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(EventVariant4Body), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for EventVariant4BodyConfirmation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(
-            stringify!(EventBodyVariant5Disposition),
+            stringify!(EventVariant4BodyConfirmation),
             "([redacted])"
         ))
     }
 }
-impl std::fmt::Debug for EventBodyVariant5Text {
+impl std::fmt::Debug for EventVariant5Body {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(concat!(stringify!(EventBodyVariant5Text), "([redacted])"))
+        f.write_str(concat!(stringify!(EventVariant5Body), "([redacted])"))
     }
 }
-impl std::fmt::Debug for EventBodyVariant7Status {
+impl std::fmt::Debug for EventVariant6Body {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(concat!(stringify!(EventBodyVariant7Status), "([redacted])"))
+        f.write_str(concat!(stringify!(EventVariant6Body), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for EventVariant6BodyDisposition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(EventVariant6BodyDisposition),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for EventVariant6BodyText {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(EventVariant6BodyText), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for EventVariant7Body {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(EventVariant7Body), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for EventVariant8Body {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(EventVariant8Body), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for EventVariant8BodyStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(EventVariant8BodyStatus), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for EventVariant9Body {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(EventVariant9Body), "([redacted])"))
     }
 }
 impl std::fmt::Debug for Failure {

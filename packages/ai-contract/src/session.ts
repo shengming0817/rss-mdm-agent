@@ -1,4 +1,5 @@
 import canonicalize from "canonicalize";
+import { boundedJson, decode } from "./codec.js";
 import type { Binding, Capabilities } from "./wire.js";
 import type {
   Budget,
@@ -22,16 +23,19 @@ export class VerifiedProviderSession {
   readonly #binding: Binding;
   readonly #capabilities: Capabilities;
   readonly #tools?: ToolEndpoint;
+  readonly #previous?: Binding;
   private constructor(
     token: symbol,
     binding: Binding,
     capabilities: Capabilities,
     tools?: ToolEndpoint,
+    previous?: Binding,
   ) {
     if (token !== authority) throw new TypeError("unverified provider session");
     this.#binding = structuredClone(binding);
     this.#capabilities = structuredClone(capabilities);
     this.#tools = tools;
+    this.#previous = previous && structuredClone(previous);
     Object.freeze(this);
   }
   get binding(): Binding {
@@ -43,8 +47,54 @@ export class VerifiedProviderSession {
   matches(binding: Binding, tools?: ToolEndpoint): boolean {
     return same(this.#binding, binding) && this.#tools === tools;
   }
-  static async open(
+  /** Only the resume path can establish this link. */
+  restores(previous: Binding): boolean {
+    return this.#previous !== undefined && same(previous, this.#previous);
+  }
+  static async restore(
     port: ProviderAgentPort,
+    previous: Binding,
+    configuration: ProviderConfiguration,
+    budget: Budget,
+  ): Promise<Result<VerifiedProviderSession>> {
+    const prior = structuredClone(previous);
+    if (!port.resume || budget.signal.aborted) return denied();
+    const resume = port.resume;
+    const adapter = {
+      createSession: (config: ProviderConfiguration, b: Budget) =>
+        resume.call(port, structuredClone(prior), config, b),
+    };
+    const result = await VerifiedProviderSession.open(
+      adapter,
+      configuration,
+      budget,
+    );
+    if (!result.ok) return result;
+    const next = result.value.binding;
+    if (
+      next.generation === prior.generation ||
+      next.provider !== prior.provider ||
+      next.providerVersion !== prior.providerVersion ||
+      next.adapterVersion !== prior.adapterVersion ||
+      next.accountRef !== prior.accountRef ||
+      !same(next.config, prior.config) ||
+      next.nativeSessionId !== prior.nativeSessionId ||
+      result.value.capabilities.continuation !== "across_processes"
+    )
+      return denied();
+    return {
+      ok: true,
+      value: new VerifiedProviderSession(
+        authority,
+        next,
+        result.value.capabilities,
+        result.value.#tools,
+        prior,
+      ),
+    };
+  }
+  static async open(
+    port: Pick<ProviderAgentPort, "createSession">,
     configuration: ProviderConfiguration,
     budget: Budget,
   ): Promise<Result<VerifiedProviderSession>> {
@@ -72,6 +122,37 @@ export class VerifiedProviderSession {
     );
     if (!initialized.ok) return initialized;
     const { binding, capabilities } = structuredClone(initialized.value);
+    try {
+      const limits = {
+        maxBytes: 65536,
+        maxTextBytes: 32768,
+        maxDepth: 16,
+        maxNodes: 2048,
+      };
+      decode(
+        boundedJson(
+          {
+            schemaVersion: 2,
+            kind: "session",
+            namespace: {
+              tenantId: "verify",
+              principalId: "verify",
+              authorityId: "verify",
+              sessionId: "verify",
+            },
+            revision: 0,
+            lastSequence: 0,
+            status: "active",
+            binding,
+            capabilities,
+          },
+          limits,
+        ),
+        limits,
+      );
+    } catch {
+      return denied();
+    }
     if (
       binding.provider !== provider ||
       !same(binding.config, config) ||

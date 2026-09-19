@@ -14,6 +14,8 @@ import type {
   Session,
   SurfaceBinding,
   ConfigRef,
+  DispatchAttempt,
+  Outcome,
 } from "./wire.js";
 /** Supplied by authenticated ingress, never decoded from model/tool/action content.
  * This port does not authenticate its caller; the composition root owns that proof. */
@@ -118,7 +120,7 @@ export type ProviderInteraction = Pick<
   | "callbackLifetime"
   | "request"
 >;
-export type ProviderObservation =
+export type ProviderObservation = { readonly attemptId: Id } & (
   | {
       type: "event";
       binding: Binding;
@@ -131,7 +133,8 @@ export type ProviderObservation =
       binding: Binding;
       commandId: Id;
       interaction: ProviderInteraction;
-    };
+    }
+);
 export type Submission =
   | { certainty: "submitted"; binding: Binding }
   | { certainty: "not_sent"; error: Failure }
@@ -145,6 +148,7 @@ export interface ProviderAgentPort {
   submit(
     binding: Binding,
     command: Command,
+    attempt: DispatchAttempt,
     budget: Budget,
   ): Promise<Submission>;
   cancel(
@@ -162,14 +166,12 @@ export interface ProviderAgentPort {
     binding: Binding,
     record: CommandRecord,
     budget: Budget,
-  ): Promise<
-    Result<{
-      status: "running" | "terminal" | "not_submitted" | "unknown";
-      binding: Binding;
-      outcome?: import("./wire.js").Outcome;
-    }>
-  >;
-  resume?(binding: Binding, budget: Budget): Promise<Result<Binding>>;
+  ): Promise<Result<Reconciliation>>;
+  resume?(
+    binding: Binding,
+    configuration: ProviderConfiguration,
+    budget: Budget,
+  ): Promise<Result<ProviderSessionBinding>>;
   close(budget: Budget): Promise<Result<{ processStopped: boolean }>>;
 }
 export interface Snapshot {
@@ -226,6 +228,10 @@ export interface HostPort extends Closeable {
 }
 /** Atomic batch, checked against both revision and generation. No external await inside a transaction. */
 export interface SessionCommit {
+  /** Verified provider reconciliation observations; consumed by the same transition rules. */
+  readonly reconciliations?: readonly Reconciliation[];
+  /** Required for retry eligibility and local expiry transitions. */
+  readonly nowMs?: Counter;
   readonly namespace: Namespace;
   readonly expectedRevision: Counter;
   readonly expectedGeneration: Id;
@@ -260,6 +266,7 @@ export interface SessionStore extends Closeable {
   ): Promise<Result<SurfaceBinding>>;
   command(namespace: Namespace, commandId: Id): Promise<Result<CommandRecord>>;
   commit(batch: SessionCommit): Promise<Result<void>>;
+  rebind(input: SessionRebind): Promise<Result<Session>>;
   snapshot(namespace: Namespace, limit: number): Promise<Result<Snapshot>>;
   events(
     namespace: Namespace,
@@ -280,4 +287,23 @@ export interface SessionStore extends Closeable {
   /** Delete retired sessions only after all receipts expire and delivery is settled.
    * Missing/retired namespaces never implicitly recreate a session. */
   pruneRetired(nowMs: Counter): Promise<Result<number>>;
+}
+
+/** Bound to the original attempt and the current observer; unknown is not permission to send. */
+export type Reconciliation = {
+  readonly commandId: Id;
+  readonly attemptId: Id;
+  readonly binding: Binding;
+} & (
+  | { readonly status: "running" | "unknown"; readonly outcome?: never }
+  | { readonly status: "terminal"; readonly outcome: Outcome }
+  | { readonly status: "not_submitted"; readonly outcome?: never }
+);
+/** A trusted resume result, never a wire-decoded capability assertion. */
+export interface SessionRebind {
+  readonly namespace: Namespace;
+  readonly expectedRevision: Counter;
+  readonly expectedGeneration: Id;
+  readonly restored: import("./session.js").VerifiedProviderSession;
+  readonly eventId: Id;
 }

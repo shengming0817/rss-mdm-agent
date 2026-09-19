@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import canonicalize from "canonicalize";
 import { withinBudget, withCleanup, type BudgetFactory } from "./budget.js";
-import type { Binding, Command, CommandRecord } from "../wire.js";
+import type {
+  Binding,
+  Command,
+  CommandRecord,
+  DispatchAttempt,
+} from "../wire.js";
 import type {
   Budget,
   ProviderAgentPort,
@@ -10,6 +15,7 @@ import type {
   ProviderObservation,
   Result,
   Submission,
+  Reconciliation,
 } from "../ports.js";
 import { fixtureSession, fixtureCommand, unwrap } from "./conformance.js";
 import { ok, fail, fixtureLimits } from "./store.js";
@@ -51,12 +57,15 @@ export class ScriptedProvider implements ProviderAgentPort {
   async submit(
     binding: Binding,
     command: Command,
+    attempt: DispatchAttempt,
     _budget: Budget,
   ): Promise<Submission> {
     if (
       !this.configuration ||
       canonicalize(binding) !== canonicalize(this.binding) ||
-      command.input.type !== "prompt"
+      command.input.type !== "prompt" ||
+      attempt.observerGeneration !== binding.generation ||
+      attempt.nativeSessionId !== binding.nativeSessionId
     )
       return {
         certainty: "not_sent",
@@ -106,11 +115,17 @@ export class ScriptedProvider implements ProviderAgentPort {
   }
   async reconcile(
     binding: Binding,
-    _record: CommandRecord,
+    record: CommandRecord,
     _budget: Budget,
-  ): Promise<Result<{ status: "unknown"; binding: Binding }>> {
-    return canonicalize(binding) === canonicalize(this.binding)
-      ? ok({ status: "unknown", binding: structuredClone(binding) })
+  ): Promise<Result<Reconciliation>> {
+    return record.dispatch &&
+      canonicalize(binding) === canonicalize(this.binding)
+      ? ok({
+          status: "unknown",
+          commandId: record.command.commandId,
+          attemptId: record.dispatch.attemptId,
+          binding: structuredClone(binding),
+        })
       : fail("stale_binding");
   }
   async close(_budget: Budget): Promise<Result<{ processStopped: boolean }>> {
@@ -140,8 +155,15 @@ export async function runProviderConformance(
         assert.deepEqual(binding.config, configuration.config);
         assert.equal(binding.accountRef, configuration.accountRef);
         const command = fixtureCommand();
+        const attempt: DispatchAttempt = {
+          attemptId: "attempt-command-1",
+          originGeneration: binding.generation,
+          observerGeneration: binding.generation,
+          nativeSessionId: binding.nativeSessionId,
+          certainty: "intent",
+        };
         const submission = await withinBudget(budget, (b) =>
-          port.submit(binding, command, b),
+          port.submit(binding, command, attempt, b),
         );
         assert.equal(submission.certainty, scenario);
         if (scenario === "unknown") {
@@ -166,8 +188,8 @@ export async function runProviderConformance(
             },
             state: "reconciliation_required",
             dispatch: {
-              generation: binding.generation,
-              nativeSessionId: binding.nativeSessionId,
+              ...attempt,
+              correlationId: submission.correlationId,
               certainty: "unknown",
             },
           };
@@ -237,6 +259,7 @@ export async function runProviderConformance(
                   boundedJson(item.value, fixtureLimits),
                 );
                 assert.equal(observation.commandId, command.commandId);
+                assert.equal(observation.attemptId, attempt.attemptId);
                 assert.deepEqual(
                   observation.binding,
                   submission.certainty === "submitted"
@@ -294,6 +317,7 @@ export async function runProviderConformance(
                         ...context,
                         kind: "event",
                         eventId: "fixture-event",
+                        attemptId: attempt.attemptId,
                         sequence: count,
                         body:
                           observation.type === "event"

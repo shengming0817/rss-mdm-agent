@@ -13,6 +13,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // owns semantics; document each generated serialized alternative here.
         if let syn::Item::Enum(enumeration) = item {
             for variant in &mut enumeration.variants {
+                // Inline object schemas become named types; typify moves their
+                // description to that type and leaves the containing field bare.
+                for field in &mut variant.fields {
+                    if !field.attrs.iter().any(|a| a.path().is_ident("doc")) {
+                        let doc = format!(
+                            "`{}` member; see its generated type and parent schema.",
+                            field
+                                .ident
+                                .as_ref()
+                                .map(ToString::to_string)
+                                .unwrap_or_default()
+                        );
+                        field.attrs.push(syn::parse_quote!(#[doc = #doc]));
+                    }
+                }
                 if !variant.attrs.iter().any(|a| a.path().is_ident("doc")) {
                     let doc = format!(
                         "`{}` alternative; see the parent type's schema contract.",

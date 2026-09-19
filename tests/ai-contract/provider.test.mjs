@@ -32,6 +32,7 @@ const callbackHarness = (mutate) =>
         if (scenario === "submitted")
           yield mutate({
             type: "interaction",
+            attemptId: "attempt-command-1",
             binding,
             commandId: fixtureCommand().commandId,
             interaction: structuredClone(callback),
@@ -65,6 +66,7 @@ for (const [name, mutate] of [
       type: "event",
       binding: x.binding,
       commandId: x.commandId,
+      attemptId: x.attemptId,
       body: {
         type: "interaction",
         interactionId: x.interaction.interactionId,
@@ -125,7 +127,8 @@ test("unknown submit and cancel request do not manufacture terminal or tool auth
   const { binding } = unwrap(await port.createSession(configuration, budget()));
   port.submission = "unknown";
   assert.equal(
-    (await port.submit(binding, fixtureCommand(), budget())).certainty,
+    (await port.submit(binding, fixtureCommand(), intent(binding), budget()))
+      .certainty,
     "unknown",
   );
   assert.equal(
@@ -182,7 +185,14 @@ test("equivalent binding property order does not reject submission", async () =>
   const { binding } = unwrap(await port.createSession(configuration, budget()));
   const reordered = Object.fromEntries(Object.entries(binding).reverse());
   assert.equal(
-    (await port.submit(reordered, fixtureCommand(), budget())).certainty,
+    (
+      await port.submit(
+        reordered,
+        fixtureCommand(),
+        intent(reordered),
+        budget(),
+      )
+    ).certainty,
     "submitted",
   );
 });
@@ -371,11 +381,25 @@ test("atomic provider session results retain their own capabilities across concu
   assert.equal(second.binding.config.id, "config-2");
   assert.equal(first.matches(second.binding), false);
   assert.equal(
-    (await port.submit(first.binding, fixtureCommand(), budget())).certainty,
+    (
+      await port.submit(
+        first.binding,
+        fixtureCommand(),
+        intent(first.binding),
+        budget(),
+      )
+    ).certainty,
     "not_sent",
   );
   assert.equal(
-    (await port.submit(second.binding, fixtureCommand(), budget())).certainty,
+    (
+      await port.submit(
+        second.binding,
+        fixtureCommand(),
+        intent(second.binding),
+        budget(),
+      )
+    ).certainty,
     "submitted",
   );
 });
@@ -475,11 +499,35 @@ test("independent provider instances cannot accept each other's binding", async 
   const second = unwrap(await b.createSession(configuration, budget()));
   assert.notDeepEqual(first.binding, second.binding);
   assert.equal(
-    (await b.submit(first.binding, fixtureCommand(), budget())).certainty,
+    (
+      await b.submit(
+        first.binding,
+        fixtureCommand(),
+        intent(first.binding),
+        budget(),
+      )
+    ).certainty,
     "not_sent",
   );
   assert.equal(
-    (await b.submit(second.binding, fixtureCommand(), budget())).certainty,
+    (
+      await b.submit(
+        second.binding,
+        fixtureCommand(),
+        intent(second.binding),
+        budget(),
+      )
+    ).certainty,
     "submitted",
   );
 });
+
+function intent(binding) {
+  return {
+    attemptId: "attempt-command-1",
+    originGeneration: binding.generation,
+    observerGeneration: binding.generation,
+    nativeSessionId: binding.nativeSessionId,
+    certainty: "intent",
+  };
+}

@@ -124,6 +124,7 @@ test("interleaved delta messages retain identities through Host subscription", a
       unwrap(
         await host.publishDelta(fixtureCaller, command.sessionId, {
           type: "delta",
+          attemptId: "attempt-command-1",
           binding: session.binding,
           commandId: command.commandId,
           messageId,
@@ -186,6 +187,7 @@ test("separate Host sessions cannot exchange provider observations", async () =>
       (
         await host.publishDelta(fixtureCaller, b.namespace.sessionId, {
           type: "delta",
+          attemptId: "attempt-command-1",
           binding: a.binding,
           commandId: command.commandId,
           messageId: "m",

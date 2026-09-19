@@ -19,7 +19,11 @@
       "types": "./dist/testing/index.d.ts",
       "import": "./dist/testing/index.js"
     },
-    "./schema": "./schema/runtime.schema.json"
+    "./schema": "./schema/runtime.schema.json",
+    "./transitions": {
+      "types": "./dist/transitions.d.ts",
+      "import": "./dist/transitions.js"
+    }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
