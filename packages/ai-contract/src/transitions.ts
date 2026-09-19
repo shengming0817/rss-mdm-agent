@@ -1243,22 +1243,6 @@ export function recoverUnavailable(
   return guarded(() => reduceHandoff(state, input, limits));
 }
 
-export function validLaunch(launch: import("./ports.js").WorkerLaunch): void {
-  namespaceKey(launch.namespace);
-  if (
-    !isId(launch.launchId) ||
-    typeof launch.artifact !== "string" ||
-    !launch.artifact ||
-    launch.artifact.length > 4096 ||
-    !["reserved", "registered"].includes(launch.phase) ||
-    (launch.phase === "registered" &&
-      (!Number.isSafeInteger(launch.rootPid) ||
-        launch.rootPid <= 1 ||
-        launch.pgid !== launch.rootPid))
-  )
-    throw new ContractError("context");
-}
-
 /** Controls are scoped to their current native run, never the most recent unrelated turn. */
 export function controlIsStale(
   session: Session,

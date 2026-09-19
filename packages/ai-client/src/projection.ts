@@ -36,6 +36,8 @@ export interface SessionView {
   /** Identity of this attachment's snapshot, not a second live Host Session. */
   namespace: Session["namespace"];
   generation: string;
+  /** Durable session health; attachment alone never means the session is usable. */
+  status: Session["status"];
   cursor: number;
   connection: "attached" | "detached" | "resync_required";
   commands: Record<
@@ -75,6 +77,7 @@ export function emptyView(session: Session, cursor: number): SessionView {
   return {
     namespace: structuredClone(session.namespace),
     generation: session.binding.generation,
+    status: session.status,
     cursor,
     connection: "detached",
     commands: Object.create(null),
@@ -87,9 +90,11 @@ export function emptyView(session: Session, cursor: number): SessionView {
 function event(view: SessionView, e: Event): void {
   // Session-level events have no command; snapshot metadata owns session identity.
   if (e.body.type === "session_recovery_unavailable") {
+    view.status = "recovery_required";
     view.connection = "resync_required";
     return;
   }
+  if (e.body.type === "session_retired") view.status = "retired";
   if (e.commandId === undefined) return;
   const body = e.body;
   if (body.type === "acknowledged") {
@@ -179,6 +184,8 @@ export function restoreSnapshot(
   pages: SnapshotPage[],
 ): void {
   for (const page of pages) for (const e of page.events) event(view, e);
+  // Historical recovery events precede possible successful rebinds; the snapshot owns current health.
+  if (pages.length) view.status = pages[0].session.status;
   for (const page of pages) {
     for (const c of page.commands)
       view.commands[c.command.commandId] = {

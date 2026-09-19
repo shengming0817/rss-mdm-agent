@@ -150,6 +150,9 @@ importers:
       "@rss-mdm-agent/ai-contract":
         specifier: workspace:*
         version: link:../ai-contract
+      "@rss-mdm-agent/ai-host":
+        specifier: workspace:*
+        version: link:../ai-host
 
   packages/ai-ui-bridge:
     dependencies:

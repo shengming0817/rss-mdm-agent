@@ -133,3 +133,5 @@ A01 恢复契约升级后，submit 显式接收 Host 已持久化的 DispatchAtt
 
 
 A03 统一端口：prompt、cancel 与 respond 均调用 `dispatch(binding, command, attempt, budget)`。cancel / respond 返回 acknowledged，不形成模型 Outcome。原生 acceptance 只证明 submitted；assistant / stream_event 的运行观察才证明 running。`ProviderConfiguration` 只含数据，ToolEndpoint 由 `ClaudeAdapterOptions.tools` 注入；verifier 由 parent 的 `VerifiedProviderSession` 准入参数持有，adapter / SDK worker 不接收 verifier。
+
+原生 transcript/恢复状态目录在 SDK 启动前校验为当前 UID 拥有的真实私有目录，拒绝 symlink、普通文件及任何 group/other 权限。缺失目录按 `0700` 创建，`CLAUDE_CONFIG_DIR` 只接收核对过的 canonical realpath；错误不包含路径或凭据。

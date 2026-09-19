@@ -75,6 +75,7 @@ test("Host SIGKILL closes worker group; restart reconciles the original attempt 
   const host = unwrap(
     await createHost({
       store,
+      launchFences: store,
       resolve: async (caller, options, namespace) => ({
         configuration: {
           namespace,
@@ -132,6 +133,7 @@ test("crash after durable registration cannot import the SDK before activation",
   const host = unwrap(
     await createHost({
       store,
+      launchFences: store,
       resolve: async () => {
         throw new Error("no session to resume");
       },
@@ -269,6 +271,7 @@ test("unresolved registered process group freezes recovery without signaling or 
   host = unwrap(
     await createHost({
       store: reopened,
+      launchFences: reopened,
       resolve: async () => {
         resolves++;
         throw new Error("must not start");
@@ -332,6 +335,7 @@ for (const hasSession of [true, false])
     host = unwrap(
       await createHost({
         store: reopened,
+        launchFences: reopened,
         resolve: async () => {
           throw new Error("fixture admission refused");
         },

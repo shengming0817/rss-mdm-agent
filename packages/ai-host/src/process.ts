@@ -15,13 +15,14 @@ import type {
   ProviderSessionBinding,
   Reconciliation,
   Result,
-  SessionStore,
   Submission,
   ToolEndpoint,
 } from "@rss-mdm-agent/ai-contract";
 import { fail, ok } from "@rss-mdm-agent/ai-contract/transitions";
 import { Channel } from "./channel.js";
 import { Output } from "./queue.js";
+import { Deadline } from "./deadline.js";
+import type { WorkerLaunchFenceStore } from "./launch-fence.js";
 
 export function groupEmpty(pgid: number): boolean {
   if (!Number.isSafeInteger(pgid) || pgid <= 1) return false;
@@ -45,6 +46,7 @@ export class WorkerPort implements ProviderAgentPort {
   private exited = false;
   private closing = false;
   private released = false;
+  private releaseTask?: Promise<Result<void>>;
   private reserved = false;
   private closingTask?: Promise<Result<{ processStopped: boolean }>>;
   private starting?: Promise<Result<void>>;
@@ -52,7 +54,7 @@ export class WorkerPort implements ProviderAgentPort {
   private toolsAdmitted = false;
   onFailure?: () => void;
   constructor(
-    private readonly store: SessionStore,
+    private readonly store: WorkerLaunchFenceStore,
     private readonly namespace: Namespace,
     private readonly artifact: string,
     private readonly bridge?: ToolEndpoint,
@@ -275,35 +277,12 @@ export class WorkerPort implements ProviderAgentPort {
       .catch(() => {});
     return task;
   }
-  private async stop(
-    budget: Budget,
-  ): Promise<Result<{ processStopped: boolean }>> {
-    if (this.released) return ok({ processStopped: true });
+  /** Revoke IPC and escalate only through the current owned ChildProcess handle. */
+  terminate(): void {
     this.closing = true;
     this.toolsAdmitted = false;
+    this.onFailure = undefined;
     this.startupAbort.abort();
-    const deadline = Date.now() + Math.max(1, budget.timeoutMs);
-    if (this.starting) {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const finished = await Promise.race([
-        this.starting.then(() => true),
-        new Promise<false>((resolve) => {
-          timer = setTimeout(
-            () => resolve(false),
-            Math.max(1, deadline - Date.now()),
-          );
-        }),
-      ]).finally(() => clearTimeout(timer));
-      if (!finished) return ok({ processStopped: false });
-    }
-    try {
-      if (this.control && !this.control.closed && !this.exited)
-        await this.control.call("close", [], {
-          timeoutMs: Math.min(500, Math.max(1, deadline - Date.now())),
-          signal: budget.signal,
-        });
-    } catch {}
-    // The current ChildProcess handle and verified live root authorize escalation.
     if (this.child?.pid && !this.exited) {
       try {
         if (this.registered) process.kill(-this.child.pid, "SIGKILL");
@@ -313,25 +292,60 @@ export class WorkerPort implements ProviderAgentPort {
     this.tools?.close();
     this.control?.close();
     this.output?.close();
-    while (
-      this.child &&
-      (!this.exited || (this.registered && !groupEmpty(this.child.pid!))) &&
-      Date.now() < deadline &&
-      !budget.signal.aborted
-    )
-      await pause(10);
-    const stopped =
-      (!this.child || this.exited) &&
-      (!this.registered || groupEmpty(this.child!.pid!));
-    if (!stopped) return ok({ processStopped: false });
-    if (this.reserved) {
-      const released = await this.store.releaseLaunch(
-        this.namespace,
-        this.launchId,
-      );
-      if (!released.ok) return released;
+    for (const stream of this.streams.values()) stream.end();
+    this.streams.clear();
+  }
+  private async stop(
+    budget: Budget,
+  ): Promise<Result<{ processStopped: boolean }>> {
+    if (this.released) return ok({ processStopped: true });
+    this.closing = true;
+    this.toolsAdmitted = false;
+    this.startupAbort.abort();
+    const deadline = new Deadline(budget);
+    try {
+      if (this.starting) await deadline.wait(() => this.starting!);
+      try {
+        if (this.control && !this.control.closed && !this.exited)
+          await deadline.wait(() =>
+            this.control!.call("close", [], {
+              ...deadline.budget(),
+              timeoutMs: Math.min(500, deadline.budget().timeoutMs),
+            }),
+          );
+      } catch {}
+      this.terminate();
+      while (
+        this.child &&
+        (!this.exited || (this.registered && !groupEmpty(this.child.pid!)))
+      )
+        await deadline.wait(() => pause(10));
+      if (this.reserved) {
+        const released = await deadline.wait(
+          () =>
+            (this.releaseTask ??= this.store
+              .releaseLaunch(this.namespace, this.launchId)
+              .then(
+                (result) => {
+                  if (result.ok) this.released = true;
+                  else this.releaseTask = undefined;
+                  return result;
+                },
+                (error) => {
+                  this.releaseTask = undefined;
+                  throw error;
+                },
+              )),
+        );
+        if (!released.ok) return released;
+      }
+      this.released = true;
+      return ok({ processStopped: true });
+    } catch {
+      return ok({ processStopped: false });
+    } finally {
+      this.terminate();
+      deadline.dispose();
     }
-    this.released = true;
-    return ok({ processStopped: true });
   }
 }

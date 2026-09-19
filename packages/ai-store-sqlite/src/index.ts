@@ -1,4 +1,9 @@
 import {
+  validLaunch,
+  type WorkerLaunch,
+  type WorkerLaunchFenceStore,
+} from "@rss-mdm-agent/ai-host/launch-fence";
+import {
   ReadViews,
   readSnapshotPage,
   readSessionPage,
@@ -34,7 +39,6 @@ import {
   type SessionCommit,
   type SessionRebind,
   type RecoveryUnavailable,
-  type WorkerLaunch,
   type SessionStore,
   type StoreCursor,
   type SnapshotPage,
@@ -50,7 +54,6 @@ import {
   createState,
   rebindSession,
   recoverUnavailable,
-  validLaunch,
   retireSession,
   defaultLimits,
   namespaceKey,
@@ -221,7 +224,9 @@ function pageLimit(db: DatabaseSync, maxBytes: number): number {
 
 /** One Host owns the whole database for this connection's lifetime. There is no
  * lease, background worker, side-effect execution or asynchronous transaction hook. */
-export function openSqliteStore(options: StoreOptions): Result<SessionStore> {
+export function openSqliteStore(
+  options: StoreOptions,
+): Result<SessionStore & WorkerLaunchFenceStore> {
   let db: DatabaseSync | undefined;
   try {
     if (
@@ -282,7 +287,7 @@ export function openSqliteStore(options: StoreOptions): Result<SessionStore> {
     return errorResult(error);
   }
 }
-class SqliteSessionStore implements SessionStore {
+class SqliteSessionStore implements SessionStore, WorkerLaunchFenceStore {
   readonly #db: DatabaseSync;
   readonly #bounds: Bounds;
   readonly #owned = new Map<string, string>();

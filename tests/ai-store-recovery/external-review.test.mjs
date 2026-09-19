@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { writeFileSync, readFileSync } from "node:fs";
+import { writeFileSync, readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { runtimeArtifact } from "../../scripts/ai-host-artifacts.mjs";
 import { spawnSync } from "node:child_process";
 import {
   fixtureSession,
@@ -13,12 +15,16 @@ test("runtime declaration and CI preflight reject an unverified Node version bef
   const root = JSON.parse(
     readFileSync(new URL("../../package.json", import.meta.url)),
   );
-  const adapter = JSON.parse(
-    readFileSync(
-      new URL("../../packages/ai-store-sqlite/package.json", import.meta.url),
-    ),
-  );
-  assert.equal(root.engines.node, adapter.engines.node);
+  for (const path of [
+    "packages/ai-store-sqlite",
+    "packages/ai-host",
+    "apps/ai-host",
+  ]) {
+    const manifest = JSON.parse(
+      readFileSync(new URL(`../../${path}/package.json`, import.meta.url)),
+    );
+    assert.equal(root.engines.node, manifest.engines.node, path);
+  }
   const result = spawnSync(
     process.execPath,
     [
@@ -149,4 +155,24 @@ test("owned schema and persisted wire corruption are never reported as caller in
     error: { code: "storage_corrupt", retry: "never" },
   });
   assert.deepEqual(readFileSync(path), bytes);
+});
+
+test("runtime bundle version is selected by the manifest and unknown version/platform pairs fail before download", (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "rss-runtime-version-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const root = JSON.parse(
+    readFileSync(new URL("../../package.json", import.meta.url)),
+  );
+  const manifest = join(directory, "package.json");
+  writeFileSync(manifest, JSON.stringify(root));
+  const artifact = runtimeArtifact(directory, "darwin-arm64");
+  assert.equal(artifact.version, root.engines.node);
+  assert.match(artifact.sha256, /^[a-f0-9]{64}$/);
+  assert.throws(
+    () => runtimeArtifact(directory, "unverified-platform"),
+    /No verified Node artifact/,
+  );
+  root.engines.node = "99.0.0";
+  writeFileSync(manifest, JSON.stringify(root));
+  assert.throws(() => runtimeArtifact(directory, "darwin-arm64"), /99\.0\.0/);
 });

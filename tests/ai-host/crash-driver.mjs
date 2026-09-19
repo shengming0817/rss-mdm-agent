@@ -34,6 +34,7 @@ const options = {
 const host = unwrap(
   await createHost({
     store,
+    launchFences: store,
     resolve: async (caller, options, namespace) => ({
       configuration: {
         namespace,

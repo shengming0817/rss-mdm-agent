@@ -163,3 +163,20 @@ export function installHost(root, directory, production = false) {
   );
   return createHash("sha256").update(readFileSync(lockPath)).digest("hex");
 }
+
+/** Root manifest owns the runtime version; each approved archive binds its platform and SQLite ABI. */
+export function runtimeArtifact(root, target) {
+  const version = JSON.parse(readFileSync(join(root, "package.json"), "utf8"))
+    .engines.node;
+  const artifacts = {
+    "24.14.1/darwin-arm64": {
+      sha256:
+        "25495ff85bd89e2d8a24d88566d7e2f827c6b0d3d872b2cebf75371f93fcb1fe",
+      sqlite: "3.51.2",
+    },
+  };
+  const artifact = artifacts[`${version}/${target}`];
+  if (!artifact)
+    throw new Error(`No verified Node artifact for ${version}/${target}`);
+  return { version, target, ...artifact };
+}

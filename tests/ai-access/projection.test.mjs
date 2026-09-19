@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   emptyView,
   applyUpdate,
+  restoreSnapshot,
 } from "../../packages/ai-client/dist/projection.js";
 import { fixtureSession } from "../../packages/ai-contract/dist/testing/index.js";
 const session = fixtureSession();
@@ -111,4 +112,31 @@ test("tool proposals and results use the same stable reducer as snapshot replay"
     status: "completed",
     result: { disposition: "returned", text: "content" },
   });
+});
+
+test("snapshot session health is independent of attachment and historical recovery events", () => {
+  for (const status of ["active", "recovery_required", "retired"]) {
+    const current = { ...session, status };
+    const view = emptyView(current, 1);
+    restoreSnapshot(view, [
+      {
+        session: current,
+        events: [
+          {
+            ...event(1, { type: "session_recovery_unavailable" }).event,
+            commandId: undefined,
+          },
+        ],
+        commands: [],
+        interactions: [],
+        surfaces: [],
+      },
+    ]);
+    view.connection = "attached";
+    assert.equal(view.status, status);
+  }
+  const live = emptyView(session, 0);
+  live.connection = "attached";
+  applyUpdate(live, event(1, { type: "session_recovery_unavailable" }));
+  assert.equal(live.status, "recovery_required");
 });

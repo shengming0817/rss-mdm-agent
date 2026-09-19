@@ -12,13 +12,19 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
-import { packHost, installHost, run } from "./ai-host-artifacts.mjs";
+import {
+  packHost,
+  installHost,
+  run,
+  runtimeArtifact,
+} from "./ai-host-artifacts.mjs";
 import { sourceState, sameCommittedSource } from "./source-state.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url)),
   start = sourceState(root);
-const version = "24.14.1",
-  target = "darwin-arm64",
-  sha256 = "25495ff85bd89e2d8a24d88566d7e2f827c6b0d3d872b2cebf75371f93fcb1fe";
+const { version, target, sha256, sqlite } = runtimeArtifact(
+  root,
+  `${process.platform}-${process.arch}`,
+);
 if (process.platform !== "darwin" || process.arch !== "arm64")
   throw new Error("This runtime artifact is verified only on macOS arm64");
 const directory = join(root, ".local-ci-runs/ai-host-runtime"),
@@ -68,7 +74,7 @@ try {
     join(directory, "bin/node"),
     [
       "--eval",
-      `if(process.versions.node!=='${version}'||process.versions.sqlite!=='3.51.2')process.exit(1)`,
+      `if(process.versions.node!=='${version}'||process.versions.sqlite!=='${sqlite}')process.exit(1)`,
     ],
     directory,
   );

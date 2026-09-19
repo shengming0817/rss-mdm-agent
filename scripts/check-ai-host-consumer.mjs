@@ -57,7 +57,7 @@ import {openSqliteStore} from '@rss-mdm-agent/ai-store-sqlite';import type {Resu
 const unwrap=<T>(r:Result<T>):T=>{if(!r.ok)throw new Error(r.error.code);return r.value;};
 const dir=await mkdtemp(join(tmpdir(),'isolated-host-db-')),caller={tenantId:'t',principalId:'p',authorityId:'a'},budget=()=>({timeoutMs:5000,signal:new AbortController().signal});
 const store=unwrap(openSqliteStore({path:join(dir,'host.sqlite'),mode:'create'}));
-const options:HostOptions={store,resolve:async(caller,options,namespace)=>({configuration:{namespace,provider:options.provider,config:options.config,accountRef:options.accountRef,workingDirectory:dir,permissions:'tools_disabled'},artifact:new URL('../provider.mjs',import.meta.url).href})};
+const options:HostOptions={store,launchFences:store,resolve:async(caller,options,namespace)=>({configuration:{namespace,provider:options.provider,config:options.config,accountRef:options.accountRef,workingDirectory:dir,permissions:'tools_disabled'},artifact:new URL('../provider.mjs',import.meta.url).href})};
 const host:HostPort=unwrap(await createHost(options));
 try{const session=unwrap(await host.createSession(caller,{provider:'fake',config:{id:'c',revision:'1'},accountRef:'a',profile:'conversation'},budget()));
 const command:Command={schemaVersion:2,kind:'command',commandId:'prompt',sessionId:session.namespace.sessionId,expiresAtMs:Date.now()+10000,input:{type:'prompt',policy:'queue_next',text:'quick'}};

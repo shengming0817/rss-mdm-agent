@@ -44,6 +44,7 @@ export async function startLocalApp(configurationPath: string) {
   artifact.searchParams.set("configuration", path);
   const created = await createHost({
     store,
+    launchFences: store,
     onDiagnostic: (diagnostic) =>
       process.stderr.write(`AI Host ${diagnostic.stage}: ${diagnostic.code}\n`),
     resolve: async (caller, options, namespace) => {

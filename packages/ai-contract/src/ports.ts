@@ -286,15 +286,6 @@ export interface SessionStore extends Closeable {
   listSessions(caller: Caller, query: PageQuery): Promise<Result<SessionPage>>;
   rebind(input: SessionRebind): Promise<Result<Session>>;
   recoverUnavailable(input: RecoveryUnavailable): Promise<Result<Session>>;
-  reserveLaunch(launch: WorkerLaunch): Promise<Result<void>>;
-  registerLaunch(
-    namespace: Namespace,
-    launchId: Id,
-    rootPid: number,
-    pgid: number,
-  ): Promise<Result<void>>;
-  releaseLaunch(namespace: Namespace, launchId: Id): Promise<Result<void>>;
-  launches(): Promise<Result<readonly WorkerLaunch[]>>;
   events(
     namespace: Namespace,
     after: Counter,
@@ -358,23 +349,6 @@ export interface SessionRebind {
   readonly eventId: Id;
 }
 
-/** Durable launch fence; reservation precedes spawn and SDK activation. */
-export type WorkerLaunch = {
-  readonly namespace: Namespace;
-  readonly launchId: Id;
-  readonly artifact: string;
-} & (
-  | {
-      readonly phase: "reserved";
-      readonly rootPid?: never;
-      readonly pgid?: never;
-    }
-  | {
-      readonly phase: "registered";
-      readonly rootPid: number;
-      readonly pgid: number;
-    }
-);
 export interface RecoveryUnavailable {
   readonly namespace: Namespace;
   readonly expectedRevision: Counter;

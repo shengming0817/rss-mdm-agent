@@ -17,6 +17,10 @@
     "./worker": {
       "types": "./dist/worker.d.ts",
       "import": "./dist/worker.js"
+    },
+    "./launch-fence": {
+      "types": "./dist/launch-fence.d.ts",
+      "import": "./dist/launch-fence.js"
     }
   },
   "scripts": {

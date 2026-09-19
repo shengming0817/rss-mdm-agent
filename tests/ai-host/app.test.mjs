@@ -14,12 +14,13 @@ import {
 import { createModelServer } from "../ai-adapters/claude/model-fixture.mjs";
 
 test("local app uses a private ACP socket and a real SDK worker against fixed model transport", async () => {
+  let finishReply;
+  const heldReply = new Promise((resolve) => {
+    finishReply = () => resolve([{ type: "text", text: "real isolated SDK" }]);
+  });
   const directory = await mkdtemp(join(tmpdir(), "rss-host-app-")),
     requests = [],
-    server = createModelServer(
-      [[{ type: "text", text: "real isolated SDK" }]],
-      requests,
-    );
+    server = createModelServer([heldReply], requests);
   let app, client, socket;
   try {
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -65,6 +66,25 @@ test("local app uses a private ACP socket and a real SDK worker against fixed mo
       expiresAtMs: Date.now() + 30000,
       input: { type: "prompt", policy: "queue_next", text: "hello" },
     });
+    const requestDeadline = Date.now() + 15000;
+    while (requests.length === 0 && Date.now() < requestDeadline)
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(requests.length, 1);
+    const disconnected = once(socket, "close");
+    socket.destroy();
+    await disconnected;
+    await client.close();
+    socket = connect(configuration.socketPath);
+    await once(socket, "connect");
+    client = new RuntimeClient(
+      ndJsonStream(Writable.toWeb(socket), Readable.toWeb(socket)),
+    );
+    await client.initialize();
+    const restored = await client.restore(id);
+    assert.equal(restored.namespace.sessionId, id);
+    assert.equal(restored.status, "active");
+    assert.notEqual(restored.commands.native.state, "terminal");
+    finishReply();
     const deadline = Date.now() + 15000;
     while (
       Date.now() < deadline &&
@@ -89,6 +109,7 @@ test("local app uses a private ACP socket and a real SDK worker against fixed mo
     assert.equal(page.value.items.length, 1);
     assert.equal(requests.length, 1);
   } finally {
+    finishReply();
     await client?.close();
     socket?.destroy();
     await app?.close();

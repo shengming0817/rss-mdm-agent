@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import type {
@@ -50,6 +50,27 @@ export interface ClaudeAdapterOptions {
   clock?: Clock;
   callbackTimeoutMs?: number;
 }
+/** Native transcripts and resume state share the credential trust boundary. */
+function privateDirectory(path: string): string {
+  try {
+    if (!isAbsolute(path) || !process.getuid) throw new Error();
+    mkdirSync(path, { recursive: true, mode: 0o700 });
+    const stat = lstatSync(path);
+    if (
+      !stat.isDirectory() ||
+      stat.isSymbolicLink() ||
+      stat.uid !== process.getuid() ||
+      (stat.mode & 0o077) !== 0
+    )
+      throw new Error();
+    const canonical = realpathSync(path),
+      actual = lstatSync(canonical);
+    if (actual.dev !== stat.dev || actual.ino !== stat.ino) throw new Error();
+    return canonical;
+  } catch {
+    throw new Error("invalid configuration directory");
+  }
+}
 /** No raw SDK option passthrough. Settings, child environment and tool inventory are sealed. */
 export function sdkOptions(resolved: ResolvedClaudeConfiguration): Options {
   const { configuration: config, credential } = resolved;
@@ -75,7 +96,7 @@ export function sdkOptions(resolved: ResolvedClaudeConfiguration): Options {
     throw new Error("invalid configuration");
   const env: Record<string, string> = {
     ANTHROPIC_BASE_URL: resolved.apiUrl,
-    CLAUDE_CONFIG_DIR: resolved.configurationDirectory,
+    CLAUDE_CONFIG_DIR: privateDirectory(resolved.configurationDirectory),
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
   };
   for (const key of ["PATH", "SystemRoot", "WINDIR", "TEMP", "TMP", "TMPDIR"])

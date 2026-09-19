@@ -40,6 +40,8 @@ import {
 } from "@rss-mdm-agent/ai-contract/transitions";
 import { WorkerPort, groupEmpty } from "./process.js";
 import { Output } from "./queue.js";
+import { Deadline } from "./deadline.js";
+import type { WorkerLaunchFenceStore } from "./launch-fence.js";
 
 export interface HostDiagnostic {
   readonly stage: "admission" | "dispatch" | "observe" | "recovery" | "close";
@@ -48,6 +50,7 @@ export interface HostDiagnostic {
 export interface HostOptions {
   readonly onDiagnostic?: (diagnostic: HostDiagnostic) => void;
   readonly store: SessionStore;
+  readonly launchFences: WorkerLaunchFenceStore;
   /** Trusted composition. Account references are not credentials. */
   resolve(
     caller: Caller,
@@ -125,14 +128,17 @@ export class SessionHost implements HostPort {
     this.workerLimit = options.workerLimit ?? 8;
     this.accountLimit = options.accountWorkerLimit ?? 2;
     this.timeout = options.operationTimeoutMs ?? 30000;
-    if (
-      [this.queueLimit, this.workerLimit, this.accountLimit, this.timeout].some(
-        (n) => !Number.isSafeInteger(n) || n < 1,
-      )
-    )
-      throw new TypeError("Host limits");
   }
   static async create(options: HostOptions): Promise<Result<SessionHost>> {
+    if (
+      [
+        options.queueLimit ?? 64,
+        options.workerLimit ?? 8,
+        options.accountWorkerLimit ?? 2,
+        options.operationTimeoutMs ?? 30000,
+      ].some((n) => !Number.isSafeInteger(n) || n < 1 || n > 2147483647)
+    )
+      return fail("invalid_input");
     if (hostOwners.has(options.store)) return fail("unavailable");
     const host = new SessionHost(options);
     hostOwners.add(options.store);
@@ -168,7 +174,9 @@ export class SessionHost implements HostPort {
   }
   private track(task: Promise<unknown>) {
     this.tasks.add(task);
-    void task.finally(() => this.tasks.delete(task)).catch(() => {});
+    void task
+      .catch((error) => this.diagnose("recovery", error))
+      .finally(() => this.tasks.delete(task));
   }
   private admit<T>(
     namespace: Namespace,
@@ -212,10 +220,15 @@ export class SessionHost implements HostPort {
   /** Scan launch fences before any provider restore. Saved process IDs never authorize signaling. */
   private async start(): Promise<Result<void>> {
     return this.result(async () => {
-      for (const launch of requireValue(await this.store.launches())) {
+      for (const launch of requireValue(
+        await this.options.launchFences.launches(),
+      )) {
         if (launch.phase === "reserved" || groupEmpty(launch.pgid))
           requireValue(
-            await this.store.releaseLaunch(launch.namespace, launch.launchId),
+            await this.options.launchFences.releaseLaunch(
+              launch.namespace,
+              launch.launchId,
+            ),
           );
         else {
           this.blocked.add(namespaceKey(launch.namespace));
@@ -246,14 +259,19 @@ export class SessionHost implements HostPort {
   ): Promise<Result<Session>> {
     if (this.closing || b.signal.aborted) return fail("unavailable");
     // Retry orphan collection on admission, without a heartbeat or signaling old PIDs.
-    for (const launch of requireValue(await this.store.launches())) {
+    for (const launch of requireValue(
+      await this.options.launchFences.launches(),
+    )) {
       const blockedKey = namespaceKey(launch.namespace);
       if (
         this.blocked.has(blockedKey) &&
         (launch.phase === "reserved" || groupEmpty(launch.pgid))
       ) {
         requireValue(
-          await this.store.releaseLaunch(launch.namespace, launch.launchId),
+          await this.options.launchFences.releaseLaunch(
+            launch.namespace,
+            launch.launchId,
+          ),
         );
         this.blocked.delete(blockedKey);
       }
@@ -262,13 +280,18 @@ export class SessionHost implements HostPort {
     if (this.runtimes.has(key))
       return fail("reconciliation_required", "reconcile_first");
     if (this.blocked.has(key)) {
-      const fence = requireValue(await this.store.launches()).find(
-        (row) => namespaceKey(row.namespace) === key,
-      );
+      const fence = requireValue(
+        await this.options.launchFences.launches(),
+      ).find((row) => namespaceKey(row.namespace) === key);
       if (fence?.phase === "registered" && !groupEmpty(fence.pgid))
         return fail("reconciliation_required", "reconcile_first");
       if (fence)
-        requireValue(await this.store.releaseLaunch(namespace, fence.launchId));
+        requireValue(
+          await this.options.launchFences.releaseLaunch(
+            namespace,
+            fence.launchId,
+          ),
+        );
       this.blocked.delete(key);
     }
     const resolved = await this.options.resolve(
@@ -302,7 +325,7 @@ export class SessionHost implements HostPort {
     )
       return fail("limit_exceeded");
     const worker = new WorkerPort(
-      this.store,
+      this.options.launchFences,
       namespace,
       resolved.artifact,
       resolved.admission?.tools,
@@ -317,8 +340,10 @@ export class SessionHost implements HostPort {
       abort: new AbortController(),
     };
     this.runtimes.set(key, runtime);
-    worker.onFailure = () =>
+    worker.onFailure = () => {
+      this.isolate(namespace);
       this.track(this.mailbox(namespace, () => this.unavailable(namespace)));
+    };
     try {
       requireValue(await worker.start(configuration, b));
       if (this.closing || b.signal.aborted)
@@ -366,8 +391,6 @@ export class SessionHost implements HostPort {
       }
       runtime.verified = verified;
       worker.admitTools();
-      worker.onFailure = () =>
-        this.track(this.mailbox(namespace, () => this.unavailable(namespace)));
       if (previous) {
         await this.publishSince(namespace, previous.lastSequence);
         const snapshot = await this.snapshot(namespace);
@@ -424,7 +447,8 @@ export class SessionHost implements HostPort {
         if (previous.status === "retired") return fail("session_gone");
         if (
           this.runtimes.get(namespaceKey(namespace))?.verified &&
-          previous.status === "active"
+          previous.status === "active" &&
+          !this.blocked.has(namespaceKey(namespace))
         )
           return ok(previous);
         try {
@@ -488,6 +512,8 @@ export class SessionHost implements HostPort {
         sessionId: command.sessionId,
       };
       const result = await this.mailbox(namespace, async () => {
+        if (b.signal.aborted)
+          return fail<Receipt>("unavailable", "same_command");
         const session = requireValue(await this.store.session(namespace)),
           prior = await this.store.command(namespace, command.commandId);
         if (!prior.ok) {
@@ -544,6 +570,8 @@ export class SessionHost implements HostPort {
           type: "status",
           state: "accepted",
         });
+        if (b.signal.aborted)
+          return fail<Receipt>("unavailable", "same_command");
         const receipt = await this.store.accept({
           namespace,
           command,
@@ -561,7 +589,10 @@ export class SessionHost implements HostPort {
       return result;
     });
   }
-  private async snapshot(namespace: Namespace): Promise<{
+  private async snapshot(
+    namespace: Namespace,
+    deadline?: Deadline,
+  ): Promise<{
     session: Session;
     commands: CommandRecord[];
     interactions: Interaction[];
@@ -572,12 +603,12 @@ export class SessionHost implements HostPort {
       interactions: Interaction[] = [],
       surfaces: SurfaceState[] = [];
     do {
-      page = requireValue(
-        await this.store.snapshotPage(namespace, {
+      const read = () =>
+        this.store.snapshotPage(namespace, {
           limit: 256,
           ...(page?.next ? { continuation: page.next } : {}),
-        }),
-      );
+        });
+      page = requireValue(await (deadline ? deadline.wait(read) : read()));
       commands.push(...page.commands);
       interactions.push(...page.interactions);
       surfaces.push(...page.surfaces);
@@ -649,7 +680,12 @@ export class SessionHost implements HostPort {
     if (!runtime?.verified || runtime.abort.signal.aborted) return;
     for (let n = 0; n < 16; n++) {
       const { session, commands } = await this.snapshot(namespace);
-      if (session.status !== "active") return;
+      if (
+        session.status !== "active" ||
+        runtime.abort.signal.aborted ||
+        !runtime.verified
+      )
+        return;
       const pending = commands
         .filter((row) => row.state === "accepted")
         .sort(
@@ -1158,33 +1194,60 @@ export class SessionHost implements HostPort {
       this.retryTimers.add(timer);
     } else this.kick(namespace);
   }
-  private async unavailable(namespace: Namespace) {
-    const session = await this.store.session(namespace);
-    if (!session.ok || session.value.status === "retired") return;
-    if (session.value.status !== "recovery_required") {
-      const s = session.value;
-      requireValue(
-        await this.store.recoverUnavailable({
-          namespace,
-          expectedRevision: s.revision,
-          expectedGeneration: s.binding.generation,
-          eventId: randomUUID(),
-        }),
-      );
-      await this.publishSince(namespace, s.lastSequence);
-    }
+  private isolate(namespace: Namespace): Runtime | undefined {
     const key = namespaceKey(namespace),
       runtime = this.runtimes.get(key);
     if (runtime) {
+      this.blocked.add(key);
+      runtime.verified = undefined;
       runtime.abort.abort();
-      runtime.worker.onFailure = undefined;
-      this.track(
-        runtime.worker.close(budget(2000)).then((result) => {
-          if (result.ok && result.value.processStopped)
-            this.runtimes.delete(key);
-          else this.blocked.add(key);
-        }),
-      );
+      runtime.worker.terminate();
+    }
+    return runtime;
+  }
+  private async unavailable(
+    namespace: Namespace,
+    b = budget(this.timeout),
+  ): Promise<Result<void>> {
+    const key = namespaceKey(namespace),
+      runtime = this.isolate(namespace);
+    const deadline = new Deadline(b);
+    try {
+      const session = await deadline.wait(() => this.store.session(namespace));
+      if (!session.ok && session.error.code !== "session_gone")
+        throw new HostFailure(session.error);
+      if (session.ok && session.value.status === "active") {
+        const s = session.value;
+        requireValue(
+          await deadline.wait(() =>
+            this.store.recoverUnavailable({
+              namespace,
+              expectedRevision: s.revision,
+              expectedGeneration: s.binding.generation,
+              eventId: randomUUID(),
+            }),
+          ),
+        );
+        await deadline.wait(() => this.publishSince(namespace, s.lastSequence));
+      }
+      if (runtime) {
+        const stopped = requireValue(
+          await deadline.wait(() => runtime.worker.close(deadline.budget())),
+        );
+        if (!stopped.processStopped) throw new Error("worker still present");
+        if (this.runtimes.get(key) === runtime) this.runtimes.delete(key);
+        this.blocked.delete(key);
+      }
+      return ok(undefined);
+    } catch (error) {
+      this.diagnose("recovery", error);
+      for (const stream of this.subscribers.get(key) ?? [])
+        stream.end({ type: "resync_required" });
+      return fail("unavailable", "same_command");
+    } finally {
+      // Even an unavailable Store cannot retain callbacks, tools, or a live owned worker.
+      runtime?.worker.terminate();
+      deadline.dispose();
     }
   }
   private publish(namespace: Namespace, item: Subscription) {
@@ -1288,93 +1351,98 @@ export class SessionHost implements HostPort {
   }
   private async stop(b: Budget): Promise<Result<void>> {
     if (this.closed) return ok(undefined);
+    if (
+      !Number.isSafeInteger(b.timeoutMs) ||
+      b.timeoutMs < 1 ||
+      b.timeoutMs > 2147483647
+    )
+      return fail("invalid_input");
     this.closing = true;
-    const deadline = Date.now() + b.timeoutMs;
+    const deadline = new Deadline(b);
     for (const abort of this.admissions.values()) abort.abort();
-    if (this.admissions.size) {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const drained = await Promise.race([
-        Promise.allSettled([...this.admissions.keys()]).then(() => true),
-        new Promise<false>((resolve) => {
-          timer = setTimeout(
-            () => resolve(false),
-            Math.max(1, deadline - Date.now()),
-          );
-        }),
-      ]).finally(() => clearTimeout(timer));
-      if (!drained) return fail("unavailable", "same_command");
-    }
     for (const timer of this.retryTimers) clearTimeout(timer);
     this.retryTimers.clear();
-    for (const [key, runtime] of this.runtimes) {
-      const namespace = JSON.parse(key) as string[],
-        ns = {
-          tenantId: namespace[0],
-          principalId: namespace[1],
-          authorityId: namespace[2],
-          sessionId: namespace[3],
-        };
-      const snapshot = await this.snapshot(ns);
-      for (const record of snapshot.commands.filter(
-        (row) => isOrdinary(row) && row.dispatch && !isSettled(row),
-      )) {
-        await this.accept(
-          ns,
-          {
-            schemaVersion: 2,
-            kind: "command",
-            sessionId: ns.sessionId,
-            commandId: randomUUID(),
-            expiresAtMs: this.now() + Math.max(1, deadline - Date.now()),
-            input: {
-              type: "cancel",
-              targetCommandId: record.command.commandId,
-              generation: snapshot.session.binding.generation,
-              ...(record.dispatch?.nativeRunId
-                ? { nativeRunId: record.dispatch.nativeRunId }
-                : {}),
-            },
-          },
-          b,
-          true,
+    try {
+      await deadline.wait(() =>
+        Promise.allSettled([...this.admissions.keys()]),
+      );
+      for (const [key, runtime] of this.runtimes) {
+        if (runtime.abort.signal.aborted) continue;
+        const [tenantId, principalId, authorityId, sessionId] = JSON.parse(key);
+        const namespace = { tenantId, principalId, authorityId, sessionId };
+        const snapshot = await this.snapshot(namespace, deadline);
+        for (const record of snapshot.commands.filter(
+          (row) => isOrdinary(row) && row.dispatch && !isSettled(row),
+        )) {
+          requireValue(
+            await deadline.wait(() =>
+              this.accept(
+                namespace,
+                {
+                  schemaVersion: 2,
+                  kind: "command",
+                  sessionId,
+                  commandId: randomUUID(),
+                  expiresAtMs: this.now() + deadline.budget().timeoutMs,
+                  input: {
+                    type: "cancel",
+                    targetCommandId: record.command.commandId,
+                    generation: snapshot.session.binding.generation,
+                    ...(record.dispatch?.nativeRunId
+                      ? { nativeRunId: record.dispatch.nativeRunId }
+                      : {}),
+                  },
+                },
+                deadline.budget(),
+                true,
+              ),
+            ),
+          );
+        }
+        runtime.worker.onFailure = undefined;
+      }
+      // Leave time for cancellation observations, bounded by the same shutdown deadline.
+      const settleUntil =
+        Date.now() +
+        Math.min(1000, Math.max(0, deadline.budget().timeoutMs - 1000));
+      while (this.tasks.size && Date.now() < settleUntil)
+        await deadline.wait(
+          () => new Promise((resolve) => setTimeout(resolve, 10)),
+        );
+      for (const [key, runtime] of [...this.runtimes]) {
+        runtime.abort.abort();
+        runtime.worker.terminate();
+        const [tenantId, principalId, authorityId, sessionId] = JSON.parse(key);
+        const namespace = { tenantId, principalId, authorityId, sessionId };
+        requireValue(
+          await deadline.wait(() =>
+            this.mailbox(namespace, () =>
+              this.unavailable(namespace, deadline.budget()),
+            ),
+          ),
         );
       }
-      runtime.worker.onFailure = undefined;
-    }
-    // Allow cancellation observations to settle without admitting the next queued turn.
-    const settleUntil = Math.min(deadline - 1000, Date.now() + 1000);
-    while (this.tasks.size && Date.now() < settleUntil && !b.signal.aborted)
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    let stopped = true;
-    for (const [key, runtime] of [...this.runtimes]) {
-      runtime.abort.abort();
-      const result = await runtime.worker.close({
-        timeoutMs: Math.max(1, deadline - Date.now()),
-        signal: b.signal,
-      });
-      if (!result.ok || !result.value.processStopped) {
-        this.diagnose(
-          "close",
-          !result.ok ? new HostFailure(result.error) : undefined,
-        );
-        stopped = false;
-        continue;
+      const result = await deadline.wait(() =>
+        this.store.close(deadline.budget()),
+      );
+      if (result.ok) this.closed = true;
+      return result;
+    } catch (error) {
+      this.diagnose("close", error);
+      return fail("unavailable", "same_command");
+    } finally {
+      // This synchronous fallback runs even when Store/admission/mailbox awaits never settle.
+      for (const [key, runtime] of this.runtimes) {
+        this.blocked.add(key);
+        runtime.verified = undefined;
+        runtime.abort.abort();
+        runtime.worker.terminate();
       }
-      const [tenantId, principalId, authorityId, sessionId] = JSON.parse(key);
-      const namespace = { tenantId, principalId, authorityId, sessionId };
-      await this.mailbox(namespace, () => this.unavailable(namespace));
-      this.runtimes.delete(key);
+      for (const listeners of this.subscribers.values())
+        for (const stream of listeners) stream.end();
+      this.subscribers.clear();
+      deadline.dispose();
     }
-    for (const listeners of this.subscribers.values())
-      for (const stream of listeners) stream.end();
-    this.subscribers.clear();
-    if (!stopped) return fail("unavailable", "same_command");
-    const result = await this.store.close({
-      timeoutMs: Math.max(1, deadline - Date.now()),
-      signal: b.signal,
-    });
-    if (result.ok) this.closed = true;
-    return result;
   }
 }
 export async function createHost(

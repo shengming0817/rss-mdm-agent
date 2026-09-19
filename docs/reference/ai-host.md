@@ -9,3 +9,5 @@
 | Node 官方 [v24.14.1 SHASUMS256](https://nodejs.org/download/release/v24.14.1/SHASUMS256.txt)                                                                                   | macOS arm64 archive 的固定 SHA-256，运行包保留 Node LICENSE 与实际平台标记。                                |
 
 逐文件 owner：`packages/ai-host/src/index.ts` 持有 mailbox 与公共 Host；`channel.ts` 持有有界 IPC；`process.ts` 持有当前进程所有权；`bootstrap.ts` 持有激活前后的隔离边界；`apps/ai-host` 持有可信本地装配。A01 transition / SQLite schema 仍分别由原包持有，没有平行状态库。
+
+PR #1061 修复参考：Node `v24.14.1/lib/child_process.js` 的 timeout/kill 与 exit 分离；[OpenSSH authfile.c](https://github.com/openssh/openssh-portable/blob/master/authfile.c) 的私有材料 mode 检查（本产品额外要求当前 UID 及非 symlink）；[Kubernetes pod_workers.go](https://github.com/kubernetes/kubernetes/blob/master/pkg/kubelet/pod_workers.go) 的独立 worker 终止状态。Host port 与 `deadline.ts` 属本仓实现，未复制上游源码。

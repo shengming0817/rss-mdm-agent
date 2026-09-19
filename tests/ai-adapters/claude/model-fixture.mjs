@@ -13,7 +13,7 @@ export function createModelServer(replies, requests = []) {
       }
       const body = JSON.parse(data);
       requests.push(body);
-      const blocks = replies.shift();
+      const blocks = await replies.shift();
       if (!blocks) throw new Error("unexpected model request");
       if (blocks === "http-error") {
         res.writeHead(400, { "content-type": "application/json" });

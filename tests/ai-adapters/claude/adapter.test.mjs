@@ -5,8 +5,10 @@ import {
   fixtureSession,
 } from "../../../packages/ai-contract/dist/testing/index.js";
 import assert from "node:assert/strict";
-import { test } from "node:test";
-import { readFileSync } from "node:fs";
+import { test, after } from "node:test";
+import { readFileSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { createTestAdapter } from "../../../packages/ai-adapters/claude/dist/testing.js";
@@ -15,6 +17,10 @@ import {
   unwrap,
   runProviderConformance,
 } from "../../../packages/ai-contract/dist/testing/index.js";
+const configurationDirectory = mkdtempSync(
+  join(tmpdir(), "rss-sdk-test-config-"),
+);
+after(() => rmSync(configurationDirectory, { recursive: true, force: true }));
 const configuration = {
   provider: "claude",
   config: { id: "claude-config", revision: "1" },
@@ -68,7 +74,7 @@ function harness({
     {
       resolveConfiguration: async () => ({
         configuration,
-        configurationDirectory: "/tmp/rss-sdk-test-config",
+        configurationDirectory,
         apiUrl: "https://example.invalid",
         credential: { type: "api_key", value: "fixture-secret" },
       }),

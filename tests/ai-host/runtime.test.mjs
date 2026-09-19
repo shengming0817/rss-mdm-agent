@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
 import { createHost } from "../../packages/ai-host/dist/index.js";
+import { groupEmpty } from "../../packages/ai-host/dist/process.js";
 import { openSqliteStore } from "../../packages/ai-store-sqlite/dist/index.js";
 import { runHostConformance } from "../../packages/ai-contract/dist/testing/index.js";
 import { createAccessService } from "../../packages/ai-access/dist/index.js";
@@ -85,6 +86,7 @@ async function setup(t, revision = "1", extras = {}) {
   host = unwrap(
     await createHost({
       store,
+      launchFences: store,
       resolve: async (caller, options, namespace) => ({
         configuration: {
           namespace,
@@ -581,4 +583,139 @@ test("explicit supported steer is attempt-bound and never starts a competing mod
     ).ok,
     false,
   );
+});
+
+for (const option of [
+  "queueLimit",
+  "workerLimit",
+  "accountWorkerLimit",
+  "operationTimeoutMs",
+])
+  test(`Host factory returns invalid_input for invalid ${option}`, async () => {
+    for (const value of [0, -1, NaN, Infinity, 1.5]) {
+      const result = await createHost({
+        store: {},
+        resolve: async () => {},
+        [option]: value,
+      });
+      assert.deepEqual(result, {
+        ok: false,
+        error: { code: "invalid_input", retry: "never" },
+      });
+    }
+  });
+
+for (const method of [
+  "snapshotPage",
+  "accept",
+  "recoverUnavailable",
+  "releaseLaunch",
+  "close",
+])
+  test(`Host close bounds a hanging Store ${method} and still terminates the worker`, async (t) => {
+    const f = await setup(t);
+    unwrap(await f.host.submit(caller, f.command("closing-run"), budget()));
+    await until(
+      async () => (await f.record("closing-run")).state === "running",
+    );
+    const pid = (await f.trace()).find((row) => row.type === "activate").pid;
+    const original = f.store[method].bind(f.store);
+    let release;
+    const held = new Promise((resolve) => {
+      release = resolve;
+    });
+    f.store[method] = async (...args) => {
+      await held;
+      return original(...args);
+    };
+    try {
+      const result = await Promise.race([
+        f.host.close(budget(150)),
+        new Promise((resolve) =>
+          setTimeout(() => resolve("deadline exceeded"), 700),
+        ),
+      ]);
+      assert.notEqual(result, "deadline exceeded");
+      assert.equal(result.ok, false);
+      assert.equal(result.error.retry, "same_command");
+      await until(() => groupEmpty(pid));
+    } finally {
+      f.store[method] = original;
+      release();
+    }
+  });
+
+for (const fault of ["session_result", "recovery_rejection", "recovery_hang"])
+  test(`worker IPC failure isolates the runtime and diagnoses ${fault}`, async (t) => {
+    const diagnostics = [];
+    const f = await setup(t, "1", {
+      hostOptions: {
+        operationTimeoutMs: 100,
+        onDiagnostic: (d) => diagnostics.push(d),
+      },
+    });
+    const runtime = [...f.host.runtimes.values()][0];
+    const pid = (await f.trace()).find((row) => row.type === "activate").pid;
+    const method =
+      fault === "session_result" ? "session" : "recoverUnavailable";
+    const original = f.store[method].bind(f.store);
+    let release;
+    const held = new Promise((resolve) => {
+      release = resolve;
+    });
+    f.store[method] = async (...args) => {
+      if (fault === "session_result")
+        return {
+          ok: false,
+          error: { code: "storage_corrupt", retry: "never" },
+        };
+      if (fault === "recovery_rejection")
+        throw new Error("private storage detail");
+      await held;
+      return original(...args);
+    };
+    try {
+      // Break a real worker IPC channel while the OS process is still alive.
+      runtime.worker.control.close();
+      await until(() => diagnostics.some((d) => d.stage === "recovery"));
+      await until(() => groupEmpty(pid));
+      assert.equal(runtime.abort.signal.aborted, true);
+      assert.equal(
+        (await f.host.submit(caller, f.command("after-failure"), budget())).ok,
+        false,
+      );
+      assert.equal(
+        (await f.trace()).filter((row) => row.type === "activate").length,
+        1,
+      );
+    } finally {
+      f.store[method] = original;
+      release();
+    }
+  });
+
+test("client restore keeps recovery_required visible on an attached real Host session", async (t) => {
+  const f = await setup(t),
+    service = createAccessService({ host: f.host, sessionOptions: f.options });
+  const [a, b] = localTransportPair();
+  service.connect(a, caller);
+  const client = new RuntimeClient(b);
+  t.after(async () => {
+    await client.close();
+    await service.close();
+  });
+  await client.initialize();
+  const id = f.session.namespace.sessionId;
+  await client.restore(id);
+  const runtime = [...f.host.runtimes.values()][0];
+  runtime.worker.control.close();
+  await until(
+    async () =>
+      unwrap(await f.store.session(f.session.namespace)).status ===
+      "recovery_required",
+  );
+  const view = await client.restore(id);
+  assert.equal(view.connection, "attached");
+  assert.equal(view.status, "recovery_required");
+  await assert.rejects(client.submit(f.command("unavailable")));
 });
