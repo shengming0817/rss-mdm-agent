@@ -92,7 +92,7 @@ export default defineConfig({plugins:[{name:'forbid-server-imports',enforce:'pre
   run("pnpm", ["exec", "vite", "build"]);
   writeFileSync(
     join(dir, "consumer-exports.mjs"),
-    'export {createAccessService} from "@rss-mdm-agent/ai-access"; export {FakeHost,MemorySessionStore,fixtureCaller,seedSurface,surfaceCommit,unwrap} from "@rss-mdm-agent/ai-contract/testing"; export {channelStream} from "@rss-mdm-agent/ai-client";',
+    'export {createAccessService} from "@rss-mdm-agent/ai-access"; export {FakeHost,MemorySessionStore,fixtureCaller,seedSurface,surfaceCommit,readSnapshot,unwrap} from "@rss-mdm-agent/ai-contract/testing"; export {channelStream} from "@rss-mdm-agent/ai-client";',
   );
   const {
     createAccessService,
@@ -101,6 +101,7 @@ export default defineConfig({plugins:[{name:'forbid-server-imports',enforce:'pre
     fixtureCaller,
     seedSurface,
     surfaceCommit,
+    readSnapshot,
     unwrap,
     channelStream,
   } = await import(pathToFileURL(join(dir, "consumer-exports.mjs")).href);
@@ -164,11 +165,17 @@ export default defineConfig({plugins:[{name:'forbid-server-imports',enforce:'pre
       status: operation === "delete" ? "deleted" : "active",
       messages: [...surface.messages, message],
     };
-    const current = unwrap(await store.session(seeded.session.namespace));
-    unwrap(
-      await store.commit(surfaceCommit(current, surface, seeded.interaction)),
+    const snapshot = unwrap(
+      await readSnapshot(store, seeded.session.namespace),
     );
-    host.notify(current.namespace);
+    const interaction = snapshot.interactions.find(
+      (row) => row.interactionId === surface.interactionId,
+    );
+    if (!interaction) throw new Error("Missing surface interaction");
+    unwrap(
+      await store.commit(surfaceCommit(snapshot.session, surface, interaction)),
+    );
+    host.notify(snapshot.session.namespace);
   }
   server = createServer(async (req, res) => {
     try {

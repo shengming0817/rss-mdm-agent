@@ -15,6 +15,7 @@ const event = (sequence, body) => ({
     eventId: `e-${sequence}`,
     sequence,
     commandId: "c",
+    attemptId: "attempt-c",
     generation: session.binding.generation,
     body,
   },
@@ -53,6 +54,32 @@ test("public view has one cursor and no stale copy of authoritative Session meta
   applyUpdate(view, event(1, { type: "status", state: "accepted" }));
   applyUpdate(view, event(2, { type: "terminal", outcome: "completed" }));
   assert.equal(view.cursor, 2);
+});
+
+test("recovery invalidation keeps durable text, clears transient text, and rejects late deltas", () => {
+  const view = emptyView(session, 0);
+  const failure = { code: "stale_binding", retry: "never" };
+  const delta = {
+    type: "delta",
+    commandId: "c",
+    messageId: "transient",
+    generation: session.binding.generation,
+    text: "uncommitted",
+  };
+  applyUpdate(view, event(1, { type: "status", state: "running" }));
+  applyUpdate(
+    view,
+    event(2, { type: "text", messageId: "saved", text: "durable" }),
+  );
+  applyUpdate(view, delta);
+  assert.equal(view.messages["c/transient"].text, "uncommitted");
+  applyUpdate(view, event(3, { type: "invalidated", failure }));
+  applyUpdate(view, { ...delta, text: "late" });
+  applyUpdate(view, event(4, { type: "status", state: "running" }));
+  assert.deepEqual(view.commands.c, { state: "invalidated", failure });
+  assert.deepEqual(Object.keys(view.messages), ["c/saved"]);
+  assert.equal(view.messages["c/saved"].text, "durable");
+  assert.equal(view.cursor, 4);
 });
 
 test("tool proposals and results use the same stable reducer as snapshot replay", () => {
