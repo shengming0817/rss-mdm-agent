@@ -1,0 +1,13 @@
+{
+  "name": "@rss-mdm-agent/ai-store-sqlite",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "files": ["dist", "README.md", "LICENSE"],
+  "exports": {".": {"types": "./dist/index.d.ts", "import": "./dist/index.js"}},
+  "scripts": {"build": "tsc -p tsconfig.json"},
+  "peerDependencies": {"@rss-mdm-agent/ai-contract": "0.1.0"},
+  "devDependencies": {"@rss-mdm-agent/ai-contract": "workspace:*"},
+  "engines": {"node": "24.14.1"}
+}
