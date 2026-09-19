@@ -343,7 +343,8 @@ function reduceCommit(
       return fail("invalid_input");
     if (
       c.dispatch &&
-      c.dispatch.observerGeneration !== batch.expectedGeneration
+      (c.dispatch.observerGeneration !== batch.expectedGeneration ||
+        c.dispatch.nativeThreadId !== state.session.binding.nativeThreadId)
     )
       return fail("stale_binding");
     if (resolution) {
@@ -412,12 +413,13 @@ function reduceCommit(
         return fail("content_conflict");
     }
     if (old?.dispatch && c.dispatch) {
+      if (old.dispatch.nativeThreadId !== c.dispatch.nativeThreadId)
+        return fail("stale_binding");
       for (const key of [
         "attemptId",
         "originGeneration",
         "observerGeneration",
         "nativeSessionId",
-        "nativeThreadId",
         "nativeRunId",
         "nativeRequestId",
         "correlationId",
@@ -445,7 +447,6 @@ function reduceCommit(
         c.dispatch.certainty !== "intent" ||
         c.dispatch.originGeneration !== batch.expectedGeneration ||
         c.dispatch.nativeSessionId !== state.session.binding.nativeSessionId ||
-        c.dispatch.nativeThreadId !== state.session.binding.nativeThreadId ||
         attemptIds.has(c.dispatch.attemptId)
       )
         return fail("invalid_input");

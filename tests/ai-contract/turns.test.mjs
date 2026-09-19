@@ -102,6 +102,31 @@ test("thread identity survives dispatch and restore, and cannot change under the
   }
 });
 
+test("an existing dispatch cannot acquire a thread outside its session binding", async () => {
+  const store = new MemorySessionStore(),
+    session = fixtureSession();
+  unwrap(await store.create(session));
+  let head = await accept(store, fixtureCommand());
+  const record = unwrap(await store.command(head.namespace, "command-1"));
+  unwrap(await store.commit(intent(head, record)));
+  head = unwrap(await store.session(head.namespace));
+  const dispatched = unwrap(await store.command(head.namespace, "command-1"));
+  const changed = {
+    ...dispatched,
+    dispatch: { ...dispatched.dispatch, nativeThreadId: "foreign-thread" },
+  };
+  assert.equal(
+    (
+      await store.commit(
+        commandCommit(head, changed, [
+          { type: "dispatch", attempt: changed.dispatch },
+        ]),
+      )
+    ).ok,
+    false,
+  );
+});
+
 test("steer observations use their own request; unresolved steer prevents clearing its turn", async () => {
   const store = new MemorySessionStore(),
     session = fixtureSession();
