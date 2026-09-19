@@ -32,7 +32,7 @@ export const rustConsumers = [
     example: "ai-session-consumer.rs",
     locals: ["ai-session-contract"],
     registry: ["serde_json"],
-    fixtures: ["crates/ai-session-contract/tests/fixtures/events.json"],
+    fixtures: ["packages/ai-contract/src/testing/fixtures.json"],
   },
   {
     name: "execution-interaction",

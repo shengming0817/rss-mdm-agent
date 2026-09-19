@@ -1,0 +1,671 @@
+{
+  "valid": [
+    {
+      "schemaVersion": 2,
+      "kind": "command",
+      "sessionId": "session-1",
+      "commandId": "command-1",
+      "expiresAtMs": 1000,
+      "input": {
+        "type": "prompt",
+        "text": "fixture text",
+        "policy": "queue_next"
+      }
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "receipt",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "commandId": "command-1",
+      "contentHash": "273d2bc05c0cb23b02f666dff841b992d7839f7c43352570827c46ab4b6b0de7",
+      "acceptedAtMs": 0,
+      "retryUntilMs": 100,
+      "receiptUntilMs": 200,
+      "acceptedRevision": 1
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "commandRecord",
+      "command": {
+        "schemaVersion": 2,
+        "kind": "command",
+        "sessionId": "session-1",
+        "commandId": "command-1",
+        "expiresAtMs": 1000,
+        "input": {
+          "type": "prompt",
+          "text": "fixture text",
+          "policy": "queue_next"
+        }
+      },
+      "receipt": {
+        "schemaVersion": 2,
+        "kind": "receipt",
+        "namespace": {
+          "tenantId": "tenant-1",
+          "principalId": "user-1",
+          "authorityId": "authority-1",
+          "sessionId": "session-1"
+        },
+        "commandId": "command-1",
+        "contentHash": "273d2bc05c0cb23b02f666dff841b992d7839f7c43352570827c46ab4b6b0de7",
+        "acceptedAtMs": 0,
+        "retryUntilMs": 100,
+        "receiptUntilMs": 200,
+        "acceptedRevision": 1
+      },
+      "state": "accepted"
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "session",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "revision": 0,
+      "lastSequence": 0,
+      "binding": {
+        "provider": "fake",
+        "providerVersion": "fixture-1",
+        "adapterVersion": "fixture-1",
+        "generation": "generation-1",
+        "accountRef": "account-1",
+        "nativeSessionId": "native-1",
+        "config": {
+          "id": "config-1",
+          "revision": "1"
+        }
+      },
+      "capabilities": {
+        "continuation": "unsupported",
+        "cancellation": "request_only",
+        "tools": "disabled",
+        "steer": "unsupported",
+        "fork": "unsupported",
+        "subagent": "unsupported",
+        "terminal": "unsupported",
+        "structuredQuestion": "unsupported",
+        "multimodal": "unsupported"
+      },
+      "status": "active"
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "interaction",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "interactionId": "i-1",
+      "commandId": "command-1",
+      "generation": "generation-1",
+      "nativeRequestId": "r-1",
+      "expiresAtMs": 100,
+      "status": "pending",
+      "callbackLifetime": "generation_bound"
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "delivery",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "operationId": "op-1",
+      "eventId": "event-1",
+      "target": "execution-service",
+      "contentHash": "273d2bc05c0cb23b02f666dff841b992d7839f7c43352570827c46ab4b6b0de7",
+      "retry": "receiver_idempotent",
+      "status": "pending",
+      "attempts": 0,
+      "nextAttemptAtMs": 0
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "surface",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "generation": "generation-1",
+      "nativeRunId": "run-1",
+      "surfaceId": "surface-1",
+      "surfaceInstanceId": "surface-instance-1",
+      "revision": 1,
+      "interactionId": "i-1",
+      "sourceComponentId": "button-1",
+      "eventName": "respond",
+      "catalogId": "catalog-1",
+      "catalogVersion": "1",
+      "a2uiVersion": "v0.9.1",
+      "status": "active"
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "surfaceAction",
+      "sessionId": "session-1",
+      "commandId": "action-1",
+      "surfaceInstanceId": "surface-instance-1",
+      "surfaceRevision": 1,
+      "interactionId": "i-1",
+      "generation": "generation-1",
+      "nativeRunId": "run-1"
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "event",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "eventId": "event-1",
+      "sequence": 1,
+      "commandId": "command-1",
+      "generation": "generation-1",
+      "body": {
+        "type": "text",
+        "messageId": "m-1",
+        "text": "你好 <script> inert"
+      }
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "event",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "eventId": "event-2",
+      "sequence": 2,
+      "commandId": "command-1",
+      "generation": "generation-1",
+      "body": {
+        "type": "cancel_dispatched",
+        "confirmation": "request_only"
+      }
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "event",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "eventId": "event-3",
+      "sequence": 3,
+      "commandId": "command-1",
+      "generation": "generation-1",
+      "body": {
+        "type": "tool_proposal",
+        "proposalId": "p-1",
+        "name": "catalog-request",
+        "arguments": {
+          "approved": true,
+          "actor": "untrusted",
+          "nested": [
+            {
+              "value": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "event",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "eventId": "event-4",
+      "sequence": 4,
+      "commandId": "command-1",
+      "generation": "generation-1",
+      "body": {
+        "type": "terminal",
+        "outcome": "interrupted"
+      }
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "event",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "eventId": "event-5",
+      "sequence": 5,
+      "commandId": "command-1",
+      "generation": "generation-1",
+      "body": {
+        "type": "error",
+        "failure": {
+          "code": "reconciliation_required",
+          "retry": "reconcile_first"
+        }
+      }
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "command",
+      "sessionId": "session-1",
+      "commandId": "command-1",
+      "expiresAtMs": 1000,
+      "input": {
+        "type": "cancel",
+        "targetCommandId": "command-1",
+        "generation": "generation-1"
+      }
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "command",
+      "sessionId": "session-1",
+      "commandId": "command-1",
+      "expiresAtMs": 1000,
+      "input": {
+        "type": "respond",
+        "interactionId": "i-1",
+        "generation": "generation-1",
+        "answer": {
+          "option": "deny",
+          "actor": "untrusted"
+        }
+      }
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "command",
+      "sessionId": "session-1",
+      "commandId": "command-1",
+      "expiresAtMs": 1000,
+      "input": {
+        "type": "prompt",
+        "policy": "steer",
+        "text": "steer",
+        "targetRunId": "run-1"
+      }
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "commandRecord",
+      "command": {
+        "schemaVersion": 2,
+        "kind": "command",
+        "sessionId": "session-1",
+        "commandId": "command-1",
+        "expiresAtMs": 1000,
+        "input": {
+          "type": "prompt",
+          "text": "fixture text",
+          "policy": "queue_next"
+        }
+      },
+      "receipt": {
+        "schemaVersion": 2,
+        "kind": "receipt",
+        "namespace": {
+          "tenantId": "tenant-1",
+          "principalId": "user-1",
+          "authorityId": "authority-1",
+          "sessionId": "session-1"
+        },
+        "commandId": "command-1",
+        "contentHash": "273d2bc05c0cb23b02f666dff841b992d7839f7c43352570827c46ab4b6b0de7",
+        "acceptedAtMs": 0,
+        "retryUntilMs": 100,
+        "receiptUntilMs": 200,
+        "acceptedRevision": 1
+      },
+      "state": "dispatching",
+      "dispatch": {
+        "generation": "generation-1",
+        "nativeSessionId": "native-1",
+        "nativeRunId": "run-1",
+        "nativeRequestId": "request-1",
+        "certainty": "submitted"
+      }
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "commandRecord",
+      "command": {
+        "schemaVersion": 2,
+        "kind": "command",
+        "sessionId": "session-1",
+        "commandId": "command-1",
+        "expiresAtMs": 1000,
+        "input": {
+          "type": "prompt",
+          "text": "fixture text",
+          "policy": "queue_next"
+        }
+      },
+      "receipt": {
+        "schemaVersion": 2,
+        "kind": "receipt",
+        "namespace": {
+          "tenantId": "tenant-1",
+          "principalId": "user-1",
+          "authorityId": "authority-1",
+          "sessionId": "session-1"
+        },
+        "commandId": "command-1",
+        "contentHash": "273d2bc05c0cb23b02f666dff841b992d7839f7c43352570827c46ab4b6b0de7",
+        "acceptedAtMs": 0,
+        "retryUntilMs": 100,
+        "receiptUntilMs": 200,
+        "acceptedRevision": 1
+      },
+      "state": "running",
+      "dispatch": {
+        "generation": "generation-1",
+        "nativeSessionId": "native-1",
+        "nativeRunId": "run-1",
+        "nativeRequestId": "request-1",
+        "certainty": "submitted"
+      }
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "commandRecord",
+      "command": {
+        "schemaVersion": 2,
+        "kind": "command",
+        "sessionId": "session-1",
+        "commandId": "command-1",
+        "expiresAtMs": 1000,
+        "input": {
+          "type": "prompt",
+          "text": "fixture text",
+          "policy": "queue_next"
+        }
+      },
+      "receipt": {
+        "schemaVersion": 2,
+        "kind": "receipt",
+        "namespace": {
+          "tenantId": "tenant-1",
+          "principalId": "user-1",
+          "authorityId": "authority-1",
+          "sessionId": "session-1"
+        },
+        "commandId": "command-1",
+        "contentHash": "273d2bc05c0cb23b02f666dff841b992d7839f7c43352570827c46ab4b6b0de7",
+        "acceptedAtMs": 0,
+        "retryUntilMs": 100,
+        "receiptUntilMs": 200,
+        "acceptedRevision": 1
+      },
+      "state": "reconciliation_required",
+      "dispatch": {
+        "generation": "generation-1",
+        "nativeSessionId": "native-1",
+        "nativeRunId": "run-1",
+        "nativeRequestId": "request-1",
+        "certainty": "unknown"
+      }
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "commandRecord",
+      "command": {
+        "schemaVersion": 2,
+        "kind": "command",
+        "sessionId": "session-1",
+        "commandId": "command-1",
+        "expiresAtMs": 1000,
+        "input": {
+          "type": "prompt",
+          "text": "fixture text",
+          "policy": "queue_next"
+        }
+      },
+      "receipt": {
+        "schemaVersion": 2,
+        "kind": "receipt",
+        "namespace": {
+          "tenantId": "tenant-1",
+          "principalId": "user-1",
+          "authorityId": "authority-1",
+          "sessionId": "session-1"
+        },
+        "commandId": "command-1",
+        "contentHash": "273d2bc05c0cb23b02f666dff841b992d7839f7c43352570827c46ab4b6b0de7",
+        "acceptedAtMs": 0,
+        "retryUntilMs": 100,
+        "receiptUntilMs": 200,
+        "acceptedRevision": 1
+      },
+      "state": "terminal",
+      "outcome": "completed"
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "event",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "eventId": "event-1",
+      "sequence": 1,
+      "commandId": "command-1",
+      "generation": "generation-1",
+      "body": {
+        "type": "status",
+        "state": "running"
+      }
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "event",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "eventId": "event-1",
+      "sequence": 1,
+      "commandId": "command-1",
+      "generation": "generation-1",
+      "body": {
+        "type": "tool_result",
+        "proposalId": "p-1",
+        "disposition": "returned",
+        "text": "not execution evidence"
+      }
+    },
+    {
+      "schemaVersion": 2,
+      "kind": "event",
+      "namespace": {
+        "tenantId": "tenant-1",
+        "principalId": "user-1",
+        "authorityId": "authority-1",
+        "sessionId": "session-1"
+      },
+      "eventId": "event-1",
+      "sequence": 1,
+      "commandId": "command-1",
+      "generation": "generation-1",
+      "body": {
+        "type": "interaction",
+        "interactionId": "i-1",
+        "status": "unavailable"
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "old_version",
+      "raw": "{\"schemaVersion\":1,\"kind\":\"command\",\"sessionId\":\"session-1\",\"commandId\":\"command-1\",\"expiresAtMs\":1000,\"input\":{\"type\":\"prompt\",\"text\":\"fixture text\",\"policy\":\"queue_next\"}}",
+      "code": "version"
+    },
+    {
+      "name": "future_version",
+      "raw": "{\"schemaVersion\":3,\"kind\":\"command\",\"sessionId\":\"session-1\",\"commandId\":\"command-1\",\"expiresAtMs\":1000,\"input\":{\"type\":\"prompt\",\"text\":\"fixture text\",\"policy\":\"queue_next\"}}",
+      "code": "version"
+    },
+    {
+      "name": "duplicate_top",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"command\",\"sessionId\":\"session-1\",\"commandId\":\"command-1\",\"commandId\":\"other\",\"expiresAtMs\":1000,\"input\":{\"type\":\"prompt\",\"text\":\"fixture text\",\"policy\":\"queue_next\"}}",
+      "code": "duplicate_key"
+    },
+    {
+      "name": "authority_field",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"command\",\"sessionId\":\"session-1\",\"commandId\":\"command-1\",\"expiresAtMs\":1000,\"input\":{\"type\":\"prompt\",\"text\":\"fixture text\",\"policy\":\"queue_next\"},\"approved\":true}",
+      "code": "schema"
+    },
+    {
+      "name": "missing_steer_target",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"command\",\"sessionId\":\"session-1\",\"commandId\":\"command-1\",\"expiresAtMs\":1000,\"input\":{\"type\":\"prompt\",\"text\":\"fixture text\",\"policy\":\"steer\"}}",
+      "code": "context"
+    },
+    {
+      "name": "unsafe_integer",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"command\",\"sessionId\":\"session-1\",\"commandId\":\"command-1\",\"expiresAtMs\":9007199254740992,\"input\":{\"type\":\"prompt\",\"text\":\"fixture text\",\"policy\":\"queue_next\"}}",
+      "code": "number"
+    },
+    {
+      "name": "bad_id",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"command\",\"sessionId\":\"session-1\",\"commandId\":\"\",\"expiresAtMs\":1000,\"input\":{\"type\":\"prompt\",\"text\":\"fixture text\",\"policy\":\"queue_next\"}}",
+      "code": "schema"
+    },
+    {
+      "name": "comment",
+      "raw": "/* no */{\"schemaVersion\":2,\"kind\":\"command\",\"sessionId\":\"session-1\",\"commandId\":\"command-1\",\"expiresAtMs\":1000,\"input\":{\"type\":\"prompt\",\"text\":\"fixture text\",\"policy\":\"queue_next\"}}",
+      "code": "encoding"
+    },
+    {
+      "name": "trailing_comma",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"command\",\"sessionId\":\"session-1\",\"commandId\":\"command-1\",\"expiresAtMs\":1000,\"input\":{\"type\":\"prompt\",\"text\":\"fixture text\",\"policy\":\"queue_next\"},}",
+      "code": "encoding"
+    },
+    {
+      "name": "malformed",
+      "raw": "{\"secret\":\"do-not-report\"",
+      "code": "encoding"
+    },
+    {
+      "name": "byte_budget",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"command\",\"sessionId\":\"session-1\",\"commandId\":\"command-1\",\"expiresAtMs\":1000,\"input\":{\"type\":\"prompt\",\"text\":\"fixture text\",\"policy\":\"queue_next\"}}",
+      "limits": {
+        "maxBytes": 8
+      },
+      "code": "limit"
+    },
+    {
+      "name": "depth_budget",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"command\",\"sessionId\":\"session-1\",\"commandId\":\"command-1\",\"expiresAtMs\":1000,\"input\":{\"type\":\"prompt\",\"text\":\"fixture text\",\"policy\":\"queue_next\"}}",
+      "limits": {
+        "maxDepth": 1
+      },
+      "code": "limit"
+    },
+    {
+      "name": "node_budget",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"command\",\"sessionId\":\"session-1\",\"commandId\":\"command-1\",\"expiresAtMs\":1000,\"input\":{\"type\":\"prompt\",\"text\":\"fixture text\",\"policy\":\"queue_next\"}}",
+      "limits": {
+        "maxNodes": 1
+      },
+      "code": "limit"
+    },
+    {
+      "name": "text_budget",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"command\",\"sessionId\":\"session-1\",\"commandId\":\"command-1\",\"expiresAtMs\":1000,\"input\":{\"type\":\"prompt\",\"text\":\"fixture text\",\"policy\":\"queue_next\"}}",
+      "limits": {
+        "maxTextBytes": 1
+      },
+      "code": "limit"
+    },
+    {
+      "name": "duplicate_dynamic",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"event\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"eventId\":\"event-3\",\"sequence\":3,\"commandId\":\"command-1\",\"generation\":\"generation-1\",\"body\":{\"type\":\"tool_proposal\",\"proposalId\":\"p-1\",\"name\":\"catalog-request\",\"arguments\":{\"approved\":true,\"actor\":\"untrusted\",\"nested\":[{\"value\":1,\"value\":2}]}}}",
+      "code": "duplicate_key"
+    },
+    {
+      "name": "escaped_duplicate_key",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"event\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"eventId\":\"event-3\",\"sequence\":3,\"commandId\":\"command-1\",\"generation\":\"generation-1\",\"body\":{\"type\":\"tool_proposal\",\"proposalId\":\"p-1\",\"name\":\"catalog-request\",\"arguments\":{\"approved\":true,\"actor\":\"untrusted\",\"nested\":[{\"value\":1,\"\\u0076alue\":2}]}}}",
+      "code": "duplicate_key"
+    },
+    {
+      "name": "lone_surrogate",
+      "raw": "{\"schemaVersion\":2,\"kind\":\"command\",\"sessionId\":\"session-1\",\"commandId\":\"command-1\",\"expiresAtMs\":1000,\"input\":{\"type\":\"prompt\",\"text\":\"\\ud800\",\"policy\":\"queue_next\"}}",
+      "code": "encoding"
+    },
+    {
+      "name": "positive-exponent-overflow",
+      "raw": "{\"schemaVersion\":2,\"expiresAtMs\":1e400}",
+      "code": "number"
+    },
+    {
+      "name": "negative-exponent-overflow",
+      "raw": "{\"schemaVersion\":2,\"expiresAtMs\":-1e400}",
+      "code": "number"
+    }
+  ],
+  "commandHash": "273d2bc05c0cb23b02f666dff841b992d7839f7c43352570827c46ab4b6b0de7",
+  "a2uiServer": [
+    {
+      "version": "v0.9.1",
+      "createSurface": {
+        "surfaceId": "surface-1",
+        "catalogId": "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json"
+      }
+    },
+    {
+      "version": "v0.9.1",
+      "updateComponents": {
+        "surfaceId": "surface-1",
+        "components": [
+          {
+            "id": "root",
+            "component": "Text",
+            "text": "Untrusted display text"
+          }
+        ]
+      }
+    },
+    {
+      "version": "v0.9.1",
+      "updateDataModel": {
+        "surfaceId": "surface-1",
+        "path": "/choice",
+        "value": "pending"
+      }
+    },
+    {
+      "version": "v0.9.1",
+      "deleteSurface": {
+        "surfaceId": "surface-1"
+      }
+    }
+  ]
+}

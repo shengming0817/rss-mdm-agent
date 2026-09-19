@@ -10,8 +10,17 @@ description = "Provider-independent AI conversation and tool proposal contracts"
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
-schemars.workspace = true
 thiserror.workspace = true
 
-[dev-dependencies]
 jsonschema.workspace = true
+sha2.workspace = true
+serde_json_canonicalizer.workspace = true
+regress = "=0.12.0"
+
+[dev-dependencies]
+
+# Fixed tooling only; generated Rust is committed for independent consumers.
+typify = "=0.8.0"
+schemars_codegen = { package = "schemars", version = "=0.8.22" }
+syn = { version = "=2.0.119", features = ["full"] }
+quote = "=1.0.47"
