@@ -1,4 +1,4 @@
-import type { NativeEvent } from "./protocol.js";
+import type { NativeEvent, Inspection } from "./protocol.js";
 type Outcome = NonNullable<NativeEvent["outcome"]>;
 export function outcome(reason: string): Outcome | undefined {
   return (
@@ -16,7 +16,7 @@ export function outcome(reason: string): Outcome | undefined {
 export function history(
   events: readonly any[],
   requestId: string,
-): { status: "unknown" | "terminal"; outcome?: Outcome } {
+): Exclude<Inspection, { status: "running" }> {
   const queues: Record<string, any[]> = { "next-turn": [], "next-step": [] };
   const turns = new Map<number, Set<string>>();
   let open: number | undefined;

@@ -39,7 +39,15 @@ import {
 import { COMPOSITION_ID, ACTIVE_PROFILE_ID } from "./assembly.js";
 import { nativeRuntime } from "./runtime.js";
 import type { NativeEvent, NativeRuntime, RuntimeFactory } from "./protocol.js";
-import { NativeFault, diagnosticReasons, type Operation } from "./protocol.js";
+import {
+  NativeFault,
+  diagnosticReasons,
+  decodeAnswer,
+  type Operation,
+  type OperationRequest,
+  type OperationResponse,
+  type QuestionRequest,
+} from "./protocol.js";
 import {
   bounded,
   copy,
@@ -53,9 +61,8 @@ import {
 } from "./support.js";
 interface Callback {
   id: string;
-  request: Record<string, unknown>;
+  request: QuestionRequest;
   expires: number;
-  answered?: string;
   timer: ReturnType<typeof setTimeout>;
 }
 interface Turn {
@@ -70,6 +77,7 @@ interface Turn {
   queue: Queue<ProviderObservation>;
   observing: boolean;
   callbacks: Map<string, Callback>;
+  answered: Map<string, { hash: string; expires: number }>;
 }
 export class DeepSeekAdapter implements ProviderAgentPort {
   private used = false;
@@ -89,6 +97,7 @@ export class DeepSeekAdapter implements ProviderAgentPort {
   private readonly now: () => number;
   private readonly ttl: number;
   private diagnose(diagnostic: Omit<DeepSeekDiagnostic, "generation">) {
+    if (this.closed && diagnostic.reason !== "cleanup_failed") return;
     if (
       !diagnosticReasons.includes(diagnostic.reason) ||
       ![
@@ -116,7 +125,11 @@ export class DeepSeekAdapter implements ProviderAgentPort {
       /* Diagnostics cannot change protocol behavior. */
     }
   }
-  private async call(operation: Operation, value: unknown, budget: Budget) {
+  private async call<K extends Operation>(
+    operation: K,
+    value: OperationRequest[K],
+    budget: Budget,
+  ): Promise<OperationResponse[K]> {
     try {
       return await this.runtime!.call(operation, value, budget);
     } catch (error) {
@@ -230,8 +243,12 @@ export class DeepSeekAdapter implements ProviderAgentPort {
         }
       });
       void runtime.stopped.then(
-        () => this.lost(),
-        () => this.lost(),
+        () => {
+          if (!this.closed) this.invalidate();
+        },
+        () => {
+          if (!this.closed) this.invalidate();
+        },
       );
       if (this.closed) {
         runtime.stop();
@@ -405,6 +422,7 @@ export class DeepSeekAdapter implements ProviderAgentPort {
       queue: new Queue(1024, 2 * 1024 * 1024, this.displayBudget),
       observing: false,
       callbacks: new Map(),
+      answered: new Map(),
     };
     this.turns.set(requestId, turn);
     this.active = turn;
@@ -457,9 +475,14 @@ export class DeepSeekAdapter implements ProviderAgentPort {
     });
   }
   private event(e: NativeEvent): void {
+    if (this.closed || this.failed) {
+      if (e.diagnostic?.reason === "cleanup_failed")
+        this.diagnose(e.diagnostic);
+      return;
+    }
     if (e.diagnostic) this.diagnose(e.diagnostic);
     if (e.type === "lost") {
-      this.lost();
+      this.invalidate();
       return;
     }
     if (this.closed || this.failed || !e.requestId) return;
@@ -542,7 +565,8 @@ export class DeepSeekAdapter implements ProviderAgentPort {
       });
     } else if (e.type === "question_unavailable")
       this.unavailable(t, e.callbackId!);
-    else if (e.type === "proposal") void this.propose(t, e);
+    else if (e.type === "proposal")
+      void this.propose(t, e).catch(() => this.invalidate());
   }
   private async propose(t: Turn, e: NativeEvent) {
     if (
@@ -593,7 +617,7 @@ export class DeepSeekAdapter implements ProviderAgentPort {
   }
   private unavailable(t: Turn, id: string) {
     const c = t.callbacks.get(id);
-    if (!c || c.answered) return;
+    if (!c) return;
     clearTimeout(c.timer);
     t.callbacks.delete(id);
     t.queue.push({
@@ -605,9 +629,17 @@ export class DeepSeekAdapter implements ProviderAgentPort {
     });
   }
   private invalidateCallbacks(t: Turn) {
-    for (const id of t.callbacks.keys()) this.unavailable(t, id);
+    t.answered.clear();
+    for (const id of t.callbacks.keys()) {
+      try {
+        this.unavailable(t, id);
+      } catch {
+        /* Drain every timer even if the observation queue is full. */
+      }
+    }
   }
   private lost() {
+    if (this.failed) return;
     this.failed = true;
     for (const t of this.turns.values()) {
       try {
@@ -618,6 +650,7 @@ export class DeepSeekAdapter implements ProviderAgentPort {
     }
   }
   private invalidate() {
+    if (this.failed || this.closed) return;
     this.lost();
     this.runtime?.stop();
   }
@@ -656,31 +689,50 @@ export class DeepSeekAdapter implements ProviderAgentPort {
     command: Command,
     budget: Budget,
   ): Promise<Result<void>> {
+    let c: Command;
     try {
-      const c = this.checked(command),
-        t = this.turn(b);
-      if (
-        !t ||
-        c.input.type !== "respond" ||
-        c.input.generation !== b.generation ||
-        c.input.nativeRunId !== b.nativeRunId
-      )
-        return fail("stale_binding");
-      const cb = t.callbacks.get(c.input.interactionId);
-      if (!cb || cb.expires <= this.now()) return fail("unavailable");
-      const hash = fingerprint(c, limits);
-      if (cb.answered)
-        return cb.answered === hash ? ok(undefined) : fail("already_answered");
-      await this.call(
-        "answer",
-        { callbackId: cb.id, answer: c.input.answer },
-        budget,
-      );
-      cb.answered = hash;
-      clearTimeout(cb.timer);
-      return ok(undefined);
+      c = this.checked(command);
     } catch {
       return fail("invalid_input");
+    }
+    const t = this.turn(b);
+    if (
+      !t ||
+      c.input.type !== "respond" ||
+      c.input.generation !== b.generation ||
+      c.input.nativeRunId !== b.nativeRunId
+    )
+      return fail("stale_binding");
+    const id = c.input.interactionId,
+      hash = fingerprint(c, limits),
+      answered = t.answered.get(id);
+    if (answered && answered.expires > this.now())
+      return answered.hash === hash ? ok(undefined) : fail("already_answered");
+    const cb = t.callbacks.get(id);
+    if (!cb || cb.expires <= this.now()) return fail("unavailable");
+    try {
+      await this.call(
+        "answer",
+        { callbackId: cb.id, answer: decodeAnswer(c.input.answer) },
+        budget,
+      );
+      t.callbacks.delete(id);
+      clearTimeout(cb.timer);
+      if (t.answered.size >= 256)
+        t.answered.delete(t.answered.keys().next().value!);
+      t.answered.set(id, { hash, expires: cb.expires });
+      return ok(undefined);
+    } catch (error) {
+      if (error instanceof NativeFault && error.reason === "invalid_input")
+        return fail("invalid_input");
+      if (
+        error instanceof NativeFault &&
+        error.reason === "interaction_unavailable"
+      ) {
+        this.unavailable(t, id);
+        return fail("unavailable");
+      }
+      return fail("unavailable", "reconcile_first");
     }
   }
   async *observe(

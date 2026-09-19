@@ -1,7 +1,7 @@
 # DeepSeek Harness 来源与验证
 
 A05 #2443 直接消费 DeepSeek Harness `0.1.6-alpha.2` 的 npm 产物；研究源码固定为
-[`ddefc45fbc7f8e46dd73185e68295696d1297887`](https://github.com/deepseek-ai/deepseek-harness/tree/ddefc45fbc7f8e46dd73185e68295696d1297887)。源码不作为运行时相邻目录依赖；完整解析闭包及 npm integrity 由本仓 `pnpm-lock.yaml` 持有。发布包中的 generated Typert 描述是 Gateway 的运行输入，未以源码装饰器代替。
+[`ddefc45fbc7f8e46dd73185e68295696d1297887`](https://github.com/deepseek-ai/deepseek-harness/tree/ddefc45fbc7f8e46dd73185e68295696d1297887)。源码不作为运行时相邻目录依赖；manifest 仅含直接 import roots；Harness 版本从固定的 SessionController 依赖派生，不另设版本常量。完整解析闭包及 npm integrity 由本仓 `pnpm-lock.yaml` 持有，CI 的 frozen install、直接依赖 freshness 检查和启动安装版本校验分别覆盖锁文件、源码与实际产物。发布包中的 generated Typert 描述是 Gateway 的运行输入，未以源码装饰器代替。
 
 上游 MIT 许可，保留各 npm 包的许可文件；本适配器是新实现，未复制整套上游 Agent、工具调度或持久化算法。`support.ts` 沿用本仓 Claude adapter 的 MIT 有界等待/队列辅助实现；未迁移 prmonitor 的 PR 业务或全权限配置。
 
@@ -26,3 +26,5 @@ A05 #2443 直接消费 DeepSeek Harness `0.1.6-alpha.2` 的 npm 产物；研究�
 - 固定 artifact：打包 contract/adapter，临时独立 workspace 用自身 lock 安装，公共类型及真实子进程 cold session 通过；记录 archive SHA-256 与 consumer lock SHA-256，禁止回指本仓源码。
 
 这些组件证据不承诺生产 Host/A02 存储实现、操作系统 sandbox、Windows 实测或企业接线。Host 必须持有可信 namespace、平台 verifier、原子状态转移与恢复凭证流程。未知提交不能自动重发；即使日志没有对应请求也不能证明未发送。
+
+私有 IPC 修复参考 Node.js ChildProcess `close` 生命周期和 TypeScript mapped types；预算分类参考固定 Harness `packages/util/timeout/src/index.ts`，只保留封闭原因，不把原始异常送入诊断。待回答/已回答状态按本包有界表持有，未引入持久恢复账本或通用 RPC。

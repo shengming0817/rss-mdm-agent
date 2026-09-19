@@ -456,3 +456,53 @@ test("fresh admission checkpoints an empty session before immediate close and co
   assert.deepEqual(await files(env.dir), before);
   assert.equal(env.requests.length, 0);
 });
+
+test("real worker restoration fault survives IPC and budget classification", async (t) => {
+  const { nativeRuntime } = await import(
+    "../../../packages/ai-adapters/deepseek/dist/runtime.js"
+  );
+  const { NativeFault } = await import(
+    "../../../packages/ai-adapters/deepseek/dist/protocol.js"
+  );
+  const { COMPOSITION_ID } = await import(
+    "../../../packages/ai-adapters/deepseek/dist/assembly.js"
+  );
+  const { digest, identity } = await import(
+    "../../../packages/ai-adapters/deepseek/dist/configuration.js"
+  );
+  const env = await environment(t, (_b, res) => completion(res)),
+    p = env.port();
+  const admitted = unwrap(
+    await VerifiedProviderSession.open(p, env.config, budget()),
+  );
+  await p.close(budget());
+  const before = await files(env.dir),
+    runtime = nativeRuntime();
+  try {
+    await assert.rejects(
+      runtime.call(
+        "initialize",
+        {
+          nativeSessionId: admitted.binding.nativeSessionId,
+          workingDirectory: process.cwd(),
+          persistenceDirectory: env.dir,
+          scope: digest(identity(env.config)),
+          model: "deepseek-chat",
+          apiKey: "fixture",
+          apiUrl: "https://api.deepseek.com",
+          controlled: false,
+          restore: true,
+          composition: COMPOSITION_ID,
+        },
+        budget(),
+      ),
+      (error) =>
+        error instanceof NativeFault && error.reason === "restoration_failed",
+    );
+    assert.deepEqual(await files(env.dir), before);
+    assert.equal(env.requests.length, 0);
+  } finally {
+    runtime.stop();
+    await runtime.stopped;
+  }
+});

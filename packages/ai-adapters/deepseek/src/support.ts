@@ -1,3 +1,4 @@
+import { NativeFault } from "./protocol.js";
 import {
   boundedJson,
   type Budget,
@@ -41,7 +42,8 @@ export function same(a: unknown, b: unknown): boolean {
 }
 export function bounded<T>(work: PromiseLike<T>, budget: Budget): Promise<T> {
   return new Promise((resolve, reject) => {
-    const abort = () => finish(() => reject(new Error("budget exhausted")));
+    const abort = () =>
+      finish(() => reject(new NativeFault("budget_exhausted")));
     let timer: ReturnType<typeof setTimeout> | undefined;
     const finish = (f: () => void) => {
       clearTimeout(timer);
@@ -50,7 +52,14 @@ export function bounded<T>(work: PromiseLike<T>, budget: Budget): Promise<T> {
     };
     Promise.resolve(work).then(
       (v) => finish(() => resolve(v)),
-      () => finish(() => reject(new Error("provider unavailable"))),
+      (error: unknown) =>
+        finish(() =>
+          reject(
+            error instanceof NativeFault
+              ? error
+              : new NativeFault("native_failure"),
+          ),
+        ),
     );
     if (!liveBudget(budget)) return abort();
     budget.signal.addEventListener("abort", abort, { once: true });

@@ -6,7 +6,11 @@ import type { Budget } from "@rss-mdm-agent/ai-contract";
 import type { DeepSeekDiagnostic } from "./configuration.js";
 import {
   NativeFault,
-  diagnosticReasons,
+  decodeFrame,
+  decodeRequest,
+  decodeResponse,
+  type OperationRequest,
+  type OperationResponse,
   type NativeEvent,
   type NativeRuntime,
   type Operation,
@@ -23,13 +27,14 @@ export function nativeRuntime(spawn: typeof fork = fork): NativeRuntime {
   const pending = new Map<
     number,
     {
-      resolve: (v: any) => void;
+      resolve: (v: unknown) => void;
       reject: (reason?: DeepSeekDiagnostic["reason"]) => void;
     }
   >();
   let child: ChildProcess | undefined,
     next = 0,
     ended = false,
+    stopping = false,
     exitReason: DeepSeekDiagnostic["reason"] = "process_exit",
     listener: (event: NativeEvent) => void = () => {};
   const lost = () =>
@@ -55,7 +60,7 @@ export function nativeRuntime(spawn: typeof fork = fork): NativeRuntime {
       for (const p of pending.values()) p.reject(exitReason);
       pending.clear();
       try {
-        lost();
+        if (!stopping) lost();
       } finally {
         cleanup();
       }
@@ -68,32 +73,27 @@ export function nativeRuntime(spawn: typeof fork = fork): NativeRuntime {
       stdio: ["ignore", "ignore", "ignore", "ipc"],
       serialization: "json",
     });
-    child.on("message", (raw: any) => {
+    child.on("message", (raw: unknown) => {
       try {
-        const m = copy(raw);
+        const m = decodeFrame(copy(raw));
         if (m.type === "event") listener(m.event);
         else if (m.type === "reply") {
           const p = pending.get(m.id);
           pending.delete(m.id);
           if (m.ok) p?.resolve(m.value);
-          else
-            p?.reject(
-              diagnosticReasons.includes(m.reason)
-                ? m.reason
-                : "native_failure",
-            );
+          else p?.reject(m.reason);
         } else throw new NativeFault("protocol_failure");
       } catch {
         exitReason = "protocol_failure";
         child!.kill("SIGKILL");
       }
     });
-    child.once("exit", finalize);
     child.once("close", finalize);
     child.on("error", () => {
       if (!child!.pid) {
         exitReason = "spawn_failed";
-        finalize();
+        for (const p of pending.values()) p.reject(exitReason);
+        pending.clear();
       } else {
         exitReason = "protocol_failure";
         for (const p of pending.values()) p.reject(exitReason);
@@ -109,23 +109,34 @@ export function nativeRuntime(spawn: typeof fork = fork): NativeRuntime {
     stopped: stopped.promise,
     onEvent(fn) {
       listener = fn;
-      if (ended) lost();
+      if (ended && !stopping) lost();
     },
     stop() {
+      stopping = true;
       if (ended) cleanup();
       else child?.kill("SIGKILL");
     },
-    async call(operation: Operation, value: unknown, budget: Budget) {
+    async call<K extends Operation>(
+      operation: K,
+      value: OperationRequest[K],
+      budget: Budget,
+    ): Promise<OperationResponse[K]> {
       if (ended || !child || !liveBudget(budget) || pending.size >= 64)
         throw new NativeFault(ended ? exitReason : "native_failure");
       const id = ++next;
-      const result = new Promise<any>((resolve, reject) => {
+      const result = new Promise<OperationResponse[K]>((resolve, reject) => {
         pending.set(id, {
-          resolve,
+          resolve: (raw) => {
+            try {
+              resolve(decodeResponse(operation, raw));
+            } catch {
+              reject(new NativeFault("protocol_failure"));
+            }
+          },
           reject: (reason = "native_failure") =>
             reject(new NativeFault(reason)),
         });
-        child!.send(copy({ id, operation, value }), (error) => {
+        child!.send(decodeRequest(copy({ id, operation, value })), (error) => {
           if (error) {
             pending.get(id)?.reject("protocol_failure");
             pending.delete(id);

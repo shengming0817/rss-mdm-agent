@@ -36,7 +36,10 @@ export type DeepSeekDiagnostic = {
     | "spawn_failed"
     | "process_exit"
     | "profile_drift"
-    | "cleanup_failed";
+    | "cleanup_failed"
+    | "invalid_input"
+    | "interaction_unavailable"
+    | "budget_exhausted";
   generation?: string;
 };
 export interface ResolvedDeepSeekConfiguration {
@@ -59,7 +62,8 @@ export interface DeepSeekAdapterOptions {
 export const manifest = JSON.parse(
   readFileSync(new URL("../package.json", import.meta.url), "utf8"),
 );
-export const HARNESS_VERSION = "0.1.6-alpha.2";
+export const HARNESS_VERSION: string =
+  manifest.dependencies["@deepseek-ai/dsh-api-session-controller"];
 export const ADAPTER_VERSION: string = manifest.version;
 export const API_URL = "https://api.deepseek.com";
 export const digest = (value: unknown): string =>

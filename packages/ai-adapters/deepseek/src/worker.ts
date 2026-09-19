@@ -7,11 +7,24 @@ import {
   TOOL_PROFILE,
   type Initialization,
 } from "./assembly.js";
+import { digest } from "./configuration.js";
 import { copy, deferred } from "./support.js";
 import { history, outcome } from "./history.js";
 import { sealTools } from "./guard.js";
 import type { NativeEvent, Operation } from "./protocol.js";
-import { NativeFault } from "./protocol.js";
+import {
+  NativeFault,
+  decodeRequest,
+  decodeResponse,
+  decodeFrame,
+  record,
+  type OperationHandlers,
+  type OperationRequest,
+  type OperationResponse,
+  type QuestionAnswer,
+  type QuestionRequest,
+  type ToolResult,
+} from "./protocol.js";
 
 const ctx = new Context();
 let init: Initialization | undefined,
@@ -25,13 +38,13 @@ const callbacks = new Map<
   string,
   {
     kind: "question" | "proposal";
-    resolve: (v: any) => void;
+    resolve: (v: QuestionAnswer | ToolResult | { unavailable: true }) => void;
     reject: () => void;
-    request?: any;
+    request?: QuestionRequest;
   }
 >();
 const notify = (event: NativeEvent) =>
-  process.send?.(copy({ type: "event", event }));
+  process.send?.(decodeFrame(copy({ type: "event", event })));
 const gateway = (method: string, request: unknown) =>
   ctx.typertGateway.invoke({
     namespace: "session",
@@ -53,14 +66,26 @@ function drift() {
   void shutdown();
 }
 function waitCallback(
-  kind: "question" | "proposal",
-  request: any,
+  kind: "question",
+  request: QuestionRequest,
   signal: AbortSignal,
-): Promise<any> {
+): Promise<QuestionAnswer>;
+function waitCallback(
+  kind: "proposal",
+  request: { name: string; arguments: Record<string, unknown> },
+  signal: AbortSignal,
+): Promise<ToolResult>;
+function waitCallback(
+  kind: "question" | "proposal",
+  request:
+    | QuestionRequest
+    | { name: string; arguments: Record<string, unknown> },
+  signal: AbortSignal,
+): Promise<QuestionAnswer | ToolResult> {
   if (signal.aborted || !activeRequest || callbacks.size >= 32)
     return Promise.reject(Error("callback unavailable"));
   const callbackId = randomUUID(),
-    pending = deferred<any>();
+    pending = deferred<QuestionAnswer | ToolResult | { unavailable: true }>();
   const abort = () => {
     if (callbacks.delete(callbackId)) {
       notify({
@@ -73,20 +98,22 @@ function waitCallback(
   };
   callbacks.set(callbackId, {
     kind,
-    request,
+    ...("questions" in request ? { request } : {}),
     resolve: pending.resolve,
     reject: abort,
   });
   signal.addEventListener("abort", abort, { once: true });
   notify({
-    type: kind === "question" ? "question" : "proposal",
     requestId: activeRequest,
     callbackId,
-    ...(kind === "question" ? { request } : { proposal: request }),
+    ...("questions" in request
+      ? { type: "question" as const, request }
+      : { type: "proposal" as const, proposal: request }),
   });
   return pending.promise
     .then((value) => {
-      if (value.unavailable) throw Error("callback unavailable");
+      if ("unavailable" in value)
+        throw new NativeFault("interaction_unavailable");
       return value;
     })
     .finally(() => {
@@ -125,7 +152,17 @@ async function initialize(i: Initialization) {
       },
       execute: async (args, exec) => {
         verify();
-        return waitCallback("proposal", args, exec.signal);
+        if (
+          !record(args) ||
+          typeof args.name !== "string" ||
+          !record(args.arguments)
+        )
+          throw new NativeFault("invalid_input");
+        return waitCallback(
+          "proposal",
+          { name: args.name, arguments: args.arguments },
+          exec.signal,
+        );
       },
     });
   const allowed = [
@@ -267,17 +304,34 @@ async function follow() {
     }
   });
 }
-function answer(v: any) {
+const settledCallbacks = new Map<string, string>();
+function answer(
+  v: OperationRequest["answer"] | OperationRequest["tool_result"],
+) {
+  const hash = digest(v),
+    settled = settledCallbacks.get(v.callbackId);
+  if (settled !== undefined) {
+    if (settled !== hash) throw new NativeFault("interaction_unavailable");
+    return {};
+  }
   const cb = callbacks.get(v.callbackId);
-  if (!cb) throw Error("callback unavailable");
-  if (v.unavailable) {
+  if (!cb) throw new NativeFault("interaction_unavailable");
+  const remember = () => {
+    if (settledCallbacks.size >= 256)
+      settledCallbacks.delete(settledCallbacks.keys().next().value!);
+    settledCallbacks.set(v.callbackId, hash);
+  };
+  if ("unavailable" in v) {
     cb.reject();
     return {};
   }
   if (cb.kind === "proposal") {
+    if (!("value" in v)) throw new NativeFault("invalid_input");
+    remember();
     cb.resolve(v.value);
     return {};
   }
+  if (!("answer" in v) || !cb.request) throw new NativeFault("invalid_input");
   const questions = cb.request.questions,
     answer = v.answer;
   if (
@@ -285,25 +339,26 @@ function answer(v: any) {
     !Array.isArray(answer.answers) ||
     answer.answers.length !== questions.length
   )
-    throw Error("invalid answer");
+    throw new NativeFault("invalid_input");
   const ids = new Set();
   for (const row of answer.answers) {
-    const q = questions.find((q: any) => q.id === row.id);
+    const q = questions.find((q) => q.id === row.id);
     if (
       !q ||
       ids.has(row.id) ||
       !Array.isArray(row.selected) ||
       row.selected.some(
-        (s: any) =>
+        (s) =>
           typeof s !== "string" ||
-          !(q.options ?? []).some((o: any) => o.label === s),
+          !(q.options ?? []).some((o) => o.label === s),
       ) ||
       (!q.multiSelect && row.selected.length > 1) ||
       (row.custom !== undefined && typeof row.custom !== "string")
     )
-      throw Error("invalid answer");
+      throw new NativeFault("invalid_input");
     ids.add(row.id);
   }
+  remember();
   cb.resolve(copy(answer));
   return {};
 }
@@ -313,7 +368,7 @@ async function shutdown() {
   await ctx.fiber.dispose();
   await streamTask;
 }
-const operations: Record<Operation, (value: any) => Promise<any> | any> = {
+const operations: OperationHandlers = {
   initialize,
   async prompt(v) {
     verify();
@@ -356,7 +411,8 @@ const operations: Record<Operation, (value: any) => Promise<any> | any> = {
   },
   async cancel() {
     verify();
-    return gateway("cancel", { sessionId: init!.nativeSessionId });
+    await gateway("cancel", { sessionId: init!.nativeSessionId });
+    return {};
   },
   answer,
   tool_result: answer,
@@ -365,19 +421,36 @@ const operations: Record<Operation, (value: any) => Promise<any> | any> = {
     return {};
   },
 };
-process.on("message", async (raw: any) => {
-  const { id, operation, value } = raw;
+async function dispatch<K extends Operation>(
+  operation: K,
+  value: OperationRequest[K],
+): Promise<OperationResponse[K]> {
+  return operations[operation](value);
+}
+process.on("message", async (raw: unknown) => {
+  let id: number | undefined;
   try {
-    if (!Object.hasOwn(operations, operation)) throw Error("unknown operation");
-    const result = await operations[operation as Operation](value);
-    process.send?.(copy({ type: "reply", id, ok: true, value: result }));
+    if (record(raw) && Number.isSafeInteger(raw.id) && Number(raw.id) > 0)
+      id = Number(raw.id);
+    const frame = decodeRequest(copy(raw));
+    const result = await dispatch(frame.operation, frame.value);
+    process.send?.(
+      copy({
+        type: "reply",
+        id: frame.id,
+        ok: true,
+        value: decodeResponse(frame.operation, result),
+      }),
+    );
   } catch (error) {
-    process.send?.({
-      type: "reply",
-      id,
-      ok: false,
-      reason: error instanceof NativeFault ? error.reason : "native_failure",
-    });
+    if (id !== undefined)
+      process.send?.({
+        type: "reply",
+        id,
+        ok: false,
+        reason: error instanceof NativeFault ? error.reason : "native_failure",
+      });
+    else drift();
   }
 });
 process.on("disconnect", () => {

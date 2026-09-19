@@ -34,7 +34,7 @@
     "test:ai-store": "pnpm build:ai-store && node --test tests/ai-store-recovery/*.test.mjs",
     "check:ai-store-consumer": "node scripts/check-ai-store-consumer.mjs",
     "build:ai-deepseek": "pnpm build:ai-contract && pnpm --filter @rss-mdm-agent/ai-adapter-deepseek build",
-    "test:ai-deepseek": "pnpm build:ai-deepseek && node --test tests/ai-adapters/deepseek/*.test.mjs",
+    "test:ai-deepseek": "pnpm build:ai-deepseek && tsc --noEmit --strict --skipLibCheck --module NodeNext --target ES2022 tests/ai-adapters/deepseek/protocol.types.ts && node --test tests/ai-adapters/deepseek/*.test.mjs",
     "check:deepseek-consumer": "node scripts/check-deepseek-consumer.mjs",
     "smoke:deepseek": "node scripts/smoke-deepseek.mjs"
   },

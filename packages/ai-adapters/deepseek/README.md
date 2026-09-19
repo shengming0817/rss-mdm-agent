@@ -47,3 +47,7 @@ const admitted = await VerifiedProviderSession.open(port, configuration, budget)
 [来源与证据边界](https://dev.azure.com/shengming0923/rss/_git/rss-mdm-agent?path=/docs/reference/deepseek-harness.md&version=GC80f8efc2048de118ad055dc5f0d6006edf4c42ef)。已执行平台与源码/lock/artifact 身份以 PR 及 `.local-ci-runs` 实际结果为准；不声称已经发布 registry 包或完成 Windows/企业平台 T3。
 
 可选 `onDiagnostic` 接收封闭的 stage/reason 和 generation，用于区分配置、依赖、恢复、IPC 和清理故障；不返回原始异常、路径、提示词或凭据。诊断回调抛错不会改变协议行为。准入校验必需 fiber 的 ACTIVE 状态及 create/restore 的 Agent 状态；必需 fiber/配置或工具 guard 漂移使原 incarnation 永久失效。
+
+私有 IPC 的固定 operation 同时绑定请求/响应类型，并在两端校验 envelope；预算耗尽、传输故障和原生输入拒绝分开分类。有效回答遇到传输故障返回 unavailable/reconcile_first，相同回答的确认可幂等重试。待回答回调最多 32 个；已回答幂等记录另存于有界表，不占用未决容量。正常关闭不报告 process_exit 故障，异常 lost 自动停止并清理子进程。
+
+manifest 仅声明实际源码 import 的直接运行 roots；版本为精确值，Harness 版本由 SessionController root 派生。完整解析闭包及 integrity 由 pnpm-lock.yaml 持有，frozen install 校验其 freshness；启动验证已安装的直接 roots，源码检查防止无 import 能力重新混入 direct dependencies。上游 peer 依赖出现在 lock 中不表示该能力已装配。

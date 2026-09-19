@@ -6,6 +6,7 @@ import {
   unwrap,
 } from "../../../packages/ai-contract/dist/testing/index.js";
 import { budget } from "./support.mjs";
+import { NativeFault } from "../../../packages/ai-adapters/deepseek/dist/protocol.js";
 import {
   environment,
   completion,
@@ -13,7 +14,7 @@ import {
   collect,
   files,
 } from "./native-support.mjs";
-function tool(res, name, args) {
+function tool(res, name, args, id = "tool-call-1") {
   res.writeHead(200, { "content-type": "text/event-stream" });
   const chunk = {
     id: "tool-request",
@@ -25,7 +26,7 @@ function tool(res, name, args) {
           tool_calls: [
             {
               index: 0,
-              id: "tool-call-1",
+              id,
               type: "function",
               function: { name, arguments: JSON.stringify(args) },
             },
@@ -273,4 +274,123 @@ test("provider HTTP error has sanitized error and native failed terminal", async
   assert.equal(events.at(-1)?.body?.outcome, "failed");
   assert.ok(events.some((e) => e.body?.type === "error"));
   assert.ok(!JSON.stringify(events).includes("secret-upstream"));
+});
+
+test("33 sequential native questions do not consume pending callback capacity", async (t) => {
+  const env = await environment(t, (_b, res, n) =>
+    n <= 33
+      ? tool(
+          res,
+          "ask_user_question",
+          {
+            questions: [
+              { id: "q", question: "Choose?", options: [{ label: "yes" }] },
+            ],
+          },
+          `tool-call-${n}`,
+        )
+      : completion(res),
+  );
+  const p = env.port(),
+    admitted = unwrap(
+      await VerifiedProviderSession.open(p, env.config, budget()),
+    ),
+    c = command();
+  const sent = await p.submit(
+    admitted.binding,
+    c,
+    fixtureAttempt(admitted.binding, c),
+    budget(),
+  );
+  let questions = 0,
+    terminal;
+  for await (const e of p.observe(sent.binding, budget(10000))) {
+    if (e.type === "interaction") {
+      questions++;
+      const response = {
+        ...command(`answer-${questions}`),
+        input: {
+          type: "respond",
+          generation: e.binding.generation,
+          interactionId: e.interaction.interactionId,
+          answer: { answers: [{ id: "q", selected: ["yes"] }] },
+        },
+      };
+      unwrap(await p.respond(e.binding, response, budget()));
+      unwrap(await p.respond(e.binding, response, budget()));
+    }
+    if (e.body?.type === "terminal") terminal = e.body.outcome;
+  }
+  assert.equal(questions, 33);
+  assert.equal(terminal, "completed");
+  assert.equal(env.requests.length, 34);
+});
+
+test("native answer remains idempotent after its acknowledgement is lost", async (t) => {
+  let release;
+  const held = new Promise((resolve) => {
+    release = resolve;
+  });
+  t.after(() => release());
+  const env = await environment(t, async (_b, res, n) => {
+    if (n === 1)
+      tool(res, "ask_user_question", {
+        questions: [
+          { id: "q", question: "Choose?", options: [{ label: "yes" }] },
+        ],
+      });
+    else {
+      await held;
+      completion(res);
+    }
+  });
+  let answerCalls = 0;
+  const p = env.port((runtime) => {
+    const call = runtime.call.bind(runtime);
+    runtime.call = async (op, value, b) => {
+      const result = await call(op, value, b);
+      if (op === "answer" && ++answerCalls === 1)
+        throw new NativeFault("budget_exhausted");
+      return result;
+    };
+    return runtime;
+  });
+  const admitted = unwrap(
+    await VerifiedProviderSession.open(p, env.config, budget()),
+  );
+  const c = command();
+  const sent = await p.submit(
+    admitted.binding,
+    c,
+    fixtureAttempt(admitted.binding, c),
+    budget(),
+  );
+  let questions = 0,
+    terminal;
+  for await (const e of p.observe(sent.binding, budget(10000))) {
+    if (e.type === "interaction") {
+      questions++;
+      const response = {
+        ...command("answer"),
+        input: {
+          type: "respond",
+          generation: e.binding.generation,
+          interactionId: e.interaction.interactionId,
+          answer: { answers: [{ id: "q", selected: ["yes"] }] },
+        },
+      };
+      const uncertain = await p.respond(e.binding, response, budget());
+      assert.equal(uncertain.ok, false);
+      assert.equal(uncertain.error.code, "unavailable");
+      assert.equal(uncertain.error.retry, "reconcile_first");
+      unwrap(await p.respond(e.binding, response, budget()));
+      unwrap(await p.respond(e.binding, response, budget()));
+      release();
+    }
+    if (e.body?.type === "terminal") terminal = e.body.outcome;
+  }
+  assert.equal(questions, 1);
+  assert.equal(answerCalls, 2);
+  assert.equal(env.requests.length, 2);
+  assert.equal(terminal, "completed");
 });

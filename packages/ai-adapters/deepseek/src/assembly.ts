@@ -35,19 +35,8 @@ import { createRequire } from "node:module";
 import { digest, manifest } from "./configuration.js";
 import { NativeFault } from "./protocol.js";
 
-export interface Initialization {
-  nativeSessionId: string;
-  workingDirectory: string;
-  persistenceDirectory: string;
-  scope: string;
-  model: string;
-  apiKey: string;
-  apiUrl: string;
-  controlled: boolean;
-  restore: boolean;
-  composition: string;
-  previousRequestId?: string;
-}
+import type { Initialization } from "./protocol.js";
+export type { Initialization } from "./protocol.js";
 // Sole declaration of the installed profile. No Loader, discovery, settings, MCP,
 // PTC, terminal, delegation or executable workspace instructions are mounted.
 const assembly: readonly [string, any, (i: Initialization) => any][] = [

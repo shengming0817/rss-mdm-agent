@@ -36,7 +36,7 @@ export async function environment(t, handler, configure = () => {}) {
   });
   const config = configuration(dir);
   configure(config);
-  function port() {
+  function port(transformRuntime = (runtime) => runtime) {
     const result = new DeepSeekAdapter(
       {
         resolveConfiguration: async () => ({
@@ -60,7 +60,7 @@ export async function environment(t, handler, configure = () => {}) {
               : value,
             b,
           );
-        return runtime;
+        return transformRuntime(runtime);
       },
     );
     ports.push(result);
