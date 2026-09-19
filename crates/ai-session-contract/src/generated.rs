@@ -417,78 +417,6 @@ pub enum CommandRecord {
         schema_version: i64,
     },
 }
-#[doc = "accepted persists intent; dispatching persists dispatch intent; running has native confirmation; terminal has a definite outcome; reconciliation_required forbids blind resubmission."]
-#[derive(
-    :: serde :: Deserialize,
-    :: serde :: Serialize,
-    Clone,
-    Copy,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
-)]
-pub enum CommandState {
-    #[serde(rename = "accepted")]
-    #[doc = "`Accepted` alternative; see the parent type's schema contract."]
-    Accepted,
-    #[serde(rename = "dispatching")]
-    #[doc = "`Dispatching` alternative; see the parent type's schema contract."]
-    Dispatching,
-    #[serde(rename = "running")]
-    #[doc = "`Running` alternative; see the parent type's schema contract."]
-    Running,
-    #[serde(rename = "terminal")]
-    #[doc = "`Terminal` alternative; see the parent type's schema contract."]
-    Terminal,
-    #[serde(rename = "reconciliation_required")]
-    #[doc = "`ReconciliationRequired` alternative; see the parent type's schema contract."]
-    ReconciliationRequired,
-    #[serde(rename = "invalidated")]
-    #[doc = "`Invalidated` alternative; see the parent type's schema contract."]
-    Invalidated,
-}
-impl ::std::fmt::Display for CommandState {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        match *self {
-            Self::Accepted => f.write_str("accepted"),
-            Self::Dispatching => f.write_str("dispatching"),
-            Self::Running => f.write_str("running"),
-            Self::Terminal => f.write_str("terminal"),
-            Self::ReconciliationRequired => f.write_str("reconciliation_required"),
-            Self::Invalidated => f.write_str("invalidated"),
-        }
-    }
-}
-impl ::std::str::FromStr for CommandState {
-    type Err = self::error::ConversionError;
-    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        match value {
-            "accepted" => Ok(Self::Accepted),
-            "dispatching" => Ok(Self::Dispatching),
-            "running" => Ok(Self::Running),
-            "terminal" => Ok(Self::Terminal),
-            "reconciliation_required" => Ok(Self::ReconciliationRequired),
-            "invalidated" => Ok(Self::Invalidated),
-            _ => Err("invalid value".into()),
-        }
-    }
-}
-impl ::std::convert::TryFrom<&str> for CommandState {
-    type Error = self::error::ConversionError;
-    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-impl ::std::convert::TryFrom<::std::string::String> for CommandState {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: ::std::string::String,
-    ) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 #[doc = "Immutable configuration identity and revision; contains no credentials."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
@@ -3065,11 +2993,6 @@ impl std::fmt::Debug for Command {
 impl std::fmt::Debug for CommandRecord {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(stringify!(CommandRecord), "([redacted])"))
-    }
-}
-impl std::fmt::Debug for CommandState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(concat!(stringify!(CommandState), "([redacted])"))
     }
 }
 impl std::fmt::Debug for ConfigRef {

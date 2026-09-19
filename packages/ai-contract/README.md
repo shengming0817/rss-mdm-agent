@@ -29,7 +29,7 @@ V2 一次替换 C02 的 V1。没有 V1 reader、alias、双写、fallback、转�
 - 取消已发送、模型 turn 已停止、进程已退出、业务副作用已停止分别记录。原生 transport/stream 错误不是 terminal；未知提交先核实原运行。`same_command` 重试仅复用同身份/内容；`reconcile_first` 禁止直接再次提交；`never` 不重试。
 - 一个命令账本同时持有 inbox、内容绑定、派发意图和 native IDs，不复制第二份 provider 队列。事件日志支持重放，稳定事件先提交后发布；临时 token delta 没有 durable sequence，可丢弃/合并。
 - Delivery 只用于需可靠跨服务交付的请求/结果，通过稳定 operationId/eventId、目标与内容摘要关联原事件。摘要固定为 `SHA-256(JCS({event, target}))`，由 `deliveryFingerprint(event, target, limits)` 生成，Store 必须核对完整引用事件和目标。接收方幂等；retry 类别为 receiver_idempotent/reconcile_first/never；未知副作用转核实，不自动重发。待交付记录和引用事件必须一起保留。
-- retention.retryWindowMs > 0、receiptWindowMs >= retryWindowMs，精确截止时间写入 receipt。首次接纳拒绝过期 command；receipt 保留期内同内容重复返回既有接纳事实，不能据此重发模型命令。receipt 过期后仍保留键/摘要阻止复用，直到 namespace 退役并清理；达到容量上限应拒绝新接纳。仅所有命令 terminal/invalidated、无 pending 交互方可退役，收据过期且 delivery 全结清后才能清理；旧 session ID 永不重建。
+- retention.retryWindowMs > 0、receiptWindowMs >= retryWindowMs，精确截止时间写入 receipt。首次接纳拒绝过期 command；receipt 保留期内同内容重复返回既有接纳事实，不能据此重发模型命令。receipt 过期后仍保留键/摘要阻止复用，直到 namespace 退役并清理；达到容量上限应拒绝新接纳。仅所有命令 terminal/invalidated、无 pending 交互且 delivery 已全部 delivered 方可退役，收据过期且 delivery 全结清后才能清理；旧 session ID 永不重建。
 - interaction 固定 generation/native run/nativeCallbackId、问题 request、期限及 callbackLifetime。回答接纳与 pending→answered 在同一事务；第二个不同回答返回 already_answered，同命令重复返回 receipt。回调失效为 unavailable，重建 UI 不恢复 callback。provider_resumable 仍须 adapter 证明真实恢复；不能从序列化 capability 直接推断。
 
 ## ACP–A2UI 产品约定
@@ -38,7 +38,7 @@ ACP 固定官方 SDK 1.4.0 / schema-v1.21.0。标准 session/new、session/promp
 
 产品能力在 capabilities._meta 的 `rss-mdm-agent.ai-runtime` 下协商 contractVersion=2、durableReceipts、cursorAttach，以及可选 A2UI version/catalogId/catalogVersion。`_rss-mdm-agent/submit`、`/snapshot`、`/attach` 和 `/update` 是扩展方法的完整产品前缀约定（代码中的 extension 常量为准），只有协商后使用；未知 request 按 ACP 返回 method-not-found，未知 notification 按上游规则忽略。A01 只冻结约定和 fixtures；实际 transport/协议 service 归 A04。
 
-A2UI 固定 v0.9.1 snapshot，客户端 action、服务端 surface 生命周期、basic catalog 与 common types schema 原样保留在 [upstream](schema/upstream/a2ui/NOTICE.md)。`SurfaceBinding` 绑定 session/run、surfaceId、surfaceInstanceId、revision、interaction、component/event、catalog/version。create/update/delete 的上游 payload 不改写；产品扩展携带关联 metadata。一次新建 surface 使用新 instance ID，创建 revision 为0，更新/删除以 session revision/generation CAS 为前提严格递增1，身份字段不可重绑；active→deleted 持久化 tombstone 且不可复活，同时使 pending interaction unavailable。snapshot 与事件恢复这些关联；renderer 和 catalog 内容校验由 A04 持有。
+A2UI 固定 v0.9.1 snapshot，客户端 action、服务端 surface 生命周期、basic catalog 与 common types schema 原样保留在 [upstream](schema/upstream/a2ui/NOTICE.md)。`SurfaceBinding` 绑定 session/run、surfaceId、surfaceInstanceId、revision、interaction、component/event、catalog/version。create/update/delete 的上游 payload 不改写；产品扩展携带关联 metadata。一次新建 surface 使用新 instance ID，创建 revision 为0，更新/删除以 session revision/generation CAS 为前提严格递增1，身份字段不可重绑；active→deleted 持久化 tombstone 且不可复活，若交互仍 pending，同批使其 unavailable 并追加交互事件；已经 ended 的交互不重复转换。snapshot 与事件恢复这些关联；renderer 和 catalog 内容校验由 A04 持有。
 
 `resolveSurfaceAction(store, caller, metadata, standard, limits)` 从 Store 读取当前 surface 后校验关联与 Caller，返回的 context 仍是未经授权的回答数据；名称、timestamp、context 中的 actor/approved 均无批准权。metadata 中的 commandId 由产品客户端为该次回答生成并在重试时复用；它不是权限凭据。返回的 surface instance/revision 必须放入 respond input.surface；Store 在回答接纳事务中再核对 active 状态与 revision，关联 surface 的 interaction 不允许省略该字段。回答单次消费由 Host/Store 保证，解析与提交之间的删除/更新也会拒绝旧回答。无 A2UI 客户端保留文本、工具状态和标准权限交互；专有结构交互明确不支持，不能自动批准或用普通消息替代回答。
 
@@ -83,3 +83,9 @@ Interaction 的必填 `category: "question"` 仅允许普通用户追问；权�
 `SessionCommit.reconciliations` 处理 running/terminal/not_submitted/unknown；不存在第二个恢复提交 API 或 provider 队列。证据必须指向原 attempt 和当前 observer，原生坐标不可覆盖。unknown 保持阻断；not_submitted 将完整旧 attempt（含 correlationId）写入 reconciled 事件，且仅原期限内 queue_next 可再次接纳派发，新派发必须使用新 attemptId。已过期或绑定旧代的控制输入进入 invalidated。重试不扩大原 receipt 窗口。
 
 共用 conformance 覆盖多代恢复、拒绝结构化假证据、旧 observer / 旧 attempt 回调、正反向核实证据、旧控制命令与 surface 失效、水位连续回放。真实进程故障与 SQLite 事务由 A02 单独验证。
+
+恢复证据同时绑定原 Namespace 与 Binding，禁止相同原生 binding 的跨租户重放。每个 ProviderAgentPort 实例只供一次 open/restore 准入；并发或重复准入拒绝，不关闭已成功的实例。失败路径使用新预算关闭所消费的实例；`AdmissionResult.cleanupError` 保留未完成的清理结果，调用方仍持有 port 并可重试 close。adapter 的 close 必须清理迟于 abort 完成的初始化工作；本包 watchdog 只能限定等待，不能抢占外部进程。
+
+provider 通用 event 使用 `ProviderEventBody` 白名单，只含文本、工具提案/结果、取消观察、错误、surface 和明确终态；内部派发、核实、会话/回调/本地失效事件由 Host/Store 产生。新 attempt 提交时必须再次提供 nowMs 并核对原 deadline，不以先前窗口内的 not_submitted 核实替代当前检查。
+
+`deliveries` 返回到期的 pending 与 reconciliation_required 记录，调用方必须先检查 status/retry；查询不代表领取或允许重发。仅全部 delivered 才允许 retire。`StoreCursor` 是1–2048字符的 opaque continuation，与 wire Id 分离，调用方仅原样回传给同一 adapter。

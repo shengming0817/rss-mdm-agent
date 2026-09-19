@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { deliveryFingerprint } from "../codec.js";
+import { fixtureLimits } from "./store.js";
 import { VerifiedProviderSession } from "../session.js";
-import type { Binding, CommandRecord } from "../wire.js";
+import type { Session, CommandRecord } from "../wire.js";
 import type { ProviderAgentPort, SessionStore } from "../ports.js";
 import { defaultBudget } from "./budget.js";
 import {
@@ -16,7 +18,8 @@ import {
 } from "./conformance.js";
 
 /** Scripted admission proof, never actual provider/process restoration evidence. */
-export async function restoredSession(previous: Binding, generation: string) {
+export async function restoredSession(session: Session, generation: string) {
+  const previous = session.binding;
   const binding = { ...previous, generation };
   const configuration = {
     provider: previous.provider,
@@ -26,6 +29,7 @@ export async function restoredSession(previous: Binding, generation: string) {
     permissions: "tools_disabled" as const,
   };
   const port = {
+    close: async () => ({ ok: true as const, value: { processStopped: true } }),
     resume: async () => ({
       ok: true as const,
       value: {
@@ -40,7 +44,7 @@ export async function restoredSession(previous: Binding, generation: string) {
   return unwrap(
     await VerifiedProviderSession.restore(
       port,
-      previous,
+      session,
       configuration,
       defaultBudget(),
     ),
@@ -51,6 +55,7 @@ export async function restoredSession(previous: Binding, generation: string) {
 export async function runRecoveryConformance(
   create: () => Promise<SessionStore>,
 ) {
+  await failureAndDelivery(await create());
   const store = await create();
   const initial = fixtureSession();
   initial.capabilities.continuation = "across_processes";
@@ -71,7 +76,7 @@ export async function runRecoveryConformance(
   unwrap(await store.accept(acceptance(head, control)));
   head = unwrap(await store.session(initial.namespace));
   const oldHead = head;
-  const restored = await restoredSession(head.binding, "generation-2");
+  const restored = await restoredSession(head, "generation-2");
   const input = {
     namespace: head.namespace,
     expectedRevision: head.revision,
@@ -88,6 +93,22 @@ export async function runRecoveryConformance(
     ).ok,
     false,
     "wire cannot mint restore evidence",
+  );
+  const other = {
+    ...initial,
+    namespace: { ...initial.namespace, tenantId: "other-tenant" },
+  };
+  unwrap(await store.create(other));
+  assert.equal(
+    (
+      await store.rebind({
+        ...input,
+        namespace: other.namespace,
+        expectedRevision: 0,
+      })
+    ).ok,
+    false,
+    "restore evidence cannot cross namespace with the same binding",
   );
   head = unwrap(await store.rebind(input));
   assert.equal(head.revision, oldHead.revision + 1);
@@ -200,7 +221,28 @@ export async function runRecoveryConformance(
     { type: "dispatch", attempt: nextAttempt },
     { type: "status", state: "dispatching" },
   ]);
-  unwrap(await store.commit(start));
+  const reusedAttempt = { ...nextAttempt, attemptId: original.attemptId };
+  const reuse = commandCommit(
+    head,
+    { ...dispatching, dispatch: reusedAttempt },
+    [
+      { type: "dispatch", attempt: reusedAttempt },
+      { type: "status", state: "dispatching" },
+    ],
+  );
+  assert.equal(
+    (await store.commit(reuse)).ok,
+    false,
+    "attempt identity remains reserved after positive not-submitted proof",
+  );
+  assert.deepEqual(unwrap(await store.session(head.namespace)), head);
+  assert.equal(
+    (await store.commit({ ...start, nowMs: 101 })).ok,
+    false,
+    "retry expiry rechecked at actual dispatch",
+  );
+  assert.deepEqual(unwrap(await store.session(head.namespace)), head);
+  unwrap(await store.commit({ ...start, nowMs: 1 }));
   head = unwrap(await store.session(head.namespace));
   const terminal = terminalCommit(head, dispatching);
   assert.equal(
@@ -217,7 +259,7 @@ export async function runRecoveryConformance(
   );
   unwrap(await store.commit(terminal));
   head = unwrap(await store.session(head.namespace));
-  const third = await restoredSession(head.binding, "generation-3");
+  const third = await restoredSession(head, "generation-3");
   head = unwrap(
     await store.rebind({
       ...input,
@@ -227,7 +269,7 @@ export async function runRecoveryConformance(
       eventId: "rebind-3",
     }),
   );
-  const reused = await restoredSession(head.binding, "generation-1");
+  const reused = await restoredSession(head, "generation-1");
   assert.equal(
     (
       await store.rebind({
@@ -260,7 +302,7 @@ export async function runRecoveryConformance(
     await surfaceStore.snapshot(seeded.session.namespace, 1024),
   );
   const restoredSurface = await restoredSession(
-    before.session.binding,
+    before.session,
     "surface-restored",
   );
   const after = unwrap(
@@ -273,6 +315,23 @@ export async function runRecoveryConformance(
     }),
   );
   const snapshot = unwrap(await surfaceStore.snapshot(after.namespace, 1024));
+  const appended = snapshot.events.slice(before.events.length);
+  assert.deepEqual(
+    appended.map((e) => e.body.type),
+    ["session_rebound", "status", "interaction", "surface_invalidated"],
+  );
+  assert.deepEqual(
+    appended.map((e) => e.sequence),
+    [1, 2, 3, 4].map((i) => before.cursor + i),
+  );
+  assert.equal(snapshot.cursor, before.cursor + 4);
+  assert.equal(snapshot.session.lastSequence, snapshot.cursor);
+  assert.equal(snapshot.session.revision, before.session.revision + 1);
+  assert.deepEqual(appended[2].body, {
+    type: "interaction",
+    interactionId: seeded.interaction.interactionId,
+    status: "unavailable",
+  });
   assert.equal(snapshot.interactions[0].status, "unavailable");
   assert.equal(snapshot.surfaces[0].status, "invalidated");
   assert.deepEqual(
@@ -293,4 +352,62 @@ export async function runRecoveryConformance(
     (await surfaceStore.accept(acceptance(after, seeded.answer))).ok,
     false,
   );
+}
+
+async function failureAndDelivery(store: SessionStore) {
+  const initial = fixtureSession();
+  unwrap(await store.create(initial));
+  const invalid = { ...initial.namespace, tenantId: "invalid namespace" };
+  for (const operation of [
+    () => store.session(invalid),
+    () => store.command(invalid, "command-1"),
+    () => store.surface(invalid, "surface-1"),
+    () => store.snapshot(invalid, 1024),
+    () => store.events(invalid, 0, 1),
+  ]) {
+    const result = await operation();
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.error.code, "invalid_input");
+  }
+  unwrap(await store.accept(acceptance(initial)));
+  const started = await dispatchCommand(
+    store,
+    unwrap(await store.session(initial.namespace)),
+  );
+  unwrap(await store.commit(terminalCommit(started.session, started.record)));
+  let head = unwrap(await store.session(initial.namespace));
+  const event = unwrap(await store.events(initial.namespace, 0, 1))[0];
+  const delivery: import("../wire.js").Delivery = {
+    schemaVersion: 2,
+    kind: "delivery",
+    namespace: initial.namespace,
+    operationId: "delivery-1",
+    eventId: event.eventId,
+    target: "service",
+    contentHash: deliveryFingerprint(event, "service", fixtureLimits),
+    status: "reconciliation_required",
+    attempts: 1,
+    nextAttemptAtMs: 0,
+    retry: "reconcile_first",
+  };
+  unwrap(await store.commit({ ...emptyCommit(head), deliveries: [delivery] }));
+  head = unwrap(await store.session(initial.namespace));
+  assert.deepEqual(unwrap(await store.deliveries(10, 0)).items, [delivery]);
+  assert.equal(
+    (await store.retire(head.namespace, head.revision, head.binding.generation))
+      .ok,
+    false,
+    "unsettled delivery must remain writable",
+  );
+  unwrap(
+    await store.commit({
+      ...emptyCommit(head),
+      deliveries: [{ ...delivery, status: "delivered" }],
+    }),
+  );
+  head = unwrap(await store.session(initial.namespace));
+  unwrap(
+    await store.retire(head.namespace, head.revision, head.binding.generation),
+  );
+  assert.equal(unwrap(await store.pruneRetired(201)), 1);
 }

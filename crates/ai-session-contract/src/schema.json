@@ -227,18 +227,6 @@
       "additionalProperties": false,
       "description": "Capabilities established for one exact provider binding, never execution authorization."
     },
-    "CommandState": {
-      "type": "string",
-      "enum": [
-        "accepted",
-        "dispatching",
-        "running",
-        "terminal",
-        "reconciliation_required",
-        "invalidated"
-      ],
-      "description": "accepted persists intent; dispatching persists dispatch intent; running has native confirmation; terminal has a definite outcome; reconciliation_required forbids blind resubmission."
-    },
     "Outcome": {
       "type": "string",
       "enum": [

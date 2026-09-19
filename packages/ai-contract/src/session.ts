@@ -1,6 +1,7 @@
 import canonicalize from "canonicalize";
+import { withinBudget } from "./budget.js";
 import { boundedJson, decode } from "./codec.js";
-import type { Binding, Capabilities } from "./wire.js";
+import type { Binding, Capabilities, Session, Failure } from "./wire.js";
 import type {
   Budget,
   ProviderAgentPort,
@@ -9,6 +10,14 @@ import type {
   ToolEndpoint,
 } from "./ports.js";
 
+export type AdmissionResult =
+  | { ok: true; value: VerifiedProviderSession }
+  | { ok: false; error: Failure; cleanupError?: Failure };
+const usedPorts = new WeakSet<ProviderAgentPort>();
+const unavailable = (): Failure => ({
+  code: "unavailable",
+  retry: "same_command",
+});
 const authority = Symbol("verified provider session");
 const denied = (): Result<never> => ({
   ok: false,
@@ -23,13 +32,13 @@ export class VerifiedProviderSession {
   readonly #binding: Binding;
   readonly #capabilities: Capabilities;
   readonly #tools?: ToolEndpoint;
-  readonly #previous?: Binding;
+  readonly #previous?: Pick<Session, "namespace" | "binding">;
   private constructor(
     token: symbol,
     binding: Binding,
     capabilities: Capabilities,
     tools?: ToolEndpoint,
-    previous?: Binding,
+    previous?: Pick<Session, "namespace" | "binding">,
   ) {
     if (token !== authority) throw new TypeError("unverified provider session");
     this.#binding = structuredClone(binding);
@@ -48,55 +57,80 @@ export class VerifiedProviderSession {
     return same(this.#binding, binding) && this.#tools === tools;
   }
   /** Only the resume path can establish this link. */
-  restores(previous: Binding): boolean {
-    return this.#previous !== undefined && same(previous, this.#previous);
-  }
-  static async restore(
-    port: ProviderAgentPort,
-    previous: Binding,
-    configuration: ProviderConfiguration,
-    budget: Budget,
-  ): Promise<Result<VerifiedProviderSession>> {
-    const prior = structuredClone(previous);
-    if (!port.resume || budget.signal.aborted) return denied();
-    const resume = port.resume;
-    const adapter = {
-      createSession: (config: ProviderConfiguration, b: Budget) =>
-        resume.call(port, structuredClone(prior), config, b),
-    };
-    const result = await VerifiedProviderSession.open(
-      adapter,
-      configuration,
-      budget,
+  restores(previous: Session): boolean {
+    return (
+      this.#previous !== undefined &&
+      same(
+        { namespace: previous.namespace, binding: previous.binding },
+        this.#previous,
+      )
     );
-    if (!result.ok) return result;
-    const next = result.value.binding;
-    if (
-      next.generation === prior.generation ||
-      next.provider !== prior.provider ||
-      next.providerVersion !== prior.providerVersion ||
-      next.adapterVersion !== prior.adapterVersion ||
-      next.accountRef !== prior.accountRef ||
-      !same(next.config, prior.config) ||
-      next.nativeSessionId !== prior.nativeSessionId ||
-      result.value.capabilities.continuation !== "across_processes"
-    )
-      return denied();
-    return {
-      ok: true,
-      value: new VerifiedProviderSession(
-        authority,
-        next,
-        result.value.capabilities,
-        result.value.#tools,
-        prior,
-      ),
-    };
   }
-  static async open(
-    port: Pick<ProviderAgentPort, "createSession">,
+  static restore(
+    port: ProviderAgentPort,
+    previous: Session,
     configuration: ProviderConfiguration,
     budget: Budget,
+  ): Promise<AdmissionResult> {
+    return this.admit(port, configuration, budget, previous);
+  }
+  static open(
+    port: ProviderAgentPort,
+    configuration: ProviderConfiguration,
+    budget: Budget,
+  ): Promise<AdmissionResult> {
+    return this.admit(port, configuration, budget);
+  }
+  private static async admit(
+    port: ProviderAgentPort,
+    configuration: ProviderConfiguration,
+    budget: Budget,
+    previous?: Session,
+  ): Promise<AdmissionResult> {
+    // Each instance belongs to one admission. Refusing a second call never closes
+    // the first successful session, including simultaneous calls.
+    if (usedPorts.has(port) || typeof port.close !== "function")
+      return denied();
+    usedPorts.add(port);
+    let result: Result<VerifiedProviderSession>;
+    try {
+      const prior = previous && structuredClone(previous);
+      const settings = {
+        ...configuration,
+        config: structuredClone(configuration.config),
+      };
+      result = await withinBudget(
+        () => budget,
+        (b) => this.initialize(port, settings, b, prior),
+      );
+    } catch {
+      result = { ok: false, error: unavailable() };
+    }
+    if (result.ok) return result;
+    try {
+      const closed = await withinBudget(
+        () => ({
+          timeoutMs:
+            Number.isSafeInteger(budget.timeoutMs) && budget.timeoutMs > 0
+              ? Math.min(budget.timeoutMs, 10000)
+              : 1000,
+          signal: new AbortController().signal,
+        }),
+        (b) => port.close(b),
+      );
+      if (!closed.ok) return { ...result, cleanupError: closed.error };
+      if (!closed.value.processStopped)
+        return { ...result, cleanupError: unavailable() };
+    } catch {
+      return { ...result, cleanupError: unavailable() };
+    }
+    return result;
+  }
+  private static async initialize(
+    port: ProviderAgentPort,
+    configuration: ProviderConfiguration,
+    budget: Budget,
+    previous?: Session,
   ): Promise<Result<VerifiedProviderSession>> {
     if (budget.signal.aborted) return denied();
     const controlled = configuration.permissions === "host_mediated";
@@ -116,10 +150,15 @@ export class VerifiedProviderSession {
       provider = configuration.provider;
     const tools = configuration.tools,
       verifier = configuration.verifier;
-    const initialized = await port.createSession(
-      { ...configuration, config: structuredClone(config), accountRef },
-      budget,
-    );
+    if (previous && !port.resume) return denied();
+    const settings = {
+      ...configuration,
+      config: structuredClone(config),
+      accountRef,
+    };
+    const initialized = previous
+      ? await port.resume!(structuredClone(previous.binding), settings, budget)
+      : await port.createSession(settings, budget);
     if (!initialized.ok) return initialized;
     const { binding, capabilities } = structuredClone(initialized.value);
     try {
@@ -160,6 +199,20 @@ export class VerifiedProviderSession {
       capabilities.tools !== (controlled ? "host_mediated" : "disabled")
     )
       return denied();
+    if (previous) {
+      const prior = previous.binding;
+      if (
+        binding.generation === prior.generation ||
+        binding.provider !== prior.provider ||
+        binding.providerVersion !== prior.providerVersion ||
+        binding.adapterVersion !== prior.adapterVersion ||
+        binding.accountRef !== prior.accountRef ||
+        !same(binding.config, prior.config) ||
+        binding.nativeSessionId !== prior.nativeSessionId ||
+        capabilities.continuation !== "across_processes"
+      )
+        return denied();
+    }
     if (controlled) {
       const checked = await verifier!.verify(
         {
@@ -181,6 +234,10 @@ export class VerifiedProviderSession {
         binding,
         capabilities,
         tools,
+        previous && {
+          namespace: previous.namespace,
+          binding: previous.binding,
+        },
       ),
     };
   }

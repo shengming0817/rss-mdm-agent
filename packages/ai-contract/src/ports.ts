@@ -120,12 +120,25 @@ export type ProviderInteraction = Pick<
   | "callbackLifetime"
   | "request"
 >;
+export type ProviderEventBody = Extract<
+  Event["body"],
+  {
+    type:
+      | "text"
+      | "terminal"
+      | "tool_proposal"
+      | "tool_result"
+      | "error"
+      | "cancel_dispatched"
+      | "surface";
+  }
+>;
 export type ProviderObservation = { readonly attemptId: Id } & (
   | {
       type: "event";
       binding: Binding;
       commandId: Id;
-      body: Exclude<Event["body"], { type: "interaction"; status: "pending" }>;
+      body: ProviderEventBody;
     }
   | ({ type: "delta"; binding: Binding } & MessageDelta)
   | {
@@ -139,7 +152,9 @@ export type Submission =
   | { certainty: "submitted"; binding: Binding }
   | { certainty: "not_sent"; error: Failure }
   | { certainty: "unknown"; correlationId: Id };
-/** A01 contract only: each adapter owns its SDK, process and native context. */
+/** Each port instance owns one admitted session incarnation. Open/restore consume
+ * it once; failure closes that instance. Close is idempotent, retryable and must
+ * also clean up creation/resume work that settles after abort. */
 export interface ProviderAgentPort {
   createSession(
     configuration: ProviderConfiguration,
@@ -251,9 +266,11 @@ export interface AcceptCommand {
   readonly retention: Retention;
   readonly event: Event;
 }
+/** Opaque process-independent continuation, 1–2048 characters; not a wire Id. */
+export type StoreCursor = string;
 export interface Page<T> {
   readonly items: readonly T[];
-  readonly next?: Id;
+  readonly next?: StoreCursor;
 }
 /** One logical session coordinator; no distributed worker/lease promise. */
 export interface SessionStore extends Closeable {
@@ -273,11 +290,14 @@ export interface SessionStore extends Closeable {
     after: Counter,
     limit: number,
   ): Promise<Result<readonly Event[]>>;
-  recovery(limit: number, after?: Id): Promise<Result<Page<CommandRecord>>>;
+  recovery(
+    limit: number,
+    after?: StoreCursor,
+  ): Promise<Result<Page<CommandRecord>>>;
   deliveries(
     limit: number,
     nowMs: Counter,
-    after?: Id,
+    after?: StoreCursor,
   ): Promise<Result<Page<Delivery>>>;
   retire(
     namespace: Namespace,

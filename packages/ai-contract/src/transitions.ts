@@ -100,7 +100,7 @@ export function createState(
     surfaces: new Map(),
   });
 }
-export function acceptCommand(
+function reduceAcceptance(
   state: SessionState,
   input: AcceptCommand,
   limits: Limits = defaultLimits,
@@ -112,6 +112,10 @@ export function acceptCommand(
     return fail("invalid_input");
   }
   if (input.command.sessionId !== input.namespace.sessionId)
+    return fail("permission_denied");
+  if (!Number.isSafeInteger(input.nowMs) || input.nowMs < 0)
+    return fail("invalid_input");
+  if (namespaceKey(input.namespace) !== namespaceKey(state.session.namespace))
     return fail("permission_denied");
   const digest = fingerprint(input.command, limits),
     prior = state.commands.get(input.command.commandId);
@@ -261,7 +265,7 @@ export function commitSession(
   batch: SessionCommit,
   limits: Limits = defaultLimits,
 ): Result<SessionState> {
-  return reduceCommit(state, batch, limits, false);
+  return guarded(() => reduceCommit(state, batch, limits, false));
 }
 function reduceCommit(
   state: SessionState,
@@ -442,6 +446,12 @@ function reduceCommit(
         attemptIds.has(c.dispatch.attemptId)
       )
         return fail("invalid_input");
+      if (
+        !Number.isSafeInteger(batch.nowMs) ||
+        batch.nowMs! < c.receipt.acceptedAtMs
+      )
+        return fail("invalid_input");
+      if (batch.nowMs! > dispatchDeadline(state, c)) return fail("expired");
       attemptIds.add(c.dispatch.attemptId);
     } else if (old?.dispatch && resolution?.status !== "not_submitted")
       return fail("invalid_input");
@@ -456,6 +466,8 @@ function reduceCommit(
       )
         return fail("invalid_input");
     }
+    if (c.dispatch?.certainty === "unknown" && !c.dispatch.correlationId)
+      return fail("invalid_input");
     if (c.state === "running" && c.dispatch.certainty !== "submitted")
       return fail("invalid_input");
     if (c.state === "invalidated" && old?.state !== "invalidated") {
@@ -467,7 +479,7 @@ function reduceCommit(
             old?.state === "accepted" &&
             ((c.failure.code === "expired" &&
               Number.isSafeInteger(batch.nowMs) &&
-              batch.nowMs! > c.command.expiresAtMs) ||
+              batch.nowMs! > dispatchDeadline(state, c)) ||
               (c.command.input.type !== "prompt" &&
                 c.command.input.generation !== batch.expectedGeneration))
           )) ||
@@ -570,7 +582,7 @@ function reduceCommit(
     )
       return fail("stale_binding");
     if (
-      ["text", "tool_call", "tool_result", "surface"].includes(
+      ["text", "tool_proposal", "tool_result", "surface"].includes(
         event.body.type,
       ) &&
       isSettled(source)
@@ -838,7 +850,7 @@ function reduceCommit(
 }
 
 /** Verified handoff changes observation authority, never the original attempt identity. */
-export function rebindSession(
+function reduceRebind(
   state: SessionState,
   input: SessionRebind,
   limits: Limits = defaultLimits,
@@ -855,7 +867,7 @@ export function rebindSession(
     !(input.restored instanceof VerifiedProviderSession) ||
     !VerifiedProviderSession.prototype.restores.call(
       input.restored,
-      state.session.binding,
+      state.session,
     )
   )
     return fail("permission_denied");
@@ -982,7 +994,7 @@ export function rebindSession(
   return ok(copy);
 }
 
-export function retireSession(
+function reduceRetirement(
   state: SessionState,
   revision: Counter,
   generation: Id,
@@ -992,7 +1004,8 @@ export function retireSession(
   if (!checked.ok) return checked;
   if (
     [...state.commands.values()].some((c) => !isSettled(c)) ||
-    [...state.interactions.values()].some((i) => i.status === "pending")
+    [...state.interactions.values()].some((i) => i.status === "pending") ||
+    [...state.deliveries.values()].some((d) => d.status !== "delivered")
   )
     return fail("reconciliation_required", "reconcile_first");
   const copy = clone(state);
@@ -1029,4 +1042,48 @@ export function canPrune(state: SessionState, nowMs: Counter): boolean {
     ) &&
     [...state.deliveries.values()].every((d) => d.status === "delivered")
   );
+}
+
+function guarded<T>(action: () => Result<T>): Result<T> {
+  try {
+    return action();
+  } catch (error) {
+    return fail(
+      error instanceof ContractError && error.code === "limit"
+        ? "limit_exceeded"
+        : "invalid_input",
+    );
+  }
+}
+export function acceptCommand(
+  state: SessionState,
+  input: AcceptCommand,
+  limits: Limits = defaultLimits,
+): Result<{ state: SessionState; receipt: import("./wire.js").Receipt }> {
+  return guarded(() => reduceAcceptance(state, input, limits));
+}
+export function rebindSession(
+  state: SessionState,
+  input: SessionRebind,
+  limits: Limits = defaultLimits,
+): Result<SessionState> {
+  return guarded(() => reduceRebind(state, input, limits));
+}
+export function retireSession(
+  state: SessionState,
+  revision: Counter,
+  generation: Id,
+  limits: Limits = defaultLimits,
+): Result<SessionState> {
+  return guarded(() => reduceRetirement(state, revision, generation, limits));
+}
+function dispatchDeadline(state: SessionState, c: CommandRecord): number {
+  return state.events.some(
+    (e) =>
+      e.commandId === c.command.commandId &&
+      e.body.type === "reconciled" &&
+      e.body.resolution === "not_submitted",
+  )
+    ? Math.min(c.command.expiresAtMs, c.receipt.retryUntilMs)
+    : c.command.expiresAtMs;
 }

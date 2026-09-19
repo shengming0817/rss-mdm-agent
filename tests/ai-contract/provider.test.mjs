@@ -175,7 +175,7 @@ test("shared provider harness closes failed adapters with a fresh bounded signal
   abort.abort();
   await assert.rejects(
     runProviderConformance(() => port, configuration, budget),
-    primary,
+    /unavailable/,
   );
   assert.equal(closed, true);
 });
@@ -272,7 +272,9 @@ test("controlled admission requires a trusted verifier and binds immutable evide
     assert.equal(
       (
         await VerifiedProviderSession.open(
-          port,
+          Object.assign(new ScriptedProvider(), {
+            createSession: port.createSession,
+          }),
           { ...configuration, ...patch },
           budget(),
         )
@@ -366,37 +368,20 @@ test("controlled admission requires a trusted verifier and binds immutable evide
   );
 });
 
-test("atomic provider session results retain their own capabilities across concurrent reinitialization", async () => {
+test("one provider instance admits once; parallel duplicate admission preserves the successful session", async () => {
   const port = new ScriptedProvider();
-  const [first, second] = await Promise.all([
-    VerifiedProviderSession.open(port, configuration, budget()).then(unwrap),
-    VerifiedProviderSession.open(
-      port,
-      { ...configuration, config: { id: "config-2", revision: "2" } },
-      budget(),
-    ).then(unwrap),
+  const [first, repeated] = await Promise.all([
+    VerifiedProviderSession.open(port, configuration, budget()),
+    VerifiedProviderSession.open(port, configuration, budget()),
   ]);
-  assert.notEqual(first.binding.generation, second.binding.generation);
-  assert.equal(first.binding.config.id, "config-1");
-  assert.equal(second.binding.config.id, "config-2");
-  assert.equal(first.matches(second.binding), false);
+  const admitted = unwrap(first);
+  assert.equal(repeated.ok, false);
   assert.equal(
     (
       await port.submit(
-        first.binding,
+        admitted.binding,
         fixtureCommand(),
-        intent(first.binding),
-        budget(),
-      )
-    ).certainty,
-    "not_sent",
-  );
-  assert.equal(
-    (
-      await port.submit(
-        second.binding,
-        fixtureCommand(),
-        intent(second.binding),
+        intent(admitted.binding),
         budget(),
       )
     ).certainty,

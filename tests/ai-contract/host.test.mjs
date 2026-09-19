@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   FakeHost,
+  dispatchCommand,
   runHostConformance,
   fixtureCaller,
   fixtureCommand,
@@ -105,9 +106,33 @@ test("interleaved delta messages retain identities through Host subscription", a
     sessionId: session.namespace.sessionId,
   };
   unwrap(await host.submit(fixtureCaller, command, budget()));
+  const observation = {
+    type: "delta",
+    attemptId: "attempt-command-1",
+    binding: session.binding,
+    commandId: command.commandId,
+    messageId: "m",
+    text: "x",
+  };
+  assert.equal(
+    (await host.publishDelta(fixtureCaller, command.sessionId, observation)).ok,
+    false,
+    "unsubmitted command",
+  );
+  const current = unwrap(await host.store.session(session.namespace));
+  const { session: head } = await dispatchCommand(host.store, current);
+  assert.equal(
+    (
+      await host.publishDelta(fixtureCaller, command.sessionId, {
+        ...observation,
+        attemptId: "old-attempt",
+      })
+    ).ok,
+    false,
+  );
   const control = new AbortController();
   const stream = host
-    .subscribe(fixtureCaller, command.sessionId, 1, {
+    .subscribe(fixtureCaller, command.sessionId, head.lastSequence, {
       timeoutMs: 1000,
       signal: control.signal,
     })

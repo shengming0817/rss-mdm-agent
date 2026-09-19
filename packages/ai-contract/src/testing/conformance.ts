@@ -647,6 +647,7 @@ export function commandCommit(
   );
   return {
     ...emptyCommit(session),
+    nowMs: 0,
     session: {
       ...session,
       revision: session.revision + 1,
@@ -819,6 +820,7 @@ async function runSurfaceConformance(store: SessionStore): Promise<void> {
     { surface } = seeded;
   for (const patch of [
     { revision: 0 },
+    { revision: 1 },
     { revision: 2 },
     { revision: 1, sourceComponentId: "different" },
     { revision: 1, interactionId: "different" },
@@ -832,6 +834,24 @@ async function runSurfaceConformance(store: SessionStore): Promise<void> {
       ).ok,
       false,
     );
+  assert.deepEqual(
+    unwrap(await store.session(seeded.session.namespace)),
+    seeded.session,
+  );
+  const malformed = surfaceCommit(
+    seeded.session,
+    { ...surface, revision: 1 },
+    seeded.interaction,
+  );
+  const malformedEvents = malformed.events.map((e) =>
+    e.body.type === "surface"
+      ? ({ ...e, body: { ...e.body, revision: 99 } } as Event)
+      : e,
+  );
+  assert.equal(
+    (await store.commit({ ...malformed, events: malformedEvents })).ok,
+    false,
+  );
   const updated = { ...surface, revision: 1 };
   unwrap(
     await store.commit(

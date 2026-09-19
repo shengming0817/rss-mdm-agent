@@ -43,6 +43,13 @@ export class MemorySessionStore implements SessionStore {
   private retiredIds = new Set<string>();
   failNextCommit = false;
   failNextQuery = false;
+  private query<T>(action: () => Result<T>): Result<T> {
+    try {
+      return action();
+    } catch {
+      return fail("invalid_input");
+    }
+  }
   private apply(
     namespace: Namespace,
     transition: (s: SessionState) => Result<SessionState>,
@@ -79,24 +86,30 @@ export class MemorySessionStore implements SessionStore {
     }
   }
   async session(namespace: Namespace): Promise<Result<Session>> {
-    if (this.closed) return fail("unavailable");
-    const state = this.states.get(namespaceKey(namespace));
-    return state ? ok(clone(state.session)) : fail("session_gone");
+    return this.query(() => {
+      if (this.closed) return fail("unavailable");
+      const state = this.states.get(namespaceKey(namespace));
+      return state ? ok(clone(state.session)) : fail("session_gone");
+    });
   }
   async command(namespace: Namespace, id: Id): Promise<Result<CommandRecord>> {
-    if (this.closed) return fail("unavailable");
-    const state = this.states.get(namespaceKey(namespace));
-    if (!state) return fail("session_gone");
-    const row = state.commands.get(id);
-    return row ? ok(clone(row)) : fail("unavailable");
+    return this.query(() => {
+      if (this.closed) return fail("unavailable");
+      const state = this.states.get(namespaceKey(namespace));
+      if (!state) return fail("session_gone");
+      const row = state.commands.get(id);
+      return row ? ok(clone(row)) : fail("unavailable");
+    });
   }
   async surface(namespace: Namespace, id: Id): Promise<Result<SurfaceBinding>> {
-    if (this.closed) return fail("unavailable");
-    const state = this.states.get(namespaceKey(namespace));
-    if (!state || state.session.status !== "active")
-      return fail("session_gone");
-    const row = state.surfaces.get(id);
-    return row ? ok(clone(row)) : fail("stale_binding");
+    return this.query(() => {
+      if (this.closed) return fail("unavailable");
+      const state = this.states.get(namespaceKey(namespace));
+      if (!state || state.session.status !== "active")
+        return fail("session_gone");
+      const row = state.surfaces.get(id);
+      return row ? ok(clone(row)) : fail("stale_binding");
+    });
   }
   async accept(
     input: AcceptCommand,
@@ -121,49 +134,53 @@ export class MemorySessionStore implements SessionStore {
     namespace: Namespace,
     limit: number = 1024,
   ): Promise<Result<Snapshot>> {
-    if (this.closed) return fail("unavailable");
-    const s = this.states.get(namespaceKey(namespace));
-    if (!s) return fail("session_gone");
-    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1024)
-      return fail("invalid_input");
-    if (
-      s.events.length +
-        s.commands.size +
-        s.interactions.size +
-        s.surfaces.size >
-      limit
-    )
-      return fail("limit_exceeded");
-    return ok(
-      clone({
-        session: s.session,
-        cursor: s.session.lastSequence,
-        events: s.events,
-        commands: [...s.commands.values()],
-        interactions: [...s.interactions.values()],
-        surfaces: [...s.surfaces.values()],
-      }),
-    );
+    return this.query(() => {
+      if (this.closed) return fail("unavailable");
+      const s = this.states.get(namespaceKey(namespace));
+      if (!s) return fail("session_gone");
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1024)
+        return fail("invalid_input");
+      if (
+        s.events.length +
+          s.commands.size +
+          s.interactions.size +
+          s.surfaces.size >
+        limit
+      )
+        return fail("limit_exceeded");
+      return ok(
+        clone({
+          session: s.session,
+          cursor: s.session.lastSequence,
+          events: s.events,
+          commands: [...s.commands.values()],
+          interactions: [...s.interactions.values()],
+          surfaces: [...s.surfaces.values()],
+        }),
+      );
+    });
   }
   async events(
     namespace: Namespace,
     after: Counter,
     limit: number,
   ): Promise<Result<readonly Event[]>> {
-    if (this.closed) return fail("unavailable");
-    const s = this.states.get(namespaceKey(namespace));
-    if (!s) return fail("session_gone");
-    if (
-      !Number.isSafeInteger(after) ||
-      after < 0 ||
-      after > s.session.lastSequence
-    )
-      return fail("cursor_expired");
-    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1024)
-      return fail("invalid_input");
-    return ok(
-      clone(s.events.filter((e) => e.sequence > after).slice(0, limit)),
-    );
+    return this.query(() => {
+      if (this.closed) return fail("unavailable");
+      const s = this.states.get(namespaceKey(namespace));
+      if (!s) return fail("session_gone");
+      if (
+        !Number.isSafeInteger(after) ||
+        after < 0 ||
+        after > s.session.lastSequence
+      )
+        return fail("cursor_expired");
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1024)
+        return fail("invalid_input");
+      return ok(
+        clone(s.events.filter((e) => e.sequence > after).slice(0, limit)),
+      );
+    });
   }
   async recovery(
     limit: number,
@@ -197,7 +214,7 @@ export class MemorySessionStore implements SessionStore {
     return this.page(
       [...this.states.values()]
         .flatMap((s) => [...s.deliveries.values()])
-        .filter((d) => d.status === "pending" && d.nextAttemptAtMs <= nowMs),
+        .filter((d) => d.status !== "delivered" && d.nextAttemptAtMs <= nowMs),
       (d) => namespaceKey(d.namespace) + "/" + d.operationId,
       limit,
       after,

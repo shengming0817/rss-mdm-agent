@@ -32,10 +32,12 @@ export class ScriptedProvider implements ProviderAgentPort {
   dispatched = 0;
   private readonly instance = ++nextProviderInstance;
   private incarnation = 0;
+  private closed = false;
   async createSession(
     configuration: ProviderConfiguration,
     _budget: Budget,
   ): Promise<Result<ProviderSessionBinding>> {
+    if (this.closed || _budget.signal.aborted) return fail("unavailable");
     if (
       configuration.provider !== "fake" ||
       configuration.permissions !== "tools_disabled"
@@ -129,6 +131,7 @@ export class ScriptedProvider implements ProviderAgentPort {
       : fail("stale_binding");
   }
   async close(_budget: Budget): Promise<Result<{ processStopped: boolean }>> {
+    this.closed = true;
     this.configuration = undefined;
     return ok({ processStopped: true });
   }
@@ -300,13 +303,18 @@ export async function runProviderConformance(
                     ],
                   );
                 } else {
-                  assert.equal(
-                    observation.type === "event" &&
-                      observation.body.type === "interaction" &&
-                      String(observation.body.status) === "pending",
-                    false,
-                    "pending callbacks require the dedicated question observation",
-                  );
+                  if (observation.type === "event")
+                    assert.ok(
+                      [
+                        "text",
+                        "terminal",
+                        "tool_proposal",
+                        "tool_result",
+                        "error",
+                        "cancel_dispatched",
+                        "surface",
+                      ].includes(observation.body.type),
+                    );
                   assert.ok(
                     observation.type === "event" ||
                       observation.type === "delta",

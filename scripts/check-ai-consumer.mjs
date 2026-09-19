@@ -73,8 +73,9 @@ try {
   writeFileSync(
     join(dir, "consumer.ts"),
     `import assert from 'node:assert/strict';
-import {decode,boundedJson,fingerprint,type HostPort,type ProviderAgentPort,type SessionStore,type ProviderConfiguration,type Subscription,type ProviderInteraction,type ProviderObservation,VerifiedProviderSession} from '@rss-mdm-agent/ai-contract';
-import {FakeHost,MemorySessionStore,ScriptedProvider,fixtures,fixtureLimits,runStoreConformance,runProviderConformance,runHostConformance} from '@rss-mdm-agent/ai-contract/testing';
+import {decode,boundedJson,fingerprint,type HostPort,type ProviderAgentPort,type SessionStore,type ProviderConfiguration,type Subscription,type ProviderInteraction,type ProviderObservation,type ProviderEventBody,VerifiedProviderSession} from '@rss-mdm-agent/ai-contract';
+import {createState,acceptCommand,type SessionState} from '@rss-mdm-agent/ai-contract/transitions';
+import {fixtureSession,acceptance,unwrap,FakeHost,MemorySessionStore,ScriptedProvider,fixtures,fixtureLimits,runStoreConformance,runProviderConformance,runHostConformance} from '@rss-mdm-agent/ai-contract/testing';
 // @ts-expect-error Controlled mode cannot omit its verifier and ToolEndpoint.
 const invalidConfiguration:ProviderConfiguration={provider:'fake',config:{id:'c',revision:'1'},accountRef:'a',workingDirectory:'.',permissions:'host_mediated'};
 // @ts-expect-error Admission cannot be built from serialized fields.
@@ -88,8 +89,11 @@ const oldQuestion:ProviderInteraction={category:'question',interactionId:'questi
 const permission:ProviderInteraction={...question,category:'tool_permission'};
 // @ts-expect-error Initial pending callbacks cannot bypass their dedicated observation.
 const pending:ProviderObservation={type:'event',binding:{} as any,commandId:'c',body:{type:'interaction',interactionId:'q',status:'pending',request:{}}};
+// @ts-expect-error Provider cannot manufacture a host/store lifecycle event.
+const internalEvent:ProviderEventBody={type:'session_retired'};
 assert.equal(question.nativeCallbackId,'callback');
 assert.throws(()=>boundedJson({get secret(){throw new Error('accessor must not run');}},fixtureLimits),{code:'encoding'});
+const state:SessionState=unwrap(createState(fixtureSession()));assert.equal(unwrap(acceptCommand(state,acceptance(state.session))).state.commands.size,1);
 const host:HostPort=new FakeHost();const provider:ProviderAgentPort=new ScriptedProvider();const store:SessionStore=new MemorySessionStore();
 const value=decode(JSON.stringify(fixtures.valid[0]),fixtureLimits);assert.equal(value.kind,'command');if(value.kind==='command')assert.equal(fingerprint(value,fixtureLimits),fixtures.commandHash);
 await runStoreConformance(()=>new MemorySessionStore());
