@@ -50,6 +50,13 @@ pub(crate) fn head(
     .transpose()
 }
 impl Store {
+    /// Read the protected CAS revision for a subsequent trust refresh. Requires trust-management
+    /// access, independently of result/audit access; absence means the first refresh uses None.
+    pub fn trust_revision(&self, scope: &Scope, host: &impl Host) -> Result<Option<u64>, Error> {
+        let tx = self.read(scope, Access::ManageTrust, None, host)?;
+        Ok(head(&tx, scope, self.limits)?.map(|head| head.revision))
+    }
+
     /// Atomically install a complete freshly verified snapshot using expected local head revision.
     /// Definitions are immutable; refresh cannot import, reset or refund local consumption counters.
     pub fn refresh_trust(

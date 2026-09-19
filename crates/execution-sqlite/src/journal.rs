@@ -105,7 +105,12 @@ impl Store {
             )
             .optional()?
         {
-            authorize(host, Access::ReadResult, scope, None)?;
+            // A replay is only a safe response. Either the original operation capability or
+            // independent result-read capability can retrieve it; neither repeats its effect.
+            match authorize(host, access, scope, None) {
+                Err(Error::Denied) => authorize(host, Access::ReadResult, scope, None)?,
+                other => other?,
+            }
             if old_scope != scope.key() || old_hash != fingerprint {
                 return Err(Error::Conflict);
             }
@@ -267,8 +272,42 @@ impl Write<'_> {
         self.ensure_capacity()?;
         let event_id = EventId::new(hash(&(self.op.as_str(), &self.fingerprint))?)
             .map_err(|_| Error::Corrupt)?;
+        let admission = if audit.admission.is_some()
+            || audit.reason == AuditReason::TrustUnavailable
+        {
+            match outcome {
+                Outcome::Changed => Some(AdmissionStatus::Admitted),
+                Outcome::Rejected => Some(
+                    if matches!(audit.reason, AuditReason::CommitGateRejected)
+                        && audit.admission.as_ref().is_some_and(|a| {
+                            matches!(
+                                a.outcome,
+                                execution_admission::DecisionOutcome::ApprovalRequired { .. }
+                            )
+                        })
+                        && audit.approval.as_ref().is_some_and(|a| {
+                            matches!(a.outcome, execution_approval::ApprovalOutcome::Rejected(_))
+                        })
+                    {
+                        AdmissionStatus::ApprovalRequired
+                    } else {
+                        AdmissionStatus::Denied
+                    },
+                ),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let kind = if admission.is_some() {
+            "admission"
+        } else if self.kind == OperationKind::Trust {
+            "trust"
+        } else {
+            "result"
+        };
         self.tx.execute("INSERT INTO receipts(operation_id,event_id,scope,fingerprint,kind,body) VALUES(?1,?2,?3,?4,?5,X'')",
-            params![self.op.as_str(), event_id.as_str(), self.scope.key(), self.fingerprint, match self.kind { OperationKind::Trust => "trust", _ => "result" }])?;
+            params![self.op.as_str(), event_id.as_str(), self.scope.key(), self.fingerprint, kind])?;
         let sequence = u64::try_from(self.tx.last_insert_rowid()).map_err(|_| Error::Capacity)?;
         let receipt = Receipt {
             sequence,
@@ -277,6 +316,7 @@ impl Write<'_> {
             scope: self.scope.clone(),
             kind: self.kind,
             outcome,
+            admission,
             revision,
             attempt_id: audit.attempt_id.clone(),
             occurred_at_unix_ms: self.now,
@@ -320,6 +360,8 @@ impl Write<'_> {
 }
 pub(crate) fn empty_audit(reason: AuditReason) -> AuditRecord {
     AuditRecord {
+        stop_outcome: None,
+        dispatch_cause: None,
         event: None,
         attempt_id: None,
         reason,

@@ -84,6 +84,22 @@ export const rustConsumers = [
     fixtures: ["crates/execution-contract/tests/fixtures/plan.json"],
   },
   {
+    name: "execution-app",
+    example: "execution-app-consumer.rs",
+    locals: [
+      "execution-app",
+      "execution-contract",
+      "execution-capability",
+      "execution-admission",
+      "execution-approval",
+      "execution-lifecycle",
+      "execution-interaction",
+      "execution-sqlite",
+    ],
+    registry: [],
+    fixtures: ["crates/execution-contract/tests/fixtures/plan.json"],
+  },
+  {
     name: "service-catalog",
     example: "catalog-consumer.rs",
     locals: ["service-catalog", "execution-contract"],
@@ -234,7 +250,7 @@ function checkOne(root, spec, owner, execute, receipt) {
           pkg.name,
         ) &&
         !(
-          name === "execution-sqlite" &&
+          ["execution-sqlite", "execution-app"].includes(name) &&
           [
             "execution-sqlite",
             "isolated-execution-sqlite-consumer",
