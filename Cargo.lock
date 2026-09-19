@@ -817,6 +817,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "execution-app"
+version = "0.1.0"
+dependencies = [
+ "execution-admission",
+ "execution-approval",
+ "execution-capability",
+ "execution-contract",
+ "execution-interaction",
+ "execution-lifecycle",
+ "execution-sqlite",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "serde_json_canonicalizer",
+ "sha2",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "execution-approval"
 version = "0.1.0"
 dependencies = [

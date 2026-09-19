@@ -7,6 +7,93 @@ use std::sync::{Arc, Barrier};
 use support::*;
 
 #[test]
+fn dispatch_diagnostics_keep_submitted_attempt_and_cause_even_when_stale_or_rejected() {
+    for (revision, expected) in [(0, Outcome::Stale), (1, Outcome::Rejected)] {
+        let db = Database::new();
+        let host = TestHost::new(0);
+        let mut store = db.create();
+        host.prepare(&mut store);
+        let attempt = AttemptId::new("submitted-attempt").unwrap();
+        let command = event(
+            "diagnostic",
+            revision,
+            lifecycle::Command::DispatchUnconfirmed {
+                attempt_id: attempt.clone(),
+                cause: lifecycle::DispatchCause::RunnerError,
+            },
+        );
+        let result = store
+            .apply_execution(
+                &operation("diagnostic"),
+                &host.scope(),
+                &command,
+                &[],
+                &host,
+            )
+            .unwrap();
+        assert_eq!(result.receipt().outcome, expected);
+        assert_eq!(result.receipt().attempt_id, Some(attempt.clone()));
+        drop(store);
+        let audit = db
+            .open()
+            .audit(&host.scope(), &operation("diagnostic"), &host)
+            .unwrap();
+        assert_eq!(audit.attempt_id, Some(attempt));
+        assert_eq!(
+            audit.dispatch_cause,
+            Some(lifecycle::DispatchCause::RunnerError)
+        );
+    }
+}
+
+#[test]
+fn execution_by_request_restores_exact_plan_and_checks_current_reader() {
+    let db = Database::new();
+    let host = TestHost::new(1);
+    let mut store = db.create();
+    host.prepare(&mut store);
+    drop(store);
+    let store = db.open();
+    let request = &host.plan.spec().request.request_id;
+    let restored = store
+        .execution_by_request(request, ExecutionAccess::Result, &host)
+        .unwrap()
+        .execution;
+    assert_eq!(restored.plan().digest(), host.plan.digest());
+    assert_eq!(restored.snapshot().revision, 1);
+    assert_eq!(store.trust_revision(&host.scope(), &host).unwrap(), Some(1));
+    let mut denied = host.clone();
+    denied.read = false;
+    assert!(matches!(
+        store.execution_by_request(request, ExecutionAccess::Result, &denied),
+        Err(Error::Denied)
+    ));
+    denied.denied.push(Access::ManageTrust);
+    assert_eq!(
+        store.trust_revision(&host.scope(), &denied),
+        Err(Error::Denied)
+    );
+    assert!(matches!(
+        store.execution_by_request(
+            &RequestId::new("missing").unwrap(),
+            ExecutionAccess::Result,
+            &host
+        ),
+        Err(Error::NotFound)
+    ));
+    db.sql()
+        .execute(
+            "UPDATE executions SET plan=zeroblob(?1)",
+            [limits().plan.max_input_bytes + 1],
+        )
+        .unwrap();
+    assert!(matches!(
+        store.execution_by_request(request, ExecutionAccess::Result, &host),
+        Err(Error::Corrupt)
+    ));
+}
+
+#[test]
 fn initialize_and_reopen_preserve_authority_and_reject_implicit_creation() {
     let db = Database::new();
     let authority = plan().spec().request.authority.clone();
@@ -1237,7 +1324,7 @@ fn each_endpoint_requires_its_exact_access_and_delivery_consumer() {
 }
 
 #[test]
-fn new_write_needs_only_write_permission_while_replay_needs_only_result_permission() {
+fn replay_accepts_original_action_or_independent_result_permission() {
     let db = Database::new();
     let mut store = db.create();
     let mut host = TestHost::new(0);
@@ -1246,12 +1333,12 @@ fn new_write_needs_only_write_permission_while_replay_needs_only_result_permissi
         .refresh_trust(&operation("trust"), &host.scope(), None, &host)
         .unwrap();
     assert_eq!(initial.receipt().outcome, Outcome::Changed);
-    assert_eq!(
+    assert!(matches!(
         store
             .refresh_trust(&operation("trust"), &host.scope(), None, &host)
-            .unwrap_err(),
-        Error::Denied
-    );
+            .unwrap(),
+        CommitOutcome::AlreadyCommitted(_)
+    ));
     host.read = true;
     host.write = false;
     assert!(matches!(

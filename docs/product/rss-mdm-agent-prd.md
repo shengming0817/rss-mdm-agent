@@ -342,6 +342,10 @@ C05组件、C15自助页面、C16对话页面分别独占目录；交互核心�
 C18 的当前公共入口与 S1 测试存储证据见 [execution-sqlite](../../crates/execution-sqlite/README.md)。回执兼作可靠结果，由各 consumer 的持久确认推进投递，乱序确认不能跳过未确认结果；失败/陈旧 runner 事件保留提交的 attempt 与裁决原因。受保护 BLOB 在物化前检查大小，错误区分调用输入、配置及操作/确认/初始化恢复。查询/拉取/确认不派发 runner；只提供显式测试 authority 初始化，真实 ACL/可信身份与平台隔离仍归后续交付。
 
 C18 独占 Rust 执行 SQLite migration，A02 独占 TS AI SQLite migration；C19不另建表；Cargo/lock/UI package配置与根入口由单一集成人串行合并。
+
+C19 的当前公共入口与 S1 证据见 [execution-app](../../crates/execution-app/README.md)。应用服务区分原请求重放与显式新尝试，每次新尝试经当前能力/C07/C08及原子提交；仅首次提交释放一次派发。服务 owner 独立于窗口和模型调用，丢失 runner 历史保留 Unknown，不从计划合成成功。配置由可信 host 加载/持久审计，应用验证版本、硬上限、原子替换及 LKG/degraded 接缝；C20 另行承担实际 UI/AI 接线，生产身份和真实 runner 仍归后续阶段。
+
+组合层按动作定位任务，不给交互、投递、取消或审计附加结果读取权限。普通授权状态保留安全准入结果，首次拒绝、重放和重启分类一致；派发门控与 stop 响应保留闭集诊断，stop 失败不阻断终止/效果观察。更高 schema 只返回版本诊断，不构造可写应用句柄。
 真实开工前复核变更文件、隐式消费和测试数据库/临时目录冲突；无Predecessor不自动代表可同时改同一文件。
 
 ## 11. 后续平台能力与客户端发布

@@ -159,12 +159,54 @@ pub struct AttemptSnapshot {
     pub mode: ExecutionMode,
     /// Host dispatch progress.
     pub dispatch: DispatchState,
+    /// Last first-delivery failure diagnosis, separate from execution/effect evidence.
+    pub dispatch_cause: Option<DispatchCause>,
+    /// Last stop request acknowledgement, never proof of termination.
+    pub stop_outcome: Option<StopOutcome>,
     /// Verified quiescence or authoritative never-dispatched fact.
     pub termination: Option<RecordedObservation>,
     /// Independent post-termination target/effect assessment.
     pub assessment: Option<RecordedObservation>,
     /// Cumulative output including discarded bytes; final and immutable after termination.
     pub output_bytes: u64,
+}
+/// Closed first-delivery diagnostics. These are not observations of termination or effects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DispatchCause {
+    /// Required capability or its independently verified freshness is unavailable.
+    CapabilityUnavailable,
+    /// A reliable clock could not be established at the gate.
+    ClockUnavailable,
+    /// A durable cancellation was seen before first delivery.
+    Cancelled,
+    /// A specific plan validity or cumulative budget bound prevents delivery.
+    Limit(LimitReason),
+    /// The first-commit revision is no longer current.
+    StaleRevision,
+    /// Current runner identity or provenance does not match the admitted action.
+    RunnerMismatch,
+    /// Current service configuration does not permit new delivery.
+    ConfigurationUnavailable,
+    /// Current host binding or Execute authorization was rejected.
+    AuthorityUnavailable,
+    /// The lifecycle no longer permits initial delivery for another reason.
+    LifecycleChanged,
+    /// Runner reported rejection; reconciliation still needs authoritative evidence.
+    RunnerRejected,
+    /// Delivery or acknowledgement could not be established.
+    DeliveryUnknown,
+    /// Runner returned a closed error; provider text is never persisted here.
+    RunnerError,
+}
+/// Closed stop request diagnostics. Neither variant is a termination/effect observation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StopOutcome {
+    /// The runner acknowledged the stop request, not termination.
+    Acknowledged,
+    /// The runner returned a failure; trusted observations may still be available.
+    Failed,
 }
 /// Host commands. They never perform I/O or constitute dispatch permissions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -192,6 +234,21 @@ pub enum Command {
     Dispatched {
         /// Current attempt only.
         attempt_id: AttemptId,
+    },
+    /// Retain a first-delivery diagnostic while requiring reconciliation, never refunding an
+    /// attempt or treating a runner rejection report as proof of quiescence/no effect.
+    DispatchUnconfirmed {
+        /// Exact attempted delivery, retained in the audit even if stale or rejected.
+        attempt_id: AttemptId,
+        /// Static, value-free diagnosis distinct from a generic host restart.
+        cause: DispatchCause,
+    },
+    /// Record a stop request response without modifying dispatch/termination/effect facts.
+    StopReported {
+        /// Exact current attempt.
+        attempt_id: AttemptId,
+        /// Value-free port response.
+        outcome: StopOutcome,
     },
     /// Request cancellation; does not terminate or roll back any effects.
     Cancel,
@@ -289,7 +346,8 @@ pub enum Phase {
     Cancelled,
 }
 /// Explicit reason a validity or cumulative budget bound prevents work.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum LimitReason {
     /// Plan validity has not begun.
     NotYetValid,

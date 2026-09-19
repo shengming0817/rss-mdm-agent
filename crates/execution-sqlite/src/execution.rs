@@ -3,9 +3,81 @@ use crate::{journal::*, trust::*, *};
 use execution_approval::ProfileApproval;
 use execution_contract::{AuditEvent, Decision, EventId, EvidenceRefs, FrozenPlan, Id, V1};
 use execution_lifecycle::{self as lifecycle, Command, Execution};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 impl Store {
+    /// Restore by stable business request identity after reconnect or restart. The stored scope
+    /// is authenticated before any plan or state is returned. No dispatch action is recoverable.
+    pub fn execution_by_request(
+        &self,
+        request: &execution_contract::RequestId,
+        access: ExecutionAccess<'_>,
+        host: &impl Host,
+    ) -> Result<ExecutionRecord, Error> {
+        let tx = self.conn.unchecked_transaction()?;
+        crate::database::ensure_current(&tx, &self.authority, self.limits)?;
+        let bytes: Vec<u8> = tx.query_row(
+            &format!(
+                "SELECT {} FROM executions WHERE request_id=?1",
+                bounded_blob("plan", self.limits.plan.max_input_bytes)
+            ),
+            [request.as_str()],
+            |row| row.get(0),
+        )?;
+        let spec = execution_contract::decode_plan(&bytes, &self.limits.plan)
+            .map_err(|_| Error::Corrupt)?;
+        let plan = FrozenPlan::freeze(spec, &self.limits.plan).map_err(|_| Error::Corrupt)?;
+        let scope = Scope::from_plan(&plan);
+        self.check_scope(&scope)?;
+        access.authorize(&scope, host)?;
+        if &plan.spec().request.request_id != request {
+            return Err(Error::Corrupt);
+        }
+        let receipt: Option<Vec<u8>> = tx.query_row(
+            &format!("SELECT {} FROM receipts WHERE scope=?1 AND kind='admission' ORDER BY sequence DESC LIMIT 1", bounded_blob("body", self.limits.max_record_bytes)),
+            [scope.key()], |r| r.get(0),
+        ).optional()?;
+        let admission = receipt
+            .map(|b| decode::<Receipt>(&b, self.limits.max_record_bytes))
+            .transpose()?
+            .and_then(|r| r.admission);
+        Ok(ExecutionRecord {
+            execution: load_execution(&tx, &scope, self.limits)?.1,
+            admission,
+        })
+    }
+
+    /// Retrieve an execution command's safe receipt under current Execute permission, independent
+    /// of general result reading. Does not authorize a new attempt or re-run admission.
+    pub fn execution_receipt(
+        &self,
+        scope: &Scope,
+        op: &OperationRequestId,
+        host: &impl Host,
+    ) -> Result<Option<Receipt>, Error> {
+        let tx = self.read(scope, Access::Execute, None, host)?;
+        let bytes: Option<Vec<u8>> = tx
+            .query_row(
+                &format!(
+                    "SELECT {} FROM receipts WHERE scope=?1 AND operation_id=?2",
+                    bounded_blob("body", self.limits.max_record_bytes)
+                ),
+                params![scope.key(), op.as_str()],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let receipt = bytes
+            .map(|b| decode::<Receipt>(&b, self.limits.max_record_bytes))
+            .transpose()?;
+        if receipt
+            .as_ref()
+            .is_some_and(|r| r.kind != OperationKind::Execution)
+        {
+            return Err(Error::Conflict);
+        }
+        Ok(receipt)
+    }
+
     /// Register one immutable bounded plan. No preparation, approval or runner action is implied.
     pub fn open_execution(
         &mut self,
@@ -74,6 +146,8 @@ impl Store {
         });
         let access = match event.command {
             Command::Dispatched { .. }
+            | Command::DispatchUnconfirmed { .. }
+            | Command::StopReported { .. }
             | Command::Observe { .. }
             | Command::Output { .. }
             | Command::Recover => Access::RunnerFact,
@@ -105,10 +179,18 @@ impl Store {
         audit.attempt_id = match &event.command {
             Command::BeginAttempt { attempt_id, .. }
             | Command::Dispatched { attempt_id }
+            | Command::DispatchUnconfirmed { attempt_id, .. }
+            | Command::StopReported { attempt_id, .. }
             | Command::Observe { attempt_id, .. }
             | Command::Output { attempt_id, .. } => Some(attempt_id.clone()),
             Command::Prepare | Command::Wait | Command::Cancel | Command::Recover => None,
         };
+        if let Command::DispatchUnconfirmed { cause, .. } = &event.command {
+            audit.dispatch_cause = Some(*cause);
+        }
+        if let Command::StopReported { outcome, .. } = &event.command {
+            audit.stop_outcome = Some(*outcome);
+        }
         let gate = if let Command::BeginAttempt { attempt_id, .. } = &event.command {
             audit.submitted_approvals = bindings.iter().map(ApprovalBindingAudit::from).collect();
             let Some(h) = head(&w.tx, scope, w.limits)? else {
