@@ -51,7 +51,11 @@ try {
       private: true,
       type: "module",
       dependencies,
-      devDependencies: { vite: "6.4.3", "@vitejs/plugin-vue": "5.2.1" },
+      devDependencies: {
+        vite: "6.4.3",
+        "@vitejs/plugin-vue": "5.2.1",
+        typescript: "5.6.2",
+      },
     }),
   );
   writeFileSync(
@@ -69,6 +73,20 @@ try {
 export default defineConfig({plugins:[{name:'forbid-server-imports',enforce:'pre',resolveId(id){if(id.startsWith('node:')||['fs','crypto','path','stream','buffer','child_process'].includes(id))throw new Error('Browser imported server dependency: '+id);}},vue({template:{compilerOptions:{isCustomElement:tag=>tag.startsWith('a2ui-')}}})],build:{target:'es2022'}});`,
   );
   run("pnpm", ["install", "--offline", "--ignore-scripts"]);
+  run("pnpm", [
+    "exec",
+    "tsc",
+    "--noEmit",
+    "--strict",
+    "--target",
+    "ES2022",
+    "--module",
+    "NodeNext",
+    "--moduleResolution",
+    "NodeNext",
+    "--skipLibCheck",
+    "public-types.ts",
+  ]);
   run("node", ["standard.mjs"]);
   run("pnpm", ["exec", "vite", "build"]);
   writeFileSync(
@@ -216,7 +234,15 @@ export default defineConfig({plugins:[{name:'forbid-server-imports',enforce:'pre
     .locator("p[role=status]")
     .filter({ hasText: "could not load" })
     .waitFor();
-  await page.locator("#fail-renderer").click();
+  await page.getByRole("button", { name: "Retry card", exact: true }).click();
+  await page.getByText("Choose an option", { exact: true }).waitFor();
+  await page.locator("#fail-replace").click();
+  await page
+    .locator("p[role=status]")
+    .filter({ hasText: "cannot be displayed" })
+    .waitFor();
+  await page.evaluate(() => window.consumer.runtime.restore("session-1"));
+  await page.getByRole("button", { name: "Retry card", exact: true }).click();
   await page.getByText("Choose an option", { exact: true }).waitFor();
   await page.locator("input").fill("browser answer");
   await page.evaluate(() => fetch("/change/data", { method: "POST" }));
@@ -238,12 +264,24 @@ export default defineConfig({plugins:[{name:'forbid-server-imports',enforce:'pre
     .getByRole("button", { name: "Confirm answer", exact: true })
     .waitFor();
   await page.locator("input").fill("browser answer");
+  await page.locator("#lose-response").click();
   await page
     .getByRole("button", { name: "Confirm answer", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Retry response", exact: true })
+    .waitFor();
+  if ((await page.locator("#receipts").textContent()) !== "0")
+    throw new Error("lost response reported as received");
+  await page
+    .getByRole("button", { name: "Retry response", exact: true })
     .click();
   await page.waitForFunction(
     () => document.querySelector("#receipts")?.textContent === "1",
   );
+  const attempts = (await page.locator("#attempts").textContent()).split(",");
+  if (attempts.length !== 2 || attempts[0] !== attempts[1])
+    throw new Error("retry changed command identity");
   const snapshot = unwrap(
     await store.snapshotPage(seeded.session.namespace, { limit: 64 }),
   );
@@ -256,12 +294,12 @@ export default defineConfig({plugins:[{name:'forbid-server-imports',enforce:'pre
   await page.locator("a2ui-surface").waitFor({ state: "detached" });
   if (failures.length) throw new Error(failures.join("; "));
   console.log(
-    `PASS isolated Vue + official A2UI browser ${await browser.version()}: create/components/data/delete, literal HTML, remount, action`,
+    `PASS isolated Vue + official A2UI browser ${await browser.version()}: create/components/data/delete, literal HTML, load/replace recovery, remount, exact action retry`,
   );
   disconnect();
 } finally {
   await browser?.close();
-  service?.close();
+  await service?.close();
   if (server) await new Promise((r) => server.close(r));
   if (process.env.AI_KEEP_CONSUMER) console.log(`Consumer retained: ${dir}`);
   else rmSync(dir, { recursive: true, force: true });

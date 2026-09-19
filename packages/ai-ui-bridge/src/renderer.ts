@@ -27,10 +27,15 @@ export interface RendererOptions {
   onError(error: Error): void;
   now?: () => number;
 }
+export interface SurfaceRendererHandle {
+  replace(input: SurfaceState, enabled?: boolean): void;
+  retry(): Promise<void>;
+  clear(): void;
+  dispose(): void;
+}
 /** Disposable official renderer cache. All recovery truth remains in ai-client. */
-export class SurfaceRenderer {
+export class SurfaceRenderer implements SurfaceRendererHandle {
   private processor?: MessageProcessor<typeof A2uiText>;
-  private state?: SurfaceState;
   private pending?: ActionRequest;
   private sending = false;
   private disposed = false;
@@ -41,8 +46,17 @@ export class SurfaceRenderer {
   replace(input: SurfaceState, enabled = true): void {
     if (this.disposed) throw new Error("renderer disposed");
     const state = validateSurface(input);
+    const metadata = this.pending?.metadata;
+    const pending =
+      metadata &&
+      metadata.sessionId === state.namespace.sessionId &&
+      metadata.surfaceInstanceId === state.surfaceInstanceId &&
+      metadata.surfaceRevision === state.revision &&
+      metadata.generation === state.generation
+        ? this.pending
+        : undefined;
     this.clear();
-    this.state = state;
+    this.pending = pending;
     const processor = new MessageProcessor(
       [catalog],
       async (message) => {
@@ -53,6 +67,10 @@ export class SurfaceRenderer {
           this.sending
         )
           return;
+        if (this.pending) {
+          await this.retry();
+          return;
+        }
         const now = (this.options.now ?? Date.now)();
         this.pending = {
           schemaVersion: 2,
@@ -101,14 +119,16 @@ export class SurfaceRenderer {
   /** Retry uses exactly the same command ID, expiry and action payload. */
   async retry(): Promise<void> {
     if (!this.pending || this.sending || this.disposed) return;
+    const request = this.pending;
     this.sending = true;
     try {
-      await this.options.onAction(structuredClone(this.pending));
-      this.pending = undefined;
+      await this.options.onAction(structuredClone(request));
+      if (this.pending === request) this.pending = undefined;
     } catch {
-      this.options.onError(
-        new Error("Response was not accepted; retry or restore the session"),
-      );
+      if (this.pending === request)
+        this.options.onError(
+          new Error("Response was not accepted; retry or restore the session"),
+        );
     } finally {
       this.sending = false;
     }
@@ -122,6 +142,5 @@ export class SurfaceRenderer {
   dispose(): void {
     this.disposed = true;
     this.clear();
-    this.state = undefined;
   }
 }

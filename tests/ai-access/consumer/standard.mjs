@@ -65,5 +65,5 @@ try {
 } finally {
   connection.close();
   server.close();
-  service.close();
+  await service.close();
 }

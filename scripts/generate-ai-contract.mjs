@@ -1,5 +1,6 @@
 import { format } from "prettier";
 import ts from "typescript";
+import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
@@ -9,6 +10,19 @@ const require = createRequire(
   new URL("../packages/ai-contract/package.json", import.meta.url),
 );
 const { compile } = require("json-schema-to-typescript");
+const upstreamDirectory = new URL(
+  "../packages/ai-contract/schema/upstream/a2ui/",
+  import.meta.url,
+);
+const provenance = JSON.parse(
+  readFileSync(new URL("manifest.json", upstreamDirectory), "utf8"),
+);
+for (const [name, digest] of Object.entries(provenance.sha256)) {
+  const actual = createHash("sha256")
+    .update(readFileSync(new URL(name, upstreamDirectory)))
+    .digest("hex");
+  if (actual !== digest) throw new Error(`Upstream A2UI source drift: ${name}`);
+}
 const schemaPath = "packages/ai-contract/schema/runtime.schema.json";
 const schemaText = readFileSync(
   new URL("../" + schemaPath, import.meta.url),

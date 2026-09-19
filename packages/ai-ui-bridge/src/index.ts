@@ -9,12 +9,13 @@ import {
   type PropType,
 } from "vue";
 import type { RuntimeClient, SessionView } from "@rss-mdm-agent/ai-client";
-import type { SurfaceRenderer, RendererOptions } from "./renderer.js";
-export type { RendererOptions } from "./renderer.js";
+import type { Receipt } from "@rss-mdm-agent/ai-contract";
+import type { SurfaceRendererHandle, RendererOptions } from "./renderer.js";
+export type { RendererOptions, SurfaceRendererHandle } from "./renderer.js";
 export type RendererFactory = (
   container: HTMLElement,
   options: RendererOptions,
-) => Promise<SurfaceRenderer>;
+) => Promise<SurfaceRendererHandle>;
 /** Lazy import makes renderer load failure a display error; text and ACP remain usable. */
 export const createSurfaceRenderer: RendererFactory = async (
   container,
@@ -28,7 +29,7 @@ export function useSessionView(runtime: RuntimeClient, sessionId: string) {
     runtime.getSession(sessionId),
   );
   const dispose = runtime.observe((next) => {
-    if (next.session.namespace.sessionId === sessionId) view.value = next;
+    if (next.namespace.sessionId === sessionId) view.value = next;
   });
   onScopeDispose(dispose);
   return view;
@@ -45,16 +46,24 @@ export const RuntimeSurface = defineComponent({
       default: createSurfaceRenderer,
     },
   },
-  emits: ["error", "receipt"],
+  emits: {
+    error: (_error: Error) => true,
+    receipt: (_receipt: Receipt) => true,
+  },
   setup(props, { emit, expose }) {
     const container = shallowRef<HTMLElement>(),
-      error = shallowRef("");
-    let renderer: SurfaceRenderer | undefined,
+      error = shallowRef(""),
+      errorKind = shallowRef<"renderer" | "action">("renderer");
+    let renderer: SurfaceRendererHandle | undefined,
       stop = () => {},
       mounted = false,
       epoch = 0,
       displayed = "";
-    const report = (failure: Error) => {
+    const report = (
+      failure: Error,
+      kind: "renderer" | "action" = "renderer",
+    ) => {
+      errorKind.value = kind;
       error.value = failure.message;
       emit("error", failure);
     };
@@ -74,13 +83,13 @@ export const RuntimeSurface = defineComponent({
       try {
         renderer.replace(surface, enabled);
         displayed = key;
-        error.value = "";
+        if (errorKind.value !== "action") error.value = "";
       } catch {
         renderer.dispose();
         renderer = undefined;
         report(
           new Error(
-            "This card cannot be displayed. Restore the session to retry.",
+            "This card cannot be displayed. Use Retry card to reload it.",
           ),
         );
       }
@@ -96,9 +105,10 @@ export const RuntimeSurface = defineComponent({
         const created = await props.rendererFactory(container.value, {
           onAction: async (request) => {
             const receipt = await props.runtime.action(request);
+            error.value = "";
             emit("receipt", receipt);
           },
-          onError: report,
+          onError: (failure) => report(failure, "action"),
         });
         if (current !== epoch || !mounted) {
           created.dispose();
@@ -106,8 +116,7 @@ export const RuntimeSurface = defineComponent({
         }
         renderer = created;
         stop = props.runtime.observe((view) => {
-          if (view.session.namespace.sessionId === props.sessionId)
-            update(view);
+          if (view.namespace.sessionId === props.sessionId) update(view);
         });
         update(props.runtime.getSession(props.sessionId));
       } catch {
@@ -137,6 +146,17 @@ export const RuntimeSurface = defineComponent({
       h("div", { class: "rss-ai-surface" }, [
         h("div", { ref: container }),
         error.value ? h("p", { role: "status" }, error.value) : null,
+        error.value
+          ? h(
+              "button",
+              {
+                type: "button",
+                onClick: () =>
+                  errorKind.value === "action" ? renderer?.retry() : mount(),
+              },
+              errorKind.value === "action" ? "Retry response" : "Retry card",
+            )
+          : null,
       ]);
   },
 });

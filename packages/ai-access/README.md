@@ -6,8 +6,10 @@
 
 产品客户端通过 `clientCapabilities._meta[extension.capability]` 提交 ai-contract 的 `Negotiation`，服务返回所选能力。`_rss-mdm-agent/submit` 返回接纳 receipt；snapshot/list/attach/detach/action/resume 使用同一个产品 schema。未经协商不能调用扩展。A2UI 仅接纳固定版本、catalog 和完整有界恢复消息，失效内容触发重新同步，不作为成功更新发布。
 
-`requestPermission(caller, upstreamRequest, signal)` 仅向该 caller 已附着的会话连接递送标准 ACP 权限问题/选项。它消费组合根持有的实时回调期限，首个有效回答生效，取消后不恢复回调；它没有权限数据库，也不签发 Rust 执行批准。普通 `Interaction.category=question` 保持独立。
+`requestPermission(caller, upstreamRequest, signal)` 仅向该 caller 已附着的会话连接递送标准 ACP 权限问题/选项。它消费组合根持有的实时回调期限，首个有效回答生效，会话取消会终止该 caller/session 的所有待决权限递送，断开仅结束该连接的递送；取消后不恢复回调；它没有权限数据库，也不签发 Rust 执行批准。普通 `Interaction.category=question` 保持独立。
 
 SDK `Stream` 是唯一 transport 接缝；直接提供 `ndJsonStream`。本地/Tauri channel 适配由 ai-client 的 `channelStream` 提供，实际桌面组合根归 #2413。连接关闭只释放订阅和请求，不关闭共享 Host、不取消已接纳命令。HTTP/relay 没有生产实现；独立验收中的 loopback HTTP 仅传送 SDK 测试消息。
 
 运行 `pnpm test:ai-access`、`pnpm check:ai-access-consumer`。版本、边界及消费方法见[开发说明](../../docs/guides/ai-access-development.md)。
+
+`timeoutMs` 限定请求接纳和权限等待预算，不能截断订阅或把 prompt 等待误作终态。订阅随连接存活，意外结束要求恢复。`await service.close()` 立即停止接入、终止自有订阅/权限递送并等待清理，之后拒绝 connect；共享 Host 和已接纳命令仍由组合根持有。`onDiagnostic(code)` 只输出闭合分类，不包含 caller、模型内容或原始异常；配置 limits 同时约束原始传输 envelope。

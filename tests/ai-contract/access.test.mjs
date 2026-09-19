@@ -168,3 +168,21 @@ test("continuations expire, cannot be forged, and pages honor envelope budgets f
     "cursor_expired",
   );
 });
+
+test("public conformance rejects continuation pages that change the captured watermark", async () => {
+  const { runStoreConformance } = await import(
+    "../../packages/ai-contract/dist/testing/index.js"
+  );
+  class DriftingStore extends MemorySessionStore {
+    async snapshotPage(namespace, query) {
+      const result = await super.snapshotPage(namespace, query);
+      if (query.continuation && result.ok)
+        result.value.snapshotId = "different-read-view";
+      return result;
+    }
+  }
+  await assert.rejects(
+    runStoreConformance(() => new DriftingStore()),
+    /different-read-view/,
+  );
+});

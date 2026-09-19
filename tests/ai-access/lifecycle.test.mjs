@@ -205,7 +205,7 @@ test("product receipt, paged recovery and late delta use only the shared stable 
   t.after(() => runtime.close());
   await runtime.initialize();
   const view = await runtime.createSession(),
-    id = view.session.namespace.sessionId;
+    id = view.namespace.sessionId;
   const prompt = {
     schemaVersion: 2,
     kind: "command",

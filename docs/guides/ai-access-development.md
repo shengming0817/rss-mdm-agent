@@ -27,9 +27,9 @@ pnpm check:ai-boundaries
 pnpm check:ai-access-consumer
 ```
 
-最后一项打包四个包，在系统临时目录建立独立 workspace，离线安装固定依赖；以官方 SDK/ndJsonStream 验证标准 ACP，再实际构建并运行 Vue + Lit consumer。Vite 解析钩子拒绝 Node 内置依赖；Chromium 验证四种 Surface 操作、卸载重挂、转义文本与输入/action 回传。macOS 默认使用系统 Chrome；其它平台通过 `AI_BROWSER_PATH` 指定 Chromium 可执行文件。缺浏览器会失败，不降级为 SSR。Playwright-core1.58.2 仅用于本地测试驱动，不下载浏览器、不进入产品依赖。
+最后一项打包四个包，在系统临时目录建立独立 workspace，离线安装固定依赖；以官方 SDK/ndJsonStream 验证标准 ACP，再实际构建并运行 Vue + Lit consumer。Vite 解析钩子拒绝 Node 内置依赖；隔离 TypeScript consumer 检查公开 renderer factory 与事件类型；Chromium 验证四种 Surface 操作、卸载重挂、加载/渲染失败重试、转义文本及回执丢失后的同命令重试。macOS 默认使用系统 Chrome；其它平台通过 `AI_BROWSER_PATH` 指定 Chromium 可执行文件。缺浏览器会失败，不降级为 SSR。Playwright-core1.58.2 仅用于本地测试驱动，不下载浏览器、不进入产品依赖。
 
-测试 Host/Store 明确是内存 double，脚本提供 accepted、dispatch、terminal、question 与 surface 证据。它们证明接入和消费语义，不证明真实 provider、持久化回执、工具隔离或 OS 执行。独立 consumer 的 loopback HTTP 只是测试通道，不代表远程 HTTP/relay 互操作成熟。收尾在已提交源码上执行本仓 `make ci CI_BASE=origin/develop`，证据由 `.local-ci-runs/latest.json` 绑定实际 SHA/lock/运行环境。
+测试 Host/Store 明确是内存 double，协商固定返回 durableReceipts=false；脚本提供 accepted、dispatch、terminal、question 与 surface 证据。它们证明接入和消费语义，不证明真实 provider、持久化回执、工具隔离或 OS 执行。独立 consumer 的 loopback HTTP 只是测试通道，不代表远程 HTTP/relay 互操作成熟。收尾在已提交源码上执行本仓 `make ci CI_BASE=origin/develop`，证据由 `.local-ci-runs/latest.json` 绑定实际 SHA/lock/运行环境。
 
 ## 上游版本与来源
 

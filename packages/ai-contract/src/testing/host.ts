@@ -57,7 +57,7 @@ export class FakeHost implements HostPort {
         !offered.a2ui.catalogVersion)
     )
       return fail("unsupported_capability");
-    return ok(structuredClone(offered));
+    return ok({ ...structuredClone(offered), durableReceipts: false });
   }
   async createSession(
     caller: Caller,

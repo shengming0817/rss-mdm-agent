@@ -19,7 +19,6 @@ import {
   type Negotiation,
   type PageQuery,
   type Receipt,
-  type Session,
   type SessionPage,
   type SnapshotPage,
   type WireRecord,
@@ -242,9 +241,10 @@ export class RuntimeClient {
       "receipt",
     );
   }
-  async resume(sessionId: string): Promise<Session> {
+  async resume(sessionId: string): Promise<SessionView> {
     this.ready();
-    return parse(
+    await this.detach(sessionId);
+    parse(
       await this.connection.agent.request(extension.resume, {
         schemaVersion: 2,
         kind: "resumeRequest",
@@ -252,6 +252,7 @@ export class RuntimeClient {
       }),
       "session",
     );
+    return this.restore(sessionId);
   }
   getSession(sessionId: string): SessionView | undefined {
     const view = this.views.get(sessionId);

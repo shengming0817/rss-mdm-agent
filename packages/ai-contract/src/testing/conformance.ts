@@ -128,6 +128,7 @@ async function runStoreScenarios(
   await runStoreBoundaries(create);
   await runSurfaceConformance(await create());
   await runCallbackConformance(await create());
+  await runPageConformance(await create());
   const store = await create(),
     s = fixtureSession(),
     input = acceptance(s);
@@ -276,6 +277,79 @@ async function runStoreScenarios(
     error: { code: "unavailable", retry: "never" },
   });
   assert.equal((await store.create(fixtureSession())).ok, false);
+}
+
+/** A continuation is a frozen read view, including writes between any two pages. */
+async function runPageConformance(store: SessionStore): Promise<void> {
+  const initial = fixtureSession();
+  unwrap(await store.create(initial));
+  for (let i = 0; i < 3; i++) {
+    const head = unwrap(await store.session(initial.namespace));
+    unwrap(await store.accept(acceptance(head, fixtureCommand(`frozen-${i}`))));
+  }
+  const expected = unwrap(
+    await store.snapshotPage(initial.namespace, { limit: 256 }),
+  );
+  const first = unwrap(
+    await store.snapshotPage(initial.namespace, { limit: 1 }),
+  );
+  assert.ok(first.next);
+  const other = {
+    ...initial,
+    namespace: { ...initial.namespace, sessionId: "other-session" },
+  };
+  unwrap(await store.create(other));
+  for (const namespace of [
+    other.namespace,
+    { ...initial.namespace, principalId: "other" },
+  ])
+    assert.equal(
+      (
+        await store.snapshotPage(namespace, {
+          limit: 1,
+          continuation: first.next,
+        })
+      ).ok,
+      false,
+    );
+  const collected = {
+    commands: [...first.commands],
+    events: [...first.events],
+    interactions: [...first.interactions],
+    surfaces: [...first.surfaces],
+  };
+  let continuation: string | undefined = first.next,
+    index = 1;
+  while (continuation) {
+    assert.ok(index < 32, "bounded conformance continuation");
+    const head = unwrap(await store.session(initial.namespace));
+    unwrap(
+      await store.accept(
+        acceptance(head, fixtureCommand(`concurrent-${index}`)),
+      ),
+    );
+    const page: import("../wire.js").SnapshotPage = unwrap(
+      await store.snapshotPage(initial.namespace, { limit: 1, continuation }),
+    );
+    assert.equal(page.snapshotId, first.snapshotId);
+    assert.equal(page.cursor, first.cursor);
+    assert.deepEqual(page.session, first.session);
+    assert.equal(page.pageIndex, index++);
+    collected.commands.push(...page.commands);
+    collected.events.push(...page.events);
+    collected.interactions.push(...page.interactions);
+    collected.surfaces.push(...page.surfaces);
+    continuation = page.next;
+  }
+  assert.deepEqual(collected, {
+    commands: expected.commands,
+    events: expected.events,
+    interactions: expected.interactions,
+    surfaces: expected.surfaces,
+  });
+  assert.ok(
+    unwrap(await store.session(initial.namespace)).lastSequence > first.cursor,
+  );
 }
 
 /** Prepare a real dispatched callback using only the public store port. */

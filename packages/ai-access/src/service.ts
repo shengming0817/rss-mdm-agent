@@ -40,6 +40,21 @@ export interface AccessOptions {
   limits?: Limits;
   timeoutMs?: number;
   now?: () => number;
+  /** Closed, value-free diagnostics; never receives caller data or provider errors. */
+  onDiagnostic?: (code: AccessDiagnostic) => void;
+}
+export type AccessDiagnostic =
+  | "subscription_ended"
+  | "subscription_failed"
+  | "sequence_gap"
+  | "budget_exceeded"
+  | "invalid_surface"
+  | "notification_failed"
+  | "resync_delivery_failed";
+class PumpFailure extends Error {
+  constructor(readonly code: AccessDiagnostic) {
+    super(code);
+  }
 }
 const fail = (code: string): never => {
   throw new RequestError(-32001, code, { code });
@@ -81,7 +96,35 @@ interface Peer {
  * Closing a connection detaches its views/callback deliveries, never cancels a run. */
 export function createAccessService(options: AccessOptions) {
   const { host } = options,
-    peers = new Set<Peer>();
+    peers = new Set<Peer>(),
+    tasks = new Set<Promise<unknown>>(),
+    lifetime = new AbortController(),
+    permissions = new Set<{
+      caller: Caller;
+      sessionId: string;
+      controller: AbortController;
+    }>();
+  let closing: Promise<void> | undefined;
+  const own = <T>(task: Promise<T>): Promise<T> => {
+    tasks.add(task);
+    void task.then(
+      () => tasks.delete(task),
+      () => tasks.delete(task),
+    );
+    return task;
+  };
+  const diagnose = (code: AccessDiagnostic) => {
+    try {
+      options.onDiagnostic?.(code);
+    } catch {
+      /* diagnostics cannot break cleanup */
+    }
+  };
+  const cancelPermissions = (caller: Caller, sessionId: string) => {
+    for (const pending of permissions)
+      if (sameCaller(pending.caller, caller) && pending.sessionId === sessionId)
+        pending.controller.abort();
+  };
   const limits = options.limits ?? accessLimits,
     timeoutMs = options.timeoutMs ?? 30_000,
     now = options.now ?? Date.now;
@@ -101,7 +144,7 @@ export function createAccessService(options: AccessOptions) {
     },
   });
   const ready = (peer: Peer, product = false) => {
-    if (!peer.initialized) fail("unavailable");
+    if (lifetime.signal.aborted || !peer.initialized) fail("unavailable");
     if (product && !peer.selected) fail("unsupported_capability");
   };
   const session = async (
@@ -117,11 +160,19 @@ export function createAccessService(options: AccessOptions) {
     sessionId: string,
     update: SessionUpdate,
   ) => {
-    boundedJson(update, limits);
-    await peer.connection.client.notify("session/update", {
-      sessionId,
-      update,
-    });
+    try {
+      boundedJson(update, limits);
+    } catch {
+      throw new PumpFailure("budget_exceeded");
+    }
+    try {
+      await peer.connection.client.notify("session/update", {
+        sessionId,
+        update,
+      });
+    } catch {
+      throw new PumpFailure("notification_failed");
+    }
   };
   async function project(
     peer: Peer,
@@ -146,7 +197,7 @@ export function createAccessService(options: AccessOptions) {
           0,
         ) > limits.maxTextBytes
       )
-        throw new Error("delta budget");
+        throw new PumpFailure("budget_exceeded");
       await standard(peer, id, {
         sessionUpdate: "agent_message_chunk",
         content: { type: "text", text: item.text },
@@ -223,54 +274,77 @@ export function createAccessService(options: AccessOptions) {
       waiters: new Map(),
     };
     peer.pumps.set(id, pump);
-    void (async () => {
-      try {
-        for await (const item of host.subscribe(
-          peer.caller,
-          id,
-          after,
-          budget(pump.controller.signal),
-        )) {
-          if (pump.controller.signal.aborted) break;
-          if (item.type === "event") {
-            if (item.event.sequence <= pump.after) continue;
-            if (item.event.sequence !== pump.after + 1)
-              throw new Error("sequence");
-            pump.after = item.event.sequence;
-            if (item.event.body.type === "surface" && peer.selected?.a2ui)
-              validateSurface(item.event.body.surface, limits);
+    own(
+      (async () => {
+        try {
+          for await (const item of host.subscribe(peer.caller, id, after, {
+            signal: pump.controller.signal,
+            timeoutMs,
+          })) {
+            if (pump.controller.signal.aborted) break;
+            if (item.type === "event") {
+              if (item.event.sequence <= pump.after) continue;
+              if (item.event.sequence !== pump.after + 1)
+                throw new PumpFailure("sequence_gap");
+              pump.after = item.event.sequence;
+              if (item.event.body.type === "surface" && peer.selected?.a2ui) {
+                try {
+                  validateSurface(item.event.body.surface, limits);
+                } catch {
+                  throw new PumpFailure("invalid_surface");
+                }
+              }
+            }
+            if (item.type === "delta" && pump.terminal.has(item.commandId))
+              continue;
+            if (pump.attachmentId) {
+              const update: AccessUpdate = {
+                schemaVersion: 2,
+                kind: "accessUpdate",
+                sessionId: id,
+                attachmentId: pump.attachmentId,
+                update: item,
+              };
+              parse("accessUpdate").parse(update);
+              try {
+                await peer.connection.client.notify(extension.update, update);
+              } catch {
+                throw new PumpFailure("notification_failed");
+              }
+            }
+            await project(peer, id, pump, item);
+            if (item.type === "resync_required") {
+              if (!pump.attachmentId) peer.connection.close();
+              return;
+            }
           }
-          if (item.type === "delta" && pump.terminal.has(item.commandId))
-            continue;
-          if (pump.attachmentId) {
-            const update: AccessUpdate = {
-              schemaVersion: 2,
-              kind: "accessUpdate",
-              sessionId: id,
-              attachmentId: pump.attachmentId,
-              update: item,
-            };
-            parse("accessUpdate").parse(update);
-            await peer.connection.client.notify(extension.update, update);
+          if (!pump.controller.signal.aborted)
+            throw new PumpFailure("subscription_ended");
+        } catch (error) {
+          if (!pump.controller.signal.aborted) {
+            diagnose(
+              error instanceof PumpFailure ? error.code : "subscription_failed",
+            );
+            if (pump.attachmentId) {
+              try {
+                await peer.connection.client.notify(extension.update, {
+                  schemaVersion: 2,
+                  kind: "accessUpdate",
+                  sessionId: id,
+                  attachmentId: pump.attachmentId,
+                  update: { type: "resync_required" },
+                });
+              } catch {
+                diagnose("resync_delivery_failed");
+                peer.connection.close();
+              }
+            } else peer.connection.close();
           }
-          await project(peer, id, pump, item);
-          if (item.type === "resync_required") break;
+        } finally {
+          if (peer.pumps.get(id) === pump) stopPump(peer, id);
         }
-      } catch {
-        if (!pump.controller.signal.aborted && pump.attachmentId)
-          await peer.connection.client
-            .notify(extension.update, {
-              schemaVersion: 2,
-              kind: "accessUpdate",
-              sessionId: id,
-              attachmentId: pump.attachmentId,
-              update: { type: "resync_required" },
-            })
-            .catch(() => {});
-      } finally {
-        if (peer.pumps.get(id) === pump) stopPump(peer, id);
-      }
-    })();
+      })(),
+    );
     return pump;
   };
   async function submit(peer: Peer, command: Command, signal: AbortSignal) {
@@ -283,6 +357,7 @@ export function createAccessService(options: AccessOptions) {
     return value(await host[method](peer.caller, command, budget(signal)));
   }
   function connect(stream: Stream, caller: Caller): AgentConnection {
+    if (lifetime.signal.aborted) throw new Error("access service closed");
     const peer = {
       caller: Object.freeze({ ...caller }),
       initialized: false,
@@ -428,10 +503,7 @@ export function createAccessService(options: AccessOptions) {
       const pump =
         peer.pumps.get(params.sessionId) ??
         startPump(peer, params.sessionId, 0);
-      const controller = AbortSignal.any([
-        signal,
-        AbortSignal.timeout(timeoutMs),
-      ]);
+      const controller = signal;
       let onAbort: () => void = () => {};
       const terminal = new Promise<Outcome>((resolve, reject) => {
         onAbort = () => reject(new RequestError(-32001, "unavailable"));
@@ -453,6 +525,7 @@ export function createAccessService(options: AccessOptions) {
     app.onNotification("session/cancel", async ({ params, signal }) => {
       ready(peer);
       const s = await session(peer, params.sessionId, signal);
+      cancelPermissions(peer.caller, params.sessionId);
       let continuation: string | undefined;
       const active: string[] = [];
       do {
@@ -609,7 +682,7 @@ export function createAccessService(options: AccessOptions) {
         );
       },
     );
-    peer.connection = app.connect(boundedStream(stream));
+    peer.connection = app.connect(boundedStream(stream, limits));
     peers.add(peer);
     void peer.connection.closed.then(() => {
       for (const id of peer.pumps.keys()) stopPump(peer, id);
@@ -620,7 +693,14 @@ export function createAccessService(options: AccessOptions) {
   /** Delivery to attached clients for one live, composition-owned tool callback.
    * First valid answer wins. The callback owner supplies expiry/cancellation and
    * decides tool policy; this response cannot create an execution permit. */
-  async function requestPermission(
+  function requestPermission(
+    caller: Caller,
+    request: RequestPermissionRequest,
+    signal: AbortSignal,
+  ): Promise<RequestPermissionResponse> {
+    return own(deliverPermission(caller, request, signal));
+  }
+  async function deliverPermission(
     caller: Caller,
     request: RequestPermissionRequest,
     signal: AbortSignal,
@@ -632,22 +712,31 @@ export function createAccessService(options: AccessOptions) {
         sameCaller(peer.caller, caller) &&
         peer.pumps.has(request.sessionId),
     );
-    if (!recipients.length || signal.aborted)
+    if (!recipients.length || signal.aborted || lifetime.signal.aborted)
       return { outcome: { outcome: "cancelled" } };
     const done = new AbortController(),
-      lifetime = AbortSignal.any([
+      delivery = AbortSignal.any([
         signal,
         done.signal,
+        lifetime.signal,
         AbortSignal.timeout(timeoutMs),
       ]);
+    const pending = { caller, sessionId: request.sessionId, controller: done };
+    permissions.add(pending);
     try {
       return await Promise.any(
         recipients.map(async (peer) => {
           const answer = await peer.connection.client.request(
             "session/request_permission",
             request,
-            { cancellationSignal: lifetime },
+            {
+              cancellationSignal: AbortSignal.any([
+                delivery,
+                peer.pumps.get(request.sessionId)!.controller.signal,
+              ]),
+            },
           );
+          if (delivery.aborted) return fail("unavailable");
           const outcome = answer.outcome;
           if (
             outcome.outcome === "selected" &&
@@ -661,13 +750,25 @@ export function createAccessService(options: AccessOptions) {
       return { outcome: { outcome: "cancelled" } };
     } finally {
       done.abort();
+      permissions.delete(pending);
     }
   }
   return {
     connect,
     requestPermission,
-    close: () => {
-      for (const peer of peers) peer.connection.close();
+    close: (): Promise<void> => {
+      if (closing) return closing;
+      lifetime.abort();
+      const connections = [...peers];
+      for (const peer of connections) {
+        for (const id of peer.pumps.keys()) stopPump(peer, id);
+        peer.connection.close();
+      }
+      closing = Promise.all([
+        ...tasks,
+        ...connections.map((peer) => peer.connection.closed),
+      ]).then(() => {});
+      return closing;
     },
   };
 }

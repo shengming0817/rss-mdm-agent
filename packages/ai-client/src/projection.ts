@@ -3,6 +3,7 @@ import {
   accessLimits,
   type CommandState,
   type Event,
+  type EventBody,
   type Interaction,
   type Outcome,
   type Session,
@@ -12,7 +13,9 @@ import {
 } from "@rss-mdm-agent/ai-contract";
 
 export interface SessionView {
-  session: Session;
+  /** Identity of this attachment's snapshot, not a second live Host Session. */
+  namespace: Session["namespace"];
+  generation: string;
   cursor: number;
   connection: "attached" | "detached" | "resync_required";
   commands: Record<string, { state: CommandState; outcome?: Outcome }>;
@@ -22,18 +25,34 @@ export interface SessionView {
   >;
   interactions: Record<string, Pick<Interaction, "status" | "request">>;
   surfaces: Record<string, SurfaceState>;
+  tools: Record<
+    string,
+    {
+      commandId: string;
+      proposalId: string;
+      name: string;
+      arguments: Record<string, unknown>;
+      status: "pending" | "completed" | "failed";
+      result?: Pick<
+        Extract<EventBody, { type: "tool_result" }>,
+        "disposition" | "text"
+      >;
+    }
+  >;
 }
 const messageKey = (command: string, message: string) =>
   `${command}/${message}`;
 export function emptyView(session: Session, cursor: number): SessionView {
   return {
-    session,
+    namespace: structuredClone(session.namespace),
+    generation: session.binding.generation,
     cursor,
     connection: "detached",
     commands: Object.create(null),
     messages: Object.create(null),
     interactions: Object.create(null),
     surfaces: Object.create(null),
+    tools: Object.create(null),
   };
 }
 function event(view: SessionView, e: Event): void {
@@ -52,6 +71,19 @@ function event(view: SessionView, e: Event): void {
       text: body.text,
       stable: true,
     };
+  } else if (body.type === "tool_proposal") {
+    view.tools[messageKey(e.commandId, body.proposalId)] = {
+      commandId: e.commandId,
+      proposalId: body.proposalId,
+      name: body.name,
+      arguments: body.arguments,
+      status: "pending",
+    };
+  } else if (body.type === "tool_result") {
+    const tool = view.tools[messageKey(e.commandId, body.proposalId)];
+    if (!tool) throw new Error("tool result without proposal");
+    tool.status = body.disposition === "returned" ? "completed" : "failed";
+    tool.result = { disposition: body.disposition, text: body.text };
   } else if (body.type === "interaction") {
     if (body.status === "pending")
       view.interactions[body.interactionId] = {
@@ -101,7 +133,7 @@ export function applyUpdate(view: SessionView, item: Subscription): void {
   if (view.connection === "resync_required") return;
   if (item.type === "delta") {
     if (
-      item.generation !== view.session.binding.generation ||
+      item.generation !== view.generation ||
       !view.commands[item.commandId] ||
       view.commands[item.commandId]?.state === "terminal"
     )
@@ -132,13 +164,13 @@ export function applyUpdate(view: SessionView, item: Subscription): void {
   }
   const e = item.event,
     a = e.namespace,
-    b = view.session.namespace;
+    b = view.namespace;
   if (
     a.sessionId !== b.sessionId ||
     a.tenantId !== b.tenantId ||
     a.principalId !== b.principalId ||
     a.authorityId !== b.authorityId ||
-    e.generation !== view.session.binding.generation
+    e.generation !== view.generation
   )
     throw new Error("event binding");
   if (e.sequence <= view.cursor) return;
