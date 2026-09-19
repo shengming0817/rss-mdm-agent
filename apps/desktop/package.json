@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "tauri dev",
     "dev:web": "pnpm --filter @rss-mdm-agent/ui build && vite --host 127.0.0.1",
-    "build": "vue-tsc --noEmit -p tsconfig.json && vite build",
+    "build": "node ../../scripts/check-self-service-bindings.mjs && vue-tsc --noEmit -p tsconfig.json && vite build",
     "desktop:build": "tauri build --no-bundle"
   },
   "dependencies": {

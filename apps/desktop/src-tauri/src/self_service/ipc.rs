@@ -36,30 +36,45 @@ fn with_service<T>(
         .map_err(|_| error("unavailable", "测试服务不可用，请退出后重新启动"))?;
     f(&mut service, now()?)
 }
-#[tauri::command]
-pub fn self_service_snapshot(state: State<'_, FixtureState>) -> Result<Snapshot> {
-    with_service(state, |service, now| service.snapshot(now))
+// These signatures own both the actual commands and the generated frontend wire.
+macro_rules! commands {
+    ($snapshot:ident; $($name:ident($input:ty) -> $output:ty = $method:ident),+ $(,)?) => {
+        #[tauri::command]
+        pub fn $snapshot(state: State<'_, FixtureState>) -> Result<Snapshot> {
+            with_service(state, |service, now| service.snapshot(now))
+        }
+        $(
+            #[tauri::command]
+            pub fn $name(state: State<'_, FixtureState>, input: serde_json::Value) -> Result<$output> {
+                with_service(state, |service, now| service.$method(decode::<$input>(input)?, now))
+            }
+        )+
+        pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>, state: FixtureState) -> tauri::Builder<R> {
+            builder.manage(state).invoke_handler(tauri::generate_handler![$snapshot, $($name),+])
+        }
+        pub fn wire_schema() -> schemars::Schema {
+            #[allow(dead_code)]
+            #[derive(schemars::JsonSchema)]
+            struct Command<I, O> { input: I, output: O, error: ServiceError }
+            #[allow(dead_code)]
+            #[derive(schemars::JsonSchema)]
+            #[serde(deny_unknown_fields)]
+            struct SelfServiceCommands {
+                $snapshot: Command<(), Snapshot>,
+                $($name: Command<$input, $output>),+
+            }
+            // Inputs have no skip/default conversions; serialize and deserialize shapes coincide.
+            // Output requiredness follows the actual serializer, including nullable fields.
+            schemars::generate::SchemaSettings::draft07().for_serialize()
+                .into_generator().into_root_schema_for::<SelfServiceCommands>()
+        }
+    }
 }
-#[tauri::command]
-pub fn self_service_preview(
-    state: State<'_, FixtureState>,
-    input: serde_json::Value,
-) -> Result<PlanView> {
-    with_service(state, |service, now| service.preview(decode(input)?, now))
-}
-#[tauri::command]
-pub fn self_service_submit(
-    state: State<'_, FixtureState>,
-    input: serde_json::Value,
-) -> Result<RequestView> {
-    with_service(state, |service, now| service.submit(decode(input)?, now))
-}
-#[tauri::command]
-pub fn self_service_respond(
-    state: State<'_, FixtureState>,
-    input: serde_json::Value,
-) -> Result<RequestView> {
-    with_service(state, |service, now| service.respond(decode(input)?, now))
+commands! {
+    self_service_snapshot;
+    self_service_preview(Draft) -> PlanView = preview,
+    self_service_submit(Submission) -> RequestView = submit,
+    self_service_respond(Reply) -> RequestView = respond,
 }
 
 fn decode<T: serde::de::DeserializeOwned>(input: serde_json::Value) -> Result<T> {
@@ -72,19 +87,6 @@ fn decode<T: serde::de::DeserializeOwned>(input: serde_json::Value) -> Result<T>
     }
     serde_json::from_value(input)
         .map_err(|_| error("input", "请求结构无效；不支持未知字段或回答类型"))
-}
-pub fn register<R: tauri::Runtime>(
-    builder: tauri::Builder<R>,
-    state: FixtureState,
-) -> tauri::Builder<R> {
-    builder
-        .manage(state)
-        .invoke_handler(tauri::generate_handler![
-            self_service_snapshot,
-            self_service_preview,
-            self_service_submit,
-            self_service_respond
-        ])
 }
 
 #[cfg(test)]

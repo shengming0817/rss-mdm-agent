@@ -20,7 +20,7 @@ make ci                 # 本仓完整检查，收集全部失败后返回非零
 
 开发服务器端口占用时直接失败，不自动换端口。UI库源码变化后重新运行 `pnpm --filter @rss-mdm-agent/ui build`；桌面页面由Vite提供热更新。不持有第二份组件源码alias。
 
-Rust build/test前需先 `pnpm build`，生产资源由Tauri嵌入。Cargo workspace根的 `target/release/rss-mdm-desktop`（Windows为 `.exe`）是发布可执行程序，可在无Vite服务时启动。启动失败向stderr保留底层错误链并非零退出；Windows GUI版本额外通过原生MessageBoxW显示相同诊断，不依赖WebView或控制台。Windows对话框的实际可见性需在Windows宿主验证，不能以macOS编译或单测代替。
+Rust build/test前需先 `pnpm build`，生产资源由Tauri嵌入。Cargo workspace根的 `target/release/rss-mdm-desktop`（Windows为 `.exe`）是发布可执行程序，可在无Vite服务时启动。测试服务初始化与窗口启动失败均进入同一 reporter，向stderr保留底层错误链并非零退出；Windows GUI版本额外通过原生MessageBoxW显示相同诊断，不依赖WebView或控制台。Windows对话框的实际可见性需在Windows宿主验证，不能以macOS编译或单测代替。
 
 ## 组件消费
 
@@ -51,13 +51,24 @@ C05只承诺实际记录的平台验证；Windows/Linux构建、安装签名、�
 
 传统页面完全替换旧的概览/消息演示。软件项目和工具共享目录 projection；所有参数通过 `service-catalog` runtime 校验，表单只编码输入，不补默认值。整数文本在 Rust 校验前保持原数字 token；秘密参数只接收精确引用，不解析秘密正文，摘要/任务/诊断不回显值。校验错误保留核心静态类别，不在 UI 猜测字段错误。
 
-`SelfServicePort` 只有 snapshot、preview、submit、respond。Rust 的单一 RequestRecord 拥有冻结计划、接纳状态与交互；列表/详情都是投影。业务请求 ID 在一次意图中保持稳定；编辑只升级草稿和计划版本。重复提交返回同一任务；接纳后不能替换计划。提交或回答响应不明时保留原身份，查询或重试原命令，不能自动新建请求。服务实例变更后拒绝旧实例操作。
+`SelfServicePort` 只有 snapshot、preview、submit、respond。Rust 的单一 RequestRecord 拥有冻结计划、接纳状态与交互；列表/详情都是投影。业务请求 ID 在一次意图中保持稳定；编辑只升级草稿和计划版本。重复提交返回同一任务；接纳后不能替换计划。提交或回答响应不明时保留原身份，查询或重试原命令，不能自动新建请求。服务实例变更后拒绝旧实例操作，详情页返回首页。每次刷新按目录 authority/identity/digest、item 与 variant 重绑选中项；不可申请或移除时废弃尚未提交的计划，拒绝迟到的预览。已发出的提交即使目录失效也保留原冻结身份以便查证或重试。计划预览与任务详情共用摘要，均展示冻结操作 action。
 
 测试场景固定绑定 Test authority、模拟 Windows x86_64 设备与用户；不会借用实际宿主登录身份。软件申请停在管理员等待；诊断工具依次要求普通确认、隐私同意。维护窗口、重启提示、原计划参数复核和未知效果各有明确展示。普通用户不能提交管理员决定。取消交互不代表任务取消；超时、拒绝与取消都不完成测试流程。
 
 服务没有 runner。FrozenPlan 仅绑定内嵌的不可执行测试字节及其摘要，目录资源版本摘要和 artifact 字节摘要分别计算，不代表实际软件产物验证。权限和适用性来自固定测试场景；真实授权、批准消费、执行接线与持久恢复仍由 C19/C20 负责。
 
 页面卸载不发送取消，服务记录在进程存活期间保留；退出应用将丢弃所有内存测试数据，不承诺跨进程恢复。浏览器没有假服务实现，所有写按钮禁用。桌面 IPC 出错直接报错，不降级成浏览器样本。
+
+Rust IPC 命令宏同时定义真实命令、输入/输出类型与 schema。DTO 以及目录/交互核心值类型由 Schemars 1.2.2 派生，availability、request/interaction status 和服务模式为 Rust 闭合枚举；TypeScript 不维护第二份 wire 声明。`json-schema-to-typescript` 16.0.0 确定性生成 `types.ts`，生产前端构建先校验无漂移，再由 Vue/TypeScript 消费；错误 DTO 也包含在绑定中。更新 Rust owner 后执行：
+
+```sh
+node scripts/check-self-service-bindings.mjs --write
+node scripts/check-self-service-bindings.mjs
+```
+
+生成检查需要本机 Rust/Tauri 编译依赖；使用无默认 custom-protocol feature 的 schema example，不依赖已构建的前端资源。生成的 TypeScript 是静态结构约束，不代替 Rust 运行时输入校验、预算或授权。adapter 测试实际执行四个方法，断言命令、精确 envelope、响应及 rejection 透传。
+
+Rust 能力守卫使用 syn 2.0.119 解析源码，检查 import/path/call、外部 ABI 与宏 token 中的明确路径；注释、字符串、raw string、字节串及普通局部变量不会因包含 `fs`/`process` 等词而失败。无效语法失败关闭；宏展开、类型解析和任意恶意代码不属于该 Medium 守卫的证明范围。syn/proc-macro2 仅为桌面开发依赖。
 
 浏览器快照的唯一生成入口：
 
@@ -71,6 +82,8 @@ cargo test -p rss-mdm-desktop --locked
 
 快照是 Rust 实际目录和请求的序列化投影，固定时间仅用于预览；TS 赋值类型检查与 CI 语义比较共同阻止漂移。IPC 测试使用真实 app manifest 和 Tauri MockRuntime 检查序列化、本地主窗口、非主窗口、远端 origin 和未知命令；这不代替真实 WebView 验收。
 
-固定依赖：Tauri Rust 2.11.2 / tauri-build 2.6.2 / JS API 2.11.1，Vue 3.5.38，Node 24，pnpm 11.4.0。未升级或复制核心公共契约；无迁移、旧入口、兼容 adapter 或新远端 CI。
+固定依赖：Tauri Rust 2.11.2 / tauri-build 2.6.2 / JS API 2.11.1，Vue 3.5.38，Node 24，pnpm 11.4.0。现有核心补充 schema 派生，不改变 serde wire 编码；无迁移、旧入口、兼容 adapter 或新远端 CI。
 
 ref: Tauri [应用 ACL](https://github.com/tauri-apps/tauri/blob/tauri-v2.11.2/crates/tauri-build/src/acl.rs) 与 [IPC 测试](https://github.com/tauri-apps/tauri/blob/tauri-v2.11.2/crates/tauri/src/test/mod.rs)。本次新增代码为本仓实现，复用已提取的 UI 包，未从 prmonitor 新增源码提取。
+
+ref: [Schemars schema settings](https://github.com/GREsau/schemars/blob/v1.2.2/schemars/src/generate.rs)、[JSON Schema to TypeScript compile](https://github.com/bcherny/json-schema-to-typescript/blob/7f72770eb854328c96b112be445da0306bebdbaf/src/index.ts)、[syn AST visitor](https://github.com/dtolnay/syn/blob/2.0.119/src/gen/visit.rs)。

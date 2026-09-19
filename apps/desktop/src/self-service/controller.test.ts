@@ -42,6 +42,67 @@ function fixture() {
   return { c, port, snapshot, task };
 }
 describe("self-service controller", () => {
+  it("shows the frozen action in both preview and task details", async () => {
+    const { c, snapshot } = fixture();
+    const wrapper = mount(SelfService, { props: { controller: c } });
+    await flushPromises();
+    c.select(snapshot.catalog.find((i) => i.itemId === "diagnostics")!);
+    await c.prepare();
+    await flushPromises();
+    expect(wrapper.get(".plan-summary").text()).toContain(c.state.plan!.action);
+    expect(wrapper.get(".plan-summary").text()).toContain("操作");
+    await c.submit();
+    await flushPromises();
+    expect(wrapper.get(".plan-summary").text()).toContain(c.state.plan!.action);
+    expect(wrapper.get(".plan-summary").text()).toContain("操作");
+    wrapper.unmount();
+  });
+  it("keeps a usable page when the service restarts during item details", async () => {
+    const { c, snapshot } = fixture();
+    const wrapper = mount(SelfService, { props: { controller: c } });
+    await flushPromises();
+    c.select(snapshot.catalog[0]);
+    snapshot.instanceId = "restarted";
+    await c.refresh();
+    await flushPromises();
+    expect(c.state.page).toBe("home");
+    expect(wrapper.text()).toContain("浏览软件");
+    expect(c.state.item).toBeNull();
+    wrapper.unmount();
+  });
+  it.each(["expired", "withdrawn", "missing", "revision", "variant"])(
+    "rebinds details and invalidates a preview when catalog becomes %s",
+    async (change) => {
+      const { c, snapshot } = fixture();
+      const wrapper = mount(SelfService, { props: { controller: c } });
+      await flushPromises();
+      const item = snapshot.catalog.find((i) => i.itemId === "diagnostics")!;
+      c.select(
+        c.state.snapshot!.catalog.find((i) => i.itemId === "diagnostics")!,
+      );
+      await c.prepare();
+      if (change === "missing") snapshot.catalog = [];
+      else if (change === "revision") item.catalog.identity.revision = "r2";
+      else if (change === "variant") item.variantId = "another-variant";
+      else {
+        item.availability = change as "expired" | "withdrawn";
+        item.display.requestability = "unknown";
+        item.reason = "刷新后的不可申请原因";
+      }
+      await c.refresh();
+      await flushPromises();
+      expect(c.state.plan).toBeNull();
+      if (["missing", "revision", "variant"].includes(change)) {
+        expect(c.state.item).toBeNull();
+        expect(c.state.page).toBe("tools");
+      } else {
+        expect(c.state.item?.availability).toBe(change);
+        expect(wrapper.text()).toContain("刷新后的不可申请原因");
+        expect(wrapper.get("form button").attributes("disabled")).toBeDefined();
+      }
+      wrapper.unmount();
+    },
+  );
   it("keeps one request through draft changes and double clicks, then requires explicit new intent", async () => {
     const { c, port, snapshot } = fixture();
     await c.refresh();
@@ -61,6 +122,55 @@ describe("self-service controller", () => {
     expect(c.state.requestId).toBe(id);
     c.select(item, true);
     expect(c.state.requestId).not.toBe(id);
+  });
+  it("rejects a preview that arrives after the selected catalog expires", async () => {
+    const { c, port, snapshot } = fixture();
+    await c.refresh();
+    c.select(
+      c.state.snapshot!.catalog.find((i) => i.itemId === "diagnostics")!,
+    );
+    let finish!: (plan: Plan) => void;
+    port.preview.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const pending = c.prepare();
+    const item = snapshot.catalog.find((i) => i.itemId === "diagnostics")!;
+    item.availability = "expired";
+    item.display.requestability = "unknown";
+    await c.refresh();
+    finish(structuredClone(preview.requests[0].plan));
+    await pending;
+    expect(c.state.plan).toBeNull();
+    expect(c.state.busy).toBe(false);
+    await c.prepare();
+    expect(port.preview).toHaveBeenCalledTimes(1);
+  });
+  it("keeps the exact ambiguous submission retry after its catalog item disappears", async () => {
+    const { c, port, snapshot } = fixture();
+    const wrapper = mount(SelfService, { props: { controller: c } });
+    await flushPromises();
+    c.select(
+      c.state.snapshot!.catalog.find((i) => i.itemId === "diagnostics")!,
+    );
+    await c.prepare();
+    port.submit.mockRejectedValueOnce(new Error("response lost"));
+    await c.submit();
+    snapshot.catalog = [];
+    await c.refresh();
+    await flushPromises();
+    expect(c.state.item).toBeNull();
+    expect(c.state.page).toBe("tasks");
+    const retry = wrapper
+      .findAll("button")
+      .find((button) => button.text() === "按原请求重试提交")!;
+    await retry.trigger("click");
+    await flushPromises();
+    expect(port.submit.mock.calls[1]).toEqual(port.submit.mock.calls[0]);
+    expect(c.state.accepted).toBe(true);
+    wrapper.unmount();
   });
   it("retains the exact submission on lost response and clears secret inputs", async () => {
     const { c, port, snapshot } = fixture();

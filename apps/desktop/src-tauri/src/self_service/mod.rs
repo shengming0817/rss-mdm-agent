@@ -21,7 +21,7 @@ struct RequestRecord {
     prepared: Option<Prepared>,
     accepted: bool,
     interactions: Vec<Interaction>,
-    result: Option<&'static str>,
+    result: Option<RequestStatus>,
 }
 /// One service instance owns all fixture requests. No task is executed by this type.
 pub struct FixtureService {
@@ -68,7 +68,7 @@ impl FixtureService {
             .map(|r| self.request_view(r))
             .collect::<Result<_>>()?;
         Ok(Snapshot {
-            mode: "fixture",
+            mode: ServiceMode::Fixture,
             instance_id: self.instance_id.clone(),
             target_label: fixtures::TARGET,
             catalog,
@@ -245,11 +245,11 @@ impl FixtureService {
                     self.catalog
                         .projection(&item.id, &operation.id, &fixtures::PARAMETERS)?;
                 let availability = if item.state == service_catalog::PublicationState::Withdrawn {
-                    "withdrawn"
+                    Availability::Withdrawn
                 } else if now >= self.catalog.snapshot().expires_at_unix_ms {
-                    "expired"
+                    Availability::Expired
                 } else {
-                    "listed"
+                    Availability::Listed
                 };
                 Ok(CatalogView {
                     catalog: self.catalog.reference(),
@@ -263,7 +263,7 @@ impl FixtureService {
                     fields: projection.fields().clone(),
                     input_schema: projection.input_schema().clone(),
                     display: self.display(&item.id, now),
-                    reason: if availability == "expired" {
+                    reason: if availability == Availability::Expired {
                         "目录已过期，只能浏览".into()
                     } else {
                         item.description.clone()
@@ -341,18 +341,18 @@ impl FixtureService {
                         execution_interaction::Kind::AdministratorAuthorization { .. }
                     )
             }) {
-                "approval"
+                RequestStatus::Approval
             } else {
-                "waiting"
+                RequestStatus::Waiting
             },
         );
         let message = match status {
-            "complete" => "测试流程完成；没有安装软件或修改系统",
-            "stopped" => "测试流程停止；不代表后台任务已取消",
-            "restartRequired" => "待重启提示已记录；没有执行或安排重启",
-            "unknownEffect" => "固定未知效果样本：等待核实，不能宣称成功或自动重跑",
-            "approval" => "等待管理员批准；普通用户不能在此批准",
-            _ => "等待用户处理交互",
+            RequestStatus::Complete => "测试流程完成；没有安装软件或修改系统",
+            RequestStatus::Stopped => "测试流程停止；不代表后台任务已取消",
+            RequestStatus::RestartRequired => "待重启提示已记录；没有执行或安排重启",
+            RequestStatus::UnknownEffect => "固定未知效果样本：等待核实，不能宣称成功或自动重跑",
+            RequestStatus::Approval => "等待管理员批准；普通用户不能在此批准",
+            RequestStatus::Waiting => "等待用户处理交互",
         };
         Ok(RequestView {
             plan: self.plan_view(record)?,

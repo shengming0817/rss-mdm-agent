@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve, dirname, extname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -449,6 +450,9 @@ export function checkTree(treeRoot = root) {
         "serde.workspace = true",
         'serde_json = { workspace = true, features = ["raw_value"] }',
         "sha2.workspace = true",
+        "schemars.workspace = true",
+        'syn = { version = "=2.0.119", features = ["full", "visit"] }',
+        'proc-macro2 = "=1.0.107"',
         'service-catalog = { path = "../../../crates/service-catalog" }',
         'execution-contract = { path = "../../../crates/execution-contract" }',
         'execution-interaction = { path = "../../../crates/execution-interaction" }',
@@ -498,9 +502,9 @@ export function checkTree(treeRoot = root) {
     errors.push("host must register navigation and new-window rejection");
   const ipcPath = "apps/desktop/src-tauri/src/self_service/ipc.rs";
   const ipc = read(ipcPath);
-  const commands = [...ipc.matchAll(/#\[tauri::command\]\s*pub fn (\w+)/g)].map(
-    (match) => match[1],
-  );
+  const commands =
+    ipc.match(/commands!\s*\{([\s\S]*?)\}/)?.[1].match(/self_service_\w+/g) ??
+    [];
   if (
     JSON.stringify(commands.toSorted()) !==
       JSON.stringify(fixtureCommands.toSorted()) ||
@@ -510,16 +514,6 @@ export function checkTree(treeRoot = root) {
     errors.push(
       "fixture service must register exactly its four commands and one state owner",
     );
-  const handler = ipc
-    .match(/generate_handler!\[([\s\S]*?)\]/)?.[1]
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  if (
-    JSON.stringify(handler?.toSorted()) !==
-    JSON.stringify(fixtureCommands.toSorted())
-  )
-    errors.push("unexpected fixture command registration");
   const build = read("apps/desktop/src-tauri/build.rs");
   const manifest = build.match(/\.commands\(&\[([\s\S]*?)\]/)?.[1];
   const declared = [...(manifest ?? "").matchAll(/"(\w+)"/g)].map((m) => m[1]);
@@ -528,31 +522,37 @@ export function checkTree(treeRoot = root) {
     JSON.stringify(fixtureCommands.toSorted())
   )
     errors.push("fixture commands must be covered by the app ACL manifest");
-  for (const file of files(resolve(treeRoot, "apps/desktop/src-tauri/src"))) {
-    const source = readFileSync(file, "utf8");
-    // Medium structural guard, not a sandbox against malicious source. Ban
-    // capability modules before import aliasing can hide their call sites.
-    if (
-      relative(treeRoot, file)
-        .replaceAll("\\", "/")
-        .includes("/self_service/") &&
-      (/\b(?:fs|net|process|thread|ffi|os|async_runtime)\b/.test(source) ||
-        /\b(?:use|extern\s+crate)\s+(?:std|tauri)\s+(?:as\b)|\buse\s+(?:std|tauri)\s*::\s*\*/.test(
-          source,
-        ) ||
-        /\bextern\s+"|\.\s*(?:path|shell|spawn|spawn_blocking)\s*\(/.test(
-          source,
-        ))
-    )
-      errors.push(
-        `${file}: fixture service cannot access host I/O or background execution`,
-      );
-    if (
-      /\.plugin\s*\(|Command::new|prmonitor_lib/.test(source) ||
-      (relative(treeRoot, file).replaceAll("\\", "/") !== ipcPath &&
-        /tauri::command|invoke_handler|\.manage\s*\(/.test(source))
-    )
-      errors.push(`${file}: unexpected host capability`);
-  }
+  const rustSources = Object.fromEntries(
+    files(resolve(treeRoot, "apps/desktop/src-tauri/src"))
+      .filter((file) => file.endsWith(".rs"))
+      .map((file) => [
+        relative(treeRoot, file).replaceAll("\\", "/"),
+        readFileSync(file, "utf8"),
+      ]),
+  );
+  errors.push(...checkRustSources(rustSources));
   return errors;
+}
+
+export function checkRustSources(sources) {
+  return JSON.parse(
+    execFileSync(
+      "cargo",
+      [
+        "run",
+        "--quiet",
+        "--locked",
+        "-p",
+        "rss-mdm-desktop",
+        "--example",
+        "rust-boundaries",
+        "--no-default-features",
+      ],
+      {
+        cwd: root,
+        input: JSON.stringify(sources),
+        encoding: "utf8",
+      },
+    ),
+  );
 }

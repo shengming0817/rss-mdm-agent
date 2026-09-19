@@ -9,7 +9,34 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkTree, checkSource } from "./boundaries.mjs";
+import { checkTree, checkSource, checkRustSources } from "./boundaries.mjs";
+
+test("Rust guard distinguishes syntax from harmless words and literal contents", () => {
+  const file = "apps/desktop/src-tauri/src/self_service/example.rs";
+  assert.deepEqual(
+    checkRustSources({
+      [file]: `
+    // No fs, net, process, thread, ffi, os or async_runtime capabilities here.
+    /* nested /* std::fs::read("x") */ comment */
+    fn process() { let net = "std::process::Command::new";
+      let fs = r###"extern \\\"C\\\"; app.shell(); tauri::async_runtime::spawn"###;
+      let _ = (net, fs, b"std::fs", '\\'');
+    }
+  `,
+    }),
+    [],
+  );
+  for (const code of [
+    'use std::{net::{TcpStream as Connection}}; fn run() { Connection::connect("x"); }',
+    'use std::{self as host}; fn run() { host::fs::read("x"); }',
+    'macro_rules! run { () => { std::fs::read("x") }; }',
+    'macro_rules! run { () => { use std as host; host::fs::read("x"); }; }',
+    "macro_rules! run { () => { app.shell(); }; }",
+    'fn run() { /* between tokens */ std /* comment */ :: fs::read("x"); }',
+    "fn unfinished(",
+  ])
+    assert.ok(checkRustSources({ [file]: code }).length, code);
+});
 
 test("UI and desktop satisfy the dependency and permission boundaries", () => {
   assert.deepEqual(checkTree(), []);

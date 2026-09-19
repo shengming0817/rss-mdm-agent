@@ -20,7 +20,7 @@ const items = computed(
 const task = computed(() =>
   s.snapshot?.requests.find((item) => item.plan.requestId === s.taskId),
 );
-function decision(value: Decision) {
+function decision(value: Decision): string {
   switch (value) {
     case "allowed":
       return "允许";
@@ -36,7 +36,7 @@ function decision(value: Decision) {
       return "受限";
   }
 }
-function status(value: RequestView["status"]) {
+function status(value: RequestView["status"]): string {
   switch (value) {
     case "waiting":
       return "等待交互";
@@ -252,6 +252,10 @@ onMounted(() => {
         </button>
       </template>
       <template v-else-if="s.page === 'tasks'">
+        <div v-if="s.uncertain" class="notice">
+          提交结果尚不明确，可查询或重试原请求。
+          <button :disabled="s.busy" @click="c.submit">按原请求重试提交</button>
+        </div>
         <div class="page-heading">
           <div>
             <span class="eyebrow">REQUESTS</span>

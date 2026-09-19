@@ -13,6 +13,8 @@ defineProps<{ plan: Plan }>();
       <dd class="identifier">{{ plan.planId }}</dd>
       <dt>请求 ID</dt>
       <dd class="identifier">{{ plan.requestId }}</dd>
+      <dt>操作</dt>
+      <dd>{{ plan.action }}</dd>
       <dt>精确资源</dt>
       <dd>
         {{ plan.resource.reference.id }} /

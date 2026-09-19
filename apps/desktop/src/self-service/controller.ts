@@ -9,6 +9,20 @@ import type {
   SelfServicePort,
   Snapshot,
 } from "./types";
+function sameSelection(a: CatalogItem, b: CatalogItem) {
+  return (
+    a.itemId === b.itemId &&
+    a.variantId === b.variantId &&
+    a.catalog.digest === b.catalog.digest &&
+    a.catalog.identity.id === b.catalog.identity.id &&
+    a.catalog.identity.revision === b.catalog.identity.revision &&
+    a.catalog.authority.kind === b.catalog.authority.kind &&
+    a.catalog.authority.id === b.catalog.authority.id &&
+    (a.catalog.authority.kind !== "enterprise" ||
+      (b.catalog.authority.kind === "enterprise" &&
+        a.catalog.authority.tenant === b.catalog.authority.tenant))
+  );
+}
 function serviceError(
   error: unknown,
 ): error is { code: string; message: string } {
@@ -67,6 +81,39 @@ export function createController(
       state.uncertain = false;
     }
   }
+  function rebindSelection(snapshot: Snapshot) {
+    const previous = state.item;
+    if (!previous) return;
+    const item = snapshot.catalog.find((item) => sameSelection(item, previous));
+    state.item = item ?? null;
+    if (
+      !item ||
+      item.availability !== "listed" ||
+      item.display.requestability !== "allowed"
+    ) {
+      // A submission in flight or with a lost response retains its frozen retry identity.
+      // Catalog expiry cannot tell us whether that request was already accepted.
+      const submitted =
+        state.accepted ||
+        state.uncertain ||
+        (state.busy && state.plan !== null);
+      if (!submitted) {
+        generation++;
+        state.plan = null;
+        state.busy = false;
+      }
+      if (!item) {
+        state.fields.clear();
+        if (state.page === "detail")
+          state.page = submitted
+            ? "tasks"
+            : previous.kind === "software"
+              ? "software"
+              : "tools";
+        setError("所选目录项目已变更或移除，请从最新目录重新选择。");
+      }
+    }
+  }
   async function refresh() {
     if (!port) return;
     const sequence = ++refreshSequence;
@@ -91,10 +138,13 @@ export function createController(
         state.accepted = false;
         pendingReply = null;
         state.replyUnknown = false;
+        state.taskId = "";
+        if (state.page === "detail") state.page = "home";
         setError("测试服务已重启；旧测试数据已清空，请明确新建请求。");
       }
       if (errorSource === "snapshot") setError("");
       state.snapshot = snapshot;
+      rebindSelection(snapshot);
       const task = snapshot.requests.find(
         (r) => r.plan.requestId === state.requestId,
       );
@@ -122,7 +172,7 @@ export function createController(
   }
   function select(item: CatalogItem, fresh = false) {
     if (state.busy || state.uncertain) return;
-    if (!fresh && state.item?.itemId === item.itemId) {
+    if (!fresh && state.item && sameSelection(state.item, item)) {
       state.page = "detail";
       return;
     }
@@ -151,7 +201,9 @@ export function createController(
       !state.snapshot ||
       state.busy ||
       state.accepted ||
-      state.uncertain
+      state.uncertain ||
+      state.item.availability !== "listed" ||
+      state.item.display.requestability !== "allowed"
     )
       return;
     const token = ++generation;

@@ -4,7 +4,7 @@ use super::*;
 fn fixture_snapshot_never_claims_real_execution() {
     let mut service = FixtureService::new("fixture-test".into(), 1000).unwrap();
     let snapshot = service.snapshot(1000).unwrap();
-    assert_eq!(snapshot.mode, "fixture");
+    assert_eq!(snapshot.mode, ServiceMode::Fixture);
     assert!(snapshot
         .catalog
         .iter()
@@ -126,7 +126,7 @@ fn request_identity_survives_retries_but_not_plan_substitution() {
         "conflict"
     );
     let task = service.submit(submission(&changed), 1003).unwrap();
-    assert_eq!(task.status, "approval");
+    assert_eq!(task.status, RequestStatus::Approval);
     assert_eq!(
         service
             .submit(submission(&changed), 1004)
@@ -142,7 +142,7 @@ fn request_identity_survives_retries_but_not_plan_substitution() {
         .is_err());
     assert_eq!(
         service.snapshot(1004).unwrap().requests[0].status,
-        "approval"
+        RequestStatus::Approval
     );
 }
 #[test]
@@ -176,7 +176,7 @@ fn confirmations_consent_and_late_answers_do_not_grant_authority() {
             1003,
         )
         .unwrap();
-    assert_eq!(done.status, "complete");
+    assert_eq!(done.status, RequestStatus::Complete);
     assert!(done.message.contains("没有安装"));
 }
 #[test]
@@ -187,7 +187,7 @@ fn refusal_expiry_cancel_and_clock_regression_never_complete() {
         let task = service.submit(submission(&plan), 1000).unwrap();
         assert_eq!(
             service.respond(reply(&task, answer), 1001).unwrap().status,
-            "stopped"
+            RequestStatus::Stopped
         );
     }
     let (mut service, draft) = setup("diagnostics");
@@ -201,7 +201,7 @@ fn refusal_expiry_cancel_and_clock_regression_never_complete() {
             )
             .unwrap()
             .status,
-        "stopped"
+        RequestStatus::Stopped
     );
     assert_eq!(
         service
@@ -245,14 +245,14 @@ fn prompt_options_and_parameter_reentry_are_service_validated() {
             Answer::Choice {
                 selection: "later".into(),
             },
-            "restartRequired",
+            RequestStatus::RestartRequired,
         ),
         (
             "maintenance",
             Answer::Choice {
                 selection: "morning".into(),
             },
-            "complete",
+            RequestStatus::Complete,
         ),
     ] {
         let (mut service, draft) = setup(item);
@@ -294,7 +294,7 @@ fn prompt_options_and_parameter_reentry_are_service_validated() {
             .respond(reply(&task, Answer::Parameters { fields }), 1001)
             .unwrap()
             .status,
-        "complete"
+        RequestStatus::Complete
     );
 }
 #[test]
@@ -302,17 +302,17 @@ fn unknown_effect_is_preserved_and_snapshot_does_not_cancel() {
     let (mut service, draft) = setup("unknown");
     let plan = service.preview(draft, 1000).unwrap();
     let task = service.submit(submission(&plan), 1000).unwrap();
-    assert_eq!(task.status, "unknownEffect");
+    assert_eq!(task.status, RequestStatus::UnknownEffect);
     assert_eq!(
         service.snapshot(1001).unwrap().requests[0].status,
-        "unknownEffect"
+        RequestStatus::UnknownEffect
     );
     let (mut service, draft) = setup("office");
     let plan = service.preview(draft, 1000).unwrap();
     service.submit(submission(&plan), 1000).unwrap();
     assert_eq!(
         service.snapshot(1001).unwrap().requests[0].status,
-        "approval"
+        RequestStatus::Approval
     );
 }
 

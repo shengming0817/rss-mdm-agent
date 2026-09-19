@@ -53,7 +53,7 @@ pub(super) fn start(record: &mut RequestRecord, now: u64) -> Result<()> {
             schema: reference("fixture-catalog-r1")?,
         },
         "unknown" => {
-            record.result = Some("unknownEffect");
+            record.result = Some(RequestStatus::UnknownEffect);
             return Ok(());
         }
         _ => Kind::UserConfirmation {
@@ -67,7 +67,7 @@ pub(super) fn expire(record: &mut RequestRecord, now: u64) -> Result<()> {
         if matches!(current.snapshot().status, Status::Pending) {
             if let Some(transition) = current.evaluate(Command::CheckExpiry {}, now)?.transition {
                 *current = transition.next;
-                record.result = Some("stopped");
+                record.result = Some(RequestStatus::Stopped);
             }
         }
     }
@@ -156,10 +156,12 @@ pub(super) fn respond(
         record.interactions[index] = transition.next;
     }
     match outcome {
-        Outcome::Cancelled | Outcome::Expired => record.result = Some("stopped"),
+        Outcome::Cancelled | Outcome::Expired => record.result = Some(RequestStatus::Stopped),
         Outcome::Answered => match input.answer {
             Answer::Confirmation { accepted: false }
-            | Answer::PrivacyConsent { accepted: false } => record.result = Some("stopped"),
+            | Answer::PrivacyConsent { accepted: false } => {
+                record.result = Some(RequestStatus::Stopped)
+            }
             Answer::Confirmation { accepted: true } => open(
                 record,
                 Kind::PrivacyConsent {
@@ -169,9 +171,9 @@ pub(super) fn respond(
             )?,
             _ => {
                 record.result = Some(if matches!(kind, Kind::RestartPrompt { .. }) {
-                    "restartRequired"
+                    RequestStatus::RestartRequired
                 } else {
-                    "complete"
+                    RequestStatus::Complete
                 })
             }
         },
@@ -229,10 +231,10 @@ pub(super) fn view(interaction: &Interaction) -> InteractionView {
         id: snapshot.spec.id.as_str().into(),
         kind: snapshot.spec.kind.clone(),
         status: match snapshot.status {
-            Status::Pending => "pending",
-            Status::Answered { .. } => "answered",
-            Status::Cancelled { .. } => "cancelled",
-            Status::Expired { .. } => "expired",
+            Status::Pending => InteractionStatus::Pending,
+            Status::Answered { .. } => InteractionStatus::Answered,
+            Status::Cancelled { .. } => InteractionStatus::Cancelled,
+            Status::Expired { .. } => InteractionStatus::Expired,
         },
         message,
         expires_at_unix_ms: snapshot.spec.expires_at_unix_ms,
