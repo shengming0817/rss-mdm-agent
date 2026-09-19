@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { onBeforeUnmount, onMounted, ref } from "vue";
 import { AppShell, NavigationList } from "@rss-mdm-agent/ui";
 import Assistant from "./assistant/Assistant.vue";
 import {
@@ -8,25 +8,16 @@ import {
 } from "./assistant/controller";
 import SelfService from "./self-service/SelfService.vue";
 import { createController } from "./self-service/controller";
-import { nativePort, newIdentity } from "./self-service/native";
+import { nativePort } from "./self-service/native";
 import preview from "./self-service/preview";
 import "./self-service/style.css";
 import "./assistant/style.css";
 const props = defineProps<{ assistantServices?: AssistantServices }>();
+const newIdentity = () => crypto.randomUUID();
 const controller = createController(nativePort(), newIdentity, preview);
 const assistant = createAssistant(props.assistantServices, newIdentity);
 const page = ref("self-service");
-const attention = computed(
-  () =>
-    assistant.state.permissions.size +
-    [...assistant.state.views.values()].reduce(
-      (count, view) =>
-        count +
-        Object.values(view.interactions).filter((i) => i.status === "pending")
-          .length,
-      0,
-    ),
-);
+const attention = assistant.attention;
 function navigate(id: string) {
   page.value = id === "assistant" ? "assistant" : "self-service";
   if (page.value === "self-service") controller.navigate(id);

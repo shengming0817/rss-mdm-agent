@@ -99,6 +99,31 @@ test("assistant only consumes public AI client and bridge; no provider, Host or 
   ])
     assert.ok(checkSource(file, source).length, source);
 });
+test("desktop features cannot import siblings or escape through the assembly", () => {
+  for (const feature of ["assistant", "self-service"]) {
+    const file = `apps/desktop/src/${feature}/owner.ts`;
+    const sibling = feature === "assistant" ? "self-service" : "assistant";
+    for (const source of [
+      `import x from '../${sibling}/controller'`,
+      `export * from '../${sibling}/controller'`,
+      `const x = import('../${sibling}/controller')`,
+      `import x from '../App.vue'`,
+      `import x from './nested/../../${sibling}/controller'`,
+    ])
+      assert.ok(checkSource(file, source).length, source);
+    assert.deepEqual(checkSource(file, `import x from './controller'`), []);
+  }
+  assert.deepEqual(
+    checkSource(
+      "apps/desktop/src/App.vue",
+      `<script setup>
+    import x from './assistant/controller'; import y from './self-service/controller';
+    const identity = () => crypto.randomUUID();
+  </script>`,
+    ),
+    [],
+  );
+});
 test("alternative HTML sinks are rejected in Vue templates and scripts", () => {
   for (const source of [
     `<script setup>document.body.insertAdjacentHTML('beforeend', input)</script>`,

@@ -35,6 +35,7 @@ export function questions(
         typeof option.label !== "string" ||
         !option.label ||
         option.label.length > 1024 ||
+        options.some((existing) => existing.label === option.label) ||
         typeof option.description !== "string" ||
         option.description.length > 8192
       )

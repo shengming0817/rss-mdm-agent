@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from "vue";
+import { computed, ref } from "vue";
 import { MessageComposer, MessageStream } from "@rss-mdm-agent/ui";
 import { RuntimeSurface } from "@rss-mdm-agent/ai-ui-bridge";
 import type { CommandView, TimelineItem } from "@rss-mdm-agent/ai-client";
-import type { AssistantController } from "./controller";
+import { permissionPresentation, type AssistantController } from "./controller";
 import QuestionCard from "./QuestionCard.vue";
 import ExecutionDetails from "./ExecutionDetails.vue";
 const props = defineProps<{ controller: AssistantController }>();
@@ -12,11 +12,7 @@ const c = props.controller,
   view = c.view,
   runtime = c.runtime,
   draft = c.draft;
-const clock = ref(Date.now());
-const timer = setInterval(() => {
-  clock.value = Date.now();
-}, 1000);
-onBeforeUnmount(() => clearInterval(timer));
+const clock = c.clock;
 const connectionLabel = new Map([
   ["connected", "已连接"],
   ["attached", "已连接"],
@@ -84,7 +80,7 @@ function cancelNote(command: CommandView) {
   }
 }
 function questionEnabled(id: string) {
-  return clock.value >= 0 && c.answerable(id);
+  return c.answerable(id);
 }
 function hasSurface(item: TimelineItem) {
   return Object.values(view.value?.surfaces ?? {}).some(
@@ -165,9 +161,14 @@ const cancellations = computed(() =>
       <button
         v-for="option in permission.request.options"
         :key="option.optionId"
+        :disabled="!permissionPresentation(option.kind)"
         @click="c.permission(permission.id, option.optionId)"
       >
-        {{ option.name }}</button
+        <strong>{{
+          permissionPresentation(option.kind)?.label ?? "未知权限选项"
+        }}</strong>
+        <span>{{ permissionPresentation(option.kind)?.scope }}</span>
+        <small>提供方说明：{{ option.name }}</small></button
       ><button @click="c.permission(permission.id)">拒绝并关闭</button>
     </section>
     <div class="assistant-workspace">

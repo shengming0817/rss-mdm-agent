@@ -19,13 +19,51 @@ export interface AssistantServices {
   /** Authenticated assembly owns transport and caller scope. A new connection must never reuse another caller's client. */
   connect(
     options: ClientOptions,
+    signal: AbortSignal,
   ): Promise<{ runtime: RuntimeClient; mode: "s1" | "live" }>;
   /** Separate authenticated execution-app read; tool output never feeds this port. */
-  taskDetails?(operationRequestId: string): Promise<ExecutionTaskDetails>;
+  taskDetails?(
+    operationRequestId: string,
+    signal: AbortSignal,
+  ): Promise<ExecutionTaskDetails>;
 }
 export interface PermissionView {
   id: string;
   request: PermissionRequest;
+}
+/** ACP kind is trusted presentation semantics; provider names are supplementary. */
+export function permissionPresentation(
+  kind: PermissionRequest["options"][number]["kind"],
+) {
+  const labels = {
+    allow_once: { label: "允许一次", scope: "仅本次请求" },
+    allow_always: { label: "始终允许", scope: "持续授权：包含后续匹配请求" },
+    reject_once: { label: "拒绝一次", scope: "仅本次请求" },
+    reject_always: { label: "始终拒绝", scope: "持续拒绝：包含后续匹配请求" },
+  } satisfies Record<
+    PermissionRequest["options"][number]["kind"],
+    { label: string; scope: string }
+  >;
+  return Object.entries(labels).find(([key]) => key === kind)?.[1];
+}
+/** Bound UI settlement even when an injected service ignores its cancellation signal. */
+async function bounded<T>(
+  owner: AbortController,
+  operation: () => Promise<T>,
+): Promise<T> {
+  let abort = () => {};
+  const cancelled = new Promise<never>((_, reject) => {
+    abort = () => reject(new ClientError("request_failed"));
+    owner.signal.addEventListener("abort", abort, { once: true });
+    if (owner.signal.aborted) abort();
+  });
+  const timer = setTimeout(() => owner.abort(), 15_000);
+  try {
+    return await Promise.race([cancelled, operation()]);
+  } finally {
+    clearTimeout(timer);
+    owner.signal.removeEventListener("abort", abort);
+  }
 }
 type SessionItem = Pick<SessionPage["items"][number], "namespace" | "status">;
 type Pending = { command: Command; draft?: string };
@@ -35,6 +73,12 @@ export function createAssistant(
   now = Date.now,
 ) {
   const runtime = shallowRef<RuntimeClient>();
+  const clock = shallowRef(now());
+  const timer = setInterval(() => {
+    clock.value = now();
+  }, 1000);
+  let connectionOwner: AbortController | undefined;
+  let detailsOwner: AbortController | undefined;
   const state = reactive({
     connection: "disconnected" as "disconnected" | "connecting" | "connected",
     mode: "live" as "s1" | "live",
@@ -144,16 +188,54 @@ export function createAssistant(
     return "available";
   });
   const canResume = computed(() => resumeReason.value === "available");
-  const background = computed(() =>
-    [...state.views.values()]
-      .filter(
-        (v) =>
-          v.namespace.sessionId !== state.selected &&
-          Object.values(v.interactions).some(
-            (i) => i.status === "pending" && now() <= i.expiresAtMs,
+  function actionable(v: SessionView, id: string, at: number) {
+    const item = Object.entries(v.interactions).find(
+      ([key]) => key === id,
+    )?.[1];
+    const surfaces = Object.values(v.surfaces).filter(
+      (surface) => surface.interactionId === id,
+    );
+    const supported = surfaces.length
+      ? state.a2ui &&
+        surfaces.some(
+          (surface) =>
+            surface.status === "active" && surface.generation === v.generation,
+        )
+      : v.capabilities.structuredQuestion === "supported";
+    return (
+      supported &&
+      !!item &&
+      live(v) &&
+      item.status === "pending" &&
+      item.generation === v.generation &&
+      at <= item.expiresAtMs &&
+      !state.pending.has(v.namespace.sessionId) &&
+      !state.sending.has(v.namespace.sessionId)
+    );
+  }
+  const actionableIds = computed(
+    () =>
+      new Map(
+        [...state.views.values()].map((v) => [
+          v.namespace.sessionId,
+          Object.keys(v.interactions).filter((id) =>
+            actionable(v, id, clock.value),
           ),
-      )
-      .map((v) => v.namespace.sessionId),
+        ]),
+      ),
+  );
+  const attention = computed(
+    () =>
+      state.permissions.size +
+      [...actionableIds.value.values()].reduce(
+        (count, ids) => count + ids.length,
+        0,
+      ),
+  );
+  const background = computed(() =>
+    [...actionableIds.value]
+      .filter(([id, ids]) => id !== state.selected && ids.length > 0)
+      .map(([id]) => id),
   );
   const fail = (error: unknown) =>
     error instanceof ClientError ? error.code : "request_failed";
@@ -166,7 +248,10 @@ export function createAssistant(
     signal: AbortSignal,
   ): Promise<PermissionResponse> {
     return new Promise((resolve) => {
-      if (signal.aborted) {
+      if (
+        signal.aborted ||
+        request.options.some((option) => !permissionPresentation(option.kind))
+      ) {
         resolve({ outcome: { outcome: "cancelled" } });
         return;
       }
@@ -187,7 +272,10 @@ export function createAssistant(
     const item = state.permissions.get(id);
     if (
       !item ||
-      (optionId && !item.request.options.some((o) => o.optionId === optionId))
+      (optionId &&
+        !item.request.options.some(
+          (o) => o.optionId === optionId && permissionPresentation(o.kind),
+        ))
     )
       return;
     callbacks.get(id)?.(
@@ -218,6 +306,10 @@ export function createAssistant(
   }
   async function connect() {
     const current = ++epoch;
+    connectionOwner?.abort();
+    detailsOwner?.abort();
+    const owner = new AbortController();
+    connectionOwner = owner;
     state.cleanupError = "";
     release();
     taskEpoch++;
@@ -241,27 +333,34 @@ export function createAssistant(
     if (!services) return;
     let candidate: RuntimeClient | undefined;
     try {
-      const connected = await services.connect({
-        a2ui: true,
-        requestPermission: (request, signal) =>
-          current === epoch
-            ? requestPermission(request, signal)
-            : Promise.resolve({ outcome: { outcome: "cancelled" } }),
+      const connected = await bounded(owner, async () => {
+        const result = await services.connect(
+          {
+            a2ui: true,
+            requestPermission: (request, signal) =>
+              current === epoch && !owner.signal.aborted
+                ? requestPermission(request, signal)
+                : Promise.resolve({ outcome: { outcome: "cancelled" } }),
+          },
+          owner.signal,
+        );
+        if (owner.signal.aborted) {
+          closeClient(result.runtime, current);
+          throw new ClientError("request_failed");
+        }
+        candidate = result.runtime;
+        const negotiated = await candidate.initialize();
+        return { ...result, negotiated };
       });
-      candidate = connected.runtime;
-      if (current !== epoch) {
+      if (current !== epoch || owner.signal.aborted) {
         closeClient(candidate, current);
         return;
       }
-      const negotiated = await candidate.initialize();
-      if (current !== epoch) {
-        closeClient(candidate, current);
-        return;
-      }
-      runtime.value = markRaw(candidate);
+      const negotiated = connected.negotiated;
+      runtime.value = markRaw(connected.runtime);
       state.mode = connected.mode;
       state.a2ui = !!negotiated.a2ui;
-      stop = candidate.observe((next) => {
+      stop = connected.runtime.observe((next) => {
         if (current === epoch) {
           state.views.set(next.namespace.sessionId, next);
           state.sessions.set(next.namespace.sessionId, {
@@ -271,7 +370,7 @@ export function createAssistant(
         }
       });
       state.connection = "connected";
-      void candidate.connection.closed.then(() => {
+      void connected.runtime.connection.closed.then(() => {
         if (current === epoch) {
           state.connection = "disconnected";
           clearPermissions();
@@ -279,6 +378,7 @@ export function createAssistant(
       });
       await list(false);
     } catch (error) {
+      owner.abort();
       if (current === epoch) {
         if (runtime.value) release();
         else closeClient(candidate, current);
@@ -286,6 +386,8 @@ export function createAssistant(
         state.connection = "disconnected";
         state.error = fail(error);
       } else closeClient(candidate, current);
+    } finally {
+      if (connectionOwner === owner) connectionOwner = undefined;
     }
   }
   async function list(more = true) {
@@ -436,20 +538,13 @@ export function createAssistant(
     });
   }
   function answerable(id: string) {
-    const v = view.value,
-      item = Object.entries(v?.interactions ?? {}).find(
-        ([key]) => key === id,
-      )?.[1];
+    const v = view.value;
     return (
-      !!item &&
-      live(v) &&
-      item.status === "pending" &&
-      v!.capabilities.structuredQuestion === "supported" &&
-      item.generation === v!.generation &&
-      now() <= item.expiresAtMs &&
-      !Object.values(v!.surfaces).some((s) => s.interactionId === id) &&
-      !state.pending.has(state.selected) &&
-      !state.sending.has(state.selected)
+      !!v &&
+      actionableIds.value.get(v.namespace.sessionId)?.includes(id) === true &&
+      actionable(v, id, now()) &&
+      v.capabilities.structuredQuestion === "supported" &&
+      !Object.values(v.surfaces).some((s) => s.interactionId === id)
     );
   }
   async function respond(id: string, answers: Record<string, string>) {
@@ -498,6 +593,9 @@ export function createAssistant(
   }
   async function taskDetails(id: string) {
     const current = ++taskEpoch;
+    detailsOwner?.abort();
+    const owner = new AbortController();
+    detailsOwner = owner;
     state.task = undefined;
     state.taskError = "";
     if (!services?.taskDetails) {
@@ -506,17 +604,22 @@ export function createAssistant(
     }
     state.taskLoading = true;
     try {
-      const result = await services.taskDetails(id);
+      const read = services.taskDetails.bind(services);
+      const result = await bounded(owner, () => read(id, owner.signal));
       if (current === taskEpoch) state.task = result;
     } catch {
       if (current === taskEpoch) state.taskError = "无法读取授权执行详情";
     } finally {
       if (current === taskEpoch) state.taskLoading = false;
+      if (detailsOwner === owner) detailsOwner = undefined;
     }
   }
   function dispose() {
     epoch++;
     taskEpoch++;
+    connectionOwner?.abort();
+    detailsOwner?.abort();
+    clearInterval(timer);
     release();
     state.connection = "disconnected";
     state.opening = false;
@@ -537,6 +640,8 @@ export function createAssistant(
     sessionConnection,
     resumeReason,
     background,
+    attention,
+    clock,
     connect,
     list,
     select,

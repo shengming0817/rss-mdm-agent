@@ -114,6 +114,10 @@
   border-radius: 10px;
   background: var(--color-surface);
 }
+.permission-card button strong,
+.permission-card button span {
+  display: block;
+}
 .question-card fieldset {
   border: 0;
   padding: 12px 0;

@@ -8,6 +8,73 @@ import fixtures from "../../../../tests/assistant/execution-fixtures.json";
 import type { ExecutionTaskDetails } from "./execution-types";
 import type { InteractionView, SessionView } from "@rss-mdm-agent/ai-client";
 import { fixtureSession } from "@rss-mdm-agent/ai-contract/testing";
+it("renders permission scope from kind even when provider names contradict it", () => {
+  const c = createAssistant(undefined, () => "id");
+  c.state.permissions.set("p", {
+    id: "p",
+    request: {
+      sessionId: "session-1",
+      toolCall: { toolCallId: "tool", title: "tool" },
+      options: [
+        { optionId: "once", name: "永久允许", kind: "allow_once" },
+        { optionId: "always", name: "仅此一次", kind: "allow_always" },
+        { optionId: "reject", name: "允许", kind: "reject_once" },
+        { optionId: "never", name: "允许", kind: "reject_always" },
+      ],
+    },
+  });
+  const wrapper = mount(Assistant, { props: { controller: c } });
+  const buttons = wrapper.findAll(".permission-card button");
+  expect(buttons.slice(0, 4).map((b) => b.find("strong").text())).toEqual([
+    "允许一次",
+    "始终允许",
+    "拒绝一次",
+    "始终拒绝",
+  ]);
+  expect(buttons[1].text()).toContain("后续匹配请求");
+  expect(buttons[1].text()).toContain("提供方说明：仅此一次");
+  wrapper.unmount();
+  c.dispose();
+});
+it("labels termination and assessment observations without claiming approval evidence", () => {
+  const wrapper = mount(ExecutionDetails, {
+    props: {
+      details: fixtures.outcomeUnknown as ExecutionTaskDetails,
+      now: 1000,
+    },
+  });
+  expect(wrapper.text()).toContain("终止/效果核验证据引用（仅授权可见）");
+  expect(wrapper.text()).not.toContain("授权证据引用");
+  wrapper.unmount();
+});
+it("keeps duplicate option labels read-only instead of submitting ambiguous selections", () => {
+  const wrapper = mount(QuestionCard, {
+    props: {
+      enabled: true,
+      interaction: {
+        status: "pending",
+        expiresAtMs: 2000,
+        request: {
+          questions: [
+            {
+              question: "Choose?",
+              header: "Choice",
+              multiSelect: false,
+              options: [
+                { label: "A", description: "first" },
+                { label: "A", description: "second" },
+              ],
+            },
+          ],
+        },
+      } as unknown as InteractionView,
+    },
+  });
+  expect(wrapper.findAll("button,textarea")).toHaveLength(0);
+  expect(wrapper.text()).toContain("first");
+  expect(wrapper.text()).toContain("second");
+  wrapper.unmount();
+});
 it("preserves bounded escaped unknown question content without enabling actions", () => {
   const wrapper = mount(QuestionCard, {
     props: {

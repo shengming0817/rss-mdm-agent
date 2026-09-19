@@ -104,7 +104,7 @@ try {
   await other.getByRole("button", { name: "加载更多会话" }).click();
   await other.getByRole("button", { name: new RegExp(sessionId) }).click();
   await other.getByText("选择下一步", { exact: false }).waitFor();
-  await page.getByRole("button", { name: "允许本次", exact: true }).click();
+  await page.getByRole("button", { name: /^允许一次/ }).click();
   assert.deepEqual((await permission.result).outcome, {
     outcome: "selected",
     optionId: "allow",

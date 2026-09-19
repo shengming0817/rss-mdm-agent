@@ -116,7 +116,7 @@ const text = (value: unknown) => JSON.stringify(value, null, 2);
       </dd>
       <dt>效果验证</dt>
       <dd>{{ details.status.assessment ?? "尚未验证" }}</dd>
-      <dt>授权证据引用</dt>
+      <dt>终止/效果核验证据引用（仅授权可见）</dt>
       <dd>
         <pre>{{ text(details.status.evidence) }}</pre>
       </dd>

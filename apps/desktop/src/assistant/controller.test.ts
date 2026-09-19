@@ -9,7 +9,7 @@ import { createAssistant } from "./controller";
 import { fixtureSession } from "@rss-mdm-agent/ai-contract/testing";
 import fixtures from "../../../../tests/assistant/execution-fixtures.json";
 import type { ExecutionTaskDetails } from "./execution-types";
-function setup() {
+function setup(now = () => 100) {
   let next = 0,
     listener: (view: SessionView) => void = () => {},
     options: ClientOptions = {};
@@ -56,7 +56,7 @@ function setup() {
       taskDetails,
     },
     () => `id-${++next}`,
-    () => 100,
+    now,
   );
   return {
     c,
@@ -313,4 +313,158 @@ describe("assistant application ownership", () => {
     expect(t.c.resumeReason.value).toBe("retired");
     t.c.dispose();
   });
+});
+
+it("rejects unknown permission kinds before exposing a callback", async () => {
+  const t = setup();
+  await t.c.connect();
+  const result = t.options().requestPermission!(
+    {
+      sessionId: "session-1",
+      toolCall: { toolCallId: "tool", title: "tool" },
+      options: [
+        { optionId: "unknown", name: "Allow once", kind: "unknown" as never },
+      ],
+    },
+    new AbortController().signal,
+  );
+  try {
+    expect(t.c.state.permissions.size).toBe(0);
+  } finally {
+    t.c.dispose();
+  }
+  expect(await result).toEqual({ outcome: { outcome: "cancelled" } });
+});
+it("aborts superseded and disposed detail reads, even if the service ignores cancellation", async () => {
+  const t = setup();
+  t.taskDetails.mockImplementation(() => new Promise(() => {}));
+  const old = t.c.taskDetails("old");
+  const firstSignal = t.taskDetails.mock.calls[0][1];
+  const next = t.c.taskDetails("new");
+  try {
+    expect(firstSignal?.aborted).toBe(true);
+    t.c.dispose();
+    expect(t.taskDetails.mock.calls[1][1]?.aborted).toBe(true);
+    await Promise.all([old, next]);
+    expect(t.c.state.taskLoading).toBe(false);
+  } finally {
+    t.c.dispose();
+  }
+});
+it("bounds connection and detail waits and closes a late connection", async () => {
+  vi.useFakeTimers();
+  const t = setup();
+  let finish!: (value: { runtime: RuntimeClient; mode: "s1" }) => void;
+  const connect = vi.fn(
+    (_options: ClientOptions, _signal: AbortSignal) =>
+      new Promise<{ runtime: RuntimeClient; mode: "s1" }>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const details = vi.fn(() => new Promise<ExecutionTaskDetails>(() => {}));
+  const c = createAssistant({ connect, taskDetails: details }, () => "id");
+  try {
+    const connecting = c.connect(),
+      reading = c.taskDetails("r");
+    await vi.advanceTimersByTimeAsync(15_001);
+    expect(c.state.connection).toBe("disconnected");
+    expect(c.state.taskLoading).toBe(false);
+    expect(connect.mock.calls[0][1].aborted).toBe(true);
+    await Promise.all([connecting, reading]);
+    finish({ runtime: t.client, mode: "s1" });
+    await Promise.resolve();
+    expect(t.client.close).toHaveBeenCalledOnce();
+    expect(t.client.initialize).not.toHaveBeenCalled();
+  } finally {
+    c.dispose();
+    t.c.dispose();
+    vi.useRealTimers();
+  }
+});
+it("updates both attention and background entries when time expires, without new events", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(100);
+  const t = setup(Date.now);
+  try {
+    await t.c.connect();
+    t.view.capabilities.structuredQuestion = "supported";
+    t.view.interactions.q = {
+      commandId: "p",
+      generation: t.view.generation,
+      status: "pending",
+      expiresAtMs: 1000,
+      callbackLifetime: "generation_bound",
+      request: {},
+    };
+    t.emit();
+    expect(t.c.background.value).toEqual(["session-1"]);
+    expect(t.c.attention.value).toBe(1);
+    await vi.advanceTimersByTimeAsync(1001);
+    expect(t.c.background.value).toEqual([]);
+    expect(t.c.attention.value).toBe(0);
+    t.view.interactions.q.expiresAtMs = 5000;
+    t.view.interactions.q.generation = "old";
+    t.emit();
+    expect(t.c.attention.value).toBe(0);
+  } finally {
+    t.c.dispose();
+    expect(vi.getTimerCount()).toBe(0);
+    vi.useRealTimers();
+  }
+});
+
+it("aborts reconnects and closes acquired clients when initialization never settles", async () => {
+  vi.useFakeTimers();
+  const t = setup();
+  const connect = vi.fn(
+    async (_options: ClientOptions, _signal: AbortSignal) => ({
+      runtime: t.client,
+      mode: "s1" as const,
+    }),
+  );
+  vi.mocked(t.client.initialize).mockImplementation(
+    () => new Promise(() => {}),
+  );
+  const c = createAssistant({ connect }, () => "id");
+  try {
+    const old = c.connect();
+    await Promise.resolve();
+    const current = c.connect();
+    expect(connect.mock.calls[0][1].aborted).toBe(true);
+    await old;
+    expect(t.client.close).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(15_001);
+    await current;
+    expect(connect.mock.calls[1][1].aborted).toBe(true);
+    expect(c.state.connection).toBe("disconnected");
+    expect(t.client.close).toHaveBeenCalledTimes(2);
+  } finally {
+    c.dispose();
+    t.c.dispose();
+    expect(vi.getTimerCount()).toBe(0);
+    vi.useRealTimers();
+  }
+});
+it("aborts an in-flight connection on disposal and suppresses its late permissions", async () => {
+  let options!: ClientOptions;
+  const connect = vi.fn(async (input: ClientOptions, _signal: AbortSignal) => {
+    options = input;
+    return new Promise<{ runtime: RuntimeClient; mode: "s1" }>(() => {});
+  });
+  const c = createAssistant({ connect }, () => "id");
+  const pending = c.connect();
+  c.dispose();
+  await pending;
+  expect(connect.mock.calls[0][1].aborted).toBe(true);
+  expect(
+    await options.requestPermission!(
+      {
+        sessionId: "s",
+        toolCall: { toolCallId: "t", title: "t" },
+        options: [{ optionId: "once", name: "Allow", kind: "allow_once" }],
+      },
+      new AbortController().signal,
+    ),
+  ).toEqual({ outcome: { outcome: "cancelled" } });
+  expect(c.state.permissions.size).toBe(0);
 });

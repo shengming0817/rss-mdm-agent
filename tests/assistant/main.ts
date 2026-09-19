@@ -9,9 +9,9 @@ import "../../packages/ui/dist/style.css";
 import "../../apps/desktop/src/style.css";
 import type { AssistantServices } from "../../apps/desktop/src/assistant/controller";
 const services: AssistantServices = {
-  async connect(options) {
+  async connect(options, signal) {
     const peer = await (
-      await fetch("/__fixture/connect", { method: "POST" })
+      await fetch("/__fixture/connect", { method: "POST", signal })
     ).text();
     const runtime = new RuntimeClient(
       channelStream({
@@ -47,9 +47,10 @@ const services: AssistantServices = {
     Object.assign(window, { assistantRuntime: runtime });
     return { runtime, mode: "s1" };
   },
-  async taskDetails(operationRequestId) {
+  async taskDetails(operationRequestId, signal) {
     const response = await fetch(
       `/__fixture/details?request=${encodeURIComponent(operationRequestId)}`,
+      { signal },
     );
     if (!response.ok) throw new Error("fixture read denied");
     return response.json();

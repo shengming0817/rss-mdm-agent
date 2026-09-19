@@ -34,7 +34,14 @@ export function checkSource(file, source) {
     errors.push(`${file}: executable HTML sink`);
   const desktop = file.startsWith("apps/desktop/src/");
   const assistant = file.startsWith("apps/desktop/src/assistant/");
-  const sourceDir = desktop ? "apps/desktop/src" : "packages/ui/src";
+  const feature = /^apps\/desktop\/src\/(assistant|self-service)\//.exec(
+    file,
+  )?.[1];
+  const sourceDir = feature
+    ? `apps/desktop/src/${feature}`
+    : desktop
+      ? "apps/desktop/src"
+      : "packages/ui/src";
   const allowed = desktop
     ? ["vue", "@rss-mdm-agent/ui", "@rss-mdm-agent/ui/style.css"]
     : ["vue"];
@@ -154,14 +161,18 @@ export function checkSource(file, source) {
     if (desktop)
       for (const value of ["Object", "String", "Map", "Date"])
         globals.add(value);
-    if (file === nativeAdapter) globals.add("crypto");
+    if (file === "apps/desktop/src/App.vue") globals.add("crypto");
     const assistantGlobals = {
-      "apps/desktop/src/assistant/controller.ts": ["Set", "Promise"],
-      "apps/desktop/src/assistant/Assistant.vue": [
+      "apps/desktop/src/assistant/controller.ts": [
+        "Set",
+        "Promise",
+        "AbortController",
+        "setTimeout",
+        "clearTimeout",
         "setInterval",
         "clearInterval",
-        "JSON",
       ],
+      "apps/desktop/src/assistant/Assistant.vue": ["JSON"],
       "apps/desktop/src/assistant/ExecutionDetails.vue": ["JSON"],
       "apps/desktop/src/assistant/QuestionCard.vue": ["JSON"],
     };

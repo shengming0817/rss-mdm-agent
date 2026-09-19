@@ -847,3 +847,47 @@ test("dispatch and reconciliation cannot substitute another attempt or namespace
     await h.adapter.close(budget());
   }
 });
+
+test("duplicate option labels are denied before a provider callback is admitted", async () => {
+  const h = harness(),
+    b = await create(h),
+    c = fixtureCommand();
+  await h.adapter.submit(b, c, fixtureAttempt(b, c), budget());
+  const abort = new AbortController();
+  let settled = false;
+  const result = h.options
+    .canUseTool(
+      "AskUserQuestion",
+      {
+        questions: [
+          {
+            question: "Choose?",
+            header: "Choice",
+            multiSelect: false,
+            options: [
+              { label: "A", description: "first" },
+              { label: "A", description: "second" },
+            ],
+          },
+        ],
+      },
+      { requestId: "duplicate-label", toolUseID: "tool", signal: abort.signal },
+    )
+    .then((r) => {
+      settled = true;
+      return r;
+    });
+  try {
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    assert.equal(
+      settled,
+      true,
+      "ambiguous question must be rejected immediately",
+    );
+    assert.equal((await result).behavior, "deny");
+  } finally {
+    abort.abort();
+    await result;
+    await h.adapter.close(budget());
+  }
+});
