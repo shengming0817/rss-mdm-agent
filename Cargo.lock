@@ -847,6 +847,7 @@ dependencies = [
 name = "execution-interaction"
 version = "0.1.0"
 dependencies = [
+ "schemars 1.2.2",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
@@ -2777,6 +2778,15 @@ dependencies = [
 name = "rss-mdm-desktop"
 version = "0.1.0"
 dependencies = [
+ "execution-contract",
+ "execution-interaction",
+ "proc-macro2",
+ "schemars 1.2.2",
+ "serde",
+ "serde_json",
+ "service-catalog",
+ "sha2",
+ "syn 2.0.119",
  "tauri",
  "tauri-build",
 ]

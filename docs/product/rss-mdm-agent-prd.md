@@ -9,7 +9,7 @@ Owner repository：rss-mdm-agent。任务容器：[EPIC #2392](https://dev.azure
 来源及固定证据见[来源索引](../reference/sources.md)。
 
 C05 经用户扩大范围：提取独立 Vue UI 包和可启动的 Tauri 桌面基础壳，采用根级 `apps/`、`packages/`、`crates/` 组织。
-固定样本同时供浏览器和桌面展示，不接入模型、持久化或真实执行。业务页面仍归 C15/C16，执行桥接与共同闭环仍归 C20。
+C15 桌面自助页面通过受限 IPC 消费 Rust 内存固定测试服务；浏览器使用同源只读快照。页面不接入模型、持久化或真实执行，旧展示入口直接替换。C15 仅拥有测试服务接缝，C16 拥有会话页面，正式执行桥接与共同闭环仍归 C20；具体启动与验证见[桌面指南](../guides/desktop-development.md)。
 
 ## 1. 产品定位与完成边界
 

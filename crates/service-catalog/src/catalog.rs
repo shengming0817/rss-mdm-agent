@@ -4,6 +4,7 @@ use crate::{
     PublicationState, SelectionRef,
 };
 use execution_contract::{Digest, Id, InputValue, Target};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::{
@@ -268,7 +269,7 @@ impl SelectedOperation {
 }
 /// Independent display axes from the capability/authorization owner, never execution authority.
 /// Hosts must authenticate the source and reauthorize at execution, including for Allowed values.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DisplayStatus {
     /// Whether this exact choice should be shown to this target.
@@ -279,7 +280,7 @@ pub struct DisplayStatus {
     pub executability: DisplayDecision,
 }
 /// Closed owner-provided display decision for one axis; never a permission.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum DisplayDecision {
     /// No fresh owner explanation; says nothing about execution readiness.

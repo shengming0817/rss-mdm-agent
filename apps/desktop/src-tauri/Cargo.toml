@@ -10,8 +10,20 @@ publish = false
 tauri-build.workspace = true
 
 [dependencies]
+schemars.workspace = true
 tauri.workspace = true
+serde.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
+sha2.workspace = true
+service-catalog = { path = "../../../crates/service-catalog" }
+execution-contract = { path = "../../../crates/execution-contract" }
+execution-interaction = { path = "../../../crates/execution-interaction" }
 
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+
+[dev-dependencies]
+syn = { version = "=2.0.119", features = ["full", "visit"] }
+proc-macro2 = "=1.0.107"
+tauri = { workspace = true, features = ["test"] }

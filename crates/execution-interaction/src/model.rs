@@ -1,7 +1,8 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 
 /// Bounded opaque interaction-owned reference; not a task identity or authority proof.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(transparent)]
 pub struct Reference(String);
 impl Reference {
@@ -29,7 +30,7 @@ impl<'de> Deserialize<'de> for Reference {
     }
 }
 /// User confirmation cannot stand in for privacy consent or administrator authorization.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum ConfirmationPurpose {
     /// Acknowledge readiness to continue.
@@ -38,7 +39,7 @@ pub enum ConfirmationPurpose {
     CloseApplication,
 }
 /// Exact waiting reason. Referenced choices and schemas belong to the caller.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub enum Kind {
     /// Ordinary user confirmation, never an elevation grant.
