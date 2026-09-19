@@ -35,3 +35,21 @@ for (const mode of ["throw", "error-without-exit"])
       runtime.stop();
     }
   });
+
+test("worker executable search never inherits a hostile host PATH", async () => {
+  const original = process.env.PATH;
+  let environment;
+  process.env.PATH = "/hostile/shims";
+  try {
+    const runtime = nativeRuntime((_url, _args, options) => {
+      environment = options.env;
+      throw new Error("no process needed");
+    });
+    await runtime.stopped;
+    assert.notEqual(environment.PATH, "/hostile/shims");
+    assert.equal(environment.NoDefaultCurrentDirectoryInExePath, "1");
+  } finally {
+    if (original === undefined) delete process.env.PATH;
+    else process.env.PATH = original;
+  }
+});
