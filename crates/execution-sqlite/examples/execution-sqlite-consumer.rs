@@ -15,17 +15,6 @@ fn version() -> VersionedRef {
         revision: id("1"),
     }
 }
-impl lifecycle::ObservationVerifier for TestHost {
-    fn verify(
-        &self,
-        _: &FrozenPlan,
-        _: &AttemptId,
-        _: &EvidenceRef,
-        _: u64,
-    ) -> Result<lifecycle::ObservationFacts, lifecycle::ObservationError> {
-        Err(lifecycle::ObservationError::Untrusted)
-    }
-}
 impl AuthorityVerifier for TestHost {
     fn verify(
         &self,
@@ -170,10 +159,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let op = |name: &str| OperationRequestId::new(name).unwrap();
     store.refresh_trust(&op("trust"), &scope, None, &host)?;
     store.open_execution(&op("open"), &plan, &host)?;
-    store.apply_execution(
+    store.apply_command(
         &op("prepare"),
         &scope,
-        &lifecycle::Event {
+        &lifecycle::CommandEvent {
             id: EventId::new("prepare")?,
             expected_revision: 0,
             command: lifecycle::Command::Prepare,
@@ -181,7 +170,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &[],
         &host,
     )?;
-    let begin = lifecycle::Event {
+    let begin = lifecycle::CommandEvent {
         id: EventId::new("begin")?,
         expected_revision: 1,
         command: lifecycle::Command::BeginAttempt {
@@ -190,7 +179,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             mode: lifecycle::ExecutionMode::Test,
         },
     };
-    let receipt = match store.apply_execution(&op("begin"), &scope, &begin, &[], &host)? {
+    let receipt = match store.apply_command(&op("begin"), &scope, &begin, &[], &host)? {
         CommitOutcome::Applied {
             receipt,
             first_dispatch: Some(action),
@@ -205,7 +194,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         OpenOutcome::Ready(store) => store,
         _ => panic!("current schema expected"),
     };
-    let replay = store.apply_execution(&op("begin"), &scope, &begin, &[], &host)?;
+    let replay = store.apply_command(&op("begin"), &scope, &begin, &[], &host)?;
     assert!(matches!(replay, CommitOutcome::AlreadyCommitted(_)));
     assert_eq!(replay.receipt(), &receipt);
     assert_eq!(

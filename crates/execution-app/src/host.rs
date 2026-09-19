@@ -8,7 +8,6 @@ pub(crate) struct Host<'a, H> {
     binding: &'a Binding,
     config: Option<AppConfig>,
     plan: Option<&'a FrozenPlan>,
-    observation: Option<&'a ObservationFacts>,
 }
 impl<'a, H> Host<'a, H> {
     pub(crate) fn new(inner: &'a H, binding: &'a Binding, config: &Configuration) -> Self {
@@ -17,15 +16,10 @@ impl<'a, H> Host<'a, H> {
             binding,
             config: config.active().ok(),
             plan: None,
-            observation: None,
         }
     }
     pub(crate) fn with_plan(mut self, plan: Option<&'a FrozenPlan>) -> Self {
         self.plan = plan;
-        self
-    }
-    pub(crate) fn with_observation(mut self, observation: Option<&'a ObservationFacts>) -> Self {
-        self.observation = observation;
         self
     }
 }
@@ -57,7 +51,8 @@ pub(crate) fn capabilities(
     }
     Ok(())
 }
-impl<H: AppHost> ObservationVerifier for Host<'_, H> {
+pub(crate) struct ObservationEvidence<'a>(pub(crate) &'a ObservationFacts);
+impl ObservationVerifier for ObservationEvidence<'_> {
     fn verify(
         &self,
         plan: &FrozenPlan,
@@ -65,7 +60,7 @@ impl<H: AppHost> ObservationVerifier for Host<'_, H> {
         evidence: &EvidenceRef,
         now: u64,
     ) -> Result<ObservationFacts, ObservationError> {
-        let facts = self.observation.ok_or(ObservationError::Unavailable)?;
+        let facts = self.0;
         if facts.plan_id != plan.spec().plan_id
             || &facts.plan_digest != plan.digest()
             || &facts.attempt_id != attempt

@@ -1,11 +1,12 @@
 use crate::{
-    host::{capabilities, Host},
+    host::{capabilities, Host, ObservationEvidence},
     *,
 };
 use execution_contract::{AttemptId, Authority, EventId, FrozenPlan, RequestId};
 use execution_lifecycle::{
-    Command, Directive, DispatchAction, DispatchCause, DispatchState, Event, Execution,
-    ExecutionMode, Observation, ObservationFacts, Phase, Preparation, StopOutcome, StopReason,
+    Command, CommandEvent, Directive, DispatchAction, DispatchCause, DispatchState, Execution,
+    ExecutionMode, Observation, ObservationEvent, ObservationFacts, Phase, Preparation,
+    StopOutcome, StopReason,
 };
 use execution_sqlite::{
     Access, AccessRequest, AdmissionStatus, CommitOutcome, ExecutionAccess, Host as _, OpenOutcome,
@@ -141,13 +142,12 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         if execution.snapshot().attempt.is_none()
             && execution.snapshot().preparation != Preparation::Prepared
         {
-            self.event(
+            self.command(
                 &execution,
                 "prepare",
                 command.as_str(),
                 Command::Prepare,
                 &[],
-                None,
             )?;
             execution = self.load(request, ExecutionAccess::Execute)?;
         }
@@ -175,7 +175,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         let bindings = self.host.approval_bindings(execution.plan())?;
         let attempt = AttemptId::new(key(execution.plan(), "attempt", command.as_str())?)
             .map_err(|_| Error::InvalidInput)?;
-        let result = self.event(
+        let result = self.command(
             &execution,
             "begin",
             command.as_str(),
@@ -185,7 +185,6 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                 mode: self.runner.mode(),
             },
             &bindings,
-            None,
         )?;
         if result.receipt().outcome == Outcome::Rejected {
             return self.status_for(request, ExecutionAccess::Execute);
@@ -275,51 +274,63 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                 cause,
             },
         };
-        self.event(
+        self.command(
             &execution,
             "dispatch-result",
             attempt.as_str(),
             command,
             &[],
-            None,
         )?;
         Ok(())
     }
-    fn event(
+    fn command(
         &mut self,
         execution: &Execution,
         stage: &str,
         identity: &str,
         command: Command,
         bindings: &[execution_approval::ProfileApproval],
-        observation: Option<&ObservationFacts>,
     ) -> Result<CommitOutcome, Error> {
         let plan = execution.plan();
         let scope = Scope::from_plan(plan);
-        // A stale CAS is a receipt, not completion of a durable fact. Facts may be recomputed
-        // at a newer revision; BeginAttempt alone retains its immutable command identity.
-        let revision_identity = serde_json::to_string(&(identity, execution.snapshot().revision))
-            .map_err(|_| Error::InvalidInput)?;
-        let op = operation(
-            plan,
-            stage,
-            if matches!(command, Command::BeginAttempt { .. }) {
-                identity
-            } else {
-                &revision_identity
-            },
-        )?;
-        let host = Host::new(&self.host, &self.binding, &self.config)
-            .with_plan(Some(plan))
-            .with_observation(observation);
-        let event = Event {
+        let op = if matches!(command, Command::BeginAttempt { .. }) {
+            operation(plan, stage, identity)?
+        } else {
+            revision_operation(execution, stage, identity)?
+        };
+        let host = Host::new(&self.host, &self.binding, &self.config).with_plan(Some(plan));
+        let event = CommandEvent {
             id: EventId::new(op.as_str()).map_err(|_| Error::InvalidInput)?,
             expected_revision: execution.snapshot().revision,
             command,
         };
         Ok(self
             .store
-            .apply_execution(&op, &scope, &event, bindings, &host)?)
+            .apply_command(&op, &scope, &event, bindings, &host)?)
+    }
+    fn observation(
+        &mut self,
+        execution: &Execution,
+        attempt_id: &AttemptId,
+        facts: &ObservationFacts,
+    ) -> Result<CommitOutcome, Error> {
+        let plan = execution.plan();
+        let identity = serde_json::to_string(&facts.evidence).map_err(|_| Error::InvalidInput)?;
+        let op = revision_operation(execution, "observe", &identity)?;
+        let event = ObservationEvent {
+            id: EventId::new(op.as_str()).map_err(|_| Error::InvalidInput)?,
+            expected_revision: execution.snapshot().revision,
+            attempt_id: attempt_id.clone(),
+            evidence: facts.evidence.clone(),
+        };
+        let host = Host::new(&self.host, &self.binding, &self.config).with_plan(Some(plan));
+        Ok(self.store.apply_observation(
+            &op,
+            &Scope::from_plan(plan),
+            &event,
+            &host,
+            &ObservationEvidence(facts),
+        )?)
     }
     /// Reconcile facts only, at most termination plus assessment. Missing runner memory stays
     /// uncertain and never produces a new attempt or a synthetic successful observation.
@@ -370,30 +381,17 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                 if attempt.termination.is_none()
                     && !matches!(attempt.dispatch, DispatchState::Unknown { .. })
                 {
-                    self.event(
+                    self.command(
                         &execution,
                         "recover",
                         attempt.id.as_str(),
                         Command::Recover,
                         &[],
-                        None,
                     )?;
                 }
                 break;
             };
-            let identity =
-                serde_json::to_string(&facts.evidence).map_err(|_| Error::InvalidInput)?;
-            let result = self.event(
-                &execution,
-                "observe",
-                &identity,
-                Command::Observe {
-                    attempt_id: attempt.id.clone(),
-                    evidence: facts.evidence.clone(),
-                },
-                &[],
-                Some(&facts),
-            )?;
+            let result = self.observation(&execution, &attempt.id, &facts)?;
             if result.receipt().outcome == Outcome::Rejected {
                 return Err(Error::InvalidInput);
             }
@@ -410,7 +408,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         for _ in 0..3 {
             let execution = self.load(request, ExecutionAccess::Execute)?;
             if !execution.snapshot().cancel_requested {
-                let result = self.event(&execution, "cancel", "", Command::Cancel, &[], None)?;
+                let result = self.command(&execution, "cancel", "", Command::Cancel, &[])?;
                 if result.receipt().outcome == Outcome::Rejected {
                     return Err(Error::Conflict);
                 }
@@ -436,7 +434,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         if attempt.stop_outcome == Some(outcome) {
             return Ok(());
         }
-        let result = self.event(
+        let result = self.command(
             execution,
             "stop-result",
             attempt.id.as_str(),
@@ -445,7 +443,6 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                 outcome,
             },
             &[],
-            None,
         )?;
         if matches!(result.receipt().outcome, Outcome::Stale | Outcome::Rejected) {
             return Err(Error::Conflict);
@@ -570,4 +567,16 @@ pub(crate) fn operation(
     identity: &str,
 ) -> Result<OperationRequestId, Error> {
     Ok(OperationRequestId::new(key(plan, stage, identity)?)?)
+}
+
+// A stale receipt does not complete a fact: resubmission at a new revision needs a new operation.
+// BeginAttempt alone keeps its immutable identity and does not use this helper.
+fn revision_operation(
+    execution: &Execution,
+    stage: &str,
+    identity: &str,
+) -> Result<OperationRequestId, Error> {
+    let identity = serde_json::to_string(&(identity, execution.snapshot().revision))
+        .map_err(|_| Error::InvalidInput)?;
+    operation(execution.plan(), stage, &identity)
 }
