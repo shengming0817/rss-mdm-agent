@@ -88,6 +88,9 @@ export function packHost(root, directory, application = false) {
       {
         packages: [],
         overrides: dependencies,
+        allowBuilds:
+          load(readFileSync(join(root, "pnpm-workspace.yaml"), "utf8"))
+            .allowBuilds ?? {},
         minimumReleaseAgeExclude:
           load(readFileSync(join(root, "pnpm-workspace.yaml"), "utf8"))
             .minimumReleaseAgeExclude ?? [],
