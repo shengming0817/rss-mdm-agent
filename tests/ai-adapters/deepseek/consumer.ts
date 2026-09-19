@@ -75,9 +75,9 @@ try {
   await second.close(budget());
   await rm(directory, { recursive: true, force: true });
 }
-// @ts-expect-error No test/runtime factory escapes the public adapter interface.
 const invalid: DeepSeekAdapterOptions = {
   ...options,
+  // @ts-expect-error No test/runtime factory escapes the public adapter interface.
   runtimeFactory: () => null,
 };
 void invalid;
