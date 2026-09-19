@@ -21,6 +21,8 @@ const steps = [
   ["AI generated contracts", "pnpm", ["check:ai-contract"]],
   ["AI contract conformance", "pnpm", ["test:ai-contract"]],
   ["AI packed consumer", "pnpm", ["check:ai-consumer"]],
+  ["AI SQLite recovery", "pnpm", ["test:ai-store"]],
+  ["AI SQLite packed consumer", "pnpm", ["check:ai-store-consumer"]],
   ["frontend build", "pnpm", ["build"]],
   ["types", "pnpm", ["typecheck"]],
   ["frontend format", "pnpm", ["format:check"]],

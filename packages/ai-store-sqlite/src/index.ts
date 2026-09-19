@@ -1,0 +1,718 @@
+import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+import {
+  closeSync,
+  constants,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  realpathSync,
+} from "node:fs";
+import { dirname, isAbsolute, join, basename } from "node:path";
+import {
+  boundedJson,
+  decode,
+  ContractError,
+  type AcceptCommand,
+  type Budget,
+  type CommandRecord,
+  type Counter,
+  type Delivery,
+  type Event,
+  type Id,
+  type Namespace,
+  type Page,
+  type Receipt,
+  type Result,
+  type Session,
+  type SessionCommit,
+  type SessionRebind,
+  type SessionStore,
+  type StoreCursor,
+  type Snapshot,
+  type SurfaceBinding,
+  type WireRecord,
+} from "@rss-mdm-agent/ai-contract";
+import {
+  acceptCommand,
+  commitSession,
+  createState,
+  rebindSession,
+  retireSession,
+  defaultLimits,
+  namespaceKey,
+  ok,
+  fail,
+  type SessionState,
+} from "@rss-mdm-agent/ai-contract/transitions";
+import { initialize, SchemaError, scope, whereScope } from "./schema.js";
+
+export interface StoreOptions {
+  readonly path: string;
+  /** create refuses existing files; open refuses missing/uninitialized databases. */
+  readonly mode: "create" | "open";
+  readonly busyTimeoutMs?: number;
+  readonly maxDatabaseBytes?: number;
+  readonly maxSessionRecords?: number;
+  readonly maxSessionBytes?: number;
+  readonly maxBatchRecords?: number;
+  readonly maxQueryBytes?: number;
+}
+interface Bounds {
+  busyTimeoutMs: number;
+  maxDatabaseBytes: number;
+  maxSessionRecords: number;
+  maxSessionBytes: number;
+  maxBatchRecords: number;
+  maxQueryBytes: number;
+}
+const defaults: Bounds = {
+  busyTimeoutMs: 1000,
+  maxDatabaseBytes: 256 * 1024 * 1024,
+  maxSessionRecords: 10000,
+  maxSessionBytes: 16 * 1024 * 1024,
+  maxBatchRecords: 1024,
+  maxQueryBytes: 4 * 1024 * 1024,
+};
+const tables = [
+  "commands",
+  "events",
+  "interactions",
+  "surfaces",
+  "deliveries",
+] as const;
+type Table = (typeof tables)[number];
+const idValid = (v: unknown): v is string =>
+  typeof v === "string" && /^[A-Za-z0-9][A-Za-z0-9._:/+\-]{0,127}$/.test(v);
+const counter = (v: unknown): v is number =>
+  Number.isSafeInteger(v) && Number(v) >= 0;
+const nsValues = (n: Namespace): string[] => {
+  namespaceKey(n);
+  return [n.tenantId, n.principalId, n.authorityId, n.sessionId];
+};
+function errorResult(error: unknown): Result<never> {
+  if (error instanceof SchemaError) return fail("unsupported_version");
+  if (error instanceof ContractError)
+    return fail(error.code === "limit" ? "limit_exceeded" : "invalid_input");
+  if (error instanceof InputError) return fail(error.code);
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "errcode" in error &&
+    Number(error.errcode) === 13
+  )
+    return fail("limit_exceeded");
+  return fail("unavailable", "same_command");
+}
+class InputError extends Error {
+  constructor(
+    readonly code:
+      | "invalid_input"
+      | "limit_exceeded"
+      | "session_gone"
+      | "stale_binding"
+      | "content_conflict",
+  ) {
+    super(`AI SQLite: ${code}`);
+  }
+}
+function bounds(options: StoreOptions): Bounds {
+  const result = { ...defaults };
+  for (const key of Object.keys(defaults) as (keyof Bounds)[]) {
+    const value = options[key] ?? defaults[key];
+    const maximum =
+      key === "busyTimeoutMs"
+        ? 10000
+        : key === "maxSessionRecords" || key === "maxBatchRecords"
+          ? 100000
+          : 1024 * 1024 * 1024;
+    if (!Number.isSafeInteger(value) || value < 1 || value > maximum)
+      throw new InputError("invalid_input");
+    result[key] = value;
+  }
+  if (result.maxDatabaseBytes < 65536) throw new InputError("invalid_input");
+  return result;
+}
+function privatePath(options: StoreOptions): string {
+  if (!isAbsolute(options.path) || !["create", "open"].includes(options.mode))
+    throw new InputError("invalid_input");
+  const parent = dirname(options.path);
+  if (options.mode === "create")
+    mkdirSync(parent, { recursive: true, mode: 0o700 });
+  const directory = realpathSync(parent),
+    stat = lstatSync(directory);
+  if (
+    !stat.isDirectory() ||
+    (process.platform !== "win32" && (stat.mode & 0o077) !== 0)
+  )
+    throw new InputError("invalid_input");
+  const path = join(directory, basename(options.path));
+  if (options.mode === "create")
+    closeSync(
+      openSync(
+        path,
+        constants.O_CREAT | constants.O_EXCL | constants.O_RDWR,
+        0o600,
+      ),
+    );
+  const file = lstatSync(path);
+  if (
+    !file.isFile() ||
+    file.isSymbolicLink() ||
+    file.nlink !== 1 ||
+    (process.platform !== "win32" && (file.mode & 0o077) !== 0)
+  )
+    throw new InputError("invalid_input");
+  return path;
+}
+
+/** One Host owns the whole database for this connection's lifetime. There is no
+ * lease, background worker, side-effect execution or asynchronous transaction hook. */
+export function openSqliteStore(
+  options: StoreOptions,
+): Result<SqliteSessionStore> {
+  let db: DatabaseSync | undefined;
+  try {
+    if (process.versions.node !== "24.14.1") return fail("unsupported_version");
+    const limits = bounds(options),
+      path = privatePath(options);
+    db = new DatabaseSync(path, {
+      timeout: limits.busyTimeoutMs,
+      enableForeignKeyConstraints: true,
+      enableDoubleQuotedStringLiterals: false,
+      allowExtension: false,
+    });
+    db.exec("PRAGMA locking_mode=EXCLUSIVE");
+    if (db.prepare("PRAGMA journal_mode=WAL").get()!.journal_mode !== "wal")
+      throw new SchemaError();
+    db.exec(
+      "PRAGMA synchronous=FULL; PRAGMA trusted_schema=OFF; PRAGMA wal_autocheckpoint=256",
+    );
+    db.exec(`PRAGMA journal_size_limit=${limits.maxDatabaseBytes}`);
+    const pageSize = Number(db.prepare("PRAGMA page_size").get()!.page_size);
+    const pages = Math.floor(limits.maxDatabaseBytes / pageSize);
+    if (Number(db.prepare("PRAGMA page_count").get()!.page_count) > pages)
+      throw new InputError("limit_exceeded");
+    db.exec(`PRAGMA max_page_count=${pages}`);
+    if (
+      db.prepare("SELECT sqlite_version() AS version").get()!.version !==
+      "3.51.2"
+    )
+      throw new SchemaError();
+    initialize(db, options.mode === "create");
+    return ok(new SqliteSessionStore(construction, db, limits));
+  } catch (error) {
+    try {
+      db?.close();
+    } catch {
+      /* preserve the value-free primary failure */
+    }
+    return errorResult(error);
+  }
+}
+const construction = Symbol("SQLite store owner");
+export class SqliteSessionStore implements SessionStore {
+  readonly #db: DatabaseSync;
+  readonly #bounds: Bounds;
+  readonly #owned = new Map<string, string>();
+  #closed = false;
+  /** Use openSqliteStore; the runtime token prevents bypassing startup/ownership. */
+  constructor(token: symbol, db: DatabaseSync, limits: Bounds) {
+    if (token !== construction)
+      throw new TypeError("AI SQLite: invalid construction");
+    this.#db = db;
+    this.#bounds = limits;
+  }
+  #query<T>(action: () => Result<T>): Result<T> {
+    if (this.#closed) return fail("unavailable");
+    try {
+      return action();
+    } catch (error) {
+      return errorResult(error);
+    }
+  }
+  #transaction<T>(action: () => Result<T>): Result<T> {
+    return this.#query(() => {
+      this.#db.exec("BEGIN IMMEDIATE");
+      try {
+        const result = action();
+        this.#db.exec(result.ok ? "COMMIT" : "ROLLBACK");
+        return result;
+      } catch (error) {
+        try {
+          if (this.#db.isTransaction) this.#db.exec("ROLLBACK");
+        } catch {
+          this.#db.close();
+          this.#closed = true;
+          this.#owned.clear();
+        }
+        return errorResult(error);
+      }
+    });
+  }
+  #decode<T extends WireRecord>(json: unknown, kind: T["kind"]): T {
+    if (typeof json !== "string") throw new SchemaError();
+    const row = decode(json, defaultLimits);
+    if (row.kind !== kind) throw new SchemaError();
+    return row as T;
+  }
+  #session(n: Namespace): Session {
+    const row = this.#db
+      .prepare(`SELECT json FROM sessions WHERE ${whereScope}`)
+      .get(...nsValues(n));
+    if (!row) throw new InputError("session_gone");
+    const session = this.#decode<Session>(row.json, "session");
+    if (namespaceKey(session.namespace) !== namespaceKey(n))
+      throw new SchemaError();
+    return session;
+  }
+  #state(n: Namespace): SessionState {
+    const session = this.#session(n),
+      params = nsValues(n);
+    const totals = this.#db
+      .prepare(
+        tables
+          .map(
+            (t) =>
+              `SELECT count(*) AS count,coalesce(sum(length(CAST(json AS BLOB))),0) AS bytes FROM ${t} WHERE ${whereScope}`,
+          )
+          .join(" UNION ALL ") +
+          ` UNION ALL SELECT count(*) AS count,coalesce(sum(length(id)),0) AS bytes FROM generations WHERE ${whereScope}`,
+      )
+      .all(...tables.flatMap(() => params), ...params);
+    if (
+      totals.reduce((a, r) => a + Number(r.count), 1) >
+        this.#bounds.maxSessionRecords ||
+      totals.reduce(
+        (a, r) => a + Number(r.bytes),
+        Buffer.byteLength(JSON.stringify(session)),
+      ) > this.#bounds.maxSessionBytes
+    )
+      throw new InputError("limit_exceeded");
+    const load = <T extends WireRecord>(table: Table, kind: T["kind"]) =>
+      this.#db
+        .prepare(
+          `SELECT json FROM ${table} WHERE ${whereScope}${table === "events" ? " ORDER BY sequence" : " ORDER BY id"}`,
+        )
+        .all(...params)
+        .map((r) => this.#decode<T>(r.json, kind));
+    const commands = load<CommandRecord>("commands", "commandRecord"),
+      events = load<Event>("events", "event"),
+      interactions = load<Snapshot["interactions"][number]>(
+        "interactions",
+        "interaction",
+      ),
+      surfaces = load<SurfaceBinding>("surfaces", "surface"),
+      deliveries = load<Delivery>("deliveries", "delivery");
+    if (
+      events.length !== session.lastSequence ||
+      events.some((e, i) => e.sequence !== i + 1)
+    )
+      throw new SchemaError();
+    const generations = new Set(
+      this.#db
+        .prepare(`SELECT id FROM generations WHERE ${whereScope}`)
+        .all(...params)
+        .map((r) => String(r.id)),
+    );
+    if (!generations.has(session.binding.generation)) throw new SchemaError();
+    return {
+      session,
+      generations,
+      commands: new Map(commands.map((c) => [c.command.commandId, c])),
+      events,
+      interactions: new Map(interactions.map((i) => [i.interactionId, i])),
+      surfaces: new Map(surfaces.map((s) => [s.surfaceInstanceId, s])),
+      deliveries: new Map(deliveries.map((d) => [d.operationId, d])),
+    };
+  }
+  #checkCapacity(state: SessionState): void {
+    const rows = [
+      state.session,
+      ...state.commands.values(),
+      ...state.events,
+      ...state.interactions.values(),
+      ...state.surfaces.values(),
+      ...state.deliveries.values(),
+    ];
+    if (rows.length + state.generations.size > this.#bounds.maxSessionRecords)
+      throw new InputError("limit_exceeded");
+    let bytes = [...state.generations].reduce(
+      (sum, generation) => sum + Buffer.byteLength(generation),
+      0,
+    );
+    for (const row of rows) {
+      bytes += Buffer.byteLength(boundedJson(row, defaultLimits));
+      if (bytes > this.#bounds.maxSessionBytes)
+        throw new InputError("limit_exceeded");
+    }
+  }
+  #writable(state: SessionState): void {
+    if (
+      this.#owned.get(namespaceKey(state.session.namespace)) !==
+      state.session.binding.generation
+    )
+      throw new InputError("stale_binding");
+  }
+  #save(before: SessionState, after: SessionState): void {
+    this.#checkCapacity(after);
+    const params = nsValues(after.session.namespace);
+    for (const g of after.generations)
+      if (!before.generations.has(g))
+        this.#db
+          .prepare(`INSERT INTO generations (${scope},id) VALUES (?,?,?,?,?)`)
+          .run(...params, g);
+    const maps = [
+      "commands",
+      "interactions",
+      "surfaces",
+      "deliveries",
+    ] as const;
+    const save = (table: Table, id: string, value: WireRecord) =>
+      this.#db
+        .prepare(
+          `INSERT INTO ${table} (${scope},id,json) VALUES (?,?,?,?,?,?) ON CONFLICT (${scope},id) DO UPDATE SET json=excluded.json`,
+        )
+        .run(...params, id, boundedJson(value, defaultLimits));
+    // Commands precede referenced events/callbacks; deliveries follow their event.
+    for (const [id, c] of after.commands)
+      if (JSON.stringify(before.commands.get(id)) !== JSON.stringify(c))
+        save("commands", id, c);
+    for (const event of after.events.slice(before.events.length))
+      this.#db
+        .prepare(`INSERT INTO events (${scope},id,json) VALUES (?,?,?,?,?,?)`)
+        .run(...params, event.eventId, boundedJson(event, defaultLimits));
+    for (const table of maps.slice(1))
+      for (const [id, row] of after[table])
+        if (JSON.stringify(before[table].get(id)) !== JSON.stringify(row))
+          save(table, id, row);
+    // Deliberately last: a CAS/constraint failure rolls back every projection.
+    const updated = this.#db
+      .prepare(
+        `UPDATE sessions SET json=? WHERE ${whereScope} AND revision=? AND generation=?`,
+      )
+      .run(
+        boundedJson(after.session, defaultLimits),
+        ...params,
+        before.session.revision,
+        before.session.binding.generation,
+      );
+    if (updated.changes !== 1) throw new InputError("stale_binding");
+  }
+  #rows(sql: string, params: SQLInputValue[]) {
+    const size = this.#db
+      .prepare(
+        `SELECT coalesce(sum(length(CAST(json AS BLOB))),0) AS bytes FROM (${sql})`,
+      )
+      .get(...params)!;
+    if (Number(size.bytes) > this.#bounds.maxQueryBytes)
+      throw new InputError("limit_exceeded");
+    return this.#db.prepare(sql).all(...params);
+  }
+  #bounded<T>(value: T): Result<T> {
+    boundedJson(value, {
+      maxBytes: this.#bounds.maxQueryBytes,
+      maxTextBytes: this.#bounds.maxQueryBytes,
+      maxDepth: 64,
+      maxNodes: 1000000,
+    });
+    return ok(value);
+  }
+  async create(session: Session): Promise<Result<void>> {
+    const result = this.#transaction(() => {
+      const state = createState(session);
+      if (!state.ok) return state;
+      this.#checkCapacity(state.value);
+      const params = nsValues(session.namespace);
+      if (
+        this.#db
+          .prepare(
+            `SELECT 1 FROM sessions WHERE ${whereScope} UNION ALL SELECT 1 FROM tombstones WHERE ${whereScope}`,
+          )
+          .get(...params, ...params)
+      )
+        return fail("content_conflict");
+      this.#db
+        .prepare(`INSERT INTO sessions (${scope},json) VALUES (?,?,?,?,?)`)
+        .run(...params, boundedJson(session, defaultLimits));
+      this.#db
+        .prepare(`INSERT INTO generations (${scope},id) VALUES (?,?,?,?,?)`)
+        .run(...params, session.binding.generation);
+      return ok(undefined);
+    });
+    if (result.ok)
+      this.#owned.set(
+        namespaceKey(session.namespace),
+        session.binding.generation,
+      );
+    return result;
+  }
+  async session(n: Namespace): Promise<Result<Session>> {
+    return this.#query(() => this.#bounded(this.#session(n)));
+  }
+  async command(n: Namespace, id: Id): Promise<Result<CommandRecord>> {
+    return this.#query(() => {
+      this.#session(n);
+      if (!idValid(id)) return fail("invalid_input");
+      const row = this.#db
+        .prepare(`SELECT json FROM commands WHERE ${whereScope} AND id=?`)
+        .get(...nsValues(n), id);
+      return row
+        ? this.#bounded(this.#decode<CommandRecord>(row.json, "commandRecord"))
+        : fail("unavailable");
+    });
+  }
+  async surface(n: Namespace, id: Id): Promise<Result<SurfaceBinding>> {
+    return this.#query(() => {
+      if (this.#session(n).status !== "active") return fail("session_gone");
+      if (!idValid(id)) return fail("invalid_input");
+      const row = this.#db
+        .prepare(`SELECT json FROM surfaces WHERE ${whereScope} AND id=?`)
+        .get(...nsValues(n), id);
+      return row
+        ? this.#bounded(this.#decode<SurfaceBinding>(row.json, "surface"))
+        : fail("stale_binding");
+    });
+  }
+  async accept(input: AcceptCommand): Promise<Result<Receipt>> {
+    return this.#transaction(() => {
+      const before = this.#state(input.namespace),
+        result = acceptCommand(before, input);
+      if (!result.ok) return result;
+      if (result.value.state !== before) {
+        this.#writable(before);
+        this.#save(before, result.value.state);
+      }
+      return ok(result.value.receipt);
+    });
+  }
+  async commit(batch: SessionCommit): Promise<Result<void>> {
+    return this.#transaction(() => {
+      if (
+        [
+          batch.commands,
+          batch.events,
+          batch.interactions,
+          batch.surfaces,
+          batch.deliveries,
+          batch.reconciliations ?? [],
+        ].some((rows) => !Array.isArray(rows)) ||
+        batch.commands.length +
+          batch.events.length +
+          batch.interactions.length +
+          batch.surfaces.length +
+          batch.deliveries.length +
+          (batch.reconciliations?.length ?? 0) >
+          this.#bounds.maxBatchRecords
+      )
+        return fail("limit_exceeded");
+      const before = this.#state(batch.namespace);
+      this.#writable(before);
+      const result = commitSession(before, batch);
+      if (!result.ok) return result;
+      this.#save(before, result.value);
+      return ok(undefined);
+    });
+  }
+  async rebind(input: SessionRebind): Promise<Result<Session>> {
+    const result = this.#transaction(() => {
+      const before = this.#state(input.namespace),
+        result = rebindSession(before, input);
+      if (!result.ok) return result;
+      this.#save(before, result.value);
+      return ok(result.value.session);
+    });
+    if (result.ok)
+      this.#owned.set(
+        namespaceKey(input.namespace),
+        result.value.binding.generation,
+      );
+    return result;
+  }
+  async snapshot(n: Namespace, limit: number): Promise<Result<Snapshot>> {
+    return this.#query(() => {
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1024)
+        return fail("invalid_input");
+      const state = this.#state(n);
+      if (
+        state.events.length +
+          state.commands.size +
+          state.interactions.size +
+          state.surfaces.size >
+        limit
+      )
+        return fail("limit_exceeded");
+      return this.#bounded({
+        session: state.session,
+        cursor: state.session.lastSequence,
+        events: state.events,
+        commands: [...state.commands.values()],
+        interactions: [...state.interactions.values()],
+        surfaces: [...state.surfaces.values()],
+      });
+    });
+  }
+  async events(
+    n: Namespace,
+    after: Counter,
+    limit: number,
+  ): Promise<Result<readonly Event[]>> {
+    return this.#query(() => {
+      const session = this.#session(n);
+      if (!counter(after) || after > session.lastSequence)
+        return fail("cursor_expired");
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1024)
+        return fail("invalid_input");
+      const rows = this.#rows(
+        `SELECT json FROM events WHERE ${whereScope} AND sequence>? ORDER BY sequence LIMIT ?`,
+        [...nsValues(n), after, limit],
+      );
+      return this.#bounded(
+        rows.map((r) => this.#decode<Event>(r.json, "event")),
+      );
+    });
+  }
+  #page<T extends CommandRecord | Delivery>(
+    table: "commands" | "deliveries",
+    limit: number,
+    after: string | undefined,
+    due?: number,
+  ): Result<Page<T>> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1024)
+      return fail("invalid_input");
+    let cursor: string[] | undefined;
+    if (after !== undefined) {
+      if (
+        typeof after !== "string" ||
+        after.length < 1 ||
+        after.length > 2048 ||
+        !/^[A-Za-z0-9_-]+$/.test(after)
+      )
+        return fail("invalid_input");
+      try {
+        cursor = JSON.parse(Buffer.from(after, "base64url").toString("utf8"));
+      } catch {
+        return fail("invalid_input");
+      }
+      if (
+        !Array.isArray(cursor) ||
+        cursor.length !== 5 ||
+        !cursor.every(idValid)
+      )
+        return fail("invalid_input");
+    }
+    const filter =
+      table === "commands"
+        ? "state NOT IN ('terminal','invalidated')"
+        : "status!='delivered' AND due<=?";
+    const params: SQLInputValue[] = table === "commands" ? [] : [due!];
+    if (cursor) params.push(...cursor);
+    const rows = this.#rows(
+      `SELECT ${scope},id,json FROM ${table} WHERE ${filter}${cursor ? ` AND (${scope},id)>(?,?,?,?,?)` : ""} ORDER BY ${scope},id LIMIT ?`,
+      [...params, limit + 1],
+    );
+    const items = rows
+      .slice(0, limit)
+      .map((r) =>
+        this.#decode<T>(
+          r.json,
+          table === "commands" ? "commandRecord" : "delivery",
+        ),
+      );
+    const last = rows[Math.min(rows.length, limit) - 1];
+    return this.#bounded({
+      items,
+      ...(rows.length > limit
+        ? {
+            next: Buffer.from(
+              JSON.stringify([
+                last.tenant_id,
+                last.principal_id,
+                last.authority_id,
+                last.session_id,
+                last.id,
+              ]),
+            ).toString("base64url"),
+          }
+        : {}),
+    });
+  }
+  async recovery(
+    limit: number,
+    after?: StoreCursor,
+  ): Promise<Result<Page<CommandRecord>>> {
+    return this.#query(() => this.#page("commands", limit, after));
+  }
+  async deliveries(
+    limit: number,
+    nowMs: Counter,
+    after?: StoreCursor,
+  ): Promise<Result<Page<Delivery>>> {
+    return this.#query(() =>
+      counter(nowMs)
+        ? this.#page("deliveries", limit, after, nowMs)
+        : fail("invalid_input"),
+    );
+  }
+  async retire(
+    n: Namespace,
+    revision: Counter,
+    generation: Id,
+  ): Promise<Result<void>> {
+    return this.#transaction(() => {
+      const before = this.#state(n);
+      this.#writable(before);
+      const result = retireSession(before, revision, generation);
+      if (!result.ok) return result;
+      this.#save(before, result.value);
+      return ok(undefined);
+    });
+  }
+  async pruneRetired(nowMs: Counter): Promise<Result<number>> {
+    return this.#transaction(() => {
+      if (!counter(nowMs)) return fail("invalid_input");
+      const match = (alias: string) =>
+        scope
+          .split(", ")
+          .map((k) => `${alias}.${k}=s.${k}`)
+          .join(" AND ");
+      const rows = this.#db
+        .prepare(
+          `SELECT ${scope} FROM sessions s WHERE status='retired'
+        AND NOT EXISTS (SELECT 1 FROM commands c WHERE ${match("c")} AND receipt_until>=?)
+        AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE ${match("d")} AND status!='delivered') LIMIT ?`,
+        )
+        .all(nowMs, this.#bounds.maxBatchRecords);
+      for (const row of rows) {
+        const params = scope.split(", ").map((k) => row[k]);
+        this.#db
+          .prepare(`INSERT INTO tombstones (${scope}) VALUES (?,?,?,?)`)
+          .run(...params);
+        // FK references between child tables are immediate: delete dependants first.
+        for (const table of [
+          "deliveries",
+          "surfaces",
+          "interactions",
+          "events",
+          "commands",
+          "generations",
+          "sessions",
+        ])
+          this.#db
+            .prepare(`DELETE FROM ${table} WHERE ${whereScope}`)
+            .run(...params);
+      }
+      return ok(rows.length);
+    });
+  }
+  async close(_budget: Budget): Promise<Result<void>> {
+    if (this.#closed) return ok(undefined);
+    try {
+      this.#db.close();
+      this.#closed = true;
+      this.#owned.clear();
+      return ok(undefined);
+    } catch (error) {
+      return errorResult(error);
+    }
+  }
+}
