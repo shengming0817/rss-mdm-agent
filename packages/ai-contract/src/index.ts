@@ -32,5 +32,6 @@ export {
 } from "./a2ui.js";
 
 export { boundedStream } from "./stream.js";
+export { withinBudget } from "./budget.js";
 
 export { errorCodes } from "./identity.js";

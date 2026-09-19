@@ -12,6 +12,7 @@ import {
 import {
   boundedJson,
   isId,
+  withinBudget,
   type Budget,
   type ToolEndpoint,
 } from "@rss-mdm-agent/ai-contract";
@@ -103,25 +104,18 @@ export class ToolBridge {
           return toolResult("unavailable", "Host proposal unavailable");
         try {
           boundedJson(input, limits);
-          // ref: node:globals AbortSignal.any/timeout; the Host receives the same deadline as the waiter.
-          const budget = {
-            timeoutMs: 30000,
-            signal: AbortSignal.any([
-              this.abort.signal,
-              AbortSignal.timeout(30000),
-            ]),
-          };
-          const result = await bounded(
-            this.endpoint.propose(
-              {
-                name: input.name as string,
-                arguments: input.arguments as Record<string, unknown>,
-              },
-              budget,
-            ),
-            budget,
+          const result = await withinBudget(
+            () => ({ timeoutMs: 30000, signal: this.abort.signal }),
+            (budget) =>
+              this.endpoint.propose(
+                {
+                  name: input.name as string,
+                  arguments: input.arguments as Record<string, unknown>,
+                },
+                budget,
+              ),
           );
-          if (!result.ok || budget.signal.aborted)
+          if (!result.ok || this.abort.signal.aborted)
             throw new Error("unavailable");
           boundedJson(result.value, limits);
           if (

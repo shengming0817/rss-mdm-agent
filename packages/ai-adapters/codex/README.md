@@ -43,6 +43,8 @@
 
 ## 验证与预算
 
+Host 工具提案通过 A01 `withinBudget` 共享 30 秒 deadline 与实例关闭信号；正常完成、失败、超时或关闭都释放请求的计时器与父 signal 监听，不在长期 bridge 上累积 Node composite signal 依赖。Claude、DeepSeek 工具提案复用同一封装。
+
 ```sh
 pnpm test:ai-codex
 pnpm check:codex-protocol

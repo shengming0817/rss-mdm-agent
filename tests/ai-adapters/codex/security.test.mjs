@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { getEventListeners } from "node:events";
 import { spawnSync } from "node:child_process";
 import { access, mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -76,6 +77,45 @@ const customToolCall = (callId, name, input) => ({
   item: { type: "custom_tool_call", call_id: callId, name, input },
 });
 
+test("completed MCP proposals release the bridge lifetime cancellation links", async (t) => {
+  let calls = 0;
+  const bridge = new ToolBridge(
+    {
+      propose: async () => {
+        if (++calls % 2) throw new Error("host rejected");
+        return { ok: true, value: { disposition: "returned", text: "done" } };
+      },
+    },
+    () => true,
+  );
+  await bridge.start(budget());
+  t.after(() => bridge.close(budget()));
+  const client = new Client({ name: "retention-test", version: "1" });
+  await client.connect(
+    new StreamableHTTPClientTransport(new URL(bridge.url), {
+      requestInit: { headers: { authorization: `Bearer ${bridge.token}` } },
+    }),
+  );
+  t.after(() => client.close());
+  for (let i = 0; i < 200; i++)
+    assert.equal(
+      (
+        await client.callTool({
+          name: "propose",
+          arguments: { name: "fast", arguments: {} },
+        })
+      ).isError,
+      i % 2 === 0,
+    );
+  const lifetime = bridge.abort.signal;
+  assert.equal(lifetime.aborted, false);
+  assert.equal(getEventListeners(lifetime, "abort").length, 0);
+  const dependency = Object.getOwnPropertySymbols(lifetime).find(
+    (key) => key.description === "kDependantSignals",
+  );
+  assert.equal(lifetime[dependency]?.size ?? 0, 0);
+});
+
 test(
   "MCP proposal deadline aborts Host work without poisoning later requests",
   { timeout: 40000 },
@@ -120,7 +160,16 @@ test(
       "deadline must reach the running Host proposal",
     );
     assert.equal((await call("fast")).isError, false);
-    assert.equal(received[1].aborted, false);
+    assert.equal(
+      received[1].aborted,
+      true,
+      "completed request releases its scoped signal",
+    );
+    assert.equal(
+      bridge.abort.signal.aborted,
+      false,
+      "request cleanup must not abort the bridge",
+    );
     const started = new Promise((resolve) => {
       entered = resolve;
     });

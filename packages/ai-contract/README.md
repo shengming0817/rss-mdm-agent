@@ -24,6 +24,8 @@ V2 一次替换 C02 的 V1。没有 V1 reader、alias、双写、fallback、转�
 
 ## 可靠性与交互
 
+`withinBudget(factory, operation, lifetime?)` 是共享的有界调用封装：将调用方取消、可选实例关闭和 deadline 传到同一个子 `Budget.signal`，并以 watchdog 约束不响应取消的 port。调用结束时清除计时器、解除父 signal 监听并终止子 signal；调用方 signal 不会被子调用结束所取消。Node 24.14.1 的 composite signal 保留问题通过显式监听释放规避，不把 signal 取消当作进程退出或业务副作用回滚证明。
+
 - namespace = tenant + principal + authority + logical session。相同 commandId/相同规范内容返回原 receipt；内容不同返回 content_conflict，不能覆盖旧记录。receipt 只有真实 store commit 后才能称 durable；测试替身的内存接纳不作此承诺。
 - accepted 只表示持久接纳；dispatching 表示派发意图已保存；running 需要原生确认；terminal 需要明确模型终态：状态投影必须保留原 dispatch，并与同批、同 command/generation、同 outcome 的 terminal Event 一起提交；accepted 或 unknown 不能凭空变成 completed。dispatching/running 结果不明进入 reconciliation_required，只有带原 attempt 的明确 not_submitted 证据且原重试期限内的 queue_next 才能回到 accepted。普通输入 queue_next；steer 必须精确匹配运行及能力。
 - 取消已发送、模型 turn 已停止、进程已退出、业务副作用已停止分别记录。原生 transport/stream 错误不是 terminal；未知提交先核实原运行。`same_command` 重试仅复用同身份/内容；`reconcile_first` 禁止直接再次提交；`never` 不重试。
