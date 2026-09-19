@@ -56,9 +56,11 @@ try {
       clearTimeout(timer);
       reject(error);
     });
-    child.once("exit", () => {
+    child.once("exit", (code, signal) => {
       clearTimeout(timer);
-      resolve();
+      if (code !== 0 || signal !== null)
+        reject(new Error("native process did not exit cleanly"));
+      else resolve();
     });
   });
   behavior = JSON.parse(readFileSync(report, "utf8"));

@@ -106,7 +106,7 @@ export function nativeSettings(
   return {
     model: resolved.model,
     ...(resolved.authentication.type === "chatgpt_tokens"
-      ? { forced_chatgpt_account_id: resolved.authentication.accountId }
+      ? { forced_chatgpt_workspace_id: resolved.authentication.accountId }
       : {}),
     model_provider:
       resolved.authentication.type === "api_key" ? "rss_host_model" : "openai",
