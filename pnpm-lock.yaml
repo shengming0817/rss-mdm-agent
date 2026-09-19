@@ -95,6 +95,12 @@ importers:
         specifier: 16.0.0
         version: 16.0.0
 
+  packages/ai-store-sqlite:
+    devDependencies:
+      '@rss-mdm-agent/ai-contract':
+        specifier: workspace:*
+        version: link:../ai-contract
+
   packages/ui:
     dependencies:
       vue:

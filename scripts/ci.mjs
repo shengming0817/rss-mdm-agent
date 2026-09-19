@@ -1,9 +1,18 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { stepResult } from "./ci-result.mjs";
 import { sameCommittedSource, sourceState } from "./source-state.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url));
+const requiredNode = JSON.parse(
+  readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+).engines.node;
+if (process.versions.node !== requiredNode) {
+  console.error(
+    `Node version must be ${requiredNode} for the verified SQLite runtime`,
+  );
+  process.exit(1);
+}
 const start = sourceState(root);
 const steps = [
   [
@@ -21,6 +30,8 @@ const steps = [
   ["AI generated contracts", "pnpm", ["check:ai-contract"]],
   ["AI contract conformance", "pnpm", ["test:ai-contract"]],
   ["AI packed consumer", "pnpm", ["check:ai-consumer"]],
+  ["AI SQLite recovery", "pnpm", ["test:ai-store"]],
+  ["AI SQLite packed consumer", "pnpm", ["check:ai-store-consumer"]],
   ["Claude SDK adapter", "pnpm", ["test:ai-claude"]],
   ["Claude packed consumer", "pnpm", ["check:claude-consumer"]],
   ["frontend build", "pnpm", ["build"]],
