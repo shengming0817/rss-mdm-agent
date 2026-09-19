@@ -51,3 +51,11 @@ pnpm check:ai-consumer
 A01 回调补齐采用直接替换：Interaction 使用必填 `nativeCallbackId` 与 `request`，父请求 ID 仅由 binding/dispatch 持有。消费者同步生成绑定并使用新版 `runStoreConformance`；不保留旧字段兼容。行为映射及同批 pending 投影约束见 [AI Runtime 回调说明](../../packages/ai-contract/README.md#a01-回调契约替换2406)。
 
 Interaction 的必填 `category: "question"` 仅允许普通用户追问；权限 callback 不属于普通 respond 生命周期，进入 ToolEndpoint/verifier 或拒绝。Provider 的 pending 发布只能使用专用 interaction observation。wire schema 按状态闭合：pending 必带 request，answered/expired/unavailable 禁带 request；旧格式直接拒绝，TS/Rust 由同一 schema 生成。
+
+## Provider 恢复准入
+
+新建与恢复都原子返回 `ProviderSessionBinding`。可选 `resume` 显式接收旧 binding、
+当前 `ProviderConfiguration` 和 budget，不再返回裸 Binding。Host 使用
+`VerifiedProviderSession.resume` 重新验证当前 endpoint、capabilities 和新 generation；
+原生会话历史不能继承旧进程的工具准入。适配器与消费方的编译、准入失败清理和真实 SDK
+冷恢复测试共同覆盖该接缝，wire schema 本身没有新增字段。

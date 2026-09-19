@@ -1,3 +1,4 @@
+import { fingerprint } from "../codec.js";
 import { verifiedReconciliation } from "./recovery.js";
 import type { VerifiedReconciliation } from "../session.js";
 import { workspaceIdentity } from "../session.js";
@@ -1080,4 +1081,64 @@ async function runCallbackConformance(store: SessionStore): Promise<void> {
     )?.request,
     observation.interaction.request,
   );
+}
+
+/** Deterministic dispatch metadata for adapter fixtures, never real durability evidence. */
+export function fixtureAttempt(
+  binding: Session["binding"],
+  command: Command,
+): DispatchAttempt {
+  return {
+    attemptId: `attempt-${command.commandId}`,
+    originGeneration: binding.generation,
+    observerGeneration: binding.generation,
+    nativeSessionId: binding.nativeSessionId,
+    certainty: "intent",
+  };
+}
+export function fixtureDispatchedRecord(
+  binding: Session["binding"],
+  command: Command,
+  namespace = fixtureSession().namespace,
+): CommandRecord {
+  return {
+    schemaVersion: 2,
+    kind: "commandRecord",
+    command,
+    receipt: {
+      schemaVersion: 2,
+      kind: "receipt",
+      namespace,
+      commandId: command.commandId,
+      contentHash: fingerprint(command, fixtureLimits),
+      acceptedAtMs: 0,
+      retryUntilMs: command.expiresAtMs,
+      receiptUntilMs: command.expiresAtMs,
+      acceptedRevision: 1,
+    },
+    state: "reconciliation_required",
+    dispatch: {
+      ...fixtureAttempt(binding, command),
+      certainty: "unknown",
+      correlationId: command.commandId,
+    },
+  };
+}
+export function fixtureProviderSession(
+  binding: Session["binding"],
+  configuration: import("../ports.js").ProviderConfiguration,
+): Session {
+  return {
+    ...fixtureSession(),
+    namespace: configuration.namespace,
+    binding,
+    capabilities: {
+      ...fixtureSession().capabilities,
+      tools:
+        configuration.permissions === "host_mediated"
+          ? "host_mediated"
+          : "disabled",
+      continuation: "across_processes",
+    },
+  };
 }

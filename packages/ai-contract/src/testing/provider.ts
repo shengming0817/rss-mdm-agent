@@ -333,6 +333,31 @@ export async function runProviderConformance(
                       "request",
                     ],
                   );
+                } else if (
+                  observation.type === "submitted" ||
+                  observation.type === "interaction_unavailable"
+                ) {
+                  decode(
+                    boundedJson(
+                      {
+                        ...context,
+                        kind: "event",
+                        eventId: "native-lifecycle",
+                        sequence: count,
+                        attemptId: observation.attemptId,
+                        body:
+                          observation.type === "submitted"
+                            ? { type: "status", state: "running" }
+                            : {
+                                type: "interaction",
+                                interactionId: observation.interactionId,
+                                status: "unavailable",
+                              },
+                      },
+                      fixtureLimits,
+                    ),
+                    fixtureLimits,
+                  );
                 } else {
                   if (observation.type === "event")
                     assert.ok(
@@ -356,7 +381,10 @@ export async function runProviderConformance(
                         ...context,
                         kind: "event",
                         eventId: "fixture-event",
-                        attemptId: attempt.attemptId,
+                        ...(observation.type === "event" &&
+                        observation.body.type === "error"
+                          ? {}
+                          : { attemptId: attempt.attemptId }),
                         sequence: count,
                         body:
                           observation.type === "event"
@@ -441,17 +469,32 @@ async function lateAdmission(
       };
       Object.assign(port, { [operation]: delayed });
       const control = new AbortController();
-      const previous = {
+      let previous = {
         ...fixtureSession(),
         namespace: configuration.namespace,
-        binding: {
-          ...fixtureSession().binding,
-          workspaceId: workspaceIdentity(configuration.workingDirectory),
-          provider: configuration.provider,
-          config: configuration.config,
-          accountRef: configuration.accountRef,
-        },
       };
+      if (operation === "resume") {
+        const original = await withinBudget(budget, () => create("unknown"));
+        await withCleanup(
+          async () => {
+            const admitted = unwrap(
+              await VerifiedProviderSession.open(
+                original,
+                configuration,
+                budget(),
+              ),
+            );
+            previous = {
+              ...previous,
+              binding: admitted.binding,
+              capabilities: admitted.capabilities,
+            };
+          },
+          async () => {
+            unwrap(await withinBudget(budget, (b) => original.close(b)));
+          },
+        );
+      }
       await withCleanup(
         async () => {
           const admission =

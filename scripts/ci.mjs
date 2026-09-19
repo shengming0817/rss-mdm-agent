@@ -21,6 +21,8 @@ const steps = [
   ["AI generated contracts", "pnpm", ["check:ai-contract"]],
   ["AI contract conformance", "pnpm", ["test:ai-contract"]],
   ["AI packed consumer", "pnpm", ["check:ai-consumer"]],
+  ["Claude SDK adapter", "pnpm", ["test:ai-claude"]],
+  ["Claude packed consumer", "pnpm", ["check:claude-consumer"]],
   ["frontend build", "pnpm", ["build"]],
   ["types", "pnpm", ["typecheck"]],
   ["frontend format", "pnpm", ["format:check"]],
