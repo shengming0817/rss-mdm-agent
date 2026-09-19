@@ -82,6 +82,7 @@ async function setup(t, overrides = {}, admit = true) {
       reject: (id) => rejected.push(id),
       reply: () => assert.fail("unsolicited request allowed"),
       close: async () => {
+        calls.push({ method: "runtime/close" });
         stopped();
         return { ok: true, value: { processStopped: true } };
       },
@@ -215,6 +216,41 @@ async function setup(t, overrides = {}, admit = true) {
     },
   };
 }
+
+async function fillObservationQueue(s, count = 511) {
+  let index = 0;
+  s.fault((method, params) => {
+    if (method !== "turn/start" || index >= count) return;
+    const value = turn(
+      `fill-turn-${index++}`,
+      params.clientUserMessageId,
+      "completed",
+    );
+    return { turn: value };
+  });
+  for (let current = 0; current < count; current++) {
+    const result = await s.adapter.submit(
+      s.admitted.binding,
+      fixtureCommand(`fill-${current}`),
+      s.attempt(`fill-${current}`),
+      budget(),
+    );
+    assert.equal(result.certainty, "submitted");
+  }
+}
+
+const reconciliationRecord = (s, command, attempt) => ({
+  schemaVersion: 2,
+  kind: "commandRecord",
+  command,
+  receipt: { namespace: s.configuration.namespace },
+  state: "reconciliation_required",
+  dispatch: {
+    ...attempt,
+    certainty: "unknown",
+    correlationId: attempt.attemptId,
+  },
+});
 
 test("pinned admission seals native capability negotiation and separates thread/session IDs", async (t) => {
   const s = await setup(t);
@@ -497,4 +533,160 @@ test("terminal arriving before steer ACK closes the acknowledged steer exactly o
     budget(),
   );
   assert.equal(next.certainty, "submitted");
+});
+
+test("ACK replay overflow fails the incarnation without fabricating a terminal", async (t) => {
+  const s = await setup(t, { nativeDiagnostics: false });
+  await fillObservationQueue(s);
+  s.fault((method, params) => {
+    if (method !== "turn/start") return;
+    const active = turn(
+      "overflow-turn",
+      params.clientUserMessageId,
+      "inProgress",
+    );
+    s.thread.turns.push(active);
+    for (const itemId of ["overflow-delta-1", "overflow-delta-2"])
+      s.emit("item/agentMessage/delta", {
+        threadId: "thread-1",
+        turnId: active.id,
+        itemId,
+        delta: itemId,
+      });
+    s.emit("turn/completed", {
+      threadId: "thread-1",
+      turn: { ...active, status: "completed" },
+    });
+    return { turn: active };
+  });
+  const result = await s.adapter.submit(
+    s.admitted.binding,
+    fixtureCommand("overflow"),
+    s.attempt("overflow"),
+    budget(),
+  );
+  assert.equal(result.certainty, "submitted");
+  assert.equal(
+    s.calls.some((call) => call.method === "runtime/close"),
+    true,
+  );
+  const observations = [];
+  for await (const item of s.adapter.observe(s.admitted.binding, {
+    ...budget(),
+    timeoutMs: 500,
+  }))
+    observations.push(item);
+  assert.equal(
+    observations.some(
+      (item) => item.commandId === "overflow" && item.body?.type === "terminal",
+    ),
+    false,
+  );
+  assert.equal(
+    (
+      await s.adapter.submit(
+        s.admitted.binding,
+        fixtureCommand("after-overflow"),
+        s.attempt("after-overflow"),
+        budget(),
+      )
+    ).certainty,
+    "not_sent",
+  );
+});
+
+test("steer ACK overflow preserves submission fact and fails the incarnation", async (t) => {
+  const s = await setup(t, { nativeDiagnostics: false });
+  await fillObservationQueue(s);
+  s.fault(undefined);
+  const started = await s.adapter.submit(
+    s.admitted.binding,
+    fixtureCommand("active"),
+    s.attempt("active"),
+    budget(),
+  );
+  s.emit("item/agentMessage/delta", {
+    threadId: "thread-1",
+    turnId: started.binding.nativeRunId,
+    itemId: "fills-last-slot",
+    delta: "full",
+  });
+  const command = {
+    ...fixtureCommand("overflow-steer"),
+    input: {
+      type: "prompt",
+      policy: "steer",
+      targetRunId: started.binding.nativeRunId,
+      text: "change",
+    },
+  };
+  const result = await s.adapter.submit(
+    started.binding,
+    command,
+    s.attempt("overflow-steer", {
+      nativeRunId: started.binding.nativeRunId,
+    }),
+    budget(),
+  );
+  assert.equal(result.certainty, "submitted");
+  assert.equal(
+    s.calls.some((call) => call.method === "runtime/close"),
+    true,
+  );
+  assert.equal(
+    (
+      await s.adapter.submit(
+        s.admitted.binding,
+        fixtureCommand("after-steer-overflow"),
+        s.attempt("after-steer-overflow"),
+        budget(),
+      )
+    ).certainty,
+    "not_sent",
+  );
+});
+
+test("reconcile replay overflow fails closed and stops the incarnation", async (t) => {
+  const s = await setup(t, { nativeDiagnostics: false });
+  await fillObservationQueue(s);
+  const command = fixtureCommand("reconcile-overflow"),
+    attempt = s.attempt("reconcile-overflow");
+  s.fault((method, params) => {
+    if (method !== "turn/start") return;
+    const active = turn(
+      "reconcile-overflow-turn",
+      params.clientUserMessageId,
+      "inProgress",
+    );
+    s.thread.turns.push(active);
+    for (const itemId of ["replay-1", "replay-2", "replay-3"])
+      s.emit("item/agentMessage/delta", {
+        threadId: "thread-1",
+        turnId: active.id,
+        itemId,
+        delta: itemId,
+      });
+    throw new Error("lost ACK");
+  });
+  assert.equal(
+    (await s.adapter.submit(s.admitted.binding, command, attempt, budget()))
+      .certainty,
+    "unknown",
+  );
+  s.fault(undefined);
+  assert.deepEqual(
+    await s.adapter.reconcile(
+      s.admitted.binding,
+      reconciliationRecord(s, command, attempt),
+      budget(),
+    ),
+    {
+      ok: false,
+      error: { code: "unavailable", retry: "reconcile_first" },
+    },
+  );
+  assert.equal(
+    s.calls.some((call) => call.method === "runtime/close"),
+    true,
+  );
 });

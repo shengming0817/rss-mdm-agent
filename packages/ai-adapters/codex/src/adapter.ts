@@ -632,6 +632,7 @@ export class CodexAdapter implements CodexAdapterPort {
     };
     this.attempts.set(input.commandId, entry);
     this.retainedAttemptBytes += Buffer.byteLength(boundedJson(input, limits));
+    let acknowledged = false;
     try {
       const prompt = [
         { type: "text" as const, text: input.input.text, text_elements: [] },
@@ -648,6 +649,7 @@ export class CodexAdapter implements CodexAdapterPort {
           },
           budget,
         );
+        acknowledged = true;
         if (result.turnId !== input.input.targetRunId)
           throw new Error("unexpected steer turn");
         this.confirm(entry, result.turnId);
@@ -664,6 +666,7 @@ export class CodexAdapter implements CodexAdapterPort {
           },
           budget,
         );
+        acknowledged = true;
         validTurn(result.turn);
         this.confirm(entry, result.turn.id);
         if (outcome(result.turn)) this.finishTurn(result.turn);
@@ -671,6 +674,7 @@ export class CodexAdapter implements CodexAdapterPort {
       this.replay();
       return { certainty: "submitted", binding: copy(entry.binding) };
     } catch {
+      if (acknowledged) this.breakIncarnation();
       return entry.confirmed
         ? { certainty: "submitted", binding: copy(entry.binding) }
         : { certainty: "unknown", correlationId: attempt.attemptId };
@@ -870,9 +874,11 @@ export class CodexAdapter implements CodexAdapterPort {
     }
   }
   private replay(): void {
-    this.uncorrelatedBytes = 0;
-    for (const message of this.uncorrelated.splice(0))
+    while (this.uncorrelated.length) {
+      const message = this.uncorrelated.shift()!;
+      this.uncorrelatedBytes -= Buffer.byteLength(boundedJson(message, limits));
       this.onNative(message, true);
+    }
   }
   private breakIncarnation(): void {
     if (this.failed) return;
@@ -1074,23 +1080,28 @@ export class CodexAdapter implements CodexAdapterPort {
         return fail("limit_exceeded");
       this.retainedAttemptBytes += bytes;
     }
-    this.attempts.set(record.command.commandId, entry);
-    this.confirm(entry, found.id, false);
-    const terminal = outcome(found);
-    // The Host commits the nominal reconciliation proof; recovery does not replay stable history.
-    if (terminal) {
-      entry.outcome = terminal;
-      entry.completedItems.clear();
+    try {
+      this.attempts.set(record.command.commandId, entry);
+      this.confirm(entry, found.id, false);
+      const terminal = outcome(found);
+      // The Host commits the nominal reconciliation proof; recovery does not replay stable history.
+      if (terminal) {
+        entry.outcome = terminal;
+        entry.completedItems.clear();
+      }
+      this.replay();
+      return terminal
+        ? ok({
+            ...base,
+            binding: copy(entry.binding),
+            status: "terminal",
+            outcome: terminal,
+          })
+        : ok({ ...base, binding: copy(entry.binding), status: "running" });
+    } catch {
+      this.breakIncarnation();
+      return fail("unavailable", "reconcile_first");
     }
-    this.replay();
-    return terminal
-      ? ok({
-          ...base,
-          binding: copy(entry.binding),
-          status: "terminal",
-          outcome: terminal,
-        })
-      : ok({ ...base, binding: copy(entry.binding), status: "running" });
   }
   async fork(
     binding: Binding,
