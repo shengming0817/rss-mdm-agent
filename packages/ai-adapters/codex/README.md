@@ -6,7 +6,7 @@
 
 从包主入口导入 `createCodexAdapter`，从 `@rss-mdm-agent/ai-contract/session` 导入 `VerifiedProviderSession`。Host 用 `VerifiedProviderSession.open(port, configuration, budget)` 准入；失败时检查 `cleanupError`，必要时继续对同一 port 调用 `close`。每个 port 只接受一次 open/restore，关闭后新建实例。
 
-`CodexAdapterOptions.resolveConfiguration(identity, budget)` 必须由可信 Host 实现，返回与请求完全一致的 `CodexConfiguration`、私有 `nativeDirectory`、Responses API 的 `apiUrl`、`apiKey` 和 `model`。URL 只允许 HTTPS 或本地 loopback HTTP；凭据不进入产品 wire。`nativeDirectory` 必须是无别名的规范绝对路径，Unix 权限0700，只归本 adapter/config/account/workspace 的受信 lineage 使用，不能与个人 Codex CLI、其他应用或不同配置共用。适配器以该目录作为 CODEX_HOME，启动 cwd 使用目录内的空白 runtime-workspace，thread cwd 使用 Host 提供的真实工作目录。
+`CodexAdapterOptions.resolveConfiguration(identity, budget)` 必须由可信 Host 实现，返回与请求完全一致的 `CodexConfiguration`、私有 `nativeDirectory`、Responses API 的 `apiUrl`、`apiKey` 和 `model`。URL 只允许 HTTPS 或本地 loopback HTTP；凭据不进入产品 wire。无效配置返回 invalid_input/never，权限或配置层拒绝返回 permission_denied/never；瞬时初始化故障才返回 unavailable，错误不包含配置值。`nativeDirectory` 必须是无别名的规范绝对路径，Unix 权限0700，只归本 adapter/config/account/workspace 的受信 lineage 使用，不能与个人 Codex CLI、其他应用或不同配置共用。适配器以该目录作为 CODEX_HOME，启动 cwd 使用目录内的空白 runtime-workspace，thread cwd 使用 Host 提供的真实工作目录。
 
 恢复或 fork 时 resolver 另收到 `history: Binding`。Host 必须先查可信持久化绑定，核验原 session/thread 属于这一 namespace/config/account/workspace 的 adapter 历史，再返回相等的 `ownedHistory: { nativeSessionId, nativeThreadId }`。直接回显用户输入或原始 history 参数不构成所有权证明。禁止导入任意 Codex 历史、路径或手工编辑的 rollout。
 
@@ -27,7 +27,7 @@
 
 固定版本实际 fork 返回新的 sessionId 和 threadId，均保存原值；源关系使用 forkedFromId。fork 创建回执丢失返回 unknown，不重试创建；调用方保留不确定状态并核实，不能把本地 correlationId 当原生查重键。`cleanupPort`/`cleanupError` 表示尚未确认停止的子实例。
 
-`reconcile` 读取原 thread 的完整分页历史，以 userMessage.clientId 对照原 attempt；查无记录仍为 unknown，绝不自行得出 not_submitted。RPC request ID 不进入持久化身份。原生进程退出、网络错误、取消请求成功均不能伪造模型终态。核实结果经 `VerifiedProviderSession.reconcile` 才能成为 Store 可消费的凭证；adapter 不修改 Host 账本。`readHistory` 返回原生上下文视图，不重放已有产品稳定事件。
+`reconcile` 读取原 thread 的完整分页历史，以 userMessage.clientId 对照原 attempt；查无记录仍为 unknown，绝不自行得出 not_submitted。固定协议明确返回 turn/steer 未提交拒绝时，适配器保留该 incarnation 内的负面证据，submit 返回 not_sent，reconcile 可据此返回 not_submitted；Host 经原 attempt 的验证凭证提交本地失效后继续对话。这不扩展为任意 RPC error 或跨进程负面推断。RPC request ID 不进入持久化身份。原生进程退出、网络错误、取消请求成功均不能伪造模型终态。核实结果经 `VerifiedProviderSession.reconcile` 才能成为 Store 可消费的凭证；adapter 不修改 Host 账本。`readHistory` 返回原生上下文视图，不重放已有产品稳定事件。
 
 跨 turn 的 Binding 可清除 run/request；仅当同一 turn 的全部已派发 prompt（含未知 steer）均已核实结束时允许清除。A01、真实 SQLite 恢复测试及 ACP 按 turn 去重取消共用这一规则，不增加另一套恢复状态机。
 

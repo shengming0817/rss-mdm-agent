@@ -12,6 +12,8 @@
 | [core/src/config/mod.rs](https://github.com/openai/codex/blob/f0a1b8f0849d90960bc406b848f32e5a129b0457/codex-rs/core/src/config/mod.rs) | 配置层与严格配置；`src/configuration.ts` 生成独占 CODEX_HOME，拒绝外部配置层、个人信任及继承环境 |
 | [tools/src/tool_spec.rs](https://github.com/openai/codex/blob/f0a1b8f0849d90960bc406b848f32e5a129b0457/codex-rs/tools/src/tool_spec.rs) | 原生工具开关与 MCP resource 辅助项；封闭 built-ins，仅允许宿主提案与空资源目录 |
 
+明确 steer 拒绝的负面证据还核对了 [app-server 的 turn_processor.rs](https://github.com/openai/codex/blob/f0a1b8f0849d90960bc406b848f32e5a129b0457/codex-rs/app-server/src/request_processors/turn_processor.rs) 与 [core/session/turn_input.rs](https://github.com/openai/codex/blob/f0a1b8f0849d90960bc406b848f32e5a129b0457/codex-rs/core/src/session/turn_input.rs)：所采用的 NotSubmitted 拒绝发生在输入入队之前。适配器仅保留固定方法/版本/错误形状的封闭证据，不把内部错误、断线或超时当成未提交。
+
 `scripts/generate-codex-protocol.mjs` 调用安装的固定原生程序 `app-server generate-ts --experimental`，只保存所用请求/响应的传递依赖闭包。转换限于 NodeNext import 后缀和统一格式，不手写上游字段或改协议语义。`protocol-manifest.json` 保存 revision、实验字段用途和逐文件 SHA-256；`pnpm check:codex-protocol` 重新生成并逐字节核验，额外文件也拒绝。运行时独立验证包/平台包版本，不通过 PATH 选择另一个 CLI。
 
 上游生成文件遵守 Apache-2.0；随包包含原始 `protocol-LICENSE` 和 `protocol-NOTICE`。包根 `LICENSE` 仅适用于本仓新增 MIT 实现；没有把上游二进制或生成协议重新标为 MIT。MCP 使用固定 `@modelcontextprotocol/sdk@1.30.0` 的官方 Streamable HTTP server API。
