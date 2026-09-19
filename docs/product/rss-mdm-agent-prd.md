@@ -230,7 +230,7 @@ AI请求与手动请求都不能自行取得可执行capability。运行模式�
 
 经 2026-09-18 授权，当前 provider 规划为 Codex app-server、Claude Agent SDK、DeepSeek Harness，
 由各自 TypeScript adapter 映射原生会话/事件/权限，消费 [A01 #2439](https://dev.azure.com/shengming0923/rss/_workitems/edit/2439) 契约。
-这里记录范围与 owner，不宣称已实现或通过真实引擎验证；DeepSeek Harness 仍是规划。
+这里记录范围与 owner；DeepSeek Harness 的独立适配边界与组件验证入口见[包说明](../../packages/ai-adapters/deepseek/README.md)，实际证据不替代生产 Host/平台接入验收。
 
 | Provider | 实施 owner | 验证责任 |
 | --- | --- | --- |
