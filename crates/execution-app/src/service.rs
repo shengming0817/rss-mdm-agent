@@ -7,7 +7,10 @@ use execution_lifecycle::{
     Command, Directive, DispatchAction, DispatchState, Event, Execution, ExecutionMode,
     Observation, ObservationFacts, Phase, Preparation,
 };
-use execution_sqlite::{CommitOutcome, OpenOutcome, OperationRequestId, Outcome, Scope, Store};
+use execution_sqlite::{
+    Access, AccessRequest, CommitOutcome, Host as _, OpenOutcome, OperationRequestId, Outcome,
+    Scope, Store,
+};
 use sha2::{Digest as _, Sha256};
 use std::path::Path;
 
@@ -116,14 +119,14 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         if matches!(result, CommitOutcome::AlreadyCommitted(_)) {
             return self.status(request);
         }
-        self.advance(request, &RequestId::new("initial").expect("static ID"))
+        self.advance(request, &CommandId::initial_attempt())
     }
     /// Explicit owner action, distinct from submit replay. Every new attempt rechecks capabilities,
     /// C07 and C08 against current trusted facts and atomically consumes all required approvals.
     pub fn advance(
         &mut self,
         request: &RequestId,
-        command: &RequestId,
+        command: &CommandId,
     ) -> Result<ExecutionStatus, Error> {
         let config = self.config.active()?;
         let mut execution = self.load(request)?;
@@ -135,6 +138,8 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         )? {
             return if receipt.outcome == Outcome::Rejected {
                 Err(Error::AdmissionRejected)
+            } else if receipt.outcome == Outcome::Stale {
+                Err(Error::Conflict)
             } else {
                 self.status(request)
             };
@@ -197,6 +202,9 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         if result.receipt().outcome == Outcome::Rejected {
             return Err(Error::AdmissionRejected);
         }
+        if result.receipt().outcome == Outcome::Stale {
+            return Err(Error::Conflict);
+        }
         if let CommitOutcome::Applied {
             first_dispatch: Some(action),
             ..
@@ -208,18 +216,23 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
     }
     fn dispatch(&mut self, request: &RequestId, action: DispatchAction) -> Result<(), Error> {
         let execution = self.load(request)?;
+        // Capability verification can take time or overlap another service handle's cancellation.
+        // Re-read the protected stop facts and clock after it, immediately before first delivery.
+        let supported = capabilities(&self.host, execution.plan(), self.config.active()?).is_ok();
+        let execution = self.load(request)?;
         let attempt = action.attempt_id().clone();
         let current = execution.snapshot();
-        let gated = current.revision == action.committed_revision()
+        let gated = supported
+            && current.revision == action.committed_revision()
             && !current.cancel_requested
             && action.runner() == &self.runner.id()
             && action.mode() == self.runner.mode()
             && execution
                 .directive(self.host.reliable_now()?)
                 .map_err(|_| Error::Clock)?
-                == Directive::Reconcile
-            && capabilities(&self.host, execution.plan(), self.config.active()?).is_ok();
+                == Directive::Reconcile;
         let outcome = if gated {
+            self.authorize_runner(execution.plan(), Access::Execute)?;
             self.runner.dispatch(AuthorizedDispatch {
                 action,
                 plan: execution.plan().clone(),
@@ -256,7 +269,19 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
     ) -> Result<CommitOutcome, Error> {
         let plan = execution.plan();
         let scope = Scope::from_plan(plan);
-        let op = operation(plan, stage, identity)?;
+        // A stale CAS is a receipt, not completion of a durable fact. Facts may be recomputed
+        // at a newer revision; BeginAttempt alone retains its immutable command identity.
+        let revision_identity = serde_json::to_string(&(identity, execution.snapshot().revision))
+            .map_err(|_| Error::InvalidInput)?;
+        let op = operation(
+            plan,
+            stage,
+            if matches!(command, Command::BeginAttempt { .. }) {
+                identity
+            } else {
+                &revision_identity
+            },
+        )?;
         let host = Host {
             inner: &self.host,
             binding: &self.binding,
@@ -288,6 +313,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                 .directive(self.host.reliable_now()?)
                 .map_err(|_| Error::Clock)?;
             if matches!(directive, Directive::StopRunner(_)) {
+                self.authorize_runner(execution.plan(), Access::RunnerFact)?;
                 self.runner.stop(execution.plan(), &attempt.id)?;
             }
             if attempt.assessment.as_ref().is_some_and(|o| {
@@ -305,6 +331,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             } else {
                 ObservationStage::Termination
             };
+            self.authorize_runner(execution.plan(), Access::RunnerFact)?;
             let Some(facts) = self.runner.observe(
                 execution.plan(),
                 &attempt.id,
@@ -347,12 +374,32 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
     }
     /// Persist cancellation before requesting stop. Acknowledgement is not termination evidence.
     pub fn cancel(&mut self, request: &RequestId) -> Result<ExecutionStatus, Error> {
-        let execution = self.load(request)?;
-        self.event(&execution, "cancel", "", Command::Cancel, &[], None)?;
-        if let Some(attempt) = &execution.snapshot().attempt {
-            self.runner.stop(execution.plan(), &attempt.id)?;
+        for _ in 0..3 {
+            let execution = self.load(request)?;
+            if !execution.snapshot().cancel_requested {
+                let result = self.event(&execution, "cancel", "", Command::Cancel, &[], None)?;
+                if result.receipt().outcome == Outcome::Rejected {
+                    return Err(Error::Conflict);
+                }
+                // Never stop based on the old attempt; the concurrent winner may have begun one.
+                continue;
+            }
+            if let Some(attempt) = &execution.snapshot().attempt {
+                self.authorize_runner(execution.plan(), Access::Execute)?;
+                self.runner.stop(execution.plan(), &attempt.id)?;
+            }
+            return self.status(request);
         }
-        self.status(request)
+        Err(Error::Conflict)
+    }
+    fn authorize_runner(&self, plan: &FrozenPlan, access: Access) -> Result<(), Error> {
+        self.adapter(Some(plan)).authorize(AccessRequest {
+            access,
+            scope: &Scope::from_plan(plan),
+            consumer: None,
+            interaction: None,
+        })?;
+        Ok(())
     }
     /// Current authenticated read. Test provenance is never upgraded to real execution success.
     pub fn status(&self, request: &RequestId) -> Result<ExecutionStatus, Error> {

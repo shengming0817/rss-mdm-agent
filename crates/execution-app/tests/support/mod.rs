@@ -70,6 +70,9 @@ impl Drop for Database {
 }
 
 pub struct State {
+    pub capability_hook: Option<(usize, Arc<dyn Fn() + Send + Sync>)>,
+    pub read_hook: Option<Arc<dyn Fn() + Send + Sync>>,
+    pub runner_facts: bool,
     pub bound: bool,
     pub actor: ActorId,
     pub now: u64,
@@ -96,6 +99,9 @@ impl TestHost {
         let template = plan();
         Self {
             state: Arc::new(Mutex::new(State {
+                capability_hook: None,
+                read_hook: None,
+                runner_facts: true,
                 bound: true,
                 actor: template.spec().request.actor.clone(),
                 now: 1000,
@@ -185,14 +191,24 @@ impl AppHost for TestHost {
         })
     }
     fn authorize(&self, r: AccessRequest<'_>) -> Result<(), execution_sqlite::Error> {
-        let s = self.state.lock().unwrap();
+        let mut s = self.state.lock().unwrap();
         if !s.bound
             || r.scope.authority != self.template.spec().request.authority
             || r.scope.actor != s.actor
             || (r.access == Access::ReadResult && !s.read)
             || (r.access == Access::ReadAudit && !s.audit)
+            || (r.access == Access::RunnerFact && !s.runner_facts)
         {
             return Err(execution_sqlite::Error::Denied);
+        }
+        let hook = if r.access == Access::ReadResult {
+            s.read_hook.take()
+        } else {
+            None
+        };
+        drop(s);
+        if let Some(hook) = hook {
+            hook();
         }
         Ok(())
     }
@@ -202,6 +218,15 @@ impl AppHost for TestHost {
     fn capabilities(&self, _: &FrozenPlan) -> Result<CapabilitySnapshot, execution_app::Error> {
         let mut s = self.state.lock().unwrap();
         s.capabilities += 1;
+        let hook = if s
+            .capability_hook
+            .as_ref()
+            .is_some_and(|(count, _)| *count == s.capabilities)
+        {
+            s.capability_hook.take().map(|(_, hook)| hook)
+        } else {
+            None
+        };
         let available = s.capability && s.capabilities < s.block_capability_on;
         let p = self.template.spec();
         fn inventory<T>(value: Vec<T>, available: bool) -> Inventory<T> {
@@ -220,7 +245,7 @@ impl AppHost for TestHost {
                     .collect(),
             }
         }
-        Ok(CapabilitySnapshot {
+        let snapshot = CapabilitySnapshot {
             verified_at_unix_ms: s.now,
             fresh_until_unix_ms: 2000,
             environment: EnvironmentSnapshot {
@@ -256,7 +281,12 @@ impl AppHost for TestHost {
                     available,
                 ),
             },
-        })
+        };
+        drop(s);
+        if let Some(hook) = hook {
+            hook();
+        }
+        Ok(snapshot)
     }
     fn trusted_snapshot(&self, _: &FrozenPlan) -> Result<TrustSnapshot, execution_sqlite::Error> {
         let s = self.state.lock().unwrap();

@@ -14,6 +14,18 @@ C19 的 Rust 组合根，连接 C06 能力、C07 唯一授权裁决、C08 批准
 
 `ExecutionApp` 由服务生命周期持有，调用均同步、有界；UI 窗口或模型调用只拥有请求/响应，不能拥有执行 future。owner 独立调度 `reconcile`，新尝试则使用显式稳定 command ID。S1 没有常驻 OS 服务安装器、通用 worker 框架或任意 exec/PTY 接口。
 
+`RequestId` 只标识任务，`CommandId` 标识任务内一次逻辑调用，两者不能混用。适配器须持久保留命令 ID，网络重试不能生成新值：
+
+| 情况 | 恢复动作 |
+| --- | --- |
+| `submit` 响应丢失或提交未知 | 同 request/冻结内容重放或 `status`；不得生成替代 request |
+| 已注册、尚无 attempt，首次执行发生暂时失败 | owner 用 `advance(request, CommandId::initial_attempt())` 继续原首次命令；已持久拒绝仍返回拒绝 |
+| `advance` 失败/未知 | 重试原 CommandId；只有明确请求新的授权尝试才创建新 CommandId |
+| `respond` 失败/未知 | 原 CommandId、交互 ID 和同一答案重放；不同内容复用键会冲突 |
+| `ConfirmationUnknown` | 用原 request/consumer/event 再次 `confirm`，不要查询不存在的业务操作回执 |
+
+取消和核对的内部事实写入以当前 revision 区分 CAS 重算；陈旧写入不会永久吞掉取消或证据。取消只在持久标记确认后请求停止，持续竞争则有界返回 Conflict 供调用方重试。
+
 ## 可信边界和限制
 
 `AppHost` 必须独立认证 authority/actor/device、来源账号/委托、规则、能力、批准与可靠时钟；在 SQLite 事务内的回调必须有界、非重入并消费已验证的本地快照，不能请求网络。提交字段、UI/AI 声明或 provider 登录不能成为授权事实。host/runner 是可信进程内代码，不能抵抗恶意实现或本机管理员。

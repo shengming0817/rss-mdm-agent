@@ -48,7 +48,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
     pub fn respond(
         &mut self,
         request: &RequestId,
-        operation_id: &RequestId,
+        operation_id: &CommandId,
         id: &Reference,
         command: &Command,
     ) -> Result<Receipt, Error> {

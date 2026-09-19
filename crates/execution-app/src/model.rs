@@ -1,4 +1,4 @@
-use execution_contract::{AttemptId, Digest, EvidenceRef, PlanId, RequestId};
+use execution_contract::{AttemptId, Digest, EvidenceRef, Id, PlanId, RequestId};
 use execution_lifecycle::{EffectAssessment, ExecutionMode};
 
 /// Value-free application failures. Backend paths, SQL, secrets and runner text never escape.
@@ -49,6 +49,9 @@ pub enum Error {
     /// Query the original operation; never allocate a replacement attempt.
     #[error("operation commit outcome unknown")]
     OutcomeUnknown,
+    /// Retry confirmation with the same request/consumer/event; there is no operation receipt.
+    #[error("confirmation commit outcome unknown; retry the same event confirmation")]
+    ConfirmationUnknown,
 }
 impl From<execution_sqlite::Error> for Error {
     fn from(error: execution_sqlite::Error) -> Self {
@@ -62,9 +65,34 @@ impl From<execution_sqlite::Error> for Error {
             S::Clock => Self::Clock,
             S::Trust | S::Busy => Self::Unavailable,
             S::Capacity => Self::Capacity,
-            S::OperationCommitUnknown | S::ConfirmationCommitUnknown => Self::OutcomeUnknown,
+            S::OperationCommitUnknown => Self::OutcomeUnknown,
+            S::ConfirmationCommitUnknown => Self::ConfirmationUnknown,
             S::Corrupt | S::Schema | S::Storage | S::BootstrapUnpublished => Self::Storage,
         }
+    }
+}
+
+/// Stable logical command identity, distinct from a business task's RequestId.
+/// Retain this value across network retries/unknown outcomes. Generate a new value only for
+/// a deliberately new owner action; doing so for advance can spend another attempt/approval.
+/// ```compile_fail
+/// let _: execution_app::CommandId = execution_contract::RequestId::new("task").unwrap();
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandId(Id);
+impl CommandId {
+    /// Construct a bounded identity for one explicit owner command.
+    pub fn new(value: impl Into<String>) -> Result<Self, Error> {
+        Ok(Self(Id::new(value).map_err(|_| Error::InvalidInput)?))
+    }
+    /// The exact first-attempt command owned by submit. Use it to resume a registered task with
+    /// no admitted attempt after a pre-commit transient failure; rejected admission stays rejected.
+    pub fn initial_attempt() -> Self {
+        Self(Id::new("initial").expect("static ID"))
+    }
+    /// Opaque value for adapter-owned durable retry tracking; not a task or authority identity.
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
     }
 }
 
