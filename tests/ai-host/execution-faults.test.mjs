@@ -11,6 +11,7 @@ import { openSqliteStore } from "../../packages/ai-store-sqlite/dist/index.js";
 import {
   fixtureCommand,
   fixtureSession,
+  restoredSession,
   unwrap,
 } from "../../packages/ai-contract/dist/testing/index.js";
 
@@ -155,6 +156,10 @@ test("lost submit receipt recovers the same Rust attempt and keeps process exit 
       config: { id: "local", revision: "r1" },
       generation: "generation-a",
     },
+    capabilities: {
+      ...original.capabilities,
+      continuation: "across_processes",
+    },
   };
   const plan = JSON.parse(await readFile(audit, "utf8"));
 
@@ -180,6 +185,24 @@ test("lost submit receipt recovers the same Rust attempt and keeps process exit 
   );
 
   store = unwrap(openSqliteStore({ path: aiDb, mode: "open" }));
+  const crashed = unwrap(await store.session(session.namespace));
+  const successor = unwrap(
+    await store.rebind({
+      namespace: session.namespace,
+      expectedRevision: crashed.revision,
+      expectedGeneration: crashed.binding.generation,
+      restored: await restoredSession(crashed, "generation-b"),
+      eventId: "execution-fault-takeover",
+    }),
+  );
+  assert.equal(successor.binding.generation, "generation-b");
+  let modelCommand = unwrap(
+    await store.command(session.namespace, submitCommand.commandId),
+  );
+  assert.equal(modelCommand.state, "reconciliation_required");
+  assert.equal(modelCommand.outcome, undefined);
+  assert.equal(modelCommand.dispatch.originGeneration, "generation-a");
+  assert.equal(modelCommand.dispatch.observerGeneration, "generation-b");
   let saved = unwrap(
     await store.delivery(session.namespace, request.body.operationId),
   );
@@ -196,11 +219,18 @@ test("lost submit receipt recovers the same Rust attempt and keeps process exit 
     1,
     "unknown recovery must not resend submit",
   );
+  modelCommand = unwrap(
+    await store.command(session.namespace, submitCommand.commandId),
+  );
+  assert.equal(modelCommand.state, "reconciliation_required");
+  assert.equal(modelCommand.outcome, undefined);
+  assert.equal(modelCommand.dispatch.originGeneration, "generation-a");
+  assert.equal(modelCommand.dispatch.observerGeneration, "generation-b");
 
   const duplicate = reply(
     await restarted.propose(
       session.namespace,
-      session.binding.generation,
+      successor.binding.generation,
       submitCommand.commandId,
       submit,
       budget(),

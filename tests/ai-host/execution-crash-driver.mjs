@@ -25,7 +25,7 @@ await dispatchCommand(
   store,
   unwrap(await store.session(session.namespace)),
   command.commandId,
-  "submitted",
+  "unknown",
 );
 const current = unwrap(await store.session(session.namespace));
 let tail = Promise.resolve();
