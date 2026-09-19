@@ -11,6 +11,7 @@
 - [ACP–A2UI 开发](guides/ai-access-development.md)：标准协议、公共客户端、Vue/Lit 接缝与真实浏览器独立消费。
 
 - [AI SQLite](../packages/ai-store-sqlite/README.md)与[来源记录](reference/ai-store-sqlite.md)：原子持久化、单 Host 所有权、恢复与独立消费。
+- [DeepSeek Harness adapter](../packages/ai-adapters/deepseek/README.md)与[来源记录](reference/deepseek-harness.md)：静态原生进程、A01 恢复凭证、受控桥与独立消费。
 - [Claude SDK adapter](../packages/ai-adapters/claude/README.md)：原生会话、回调、受控工具与独立消费。
 - [Codex app-server adapter](../packages/ai-adapters/codex/README.md)与[来源记录](reference/codex-adapter.md)：固定原生协议、turn/steer/fork、受控 MCP 与独立消费。
 - [AI Runtime 来源](reference/ai-runtime.md)：固定上游版本、生成链和许可。

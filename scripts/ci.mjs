@@ -40,6 +40,8 @@ const steps = [
   ["Codex pinned protocol", "pnpm", ["check:codex-protocol"]],
   ["Codex native adapter", "pnpm", ["test:ai-codex"]],
   ["Codex packed consumer", "pnpm", ["check:codex-consumer"]],
+  ["DeepSeek Harness adapter", "pnpm", ["test:ai-deepseek"]],
+  ["DeepSeek packed consumer", "pnpm", ["check:deepseek-consumer"]],
   ["frontend build", "pnpm", ["build"]],
   ["types", "pnpm", ["typecheck"]],
   ["frontend format", "pnpm", ["format:check"]],
