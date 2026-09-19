@@ -25,6 +25,7 @@ import {
   type Submission,
 } from "@rss-mdm-agent/ai-contract";
 import {
+  ADAPTER_VERSION,
   CLI_VERSION,
   PROVIDER_VERSION,
   sdkOptions,
@@ -34,18 +35,20 @@ import { Interactions } from "./interactions.js";
 import type { RuntimeFactory } from "./runtime.js";
 import {
   bounded,
+  ByteBudget,
   copy,
   deferred,
   fail,
   id,
   limits,
+  liveBudget,
   ok,
   Queue,
   same,
 } from "./support.js";
 const bridge = "mcp__rss_host__propose";
 interface Turn {
-  command: Command;
+  command: Pick<Command, "sessionId" | "commandId">;
   hash: string;
   binding: Binding;
   inputBinding: Binding;
@@ -66,6 +69,7 @@ interface Session {
   runtime: ReturnType<RuntimeFactory>;
   abort: AbortController;
   turns: Map<string, Turn>;
+  displayBudget: ByteBudget;
   active?: Turn;
   initialized: boolean;
   closing: boolean;
@@ -94,24 +98,43 @@ export class ClaudeAdapter implements ProviderAgentPort {
     return this.open(configuration, budget);
   }
   private async open(
-    request: ProviderConfiguration | Binding,
+    requested: ProviderConfiguration | Binding,
     budget: Budget,
   ): Promise<Result<ProviderSessionBinding>> {
+    if (!liveBudget(budget)) return fail("unavailable", "same_command");
+    const deadline = Date.now() + budget.timeoutMs;
+    const remaining = (): Budget => ({
+      ...budget,
+      timeoutMs: deadline - Date.now(),
+    });
     if (this.opening || (this.session && !this.session.stopped))
       return fail("unavailable");
     this.opening = true;
     const epoch = ++this.epoch;
     try {
+      // Capture admission identities before calling external configuration code.
+      const request =
+        "workingDirectory" in requested
+          ? { ...requested, config: copy(requested.config) }
+          : copy(requested);
       const identity = copy({
         config: request.config,
         accountRef: request.accountRef,
       });
-      const resolved = await bounded(
-          this.options.resolveConfiguration(identity, budget),
-          budget,
-        ),
-        config = resolved.configuration;
-      if (epoch !== this.epoch || budget.signal.aborted)
+      const supplied = await bounded(
+        this.options.resolveConfiguration(identity, budget),
+        budget,
+      );
+      const config = {
+        ...supplied.configuration,
+        config: copy(supplied.configuration.config),
+      } as ProviderConfiguration;
+      const resolved = {
+        ...supplied,
+        configuration: config,
+        credential: { ...supplied.credential },
+      };
+      if (epoch !== this.epoch || !liveBudget(remaining()))
         return fail("unavailable");
       if (
         config.provider !== "claude" ||
@@ -141,7 +164,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
       if (
         resume &&
         (request.providerVersion !== PROVIDER_VERSION ||
-          request.adapterVersion !== "0.1.0" ||
+          request.adapterVersion !== ADAPTER_VERSION ||
           !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
             request.nativeSessionId,
           ))
@@ -150,7 +173,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
       const binding: Binding = {
         provider: "claude",
         providerVersion: PROVIDER_VERSION,
-        adapterVersion: "0.1.0",
+        adapterVersion: ADAPTER_VERSION,
         config: identity.config,
         accountRef: identity.accountRef,
         generation: randomUUID(),
@@ -340,6 +363,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
         runtime,
         abort,
         turns: new Map(),
+        displayBudget: new ByteBudget(4 * 1024 * 1024),
         initialized: false,
         closing: false,
         stopped: false,
@@ -354,7 +378,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
         () => this.lost(session),
       );
       void this.pump(session);
-      await bounded(runtime.query.initializationResult(), budget);
+      await bounded(runtime.query.initializationResult(), remaining());
       if (
         epoch !== this.epoch ||
         budget.signal.aborted ||
@@ -423,7 +447,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
       return denied("invalid_input");
     }
     const s = this.session;
-    if (!s || s.closing || s.failed || budget.signal.aborted)
+    if (!s || s.closing || s.failed || !liveBudget(budget))
       return denied("unavailable", "same_command");
     const prior = s.turns.get(c.commandId);
     if (prior) {
@@ -445,11 +469,11 @@ export class ClaudeAdapter implements ProviderAgentPort {
     if (s.turns.size >= 256) return denied("limit_exceeded");
     const live = { ...copy(binding), nativeRequestId: randomUUID() };
     const turn: Turn = {
-      command: c,
+      command: { sessionId: c.sessionId, commandId: c.commandId },
       hash: fingerprint(c, limits),
       binding: live,
       inputBinding: copy(binding),
-      queue: new Queue(),
+      queue: new Queue(1024, 2 * 1024 * 1024, s.displayBudget),
       acceptance: deferred<boolean>(),
       consumed: false,
       accepted: false,
@@ -496,6 +520,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
   private accept(s: Session, turn: Turn): void {
     if (!turn.accepted) {
       turn.accepted = true;
+      turn.uncertain = false;
       s.binding = copy(turn.binding);
       turn.acceptance.resolve(true);
       this.emit(turn, { type: "status", state: "running" });
@@ -673,6 +698,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
     command: Command,
     budget: Budget,
   ): Promise<Result<"request_only" | "already_terminal">> {
+    if (!liveBudget(budget)) return fail("unavailable", "same_command");
     let c: Command;
     try {
       c = this.checked(command);
@@ -706,7 +732,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
     budget: Budget,
   ): Promise<Result<void>> {
     if (
-      budget.signal.aborted ||
+      !liveBudget(budget) ||
       !this.session ||
       this.session.closing ||
       this.session.failed
@@ -738,7 +764,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
   async reconcile(
     binding: Binding,
     record: CommandRecord,
-    _budget: Budget,
+    budget: Budget,
   ): Promise<
     Result<{
       status: "running" | "terminal" | "not_submitted" | "unknown";
@@ -746,12 +772,23 @@ export class ClaudeAdapter implements ProviderAgentPort {
       outcome?: Outcome;
     }>
   > {
+    if (!liveBudget(budget)) return fail("unavailable", "same_command");
     const s = this.session;
-    if (!s || (!same(binding, s.binding) && !this.turn(binding)))
+    if (
+      !s ||
+      (!same(binding, s.binding) &&
+        !this.turn(binding) &&
+        !same(binding, s.turns.get(record.command.commandId)?.inputBinding))
+    )
       return fail("stale_binding");
     const turn = s.turns.get(record.command.commandId);
     if (!turn) return ok({ status: "unknown", binding: copy(binding) });
-    if (!same(turn.command, record.command)) return fail("content_conflict");
+    try {
+      if (turn.hash !== fingerprint(record.command, limits))
+        return fail("content_conflict");
+    } catch {
+      return fail("invalid_input");
+    }
     return ok({
       status: turn.outcome
         ? "terminal"
@@ -763,8 +800,12 @@ export class ClaudeAdapter implements ProviderAgentPort {
     });
   }
   async resume(binding: Binding, budget: Budget): Promise<Result<Binding>> {
-    const result = await this.open(copy(binding), budget);
-    return result.ok ? ok(result.value.binding) : result;
+    try {
+      const result = await this.open(copy(binding), budget);
+      return result.ok ? ok(result.value.binding) : result;
+    } catch {
+      return fail("invalid_input");
+    }
   }
   async close(budget: Budget): Promise<Result<{ processStopped: boolean }>> {
     ++this.epoch;

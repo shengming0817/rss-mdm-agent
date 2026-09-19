@@ -1,3 +1,4 @@
+import { fingerprint } from "@rss-mdm-agent/ai-contract";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type {
@@ -10,7 +11,7 @@ import type {
   ProviderObservation,
   Result,
 } from "@rss-mdm-agent/ai-contract";
-import { copy, deferred, fail, id, ok, same } from "./support.js";
+import { copy, deferred, fail, id, limits, ok, same } from "./support.js";
 const questionSchema = z.object({
   questions: z
     .array(
@@ -39,10 +40,10 @@ const denied = (): PermissionResult => ({
 type Callback = {
   binding: Binding;
   sessionId: string;
-  request: z.infer<typeof questionSchema>;
+  request?: z.infer<typeof questionSchema>;
   expiresAt: number;
   status: "pending" | "answered" | "unavailable";
-  response?: Command;
+  responseHash?: string;
   settle: (result: PermissionResult) => void;
   invalidate: () => void;
 };
@@ -57,7 +58,7 @@ export class Interactions {
   ) {}
   ask(
     binding: Binding,
-    command: Command,
+    command: Pick<Command, "sessionId" | "commandId">,
     input: Record<string, unknown>,
     options: Parameters<CanUseTool>[2],
   ): Promise<PermissionResult> {
@@ -91,6 +92,9 @@ export class Interactions {
         clearTimeout(timer);
         options.signal.removeEventListener("abort", callback.invalidate);
         result.resolve(value);
+        callback.request = undefined;
+        callback.settle = () => {};
+        callback.invalidate = () => {};
       },
       invalidate: () => {
         if (callback.status !== "pending") return;
@@ -139,7 +143,7 @@ export class Interactions {
     )
       return fail("stale_binding");
     if (callback.status === "answered")
-      return same(callback.response, command)
+      return callback.responseHash === fingerprint(command, limits)
         ? ok(undefined)
         : fail("already_answered");
     if (callback.status !== "pending") return fail("unavailable");
@@ -155,12 +159,12 @@ export class Interactions {
       !answer.success ||
       !same(
         Object.keys(answer.data.answers).sort(),
-        callback.request.questions.map((q) => q.question).sort(),
+        callback.request!.questions.map((q) => q.question).sort(),
       )
     )
       return fail("invalid_input");
     callback.status = "answered";
-    callback.response = copy(command);
+    callback.responseHash = fingerprint(command, limits);
     callback.settle({
       behavior: "allow",
       updatedInput: { ...copy(callback.request), answers: answer.data.answers },

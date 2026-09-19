@@ -49,6 +49,19 @@ async function fixture(t, replies, controlled = false) {
       requests.push(body);
       const blocks = replies.shift();
       if (!blocks) throw new Error("unexpected model request");
+      if (blocks === "http-error") {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            type: "error",
+            error: {
+              type: "invalid_request_error",
+              message: "fixed fixture failure",
+            },
+          }),
+        );
+        return;
+      }
       res.writeHead(200, { "content-type": "text/event-stream" });
       const emit = (type, info) =>
         res.write(
@@ -66,6 +79,7 @@ async function fixture(t, replies, controlled = false) {
           usage: { input_tokens: 1, output_tokens: 0 },
         },
       });
+      if (blocks === "hang") return;
       for (const [index, block] of blocks.entries()) {
         if (block.type === "text") {
           emit("content_block_start", {
@@ -357,7 +371,19 @@ test(
       session = unwrap(
         await VerifiedProviderSession.open(adapter, f.configuration, budget()),
       );
+    // A verifier admits an endpoint object, not a mutable resolver property.
+    let unverifiedCalls = 0;
+    f.configuration.tools = {
+      propose: async () => {
+        unverifiedCalls++;
+        return {
+          ok: true,
+          value: { disposition: "returned", text: "unverified" },
+        };
+      },
+    };
     const result = await run(adapter, session.binding, command("controlled"));
+    assert.equal(unverifiedCalls, 0);
     assert.deepEqual(f.tools, [
       { name: "install-app", arguments: { approval: true } },
     ]);
@@ -381,5 +407,75 @@ test(
         "Fixture Host rejects execution",
       ),
     );
+  },
+);
+
+test(
+  "real SDK interrupt requests cancellation without claiming process exit",
+  { timeout: 30000 },
+  async (t) => {
+    const f = await fixture(t, ["hang"]),
+      adapter = f.create();
+    const session = unwrap(
+      await adapter.createSession(f.configuration, budget()),
+    );
+    const cmd = command("cancel-target");
+    const sent = await adapter.submit(session.binding, cmd, budget());
+    assert.equal(sent.certainty, "submitted");
+    const cancelled = unwrap(
+      await adapter.cancel(
+        sent.binding,
+        {
+          ...command("cancel"),
+          input: {
+            type: "cancel",
+            targetCommandId: cmd.commandId,
+            generation: sent.binding.generation,
+          },
+        },
+        budget(),
+      ),
+    );
+    assert.equal(cancelled, "request_only");
+    const events = await Array.fromAsync(
+      adapter.observe(sent.binding, budget(2000)),
+    );
+    assert.equal(
+      events.some((e) => e.body?.outcome === "completed"),
+      false,
+    );
+    const state = unwrap(
+      await adapter.reconcile(sent.binding, { command: cmd }, budget()),
+    );
+    assert.equal(state.status, "terminal");
+    assert.equal(state.outcome, "interrupted");
+    assert.equal(unwrap(await adapter.close(budget())).processStopped, true);
+  },
+);
+
+test(
+  "real SDK HTTP failure never becomes successful model completion",
+  { timeout: 30000 },
+  async (t) => {
+    const f = await fixture(t, ["http-error"]),
+      adapter = f.create();
+    const session = unwrap(
+      await adapter.createSession(f.configuration, budget()),
+    );
+    const cmd = command("http-failure");
+    const sent = await adapter.submit(session.binding, cmd, budget());
+    assert.equal(sent.certainty, "submitted");
+    const events = await Array.fromAsync(
+      adapter.observe(sent.binding, budget(3000)),
+    );
+    assert.equal(
+      events.some((e) => e.body?.outcome === "completed"),
+      false,
+    );
+    const state = unwrap(
+      await adapter.reconcile(sent.binding, { command: cmd }, budget()),
+    );
+    assert.equal(state.status, "terminal");
+    assert.equal(state.outcome, "failed");
   },
 );

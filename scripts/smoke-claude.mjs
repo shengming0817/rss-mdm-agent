@@ -22,14 +22,35 @@ const root = fileURLToPath(new URL("../", import.meta.url)),
 const args = process.argv.slice(2);
 if (args.length && !(args.length === 2 && args[0] === "--credential-file"))
   throw new Error("Expected --credential-file PATH");
-const credentials = args.length
-  ? JSON.parse(readFileSync(args[1], "utf8")).env
-  : process.env;
+let credentials;
+try {
+  credentials = args.length
+    ? JSON.parse(readFileSync(args[1], "utf8")).env
+    : process.env;
+  if (!credentials || typeof credentials !== "object") throw new Error();
+} catch {
+  // JSON parser and filesystem diagnostics can contain secret material or private paths.
+  throw new Error("Invalid credential configuration");
+}
 const key = credentials.ANTHROPIC_API_KEY,
   token = credentials.ANTHROPIC_AUTH_TOKEN,
   url = credentials.ANTHROPIC_BASE_URL;
 if (!url || !!key === !!token)
   throw new Error("Set API URL and exactly one API key or auth token");
+let endpoint;
+try {
+  const parsed = new URL(url);
+  endpoint = {
+    originSha256: createHash("sha256").update(parsed.origin).digest("hex"),
+    mode: ["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname)
+      ? "loopback-compatible-endpoint"
+      : parsed.hostname === "api.anthropic.com"
+        ? "anthropic-api"
+        : "configured-compatible-endpoint",
+  };
+} catch {
+  throw new Error("Invalid endpoint configuration");
+}
 const directory = mkdtempSync(join(tmpdir(), "rss-claude-model-"));
 mkdirSync(join(directory, "config"), { mode: 0o700 });
 mkdirSync(join(directory, "project"));
@@ -145,7 +166,10 @@ try {
     deliverable = passed && processesStopped && sameCommittedSource(start, end);
   if (!deliverable) process.exitCode = 1;
   const evidence = {
-    evidence: "real-sdk-real-model",
+    evidence: "real-sdk-configured-endpoint-smoke",
+    endpoint,
+    requestedModel: credentials.ANTHROPIC_MODEL || "provider_default",
+    backendIdentityVerified: false,
     status: deliverable ? "passed" : "failed",
     behaviorPassed: passed,
     processesStopped,
@@ -163,6 +187,7 @@ try {
     results,
     failure,
     notCovered: [
+      "upstream model/backend identity behind the configured endpoint",
       "Windows containment",
       "business execution",
       "full product assembly",

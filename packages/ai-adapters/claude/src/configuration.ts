@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import type {
@@ -6,8 +7,27 @@ import type {
   Clock,
   ProviderConfiguration,
 } from "@rss-mdm-agent/ai-contract";
-export const SDK_VERSION = "0.3.277";
-export const CLI_VERSION = "2.1.277";
+// The installed package manifests own compatibility identity, including packed consumers.
+const manifest = (url: URL) => JSON.parse(readFileSync(url, "utf8"));
+const adapterPackage = manifest(new URL("../package.json", import.meta.url));
+const sdkPackage = manifest(
+  new URL(
+    "./package.json",
+    import.meta.resolve("@anthropic-ai/claude-agent-sdk"),
+  ),
+);
+const version = (value: unknown): string => {
+  if (typeof value !== "string" || !/^\d+\.\d+\.\d+$/.test(value))
+    throw new Error("invalid package version metadata");
+  return value;
+};
+export const ADAPTER_VERSION = version(adapterPackage.version);
+export const SDK_VERSION = version(sdkPackage.version);
+export const CLI_VERSION = version(sdkPackage.claudeCodeVersion);
+if (
+  adapterPackage.dependencies["@anthropic-ai/claude-agent-sdk"] !== SDK_VERSION
+)
+  throw new Error("SDK package version does not match pinned dependency");
 export const PROVIDER_VERSION = `claude-agent-sdk-${SDK_VERSION}/claude-code-${CLI_VERSION}`;
 /** Secrets come from trusted composition, never a command or serialized binding. */
 export interface ResolvedClaudeConfiguration {

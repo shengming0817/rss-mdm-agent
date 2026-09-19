@@ -77,17 +77,26 @@ steer、fork、subagent、terminal facility、multimodal 均 unsupported。
 ```sh
 pnpm test:ai-claude          # SDK fixtures + 真实 SDK / 固定 HTTP 模型传输
 pnpm check:claude-consumer  # 隔离目录 pack/install/types/公共 API 和真实 SDK 接缝
-pnpm smoke:claude           # 显式真实模型；读取环境 URL + 单一凭据
+pnpm smoke:claude           # 配置端点 smoke；读取环境 URL + 单一凭据
 ```
 
-真实模型 smoke 也可显式 `--credential-file PATH` 读取该文件的 env 中 URL/凭据/model；
+配置端点 smoke 也可显式 `--credential-file PATH` 读取该文件的 env 中 URL/凭据/model；
 不加载该文件的 hooks、权限或信任设置。结果写入被忽略的 `.local-ci-runs/claude-model.json`，
-记录源码 SHA、lock hash、SDK/CLI/Node/平台、模式、结果与未覆盖项，不记录密钥或原文。
+记录源码 SHA、lock hash、SDK/CLI/Node/平台、凭据模式、端点 origin 哈希、请求模型
+（未配置时为 provider_default）、结果与未覆盖项，不记录密钥、私有 URL 或对话原文。
+证据类型为 real-sdk-configured-endpoint-smoke；兼容端点或代理的响应本身无法证明
+上游实际模型身份，backendIdentityVerified 始终为 false，不据此宣称真实 Claude 后端验证。
 交付证据要求已提交且干净的源码。完整本地 CI 不需要模型凭据，只运行确定性模型传输。
 
-固定传输测试证明真实 SDK streaming、同进程/跨进程上下文、AskUserQuestion 往返和
-恶意 settings/skills/MCP 旁路拒绝；它不证明真实模型行为。真实模型 smoke 另验新建、
+固定传输测试证明真实 SDK streaming、同进程/跨进程上下文、取消/HTTP 错误、AskUserQuestion 往返和
+恶意 settings/skills/MCP 旁路拒绝；它不证明真实模型行为。配置端点 smoke 另验新建、
 续聊和冷恢复；业务执行与完整产品装配属于其他 owner。
+
+会话最多保留 256 条紧凑派发记录，达到上限后需 close/resume 开启新 generation；
+已完成的 prompt/answer 原文不由幂等记录保留。待消费展示队列单 turn 上限 2 MiB、
+全 session 共用 4 MiB，消费后释放预算；溢出进入 unknown 并停止原生进程，不能伪造终态。
+模型 turn 数上限 32。金额预算与账单政策由消费产品持有，本包不声明费用上限；
+错误只投影 value-free Result/Outcome，不透传 SDK stderr 或底层错误正文。
 
 ## 来源与许可
 

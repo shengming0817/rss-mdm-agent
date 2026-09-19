@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 import { createTestAdapter } from "../../../packages/ai-adapters/claude/dist/testing.js";
 import {
   fixtureCommand,
@@ -50,6 +53,7 @@ function harness({
   let options,
     input,
     stopped,
+    lastUser,
     closed = 0,
     interrupted = 0;
   const output = new Queue();
@@ -87,6 +91,7 @@ function harness({
           const item = await input.next();
           if (item.done) break;
           const user = item.value;
+          lastUser = user;
           if (acknowledge) {
             output.push({
               type: "system",
@@ -109,6 +114,9 @@ function harness({
   return {
     adapter,
     output,
+    get lastUser() {
+      return lastUser;
+    },
     get options() {
       return options;
     },
@@ -492,3 +500,155 @@ test("foreign native terminal and missing prompt correlation never complete a tu
     await h.adapter.close(budget());
   }
 });
+
+test("exhausted budgets do not send prompts or interrupts", async () => {
+  const h = harness(),
+    binding = await create(h),
+    cmd = fixtureCommand();
+  assert.equal(
+    (await h.adapter.submit(binding, cmd, budget(0))).certainty,
+    "not_sent",
+  );
+  const sent = await h.adapter.submit(binding, cmd, budget());
+  assert.equal(sent.certainty, "submitted");
+  const cancel = {
+    ...fixtureCommand("cancel"),
+    input: {
+      type: "cancel",
+      targetCommandId: cmd.commandId,
+      generation: binding.generation,
+    },
+  };
+  const abort = new AbortController();
+  abort.abort();
+  assert.equal(
+    (
+      await h.adapter.cancel(sent.binding, cancel, {
+        timeoutMs: 100,
+        signal: abort.signal,
+      })
+    ).ok,
+    false,
+  );
+  assert.equal(h.interrupted, 0);
+  await h.adapter.close(budget());
+});
+
+test("invalid resume input returns a value-free Result", async () => {
+  const h = harness();
+  const result = await h.adapter.resume(
+    {
+      provider: "claude",
+      config: { id: "c", revision: "1" },
+      accountRef: "account",
+      nativeSessionId: "bad",
+      generation: "bad",
+      nativeRequestId: undefined,
+    },
+    budget(),
+  );
+  assert.equal(result.ok, false);
+  await h.adapter.close(budget());
+});
+
+test("late native acceptance reconciles unknown submission to running", async () => {
+  const h = harness({ acknowledge: false }),
+    binding = await create(h),
+    cmd = fixtureCommand();
+  assert.equal(
+    (await h.adapter.submit(binding, cmd, budget(15))).certainty,
+    "unknown",
+  );
+  h.output.push({
+    type: "system",
+    subtype: "init",
+    session_id: binding.nativeSessionId,
+    claude_code_version: "2.1.277",
+    tools: ["AskUserQuestion"],
+    mcp_servers: [],
+    skills: [],
+    plugins: [],
+    permissionMode: "default",
+  });
+  h.output.push(h.lastUser);
+  await new Promise((r) => setImmediate(r));
+  const state = unwrap(
+    await h.adapter.reconcile(binding, { command: cmd }, budget()),
+  );
+  assert.equal(state.status, "running");
+  assert.equal(state.binding.nativeRequestId, h.lastUser.uuid);
+  assert.equal(
+    (await h.adapter.submit(binding, cmd, budget())).certainty,
+    "submitted",
+  );
+  await h.adapter.close(budget());
+});
+
+test("binding compatibility identity matches installed package manifests", async () => {
+  const entry = import.meta.resolve(
+    "../../../packages/ai-adapters/claude/dist/index.js",
+  );
+  const manifest = (url) => JSON.parse(readFileSync(url, "utf8"));
+  const own = manifest(new URL("../package.json", entry));
+  const sdk = manifest(
+    new URL(
+      "./package.json",
+      pathToFileURL(
+        createRequire(entry).resolve("@anthropic-ai/claude-agent-sdk"),
+      ),
+    ),
+  );
+  const h = harness(),
+    binding = await create(h);
+  assert.equal(binding.adapterVersion, own.version);
+  assert.equal(
+    binding.providerVersion,
+    `claude-agent-sdk-${sdk.version}/claude-code-${sdk.claudeCodeVersion}`,
+  );
+  await h.adapter.close(budget());
+});
+
+for (const consume of [false, true])
+  test(`session display budget ${consume ? "is released by consumption" : "bounds unconsumed turns"}`, async () => {
+    const h = harness();
+    let binding = await create(h);
+    for (let n = 0; n < 4; n++) {
+      const sent = await h.adapter.submit(
+        binding,
+        fixtureCommand(`large-${n}`),
+        budget(),
+      );
+      assert.equal(sent.certainty, "submitted");
+      binding = sent.binding;
+      for (let i = 0; i < 12; i++)
+        h.output.push({
+          type: "assistant",
+          session_id: binding.nativeSessionId,
+          uuid: `large-${i}`,
+          parent_tool_use_id: null,
+          message: {
+            id: `msg-${i}`,
+            content: [{ type: "text", text: "x".repeat(100000) }],
+          },
+        });
+      h.output.push({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        session_id: binding.nativeSessionId,
+        user_message_uuid: binding.nativeRequestId,
+      });
+      await new Promise((r) => setImmediate(r));
+      if (consume) await Array.fromAsync(h.adapter.observe(binding, budget()));
+    }
+    assert.equal(h.closed > 0, !consume);
+    const state = unwrap(
+      await h.adapter.reconcile(
+        binding,
+        { command: fixtureCommand("large-3") },
+        budget(),
+      ),
+    );
+    assert.equal(state.status, consume ? "terminal" : "unknown");
+    await h.adapter.close(budget());
+  });
