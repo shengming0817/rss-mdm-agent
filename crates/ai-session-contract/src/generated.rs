@@ -883,38 +883,45 @@ pub struct Event {
 }
 #[doc = "Stable product observation. Tool proposals and results are untrusted and cannot issue execution authority."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
-#[serde(tag = "type", deny_unknown_fields)]
+#[serde(untagged, deny_unknown_fields)]
 pub enum EventBody {
-    #[doc = "text variant; all fields are data, never authentication or execution authority."]
-    #[serde(rename = "text")]
-    Text {
+    #[doc = "`Variant0` alternative; see the parent type's schema contract."]
+    Variant0 {
         #[doc = "Stable product message correlation identifier."]
         #[serde(rename = "messageId")]
         message_id: Id,
         #[doc = "Untrusted model/user text subject to the whole-envelope budgets."]
-        text: EventBodyText,
+        text: EventBodyVariant0Text,
+        #[doc = "Closed variant discriminator."]
+        #[serde(rename = "type")]
+        type_: ::std::string::String,
     },
-    #[doc = "status variant; all fields are data, never authentication or execution authority."]
-    #[serde(rename = "status")]
-    Status {
+    #[doc = "`Variant1` alternative; see the parent type's schema contract."]
+    Variant1 {
         #[doc = "Explicit command lifecycle state; terminal and reconciliation transitions require matching evidence."]
         state: CommandState,
+        #[doc = "Closed variant discriminator."]
+        #[serde(rename = "type")]
+        type_: ::std::string::String,
     },
-    #[doc = "terminal variant; all fields are data, never authentication or execution authority."]
-    #[serde(rename = "terminal")]
-    Terminal {
+    #[doc = "`Variant2` alternative; see the parent type's schema contract."]
+    Variant2 {
         #[doc = "Definite model-turn result; no implication about business side effects."]
         outcome: Outcome,
+        #[doc = "Closed variant discriminator."]
+        #[serde(rename = "type")]
+        type_: ::std::string::String,
     },
-    #[doc = "cancel_dispatched variant; all fields are data, never authentication or execution authority."]
-    #[serde(rename = "cancel_dispatched")]
-    CancelDispatched {
+    #[doc = "`Variant3` alternative; see the parent type's schema contract."]
+    Variant3 {
         #[doc = "Cancellation request transport confirmation only; does not manufacture a model terminal."]
-        confirmation: EventBodyConfirmation,
+        confirmation: EventBodyVariant3Confirmation,
+        #[doc = "Closed variant discriminator."]
+        #[serde(rename = "type")]
+        type_: ::std::string::String,
     },
-    #[doc = "tool_proposal variant; all fields are data, never authentication or execution authority."]
-    #[serde(rename = "tool_proposal")]
-    ToolProposal {
+    #[doc = "`Variant4` alternative; see the parent type's schema contract."]
+    Variant4 {
         #[doc = "Untrusted tool JSON arguments, including keys, count toward product budgets."]
         arguments: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
         #[doc = "Provider tool name; not an approved execution action."]
@@ -922,36 +929,105 @@ pub enum EventBody {
         #[doc = "Untrusted tool proposal correlation identifier."]
         #[serde(rename = "proposalId")]
         proposal_id: Id,
+        #[doc = "Closed variant discriminator."]
+        #[serde(rename = "type")]
+        type_: ::std::string::String,
     },
-    #[doc = "tool_result variant; all fields are data, never authentication or execution authority."]
-    #[serde(rename = "tool_result")]
-    ToolResult {
+    #[doc = "`Variant5` alternative; see the parent type's schema contract."]
+    Variant5 {
         #[doc = "Protocol tool-result disposition, not authoritative business execution status."]
-        disposition: EventBodyDisposition,
+        disposition: EventBodyVariant5Disposition,
         #[doc = "Untrusted tool proposal correlation identifier."]
         #[serde(rename = "proposalId")]
         proposal_id: Id,
         #[doc = "Untrusted model/user text subject to the whole-envelope budgets."]
-        text: EventBodyText,
+        text: EventBodyVariant5Text,
+        #[doc = "Closed variant discriminator."]
+        #[serde(rename = "type")]
+        type_: ::std::string::String,
     },
-    #[doc = "interaction variant; all fields are data, never authentication or execution authority."]
-    #[serde(rename = "interaction")]
-    Interaction {
+    #[doc = "`Variant6` alternative; see the parent type's schema contract."]
+    Variant6 {
         #[doc = "Single-use interaction identity within the namespace."]
         #[serde(rename = "interactionId")]
         interaction_id: Id,
         #[doc = "Required for the first pending event and equal to the newly committed Interaction request; forbidden on later lifecycle events."]
-        #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-        request: ::std::option::Option<InteractionRequest>,
-        #[doc = "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."]
-        status: EventBodyStatus,
+        request: InteractionRequest,
+        #[doc = "First publication of an ordinary user question."]
+        status: ::std::string::String,
+        #[doc = "Closed variant discriminator."]
+        #[serde(rename = "type")]
+        type_: ::std::string::String,
     },
-    #[doc = "error variant; all fields are data, never authentication or execution authority."]
-    #[serde(rename = "error")]
-    Error {
+    #[doc = "`Variant7` alternative; see the parent type's schema contract."]
+    Variant7 {
+        #[doc = "Single-use interaction identity within the namespace."]
+        #[serde(rename = "interactionId")]
+        interaction_id: Id,
+        #[doc = "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."]
+        status: EventBodyVariant7Status,
+        #[doc = "Closed variant discriminator."]
+        #[serde(rename = "type")]
+        type_: ::std::string::String,
+    },
+    #[doc = "`Variant8` alternative; see the parent type's schema contract."]
+    Variant8 {
         #[doc = "Closed failure category and retry discipline."]
         failure: Failure,
+        #[doc = "Closed variant discriminator."]
+        #[serde(rename = "type")]
+        type_: ::std::string::String,
     },
+}
+#[doc = "Untrusted model/user text subject to the whole-envelope budgets."]
+#[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct EventBodyVariant0Text(::std::string::String);
+impl ::std::ops::Deref for EventBodyVariant0Text {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<EventBodyVariant0Text> for ::std::string::String {
+    fn from(value: EventBodyVariant0Text) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for EventBodyVariant0Text {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() > 65536usize {
+            return Err("longer than 65536 characters".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for EventBodyVariant0Text {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for EventBodyVariant0Text {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for EventBodyVariant0Text {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
 }
 #[doc = "Cancellation request transport confirmation only; does not manufacture a model terminal."]
 #[derive(
@@ -965,7 +1041,7 @@ pub enum EventBody {
     PartialEq,
     PartialOrd,
 )]
-pub enum EventBodyConfirmation {
+pub enum EventBodyVariant3Confirmation {
     #[serde(rename = "request_only")]
     #[doc = "`RequestOnly` alternative; see the parent type's schema contract."]
     RequestOnly,
@@ -976,7 +1052,7 @@ pub enum EventBodyConfirmation {
     #[doc = "`Unsupported` alternative; see the parent type's schema contract."]
     Unsupported,
 }
-impl ::std::fmt::Display for EventBodyConfirmation {
+impl ::std::fmt::Display for EventBodyVariant3Confirmation {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::RequestOnly => f.write_str("request_only"),
@@ -985,7 +1061,7 @@ impl ::std::fmt::Display for EventBodyConfirmation {
         }
     }
 }
-impl ::std::str::FromStr for EventBodyConfirmation {
+impl ::std::str::FromStr for EventBodyVariant3Confirmation {
     type Err = self::error::ConversionError;
     fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         match value {
@@ -996,13 +1072,13 @@ impl ::std::str::FromStr for EventBodyConfirmation {
         }
     }
 }
-impl ::std::convert::TryFrom<&str> for EventBodyConfirmation {
+impl ::std::convert::TryFrom<&str> for EventBodyVariant3Confirmation {
     type Error = self::error::ConversionError;
     fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
 }
-impl ::std::convert::TryFrom<::std::string::String> for EventBodyConfirmation {
+impl ::std::convert::TryFrom<::std::string::String> for EventBodyVariant3Confirmation {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
@@ -1022,7 +1098,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventBodyConfirmation {
     PartialEq,
     PartialOrd,
 )]
-pub enum EventBodyDisposition {
+pub enum EventBodyVariant5Disposition {
     #[serde(rename = "returned")]
     #[doc = "`Returned` alternative; see the parent type's schema contract."]
     Returned,
@@ -1033,7 +1109,7 @@ pub enum EventBodyDisposition {
     #[doc = "`Unavailable` alternative; see the parent type's schema contract."]
     Unavailable,
 }
-impl ::std::fmt::Display for EventBodyDisposition {
+impl ::std::fmt::Display for EventBodyVariant5Disposition {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Returned => f.write_str("returned"),
@@ -1042,7 +1118,7 @@ impl ::std::fmt::Display for EventBodyDisposition {
         }
     }
 }
-impl ::std::str::FromStr for EventBodyDisposition {
+impl ::std::str::FromStr for EventBodyVariant5Disposition {
     type Err = self::error::ConversionError;
     fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         match value {
@@ -1053,18 +1129,68 @@ impl ::std::str::FromStr for EventBodyDisposition {
         }
     }
 }
-impl ::std::convert::TryFrom<&str> for EventBodyDisposition {
+impl ::std::convert::TryFrom<&str> for EventBodyVariant5Disposition {
     type Error = self::error::ConversionError;
     fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
 }
-impl ::std::convert::TryFrom<::std::string::String> for EventBodyDisposition {
+impl ::std::convert::TryFrom<::std::string::String> for EventBodyVariant5Disposition {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
+    }
+}
+#[doc = "Untrusted model/user text subject to the whole-envelope budgets."]
+#[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct EventBodyVariant5Text(::std::string::String);
+impl ::std::ops::Deref for EventBodyVariant5Text {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<EventBodyVariant5Text> for ::std::string::String {
+    fn from(value: EventBodyVariant5Text) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for EventBodyVariant5Text {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() > 65536usize {
+            return Err("longer than 65536 characters".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for EventBodyVariant5Text {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for EventBodyVariant5Text {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for EventBodyVariant5Text {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
     }
 }
 #[doc = "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."]
@@ -1079,10 +1205,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventBodyDisposition {
     PartialEq,
     PartialOrd,
 )]
-pub enum EventBodyStatus {
-    #[serde(rename = "pending")]
-    #[doc = "`Pending` alternative; see the parent type's schema contract."]
-    Pending,
+pub enum EventBodyVariant7Status {
     #[serde(rename = "answered")]
     #[doc = "`Answered` alternative; see the parent type's schema contract."]
     Answered,
@@ -1093,21 +1216,19 @@ pub enum EventBodyStatus {
     #[doc = "`Unavailable` alternative; see the parent type's schema contract."]
     Unavailable,
 }
-impl ::std::fmt::Display for EventBodyStatus {
+impl ::std::fmt::Display for EventBodyVariant7Status {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
-            Self::Pending => f.write_str("pending"),
             Self::Answered => f.write_str("answered"),
             Self::Expired => f.write_str("expired"),
             Self::Unavailable => f.write_str("unavailable"),
         }
     }
 }
-impl ::std::str::FromStr for EventBodyStatus {
+impl ::std::str::FromStr for EventBodyVariant7Status {
     type Err = self::error::ConversionError;
     fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         match value {
-            "pending" => Ok(Self::Pending),
             "answered" => Ok(Self::Answered),
             "expired" => Ok(Self::Expired),
             "unavailable" => Ok(Self::Unavailable),
@@ -1115,68 +1236,18 @@ impl ::std::str::FromStr for EventBodyStatus {
         }
     }
 }
-impl ::std::convert::TryFrom<&str> for EventBodyStatus {
+impl ::std::convert::TryFrom<&str> for EventBodyVariant7Status {
     type Error = self::error::ConversionError;
     fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
 }
-impl ::std::convert::TryFrom<::std::string::String> for EventBodyStatus {
+impl ::std::convert::TryFrom<::std::string::String> for EventBodyVariant7Status {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
-    }
-}
-#[doc = "Untrusted model/user text subject to the whole-envelope budgets."]
-#[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
-#[serde(transparent)]
-pub struct EventBodyText(::std::string::String);
-impl ::std::ops::Deref for EventBodyText {
-    type Target = ::std::string::String;
-    fn deref(&self) -> &::std::string::String {
-        &self.0
-    }
-}
-impl ::std::convert::From<EventBodyText> for ::std::string::String {
-    fn from(value: EventBodyText) -> Self {
-        value.0
-    }
-}
-impl ::std::str::FromStr for EventBodyText {
-    type Err = self::error::ConversionError;
-    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if value.chars().count() > 65536usize {
-            return Err("longer than 65536 characters".into());
-        }
-        Ok(Self(value.to_string()))
-    }
-}
-impl ::std::convert::TryFrom<&str> for EventBodyText {
-    type Error = self::error::ConversionError;
-    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-impl ::std::convert::TryFrom<::std::string::String> for EventBodyText {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: ::std::string::String,
-    ) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-impl<'de> ::serde::Deserialize<'de> for EventBodyText {
-    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
-    where
-        D: ::serde::Deserializer<'de>,
-    {
-        ::std::string::String::deserialize(deserializer)?
-            .parse()
-            .map_err(|e: self::error::ConversionError| {
-                <D::Error as ::serde::de::Error>::custom(e.to_string())
-            })
     }
 }
 #[doc = "Value-free failure and explicit retry discipline."]
@@ -1411,6 +1482,8 @@ pub struct Interaction {
     #[doc = "generation_bound cannot survive callback loss; provider_resumable requires verified native restoration."]
     #[serde(rename = "callbackLifetime")]
     pub callback_lifetime: InteractionCallbackLifetime,
+    #[doc = "Ordinary user question only; permission and execution callbacks are forbidden in this lifecycle."]
+    pub category: ::std::string::String,
     #[doc = "Client-generated idempotency key; reuse only with identical canonical content."]
     #[serde(rename = "commandId")]
     pub command_id: Id,
@@ -2222,24 +2295,35 @@ impl std::fmt::Debug for EventBody {
         f.write_str(concat!(stringify!(EventBody), "([redacted])"))
     }
 }
-impl std::fmt::Debug for EventBodyConfirmation {
+impl std::fmt::Debug for EventBodyVariant0Text {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(concat!(stringify!(EventBodyConfirmation), "([redacted])"))
+        f.write_str(concat!(stringify!(EventBodyVariant0Text), "([redacted])"))
     }
 }
-impl std::fmt::Debug for EventBodyDisposition {
+impl std::fmt::Debug for EventBodyVariant3Confirmation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(concat!(stringify!(EventBodyDisposition), "([redacted])"))
+        f.write_str(concat!(
+            stringify!(EventBodyVariant3Confirmation),
+            "([redacted])"
+        ))
     }
 }
-impl std::fmt::Debug for EventBodyStatus {
+impl std::fmt::Debug for EventBodyVariant5Disposition {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(concat!(stringify!(EventBodyStatus), "([redacted])"))
+        f.write_str(concat!(
+            stringify!(EventBodyVariant5Disposition),
+            "([redacted])"
+        ))
     }
 }
-impl std::fmt::Debug for EventBodyText {
+impl std::fmt::Debug for EventBodyVariant5Text {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(concat!(stringify!(EventBodyText), "([redacted])"))
+        f.write_str(concat!(stringify!(EventBodyVariant5Text), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for EventBodyVariant7Status {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(EventBodyVariant7Status), "([redacted])"))
     }
 }
 impl std::fmt::Debug for Failure {

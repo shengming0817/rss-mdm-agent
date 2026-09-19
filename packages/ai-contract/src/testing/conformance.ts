@@ -289,6 +289,7 @@ export async function seedInteraction(
   const interaction: import("../wire.js").Interaction = {
     schemaVersion: 2,
     kind: "interaction",
+    category: "question",
     namespace: session.namespace,
     interactionId: "question-1",
     commandId: "command-1",
@@ -778,8 +779,9 @@ export function interactionEvent(
     body: {
       type: "interaction",
       interactionId: row.interactionId,
-      status: row.status,
-      ...(row.status === "pending" ? { request: row.request } : {}),
+      ...(row.status === "pending"
+        ? { status: "pending", request: row.request }
+        : { status: row.status }),
     },
   };
 }
@@ -798,6 +800,7 @@ async function runCallbackConformance(store: SessionStore): Promise<void> {
     },
     commandId: seeded.interaction.commandId,
     interaction: {
+      category: "question",
       interactionId: "question-2",
       nativeCallbackId: "callback-2",
       expiresAtMs: 100,
@@ -852,7 +855,7 @@ async function runCallbackConformance(store: SessionStore): Promise<void> {
                 interactionId: row.interactionId,
                 status: "pending",
                 ...(request === undefined ? {} : { request }),
-              },
+              } as import("../wire.js").EventBody,
             },
           ],
         })
@@ -904,7 +907,9 @@ async function runCallbackConformance(store: SessionStore): Promise<void> {
   assert.equal(snapshot.interactions.length, 2);
   assert.ok(snapshot.interactions.every((row) => row.status === "answered"));
   assert.deepEqual(
-    snapshot.interactions[1].request,
+    snapshot.interactions.find(
+      (row) => row.interactionId === observation.interaction.interactionId,
+    )?.request,
     observation.interaction.request,
   );
 }

@@ -269,6 +269,7 @@ export async function runProviderConformance(
                     Object.keys(observation.interaction).sort(),
                     [
                       "callbackLifetime",
+                      "category",
                       "expiresAtMs",
                       "interactionId",
                       "nativeCallbackId",
@@ -276,6 +277,13 @@ export async function runProviderConformance(
                     ],
                   );
                 } else {
+                  assert.equal(
+                    observation.type === "event" &&
+                      observation.body.type === "interaction" &&
+                      String(observation.body.status) === "pending",
+                    false,
+                    "pending callbacks require the dedicated question observation",
+                  );
                   assert.ok(
                     observation.type === "event" ||
                       observation.type === "delta",

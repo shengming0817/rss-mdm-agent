@@ -195,11 +195,23 @@ export type EventBody =
       /** Single-use interaction identity within the namespace. */
       interactionId: Id;
       /**
+       * First publication of an ordinary user question.
+       */
+      status: "pending";
+      /** Required for the first pending event and equal to the newly committed Interaction request; forbidden on later lifecycle events. */
+      request: InteractionRequest;
+    }
+  | {
+      /**
+       * Closed variant discriminator.
+       */
+      type: "interaction";
+      /** Single-use interaction identity within the namespace. */
+      interactionId: Id;
+      /**
        * Explicit lifecycle state; missing native evidence cannot be inferred from transport loss.
        */
-      status: "pending" | "answered" | "expired" | "unavailable";
-      /** Required for the first pending event and equal to the newly committed Interaction request; forbidden on later lifecycle events. */
-      request?: InteractionRequest;
+      status: "answered" | "expired" | "unavailable";
     }
   | {
       /**
@@ -498,6 +510,10 @@ export interface Interaction {
   nativeCallbackId: Id;
   /** Immutable untrusted question payload retained for display; does not restore a lost native callback or grant approval. */
   request: InteractionRequest;
+  /**
+   * Ordinary user question only; permission and execution callbacks are forbidden in this lifecycle.
+   */
+  category: "question";
 }
 /**
  * Reliable cross-service outbox record bound to an immutable event and target.
