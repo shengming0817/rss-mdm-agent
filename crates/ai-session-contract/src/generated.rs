@@ -1083,7 +1083,7 @@ pub enum EventBody {
     #[doc = "`Variant9` alternative; see the parent type's schema contract."]
     Variant9 {
         #[doc = "Full surface recovery state committed with this event."]
-        surface: SurfaceState,
+        surface: ::std::boxed::Box<SurfaceState>,
         #[doc = "Closed variant discriminator."]
         #[serde(rename = "type")]
         type_: ::std::string::String,
@@ -2196,7 +2196,7 @@ pub enum Subscription {
     #[doc = "`Event` alternative; see the parent type's schema contract."]
     Event {
         #[doc = "Stable Host event."]
-        event: Event,
+        event: ::std::boxed::Box<Event>,
     },
     #[serde(rename = "delta")]
     #[doc = "`Delta` alternative; see the parent type's schema contract."]

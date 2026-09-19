@@ -13,6 +13,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // owns semantics; document each generated serialized alternative here.
         if let syn::Item::Enum(enumeration) = item {
             for variant in &mut enumeration.variants {
+                // Rust representation only: serde Box is wire-transparent. Keep
+                // nested records from inflating every alternative of tagged enums.
+                if let syn::Fields::Named(fields) = &mut variant.fields {
+                    for field in &mut fields.named {
+                        if matches!(&field.ty, syn::Type::Path(p)
+                            if p.path.is_ident("SurfaceState") || p.path.is_ident("Event"))
+                        {
+                            let ty = &field.ty;
+                            field.ty = syn::parse_quote!(::std::boxed::Box<#ty>);
+                        }
+                    }
+                }
                 if !variant.attrs.iter().any(|a| a.path().is_ident("doc")) {
                     let doc = format!(
                         "`{}` alternative; see the parent type's schema contract.",
