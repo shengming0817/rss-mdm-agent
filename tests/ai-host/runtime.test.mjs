@@ -85,6 +85,35 @@ async function setup(t, revision = "1", extras = {}) {
   };
   host = unwrap(
     await createHost({
+      delivery: extras.admission
+        ? {
+            prepare: () => ({
+              ok: true,
+              value: { operationId: "fixture-delivery", target: "fixture" },
+            }),
+            send: async (request, b) => {
+              const saved = unwrap(
+                await store.delivery(request.namespace, "fixture-delivery"),
+              );
+              assert.equal(saved.delivery.status, "reconciliation_required");
+              const reply = await extras.admission.tools.propose(
+                request.body.proposal,
+                b,
+              );
+              return reply.ok
+                ? {
+                    ok: true,
+                    value: {
+                      receiptRef: "fixture-receipt",
+                      reply: reply.value,
+                    },
+                  }
+                : reply;
+            },
+            reconcile: async () => ({ ok: true, value: { state: "unknown" } }),
+            acknowledge: async () => ({ ok: true, value: undefined }),
+          }
+        : null,
       store,
       launchFences: store,
       resolve: async (caller, options, namespace) => ({
@@ -108,7 +137,7 @@ async function setup(t, revision = "1", extras = {}) {
   });
   const session = unwrap(await host.createSession(caller, options, budget()));
   const command = (id, text = "hold") => ({
-    schemaVersion: 3,
+    schemaVersion: 4,
     kind: "command",
     sessionId: session.namespace.sessionId,
     commandId: id,
@@ -301,7 +330,7 @@ test("standard ACP queued input outlives the request budget and executes in FIFO
     await f.host.cancel(
       caller,
       {
-        schemaVersion: 3,
+        schemaVersion: 4,
         kind: "command",
         sessionId: session.namespace.sessionId,
         commandId: "release-long-run",
@@ -431,7 +460,7 @@ test("worker reverse tool RPC reaches the parent-admitted endpoint without seria
   const f = await setup(t, "1", { admission });
   unwrap(await f.host.submit(caller, f.command("tool", "quick"), budget()));
   await until(() => calls.length === 1);
-  assert.equal(verifications[0].tools, admission.tools);
+  assert.equal(typeof verifications[0].tools.propose, "function");
   assert.deepEqual(calls[0].caller, caller);
   assert.equal(calls[0].proposal.name, "fixture");
 });
@@ -594,6 +623,7 @@ for (const option of [
   test(`Host factory returns invalid_input for invalid ${option}`, async () => {
     for (const value of [0, -1, NaN, Infinity, 1.5]) {
       const result = await createHost({
+        delivery: null,
         store: {},
         resolve: async () => {},
         [option]: value,

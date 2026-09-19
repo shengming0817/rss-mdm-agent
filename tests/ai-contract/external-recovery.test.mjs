@@ -121,7 +121,7 @@ test("raw reconciliation cannot reset an ambiguous attempt", async () => {
     "unknown",
   );
   const accepted = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     kind: "commandRecord",
     command: record.command,
     receipt: record.receipt,

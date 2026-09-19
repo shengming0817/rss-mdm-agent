@@ -232,6 +232,7 @@ pub(crate) struct StoredApprovals<'a> {
     pub scope: &'a Scope,
     pub limits: Limits,
     pub now: u64,
+    pub clock: &'a dyn Fn() -> Result<u64, Error>,
     pub head: &'a Head,
 }
 impl StoredApprovals<'_> {
@@ -308,9 +309,13 @@ impl ApprovalVerifier for StoredApprovals<'_> {
         plan: &FrozenPlan,
         refs: &[VersionedRef],
     ) -> Result<ApprovalFacts, VerificationError> {
+        let now = (self.clock)().map_err(|_| VerificationError::Clock)?;
+        if now < self.now {
+            return Err(VerificationError::Clock);
+        }
         if Scope::from_plan(plan) != *self.scope
             || refs.len() > self.limits.max_approvals
-            || self.now >= self.head.until
+            || now >= self.head.until
         {
             return Err(VerificationError::Unavailable);
         }
@@ -322,7 +327,7 @@ impl ApprovalVerifier for StoredApprovals<'_> {
             authority: self.scope.authority.clone(),
             policy: plan.spec().policy.clone(),
             verification_revision: self.head.approval.clone(),
-            now_unix_ms: self.now,
+            now_unix_ms: now,
             fresh_until_unix_ms: self.head.until,
             records,
         })
@@ -380,6 +385,7 @@ pub(crate) fn consume(
         scope: &w.scope,
         limits: w.limits,
         now: w.now,
+        clock: &|| Ok(w.now),
         head: h,
     };
     let mut audits = Vec::new();

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted } from "vue";
+import { computed, onMounted, onUnmounted } from "vue";
 import type { Controller } from "./controller";
 import type { Decision, RequestView } from "./types";
 import ParameterForm from "./ParameterForm.vue";
@@ -51,9 +51,14 @@ function status(value: RequestView["status"]): string {
       return "效果未知";
   }
 }
+let polling: ReturnType<typeof setInterval>;
 onMounted(() => {
+  polling = setInterval(() => {
+    if (!s.busy && !s.replying) void c.refresh();
+  }, 1500);
   void c.refresh();
 });
+onUnmounted(() => clearInterval(polling));
 </script>
 <template>
   <div class="self-service">
@@ -256,7 +261,9 @@ onMounted(() => {
           :item="
             s.snapshot.catalog.find((item) => item.itemId === task?.plan.itemId)
           "
-          :disabled="!c.interactive || s.replying || s.replyUnknown"
+          :disabled="!c.interactive || s.busy || s.replying || s.replyUnknown"
+          @approve="task && c.approve(task)"
+          @cancel="task && c.cancel(task)"
           @respond="(id, answer) => task && c.respond(task, id, answer)"
         />
       </div>
@@ -267,10 +274,10 @@ onMounted(() => {
       <p>{{ s.snapshot.targetLabel }}</p>
       <p>这是固定的模拟目标，不代表当前电脑的身份、权限或适用性。</p>
       <p>
-        页面关闭不会取消任务。测试服务仅保存当前进程内存数据，退出应用后清空。
+        关闭窗口不会取消任务。S1 任务与会话分别保存在本地，重开后可查询原请求。
       </p>
       <p>
-        真实安装、可信管理员批准与持久恢复将在后续执行服务中接入。
+        测试批准仅授权精确的 S1 计划；当前没有真实安装、脚本执行或企业权限。
       </p></template
     >
   </div>

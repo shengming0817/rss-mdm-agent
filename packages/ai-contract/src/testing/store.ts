@@ -115,6 +115,20 @@ export class MemorySessionStore implements SessionStore {
       return row ? ok(clone(row)) : fail("unavailable");
     });
   }
+  async delivery(
+    namespace: Namespace,
+    id: Id,
+  ): Promise<Result<{ delivery: Delivery; event: Event } | null>> {
+    return this.query(() => {
+      if (this.closed) return fail("unavailable");
+      const state = this.states.get(namespaceKey(namespace));
+      if (!state) return fail("session_gone");
+      const delivery = state.deliveries.get(id);
+      if (!delivery) return ok(null);
+      const event = state.events.find((e) => e.eventId === delivery.eventId);
+      return event ? ok(clone({ delivery, event })) : fail("invalid_input");
+    });
+  }
   async surface(namespace: Namespace, id: Id): Promise<Result<SurfaceState>> {
     return this.query(() => {
       if (this.closed) return fail("unavailable");

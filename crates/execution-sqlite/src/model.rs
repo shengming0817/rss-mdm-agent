@@ -356,6 +356,13 @@ pub enum OperationKind {
     /// Answer/cancel/expiry command.
     Interaction,
 }
+/// A bounded authorized page of existing executions, with an exclusive continuation.
+pub struct ExecutionRequestPage {
+    /// Request identities belonging to the requested actor and device.
+    pub requests: Vec<execution_contract::RequestId>,
+    /// Last returned identity when another page exists.
+    pub next: Option<execution_contract::RequestId>,
+}
 /// Stable business result; none of these variants is a dispatch permission.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -62,7 +62,7 @@ test(
     );
 
     const initial = {
-      schemaVersion: 3,
+      schemaVersion: 4,
       kind: "session",
       namespace: first.configuration.namespace,
       revision: 0,

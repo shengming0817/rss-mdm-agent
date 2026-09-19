@@ -43,7 +43,7 @@ onBeforeUnmount(assistant.dispose);
                 ? "AI 会话"
                 : "AI 服务未连接"
             : controller.interactive
-              ? "固定测试服务 · 无真实执行"
+              ? "S1 受控测试 · 无真实执行"
               : "浏览器只读预览"
         }}</span>
       </div></template
@@ -68,7 +68,7 @@ onBeforeUnmount(assistant.dispose);
     <Assistant v-show="page === 'assistant'" :controller="assistant" />
     <template #status
       ><div class="footer-note">
-        <span>测试服务 · 无系统副作用 · 无可信批准</span
+        <span>S1 测试服务 · 无系统副作用 · 独立测试批准</span
         ><span>AI 对话与设备执行分别核对</span>
       </div></template
     >

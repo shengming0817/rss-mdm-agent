@@ -29,6 +29,10 @@ function fixture() {
         digest: input.digest,
       },
     })),
+    cancel: vi.fn<SelfServicePort["cancel"]>(async () => structuredClone(task)),
+    approve: vi.fn<SelfServicePort["approve"]>(async () =>
+      structuredClone(task),
+    ),
     respond: vi.fn<SelfServicePort["respond"]>(async () =>
       structuredClone(task),
     ),
@@ -103,7 +107,7 @@ describe("self-service controller", () => {
       wrapper.unmount();
     },
   );
-  it("keeps one request through draft changes and double clicks, then requires explicit new intent", async () => {
+  it("changes request identity with draft content and preserves it for submission retries", async () => {
     const { c, port, snapshot } = fixture();
     await c.refresh();
     const item = snapshot.catalog.find((i) => i.itemId === "diagnostics")!;
@@ -114,12 +118,13 @@ describe("self-service controller", () => {
     c.change("count", { kind: "integer", value: "3.0" });
     expect(c.state.plan).toBeNull();
     await c.prepare();
-    expect(c.state.requestId).toBe(id);
+    expect(c.state.requestId).not.toBe(id);
+    const frozenId = c.state.requestId;
     await Promise.all([c.submit(), c.submit()]);
     expect(port.submit).toHaveBeenCalledTimes(1);
     expect(c.state.accepted).toBe(true);
     c.select(item);
-    expect(c.state.requestId).toBe(id);
+    expect(c.state.requestId).toBe(frozenId);
     c.select(item, true);
     expect(c.state.requestId).not.toBe(id);
   });

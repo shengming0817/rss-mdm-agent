@@ -50,7 +50,7 @@ export class FakeHost implements HostPort {
   ) {}
   negotiate(offered: Negotiation): Result<Negotiation> {
     if (this.closed) return fail("unavailable");
-    if (offered.contractVersion !== 3 || offered.acp !== 1)
+    if (offered.contractVersion !== 4 || offered.acp !== 1)
       return fail("unsupported_version");
     if (
       offered.a2ui &&
@@ -90,7 +90,7 @@ export class FakeHost implements HostPort {
       return fail("unavailable");
     }
     const session: Session = {
-      schemaVersion: 3,
+      schemaVersion: 4,
       kind: "session",
       namespace,
       revision: 0,
@@ -310,7 +310,7 @@ export class FakeHost implements HostPort {
     const events: Event[] = bodies.map(
       (body, index) =>
         ({
-          schemaVersion: 3,
+          schemaVersion: 4,
           kind: "event",
           namespace,
           eventId: `script-${s.lastSequence + index + 1}`,
@@ -330,7 +330,7 @@ export class FakeHost implements HostPort {
         if (row.commandId === commandId && row.status === "pending") {
           interactions.push({ ...row, status: "unavailable" });
           events.push({
-            schemaVersion: 3,
+            schemaVersion: 4,
             kind: "event",
             namespace,
             eventId: `script-${s.lastSequence + events.length + 1}`,
@@ -361,7 +361,7 @@ export class FakeHost implements HostPort {
           };
           surfaces.push(surface);
           events.push({
-            schemaVersion: 3,
+            schemaVersion: 4,
             kind: "event",
             namespace,
             eventId: `script-${s.lastSequence + events.length + 1}`,
@@ -378,7 +378,7 @@ export class FakeHost implements HostPort {
       : [];
     if (terminal)
       events.push({
-        schemaVersion: 3,
+        schemaVersion: 4,
         kind: "event",
         namespace,
         eventId: `script-proof-${s.revision}`,
@@ -403,7 +403,7 @@ export class FakeHost implements HostPort {
       commands: terminal
         ? [
             {
-              schemaVersion: 3,
+              schemaVersion: 4,
               kind: "commandRecord",
               command: record.command,
               receipt: record.receipt,
@@ -434,7 +434,7 @@ export class FakeHost implements HostPort {
     if (!found.ok) return found;
     const s = found.value;
     const interaction: Interaction = {
-      schemaVersion: 3,
+      schemaVersion: 4,
       kind: "interaction",
       category: "question",
       namespace,
@@ -458,7 +458,7 @@ export class FakeHost implements HostPort {
       interactions: [interaction],
       events: [
         {
-          schemaVersion: 3,
+          schemaVersion: 4,
           kind: "event",
           namespace,
           eventId: `question-${interactionId}`,

@@ -142,6 +142,8 @@ pub enum TaskPhase {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionStatus {
+    /// The initial submission receipt exists; preview alone leaves this false.
+    pub submitted: bool,
     /// Original reliable business identity.
     pub operation_request_id: RequestId,
     /// Exact frozen plan identity.

@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { readFileSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
@@ -38,7 +39,9 @@ export interface ResolvedClaudeConfiguration {
   configuration: ClaudeConfiguration;
   configurationDirectory: string;
   apiUrl: string;
-  credential: { type: "api_key" | "auth_token"; value: string };
+  credential:
+    | { type: "api_key" | "auth_token" | "oauth_token"; value: string }
+    | { type: "user_login"; sourceDirectory: string };
   model?: string;
 }
 export interface ClaudeAdapterOptions {
@@ -88,8 +91,10 @@ export function sdkOptions(resolved: ResolvedClaudeConfiguration): Options {
     url.password ||
     url.search ||
     url.hash ||
-    !credential.value ||
-    !["api_key", "auth_token"].includes(credential.type) ||
+    (credential.type === "user_login"
+      ? process.platform !== "darwin" || !isAbsolute(credential.sourceDirectory)
+      : !credential.value ||
+        !["api_key", "auth_token", "oauth_token"].includes(credential.type)) ||
     !isAbsolute(config.workingDirectory) ||
     !isAbsolute(resolved.configurationDirectory)
   )
@@ -107,9 +112,21 @@ export function sdkOptions(resolved: ResolvedClaudeConfiguration): Options {
   env.NoDefaultCurrentDirectoryInExePath = "1";
   for (const key of ["SystemRoot", "WINDIR", "TEMP", "TMP", "TMPDIR"])
     if (process.env[key]) env[key] = process.env[key]!;
-  env[
-    credential.type === "api_key" ? "ANTHROPIC_API_KEY" : "ANTHROPIC_AUTH_TOKEN"
-  ] = credential.value;
+  if (credential.type === "user_login") {
+    // Fixed CLI secure-storage override selects the user's keychain, not their tools/settings.
+    env.CLAUDE_SECURESTORAGE_CONFIG_DIR =
+      credential.sourceDirectory === join(homedir(), ".claude")
+        ? ""
+        : credential.sourceDirectory;
+    if (process.env.USER) env.USER = process.env.USER;
+  } else
+    env[
+      credential.type === "api_key"
+        ? "ANTHROPIC_API_KEY"
+        : credential.type === "oauth_token"
+          ? "CLAUDE_CODE_OAUTH_TOKEN"
+          : "ANTHROPIC_AUTH_TOKEN"
+    ] = credential.value;
   return {
     cwd: config.workingDirectory,
     env,

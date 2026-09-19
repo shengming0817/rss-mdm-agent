@@ -66,6 +66,45 @@ export type LimitReason =
  */
 export type StopOutcome = "acknowledged" | "failed";
 /**
+ * Product actor reference, not an authenticated principal.
+ *
+ * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
+ * via the `definition` "ActorId".
+ */
+export type ActorId = string;
+/**
+ * Separate namespaces: none of these serializable references authenticates its issuer.
+ *
+ * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
+ * via the `definition` "Authority".
+ */
+export type Authority =
+  | {
+      /**
+       * Authority reference in this variant namespace; no proof of issuer authenticity.
+       */
+      id: string;
+      kind: "local";
+    }
+  | {
+      /**
+       * Authority reference in this variant namespace; no proof of issuer authenticity.
+       */
+      id: string;
+      kind: "enterprise";
+      /**
+       * Explicit enterprise tenant reference; local/test authority never fabricates a tenant.
+       */
+      tenant: string;
+    }
+  | {
+      /**
+       * Authority reference in this variant namespace; no proof of issuer authenticity.
+       */
+      id: string;
+      kind: "test";
+    };
+/**
  * Device reference, not verified registration evidence.
  *
  * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
@@ -101,6 +140,38 @@ export type ExecutionMode = "test" | "real";
  */
 export type Id = string;
 /**
+ * Request origin and account provenance; never grants the product actor additional authority.
+ *
+ * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
+ * via the `definition` "Initiator".
+ */
+export type Initiator =
+  | {
+      kind: "human";
+      osSession: OsSessionRef;
+    }
+  | {
+      /**
+       * Originating AI conversation reference in the provider namespace.
+       */
+      conversation: string;
+      kind: "ai";
+      osSession: OsSessionRef1;
+      /**
+       * Provider/CLI namespace of the recorded AI account; not product authentication.
+       */
+      provider: string;
+      providerAccount: ProviderAccountRef;
+      /**
+       * Originating tool-call reference; cannot act as a product approval.
+       */
+      toolCall: string;
+    }
+  | {
+      kind: "policy";
+      policy: VersionedRef2;
+    };
+/**
  * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
  * via the `definition` "LocalContractV1".
  */
@@ -134,7 +205,7 @@ export type RequestId = string;
  */
 export type RunAs =
   | {
-      account: OsAccountRef;
+      account: OsAccountRef1;
       kind: "user";
     }
   | {
@@ -155,7 +226,7 @@ export type SessionRequirement =
       kind: "notRequired";
     }
   | {
-      account: OsAccountRef1;
+      account: OsAccountRef2;
       kind: "activeUser";
     };
 /**
@@ -169,7 +240,7 @@ export type TargetScope =
       kind: "device";
     }
   | {
-      account: OsAccountRef2;
+      account: OsAccountRef3;
       kind: "user";
     };
 /**
@@ -202,8 +273,70 @@ export interface ExecutionTaskDetails {
  */
 export interface FrozenPlanSummary {
   access: AccessSummary;
+  /**
+   * Permission-bearing principal; not the model account.
+   */
+  actor: string;
   artifact: ExactArtifactRef;
+  /**
+   * Product authority bound to the exact plan.
+   */
+  authority:
+    | {
+        /**
+         * Authority reference in this variant namespace; no proof of issuer authenticity.
+         */
+        id: string;
+        kind: "local";
+      }
+    | {
+        /**
+         * Authority reference in this variant namespace; no proof of issuer authenticity.
+         */
+        id: string;
+        kind: "enterprise";
+        /**
+         * Explicit enterprise tenant reference; local/test authority never fabricates a tenant.
+         */
+        tenant: string;
+      }
+    | {
+        /**
+         * Authority reference in this variant namespace; no proof of issuer authenticity.
+         */
+        id: string;
+        kind: "test";
+      };
   budget: ExecutionBudget;
+  /**
+   * Human or AI origin, without granting execution permission.
+   */
+  initiator:
+    | {
+        kind: "human";
+        osSession: OsSessionRef;
+      }
+    | {
+        /**
+         * Originating AI conversation reference in the provider namespace.
+         */
+        conversation: string;
+        kind: "ai";
+        osSession: OsSessionRef1;
+        /**
+         * Provider/CLI namespace of the recorded AI account; not product authentication.
+         */
+        provider: string;
+        providerAccount: ProviderAccountRef;
+        /**
+         * Originating tool-call reference; cannot act as a product approval.
+         */
+        toolCall: string;
+      }
+    | {
+        kind: "policy";
+        policy: VersionedRef2;
+      };
   interpreter: InterpreterRef;
   operation: Operation;
   /**
@@ -214,13 +347,13 @@ export interface FrozenPlanSummary {
    * Exact frozen plan identity.
    */
   planId: string;
-  policy: VersionedRef3;
+  policy: VersionedRef5;
   /**
    * Explicit execution identity; never inferred from a provider login.
    */
   runAs:
     | {
-        account: OsAccountRef;
+        account: OsAccountRef1;
         kind: "user";
       }
     | {
@@ -242,7 +375,7 @@ export interface FrozenPlanSummary {
         kind: "notRequired";
       }
     | {
-        account: OsAccountRef1;
+        account: OsAccountRef2;
         kind: "activeUser";
       };
   target: Target;
@@ -319,11 +452,88 @@ export interface ExecutionBudget {
   totalTimeoutMs: number;
 }
 /**
+ * Originating OS account/session reference, separate from requested run-as identity.
+ */
+export interface OsSessionRef {
+  account: OsAccountRef;
+  /**
+   * Origin device reference; it does not establish registration or target authority.
+   */
+  device: string;
+  /**
+   * Origin OS login/session reference, including an explicit test reference in fixtures.
+   */
+  session: string;
+}
+/**
+ * Login account at the origin; never implicitly equated to the product actor.
+ */
+export interface OsAccountRef {
+  /**
+   * OS namespace of this reference or target; does not assert platform support.
+   */
+  platform: "windows" | "macos" | "linux";
+  /**
+   * Opaque stable OS account reference, such as a SID/UID reference, not an authentication credential.
+   */
+  subject: string;
+}
+/**
+ * Originating OS account/session reference, separate from requested run-as identity.
+ */
+export interface OsSessionRef1 {
+  account: OsAccountRef;
+  /**
+   * Origin device reference; it does not establish registration or target authority.
+   */
+  device: string;
+  /**
+   * Origin OS login/session reference, including an explicit test reference in fixtures.
+   */
+  session: string;
+}
+/**
+ * Explicit provider account and configuration references at initiation.
+ */
+export interface ProviderAccountRef {
+  /**
+   * Opaque account reference scoped by Initiator's provider, not a token or email credential.
+   */
+  account: string;
+  config: VersionedRef1;
+}
+/**
+ * Exact configuration revision used by the originating AI session.
+ */
+export interface VersionedRef1 {
+  /**
+   * Opaque reference identity; the revision must be supplied separately.
+   */
+  id: string;
+  /**
+   * Exact immutable revision reference; does not resolve or follow a moving alias.
+   */
+  revision: string;
+}
+/**
+ * Exact policy revision associated with this request or audit decision.
+ */
+export interface VersionedRef2 {
+  /**
+   * Opaque reference identity; the revision must be supplied separately.
+   */
+  id: string;
+  /**
+   * Exact immutable revision reference; does not resolve or follow a moving alias.
+   */
+  revision: string;
+}
+/**
  * Exact interpreter selection.
  */
 export interface InterpreterRef {
   artifact: ExactArtifactRef1;
-  profile: VersionedRef1;
+  profile: VersionedRef3;
 }
 /**
  * Binary identity; the adapter must verify bytes, without PATH or version fallback.
@@ -338,7 +548,7 @@ export interface ExactArtifactRef1 {
 /**
  * Calling convention identity/revision; matched together with the binary.
  */
-export interface VersionedRef1 {
+export interface VersionedRef3 {
   /**
    * Opaque reference identity; the revision must be supplied separately.
    */
@@ -356,12 +566,12 @@ export interface Operation {
    * Stable operation identifier owned by the catalog/authorization policy.
    */
   action: string;
-  resource: VersionedRef2;
+  resource: VersionedRef4;
 }
 /**
  * Exact resource ID and revision; no latest-version lookup is performed here.
  */
-export interface VersionedRef2 {
+export interface VersionedRef4 {
   /**
    * Opaque reference identity; the revision must be supplied separately.
    */
@@ -374,7 +584,7 @@ export interface VersionedRef2 {
 /**
  * Exact policy revision.
  */
-export interface VersionedRef3 {
+export interface VersionedRef5 {
   /**
    * Opaque reference identity; the revision must be supplied separately.
    */
@@ -387,7 +597,7 @@ export interface VersionedRef3 {
 /**
  * Explicit account reference; never implicitly mapped to a product actor by name or email.
  */
-export interface OsAccountRef {
+export interface OsAccountRef1 {
   /**
    * OS namespace of this reference or target; does not assert platform support.
    */
@@ -400,7 +610,7 @@ export interface OsAccountRef {
 /**
  * Exact account whose session is required, not inferred from the initiator.
  */
-export interface OsAccountRef1 {
+export interface OsAccountRef2 {
   /**
    * OS namespace of this reference or target; does not assert platform support.
    */
@@ -430,14 +640,14 @@ export interface Target {
         kind: "device";
       }
     | {
-        account: OsAccountRef2;
+        account: OsAccountRef3;
         kind: "user";
       };
 }
 /**
  * Explicit account reference; never implicitly mapped to a product actor by name or email.
  */
-export interface OsAccountRef2 {
+export interface OsAccountRef3 {
   /**
    * OS namespace of this reference or target; does not assert platform support.
    */
@@ -526,6 +736,10 @@ export interface ExecutionStatus {
    * Last stop request response; independent of termination/effect evidence.
    */
   stopOutcome: StopOutcome | null;
+  /**
+   * The initial submission receipt exists; preview alone leaves this false.
+   */
+  submitted: boolean;
 }
 /**
  * Versioned observation reference and runner provenance; the referenced fact remains unverified.
@@ -538,7 +752,7 @@ export interface EvidenceRef {
    * Recorded observation category; a category label does not prove an external fact.
    */
   kind: "testResult" | "processExited" | "stateObserved";
-  reference: VersionedRef4;
+  reference: VersionedRef6;
   /**
    * Runner reference whose evidence is being recorded, including an explicit fixture runner in tests.
    */
@@ -547,7 +761,7 @@ export interface EvidenceRef {
 /**
  * Exact versioned reference. Authenticity and access are checked by its owner.
  */
-export interface VersionedRef4 {
+export interface VersionedRef6 {
   /**
    * Opaque reference identity; the revision must be supplied separately.
    */
@@ -692,6 +906,10 @@ export interface ExecutionStatus1 {
    * Last stop request response; independent of termination/effect evidence.
    */
   stopOutcome: StopOutcome | null;
+  /**
+   * The initial submission receipt exists; preview alone leaves this false.
+   */
+  submitted: boolean;
 }
 /**
  * Allowlisted view of the immutable plan; no parameters, launch inputs, secrets or audit.
@@ -701,8 +919,70 @@ export interface ExecutionStatus1 {
  */
 export interface FrozenPlanSummary1 {
   access: AccessSummary;
+  /**
+   * Permission-bearing principal; not the model account.
+   */
+  actor: string;
   artifact: ExactArtifactRef;
+  /**
+   * Product authority bound to the exact plan.
+   */
+  authority:
+    | {
+        /**
+         * Authority reference in this variant namespace; no proof of issuer authenticity.
+         */
+        id: string;
+        kind: "local";
+      }
+    | {
+        /**
+         * Authority reference in this variant namespace; no proof of issuer authenticity.
+         */
+        id: string;
+        kind: "enterprise";
+        /**
+         * Explicit enterprise tenant reference; local/test authority never fabricates a tenant.
+         */
+        tenant: string;
+      }
+    | {
+        /**
+         * Authority reference in this variant namespace; no proof of issuer authenticity.
+         */
+        id: string;
+        kind: "test";
+      };
   budget: ExecutionBudget;
+  /**
+   * Human or AI origin, without granting execution permission.
+   */
+  initiator:
+    | {
+        kind: "human";
+        osSession: OsSessionRef;
+      }
+    | {
+        /**
+         * Originating AI conversation reference in the provider namespace.
+         */
+        conversation: string;
+        kind: "ai";
+        osSession: OsSessionRef1;
+        /**
+         * Provider/CLI namespace of the recorded AI account; not product authentication.
+         */
+        provider: string;
+        providerAccount: ProviderAccountRef;
+        /**
+         * Originating tool-call reference; cannot act as a product approval.
+         */
+        toolCall: string;
+      }
+    | {
+        kind: "policy";
+        policy: VersionedRef2;
+      };
   interpreter: InterpreterRef;
   operation: Operation;
   /**
@@ -713,13 +993,13 @@ export interface FrozenPlanSummary1 {
    * Exact frozen plan identity.
    */
   planId: string;
-  policy: VersionedRef3;
+  policy: VersionedRef5;
   /**
    * Explicit execution identity; never inferred from a provider login.
    */
   runAs:
     | {
-        account: OsAccountRef;
+        account: OsAccountRef1;
         kind: "user";
       }
     | {
@@ -741,7 +1021,7 @@ export interface FrozenPlanSummary1 {
         kind: "notRequired";
       }
     | {
-        account: OsAccountRef1;
+        account: OsAccountRef2;
         kind: "activeUser";
       };
   target: Target;
@@ -755,7 +1035,7 @@ export interface FrozenPlanSummary1 {
  */
 export interface InterpreterRef1 {
   artifact: ExactArtifactRef1;
-  profile: VersionedRef1;
+  profile: VersionedRef3;
 }
 /**
  * Action and exact resource identity submitted to the authorization owner.
@@ -768,7 +1048,7 @@ export interface Operation1 {
    * Stable operation identifier owned by the catalog/authorization policy.
    */
   action: string;
-  resource: VersionedRef2;
+  resource: VersionedRef4;
 }
 /**
  * Opaque account reference in an OS namespace, independent of product or provider identity.
@@ -776,7 +1056,7 @@ export interface Operation1 {
  * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
  * via the `definition` "OsAccountRef".
  */
-export interface OsAccountRef3 {
+export interface OsAccountRef4 {
   /**
    * OS namespace of this reference or target; does not assert platform support.
    */
@@ -785,6 +1065,36 @@ export interface OsAccountRef3 {
    * Opaque stable OS account reference, such as a SID/UID reference, not an authentication credential.
    */
   subject: string;
+}
+/**
+ * Claimed OS login provenance at the request origin, separate from target and run-as identity.
+ *
+ * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
+ * via the `definition` "OsSessionRef".
+ */
+export interface OsSessionRef2 {
+  account: OsAccountRef;
+  /**
+   * Origin device reference; it does not establish registration or target authority.
+   */
+  device: string;
+  /**
+   * Origin OS login/session reference, including an explicit test reference in fixtures.
+   */
+  session: string;
+}
+/**
+ * Non-secret provider/CLI account provenance. Neither field proves product authentication.
+ *
+ * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
+ * via the `definition` "ProviderAccountRef".
+ */
+export interface ProviderAccountRef1 {
+  /**
+   * Opaque account reference scoped by Initiator's provider, not a token or email credential.
+   */
+  account: string;
+  config: VersionedRef1;
 }
 /**
  * Explicit device, platform and scope bound into the plan digest.
@@ -809,7 +1119,7 @@ export interface Target1 {
         kind: "device";
       }
     | {
-        account: OsAccountRef2;
+        account: OsAccountRef3;
         kind: "user";
       };
 }
@@ -835,7 +1145,7 @@ export interface ValidityWindow1 {
  * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
  * via the `definition` "VersionedRef".
  */
-export interface VersionedRef5 {
+export interface VersionedRef7 {
   /**
    * Opaque reference identity; the revision must be supplied separately.
    */

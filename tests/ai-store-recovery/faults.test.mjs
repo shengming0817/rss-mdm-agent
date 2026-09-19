@@ -71,7 +71,7 @@ test("delivery is atomically tied to the event, content and stable operation ide
   const head = unwrap(await store.session(initial.namespace)),
     event = unwrap(await store.events(initial.namespace, 0, 1))[0];
   const delivery = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     kind: "delivery",
     namespace: initial.namespace,
     operationId: "operation-1",

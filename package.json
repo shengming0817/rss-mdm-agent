@@ -48,7 +48,9 @@
     "build:ai-host": "pnpm --filter @rss-mdm-agent/ai-host-app... --filter @rss-mdm-agent/ai-client build",
     "test:ai-host": "pnpm build:ai-host && node --test tests/ai-host/*.test.mjs",
     "check:ai-host-consumer": "node scripts/check-ai-host-consumer.mjs",
-    "bundle:ai-host": "node scripts/bundle-ai-host.mjs"
+    "bundle:ai-host": "node scripts/bundle-ai-host.mjs",
+    "stage:desktop-runtime": "node scripts/stage-desktop-runtime.mjs",
+    "check:desktop-native": "node scripts/check-desktop-native.mjs"
   },
   "devDependencies": {
     "@types/node": "24.3.0",

@@ -28,7 +28,6 @@ import type {
 import {
   ADAPTER_VERSION,
   HARNESS_VERSION,
-  API_URL,
   digest,
   identity,
   sessionPrefix,
@@ -274,7 +273,7 @@ export class DeepSeekAdapter implements ProviderAgentPort {
               scope: digest(identity(c)),
               model: resolved.model,
               apiKey: resolved.apiKey,
-              apiUrl: API_URL,
+              apiUrl: resolved.apiUrl,
               controlled: c.permissions === "host_mediated",
               restore: !!previous,
               composition: COMPOSITION_ID,
@@ -432,7 +431,7 @@ export class DeepSeekAdapter implements ProviderAgentPort {
       decode(
         boundedJson(
           {
-            schemaVersion: 3,
+            schemaVersion: 4,
             kind: "event",
             namespace: this.configuration!.namespace,
             eventId: "validate",

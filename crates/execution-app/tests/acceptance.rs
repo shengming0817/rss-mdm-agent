@@ -7,6 +7,24 @@ fn command(value: &str) -> CommandId {
 }
 
 #[test]
+fn preview_registration_is_not_submission_and_submission_replay_never_dispatches() {
+    let db = Database::new();
+    let host = TestHost::new();
+    let runner = DeterministicTestRunner::new(id("test-runner"), TestScenario::Wait, 16).unwrap();
+    let mut app = open(&db, host.clone(), runner.clone(), Startup::CreateTest);
+    let p = plan();
+    let r = &p.spec().request.request_id;
+    assert_eq!(app.register_plan(r, &p).unwrap().attempts, 0);
+    assert_eq!(app.register_plan(r, &p).unwrap().attempts, 0);
+    assert_eq!(runner.dispatch_count(), 0);
+    assert_eq!(app.submit(r, &p).unwrap().attempts, 1);
+    app.configuration_load_failed(2);
+    host.state.lock().unwrap().accesses = Some(vec![execution_sqlite::Access::ReadResult]);
+    assert_eq!(app.submit(r, &p).unwrap().attempts, 1);
+    assert_eq!(runner.dispatch_count(), 1);
+}
+
+#[test]
 fn task_details_are_authorized_frozen_and_redacted() {
     let db = Database::new();
     let host = TestHost::new();
@@ -20,6 +38,8 @@ fn task_details_are_authorized_frozen_and_redacted() {
     assert_eq!(&details.plan.plan_digest, p.digest());
     assert_eq!(details.plan.target, p.spec().request.target);
     assert_eq!(details.plan.run_as, p.spec().run_as);
+    assert_eq!(details.plan.actor, p.spec().request.actor);
+    assert_eq!(details.plan.initiator, p.spec().request.initiator);
     let json = serde_json::to_string(&details).unwrap();
     for field in [
         "parameters",
@@ -27,7 +47,6 @@ fn task_details_are_authorized_frozen_and_redacted() {
         "cwd",
         "env",
         "stdin",
-        "initiator",
         "delegation",
         "approvalBindings",
         "readPaths",

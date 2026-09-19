@@ -4,6 +4,8 @@ import {
   decode,
   interactionCatalog,
   type Budget,
+  type Binding,
+  type ToolEndpoint,
   type Caller,
   type Command,
   type CommandRecord,
@@ -38,6 +40,12 @@ import {
   namespaceKey,
   ok,
 } from "@rss-mdm-agent/ai-contract/transitions";
+import { Deliveries, type DeliveryRouter } from "./delivery.js";
+export type {
+  DeliveryRouter,
+  DeliveryRequest,
+  DeliveryReceipt,
+} from "./delivery.js";
 import { WorkerPort, groupEmpty } from "./process.js";
 import { Output } from "./queue.js";
 import { Deadline } from "./deadline.js";
@@ -51,16 +59,18 @@ export interface HostOptions {
   readonly onDiagnostic?: (diagnostic: HostDiagnostic) => void;
   readonly store: SessionStore;
   readonly launchFences: WorkerLaunchFenceStore;
+  readonly delivery: DeliveryRouter | null;
   /** Trusted composition. Account references are not credentials. */
   resolve(
     caller: Caller,
     options: SessionOptions,
     namespace: Namespace,
     budget: Budget,
+    previous: Binding | null,
   ): Promise<{
     configuration: ProviderConfiguration;
     artifact: string;
-    admission?: ProviderAdmission;
+    admission?: Pick<ProviderAdmission, "verifier">;
   }>;
   readonly queueLimit?: number;
   readonly workerLimit?: number;
@@ -83,7 +93,7 @@ const budget = (timeoutMs = 30000): Budget => ({
   signal: new AbortController().signal,
 });
 const baseRecord = (record: CommandRecord) => ({
-  schemaVersion: 3 as const,
+  schemaVersion: 4 as const,
   kind: "commandRecord" as const,
   command: record.command,
   receipt: record.receipt,
@@ -122,12 +132,22 @@ export class SessionHost implements HostPort {
   private readonly workerLimit: number;
   private readonly accountLimit: number;
   private readonly timeout: number;
+  private readonly deliveries?: Deliveries;
+  private readonly deliveryAbort = new AbortController();
   private constructor(private readonly options: HostOptions) {
     this.now = options.now ?? Date.now;
     this.queueLimit = options.queueLimit ?? 64;
     this.workerLimit = options.workerLimit ?? 8;
     this.accountLimit = options.accountWorkerLimit ?? 2;
     this.timeout = options.operationTimeoutMs ?? 30000;
+    if (options.delivery)
+      this.deliveries = new Deliveries(
+        options.store,
+        options.delivery,
+        (n, fn) => this.mailbox(n, fn),
+        (n, after) => this.publishSince(n, after),
+        this.now,
+      );
   }
   static async create(options: HostOptions): Promise<Result<SessionHost>> {
     if (
@@ -206,7 +226,7 @@ export class SessionHost implements HostPort {
   }
   negotiate(offered: Negotiation): Result<Negotiation> {
     if (this.closed) return fail("unavailable");
-    if (offered.contractVersion !== 3 || offered.acp !== 1)
+    if (offered.contractVersion !== 4 || offered.acp !== 1)
       return fail("unsupported_version");
     if (
       offered.a2ui &&
@@ -248,8 +268,51 @@ export class SessionHost implements HostPort {
       } while (after);
       for (const namespace of namespaces.values())
         await this.resume(namespace, namespace.sessionId, budget(this.timeout));
+      this.sweepDeliveries();
       return ok(undefined);
     });
+  }
+  private sweepDeliveries() {
+    if (!this.deliveries || this.closing) return;
+    this.track(
+      this.deliveries
+        .recover({ timeoutMs: this.timeout, signal: this.deliveryAbort.signal })
+        .finally(() => {
+          if (this.closing) return;
+          const timer = setTimeout(() => {
+            this.retryTimers.delete(timer);
+            this.sweepDeliveries();
+          }, 1000);
+          timer.unref();
+          this.retryTimers.add(timer);
+        }),
+    );
+  }
+  private async propose(
+    namespace: Namespace,
+    proposal: Parameters<ToolEndpoint["propose"]>[0],
+    b: Budget,
+  ): ReturnType<ToolEndpoint["propose"]> {
+    if (this.closing || !this.deliveries) return fail("unavailable");
+    const runtime = this.runtimes.get(namespaceKey(namespace));
+    if (!runtime?.verified || runtime.abort.signal.aborted)
+      return fail("stale_binding");
+    const generation = runtime.verified.binding.generation;
+    const snapshot = await this.snapshot(namespace);
+    const active = snapshot.commands.filter(
+      (c) =>
+        c.command.input.type === "prompt" &&
+        (c.state === "running" || c.state === "dispatching") &&
+        c.dispatch?.observerGeneration === generation,
+    );
+    if (active.length !== 1) return fail("stale_binding");
+    return this.deliveries.propose(
+      namespace,
+      generation,
+      active[0]!.command.commandId,
+      proposal,
+      b,
+    );
   }
   private async open(
     namespace: Namespace,
@@ -299,6 +362,7 @@ export class SessionHost implements HostPort {
         options,
         namespace,
         b,
+        previous?.binding ?? null,
       ),
       configuration = structuredClone(resolved.configuration);
     if (this.closing || b.signal.aborted) return fail("unavailable");
@@ -324,11 +388,22 @@ export class SessionHost implements HostPort {
         this.accountLimit
     )
       return fail("limit_exceeded");
+    if (
+      options.profile === "controlled_tools" &&
+      (!resolved.admission || !this.deliveries)
+    )
+      return fail("unsupported_capability");
+    const tools: ToolEndpoint = {
+      propose: (proposal, b) => this.propose(namespace, proposal, b),
+    };
+    const admission = resolved.admission
+      ? { verifier: resolved.admission.verifier, tools }
+      : undefined;
     const worker = new WorkerPort(
       this.options.launchFences,
       namespace,
       resolved.artifact,
-      resolved.admission?.tools,
+      admission?.tools,
     );
     const runtime: Runtime = {
       worker,
@@ -345,7 +420,9 @@ export class SessionHost implements HostPort {
       this.track(this.mailbox(namespace, () => this.unavailable(namespace)));
     };
     try {
-      requireValue(await worker.start(configuration, b));
+      requireValue(
+        await worker.start(configuration, b, previous?.binding ?? null),
+      );
       if (this.closing || b.signal.aborted)
         throw new HostFailure({ code: "unavailable", retry: "never" });
       const admitted = previous
@@ -354,13 +431,13 @@ export class SessionHost implements HostPort {
             previous,
             configuration,
             b,
-            resolved.admission,
+            admission,
           )
         : await VerifiedProviderSession.open(
             worker,
             configuration,
             b,
-            resolved.admission,
+            admission,
           );
       const verified = requireValue(admitted);
       if (this.closing || b.signal.aborted)
@@ -378,7 +455,7 @@ export class SessionHost implements HostPort {
         );
       else {
         session = {
-          schemaVersion: 3,
+          schemaVersion: 4,
           kind: "session",
           namespace,
           revision: 0,
@@ -625,7 +702,7 @@ export class SessionHost implements HostPort {
     )
       attemptId = undefined;
     return {
-      schemaVersion: 3,
+      schemaVersion: 4,
       kind: "event",
       namespace: session.namespace,
       eventId: randomUUID(),
@@ -992,7 +1069,7 @@ export class SessionHost implements HostPort {
         append(observed.body);
       } else if (observed.type === "interaction") {
         const row: Interaction = {
-          schemaVersion: 3,
+          schemaVersion: 4,
           kind: "interaction",
           namespace,
           commandId: record.command.commandId,
@@ -1351,6 +1428,7 @@ export class SessionHost implements HostPort {
     )
       return fail("invalid_input");
     this.closing = true;
+    this.deliveryAbort.abort();
     const deadline = new Deadline(b);
     for (const abort of this.admissions.values()) abort.abort();
     for (const timer of this.retryTimers) clearTimeout(timer);
@@ -1372,7 +1450,7 @@ export class SessionHost implements HostPort {
               this.accept(
                 namespace,
                 {
-                  schemaVersion: 3,
+                  schemaVersion: 4,
                   kind: "command",
                   sessionId,
                   commandId: randomUUID(),

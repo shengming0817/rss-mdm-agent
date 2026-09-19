@@ -48,6 +48,7 @@ export async function environment(t, handler, configure = () => {}) {
         resolveConfiguration: async () => ({
           configuration: config,
           persistenceDirectory: dir,
+          apiUrl: "https://custom.example.test/v1",
           apiKey: "fixture",
           model: "deepseek-chat",
         }),

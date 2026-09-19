@@ -1,9 +1,8 @@
 //! Explicit in-memory fixtures, not an execution service or trusted approval authority.
-mod fixtures;
+pub(crate) mod fixtures;
 mod interaction;
-pub mod ipc;
 mod model;
-mod selection;
+pub(crate) mod selection;
 use execution_contract::{FrozenPlan, Id, RequestId};
 use execution_interaction::{Interaction, Status};
 pub use model::*;
@@ -126,6 +125,7 @@ impl FixtureService {
                     &draft.request_id,
                     format!("plan-{}-{}", self.instance_id, self.next_plan),
                     now,
+                    &crate::composition::origin::human(),
                 )?;
                 let display = self.display(&draft.item_id, now);
                 selected.display_status(

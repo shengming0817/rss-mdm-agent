@@ -4,7 +4,7 @@ import { rootCertificates } from "node:tls";
 import { randomBytes, createHash } from "node:crypto";
 
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
-/** A claimed model name is evidence only on a response received from the pinned TLS peer. */
+/** A claimed model name is evidence only on a response received from the configured TLS endpoint. */
 export function modelReceipt(event, expectedModel) {
   const response = event?.response;
   if (
@@ -12,22 +12,22 @@ export function modelReceipt(event, expectedModel) {
     response?.status !== "completed" ||
     response?.model !== expectedModel ||
     typeof response?.id !== "string" ||
-    !/^resp_[A-Za-z0-9_-]+$/.test(response.id)
+    !/^[A-Za-z0-9_-]{1,256}$/.test(response.id)
   )
     throw new Error("backend identity mismatch");
   return {
-    backend: "openai",
+    backend: "configured_endpoint",
     modelSha256: sha256(response.model),
     responseIdSha256: sha256(response.id),
   };
 }
 
-/** Smoke-only relay: explicit TLS trust, no redirect, no proxy, no user-supplied backend.
+/** Smoke-only relay: explicit TLS trust, no redirect or proxy; endpoint comes from trusted smoke configuration.
  * It binds evidence to the exact native model requests, not a separate probe. */
 export async function startSmokeModelGateway(settings) {
   if (
     settings.mode !== "real_model" ||
-    settings.apiUrl !== "https://api.openai.com/v1"
+    new URL(settings.apiUrl).protocol !== "https:"
   )
     throw new Error("untrusted smoke backend");
   const token = randomBytes(32).toString("hex"),
@@ -65,7 +65,7 @@ export async function startSmokeModelGateway(settings) {
         }),
       );
       upstream = request(
-        "https://api.openai.com/v1/responses",
+        `${settings.apiUrl}/responses`,
         {
           method: "POST",
           rejectUnauthorized: true,

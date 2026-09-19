@@ -18,6 +18,16 @@ sha2.workspace = true
 service-catalog = { path = "../../../crates/service-catalog" }
 execution-contract = { path = "../../../crates/execution-contract" }
 execution-interaction = { path = "../../../crates/execution-interaction" }
+execution-app = { path = "../../../crates/execution-app" }
+execution-sqlite = { path = "../../../crates/execution-sqlite" }
+execution-mcp = { path = "../../../crates/execution-mcp" }
+execution-admission = { path = "../../../crates/execution-admission" }
+execution-approval = { path = "../../../crates/execution-approval" }
+execution-capability = { path = "../../../crates/execution-capability" }
+execution-lifecycle = { path = "../../../crates/execution-lifecycle" }
+tokio = { workspace = true, features = ["process", "net", "rt-multi-thread"] }
+tokio-util.workspace = true
+futures-util.workspace = true
 
 [features]
 default = ["custom-protocol"]

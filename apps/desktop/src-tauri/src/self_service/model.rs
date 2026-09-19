@@ -175,6 +175,7 @@ pub enum Availability {
 #[serde(rename_all = "camelCase")]
 pub enum ServiceMode {
     Fixture,
+    S1,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]

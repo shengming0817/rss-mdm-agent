@@ -360,6 +360,23 @@ impl<S: ExecutionServicePort> ServerHandler for Handler<S> {
             .extensions
             .get::<OriginalArguments>()
             .ok_or_else(|| ErrorData::invalid_request("bounded ingress required", None))?;
-        Ok(self.call(&request.name, &raw.0, context.ct).await?.into())
+        let metadata = context
+            .extensions
+            .get::<crate::transport::OriginalMetadata>()
+            .ok_or_else(|| ErrorData::invalid_request("bounded ingress required", None))?;
+        let service = match self.service.bind_call(&metadata.0) {
+            Ok(service) => service,
+            Err(error) => {
+                return Ok(result::<Value>(Err(error.into()), self.limits.response_bytes)?.into())
+            }
+        };
+        let handler = Handler {
+            service,
+            limits: self.limits.clone(),
+        };
+        Ok(handler
+            .call(&request.name, &raw.0, context.ct)
+            .await?
+            .into())
     }
 }

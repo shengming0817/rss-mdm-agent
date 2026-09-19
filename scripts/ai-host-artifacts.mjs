@@ -26,7 +26,15 @@ export function packHost(root, directory, application = false) {
     "ai-contract",
     "ai-store-sqlite",
     "ai-host",
-    ...(application ? ["ai-access", "ai-adapter-claude", "ai-host-app"] : []),
+    ...(application
+      ? [
+          "ai-access",
+          "ai-adapter-claude",
+          "ai-adapter-codex",
+          "ai-adapter-deepseek",
+          "ai-host-app",
+        ]
+      : []),
   ];
   for (const name of names) {
     const source = sourceDirectory(name);

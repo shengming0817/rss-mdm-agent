@@ -60,6 +60,11 @@ pub struct AuthorizedDispatch {
     pub(crate) plan: FrozenPlan,
 }
 impl AuthorizedDispatch {
+    /// Inspect the authorized immutable plan to select the host's runner implementation.
+    /// Reading it cannot clone or reconstruct first-dispatch authority.
+    pub fn plan(&self) -> &FrozenPlan {
+        &self.plan
+    }
     /// Consume first-dispatch authority. Runner implementations must perform no action beforehand.
     pub fn dispatch<T>(self, run: impl FnOnce(&FrozenPlan, &DispatchAction) -> T) -> T {
         self.action.dispatch(|action| run(&self.plan, action))

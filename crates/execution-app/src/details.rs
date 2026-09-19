@@ -27,6 +27,12 @@ pub struct AccessSummary {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct FrozenPlanSummary {
+    /// Product authority bound to the exact plan.
+    pub authority: execution_contract::Authority,
+    /// Permission-bearing principal; not the model account.
+    pub actor: execution_contract::ActorId,
+    /// Human or AI origin, without granting execution permission.
+    pub initiator: execution_contract::Initiator,
     /// Version of the frozen execution plan, independent of the AI wire version.
     pub schema_version: V1,
     /// Exact frozen plan identity.
@@ -58,6 +64,9 @@ impl FrozenPlanSummary {
     pub(crate) fn from_plan(plan: &FrozenPlan) -> Self {
         let p = plan.spec();
         Self {
+            authority: p.request.authority.clone(),
+            actor: p.request.actor.clone(),
+            initiator: p.request.initiator.clone(),
             schema_version: p.schema_version,
             plan_id: p.plan_id.clone(),
             plan_digest: plan.digest().clone(),
@@ -93,4 +102,13 @@ pub struct ExecutionTaskDetails {
     pub status: crate::ExecutionStatus,
     /// Redacted frozen plan bound to that lifecycle.
     pub plan: FrozenPlanSummary,
+}
+/// Bounded authorized task list using the same detail projection as individual reads.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskPage {
+    /// Safe frozen facts and current lifecycle state.
+    pub items: Vec<ExecutionTaskDetails>,
+    /// Exclusive request continuation; absent at the end.
+    pub next: Option<execution_contract::RequestId>,
 }

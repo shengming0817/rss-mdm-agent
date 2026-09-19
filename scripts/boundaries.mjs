@@ -5,13 +5,26 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { parse, compileTemplate } from "vue/compiler-sfc";
 
-const fixtureCommands = [
+const selfServiceCommands = [
   "self_service_snapshot",
   "self_service_preview",
   "self_service_submit",
   "self_service_respond",
+  "self_service_approve",
+  "self_service_cancel",
 ];
-const nativeAdapter = "apps/desktop/src/self-service/native.ts";
+const assistantCommands = [
+  "ai_connect",
+  "ai_receive",
+  "ai_send",
+  "ai_disconnect",
+  "execution_task_details",
+];
+const compositionCommands = [...selfServiceCommands, ...assistantCommands];
+const nativeAdapters = new Map([
+  ["apps/desktop/src/self-service/native.ts", selfServiceCommands],
+  ["apps/desktop/src/assistant/native.ts", assistantCommands],
+]);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 function files(dir) {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -45,7 +58,7 @@ export function checkSource(file, source) {
   const allowed = desktop
     ? ["vue", "@rss-mdm-agent/ui", "@rss-mdm-agent/ui/style.css"]
     : ["vue"];
-  if (file === nativeAdapter) allowed.push("@tauri-apps/api/core");
+  if (nativeAdapters.has(file)) allowed.push("@tauri-apps/api/core");
   if (assistant)
     allowed.push("@rss-mdm-agent/ai-client", "@rss-mdm-agent/ai-ui-bridge");
   const descriptor = extname(file) === ".vue" ? parse(source).descriptor : null;
@@ -163,6 +176,10 @@ export function checkSource(file, source) {
         globals.add(value);
     if (file === "apps/desktop/src/App.vue") globals.add("crypto");
     const assistantGlobals = {
+      "apps/desktop/src/self-service/SelfService.vue": [
+        "setInterval",
+        "clearInterval",
+      ],
       "apps/desktop/src/assistant/controller.ts": [
         "Set",
         "Promise",
@@ -208,7 +225,7 @@ export function checkSource(file, source) {
         errors.push(`${file}: unexpected dependency ${name}`);
       if (
         /(?:^|\/)(api|transport|stores?)(?:[./]|$)/.test(name) &&
-        !(file === nativeAdapter && name === "@tauri-apps/api/core")
+        !(nativeAdapters.has(file) && name === "@tauri-apps/api/core")
       )
         errors.push(`${file}: host dependency ${name}`);
       if (
@@ -255,7 +272,7 @@ export function checkSource(file, source) {
       )
         checkImport(node.moduleSpecifier.text);
       if (
-        file === nativeAdapter &&
+        nativeAdapters.has(file) &&
         ts.isImportDeclaration(node) &&
         node.moduleSpecifier.text === "@tauri-apps/api/core"
       ) {
@@ -272,7 +289,7 @@ export function checkSource(file, source) {
           errors.push(`${file}: only direct invoke/isTauri imports allowed`);
       }
       if (
-        file === nativeAdapter &&
+        nativeAdapters.has(file) &&
         ts.isIdentifier(node) &&
         node.text === "invoke" &&
         !ts.isImportSpecifier(node.parent) &&
@@ -281,12 +298,14 @@ export function checkSource(file, source) {
         errors.push(`${file}: invoke cannot escape the adapter`);
       if (ts.isCallExpression(node)) {
         if (
-          file === nativeAdapter &&
+          nativeAdapters.has(file) &&
           node.expression.getText(ast) === "invoke" &&
           (!ts.isStringLiteral(node.arguments[0]) ||
-            !fixtureCommands.includes(node.arguments[0].text))
+            !nativeAdapters.get(file).includes(node.arguments[0].text))
         )
-          errors.push(`${file}: only literal fixture commands allowed`);
+          errors.push(
+            `${file}: only declared literal composition commands allowed`,
+          );
         if (
           node.expression.kind === ts.SyntaxKind.ImportKeyword ||
           node.expression.getText(ast) === "require"
@@ -400,14 +419,14 @@ export function checkTree(treeRoot = root) {
       JSON.stringify(cap.windows) !== '["main"]' ||
       JSON.stringify(cap.permissions?.toSorted()) !==
         JSON.stringify(
-          fixtureCommands
+          compositionCommands
             .map((cmd) => `allow-${cmd.replaceAll("_", "-")}`)
             .toSorted(),
         ) ||
       cap.remote
     )
       errors.push(
-        "host capability must be local main with only fixture permissions",
+        "host capability must be local main with only declared composition permissions",
       );
   }
   if (
@@ -471,6 +490,16 @@ export function checkTree(treeRoot = root) {
     [
       "apps/desktop/src-tauri/Cargo.toml",
       [
+        'execution-app = { path = "../../../crates/execution-app" }',
+        'execution-sqlite = { path = "../../../crates/execution-sqlite" }',
+        'execution-mcp = { path = "../../../crates/execution-mcp" }',
+        'execution-admission = { path = "../../../crates/execution-admission" }',
+        'execution-approval = { path = "../../../crates/execution-approval" }',
+        'execution-capability = { path = "../../../crates/execution-capability" }',
+        'execution-lifecycle = { path = "../../../crates/execution-lifecycle" }',
+        'tokio = { workspace = true, features = ["process", "net", "rt-multi-thread"] }',
+        "tokio-util.workspace = true",
+        "futures-util.workspace = true",
         "tauri-build.workspace = true",
         "tauri.workspace = true",
         "serde.workspace = true",
@@ -526,28 +555,41 @@ export function checkTree(treeRoot = root) {
     )
   )
     errors.push("host must register navigation and new-window rejection");
-  const ipcPath = "apps/desktop/src-tauri/src/self_service/ipc.rs";
+  const ipcPath = "apps/desktop/src-tauri/src/composition/ipc.rs";
   const ipc = read(ipcPath);
   const commands =
     ipc.match(/commands!\s*\{([\s\S]*?)\}/)?.[1].match(/self_service_\w+/g) ??
     [];
   if (
     JSON.stringify(commands.toSorted()) !==
-      JSON.stringify(fixtureCommands.toSorted()) ||
-    (ipc.match(/\.manage\(/g) ?? []).length !== 1 ||
+      JSON.stringify(
+        selfServiceCommands
+          .filter((c) => c !== "self_service_snapshot")
+          .toSorted(),
+      ) ||
+    (main.match(/app\.manage\(/g) ?? []).length !== 1 ||
     (ipc.match(/\.invoke_handler\(/g) ?? []).length !== 1
   )
     errors.push(
-      "fixture service must register exactly its four commands and one state owner",
+      "composition must register its exact command set and one state owner",
     );
+  const registered =
+    ipc
+      .match(/generate_handler!\s*\[([\s\S]*?)\]/)?.[1]
+      .match(/\b(?:self_service_\w+|ai_\w+|execution_task_details)\b/g) ?? [];
+  if (
+    JSON.stringify(registered.toSorted()) !==
+    JSON.stringify(compositionCommands.toSorted())
+  )
+    errors.push("exactly the declared composition commands must be registered");
   const build = read("apps/desktop/src-tauri/build.rs");
   const manifest = build.match(/\.commands\(&\[([\s\S]*?)\]/)?.[1];
   const declared = [...(manifest ?? "").matchAll(/"(\w+)"/g)].map((m) => m[1]);
   if (
     JSON.stringify(declared.toSorted()) !==
-    JSON.stringify(fixtureCommands.toSorted())
+    JSON.stringify(compositionCommands.toSorted())
   )
-    errors.push("fixture commands must be covered by the app ACL manifest");
+    errors.push("composition commands must be covered by the app ACL manifest");
   const rustSources = Object.fromEntries(
     files(resolve(treeRoot, "apps/desktop/src-tauri/src"))
       .filter((file) => file.endsWith(".rs"))

@@ -54,6 +54,7 @@ const control = new Channel(
       active = true;
       const input = data as {
         artifact: string;
+        previous: Binding | null;
         configuration: ProviderConfiguration;
       };
       if (!input.artifact.startsWith("file:"))
@@ -63,6 +64,7 @@ const control = new Channel(
       };
       port = await module.createProvider({
         configuration: input.configuration,
+        previous: input.previous,
         ...(input.configuration.permissions === "host_mediated"
           ? { tools: bridge }
           : {}),

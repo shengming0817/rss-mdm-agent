@@ -30,7 +30,7 @@ if (process.argv.includes("--write")) {
   assert.deepEqual(
     committed,
     generated,
-    "browser preview must match the Rust service projection",
+    "browser read-only preview must match the explicit Rust fixture projection",
   );
   console.log("Self-service: Rust/browser fixture parity passed");
 }

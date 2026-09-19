@@ -190,6 +190,7 @@ export function createController(
     if (state.busy || state.accepted || state.uncertain) return;
     if (value === null) state.fields.delete(key);
     else state.fields.set(key, value);
+    state.requestId = port ? newId() : "";
     state.revision++;
     state.plan = null;
     generation++;
@@ -278,6 +279,43 @@ export function createController(
       if (token === generation) state.busy = false;
     }
   }
+  async function cancel(task: RequestView) {
+    if (!port || !state.snapshot || state.busy) return;
+    state.busy = true;
+    try {
+      record(
+        await port.cancel({
+          instanceId: state.snapshot.instanceId,
+          requestId: task.plan.requestId,
+          planId: task.plan.planId,
+          digest: task.plan.digest,
+        }),
+      );
+    } catch {
+      setError("取消请求未确认；请查询原任务，不能据此认定已停止。");
+    } finally {
+      state.busy = false;
+    }
+  }
+  async function approve(task: RequestView) {
+    if (!port || !state.snapshot || state.busy || task.status !== "approval")
+      return;
+    state.busy = true;
+    try {
+      record(
+        await port.approve({
+          instanceId: state.snapshot.instanceId,
+          requestId: task.plan.requestId,
+          planId: task.plan.planId,
+          digest: task.plan.digest,
+        }),
+      );
+    } catch {
+      setError("批准未确认；请刷新原任务，不创建新执行请求。");
+    } finally {
+      state.busy = false;
+    }
+  }
   async function sendReply() {
     if (!port || !pendingReply || state.replying) return;
     state.replying = true;
@@ -332,6 +370,8 @@ export function createController(
     prepare,
     submit,
     respond,
+    approve,
+    cancel,
     retryReply: sendReply,
     navigate,
   };

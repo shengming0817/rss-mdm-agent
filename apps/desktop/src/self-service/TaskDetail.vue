@@ -10,6 +10,8 @@ defineProps<{
 }>();
 const emit = defineEmits<{
   respond: [interactionId: string, answer: Answer];
+  approve: [];
+  cancel: [];
 }>();
 const fields = reactive(new Map<string, FieldInput>());
 function change(key: string, value: FieldInput | null) {
@@ -154,5 +156,19 @@ function parameters(id: string) {
       </template>
     </section>
     <PlanSummary :plan="task.plan" />
+    <button
+      v-if="['waiting', 'approval', 'unknownEffect'].includes(task.status)"
+      :disabled="disabled"
+      @click="emit('cancel')"
+    >
+      请求取消原任务
+    </button>
+    <section v-if="task.status === 'approval'" class="interaction-card">
+      <h3>S1 测试管理员批准</h3>
+      <p>只批准上方精确计划一次。参数、目标或摘要变化后必须重新复核。</p>
+      <button :disabled="disabled" @click="emit('approve')">
+        批准此测试计划一次
+      </button>
+    </section>
   </section>
 </template>

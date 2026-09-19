@@ -108,6 +108,7 @@ async function main() {
     resolveConfiguration: async () => ({
       configuration: config,
       persistenceDirectory: directory,
+      apiUrl: process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
       apiKey,
       model: process.env.DEEPSEEK_MODEL ?? "deepseek-chat",
     }),
@@ -119,7 +120,7 @@ async function main() {
     return p;
   };
   const prompt = (id, text) => ({
-    schemaVersion: 3,
+    schemaVersion: 4,
     kind: "command",
     sessionId: config.namespace.sessionId,
     commandId: id,
@@ -167,7 +168,7 @@ async function main() {
     assert.equal(unwrap(await first.close(budget(10000))).processStopped, true);
     stage = "restore";
     const previous = {
-      schemaVersion: 3,
+      schemaVersion: 4,
       kind: "session",
       namespace: config.namespace,
       revision: 0,
@@ -186,11 +187,11 @@ async function main() {
         ),
       );
     const record = {
-      schemaVersion: 3,
+      schemaVersion: 4,
       kind: "commandRecord",
       command,
       receipt: {
-        schemaVersion: 3,
+        schemaVersion: 4,
         kind: "receipt",
         namespace: config.namespace,
         commandId: command.commandId,
@@ -279,6 +280,7 @@ async function main() {
       resolveConfiguration: async () => ({
         configuration: controlled,
         persistenceDirectory: directory,
+        apiUrl: process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
         apiKey,
         model: process.env.DEEPSEEK_MODEL ?? "deepseek-chat",
       }),

@@ -38,7 +38,7 @@ export const fixtureCaller: Caller = {
 };
 export function fixtureSession(): Session {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     kind: "session",
     namespace: { ...fixtureCaller, sessionId: "session-1" },
     revision: 0,
@@ -69,7 +69,7 @@ export function fixtureSession(): Session {
 }
 export function fixtureCommand(id = "command-1"): Command {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     kind: "command",
     sessionId: "session-1",
     commandId: id,
@@ -351,7 +351,7 @@ export async function seedInteraction(
     { nativeRunId: "run-1", nativeRequestId: "parent-request-1" },
   );
   const interaction: import("../wire.js").Interaction = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     kind: "interaction",
     category: "question",
     namespace: session.namespace,
@@ -580,7 +580,7 @@ async function runStoreBoundaries(
       await readSnapshot(store, s.namespace),
     ).events.find((e) => e.eventId === input.eventId)!;
     const row: import("../wire.js").Delivery = {
-      schemaVersion: 3,
+      schemaVersion: 4,
       kind: "delivery",
       namespace: s.namespace,
       operationId: `delivery-${i}`,
@@ -679,7 +679,7 @@ export async function terminalCommit(
     certainty: "submitted",
   };
   const next: CommandRecord = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     kind: "commandRecord",
     command: record.command,
     receipt: record.receipt,
@@ -714,7 +714,7 @@ export function commandCommit(
   const events = bodies.map(
     (body, i) =>
       ({
-        schemaVersion: 3,
+        schemaVersion: 4,
         kind: "event",
         namespace: session.namespace,
         eventId: `change-${session.revision}-${record.command.commandId}-${i}`,
@@ -762,7 +762,7 @@ export async function dispatchCommand(
     certainty: "intent",
   };
   const preparing: CommandRecord = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     kind: "commandRecord",
     command: record.command,
     receipt: record.receipt,
@@ -848,7 +848,7 @@ export function surfaceCommit(
       ],
     };
   const event: Event = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     kind: "event",
     namespace: session.namespace,
     eventId: `surface-${surface.surfaceInstanceId}-${surface.revision}`,
@@ -1031,7 +1031,7 @@ export function interactionEvent(
   row: import("../wire.js").Interaction,
 ): import("../wire.js").Event {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     kind: "event",
     namespace: session.namespace,
     eventId: `interaction-${row.interactionId}-${row.status}`,
@@ -1080,7 +1080,7 @@ async function runCallbackConformance(store: SessionStore): Promise<void> {
     },
   };
   const row: import("../wire.js").Interaction = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     kind: "interaction",
     namespace: seeded.session.namespace,
     commandId: observation.commandId,
@@ -1208,11 +1208,11 @@ export function fixtureDispatchedRecord(
   namespace = fixtureSession().namespace,
 ): CommandRecord {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     kind: "commandRecord",
     command,
     receipt: {
-      schemaVersion: 3,
+      schemaVersion: 4,
       kind: "receipt",
       namespace,
       commandId: command.commandId,

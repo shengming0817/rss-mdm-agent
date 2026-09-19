@@ -74,6 +74,7 @@ test("Host SIGKILL closes worker group; restart reconciles the original attempt 
   );
   const host = unwrap(
     await createHost({
+      delivery: null,
       store,
       launchFences: store,
       resolve: async (caller, options, namespace) => ({
@@ -132,6 +133,7 @@ test("crash after durable registration cannot import the SDK before activation",
   );
   const host = unwrap(
     await createHost({
+      delivery: null,
       store,
       launchFences: store,
       resolve: async () => {
@@ -270,6 +272,7 @@ test("unresolved registered process group freezes recovery without signaling or 
   let resolves = 0;
   host = unwrap(
     await createHost({
+      delivery: null,
       store: reopened,
       launchFences: reopened,
       resolve: async () => {
@@ -334,6 +337,7 @@ for (const hasSession of [true, false])
     const reopened = unwrap(openSqliteStore({ path, mode: "open" }));
     host = unwrap(
       await createHost({
+        delivery: null,
         store: reopened,
         launchFences: reopened,
         resolve: async () => {

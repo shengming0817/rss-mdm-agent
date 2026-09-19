@@ -145,7 +145,7 @@ it.each(["prompt", "cancel", "respond"] as const)(
       commands: {
         p: {
           command: {
-            schemaVersion: 3,
+            schemaVersion: 4,
             kind: "command",
             sessionId: session.namespace.sessionId,
             commandId: "p",

@@ -284,6 +284,11 @@ export interface SessionStore extends Closeable {
   accept(input: AcceptCommand): Promise<Result<Receipt>>;
   surface(namespace: Namespace, instanceId: Id): Promise<Result<SurfaceState>>;
   command(namespace: Namespace, commandId: Id): Promise<Result<CommandRecord>>;
+  /** Exact immutable outbox request, including settled deliveries; null means absent. */
+  delivery(
+    namespace: Namespace,
+    operationId: Id,
+  ): Promise<Result<{ delivery: Delivery; event: Event } | null>>;
   commit(batch: SessionCommit): Promise<Result<void>>;
   snapshotPage(
     namespace: Namespace,

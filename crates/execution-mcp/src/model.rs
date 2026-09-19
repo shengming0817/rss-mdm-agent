@@ -254,6 +254,10 @@ pub enum OperationPhase {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct OperationStatus {
+    /// Durable initial submission receipt; preview alone is false.
+    pub submitted: bool,
+    /// Durable cancellation request, independent of termination/effect status.
+    pub cancel_requested: bool,
     /// Original business identity.
     pub operation_request_id: RequestId,
     /// Original frozen plan.

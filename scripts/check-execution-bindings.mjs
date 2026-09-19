@@ -5,19 +5,11 @@ import { fileURLToPath } from "node:url";
 import { compile } from "json-schema-to-typescript";
 import { format } from "prettier";
 const root = fileURLToPath(new URL("../", import.meta.url));
-const run = (example) =>
+const run = (example, crate = "execution-app") =>
   JSON.parse(
     execFileSync(
       "cargo",
-      [
-        "run",
-        "--quiet",
-        "--locked",
-        "-p",
-        "execution-app",
-        "--example",
-        example,
-      ],
+      ["run", "--quiet", "--locked", "-p", crate, "--example", example],
       { cwd: root, encoding: "utf8" },
     ),
   );
@@ -36,6 +28,12 @@ const fixtures = await format(JSON.stringify(run("task-details-fixtures")), {
   parser: "json",
 });
 const files = [
+  [
+    "apps/ai-host/src/execution-tools.json",
+    await format(JSON.stringify(run("tool-schema", "execution-mcp")), {
+      parser: "json",
+    }),
+  ],
   ["apps/desktop/src/assistant/execution-types.ts", binding],
   ["tests/assistant/execution-fixtures.json", fixtures],
 ];

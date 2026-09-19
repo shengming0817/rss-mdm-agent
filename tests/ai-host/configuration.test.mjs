@@ -68,20 +68,24 @@ test("invalid local configuration fails before listening and emits only a closed
         profile: "conversation",
       },
       workingDirectory: directory,
-      claude: {
-        configurationDirectory: directory,
+      nativeDirectory: directory,
+      connection: {
+        source: "custom_endpoint",
+        model: "fixture-model",
         credentialPath: join(directory, "credential"),
         credentialType: "api_key",
         apiUrl: "https://api.example.test",
       },
     };
-  for (const claude of [
-    { ...base.claude, apiUrl: undefined },
-    { ...base.claude, model: 42 },
-    { ...base.claude, apiUrl: "https://secret-value@example.test" },
-    { ...base.claude, apiUrl: "http://remote.example.test" },
+  for (const connection of [
+    { ...base.connection, apiUrl: undefined },
+    { ...base.connection, model: 42 },
+    { ...base.connection, apiUrl: "https://secret-value@example.test" },
+    { ...base.connection, apiUrl: "http://remote.example.test" },
   ]) {
-    await writeFile(path, JSON.stringify({ ...base, claude }), { mode: 0o600 });
+    await writeFile(path, JSON.stringify({ ...base, connection }), {
+      mode: 0o600,
+    });
     await assert.rejects(
       readConfiguration(path),
       (error) => error.code === "configuration_invalid",
@@ -104,8 +108,8 @@ test("invalid local configuration fails before listening and emits only a closed
   assert.doesNotMatch(cli.stderr, /remote\.example\.test|secret-value/);
   await writeFile(path, JSON.stringify(base), { mode: 0o600 });
   assert.equal(
-    (await readConfiguration(path)).claude.apiUrl,
-    base.claude.apiUrl,
+    (await readConfiguration(path)).connection.apiUrl,
+    base.connection.apiUrl,
   );
   await writeFile(base.socketPath, "preserve this file");
   await assert.rejects(startLocalApp(path), /socket path is not a socket/);

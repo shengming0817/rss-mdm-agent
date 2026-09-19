@@ -345,7 +345,7 @@ test("each host boundary mutation independently fails the tree scan", () => {
       "app.path().app_data_dir();",
       'extern "C" { fn system(); }',
     ].map((capability) => [
-      "apps/desktop/src-tauri/src/self_service/ipc.rs",
+      "apps/desktop/src-tauri/src/self_service/model.rs",
       (source) => source + `\nfn forbidden() { ${capability} }\n`,
     ]),
   ];

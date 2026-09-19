@@ -16,6 +16,13 @@ use tokio_util::sync::CancellationToken;
 /// Accepted effects must remain queryable even when this adapter or its process disappears.
 /// Only explicitly identified test implementations may synthesize authority/evidence.
 pub trait ExecutionServicePort: Send + Sync + 'static {
+    /// Bind one call from bounded, untrusted MCP metadata to the authenticated connection.
+    /// The composition owns metadata semantics and must reject missing/mismatched provenance.
+    /// Return an immutable per-call service; never mutate shared connection identity.
+    fn bind_call(
+        self: &std::sync::Arc<Self>,
+        metadata: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<std::sync::Arc<Self>, ServiceError>;
     /// Fail startup when no trusted binding exists. This is not a substitute for per-call checks.
     fn check_binding(&self) -> Result<(), ServiceError>;
     /// Return a bounded authorized directory, optionally matching an exact historical reference.

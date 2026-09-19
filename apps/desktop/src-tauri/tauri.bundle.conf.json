@@ -1,0 +1,11 @@
+{
+  "bundle": {
+    "active": true,
+    "targets": [
+      "app"
+    ],
+    "resources": {
+      "resources/ai-host-runtime/": "ai-host-runtime/"
+    }
+  }
+}

@@ -31,6 +31,12 @@ async function main() {
     "InitializeParams",
     "InitializeResponse",
     ...[
+      "LoginAccountParams",
+      "LoginAccountResponse",
+      "GetAccountParams",
+      "GetAccountResponse",
+      "ChatgptAuthTokensRefreshParams",
+      "ChatgptAuthTokensRefreshResponse",
       "ThreadStartParams",
       "ThreadStartResponse",
       "ThreadResumeParams",

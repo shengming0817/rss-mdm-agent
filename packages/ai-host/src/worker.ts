@@ -1,4 +1,5 @@
 import type {
+  Binding,
   ProviderAgentPort,
   ProviderConfiguration,
   ToolEndpoint,
@@ -6,5 +7,6 @@ import type {
 /** Implemented by the trusted provider composition module loaded only after activation. */
 export type WorkerFactory = (input: {
   configuration: ProviderConfiguration;
+  previous: Binding | null;
   tools?: ToolEndpoint;
 }) => ProviderAgentPort | Promise<ProviderAgentPort>;

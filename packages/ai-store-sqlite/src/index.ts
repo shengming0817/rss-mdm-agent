@@ -51,6 +51,7 @@ import {
 import {
   acceptCommand,
   commitSession,
+  isDeliveryCommit,
   createState,
   rebindSession,
   recoverUnavailable,
@@ -548,6 +549,28 @@ class SqliteSessionStore implements SessionStore, WorkerLaunchFenceStore {
         : fail("unavailable");
     });
   }
+  async delivery(
+    n: Namespace,
+    id: Id,
+  ): Promise<Result<{ delivery: Delivery; event: Event } | null>> {
+    return this.#query(() => {
+      this.#session(n);
+      if (!isId(id)) return fail("invalid_input");
+      const row = this.#db
+        .prepare(`SELECT json FROM deliveries WHERE ${whereScope} AND id=?`)
+        .get(...nsValues(n), id);
+      if (!row) return ok(null);
+      const delivery = this.#decode<Delivery>(row.json, "delivery");
+      const event = this.#db
+        .prepare(`SELECT json FROM events WHERE ${whereScope} AND id=?`)
+        .get(...nsValues(n), delivery.eventId);
+      if (!event) return fail("invalid_input");
+      return this.#bounded({
+        delivery,
+        event: this.#decode<Event>(event.json, "event"),
+      });
+    });
+  }
   async surface(n: Namespace, id: Id): Promise<Result<SurfaceState>> {
     return this.#query(() => {
       if (this.#session(n).status !== "active") return fail("session_gone");
@@ -593,7 +616,7 @@ class SqliteSessionStore implements SessionStore, WorkerLaunchFenceStore {
       )
         return fail("limit_exceeded");
       const before = this.#state(batch.namespace);
-      this.#writable(before);
+      if (!isDeliveryCommit(before, batch)) this.#writable(before);
       const result = commitSession(before, batch);
       if (!result.ok) return result;
       this.#save(before, result.value);

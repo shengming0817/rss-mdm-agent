@@ -39,8 +39,9 @@ test("local app uses a private ACP socket and a real SDK worker against fixed mo
         profile: "conversation",
       },
       workingDirectory: directory,
-      claude: {
-        configurationDirectory: configDirectory,
+      nativeDirectory: configDirectory,
+      connection: {
+        source: "custom_endpoint",
         credentialPath,
         credentialType: "api_key",
         apiUrl: `http://127.0.0.1:${server.address().port}`,
@@ -59,7 +60,7 @@ test("local app uses a private ACP socket and a real SDK worker against fixed mo
     const session = await client.createSession(),
       id = session.namespace.sessionId;
     await client.submit({
-      schemaVersion: 3,
+      schemaVersion: 4,
       kind: "command",
       commandId: "native",
       sessionId: id,

@@ -81,6 +81,26 @@ impl Store {
         Ok(receipt)
     }
 
+    /// Read whether an exact execution command was durably received, under current result access.
+    /// Presence is submission evidence, never dispatch or effect evidence.
+    pub fn has_execution_receipt(
+        &self,
+        scope: &Scope,
+        op: &OperationRequestId,
+        access: ExecutionAccess<'_>,
+        host: &impl Host,
+    ) -> Result<bool, Error> {
+        self.check_scope(scope)?;
+        access.authorize(scope, host)?;
+        let tx = self.conn.unchecked_transaction()?;
+        crate::database::ensure_current(&tx, &self.authority, self.limits)?;
+        Ok(tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM receipts WHERE scope=?1 AND operation_id=?2)",
+            params![scope.key(), op.as_str()],
+            |row| row.get(0),
+        )?)
+    }
+
     /// Register one immutable bounded plan. No preparation, approval or runner action is implied.
     pub fn open_execution(
         &mut self,
@@ -103,6 +123,31 @@ impl Store {
             Start::Replay(r) => return Ok(CommitOutcome::AlreadyCommitted(r)),
             Start::New(w) => w,
         };
+        // A preview and a submission register the same immutable aggregate under distinct
+        // operation IDs. Only the first call for each operation returns Applied. The receipt
+        // remains the durable acceptance boundary even if the later initial attempt fails.
+        let existing: Option<(Vec<u8>, u64)> =
+            w.tx.query_row(
+                &format!(
+                    "SELECT {},revision FROM executions WHERE request_id=?1",
+                    bounded_blob("plan", w.limits.plan.max_input_bytes)
+                ),
+                [plan.spec().request.request_id.as_str()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        if let Some((original, revision)) = existing {
+            if original != bytes {
+                return Err(Error::Conflict);
+            }
+            let audit = plan_audit(
+                &w,
+                plan,
+                Decision::Proposed {},
+                AuditReason::ExecutionOpened,
+            );
+            return w.finish(Outcome::Duplicate, revision, audit);
+        }
         let state = Execution::open(plan.clone(), w.now, w.limits.lifecycle)
             .map_err(|_| Error::InvalidInput)?;
         w.tx.execute(
@@ -123,6 +168,40 @@ impl Store {
             AuditReason::ExecutionOpened,
         );
         w.finish(Outcome::Changed, 0, audit)
+    }
+    /// Read a bounded page only for the selected actor/device; each row requires result access.
+    pub fn execution_requests(
+        &self,
+        actor: &execution_contract::ActorId,
+        device: &execution_contract::DeviceId,
+        after: Option<&execution_contract::RequestId>,
+        limit: usize,
+        host: &impl Host,
+    ) -> Result<ExecutionRequestPage, Error> {
+        if !(1..=128).contains(&limit) {
+            return Err(Error::InvalidInput);
+        }
+        crate::database::ensure_current(&self.conn, &self.authority, self.limits)?;
+        let mut statement = self.conn.prepare("SELECT request_id FROM executions WHERE request_id>?1 AND json_extract(CAST(plan AS TEXT),'$.request.actor')=?2 AND json_extract(CAST(plan AS TEXT),'$.request.target.device')=?3 ORDER BY request_id LIMIT ?4")?;
+        let rows = statement.query_map(
+            params![
+                after.map_or("", |id| id.as_str()),
+                actor.as_str(),
+                device.as_str(),
+                limit + 1
+            ],
+            |r| r.get::<_, String>(0),
+        )?;
+        let mut requests = rows
+            .map(|r| execution_contract::RequestId::new(r?).map_err(|_| Error::Corrupt))
+            .collect::<Result<Vec<_>, _>>()?;
+        let more = requests.len() > limit;
+        requests.truncate(limit);
+        for request in &requests {
+            self.execution_by_request(request, ExecutionAccess::Result, host)?;
+        }
+        let next = more.then(|| requests.last().expect("nonempty page").clone());
+        Ok(ExecutionRequestPage { requests, next })
     }
     /// Apply a host command through historical deduplication and atomic persistence.
     /// BeginAttempt obtains decisions lazily after receipt replay is ruled out.
@@ -271,6 +350,7 @@ impl Store {
                 scope,
                 limits: w.limits,
                 now: w.now,
+                clock: &|| host.reliable_now(),
                 head: &h,
             };
             audit.trust = Some(TrustAudit {

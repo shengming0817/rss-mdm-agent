@@ -27,6 +27,7 @@ const options: DeepSeekAdapterOptions = {
   resolveConfiguration: async () => ({
     configuration: config,
     persistenceDirectory: directory,
+    apiUrl: "https://custom.example.test/v1",
     apiKey: "not-used-no-model-request",
     model: "deepseek-chat",
   }),
@@ -42,7 +43,7 @@ try {
   assert.ok(admitted.ok);
   assert.equal((await first.close(budget())).ok, true);
   const previous: Session = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     kind: "session",
     namespace: config.namespace,
     revision: 0,

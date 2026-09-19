@@ -7,6 +7,8 @@ export function nativePort(): SelfServicePort | null {
     snapshot: () => invoke<Snapshot>("self_service_snapshot"),
     preview: (input) => invoke<Plan>("self_service_preview", { input }),
     submit: (input) => invoke<RequestView>("self_service_submit", { input }),
+    cancel: (input) => invoke<RequestView>("self_service_cancel", { input }),
+    approve: (input) => invoke<RequestView>("self_service_approve", { input }),
     respond: (input) => invoke<RequestView>("self_service_respond", { input }),
   };
 }

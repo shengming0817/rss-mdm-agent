@@ -262,6 +262,30 @@ export class CodexAdapter implements ProviderAgentPort {
       )
         return fail("unsupported_version");
       connection.notify("initialized");
+      if (resolved.authentication.type === "chatgpt_tokens") {
+        const login = await rpc(
+          connection,
+          "account/login/start",
+          {
+            type: "chatgptAuthTokens",
+            accessToken: resolved.authentication.accessToken,
+            chatgptAccountId: resolved.authentication.accountId,
+          },
+          nextBudget(),
+        );
+        const account = await rpc(
+          connection,
+          "account/read",
+          { refreshToken: false },
+          nextBudget(),
+        );
+        if (
+          login.type !== "chatgptAuthTokens" ||
+          !account.requiresOpenaiAuth ||
+          account.account?.type !== "chatgpt"
+        )
+          return fail("permission_denied");
+      }
       await this.checkConfiguration(
         launch.settings,
         launch.overrides,
@@ -269,7 +293,13 @@ export class CodexAdapter implements ProviderAgentPort {
       );
       const params = {
         model: resolved.model,
-        modelProvider: "rss_host_model",
+        ...(resolved.developerInstructions
+          ? { developerInstructions: resolved.developerInstructions }
+          : {}),
+        modelProvider:
+          resolved.authentication.type === "api_key"
+            ? "rss_host_model"
+            : "openai",
         cwd: config.workingDirectory,
         approvalPolicy: "on-request" as const,
         sandbox: "read-only" as const,
@@ -784,7 +814,7 @@ export class CodexAdapter implements ProviderAgentPort {
     decode(
       boundedJson(
         {
-          schemaVersion: 3,
+          schemaVersion: 4,
           kind: "event",
           namespace: this.configuration!.namespace,
           eventId: "validation",
@@ -806,9 +836,50 @@ export class CodexAdapter implements ProviderAgentPort {
       body,
     });
   }
+  private async refreshAuthentication(message: NativeMessage): Promise<void> {
+    const auth = this.resolved?.authentication;
+    const params =
+      message.params as import("./protocol/v2/ChatgptAuthTokensRefreshParams.js").ChatgptAuthTokensRefreshParams;
+    try {
+      if (
+        this.closed ||
+        auth?.type !== "chatgpt_tokens" ||
+        params?.reason !== "unauthorized" ||
+        params.previousAccountId !== auth.accountId
+      )
+        throw new Error("authentication unavailable");
+      const b = { timeoutMs: 5000, signal: AbortSignal.timeout(5000) };
+      const next = await bounded(auth.refresh(b), b);
+      if (
+        this.closed ||
+        next.accountId !== auth.accountId ||
+        !next.accessToken ||
+        next.accessToken === auth.accessToken
+      )
+        throw new Error("authentication unavailable");
+      const response: import("./protocol/v2/ChatgptAuthTokensRefreshResponse.js").ChatgptAuthTokensRefreshResponse =
+        {
+          accessToken: next.accessToken,
+          chatgptAccountId: next.accountId,
+          chatgptPlanType: null,
+        };
+      auth.accessToken = next.accessToken;
+      this.connection!.reply(message.id!, response);
+    } catch {
+      this.connection?.reject(message.id!);
+      this.breakIncarnation();
+    }
+  }
   private onNative(message: NativeMessage, replay = false): void {
     if (this.closed) return;
     if (message.id !== undefined) {
+      if (
+        message.method === "account/chatgptAuthTokens/refresh" &&
+        this.resolved?.authentication.type === "chatgpt_tokens"
+      ) {
+        void this.refreshAuthentication(message);
+        return;
+      }
       this.connection!.reject(message.id);
       return;
     }

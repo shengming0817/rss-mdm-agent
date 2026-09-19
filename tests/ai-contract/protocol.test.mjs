@@ -123,7 +123,7 @@ test("official A2UI action binds exact surface/run/revision; payload claims gran
 test("negotiation permits basic ACP without A2UI and rejects unselected versions", () => {
   const host = new FakeHost();
   const basic = {
-    contractVersion: 3,
+    contractVersion: 4,
     acp: 1,
     durableReceipts: false,
     cursorAttach: false,

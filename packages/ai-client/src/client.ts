@@ -93,7 +93,7 @@ export class RuntimeClient {
   async initialize(): Promise<Negotiation> {
     return this.boundary(async () => {
       const offered: Negotiation = {
-        contractVersion: 3,
+        contractVersion: 4,
         acp: 1,
         durableReceipts: true,
         cursorAttach: true,
@@ -116,7 +116,7 @@ export class RuntimeClient {
       }
       if (
         response.protocolVersion !== 1 ||
-        selected?.contractVersion !== 3 ||
+        selected?.contractVersion !== 4 ||
         !selected.cursorAttach
       )
         throw new ClientError("negotiation_failed");
@@ -159,7 +159,7 @@ export class RuntimeClient {
       this.ready();
       return parse(
         await this.connection.agent.request(extension.list, {
-          schemaVersion: 3,
+          schemaVersion: 4,
           kind: "listRequest",
           query,
         }),
@@ -184,7 +184,7 @@ export class RuntimeClient {
           if (index >= 4096) throw new ClientError("resync_required");
           const page = parse(
             await this.connection.agent.request(extension.snapshot, {
-              schemaVersion: 3,
+              schemaVersion: 4,
               kind: "snapshotRequest",
               sessionId,
               query: {
@@ -220,7 +220,7 @@ export class RuntimeClient {
         this.views.set(sessionId, view);
         view.connection = "attached";
         await this.connection.agent.request(extension.attach, {
-          schemaVersion: 3,
+          schemaVersion: 4,
           kind: "attachRequest",
           sessionId,
           attachmentId,
@@ -252,7 +252,7 @@ export class RuntimeClient {
       }
       if (attachmentId && !this.connection.signal.aborted)
         await this.connection.agent.request(extension.detach, {
-          schemaVersion: 3,
+          schemaVersion: 4,
           kind: "detachRequest",
           sessionId,
           attachmentId,
@@ -290,7 +290,7 @@ export class RuntimeClient {
       await this.detach(sessionId);
       parse(
         await this.connection.agent.request(extension.resume, {
-          schemaVersion: 3,
+          schemaVersion: 4,
           kind: "resumeRequest",
           sessionId,
         }),

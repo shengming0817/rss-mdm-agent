@@ -111,7 +111,7 @@ test("cleanup retries with fresh budgets and retains a live runtime directory", 
   }
 });
 
-test("real-model smoke rejects arbitrary HTTPS gateways and model identity mismatch", async () => {
+test("real-model smoke accepts configured HTTPS endpoints and rejects model identity mismatch", async () => {
   const { modelReceipt, startSmokeModelGateway } = await import(
     "../../../scripts/codex-smoke-model.mjs"
   );
@@ -121,9 +121,9 @@ test("real-model smoke rejects arbitrary HTTPS gateways and model identity misma
     RSS_CODEX_SMOKE_API_KEY: "SECRET_CANARY",
     RSS_CODEX_SMOKE_MODEL: "expected",
   };
-  assert.throws(
-    () => loadSmokeConfiguration([], env),
-    /invalid smoke configuration/,
+  assert.equal(
+    loadSmokeConfiguration([], env).apiUrl,
+    "https://untrusted.example/v1",
   );
   const good = loadSmokeConfiguration([], {
     ...env,
@@ -131,14 +131,14 @@ test("real-model smoke rejects arbitrary HTTPS gateways and model identity misma
   });
   assert.equal(good.mode, "real_model");
   await assert.rejects(
-    startSmokeModelGateway({ ...good, apiUrl: "https://untrusted.example/v1" }),
+    startSmokeModelGateway({ ...good, apiUrl: "http://untrusted.example/v1" }),
     /untrusted/,
   );
   const event = {
     type: "response.completed",
     response: { id: "resp_test", status: "completed", model: "expected" },
   };
-  assert.equal(modelReceipt(event, "expected").backend, "openai");
+  assert.equal(modelReceipt(event, "expected").backend, "configured_endpoint");
   for (const response of [
     { ...event.response, model: "wrong" },
     { ...event.response, model: undefined },
@@ -211,8 +211,8 @@ test(
             ...process.env,
             CI_BASE: "origin/develop",
             RSS_CODEX_SMOKE_MODE: "local_fixture",
-            RSS_CODEX_SMOKE_API_URL: settings.apiUrl,
-            RSS_CODEX_SMOKE_API_KEY: settings.apiKey,
+            RSS_CODEX_SMOKE_API_URL: settings.authentication.apiUrl,
+            RSS_CODEX_SMOKE_API_KEY: settings.authentication.apiKey,
             RSS_CODEX_SMOKE_MODEL: settings.model,
           },
           stdio: ["ignore", "pipe", "pipe"],

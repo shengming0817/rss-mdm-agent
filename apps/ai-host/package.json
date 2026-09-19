@@ -22,11 +22,16 @@
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@iarna/toml": "2.2.5",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@rss-mdm-agent/ai-access": "workspace:*",
+    "@rss-mdm-agent/ai-adapter-claude": "workspace:*",
+    "@rss-mdm-agent/ai-adapter-codex": "workspace:*",
+    "@rss-mdm-agent/ai-adapter-deepseek": "workspace:*",
     "@rss-mdm-agent/ai-contract": "workspace:*",
     "@rss-mdm-agent/ai-host": "workspace:*",
     "@rss-mdm-agent/ai-store-sqlite": "workspace:*",
-    "@rss-mdm-agent/ai-access": "workspace:*",
-    "@rss-mdm-agent/ai-adapter-claude": "workspace:*"
+    "yaml": "2.9.1"
   },
   "engines": {
     "node": "24.14.1"
