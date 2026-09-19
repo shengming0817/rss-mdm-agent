@@ -26,6 +26,7 @@ const names = [
   "service-catalog",
   "script-plan",
   "software-plan",
+  "execution-mcp",
 ];
 function fixture() {
   const root = realpathSync(
@@ -105,13 +106,13 @@ function fakeCargo(root, failure) {
         stdout: JSON.stringify({
           packages: names.map((name) => ({
             name,
-            dependencies: [
-              {
-                name: "serde_json",
-                req: "=1.0.151",
+            dependencies: rustConsumers
+              .find((s) => s.name === name)
+              .registry.map((name) => ({
+                name,
+                req: name === "serde_json" ? "=1.0.151" : "=1.0.0",
                 source: "registry+https://github.com/rust-lang/crates.io-index",
-              },
-            ],
+              })),
           })),
         }),
       };
@@ -253,7 +254,7 @@ test("only clean unchanged source can produce a deliverable consumer PASS", () =
   }
 });
 
-test("consumer inventory covers the ten independent crates", () => {
+test("consumer inventory covers the independent crates", () => {
   assert.deepEqual(
     rustConsumers.map((spec) => spec.name),
     names,

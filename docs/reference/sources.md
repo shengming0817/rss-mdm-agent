@@ -1,6 +1,6 @@
 # 来源与对标
 
-本文件记录需求与源码证据，不作为实现状态或依赖选型批准。查阅日期：2026-09-18 UTC。
+本文件记录需求与源码证据，不作为实现状态或依赖选型批准。初始查阅日期：2026-09-09 UTC；AI Runtime 契约核对：2026-09-18 UTC；provider 基线核对：2026-09-19 UTC。
 PRD唯一入口为[客户端PRD](../product/rss-mdm-agent-prd.md)。D00仅编写文档；C05的实际UI/桌面壳提取、权利授权和固定对标见[提取记录](ui-extraction.md)。
 
 C01/C02 的实际契约实现及固定来源映射见[契约来源记录](contracts-extraction.md)。
@@ -17,6 +17,14 @@ C01/C02 的实际契约实现及固定来源映射见[契约来源记录](contra
 服务端[工程目标](https://dev.azure.com/shengming0923/rss/_git/rss-mdm?version=GC589211a598d588508375f7e84742cfa0dc7d29ce&path=/docs/product/project-goals.md)、[产品PRD](https://dev.azure.com/shengming0923/rss/_git/rss-mdm?version=GC589211a598d588508375f7e84742cfa0dc7d29ce&path=/docs/product/rss-mdm-prd.md)、[架构ADR](https://dev.azure.com/shengming0923/rss/_git/rss-mdm?version=GC589211a598d588508375f7e84742cfa0dc7d29ce&path=/docs/architecture/adr/202609072231-001-rust-rss-product-foundation.md)。
 本地服务端仓包含WinMDM历史快照，恢复来源由其reference/README.md持有；历史实现不是本客户端交付证明。
 
+## 当前 provider 基线来源
+
+当前矩阵由[PRD 引擎基线](../product/rss-mdm-agent-prd.md#provider-baseline)单源持有。
+2026-09-18 授权记录及原生 adapter 的实现/验证范围见 [C12 #2405](https://dev.azure.com/shengming0923/rss/_workitems/edit/2405)、
+[C13 #2406](https://dev.azure.com/shengming0923/rss/_workitems/edit/2406)、[A05 #2443](https://dev.azure.com/shengming0923/rss/_workitems/edit/2443)。
+DeepSeek Harness 仍是规划；#2443 中固定上游源码只是研究证据，实际消费版本、许可和原生烟测由该 owner 交付。
+历史 Cursor #2407 已移出当前范围；下表保留其固定来源用于迁移追踪，不将旧来源记录视为支持承诺。
+
 ## prmonitor 源码提取清单
 
 以下链接固定上述commit。实际复制时必须记录新增/删除/改写与许可证/权利依据；当前根目录未发现LICENSE，不臆造开源许可，也不把第三方代码权利等同于仓库所有权。
@@ -26,7 +34,7 @@ C01/C02 的实际契约实现及固定来源映射见[契约来源记录](contra
 | [review/engine.rs](https://dev.azure.com/shengming0923/prmonitor/_git/prmonitor?version=GC4dcc87264ad740da6559824e0a8b04a1c2914d4b&path=/src-tauri/src/review/engine.rs) | engine trait、启动/续聊结果、能力化入口模式 | pr_number、SkillInvocation、PR/skill去重、Review身份 |
 | [Codex adapter](https://dev.azure.com/shengming0923/prmonitor/_git/prmonitor?version=GC4dcc87264ad740da6559824e0a8b04a1c2914d4b&path=/src-tauri/src/review/engines/codex) | RPC、codec、进程/流式会话 | review prompt、自动批准与全权限默认；按实际版本验证工具控制 |
 | [Claude adapter](https://dev.azure.com/shengming0923/prmonitor/_git/prmonitor?version=GC4dcc87264ad740da6559824e0a8b04a1c2914d4b&path=/src-tauri/src/review/engines/claude) | 流事件、CLI会话、resume差异 | bypassPermissions、PR skill入口 |
-| [Cursor adapter](https://dev.azure.com/shengming0923/prmonitor/_git/prmonitor?version=GC4dcc87264ad740da6559824e0a8b04a1c2914d4b&path=/src-tauri/src/review/engines/cursor) | ACP流与进程generation | force/sandbox-disabled、反向自动批准、PR上下文 |
+| [历史 Cursor adapter](https://dev.azure.com/shengming0923/prmonitor/_git/prmonitor?version=GC4dcc87264ad740da6559824e0a8b04a1c2914d4b&path=/src-tauri/src/review/engines/cursor) | 仅历史 ACP流与进程generation 参考，不是当前 provider 实施来源 | 当前范围移除；不得继承 force/sandbox-disabled、反向自动批准或PR上下文 |
 | [review/session.rs](https://dev.azure.com/shengming0923/prmonitor/_git/prmonitor?version=GC4dcc87264ad740da6559824e0a8b04a1c2914d4b&path=/src-tauri/src/review/session.rs) | 会话事件与UI连接的来源线索 | approval_policy=never、DangerFullAccess、PR完成/评论绑定；不整体提取 |
 | [ReviewStream.vue](https://dev.azure.com/shengming0923/prmonitor/_git/prmonitor?version=GC4dcc87264ad740da6559824e0a8b04a1c2914d4b&path=/src/review/ReviewStream.vue)、[SplitPane.vue](https://dev.azure.com/shengming0923/prmonitor/_git/prmonitor?version=GC4dcc87264ad740da6559824e0a8b04a1c2914d4b&path=/src/SplitPane.vue) | 消息展示、流式交互与布局 | review store/API、PR字段、宿主强耦合 |
 | [types.ts](https://dev.azure.com/shengming0923/prmonitor/_git/prmonitor?version=GC4dcc87264ad740da6559824e0a8b04a1c2914d4b&path=/src/types.ts) | 类型化事件的组织方式 | 不整体复制PullRequest/Workflow等PR契约 |

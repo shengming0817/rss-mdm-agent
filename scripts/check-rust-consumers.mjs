@@ -93,6 +93,16 @@ export const rustConsumers = [
     registry: [],
     fixtures: [],
   },
+  {
+    name: "execution-mcp",
+    example: "mcp-consumer.rs",
+    locals: ["execution-mcp", "execution-contract", "service-catalog"],
+    registry: ["serde_json", "sha2", "tokio", "tokio-util"],
+    fixtures: [
+      "crates/service-catalog/tests/fixtures/catalog.json",
+      "crates/execution-contract/tests/fixtures/plan.json",
+    ],
+  },
 ];
 function cargo(args, cwd, env, execute, receipt, capture = false) {
   const command = ["cargo", ...args];
@@ -145,12 +155,12 @@ function checkOne(root, spec, owner, execute, receipt) {
     if (!packageMetadata)
       throw new ConsumerFailure("missing-consumer-owner", name);
     const registryDependencies = spec.registry.map((dependency) => {
-      const version = packageMetadata.dependencies.find(
+      const declaration = packageMetadata.dependencies.find(
         (d) => d.name === dependency && d.source?.startsWith("registry+"),
-      )?.req;
-      if (!version)
+      );
+      if (!declaration?.req)
         throw new ConsumerFailure("missing-registry-dependency", dependency);
-      return `${dependency} = ${JSON.stringify(version)}`;
+      return `${dependency} = { version = ${JSON.stringify(declaration.req)}, default-features = ${declaration.uses_default_features !== false}, features = ${JSON.stringify(declaration.features ?? [])} }`;
     });
     writeFileSync(
       join(dir, "Cargo.toml"),

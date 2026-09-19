@@ -1,6 +1,6 @@
 use std::error::Error;
 
-fn diagnostic(error: &dyn Error) -> String {
+pub(super) fn diagnostic(error: &dyn Error) -> String {
     let mut message = format!("RSS MDM Agent 启动失败：{error}");
     let mut cause = error.source();
     while let Some(error) = cause {

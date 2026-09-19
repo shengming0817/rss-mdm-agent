@@ -3,7 +3,7 @@
 - [客户端 PRD](product/rss-mdm-agent-prd.md)：客户端需求唯一入口，包含执行等级、传统自助与 AI 交互、责任边界和阶段验收。
 - [稳定规则](rules/README.md)：范围、依赖、验证与文档维护。
 - [Codex工作方式](guides/codex-workflow.md)：项目指令与本地共享技能入口。
-- [桌面开发](guides/desktop-development.md)：启动、构建、组件消费和本地验收。
+- [桌面开发](guides/desktop-development.md)：启动、构建、组件消费、自助固定测试服务与本地验收。
 - [UI与桌面壳提取记录](reference/ui-extraction.md)：固定来源、MIT授权和逐文件映射。
 - [目录与后端对齐](guides/202609130000-2396-service-catalog.md)：精确资源绑定、参数演进与执行 owner 边界。
 - [契约开发](guides/contracts-development.md)：执行/AI 契约、schema 与隔离消费验证。
@@ -17,6 +17,7 @@
 - [生命周期核心](../crates/execution-lifecycle/README.md)：有界快照、证据核实与安全重试。
 - [脚本计划核心](../crates/script-plan/README.md)：静态解释器 profile、参数与受控 IO 编译。
 - [软件计划核心](../crates/software-plan/README.md)：精确包身份、变更约束与独立检测决策。
+- [受控 MCP 适配器](../crates/execution-mcp/README.md)：同源目录参数、宿主绑定服务 port、幂等提交与有界 stdio。
 - [执行核心来源](reference/execution-cores.md)：固定Rust对标及重写边界。
 - [来源与对标](reference/sources.md)：prmonitor 固定源码证据、服务端产品基线及上游参考。
 
