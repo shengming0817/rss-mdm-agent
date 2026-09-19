@@ -14,7 +14,10 @@ export async function readPrivateFile(
     (process.getuid && directory.uid !== process.getuid())
   )
     throw new Error("private file directory ownership");
-  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const file = await open(
+    path,
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+  );
   try {
     const stat = await file.stat();
     if (

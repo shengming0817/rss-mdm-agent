@@ -25,6 +25,28 @@ test("private configuration and credentials require bounded owned files in priva
   await assert.rejects(readPrivateFile(file, 5));
   await symlink(file, link);
   await assert.rejects(readPrivateFile(link, 64));
+  const fifo = join(directory, "fifo");
+  assert.equal(spawnSync("/usr/bin/mkfifo", [fifo]).status, 0);
+  await chmod(fifo, 0o600);
+  const moduleUrl = new URL(
+    "../../apps/ai-host/dist/private-file.js",
+    import.meta.url,
+  ).href;
+  const rejected = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `import {readPrivateFile} from ${JSON.stringify(moduleUrl)}; try {await readPrivateFile(process.argv[1],64);process.exitCode=2;}catch {process.exitCode=0;}`,
+      fifo,
+    ],
+    { timeout: 1000 },
+  );
+  assert.equal(
+    rejected.status,
+    0,
+    "non-regular files must be rejected without blocking open",
+  );
   await chmod(file, 0o644);
   await assert.rejects(readPrivateFile(file, 64));
   await chmod(file, 0o600);

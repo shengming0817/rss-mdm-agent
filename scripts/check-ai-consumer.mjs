@@ -73,14 +73,16 @@ try {
   writeFileSync(
     join(dir, "consumer.ts"),
     `import assert from 'node:assert/strict';
-import { decode, boundedJson, fingerprint, type HostPort, type ProviderAgentPort, type SessionStore, type ProviderConfiguration, type Subscription, type ProviderInteraction, type ProviderObservation, type ProviderEventBody } from '@rss-mdm-agent/ai-contract';
+import { decode, boundedJson, fingerprint, type HostPort, type ProviderAgentPort, type SessionStore, type ProviderConfiguration, type ProviderAdmission, type Subscription, type ProviderInteraction, type ProviderObservation, type ProviderEventBody } from '@rss-mdm-agent/ai-contract';
 import { VerifiedProviderSession } from '@rss-mdm-agent/ai-contract/session';
 import {createState,acceptCommand,type SessionState} from '@rss-mdm-agent/ai-contract/transitions';
 import {fixtureSession,acceptance,unwrap,FakeHost,MemorySessionStore,ScriptedProvider,fixtures,fixtureLimits,runStoreConformance,runProviderConformance,runHostConformance} from '@rss-mdm-agent/ai-contract/testing';
 // @ts-expect-error Resume must return capabilities with binding.
 const invalidResume:NonNullable<ProviderAgentPort['resume']>=async()=>({ok:true,value:{} as import('@rss-mdm-agent/ai-contract').Binding});
-// @ts-expect-error Controlled mode cannot omit its verifier and ToolEndpoint.
-const invalidConfiguration:ProviderConfiguration={provider:'fake',config:{id:'c',revision:'1'},accountRef:'a',namespace:fixtureSession().namespace,workingDirectory:'.',permissions:'host_mediated'};
+const controlledConfiguration:ProviderConfiguration={provider:'fake',config:{id:'c',revision:'1'},accountRef:'a',namespace:fixtureSession().namespace,workingDirectory:'.',permissions:'host_mediated'};
+// @ts-expect-error Parent admission cannot omit its verifier or ToolEndpoint.
+const invalidAdmission:ProviderAdmission={};
+assert.equal((await VerifiedProviderSession.open(new ScriptedProvider(),controlledConfiguration,{timeoutMs:1000,signal:new AbortController().signal})).ok,false);
 // @ts-expect-error Admission cannot be built from serialized fields.
 const forged:VerifiedProviderSession={binding:{},capabilities:{}};
 // @ts-expect-error Every subscription delta retains its message identity.

@@ -223,7 +223,9 @@ impl ::std::convert::TryFrom<::std::string::String> for AccessUpdateKind {
 #[doc = "Exact product contract version; no legacy readers."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct AccessUpdateSchemaVersion(i64);
+pub struct AccessUpdateSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for AccessUpdateSchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -394,7 +396,9 @@ impl ::std::convert::TryFrom<::std::string::String> for ActionRequestKind {
 #[doc = "Exact product contract version; no legacy readers."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct ActionRequestSchemaVersion(i64);
+pub struct ActionRequestSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for ActionRequestSchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -493,7 +497,9 @@ impl ::std::convert::TryFrom<::std::string::String> for AttachReceiptKind {
 #[doc = "Exact product contract version; no legacy readers."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct AttachReceiptSchemaVersion(i64);
+pub struct AttachReceiptSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for AttachReceiptSchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -592,7 +598,9 @@ impl ::std::convert::TryFrom<::std::string::String> for AttachRequestKind {
 #[doc = "Exact product contract version; no legacy readers."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct AttachRequestSchemaVersion(i64);
+pub struct AttachRequestSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for AttachRequestSchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -1245,7 +1253,9 @@ impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant0Kin
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct CommandRecordVariant0SchemaVersion(i64);
+pub struct CommandRecordVariant0SchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for CommandRecordVariant0SchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -1373,7 +1383,9 @@ impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant1Kin
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct CommandRecordVariant1SchemaVersion(i64);
+pub struct CommandRecordVariant1SchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for CommandRecordVariant1SchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -1501,7 +1513,9 @@ impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant2Kin
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct CommandRecordVariant2SchemaVersion(i64);
+pub struct CommandRecordVariant2SchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for CommandRecordVariant2SchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -1629,7 +1643,9 @@ impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant3Kin
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct CommandRecordVariant3SchemaVersion(i64);
+pub struct CommandRecordVariant3SchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for CommandRecordVariant3SchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -1757,7 +1773,9 @@ impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant4Kin
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct CommandRecordVariant4SchemaVersion(i64);
+pub struct CommandRecordVariant4SchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for CommandRecordVariant4SchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -1885,7 +1903,9 @@ impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant5Kin
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct CommandRecordVariant5SchemaVersion(i64);
+pub struct CommandRecordVariant5SchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for CommandRecordVariant5SchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -2013,7 +2033,9 @@ impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant6Kin
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct CommandRecordVariant6SchemaVersion(i64);
+pub struct CommandRecordVariant6SchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for CommandRecordVariant6SchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -2141,7 +2163,9 @@ impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant7Kin
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct CommandRecordVariant7SchemaVersion(i64);
+pub struct CommandRecordVariant7SchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for CommandRecordVariant7SchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -2327,7 +2351,9 @@ impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant8Kin
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct CommandRecordVariant8SchemaVersion(i64);
+pub struct CommandRecordVariant8SchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for CommandRecordVariant8SchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -2408,7 +2434,9 @@ impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant8Sta
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct CommandSchemaVersion(i64);
+pub struct CommandSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for CommandSchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -2451,7 +2479,7 @@ pub struct ConfigRef {
 #[doc = "Nonnegative integer in the shared JavaScript safe-integer range."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct Counter(pub i64);
+pub struct Counter(#[doc = "`` member; see its generated type and parent schema."] pub i64);
 impl ::std::ops::Deref for Counter {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -2526,7 +2554,9 @@ pub struct Delivery {
 #[doc = "SHA-256 of JCS({event, target}), including the full referenced stable event and exact destination."]
 #[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[serde(transparent)]
-pub struct DeliveryContentHash(::std::string::String);
+pub struct DeliveryContentHash(
+    #[doc = "`` member; see its generated type and parent schema."] ::std::string::String,
+);
 impl ::std::ops::Deref for DeliveryContentHash {
     type Target = ::std::string::String;
     fn deref(&self) -> &::std::string::String {
@@ -2682,7 +2712,9 @@ impl ::std::convert::TryFrom<::std::string::String> for DeliveryRetry {
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct DeliverySchemaVersion(i64);
+pub struct DeliverySchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for DeliverySchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -2836,7 +2868,9 @@ impl ::std::convert::TryFrom<::std::string::String> for DetachRequestKind {
 #[doc = "Exact product contract version; no legacy readers."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct DetachRequestSchemaVersion(i64);
+pub struct DetachRequestSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for DetachRequestSchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -3082,8 +3116,8 @@ impl ::std::convert::TryFrom<::std::string::String> for ErrorCode {
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(untagged, deny_unknown_fields)]
 pub enum Event {
-    #[doc = "`Variant0` alternative; see the parent type's schema contract."]
-    Variant0 {
+    #[doc = "`Text` alternative; see the parent type's schema contract."]
+    Text {
         #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
         #[serde(rename = "attemptId")]
         attempt_id: Id,
@@ -3107,8 +3141,8 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`Variant1` alternative; see the parent type's schema contract."]
-    Variant1 {
+    #[doc = "`StatusAccepted` alternative; see the parent type's schema contract."]
+    StatusAccepted {
         #[doc = "`body` member; see its generated type and parent schema."]
         body: EventStatusAcceptedBody,
         #[doc = "Original command identity within the trusted namespace."]
@@ -3129,8 +3163,8 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`Variant2` alternative; see the parent type's schema contract."]
-    Variant2 {
+    #[doc = "`StatusDispatchingRunningReconciliationRequired` alternative; see the parent type's schema contract."]
+    StatusDispatchingRunningReconciliationRequired {
         #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
         #[serde(rename = "attemptId")]
         attempt_id: Id,
@@ -3154,8 +3188,8 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`Variant3` alternative; see the parent type's schema contract."]
-    Variant3 {
+    #[doc = "`Terminal` alternative; see the parent type's schema contract."]
+    Terminal {
         #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
         #[serde(rename = "attemptId")]
         attempt_id: Id,
@@ -3179,8 +3213,8 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`Variant4` alternative; see the parent type's schema contract."]
-    Variant4 {
+    #[doc = "`CancelDispatched` alternative; see the parent type's schema contract."]
+    CancelDispatched {
         #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
         #[serde(rename = "attemptId")]
         attempt_id: Id,
@@ -3204,8 +3238,8 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`Variant5` alternative; see the parent type's schema contract."]
-    Variant5 {
+    #[doc = "`ToolProposal` alternative; see the parent type's schema contract."]
+    ToolProposal {
         #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
         #[serde(rename = "attemptId")]
         attempt_id: Id,
@@ -3229,8 +3263,8 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`Variant6` alternative; see the parent type's schema contract."]
-    Variant6 {
+    #[doc = "`ToolResult` alternative; see the parent type's schema contract."]
+    ToolResult {
         #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
         #[serde(rename = "attemptId")]
         attempt_id: Id,
@@ -3254,8 +3288,8 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`Variant7` alternative; see the parent type's schema contract."]
-    Variant7 {
+    #[doc = "`InteractionPending` alternative; see the parent type's schema contract."]
+    InteractionPending {
         #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
         #[serde(rename = "attemptId")]
         attempt_id: Id,
@@ -3279,8 +3313,8 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`Variant8` alternative; see the parent type's schema contract."]
-    Variant8 {
+    #[doc = "`InteractionAnswered` alternative; see the parent type's schema contract."]
+    InteractionAnswered {
         #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
         #[serde(rename = "attemptId")]
         attempt_id: Id,
@@ -3304,8 +3338,8 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`Variant9` alternative; see the parent type's schema contract."]
-    Variant9 {
+    #[doc = "`InteractionExpiredUnavailable` alternative; see the parent type's schema contract."]
+    InteractionExpiredUnavailable {
         #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
         #[serde(rename = "attemptId")]
         attempt_id: Id,
@@ -3329,8 +3363,8 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`Variant10` alternative; see the parent type's schema contract."]
-    Variant10 {
+    #[doc = "`Error` alternative; see the parent type's schema contract."]
+    Error {
         #[doc = "`body` member; see its generated type and parent schema."]
         body: EventErrorBody,
         #[doc = "Original command identity within the trusted namespace."]
@@ -3351,8 +3385,8 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`Variant11` alternative; see the parent type's schema contract."]
-    Variant11 {
+    #[doc = "`Invalidated` alternative; see the parent type's schema contract."]
+    Invalidated {
         #[doc = "`body` member; see its generated type and parent schema."]
         body: EventInvalidatedBody,
         #[doc = "Original command identity within the trusted namespace."]
@@ -3373,8 +3407,8 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`Variant12` alternative; see the parent type's schema contract."]
-    Variant12 {
+    #[doc = "`Dispatch` alternative; see the parent type's schema contract."]
+    Dispatch {
         #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
         #[serde(rename = "attemptId")]
         attempt_id: Id,
@@ -3398,8 +3432,8 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`Variant13` alternative; see the parent type's schema contract."]
-    Variant13 {
+    #[doc = "`Reconciled` alternative; see the parent type's schema contract."]
+    Reconciled {
         #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
         #[serde(rename = "attemptId")]
         attempt_id: Id,
@@ -3423,8 +3457,8 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`Variant14` alternative; see the parent type's schema contract."]
-    Variant14 {
+    #[doc = "`Surface` alternative; see the parent type's schema contract."]
+    Surface {
         #[doc = "Stable identity of one dispatch attempt; never reused after positive non-submission proof."]
         #[serde(rename = "attemptId")]
         attempt_id: Id,
@@ -3448,8 +3482,8 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`Variant15` alternative; see the parent type's schema contract."]
-    Variant15 {
+    #[doc = "`SessionRebound` alternative; see the parent type's schema contract."]
+    SessionRebound {
         #[doc = "`body` member; see its generated type and parent schema."]
         body: EventSessionReboundBody,
         #[doc = "Stable unique event identifier within the namespace."]
@@ -3467,8 +3501,8 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`Variant16` alternative; see the parent type's schema contract."]
-    Variant16 {
+    #[doc = "`SessionRetired` alternative; see the parent type's schema contract."]
+    SessionRetired {
         #[doc = "`body` member; see its generated type and parent schema."]
         body: EventSessionRetiredBody,
         #[doc = "Stable unique event identifier within the namespace."]
@@ -3486,8 +3520,8 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`Variant17` alternative; see the parent type's schema contract."]
-    Variant17 {
+    #[doc = "`Acknowledged` alternative; see the parent type's schema contract."]
+    Acknowledged {
         #[doc = "Exact native dispatch attempt identity."]
         #[serde(rename = "attemptId")]
         attempt_id: Id,
@@ -3511,8 +3545,8 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`Variant18` alternative; see the parent type's schema contract."]
-    Variant18 {
+    #[doc = "`Cancelled` alternative; see the parent type's schema contract."]
+    Cancelled {
         #[doc = "`body` member; see its generated type and parent schema."]
         body: EventCancelledBody,
         #[doc = "Original command identity within the trusted namespace."]
@@ -3533,8 +3567,8 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`Variant19` alternative; see the parent type's schema contract."]
-    Variant19 {
+    #[doc = "`SessionRecoveryUnavailable` alternative; see the parent type's schema contract."]
+    SessionRecoveryUnavailable {
         #[doc = "`body` member; see its generated type and parent schema."]
         body: EventSessionRecoveryUnavailableBody,
         #[doc = "Stable unique event identifier within the namespace."]
@@ -3552,10 +3586,10 @@ pub enum Event {
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
-    #[doc = "`Variant20` alternative; see the parent type's schema contract."]
-    Variant20 {
+    #[doc = "`AcknowledgedQueuedCancelled` alternative; see the parent type's schema contract."]
+    AcknowledgedQueuedCancelled {
         #[doc = "`body` member; see its generated type and parent schema."]
-        body: EventAcknowledgedBody,
+        body: EventAcknowledgedQueuedCancelledBody,
         #[doc = "Original command identity within the trusted namespace."]
         #[serde(rename = "commandId")]
         command_id: Id,
@@ -3565,12 +3599,12 @@ pub enum Event {
         #[doc = "Live provider incarnation token; rejects callbacks from previous incarnations."]
         generation: Id,
         #[doc = "Closed product record discriminator."]
-        kind: EventAcknowledgedKind,
+        kind: EventAcknowledgedQueuedCancelledKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
         #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
-        schema_version: EventAcknowledgedSchemaVersion,
+        schema_version: EventAcknowledgedQueuedCancelledSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
         sequence: Counter,
     },
@@ -3584,64 +3618,6 @@ pub struct EventAcknowledgedBody {
     #[doc = "Closed variant discriminator."]
     #[serde(rename = "type")]
     pub type_: EventAcknowledgedBodyType,
-}
-#[doc = "Closed control acknowledgement; never a model-turn outcome."]
-#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
-#[serde(deny_unknown_fields)]
-pub struct EventAcknowledgedBodyAcknowledgement {
-    #[doc = "Queued prompt cancelled without a native dispatch."]
-    #[serde(rename = "targetCommandId")]
-    pub target_command_id: Id,
-    #[doc = "Closed variant discriminator."]
-    #[serde(rename = "type")]
-    pub type_: EventAcknowledgedBodyAcknowledgementType,
-}
-#[doc = "Closed variant discriminator."]
-#[derive(
-    :: serde :: Deserialize,
-    :: serde :: Serialize,
-    Clone,
-    Copy,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
-)]
-pub enum EventAcknowledgedBodyAcknowledgementType {
-    #[serde(rename = "queued_cancelled")]
-    #[doc = "`QueuedCancelled` alternative; see the parent type's schema contract."]
-    QueuedCancelled,
-}
-impl ::std::fmt::Display for EventAcknowledgedBodyAcknowledgementType {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        match *self {
-            Self::QueuedCancelled => f.write_str("queued_cancelled"),
-        }
-    }
-}
-impl ::std::str::FromStr for EventAcknowledgedBodyAcknowledgementType {
-    type Err = self::error::ConversionError;
-    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        match value {
-            "queued_cancelled" => Ok(Self::QueuedCancelled),
-            _ => Err("invalid value".into()),
-        }
-    }
-}
-impl ::std::convert::TryFrom<&str> for EventAcknowledgedBodyAcknowledgementType {
-    type Error = self::error::ConversionError;
-    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-impl ::std::convert::TryFrom<::std::string::String> for EventAcknowledgedBodyAcknowledgementType {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: ::std::string::String,
-    ) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
 }
 #[doc = "Closed variant discriminator."]
 #[derive(
@@ -3737,10 +3713,212 @@ impl ::std::convert::TryFrom<::std::string::String> for EventAcknowledgedKind {
         value.parse()
     }
 }
+#[doc = "Stable product contract field."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct EventAcknowledgedQueuedCancelledBody {
+    #[doc = "`acknowledgement` member; see its generated type and parent schema."]
+    pub acknowledgement: EventAcknowledgedQueuedCancelledBodyAcknowledgement,
+    #[doc = "Closed variant discriminator."]
+    #[serde(rename = "type")]
+    pub type_: EventAcknowledgedQueuedCancelledBodyType,
+}
+#[doc = "Closed control acknowledgement; never a model-turn outcome."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct EventAcknowledgedQueuedCancelledBodyAcknowledgement {
+    #[doc = "Queued prompt cancelled without a native dispatch."]
+    #[serde(rename = "targetCommandId")]
+    pub target_command_id: Id,
+    #[doc = "Closed variant discriminator."]
+    #[serde(rename = "type")]
+    pub type_: EventAcknowledgedQueuedCancelledBodyAcknowledgementType,
+}
+#[doc = "Closed variant discriminator."]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum EventAcknowledgedQueuedCancelledBodyAcknowledgementType {
+    #[serde(rename = "queued_cancelled")]
+    #[doc = "`QueuedCancelled` alternative; see the parent type's schema contract."]
+    QueuedCancelled,
+}
+impl ::std::fmt::Display for EventAcknowledgedQueuedCancelledBodyAcknowledgementType {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::QueuedCancelled => f.write_str("queued_cancelled"),
+        }
+    }
+}
+impl ::std::str::FromStr for EventAcknowledgedQueuedCancelledBodyAcknowledgementType {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "queued_cancelled" => Ok(Self::QueuedCancelled),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for EventAcknowledgedQueuedCancelledBodyAcknowledgementType {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String>
+    for EventAcknowledgedQueuedCancelledBodyAcknowledgementType
+{
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Closed variant discriminator."]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum EventAcknowledgedQueuedCancelledBodyType {
+    #[serde(rename = "acknowledged")]
+    #[doc = "`Acknowledged` alternative; see the parent type's schema contract."]
+    Acknowledged,
+}
+impl ::std::fmt::Display for EventAcknowledgedQueuedCancelledBodyType {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Acknowledged => f.write_str("acknowledged"),
+        }
+    }
+}
+impl ::std::str::FromStr for EventAcknowledgedQueuedCancelledBodyType {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "acknowledged" => Ok(Self::Acknowledged),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for EventAcknowledgedQueuedCancelledBodyType {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for EventAcknowledgedQueuedCancelledBodyType {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Closed product record discriminator."]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum EventAcknowledgedQueuedCancelledKind {
+    #[serde(rename = "event")]
+    #[doc = "`Event` alternative; see the parent type's schema contract."]
+    Event,
+}
+impl ::std::fmt::Display for EventAcknowledgedQueuedCancelledKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Event => f.write_str("event"),
+        }
+    }
+}
+impl ::std::str::FromStr for EventAcknowledgedQueuedCancelledKind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "event" => Ok(Self::Event),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for EventAcknowledgedQueuedCancelledKind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for EventAcknowledgedQueuedCancelledKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct EventAcknowledgedSchemaVersion(i64);
+pub struct EventAcknowledgedQueuedCancelledSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
+impl ::std::ops::Deref for EventAcknowledgedQueuedCancelledSchemaVersion {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::std::convert::From<EventAcknowledgedQueuedCancelledSchemaVersion> for i64 {
+    fn from(value: EventAcknowledgedQueuedCancelledSchemaVersion) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::TryFrom<i64> for EventAcknowledgedQueuedCancelledSchemaVersion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if ![2_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for EventAcknowledgedQueuedCancelledSchemaVersion {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
+#[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
+#[derive(:: serde :: Serialize, Clone)]
+#[serde(transparent)]
+pub struct EventAcknowledgedSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for EventAcknowledgedSchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -3935,7 +4113,9 @@ impl ::std::convert::TryFrom<::std::string::String> for EventCancelDispatchedKin
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct EventCancelDispatchedSchemaVersion(i64);
+pub struct EventCancelDispatchedSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for EventCancelDispatchedSchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -4074,7 +4254,9 @@ impl ::std::convert::TryFrom<::std::string::String> for EventCancelledKind {
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct EventCancelledSchemaVersion(i64);
+pub struct EventCancelledSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for EventCancelledSchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -4212,7 +4394,9 @@ impl ::std::convert::TryFrom<::std::string::String> for EventDispatchKind {
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct EventDispatchSchemaVersion(i64);
+pub struct EventDispatchSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for EventDispatchSchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -4350,7 +4534,9 @@ impl ::std::convert::TryFrom<::std::string::String> for EventErrorKind {
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct EventErrorSchemaVersion(i64);
+pub struct EventErrorSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for EventErrorSchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -4541,7 +4727,9 @@ impl ::std::convert::TryFrom<::std::string::String> for EventInteractionAnswered
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct EventInteractionAnsweredSchemaVersion(i64);
+pub struct EventInteractionAnsweredSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for EventInteractionAnsweredSchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -4736,7 +4924,9 @@ impl ::std::convert::TryFrom<::std::string::String> for EventInteractionExpiredU
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct EventInteractionExpiredUnavailableSchemaVersion(i64);
+pub struct EventInteractionExpiredUnavailableSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for EventInteractionExpiredUnavailableSchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -4932,7 +5122,9 @@ impl ::std::convert::TryFrom<::std::string::String> for EventInteractionPendingK
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct EventInteractionPendingSchemaVersion(i64);
+pub struct EventInteractionPendingSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for EventInteractionPendingSchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -5070,7 +5262,9 @@ impl ::std::convert::TryFrom<::std::string::String> for EventInvalidatedKind {
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct EventInvalidatedSchemaVersion(i64);
+pub struct EventInvalidatedSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for EventInvalidatedSchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -5282,7 +5476,9 @@ impl ::std::convert::TryFrom<::std::string::String> for EventReconciledKind {
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct EventReconciledSchemaVersion(i64);
+pub struct EventReconciledSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for EventReconciledSchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -5421,7 +5617,9 @@ impl ::std::convert::TryFrom<::std::string::String> for EventSessionReboundKind 
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct EventSessionReboundSchemaVersion(i64);
+pub struct EventSessionReboundSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for EventSessionReboundSchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -5557,7 +5755,9 @@ impl ::std::convert::TryFrom<::std::string::String> for EventSessionRecoveryUnav
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct EventSessionRecoveryUnavailableSchemaVersion(i64);
+pub struct EventSessionRecoveryUnavailableSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for EventSessionRecoveryUnavailableSchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -5693,7 +5893,9 @@ impl ::std::convert::TryFrom<::std::string::String> for EventSessionRetiredKind 
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct EventSessionRetiredSchemaVersion(i64);
+pub struct EventSessionRetiredSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for EventSessionRetiredSchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -5878,7 +6080,9 @@ impl ::std::convert::TryFrom<::std::string::String> for EventStatusAcceptedKind 
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct EventStatusAcceptedSchemaVersion(i64);
+pub struct EventStatusAcceptedSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for EventStatusAcceptedSchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -6081,7 +6285,9 @@ impl ::std::convert::TryFrom<::std::string::String>
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct EventStatusDispatchingRunningReconciliationRequiredSchemaVersion(i64);
+pub struct EventStatusDispatchingRunningReconciliationRequiredSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for EventStatusDispatchingRunningReconciliationRequiredSchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -6225,7 +6431,9 @@ impl ::std::convert::TryFrom<::std::string::String> for EventSurfaceKind {
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct EventSurfaceSchemaVersion(i64);
+pub struct EventSurfaceSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for EventSurfaceSchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -6363,7 +6571,9 @@ impl ::std::convert::TryFrom<::std::string::String> for EventTerminalKind {
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct EventTerminalSchemaVersion(i64);
+pub struct EventTerminalSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for EventTerminalSchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -6410,7 +6620,9 @@ pub struct EventTextBody {
 #[doc = "Untrusted model/user text subject to the whole-envelope budgets."]
 #[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[serde(transparent)]
-pub struct EventTextBodyText(::std::string::String);
+pub struct EventTextBodyText(
+    #[doc = "`` member; see its generated type and parent schema."] ::std::string::String,
+);
 impl ::std::ops::Deref for EventTextBodyText {
     type Target = ::std::string::String;
     fn deref(&self) -> &::std::string::String {
@@ -6554,7 +6766,9 @@ impl ::std::convert::TryFrom<::std::string::String> for EventTextKind {
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct EventTextSchemaVersion(i64);
+pub struct EventTextSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for EventTextSchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -6697,7 +6911,9 @@ impl ::std::convert::TryFrom<::std::string::String> for EventToolProposalKind {
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct EventToolProposalSchemaVersion(i64);
+pub struct EventToolProposalSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for EventToolProposalSchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -6803,7 +7019,9 @@ impl ::std::convert::TryFrom<::std::string::String> for EventToolResultBodyDispo
 #[doc = "Untrusted model/user text subject to the whole-envelope budgets."]
 #[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[serde(transparent)]
-pub struct EventToolResultBodyText(::std::string::String);
+pub struct EventToolResultBodyText(
+    #[doc = "`` member; see its generated type and parent schema."] ::std::string::String,
+);
 impl ::std::ops::Deref for EventToolResultBodyText {
     type Target = ::std::string::String;
     fn deref(&self) -> &::std::string::String {
@@ -6947,7 +7165,9 @@ impl ::std::convert::TryFrom<::std::string::String> for EventToolResultKind {
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct EventToolResultSchemaVersion(i64);
+pub struct EventToolResultSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for EventToolResultSchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -6990,7 +7210,9 @@ pub struct Failure {
 #[doc = "Opaque ASCII correlation identifier (1–128 characters); never an authentication credential."]
 #[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[serde(transparent)]
-pub struct Id(::std::string::String);
+pub struct Id(
+    #[doc = "`` member; see its generated type and parent schema."] ::std::string::String,
+);
 impl ::std::ops::Deref for Id {
     type Target = ::std::string::String;
     fn deref(&self) -> &::std::string::String {
@@ -7156,7 +7378,9 @@ impl ::std::convert::TryFrom<::std::string::String> for InputPolicy {
 #[doc = "Untrusted model/user text subject to the whole-envelope budgets."]
 #[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[serde(transparent)]
-pub struct InputText(::std::string::String);
+pub struct InputText(
+    #[doc = "`` member; see its generated type and parent schema."] ::std::string::String,
+);
 impl ::std::ops::Deref for InputText {
     type Target = ::std::string::String;
     fn deref(&self) -> &::std::string::String {
@@ -7347,7 +7571,10 @@ impl ::std::convert::TryFrom<::std::string::String> for InteractionKind {
 #[doc = "Immutable untrusted provider question payload. Subject to whole-record JSON budgets; never authentication, permission or execution approval."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct InteractionRequest(pub ::serde_json::Map<::std::string::String, ::serde_json::Value>);
+pub struct InteractionRequest(
+    #[doc = "`` member; see its generated type and parent schema."]
+    pub  ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+);
 impl ::std::ops::Deref for InteractionRequest {
     type Target = ::serde_json::Map<::std::string::String, ::serde_json::Value>;
     fn deref(&self) -> &::serde_json::Map<::std::string::String, ::serde_json::Value> {
@@ -7371,7 +7598,9 @@ impl ::std::convert::From<::serde_json::Map<::std::string::String, ::serde_json:
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct InteractionSchemaVersion(i64);
+pub struct InteractionSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for InteractionSchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -7526,7 +7755,9 @@ impl ::std::convert::TryFrom<::std::string::String> for ListRequestKind {
 #[doc = "Exact product contract version; no legacy readers."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct ListRequestSchemaVersion(i64);
+pub struct ListRequestSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for ListRequestSchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -7596,7 +7827,7 @@ pub struct Negotiation {
 #[doc = "Exact ACP protocol version."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct NegotiationAcp(i64);
+pub struct NegotiationAcp(#[doc = "`` member; see its generated type and parent schema."] i64);
 impl ::std::ops::Deref for NegotiationAcp {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -7630,7 +7861,9 @@ impl<'de> ::serde::Deserialize<'de> for NegotiationAcp {
 #[doc = "Exact product contract version."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct NegotiationContractVersion(i64);
+pub struct NegotiationContractVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for NegotiationContractVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -7776,7 +8009,9 @@ pub struct Receipt {
 #[doc = "SHA-256 of JCS(command), including every command field; namespace is a separate storage key."]
 #[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[serde(transparent)]
-pub struct ReceiptContentHash(::std::string::String);
+pub struct ReceiptContentHash(
+    #[doc = "`` member; see its generated type and parent schema."] ::std::string::String,
+);
 impl ::std::ops::Deref for ReceiptContentHash {
     type Target = ::std::string::String;
     fn deref(&self) -> &::std::string::String {
@@ -7875,7 +8110,9 @@ impl ::std::convert::TryFrom<::std::string::String> for ReceiptKind {
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct ReceiptSchemaVersion(i64);
+pub struct ReceiptSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for ReceiptSchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -7969,7 +8206,9 @@ impl ::std::convert::TryFrom<::std::string::String> for ResumeRequestKind {
 #[doc = "Exact product contract version; no legacy readers."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct ResumeRequestSchemaVersion(i64);
+pub struct ResumeRequestSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for ResumeRequestSchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -8192,7 +8431,9 @@ impl ::std::convert::TryFrom<::std::string::String> for SessionPageKind {
 #[doc = "Exact product contract version; no legacy readers."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct SessionPageSchemaVersion(i64);
+pub struct SessionPageSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for SessionPageSchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -8226,7 +8467,9 @@ impl<'de> ::serde::Deserialize<'de> for SessionPageSchemaVersion {
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct SessionSchemaVersion(i64);
+pub struct SessionSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for SessionSchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -8395,7 +8638,9 @@ impl ::std::convert::TryFrom<::std::string::String> for SnapshotPageKind {
 #[doc = "Exact product contract version; no legacy readers."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct SnapshotPageSchemaVersion(i64);
+pub struct SnapshotPageSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for SnapshotPageSchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -8491,7 +8736,9 @@ impl ::std::convert::TryFrom<::std::string::String> for SnapshotRequestKind {
 #[doc = "Exact product contract version; no legacy readers."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct SnapshotRequestSchemaVersion(i64);
+pub struct SnapshotRequestSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for SnapshotRequestSchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -8630,7 +8877,9 @@ impl ::std::convert::TryFrom<::std::string::String> for SurfaceActionKind {
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct SurfaceActionSchemaVersion(i64);
+pub struct SurfaceActionSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for SurfaceActionSchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -8815,7 +9064,9 @@ impl ::std::convert::TryFrom<::std::string::String> for SurfaceStateKind {
 #[doc = "Exact product wire version; V1 is rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
-pub struct SurfaceStateSchemaVersion(i64);
+pub struct SurfaceStateSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
 impl ::std::ops::Deref for SurfaceStateSchemaVersion {
     type Target = i64;
     fn deref(&self) -> &i64 {
@@ -9559,22 +9810,6 @@ impl std::fmt::Debug for EventAcknowledgedBody {
         f.write_str(concat!(stringify!(EventAcknowledgedBody), "([redacted])"))
     }
 }
-impl std::fmt::Debug for EventAcknowledgedBodyAcknowledgement {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(concat!(
-            stringify!(EventAcknowledgedBodyAcknowledgement),
-            "([redacted])"
-        ))
-    }
-}
-impl std::fmt::Debug for EventAcknowledgedBodyAcknowledgementType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(concat!(
-            stringify!(EventAcknowledgedBodyAcknowledgementType),
-            "([redacted])"
-        ))
-    }
-}
 impl std::fmt::Debug for EventAcknowledgedBodyType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(
@@ -9586,6 +9821,54 @@ impl std::fmt::Debug for EventAcknowledgedBodyType {
 impl std::fmt::Debug for EventAcknowledgedKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(stringify!(EventAcknowledgedKind), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for EventAcknowledgedQueuedCancelledBody {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(EventAcknowledgedQueuedCancelledBody),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for EventAcknowledgedQueuedCancelledBodyAcknowledgement {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(EventAcknowledgedQueuedCancelledBodyAcknowledgement),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for EventAcknowledgedQueuedCancelledBodyAcknowledgementType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(EventAcknowledgedQueuedCancelledBodyAcknowledgementType),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for EventAcknowledgedQueuedCancelledBodyType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(EventAcknowledgedQueuedCancelledBodyType),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for EventAcknowledgedQueuedCancelledKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(EventAcknowledgedQueuedCancelledKind),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for EventAcknowledgedQueuedCancelledSchemaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(EventAcknowledgedQueuedCancelledSchemaVersion),
+            "([redacted])"
+        ))
     }
 }
 impl std::fmt::Debug for EventAcknowledgedSchemaVersion {
