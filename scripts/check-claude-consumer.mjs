@@ -61,9 +61,6 @@ try {
         typescript: versions.typescript,
         "@types/node": versions["@types/node"],
       },
-      pnpm: {
-        overrides: { "@rss-mdm-agent/ai-contract": `file:./${contract}` },
-      },
     }),
   );
   const exceptions =
@@ -72,7 +69,7 @@ try {
     )[1] ?? "";
   writeFileSync(
     join(directory, "pnpm-workspace.yaml"),
-    `packages: []\nminimumReleaseAgeExclude:${exceptions}`,
+    `packages: []\noverrides: ${JSON.stringify({ "@rss-mdm-agent/ai-contract": `file:./${contract}` })}\nminimumReleaseAgeExclude:${exceptions}`,
   );
   writeFileSync(
     join(directory, "tsconfig.json"),
