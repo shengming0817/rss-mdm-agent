@@ -604,10 +604,7 @@ export class DeepSeekAdapter implements ProviderAgentPort {
           text: string;
         } = { disposition: "unavailable", text: "Tool unavailable" };
         try {
-          const result = await bounded(
-            endpoint.propose(proposal, b),
-            b,
-          );
+          const result = await bounded(endpoint.propose(proposal, b), b);
           if (
             result.ok &&
             ["returned", "rejected", "unavailable"].includes(
