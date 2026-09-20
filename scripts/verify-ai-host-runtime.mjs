@@ -2,6 +2,7 @@ import {
   configuration as fixtureConfiguration,
   nativePeer,
   clientAt,
+  executionGeneration,
 } from "../tests/ai-provider-conformance/support.mjs";
 import { executionServer } from "../tests/ai-host/rust-execution.mjs";
 import assert from "node:assert/strict";
@@ -76,7 +77,7 @@ for (const signal of ["SIGTERM", "SIGINT"]) {
     });
     const exited = once(child, "exit");
     peer = nativePeer(child.stdio[3]);
-    const view = await clientAt(peer);
+    const view = await clientAt(peer, await executionGeneration(directory));
     client = view.client;
     const session = await client.createSession();
     await client.submit({

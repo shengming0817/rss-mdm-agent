@@ -20,6 +20,7 @@ import {
   nativePeer,
   capabilities,
   evidence,
+  executionGeneration,
 } from "./support.mjs";
 
 const executable = executionServer();
@@ -94,7 +95,10 @@ for (const provider of engines) {
       }
       let peer;
       try {
-        peer = await clientAt(nativePeer(app.stdio[3]));
+        peer = await clientAt(
+          nativePeer(app.stdio[3]),
+          await executionGeneration(f.directory),
+        );
         if (provider !== "codex") {
           const empty = await peer.client.createSession();
           await assert.rejects(

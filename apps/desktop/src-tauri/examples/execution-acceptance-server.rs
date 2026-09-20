@@ -5,7 +5,13 @@ use execution_mcp::{
 };
 use rss_mdm_desktop::composition::execution::ExecutionHandle;
 use serde_json::json;
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    io::Write,
+    os::unix::fs::OpenOptionsExt,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
@@ -16,8 +22,55 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "usage: execution-acceptance-server DATABASE AUDIT OPERATION_REQUEST_ID".into(),
         );
     }
-    let execution =
-        ExecutionHandle::start(&PathBuf::from(&args[0]))?.for_caller("fixture-actor")?;
+    let database = PathBuf::from(&args[0]);
+    let user_root = database
+        .parent()
+        .ok_or("execution database must have a parent")?
+        .join("execution-users");
+    std::fs::create_dir(&user_root)?;
+    std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(user_root.join("users.json"))?
+        .write_all(
+            serde_json::to_vec(&json!({
+                "schemaVersion": 5,
+                "kind": "testUserPage",
+                "users": [{
+                    "schemaVersion": 5,
+                    "kind": "testUser",
+                    "userId": "fixture-actor",
+                    "displayName": "Fixture",
+                    "nameKey": "fixture"
+                }],
+                "current": {
+                    "schemaVersion": 5,
+                    "kind": "userContext",
+                    "user": {
+                        "schemaVersion": 5,
+                        "kind": "testUser",
+                        "userId": "fixture-actor",
+                        "displayName": "Fixture",
+                        "nameKey": "fixture"
+                    },
+                    "generation": "fixture-generation"
+                }
+            }))?
+            .as_slice(),
+        )?;
+    let users = rss_mdm_desktop::composition::users::Users::open(&user_root)?;
+    let generation = users.current()?.generation.to_string();
+    std::fs::write(
+        database
+            .parent()
+            .ok_or("execution database must have a parent")?
+            .join("execution-user.json"),
+        serde_json::to_vec(&json!({ "generation": generation }))?,
+    )?;
+    let execution = ExecutionHandle::start(&database)?
+        .with_trusted_users(Arc::new(Mutex::new(users)))
+        .for_caller("fixture-actor")?;
     let catalog = rss_mdm_desktop::composition::execution::catalog()?;
     let selected = catalog.select(
         &serde_json::to_vec(&json!({
@@ -43,7 +96,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "com.rss-mdm/ai-origin": {
             "schemaVersion": 5,
             "kind": "executionOrigin",
-            "userGeneration": "acceptance-generation",
+            "userGeneration": generation,
             "namespace": {
                 "tenantId": "test-users",
                 "principalId": "fixture-actor",

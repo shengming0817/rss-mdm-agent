@@ -8,7 +8,14 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { Duplex, PassThrough } from "node:stream";
-import { mkdtemp, mkdir, writeFile, rm, realpath } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  writeFile,
+  rm,
+  realpath,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startLocalApp } from "../../apps/ai-host/dist/index.js";
@@ -238,7 +245,22 @@ export function nativePeer(socket) {
   );
   return { control, inputs, next: 0 };
 }
-export async function clientAt(parent) {
+export async function executionGeneration(directory) {
+  const path = join(directory, "execution-user.json");
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    try {
+      const record = JSON.parse(await readFile(path, "utf8"));
+      assert.equal(typeof record.generation, "string");
+      return record.generation;
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+  assert.fail("execution user generation unavailable");
+}
+export async function clientAt(parent, generation = "fixture-generation") {
   const channel = `fixture-view-${++parent.next}`;
   const readable = new ReadableStream({
     start(input) {
@@ -255,7 +277,7 @@ export async function clientAt(parent) {
     context: {
       schemaVersion: 5,
       kind: "userContext",
-      generation: "fixture-generation",
+      generation,
       user: {
         schemaVersion: 5,
         kind: "testUser",
@@ -331,7 +353,7 @@ export async function fixture(t, provider) {
       rust = undefined;
     },
     async connect() {
-      const peer = await clientAt(parent);
+      const peer = await clientAt(parent, await executionGeneration(directory));
       peers.push(peer);
       return peer;
     },

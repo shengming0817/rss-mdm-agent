@@ -136,7 +136,7 @@ async function save() {
         old?.source.type === "custom_api" &&
         source.type === "custom_api" &&
         (old.provider !== candidate.provider ||
-          new URL(old.source.apiUrl).href !== new URL(source.apiUrl).href ||
+          old.source.apiUrl !== source.apiUrl ||
           (old.source.credentialType ?? "api_key") !==
             (source.credentialType ?? "api_key"));
       if (nativeTestMode)
@@ -334,7 +334,7 @@ async function history() {
                 <option value="auth_token">Auth Token</option>
               </select></label
             ><label
-              >API 地址<input v-model="apiUrl" required placeholder="https://…"
+              >API 地址<input v-model="apiUrl" required placeholder="HTTPS API 地址"
             /></label>
             <label v-if="editing?.source.type === 'custom_api'">
               <input v-model="replaceKey" type="checkbox" />更换 API 密钥
