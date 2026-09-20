@@ -46,6 +46,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // owns semantics; document each generated serialized alternative here.
         if let syn::Item::Enum(enumeration) = item {
             for variant in &mut enumeration.variants {
+                if enumeration.ident == "WireRecord" && variant.ident == "CommandRecord" {
+                    if let syn::Fields::Unnamed(fields) = &mut variant.fields {
+                        for field in &mut fields.unnamed {
+                            let ty = &field.ty;
+                            field.ty = syn::parse_quote!(::std::boxed::Box<#ty>);
+                        }
+                    }
+                }
                 // Only named fields: typify's tuple variants also have generated From impls.
                 if let syn::Fields::Named(fields) = &mut variant.fields {
                     for field in &mut fields.named {
@@ -66,6 +74,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         variant.ident
                     );
                     variant.attrs.push(syn::parse_quote!(#[doc = #doc]));
+                }
+            }
+        }
+        // Keep typify's conversion for the boxed top-level record aligned with its representation.
+        if let syn::Item::Impl(implementation) = item {
+            if matches!(&*implementation.self_ty, syn::Type::Path(path) if path.path.is_ident("WireRecord"))
+            {
+                for item in &mut implementation.items {
+                    if let syn::ImplItem::Fn(function) = item {
+                        if let Some(syn::Stmt::Expr(syn::Expr::Call(call), _)) =
+                            function.block.stmts.last_mut()
+                        {
+                            if matches!(&*call.func, syn::Expr::Path(path) if path.path.segments.last().is_some_and(|part| part.ident == "CommandRecord"))
+                            {
+                                if let Some(value) = call.args.first_mut() {
+                                    *value = syn::parse_quote!(::std::boxed::Box::new(#value));
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

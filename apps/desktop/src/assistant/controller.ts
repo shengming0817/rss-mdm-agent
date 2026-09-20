@@ -80,7 +80,10 @@ export function operationMessage(code: string): string {
     unsupported_capability:
       "当前认证来源或能力不可用，请选择已有 API 配置或自定义 API。",
   };
-  return messages[code] ?? "操作未确认，请重新读取后重试。";
+  return (
+    Object.entries(messages).find(([key]) => key === code)?.[1] ??
+    "操作未确认，请重新读取后重试。"
+  );
 }
 type SessionItem = Pick<SessionPage["items"][number], "namespace" | "status">;
 type Pending = { command: Command; draft?: string };

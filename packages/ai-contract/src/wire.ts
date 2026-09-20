@@ -1331,6 +1331,9 @@ export interface Command {
   /** Complete command content included in its canonical fingerprint. */
   input: Input;
 }
+/**
+ * Explicit plain-text transcript preview bound to a target connection revision and frozen history watermark.
+ */
 export interface HistoryPreview {
   schemaVersion: 5;
   kind: "historyPreview";
@@ -1896,6 +1899,9 @@ export interface AttachReceipt {
   /** Last stable sequence consumed before attaching. */
   after: Counter;
 }
+/**
+ * A user-owned named provider connection with immutable configuration and credential revisions; contains opaque references, never secrets.
+ */
 export interface Connection {
   schemaVersion: 5;
   kind: "connection";
@@ -1915,12 +1921,18 @@ export interface Connection {
   source: ConnectionSource;
   credentialRef: Id;
 }
+/**
+ * Independent optional selections owned by the current test user.
+ */
 export interface UserPreferences {
   schemaVersion: 5;
   kind: "userPreferences";
   defaultConnectionId?: Id;
   selectedSessionId?: Id;
 }
+/**
+ * TestUser product wire record; validated against the V5 schema.
+ */
 export interface TestUser {
   schemaVersion: 5;
   kind: "testUser";
@@ -1928,6 +1940,9 @@ export interface TestUser {
   displayName: string;
   nameKey: string;
 }
+/**
+ * UserContext product wire record; validated against the V5 schema.
+ */
 export interface UserContext {
   schemaVersion: 5;
   kind: "userContext";

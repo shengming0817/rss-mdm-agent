@@ -122,7 +122,7 @@ test("desktop features cannot import siblings or escape through the assembly", (
   }
   assert.deepEqual(
     checkSource(
-      "apps/desktop/src/App.vue",
+      "apps/desktop/src/Workspace.vue",
       `<script setup>
     import x from './assistant/controller'; import y from './self-service/controller';
     const identity = () => crypto.randomUUID();
@@ -178,7 +178,7 @@ test("tree scan covers desktop files and both production manifests", () => {
     assert.ok(errors.includes("UI production dependencies must be Vue only"));
     assert.ok(
       errors.includes(
-        "desktop production dependencies must be UI, public AI client/bridge, Vue and pinned Tauri core only",
+        "desktop production dependencies must be UI, public AI contract/client/bridge, Vue and pinned Tauri core only",
       ),
     );
   } finally {
@@ -473,4 +473,23 @@ test("fixture presentation cannot import the desktop composition owner", () => {
         "apps/desktop/src-tauri/src/self_service/example.rs": source,
       }).length,
     );
+});
+
+test("test-user adapter owns only literal user and native credential commands", () => {
+  const file = "apps/desktop/src/test-users.ts";
+  assert.deepEqual(
+    checkSource(
+      file,
+      'import { invoke } from "@tauri-apps/api/core"; void invoke("test_users"); void invoke("discard_connection_credential", {});',
+    ),
+    [],
+  );
+  for (const source of [
+    'import { invoke } from "@tauri-apps/api/core"; void invoke("ai_send", {});',
+    'import { invoke } from "@tauri-apps/api/core"; const command = "test_users"; void invoke(command);',
+    'import { invoke } from "@tauri-apps/api/core"; const escaped = invoke;',
+    'import x from "@rss-mdm-agent/ai-contract/session";',
+    'fetch("https://example.invalid");',
+  ])
+    assert.ok(checkSource(file, source).length, source);
 });

@@ -53,7 +53,11 @@ const historyMode = ref("none"),
 const selected = computed(() =>
   c.connectionReady.value ? (c.view.value?.selectedConnectionId ?? "") : "",
 );
-const labels = { codex: "Codex", claude: "Claude", deepseek: "DeepSeek" };
+const labels = new Map([
+  ["codex", "Codex"],
+  ["claude", "Claude"],
+  ["deepseek", "DeepSeek"],
+]);
 async function load() {
   if (!c.runtime.value) return;
   const catalog = await c.runtime.value.connections();
@@ -251,7 +255,7 @@ async function history() {
       </p>
       <ul>
         <li v-for="row in rows" :key="row.connectionId">
-          <strong>{{ row.name }}</strong> · {{ labels[row.provider] }} ·
+          <strong>{{ row.name }}</strong> · {{ labels.get(row.provider) }} ·
           {{ row.status === "ready" ? "可用" : "需要更新认证" }}
           <span v-if="prefs.defaultConnectionId === row.connectionId">
             · 默认</span
@@ -372,7 +376,7 @@ async function history() {
             :key="row.connectionId"
             :value="row.connectionId"
           >
-            {{ row.name }} · {{ labels[row.provider] }}
+            {{ row.name }} · {{ labels.get(row.provider) }}
           </option>
         </select></label
       >

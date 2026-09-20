@@ -30,6 +30,30 @@ export async function startFixture() {
       continuation: "same_process",
     },
   );
+  unwrap(
+    await host.store.saveConnection(
+      fixtureCaller,
+      {
+        schemaVersion: 5,
+        kind: "connection",
+        connectionId: "cfg",
+        name: "Browser fixture",
+        provider: "codex",
+        configRevision: 1,
+        credentialRevision: 1,
+        accountRef: "fixture",
+        credentialRef: "fixture-ref",
+        status: "ready",
+        profile: "conversation",
+        source: {
+          type: "custom_api",
+          apiUrl: "https://example.invalid",
+          model: "fixture",
+        },
+      },
+      null,
+    ),
+  );
   const service = createAccessService({
     host,
     now: Date.now,

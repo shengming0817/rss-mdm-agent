@@ -46,7 +46,7 @@ const serverFiles = new Map([
   [join(root, "packages/ai-contract/src/transitions.ts"), ["node:crypto"]],
 ]);
 for (const [file, imports] of Object.entries({
-  "index.ts": ["node:crypto"],
+  "index.ts": ["node:crypto", "node:util"],
   "channel.ts": ["node:crypto", "node:stream"],
   "delivery.ts": ["node:crypto"],
   "bootstrap.ts": ["node:net", "node:child_process"],
@@ -61,6 +61,8 @@ for (const [file, imports] of Object.entries({
 for (const [file, imports] of Object.entries({
   "index.ts": ["node:net", "node:stream", "node:fs/promises", "node:path"],
   "configuration.ts": ["node:path", "node:crypto"],
+  "credentials.ts": ["node:net"],
+  "resolver.ts": ["node:crypto", "node:fs/promises", "node:path"],
   "connection.ts": ["node:crypto", "node:fs", "node:fs/promises", "node:path"],
   "execution.ts": ["node:stream", "node:crypto"],
   "provider.ts": ["node:crypto", "node:fs/promises", "node:path"],

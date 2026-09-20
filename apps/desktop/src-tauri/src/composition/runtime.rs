@@ -254,6 +254,9 @@ impl DesktopRuntime {
                 .map_err(|_| unavailable())??;
             }
         }
+        // Match credential entry's users -> vault lock order. No old-generation
+        // editor can stage a new reference between cleanup and the user commit.
+        let mut users = self.users.lock().map_err(|_| unavailable())?;
         if let Some(previous) = previous {
             self.vault
                 .lock()
@@ -261,7 +264,7 @@ impl DesktopRuntime {
                 .discard_generation(previous.user.user_id.as_str(), previous.generation.as_str())
                 .map_err(|_| unavailable())?;
         }
-        self.users.lock().map_err(|_| unavailable())?.commit(page)
+        users.commit(page)
     }
     pub async fn connect(&self, generation: &str) -> ui::Result<String> {
         self.current(generation)?;

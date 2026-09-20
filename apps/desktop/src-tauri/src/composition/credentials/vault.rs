@@ -8,6 +8,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Closed failure for the private native credential ownership journal.
+#[derive(Debug)]
+pub struct CredentialError;
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Entry {
@@ -20,7 +23,7 @@ pub struct Vault {
     entries: BTreeMap<String, Entry>,
 }
 impl Vault {
-    pub fn open(root: &Path) -> Result<Self, ()> {
+    pub fn open(root: &Path) -> Result<Self, CredentialError> {
         use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
         let path = root.join("credential-refs.json");
         let entries = match fs::OpenOptions::new()
@@ -29,25 +32,25 @@ impl Vault {
             .open(&path)
         {
             Ok(file) => {
-                let stat = file.metadata().map_err(|_| ())?;
+                let stat = file.metadata().map_err(|_| CredentialError)?;
                 if !stat.is_file()
                     || stat.mode() & 0o077 != 0
-                    || stat.uid() != fs::metadata(root).map_err(|_| ())?.uid()
+                    || stat.uid() != fs::metadata(root).map_err(|_| CredentialError)?.uid()
                     || stat.len() > 2_097_152
                 {
-                    return Err(());
+                    return Err(CredentialError);
                 }
                 let mut bytes = Vec::new();
                 file.take(2_097_153)
                     .read_to_end(&mut bytes)
-                    .map_err(|_| ())?;
+                    .map_err(|_| CredentialError)?;
                 if bytes.len() > 2_097_152 {
-                    return Err(());
+                    return Err(CredentialError);
                 }
-                serde_json::from_slice(&bytes).map_err(|_| ())?
+                serde_json::from_slice(&bytes).map_err(|_| CredentialError)?
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => BTreeMap::new(),
-            Err(_) => return Err(()),
+            Err(_) => return Err(CredentialError),
         };
         let mut vault = Self { path, entries };
         // A new desktop process owns no pending credential editor or probe.
@@ -63,7 +66,7 @@ impl Vault {
         vault.persist()?;
         Ok(vault)
     }
-    fn persist(&self) -> Result<(), ()> {
+    fn persist(&self) -> Result<(), CredentialError> {
         use std::os::unix::fs::OpenOptionsExt;
         let temporary = self
             .path
@@ -88,11 +91,16 @@ impl Vault {
         if result.is_err() {
             let _ = fs::remove_file(temporary);
         }
-        result.map_err(|_| ())
+        result.map_err(|_| CredentialError)
     }
-    pub fn stage(&mut self, user: &str, generation: &str, reference: &str) -> Result<(), ()> {
+    pub fn stage(
+        &mut self,
+        user: &str,
+        generation: &str,
+        reference: &str,
+    ) -> Result<(), CredentialError> {
         if self.entries.len() >= 16384 || self.entries.contains_key(reference) {
-            return Err(());
+            return Err(CredentialError);
         }
         self.entries.insert(
             reference.into(),
@@ -104,7 +112,7 @@ impl Vault {
         );
         if self.persist().is_err() {
             self.entries.remove(reference);
-            return Err(());
+            return Err(CredentialError);
         }
         Ok(())
     }
@@ -113,31 +121,42 @@ impl Vault {
             entry.user == user && (entry.active || entry.generation == generation)
         })
     }
-    pub fn activate(&mut self, user: &str, generation: &str, reference: &str) -> Result<(), ()> {
+    pub fn activate(
+        &mut self,
+        user: &str,
+        generation: &str,
+        reference: &str,
+    ) -> Result<(), CredentialError> {
         if !self.readable(user, generation, reference) {
-            return Err(());
+            return Err(CredentialError);
         }
-        let previous = self.entries.get(reference).ok_or(())?.active;
-        self.entries.get_mut(reference).ok_or(())?.active = true;
+        let previous = self.entries.get(reference).ok_or(CredentialError)?.active;
+        self.entries
+            .get_mut(reference)
+            .ok_or(CredentialError)?
+            .active = true;
         if self.persist().is_err() {
-            self.entries.get_mut(reference).ok_or(())?.active = previous;
-            return Err(());
+            self.entries
+                .get_mut(reference)
+                .ok_or(CredentialError)?
+                .active = previous;
+            return Err(CredentialError);
         }
         Ok(())
     }
-    fn remove(&mut self, reference: &str) -> Result<(), ()> {
+    fn remove(&mut self, reference: &str) -> Result<(), CredentialError> {
         let Some(entry) = self.entries.get(reference) else {
             return Ok(());
         };
         match delete_generic_password(super::SERVICE, &format!("{}:{reference}", entry.user)) {
             Ok(()) => {}
             Err(e) if e.code() == -25300 => {}
-            Err(_) => return Err(()),
+            Err(_) => return Err(CredentialError),
         }
         self.entries.remove(reference);
         self.persist()
     }
-    pub fn discard(&mut self, user: &str, reference: &str) -> Result<(), ()> {
+    pub fn discard(&mut self, user: &str, reference: &str) -> Result<(), CredentialError> {
         if self
             .entries
             .get(reference)
@@ -147,7 +166,11 @@ impl Vault {
         }
         Ok(())
     }
-    pub fn discard_generation(&mut self, user: &str, generation: &str) -> Result<(), ()> {
+    pub fn discard_generation(
+        &mut self,
+        user: &str,
+        generation: &str,
+    ) -> Result<(), CredentialError> {
         let pending: Vec<_> = self
             .entries
             .iter()
@@ -159,7 +182,7 @@ impl Vault {
         }
         Ok(())
     }
-    pub fn collect(&mut self, user: &str, keep: &[String]) -> Result<(), ()> {
+    pub fn collect(&mut self, user: &str, keep: &[String]) -> Result<(), CredentialError> {
         let obsolete: Vec<_> = self
             .entries
             .iter()
@@ -201,7 +224,7 @@ mod tests {
         let reference = uuid::Uuid::new_v4().to_string();
         let user = uuid::Uuid::new_v4().to_string();
         let account = format!("{user}:{reference}");
-        let result = (|| -> Result<(), ()> {
+        let result = (|| -> Result<(), CredentialError> {
             let mut vault = Vault::open(&root)?;
             vault.stage(&user, "generation", &reference)?;
             set_generic_password(
@@ -209,26 +232,26 @@ mod tests {
                 &account,
                 b"synthetic-acceptance-value",
             )
-            .map_err(|_| ())?;
-            if get_generic_password(super::super::SERVICE, &account).map_err(|_| ())?
+            .map_err(|_| CredentialError)?;
+            if get_generic_password(super::super::SERVICE, &account).map_err(|_| CredentialError)?
                 != b"synthetic-acceptance-value"
             {
-                return Err(());
+                return Err(CredentialError);
             }
             vault.activate(&user, "generation", &reference)?;
             vault.discard(&user, &reference)?;
             vault.collect(&user, std::slice::from_ref(&reference))?;
-            get_generic_password(super::super::SERVICE, &account).map_err(|_| ())?;
+            get_generic_password(super::super::SERVICE, &account).map_err(|_| CredentialError)?;
             vault.collect(&user, &[])?;
             if get_generic_password(super::super::SERVICE, &account)
                 .err()
                 .map(|e| e.code())
                 != Some(-25300)
             {
-                return Err(());
+                return Err(CredentialError);
             }
             if vault.readable(&user, "generation", &reference) {
-                return Err(());
+                return Err(CredentialError);
             }
             Ok(())
         })();

@@ -3792,7 +3792,8 @@ const schema31 = {
           },
           required: ["type", "apiUrl", "model"],
           additionalProperties: false,
-          description: "",
+          description:
+            "An explicit endpoint and model using a native secure credential reference.",
         },
         {
           type: "object",
@@ -3803,7 +3804,8 @@ const schema31 = {
           },
           required: ["type", "directory"],
           additionalProperties: false,
-          description: "",
+          description:
+            "An existing CLI login whose stable provider account must be verified.",
         },
         {
           type: "object",
@@ -3815,7 +3817,8 @@ const schema31 = {
           },
           required: ["type", "directory"],
           additionalProperties: false,
-          description: "",
+          description:
+            "Explicit API settings read from a private existing CLI configuration.",
         },
       ],
     },
@@ -3859,7 +3862,8 @@ const schema31 = {
         "credentialRef",
       ],
       additionalProperties: false,
-      description: "",
+      description:
+        "A user-owned named provider connection with immutable configuration and credential revisions; contains opaque references, never secrets.",
     },
     UserPreferences: {
       type: "object",
@@ -3871,7 +3875,8 @@ const schema31 = {
       },
       required: ["schemaVersion", "kind"],
       additionalProperties: false,
-      description: "",
+      description:
+        "Independent optional selections owned by the current test user.",
     },
     TestUser: {
       type: "object",
@@ -3884,7 +3889,8 @@ const schema31 = {
       },
       required: ["schemaVersion", "kind", "userId", "displayName", "nameKey"],
       additionalProperties: false,
-      description: "",
+      description:
+        "TestUser product wire record; validated against the V5 schema.",
     },
     UserContext: {
       type: "object",
@@ -3896,7 +3902,8 @@ const schema31 = {
       },
       required: ["schemaVersion", "kind", "user", "generation"],
       additionalProperties: false,
-      description: "",
+      description:
+        "UserContext product wire record; validated against the V5 schema.",
     },
     HistoryPreview: {
       type: "object",
@@ -3935,7 +3942,8 @@ const schema31 = {
         "messageIds",
       ],
       additionalProperties: false,
-      description: "",
+      description:
+        "Explicit plain-text transcript preview bound to a target connection revision and frozen history watermark.",
     },
     ConnectionPage: {
       type: "object",
@@ -4272,7 +4280,8 @@ const schema38 = {
     "messageIds",
   ],
   additionalProperties: false,
-  description: "",
+  description:
+    "Explicit plain-text transcript preview bound to a target connection revision and frozen history watermark.",
 };
 const func8 = Object.prototype.hasOwnProperty;
 function validate23(
@@ -50345,7 +50354,8 @@ const schema310 = {
     "credentialRef",
   ],
   additionalProperties: false,
-  description: "",
+  description:
+    "A user-owned named provider connection with immutable configuration and credential revisions; contains opaque references, never secrets.",
 };
 const schema315 = {
   oneOf: [
@@ -50362,7 +50372,8 @@ const schema315 = {
       },
       required: ["type", "apiUrl", "model"],
       additionalProperties: false,
-      description: "",
+      description:
+        "An explicit endpoint and model using a native secure credential reference.",
     },
     {
       type: "object",
@@ -50373,7 +50384,8 @@ const schema315 = {
       },
       required: ["type", "directory"],
       additionalProperties: false,
-      description: "",
+      description:
+        "An existing CLI login whose stable provider account must be verified.",
     },
     {
       type: "object",
@@ -50385,7 +50397,8 @@ const schema315 = {
       },
       required: ["type", "directory"],
       additionalProperties: false,
-      description: "",
+      description:
+        "Explicit API settings read from a private existing CLI configuration.",
     },
   ],
 };
@@ -52110,7 +52123,8 @@ const schema317 = {
   },
   required: ["schemaVersion", "kind"],
   additionalProperties: false,
-  description: "",
+  description:
+    "Independent optional selections owned by the current test user.",
 };
 function validate149(
   data,
@@ -52416,7 +52430,7 @@ const schema320 = {
   },
   required: ["schemaVersion", "kind", "userId", "displayName", "nameKey"],
   additionalProperties: false,
-  description: "",
+  description: "TestUser product wire record; validated against the V5 schema.",
 };
 function validate151(
   data,
@@ -52754,7 +52768,8 @@ const schema322 = {
   },
   required: ["schemaVersion", "kind", "user", "generation"],
   additionalProperties: false,
-  description: "",
+  description:
+    "UserContext product wire record; validated against the V5 schema.",
 };
 function validate153(
   data,

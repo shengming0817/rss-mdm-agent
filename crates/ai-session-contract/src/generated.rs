@@ -2482,7 +2482,7 @@ pub struct ConfigRef {
     #[doc = "Immutable configuration revision; changing it invalidates prior capability evidence."]
     pub revision: Id,
 }
-#[doc = ""]
+#[doc = "A user-owned named provider connection with immutable configuration and credential revisions; contains opaque references, never secrets."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Connection {
@@ -2865,7 +2865,7 @@ impl<'de> ::serde::Deserialize<'de> for ConnectionSchemaVersion {
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(tag = "type", deny_unknown_fields)]
 pub enum ConnectionSource {
-    #[doc = ""]
+    #[doc = "An explicit endpoint and model using a native secure credential reference."]
     #[serde(rename = "custom_api")]
     CustomApi {
         #[serde(rename = "apiUrl")]
@@ -2880,7 +2880,7 @@ pub enum ConnectionSource {
         #[doc = "`model` member; see its generated type and parent schema."]
         model: ConnectionSourceModel,
     },
-    #[doc = ""]
+    #[doc = "An existing CLI login whose stable provider account must be verified."]
     #[serde(rename = "existing_login")]
     ExistingLogin {
         #[doc = "`directory` member; see its generated type and parent schema."]
@@ -2889,7 +2889,7 @@ pub enum ConnectionSource {
         #[doc = "`model` member; see its generated type and parent schema."]
         model: ::std::option::Option<ConnectionSourceModel>,
     },
-    #[doc = ""]
+    #[doc = "Explicit API settings read from a private existing CLI configuration."]
     #[serde(rename = "existing_api")]
     ExistingApi {
         #[doc = "`directory` member; see its generated type and parent schema."]
@@ -8476,7 +8476,7 @@ pub struct Failure {
     #[doc = "Explicit retry discipline; uncertainty never authorizes blind resubmission."]
     pub retry: Retry,
 }
-#[doc = ""]
+#[doc = "Explicit plain-text transcript preview bound to a target connection revision and frozen history watermark."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct HistoryPreview {
@@ -11053,7 +11053,7 @@ impl ::std::convert::TryFrom<::std::string::String> for SurfaceStateStatus {
         value.parse()
     }
 }
-#[doc = ""]
+#[doc = "TestUser product wire record; validated against the V5 schema."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TestUser {
@@ -11363,7 +11363,7 @@ impl<'de> ::serde::Deserialize<'de> for TestUserSchemaVersion {
             .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
     }
 }
-#[doc = ""]
+#[doc = "UserContext product wire record; validated against the V5 schema."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct UserContext {
@@ -11460,7 +11460,7 @@ impl<'de> ::serde::Deserialize<'de> for UserContextSchemaVersion {
             .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
     }
 }
-#[doc = ""]
+#[doc = "Independent optional selections owned by the current test user."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct UserPreferences {
@@ -11574,7 +11574,10 @@ pub enum WireRecord {
     #[doc = "`Receipt` alternative; see the parent type's schema contract."]
     Receipt(#[doc = "`` member; see its generated type and parent schema."] Receipt),
     #[doc = "`CommandRecord` alternative; see the parent type's schema contract."]
-    CommandRecord(#[doc = "`` member; see its generated type and parent schema."] CommandRecord),
+    CommandRecord(
+        #[doc = "`` member; see its generated type and parent schema."]
+        ::std::boxed::Box<CommandRecord>,
+    ),
     #[doc = "`Event` alternative; see the parent type's schema contract."]
     Event(#[doc = "`` member; see its generated type and parent schema."] Event),
     #[doc = "`Session` alternative; see the parent type's schema contract."]
@@ -11656,7 +11659,7 @@ impl ::std::convert::From<Receipt> for WireRecord {
 }
 impl ::std::convert::From<CommandRecord> for WireRecord {
     fn from(value: CommandRecord) -> Self {
-        Self::CommandRecord(value)
+        Self::CommandRecord(::std::boxed::Box::new(value))
     }
 }
 impl ::std::convert::From<Event> for WireRecord {

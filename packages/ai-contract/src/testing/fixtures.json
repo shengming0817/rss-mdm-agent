@@ -128,10 +128,7 @@
       "nativeCallbackId": "r-1",
       "request": {
         "question": "Choose an option",
-        "options": [
-          "a",
-          "b"
-        ]
+        "options": ["a", "b"]
       },
       "category": "question"
     },
@@ -190,11 +187,7 @@
               {
                 "id": "root",
                 "component": "Column",
-                "children": [
-                  "question",
-                  "field",
-                  "button-1"
-                ]
+                "children": ["question", "field", "button-1"]
               },
               {
                 "id": "question",
@@ -895,11 +888,7 @@
                   {
                     "id": "root",
                     "component": "Column",
-                    "children": [
-                      "question",
-                      "field",
-                      "button-1"
-                    ]
+                    "children": ["question", "field", "button-1"]
                   },
                   {
                     "id": "question",
@@ -1023,11 +1012,7 @@
                   {
                     "id": "root",
                     "component": "Column",
-                    "children": [
-                      "question",
-                      "field",
-                      "button-1"
-                    ]
+                    "children": ["question", "field", "button-1"]
                   },
                   {
                     "id": "question",
@@ -1135,11 +1120,7 @@
                   {
                     "id": "root",
                     "component": "Column",
-                    "children": [
-                      "question",
-                      "field",
-                      "button-1"
-                    ]
+                    "children": ["question", "field", "button-1"]
                   },
                   {
                     "id": "question",
@@ -1247,11 +1228,7 @@
                   {
                     "id": "root",
                     "component": "Column",
-                    "children": [
-                      "question",
-                      "field",
-                      "button-1"
-                    ]
+                    "children": ["question", "field", "button-1"]
                   },
                   {
                     "id": "question",

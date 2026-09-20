@@ -104,6 +104,7 @@ pub async fn enter_connection_credential<R: tauri::Runtime>(
     state: State<'_, DesktopRuntime>,
     generation: String,
 ) -> Result<String> {
+    state.current(&generation)?;
     super::credentials::enter(app, state.users.clone(), state.vault.clone(), generation).await
 }
 

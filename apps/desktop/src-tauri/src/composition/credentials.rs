@@ -18,7 +18,7 @@ use tokio_util::{
     sync::CancellationToken,
 };
 mod vault;
-pub use vault::Vault;
+pub use vault::{CredentialError, Vault};
 const SERVICE: &str = "RSS MDM Agent test-user connections";
 fn unavailable() -> crate::self_service::ServiceError {
     error(
@@ -224,7 +224,8 @@ fn resolve(
             vault
                 .lock()
                 .map_err(|_| ())?
-                .discard(&user_id, &credential_ref)?;
+                .discard(&user_id, &credential_ref)
+                .map_err(|_| ())?;
             Ok(json!(null))
         }
         Request::Activate {
@@ -235,14 +236,19 @@ fn resolve(
             vault
                 .lock()
                 .map_err(|_| ())?
-                .activate(&user_id, &generation, &credential_ref)?;
+                .activate(&user_id, &generation, &credential_ref)
+                .map_err(|_| ())?;
             Ok(json!(null))
         }
         Request::Collect { user_id, keep, .. } => {
             if keep.len() > 16384 {
                 return Err(());
             }
-            vault.lock().map_err(|_| ())?.collect(&user_id, &keep)?;
+            vault
+                .lock()
+                .map_err(|_| ())?
+                .collect(&user_id, &keep)
+                .map_err(|_| ())?;
             Ok(json!(null))
         }
         Request::Credential {

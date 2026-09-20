@@ -3740,7 +3740,8 @@ const schema31 = {
           },
           required: ["type", "apiUrl", "model"],
           additionalProperties: false,
-          description: "",
+          description:
+            "An explicit endpoint and model using a native secure credential reference.",
         },
         {
           type: "object",
@@ -3751,7 +3752,8 @@ const schema31 = {
           },
           required: ["type", "directory"],
           additionalProperties: false,
-          description: "",
+          description:
+            "An existing CLI login whose stable provider account must be verified.",
         },
         {
           type: "object",
@@ -3763,7 +3765,8 @@ const schema31 = {
           },
           required: ["type", "directory"],
           additionalProperties: false,
-          description: "",
+          description:
+            "Explicit API settings read from a private existing CLI configuration.",
         },
       ],
     },
@@ -3807,7 +3810,8 @@ const schema31 = {
         "credentialRef",
       ],
       additionalProperties: false,
-      description: "",
+      description:
+        "A user-owned named provider connection with immutable configuration and credential revisions; contains opaque references, never secrets.",
     },
     UserPreferences: {
       type: "object",
@@ -3819,7 +3823,8 @@ const schema31 = {
       },
       required: ["schemaVersion", "kind"],
       additionalProperties: false,
-      description: "",
+      description:
+        "Independent optional selections owned by the current test user.",
     },
     TestUser: {
       type: "object",
@@ -3832,7 +3837,8 @@ const schema31 = {
       },
       required: ["schemaVersion", "kind", "userId", "displayName", "nameKey"],
       additionalProperties: false,
-      description: "",
+      description:
+        "TestUser product wire record; validated against the V5 schema.",
     },
     UserContext: {
       type: "object",
@@ -3844,7 +3850,8 @@ const schema31 = {
       },
       required: ["schemaVersion", "kind", "user", "generation"],
       additionalProperties: false,
-      description: "",
+      description:
+        "UserContext product wire record; validated against the V5 schema.",
     },
     HistoryPreview: {
       type: "object",
@@ -3883,7 +3890,8 @@ const schema31 = {
         "messageIds",
       ],
       additionalProperties: false,
-      description: "",
+      description:
+        "Explicit plain-text transcript preview bound to a target connection revision and frozen history watermark.",
     },
     ConnectionPage: {
       type: "object",
