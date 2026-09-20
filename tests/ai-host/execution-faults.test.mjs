@@ -138,8 +138,13 @@ test("lost submit receipt recovers the same Rust attempt and keeps process exit 
   });
   try {
     connection = await connectExecution(rust.stdout, rust.stdin, async () => ({
-      ...activeStage(fixtureSession()).binding,
-      ...binding.session,
+      binding: {
+        ...activeStage(fixtureSession()).binding,
+        ...binding.session,
+      },
+      userGeneration: JSON.parse(
+        await readFile(join(root, "execution-user.json"), "utf8"),
+      ).generation,
     }));
   } catch (error) {
     throw new Error(`${error.message}: ${rustError}`);

@@ -1,11 +1,34 @@
 import definitions from "./execution-tools.json" with { type: "json" };
 import { createHash, randomUUID } from "node:crypto";
+import { lookup } from "node:dns/promises";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { WorkerFactory } from "@rss-mdm-agent/ai-host/worker";
 import { readPrivateFile } from "./private-file.js";
 import { resolveConnection, type ProviderActivation } from "./connection.js";
-import { validateEndpointNetwork } from "./configuration.js";
+import {
+  ConfigurationError,
+  endpoint,
+  privateAddress,
+} from "./configuration.js";
+/** The provider composition is the only endpoint that receives DNS authority. */
+async function validateEndpointNetwork(value: unknown): Promise<string> {
+  const normalized = endpoint(value);
+  const url = new URL(normalized);
+  if (url.protocol === "http:") return normalized;
+  let addresses: { address: string; family: number }[];
+  try {
+    addresses = await lookup(url.hostname, { all: true, verbatim: true });
+  } catch {
+    throw new ConfigurationError("configuration_invalid");
+  }
+  if (
+    !addresses.length ||
+    addresses.some(({ address }) => privateAddress(address))
+  )
+    throw new ConfigurationError("configuration_invalid");
+  return normalized;
+}
 /** Activated worker composition; this is the sole credential/SDK loading entry. */
 export const createProvider: WorkerFactory = async ({
   configuration,

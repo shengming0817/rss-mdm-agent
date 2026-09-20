@@ -334,7 +334,10 @@ async function history() {
                 <option value="auth_token">Auth Token</option>
               </select></label
             ><label
-              >API 地址<input v-model="apiUrl" required placeholder="HTTPS API 地址"
+              >API 地址<input
+                v-model="apiUrl"
+                required
+                placeholder="HTTPS API 地址"
             /></label>
             <label v-if="editing?.source.type === 'custom_api'">
               <input v-model="replaceKey" type="checkbox" />更换 API 密钥

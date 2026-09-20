@@ -1,6 +1,4 @@
 import { isAbsolute } from "node:path";
-import { isIP } from "node:net";
-import { lookup } from "node:dns/promises";
 import { readPrivateFile } from "./private-file.js";
 /** Host bootstrap contains paths only. User identity comes from native ingress. */
 export interface LocalConfiguration {
@@ -20,10 +18,10 @@ export class ConfigurationError extends Error {
     super(code);
   }
 }
-function privateAddress(hostname: string): boolean {
+export function privateAddress(hostname: string): boolean {
   const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
   if (host === "localhost") return true;
-  if (isIP(host) === 4) {
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) {
     const [a, b] = host.split(".").map(Number);
     return (
       a === 0 ||
@@ -36,7 +34,7 @@ function privateAddress(hostname: string): boolean {
     );
   }
   return (
-    isIP(host) === 6 &&
+    host.includes(":") &&
     (host === "::" ||
       host === "::1" ||
       host.startsWith("fc") ||
@@ -64,24 +62,6 @@ export function endpoint(value: unknown): string {
   )
     throw new ConfigurationError("configuration_invalid");
   return url.href.replace(/\/$/, "");
-}
-/** Resolve before handing a custom endpoint to an SDK; every returned address must be public. */
-export async function validateEndpointNetwork(value: unknown): Promise<string> {
-  const normalized = endpoint(value);
-  const url = new URL(normalized);
-  if (url.protocol === "http:") return normalized;
-  let addresses: { address: string; family: number }[];
-  try {
-    addresses = await lookup(url.hostname, { all: true, verbatim: true });
-  } catch {
-    throw new ConfigurationError("configuration_invalid");
-  }
-  if (
-    !addresses.length ||
-    addresses.some(({ address }) => privateAddress(address))
-  )
-    throw new ConfigurationError("configuration_invalid");
-  return normalized;
 }
 export async function readConfiguration(
   path: string,

@@ -65,7 +65,12 @@ for (const [file, imports] of Object.entries({
   "resolver.ts": ["node:crypto", "node:fs/promises", "node:path"],
   "connection.ts": ["node:os", "node:path"],
   "execution.ts": ["node:stream", "node:crypto"],
-  "provider.ts": ["node:crypto", "node:fs/promises", "node:path"],
+  "provider.ts": [
+    "node:crypto",
+    "node:dns/promises",
+    "node:fs/promises",
+    "node:path",
+  ],
   "private-file.ts": ["node:fs", "node:fs/promises", "node:path"],
 }))
   serverFiles.set(join(root, "apps/ai-host/src", file), imports);
