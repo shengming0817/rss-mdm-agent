@@ -5,6 +5,8 @@ import {
   decode,
   accessLimits,
   type TestUserPage,
+  type Connection,
+  type Result,
   type UserContext,
 } from "@rss-mdm-agent/ai-contract";
 export const currentUser = shallowRef<UserContext>();
@@ -34,20 +36,24 @@ export function userGeneration(): string {
   if (!currentUser.value) throw new Error("user_required");
   return currentUser.value.generation;
 }
-export async function enterCredential(): Promise<string> {
+/** Native input stays inside the native save operation; only public metadata returns. */
+export async function saveNativeConnection(
+  connection: Connection,
+  expected: number | null,
+  replaceKey: boolean,
+): Promise<Connection> {
   const generation = userGeneration();
-  const reference = await invoke<string>("enter_connection_credential", {
+  const result = await invoke<Result<Connection>>("save_connection", {
     generation,
+    input: connection,
+    expected,
+    replaceKey,
   });
   if (generation !== userGeneration()) throw new Error("user_changed");
-  return reference;
-}
-
-export async function discardCredential(
-  reference: string,
-  generation: string,
-): Promise<void> {
-  await invoke("discard_connection_credential", { reference, generation });
+  if (!result.ok) throw result.error;
+  const record = decode(boundedJson(result.value, accessLimits), accessLimits);
+  if (record.kind !== "connection") throw new Error("invalid_response");
+  return record;
 }
 
 export function selectionMessage(error: unknown): string {

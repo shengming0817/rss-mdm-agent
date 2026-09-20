@@ -34,13 +34,12 @@ export function providerStage(
   binding: Binding,
   capabilities: Capabilities,
   configRevision = 1,
-  credentialRevision = 1,
 ): ContextStage {
   return {
     stageId: binding.generation,
     connectionId: binding.config.id,
     configRevision,
-    credentialRevision,
+
     binding: structuredClone(binding),
     capabilities: structuredClone(capabilities),
   };

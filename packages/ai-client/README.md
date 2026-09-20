@@ -14,7 +14,7 @@
 
 ## 个人连接与显式历史
 
-连接与偏好均由可信 transport 绑定的当前用户持有，客户端不传 Caller。`connections()` 返回目录和偏好；`saveConnection(candidate, expectedRevision)` 验证并保存；删除传 `{...current, configRevision:current.configRevision+1, status:"deleted"}` 与原 revision。秘密仅通过 native 安全入口取得 opaque credentialRef，不能写进 candidate。
+连接与偏好均由可信 transport 绑定的当前用户持有，客户端不传 Caller。`connections()` 返回目录和偏好；`saveConnection(candidate, expectedRevision)` 验证并保存；删除传 `{...current, configRevision:current.configRevision+1, status:"deleted"}` 与原 revision。自定义密钥由 Native 验证保存入口直接处理，WebView 和 candidate 都不携带秘密或凭据引用。
 
 ```ts
 await runtime.initialize();

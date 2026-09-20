@@ -1280,22 +1280,12 @@ export type ConnectionSource =
       type: "custom_api";
       apiUrl: string;
       model: string;
-      credentialType?: "api_key" | "auth_token" | "oauth_token";
+      credentialType?: "api_key" | "auth_token";
       directory?: never;
-      profile?: never;
     }
   | {
-      type: "existing_login";
-      directory: string;
-      model?: string;
-      apiUrl?: never;
-      credentialType?: never;
-      profile?: never;
-    }
-  | {
-      type: "existing_api";
-      directory: string;
-      profile?: string;
+      type: "existing_config";
+      directory?: string;
       model?: string;
       apiUrl?: never;
       credentialType?: never;
@@ -1340,7 +1330,6 @@ export interface HistoryPreview {
   sessionId: Id;
   connectionId: Id;
   configRevision: Counter;
-  credentialRevision: Counter;
   throughSequence: Counter;
   /**
    * @maxItems 10000
@@ -1537,7 +1526,6 @@ export interface ContextStage {
   stageId: Id;
   connectionId: Id;
   configRevision: Counter;
-  credentialRevision: Counter;
   binding: Binding;
   capabilities: Capabilities;
 }
@@ -1553,8 +1541,6 @@ export interface Binding {
   adapterVersion: Id;
   /** Live provider incarnation token; rejects callbacks from previous incarnations. */
   generation: Id;
-  /** Opaque account reference; no token, key or account-directory contents. */
-  accountRef: Id;
   /** Provider-owned context session identifier; history alone cannot recreate it. */
   nativeSessionId: Id;
   /** Exact immutable configuration identity and revision. */
@@ -1909,8 +1895,6 @@ export interface Connection {
   name: string;
   provider: "codex" | "claude" | "deepseek";
   configRevision: Counter;
-  credentialRevision: Counter;
-  accountRef: Id;
   profile: "conversation" | "controlled_tools";
   status:
     | "unverified"
@@ -1919,7 +1903,6 @@ export interface Connection {
     | "invalid"
     | "deleted";
   source: ConnectionSource;
-  credentialRef: Id;
 }
 /**
  * Independent optional selections owned by the current test user.

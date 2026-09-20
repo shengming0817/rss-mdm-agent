@@ -16,7 +16,6 @@
     "allow-self-service-cancel",
     "allow-test-users",
     "allow-select-test-user",
-    "allow-enter-connection-credential",
-    "allow-discard-connection-credential"
+    "allow-save-connection"
   ]
 }

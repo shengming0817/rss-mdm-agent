@@ -24,7 +24,7 @@ after(() => rmSync(configurationDirectory, { recursive: true, force: true }));
 const configuration = {
   provider: "claude",
   config: { id: "claude-config", revision: "1" },
-  accountRef: "account-1",
+
   workingDirectory: "/tmp",
   namespace: fixtureSession().namespace,
   permissions: "tools_disabled",
@@ -75,8 +75,11 @@ function harness({
       resolveConfiguration: async () => ({
         configuration,
         configurationDirectory,
-        apiUrl: "https://example.invalid",
-        credential: { type: "api_key", value: "fixture-secret" },
+        authentication: {
+          type: "custom_api",
+          apiUrl: "https://example.invalid",
+          credential: { type: "api_key", value: "fixture-secret" },
+        },
       }),
       clock: { now: clock },
       callbackTimeoutMs: ttl,
@@ -362,9 +365,12 @@ test("stale binding and steer cannot dispatch; close timeout stays retryable", a
   assert.equal(
     (
       await h.adapter.dispatch(
-        { ...b, accountRef: "other" },
+        { ...b, config: { id: "foreign-config", revision: "99" } },
         c,
-        fixtureAttempt({ ...b, accountRef: "other" }, c),
+        fixtureAttempt(
+          { ...b, config: { id: "foreign-config", revision: "99" } },
+          c,
+        ),
         budget(),
       )
     ).certainty,
@@ -516,7 +522,7 @@ test("question response cannot carry permission or cross-account authority", asy
     (
       await acknowledge(
         h.adapter,
-        { ...live, accountRef: "foreign" },
+        { ...live, config: { id: "foreign-config", revision: "99" } },
         command,
         budget(),
       )
@@ -622,7 +628,7 @@ test("invalid resume input returns a value-free Result", async () => {
     {
       provider: "claude",
       config: { id: "c", revision: "1" },
-      accountRef: "account",
+
       nativeSessionId: "bad",
       generation: "bad",
       nativeRequestId: undefined,

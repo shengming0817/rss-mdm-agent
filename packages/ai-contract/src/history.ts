@@ -54,7 +54,7 @@ export function historyPreview(
     sessionId: session.namespace.sessionId,
     connectionId: connection.connectionId,
     configRevision: connection.configRevision,
-    credentialRevision: connection.credentialRevision,
+
     throughSequence: session.lastSequence,
     commandIds,
     messageIds,

@@ -26,8 +26,7 @@ const connection = (id) => ({
   name: id,
   provider: "codex",
   configRevision: 1,
-  credentialRevision: 1,
-  accountRef: `account-${id}`,
+
   profile: "conversation",
   status: "ready",
   source: {
@@ -35,7 +34,6 @@ const connection = (id) => ({
     apiUrl: "https://example.invalid/v1",
     model: "test",
   },
-  credentialRef: `credential-${id}`,
 });
 const until = async (action) => {
   for (let i = 0; i < 200; i++) {
@@ -66,7 +64,7 @@ test("real Host lazily opens phases, drains accepted work before switching, and 
             namespace,
             provider: options.provider,
             config: options.config,
-            accountRef: options.accountRef,
+
             workingDirectory: root,
             permissions: "tools_disabled",
           },
@@ -300,7 +298,7 @@ test("switching test users cancels queued model work and keeps the old user's re
           namespace,
           provider: options.provider,
           config: options.config,
-          accountRef: options.accountRef,
+
           workingDirectory: root,
           permissions: "tools_disabled",
         },
@@ -423,7 +421,7 @@ test("ordinary runtime snapshot cleanup is retained and retried after a failure"
           namespace,
           provider: options.provider,
           config: options.config,
-          accountRef: options.accountRef,
+
           workingDirectory: root,
           permissions: "tools_disabled",
         },
@@ -468,8 +466,7 @@ test("saving a connection requires a completed model probe and preserves the pre
     openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
   );
   let reject = false,
-    disposed = 0,
-    cleanupAttempts = 0;
+    disposed = 0;
   const diagnostics = [];
   const host = unwrap(
     await createHost({
@@ -477,14 +474,6 @@ test("saving a connection requires a completed model probe and preserves the pre
       launchFences: store,
       delivery: null,
       onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
-      credentials: {
-        activate: async () => {},
-        discard: async () => {},
-        collect: async () => {
-          cleanupAttempts++;
-          throw Error("fixture cleanup unavailable");
-        },
-      },
       resolve: async (_caller, options, namespace) => {
         if (reject) throw Error("fixture authentication rejected");
         return {
@@ -496,7 +485,7 @@ test("saving a connection requires a completed model probe and preserves the pre
             namespace,
             provider: options.provider,
             config: options.config,
-            accountRef: options.accountRef,
+
             workingDirectory: root,
             permissions: "tools_disabled",
           },
@@ -518,12 +507,6 @@ test("saving a connection requires a completed model probe and preserves the pre
     ),
   );
   assert.equal(first.status, "ready");
-  assert.equal(
-    cleanupAttempts,
-    1,
-    "cleanup failure cannot turn a committed save into failure",
-  );
-  assert.equal(diagnostics.at(-1).stage, "credential");
   assert.equal(
     disposed,
     1,
@@ -549,7 +532,6 @@ test("saving a connection requires a completed model probe and preserves the pre
     ),
   );
   assert.equal(deleted.status, "deleted");
-  assert.equal(cleanupAttempts, 2);
   // Use a separate ready connection to verify a failed probe retains the previous revision.
   const second = unwrap(
     await host.saveConnection(

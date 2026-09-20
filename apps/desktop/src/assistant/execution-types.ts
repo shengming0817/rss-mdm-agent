@@ -151,6 +151,7 @@ export type Initiator =
       osSession: OsSessionRef;
     }
   | {
+      config: VersionedRef1;
       /**
        * Originating AI conversation reference in the provider namespace.
        */
@@ -158,10 +159,9 @@ export type Initiator =
       kind: "ai";
       osSession: OsSessionRef1;
       /**
-       * Provider/CLI namespace of the recorded AI account; not product authentication.
+       * Provider namespace, independent of product authentication.
        */
       provider: string;
-      providerAccount: ProviderAccountRef;
       /**
        * Originating tool-call reference; cannot act as a product approval.
        */
@@ -317,6 +317,7 @@ export interface FrozenPlanSummary {
         osSession: OsSessionRef;
       }
     | {
+        config: VersionedRef1;
         /**
          * Originating AI conversation reference in the provider namespace.
          */
@@ -324,10 +325,9 @@ export interface FrozenPlanSummary {
         kind: "ai";
         osSession: OsSessionRef1;
         /**
-         * Provider/CLI namespace of the recorded AI account; not product authentication.
+         * Provider namespace, independent of product authentication.
          */
         provider: string;
-        providerAccount: ProviderAccountRef;
         /**
          * Originating tool-call reference; cannot act as a product approval.
          */
@@ -479,6 +479,19 @@ export interface OsAccountRef {
   subject: string;
 }
 /**
+ * Exact connection configuration used at initiation; no external account identity.
+ */
+export interface VersionedRef1 {
+  /**
+   * Opaque reference identity; the revision must be supplied separately.
+   */
+  id: string;
+  /**
+   * Exact immutable revision reference; does not resolve or follow a moving alias.
+   */
+  revision: string;
+}
+/**
  * Originating OS account/session reference, separate from requested run-as identity.
  */
 export interface OsSessionRef1 {
@@ -491,29 +504,6 @@ export interface OsSessionRef1 {
    * Origin OS login/session reference, including an explicit test reference in fixtures.
    */
   session: string;
-}
-/**
- * Explicit provider account and configuration references at initiation.
- */
-export interface ProviderAccountRef {
-  /**
-   * Opaque account reference scoped by Initiator's provider, not a token or email credential.
-   */
-  account: string;
-  config: VersionedRef1;
-}
-/**
- * Exact configuration revision used by the originating AI session.
- */
-export interface VersionedRef1 {
-  /**
-   * Opaque reference identity; the revision must be supplied separately.
-   */
-  id: string;
-  /**
-   * Exact immutable revision reference; does not resolve or follow a moving alias.
-   */
-  revision: string;
 }
 /**
  * Exact policy revision associated with this request or audit decision.
@@ -963,6 +953,7 @@ export interface FrozenPlanSummary1 {
         osSession: OsSessionRef;
       }
     | {
+        config: VersionedRef1;
         /**
          * Originating AI conversation reference in the provider namespace.
          */
@@ -970,10 +961,9 @@ export interface FrozenPlanSummary1 {
         kind: "ai";
         osSession: OsSessionRef1;
         /**
-         * Provider/CLI namespace of the recorded AI account; not product authentication.
+         * Provider namespace, independent of product authentication.
          */
         provider: string;
-        providerAccount: ProviderAccountRef;
         /**
          * Originating tool-call reference; cannot act as a product approval.
          */
@@ -1082,19 +1072,6 @@ export interface OsSessionRef2 {
    * Origin OS login/session reference, including an explicit test reference in fixtures.
    */
   session: string;
-}
-/**
- * Non-secret provider/CLI account provenance. Neither field proves product authentication.
- *
- * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
- * via the `definition` "ProviderAccountRef".
- */
-export interface ProviderAccountRef1 {
-  /**
-   * Opaque account reference scoped by Initiator's provider, not a token or email credential.
-   */
-  account: string;
-  config: VersionedRef1;
 }
 /**
  * Explicit device, platform and scope bound into the plan digest.

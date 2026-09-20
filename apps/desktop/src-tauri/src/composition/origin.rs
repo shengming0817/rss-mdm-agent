@@ -30,7 +30,6 @@ struct Origin {
     namespace: Namespace,
     operation_id: Id,
     provider: Id,
-    account_ref: Id,
     config: VersionedRef,
 }
 use crate::self_service::fixtures::os_session;
@@ -76,10 +75,7 @@ impl AiBinding {
         Ok(Initiator::Ai {
             provider: origin.provider,
             os_session: os_session(),
-            provider_account: ProviderAccountRef {
-                account: origin.account_ref,
-                config: origin.config,
-            },
+            config: origin.config,
             conversation: origin.namespace.session_id,
             tool_call: origin.operation_id,
         })
@@ -100,18 +96,18 @@ pub fn same_conversation(expected: &Initiator, actual: &Initiator) -> bool {
             Initiator::Ai {
                 provider: p,
                 os_session: o,
-                provider_account: a,
+                config: a,
                 conversation: c,
                 ..
             },
             Initiator::Ai {
                 provider,
                 os_session,
-                provider_account,
+                config,
                 conversation,
                 ..
             },
-        ) => p == provider && o == os_session && a == provider_account && c == conversation,
+        ) => p == provider && o == os_session && a == config && c == conversation,
         _ => false,
     }
 }

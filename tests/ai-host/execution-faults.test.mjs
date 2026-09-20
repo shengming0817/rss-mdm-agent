@@ -35,7 +35,7 @@ const binding = {
   },
   session: {
     provider: "codex",
-    accountRef: "test-account",
+
     config: { id: "local", revision: "r1" },
     profile: "controlled_tools",
   },
@@ -156,7 +156,7 @@ test("lost submit receipt recovers the same Rust attempt and keeps process exit 
       {
         ...activeStage(original).binding,
         provider: "codex",
-        accountRef: "test-account",
+
         config: { id: "local", revision: "r1" },
         generation: "generation-a",
       },

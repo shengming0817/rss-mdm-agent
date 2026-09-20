@@ -37,7 +37,7 @@ async function configuration() {
       namespace: { ...fixtureCaller, sessionId: "session-1" },
       provider: "codex",
       config: { id: "cfg", revision: "1" },
-      accountRef: "account",
+
       workingDirectory,
       permissions: "tools_disabled",
     },
@@ -75,23 +75,6 @@ test("permanent launch configuration errors preserve invalid_input", async (t) =
         error: { code: "invalid_input", retry: "never" },
       });
     });
-});
-
-test("foreign native configuration preserves permission_denied", async (t) => {
-  const resolved = await configuration();
-  await mkdir(resolved.nativeDirectory, { mode: 0o700 });
-  await writeFile(
-    join(resolved.nativeDirectory, "config.toml"),
-    "foreign=true\n",
-    {
-      mode: 0o600,
-    },
-  );
-  const result = await admission(t, resolved);
-  assert.deepEqual(result, {
-    ok: false,
-    error: { code: "permission_denied", retry: "never" },
-  });
 });
 
 test("transient configuration resolution failures remain retryable", async (t) => {

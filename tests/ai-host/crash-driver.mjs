@@ -30,7 +30,7 @@ const caller = {
 const options = {
   provider: "fake",
   config: { id: "config", revision: mode === "registered" ? "1" : mode },
-  accountRef: "account",
+
   profile: "conversation",
 };
 const host = unwrap(
@@ -43,7 +43,7 @@ const host = unwrap(
         namespace,
         provider: options.provider,
         config: options.config,
-        accountRef: options.accountRef,
+
         workingDirectory: directory,
         permissions: "tools_disabled",
       },

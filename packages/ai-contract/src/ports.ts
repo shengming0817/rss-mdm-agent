@@ -71,7 +71,7 @@ export interface SessionOptions {
 export interface ConnectionOptions {
   readonly provider: Id;
   readonly config: ConfigRef;
-  readonly accountRef: Id;
+
   readonly profile: "conversation" | "controlled_tools";
 }
 /** Only a proposal/result bridge; it cannot issue execution permits or approve a plan. */
@@ -90,7 +90,7 @@ interface ProviderConfigurationBase {
   readonly namespace: Namespace;
   readonly provider: Id;
   readonly config: ConfigRef;
-  readonly accountRef: Id;
+
   readonly workingDirectory: string;
 }
 /** Pure data crossing the private worker IPC boundary. */
@@ -384,7 +384,7 @@ export interface StageActivation {
   readonly namespace: Namespace;
   readonly expectedRevision: Counter;
   readonly configRevision: Counter;
-  readonly credentialRevision: Counter;
+
   readonly opened: import("./session.js").VerifiedProviderSession;
 }
 

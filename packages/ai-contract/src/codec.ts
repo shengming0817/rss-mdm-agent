@@ -146,8 +146,7 @@ function checkContext(value: WireRecord): void {
       value.stages.some(
         (stage) =>
           stage.connectionId !== stage.binding.config.id ||
-          stage.configRevision < 1 ||
-          stage.credentialRevision < 1,
+          stage.configRevision < 1,
       )
     )
       throw new ContractError("context");

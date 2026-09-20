@@ -21,7 +21,7 @@ export async function createProvider({ configuration, tools }) {
         type,
         pid: process.pid,
         sessionId: configuration.namespace.sessionId,
-        account: configuration.accountRef,
+        config: configuration.config,
         ...extra,
       }) + "\n",
     );
@@ -69,7 +69,7 @@ export async function createProvider({ configuration, tools }) {
       provider: configuration.provider,
       workspaceId: workspaceIdentity(configuration.workingDirectory),
       config: configuration.config,
-      accountRef: configuration.accountRef,
+
       generation: randomUUID(),
       nativeSessionId: previous?.nativeSessionId ?? randomUUID(),
     };

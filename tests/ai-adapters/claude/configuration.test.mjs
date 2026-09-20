@@ -16,8 +16,12 @@ import { sdkOptions } from "../../../packages/ai-adapters/claude/dist/configurat
 const resolved = (directory) => ({
   configuration: { workingDirectory: directory },
   configurationDirectory: directory,
-  credential: { type: "api_key", value: "fixture" },
-  apiUrl: "https://example.invalid",
+
+  authentication: {
+    type: "custom_api",
+    apiUrl: "https://example.invalid",
+    credential: { type: "api_key", value: "fixture" },
+  },
 });
 test("Claude persistence accepts only private owned real directories before SDK launch", (t) => {
   const directory = mkdtempSync(join(tmpdir(), "rss-claude-private-"));
@@ -45,15 +49,18 @@ test("Claude persistence accepts only private owned real directories before SDK 
   );
 });
 
-test("Claude SDK rejects directory-only credentials before launching a native session", (t) => {
+test("existing Claude configuration passes directly to the SDK with user settings and sealed execution capabilities", (t) => {
   const directory = mkdtempSync(join(tmpdir(), "rss-claude-login-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
-  assert.throws(
-    () =>
-      sdkOptions({
-        ...resolved(directory),
-        credential: { type: "user_login", sourceDirectory: directory },
-      }),
-    /configuration/,
-  );
+  const value = sdkOptions({
+    ...resolved(directory),
+    authentication: { type: "existing_config", directory },
+    verification: true,
+  });
+  assert.equal(value.env.CLAUDE_CONFIG_DIR, directory);
+  assert.deepEqual(value.settingSources, ["user"]);
+  assert.equal(value.settings.disableAllHooks, true);
+  assert.equal(value.strictMcpConfig, true);
+  assert.equal(value.persistSession, false);
+  assert.equal(value.env.ANTHROPIC_API_KEY, undefined);
 });

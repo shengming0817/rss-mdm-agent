@@ -103,9 +103,8 @@
       if (source.kind === "ai")
         expected.push(
           source.provider,
-          source.providerAccount.account,
-          source.providerAccount.config.id,
-          source.providerAccount.config.revision,
+          source.config.id,
+          source.config.revision,
           source.conversation,
           source.toolCall,
         );

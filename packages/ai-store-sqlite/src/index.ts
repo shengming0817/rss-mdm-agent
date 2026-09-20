@@ -237,11 +237,26 @@ function pageLimit(db: DatabaseSync, maxBytes: number): number {
   return pages;
 }
 
+/** Private persistence seam for the app composition. Ciphertext is never a wire field. */
+export interface ConnectionSecretStore {
+  encryptedSecret(
+    caller: Caller,
+    id: Id,
+    revision: number,
+  ): Promise<Result<Uint8Array | null>>;
+  hasSecrets(): Promise<Result<boolean>>;
+  saveConnection(
+    caller: Caller,
+    connection: Connection,
+    expected: number | null,
+    encryptedSecret?: Uint8Array,
+  ): Promise<Result<Connection>>;
+}
 /** One Host owns the whole database for this connection's lifetime. There is no
  * lease, background worker, side-effect execution or asynchronous transaction hook. */
 export function openSqliteStore(
   options: StoreOptions,
-): Result<SessionStore & WorkerLaunchFenceStore> {
+): Result<SessionStore & WorkerLaunchFenceStore & ConnectionSecretStore> {
   let db: DatabaseSync | undefined;
   try {
     if (
@@ -609,12 +624,58 @@ class SqliteSessionStore implements SessionStore, WorkerLaunchFenceStore {
       return ok(structuredClone(prefs));
     });
   }
+  async encryptedSecret(
+    caller: Caller,
+    id: Id,
+    revision: number,
+  ): Promise<Result<Uint8Array | null>> {
+    return this.#query(() => {
+      const current = this.#connection(caller, id);
+      if (
+        !current ||
+        current.status === "deleted" ||
+        !this.#connection(caller, id, revision)
+      )
+        return fail("connection_required");
+      const row = this.#db
+        .prepare(
+          "SELECT encrypted_secret FROM connections WHERE tenant_id=? AND principal_id=? AND authority_id=? AND id=? AND revision=?",
+        )
+        .get(...this.#caller(caller), id, revision)!;
+      return ok(
+        row.encrypted_secret === null
+          ? null
+          : new Uint8Array(row.encrypted_secret as Uint8Array),
+      );
+    });
+  }
+  async hasSecrets(): Promise<Result<boolean>> {
+    return this.#query(() =>
+      ok(
+        !!this.#db
+          .prepare(
+            "SELECT 1 FROM connections WHERE encrypted_secret IS NOT NULL LIMIT 1",
+          )
+          .get(),
+      ),
+    );
+  }
   async saveConnection(
     caller: Caller,
     next: Connection,
     expected: number | null,
+    encryptedSecret?: Uint8Array,
   ): Promise<Result<Connection>> {
     return this.#transaction(() => {
+      if (
+        encryptedSecret &&
+        (!(encryptedSecret instanceof Uint8Array) ||
+          encryptedSecret.length < 29 ||
+          encryptedSecret.length > 16412 ||
+          next.source.type !== "custom_api" ||
+          next.status === "deleted")
+      )
+        return fail("invalid_input");
       const previous = this.#connection(caller, next.connectionId);
       const checked = connectionRevision(next, previous, expected);
       if (!checked.ok) return checked;
@@ -634,14 +695,21 @@ class SqliteSessionStore implements SessionStore, WorkerLaunchFenceStore {
         delete prefs.defaultConnectionId;
       this.#db
         .prepare(
-          "INSERT INTO connections (tenant_id,principal_id,authority_id,id,revision,json) VALUES (?,?,?,?,?,?)",
+          "INSERT INTO connections (tenant_id,principal_id,authority_id,id,revision,json,encrypted_secret) VALUES (?,?,?,?,?,?,?)",
         )
         .run(
           ...this.#caller(caller),
           next.connectionId,
           next.configRevision,
           boundedJson(next, defaultLimits),
+          encryptedSecret ?? null,
         );
+      if (next.status === "deleted")
+        this.#db
+          .prepare(
+            "UPDATE connections SET encrypted_secret=NULL WHERE tenant_id=? AND principal_id=? AND authority_id=? AND id=?",
+          )
+          .run(...this.#caller(caller), next.connectionId);
       this.#savePreferences(caller, prefs);
       return checked;
     });

@@ -21,7 +21,7 @@ const binding = {
   providerVersion: "codex-0.155.0",
   adapterVersion: "0.1.0",
   generation: "generation-2",
-  accountRef: "account",
+
   nativeSessionId: "native-session",
   nativeThreadId: "thread-1",
   nativeRunId: "run-1",

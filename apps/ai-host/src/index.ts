@@ -1,88 +1,47 @@
-import { createServer, createConnection, type Socket } from "node:net";
+import type { Duplex } from "node:stream";
 import { Readable, Writable } from "node:stream";
-import { chmod, lstat, mkdir, readdir, unlink } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { lstat, mkdir } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import { createHost } from "@rss-mdm-agent/ai-host";
 import { openSqliteStore } from "@rss-mdm-agent/ai-store-sqlite";
-import { createAccessService, ndJsonStream } from "@rss-mdm-agent/ai-access";
+import { createAccessService, type Stream } from "@rss-mdm-agent/ai-access";
 import { connectExecution } from "./execution.js";
 import { readConfiguration } from "./configuration.js";
-import { readPrivateFile } from "./private-file.js";
 import {
+  boundedJson,
   decode,
   type Caller,
   type UserContext,
+  type Connection,
 } from "@rss-mdm-agent/ai-contract";
-import { defaultLimits } from "@rss-mdm-agent/ai-contract/transitions";
-import { credentialLifecycle } from "./credential-lifecycle.js";
+import { defaultLimits, fail } from "@rss-mdm-agent/ai-contract/transitions";
 import { localResolver } from "./resolver.js";
+import { ConnectionSecrets } from "./secrets.js";
+import { NativeControl } from "./native.js";
 export type { LocalConfiguration } from "./configuration.js";
-const snapshotName = /^[a-f0-9]{64}\.json$/;
-/** Called only while the application owns the exclusive SQLite connection. */
-export async function removeUnfencedSnapshots(
-  nativeDirectory: string,
-  launches: readonly { artifact: string }[],
-): Promise<void> {
-  const directory = resolve(nativeDirectory, "snapshots");
-  const stat = await lstat(directory).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === "ENOENT") return undefined;
-    throw error;
-  });
-  if (!stat) return;
-  if (
-    !stat.isDirectory() ||
-    stat.isSymbolicLink() ||
-    (process.platform !== "win32" && (stat.mode & 0o077) !== 0) ||
-    (process.getuid && stat.uid !== process.getuid())
-  )
-    throw new Error("snapshot directory ownership");
-  const retained = new Set<string>();
-  for (const launch of launches) {
-    const artifact = new URL(launch.artifact);
-    const snapshot = artifact.searchParams.get("snapshot");
-    if (!snapshot) throw new Error("snapshot ownership unknown");
-    const path = resolve(snapshot);
-    if (
-      artifact.protocol !== "file:" ||
-      dirname(path) !== directory ||
-      !snapshotName.test(basename(path))
-    )
-      throw new Error("snapshot ownership unknown");
-    retained.add(path);
-  }
-  for (const entry of await readdir(directory, { withFileTypes: true })) {
-    if (!entry.isFile() || !snapshotName.test(entry.name)) continue;
-    const path = join(directory, entry.name);
-    if (!retained.has(path)) await unlink(path);
-  }
-}
-/** A private local ACP endpoint. Disconnecting a socket only detaches that client. */
+/** One native-owned process, private control descriptor and fixed-context logical UI channels. */
 export async function startLocalApp(
   configurationPath: string,
   parent = {
     input: process.stdin as Readable,
     output: process.stdout as Writable,
   },
+  controlSocket?: Duplex,
 ) {
-  const path = resolve(configurationPath),
-    local = await readConfiguration(path);
+  const local = await readConfiguration(resolve(configurationPath));
   if (process.platform !== "darwin" || process.arch !== "arm64")
     throw new Error("runtime platform is not verified");
-  for (const directory of new Set([
-    dirname(local.databasePath),
-    dirname(local.socketPath),
-  ])) {
-    await mkdir(directory, { recursive: true, mode: 0o700 });
-    const stat = await lstat(directory);
-    if (
-      !stat.isDirectory() ||
-      stat.isSymbolicLink() ||
-      (stat.mode & 0o077) !== 0 ||
-      (process.getuid && stat.uid !== process.getuid())
-    )
-      throw new Error("runtime directory ownership");
-  }
-  const existing = await lstat(local.databasePath).then(
+  const directory = dirname(local.databasePath);
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const stat = await lstat(directory);
+  if (
+    !stat.isDirectory() ||
+    stat.isSymbolicLink() ||
+    (stat.mode & 0o077) !== 0 ||
+    (process.getuid && stat.uid !== process.getuid())
+  )
+    throw new Error("runtime directory ownership");
+  const exists = await lstat(local.databasePath).then(
     () => true,
     (error) => {
       if (error.code === "ENOENT") return false;
@@ -91,36 +50,21 @@ export async function startLocalApp(
   );
   const opened = openSqliteStore({
     path: local.databasePath,
-    mode: existing ? "open" : "create",
+    mode: exists ? "open" : "create",
   });
   if (!opened.ok) throw new Error(opened.error.code);
   const store = opened.value;
-  try {
-    const launches = await store.launches();
-    if (!launches.ok) throw new Error(launches.error.code);
-    await removeUnfencedSnapshots(local.nativeDirectory, launches.value);
-  } catch (error) {
-    await store.close({
-      timeoutMs: 1000,
-      signal: new AbortController().signal,
-    });
-    throw error;
-  }
-  const readUser = async (): Promise<UserContext | undefined> => {
-    const record = decode(
-      await readPrivateFile(local.usersPath, 65536),
-      defaultLimits,
-    );
-    if (record.kind !== "testUserPage")
-      throw new Error("invalid user registry");
-    return record.current;
-  };
+  let activeUser: UserContext | undefined;
   const callerFor = (context: UserContext): Caller => ({
     tenantId: "test-users",
     principalId: context.user.userId,
     authorityId: "desktop-fixture",
   });
-  let activeUser = await readUser();
+  const available = (caller: Caller) =>
+    !!activeUser &&
+    caller.principalId === activeUser.user.userId &&
+    caller.tenantId === "test-users" &&
+    caller.authorityId === "desktop-fixture";
   const execution = await connectExecution(
     parent.input,
     parent.output,
@@ -142,20 +86,39 @@ export async function startLocalApp(
     });
     throw error;
   });
-  const credentials = credentialLifecycle(local, store);
+  let control: NativeControl;
+  const secrets = new ConnectionSecrets(store, async (create) => {
+    const bytes = await control.call("master_key", { create });
+    if (
+      !Array.isArray(bytes) ||
+      bytes.length !== 32 ||
+      bytes.some((n) => !Number.isInteger(n) || n < 0 || n > 255)
+    )
+      throw new Error("authentication_required");
+    return Uint8Array.from(bytes);
+  });
   const created = await createHost({
-    credentials,
     delivery: execution?.router ?? null,
     store,
     launchFences: store,
     onDiagnostic: (diagnostic) =>
       process.stderr.write(`AI Host ${diagnostic.stage}: ${diagnostic.code}\n`),
-    resolve: localResolver(local, store),
-    callerAvailable: (caller) =>
-      !!activeUser &&
-      caller.principalId === activeUser.user.userId &&
-      caller.tenantId === "test-users" &&
-      caller.authorityId === "desktop-fixture",
+    resolve: localResolver(local, store, secrets),
+    callerAvailable: available,
+    persistConnection: async (caller, connection, expected, secret, budget) => {
+      const encrypted =
+        connection.status !== "deleted" &&
+        connection.source.type === "custom_api"
+          ? await secrets.seal(
+              caller,
+              connection,
+              await secrets.read(caller, connection, secret, expected ?? 0),
+            )
+          : undefined;
+      if (!available(caller) || budget.signal.aborted)
+        return fail("unavailable");
+      return store.saveConnection(caller, connection, expected, encrypted);
+    },
   });
   if (!created.ok) {
     await execution?.close();
@@ -166,188 +129,158 @@ export async function startLocalApp(
     throw new Error(created.error.code);
   }
   const host = created.value,
-    service = createAccessService({ host, sessionOptions: {} }),
-    sockets = new Set<Socket>();
+    service = createAccessService({ host, sessionOptions: {} });
+  const views = new Map<
+    string,
+    { input: ReadableStreamDefaultController<any>; generation: string }
+  >();
+  const detach = (id: string) => {
+    const view = views.get(id);
+    if (view) {
+      views.delete(id);
+      try {
+        view.input.close();
+      } catch {}
+    }
+  };
   let switching: Promise<unknown> = Promise.resolve();
-  const server = createServer((socket) => {
-    sockets.add(socket);
-    socket.once("close", () => sockets.delete(socket));
-    socket.on("error", () => socket.destroy());
-    void (async () => {
-      const request = await nativeHandshake(socket);
-      const change = switching
-        .catch(() => {})
-        .then(async () => {
-          const next = await readUser();
-          if (!next || request.generation !== next.generation)
-            throw new Error("user_changed");
+  const switchUser = (action: () => Promise<unknown>) => {
+    const task = switching.catch(() => {}).then(action);
+    switching = task;
+    return task;
+  };
+  const context = (data: unknown): UserContext => {
+    const record = decode(boundedJson(data, defaultLimits), defaultLimits);
+    if (record.kind !== "userContext") throw new Error("invalid context");
+    return record;
+  };
+  control = new NativeControl(
+    async (method, data) => {
+      if (method === "attach")
+        return switchUser(async () => {
+          const next = context(data.context),
+            id = data.channel;
           if (
-            request.type === "suspend_user" ||
-            activeUser?.generation !== next.generation
-          ) {
-            for (const previous of sockets)
-              if (previous !== socket) previous.destroy();
-            const previous =
-              request.type === "suspend_user" ? next : activeUser;
-            if (previous) {
-              const fenced = await host.suspendCaller(callerFor(previous), {
+            typeof id !== "string" ||
+            id.length > 128 ||
+            views.has(id) ||
+            views.size >= 4
+          )
+            throw new Error("view limit");
+          if (activeUser?.generation !== next.generation) {
+            for (const id of views.keys()) detach(id);
+            if (activeUser) {
+              const fenced = await host.suspendCaller(callerFor(activeUser), {
                 timeoutMs: 10000,
                 signal: AbortSignal.timeout(10000),
               });
               if (!fenced.ok) throw new Error("user fence unavailable");
             }
-            activeUser = request.type === "suspend_user" ? undefined : next;
-            if (activeUser) host.activateCaller(callerFor(activeUser));
+            activeUser = next;
+            host.activateCaller(callerFor(next));
           }
-          return callerFor(next);
+          const readable = new ReadableStream(
+            {
+              start(input) {
+                views.set(id, { input, generation: next.generation });
+              },
+              cancel() {
+                detach(id);
+              },
+            },
+            { highWaterMark: 64 },
+          );
+          const writable = new WritableStream({
+            write(message) {
+              control.emit(id, message);
+            },
+            close() {
+              detach(id);
+            },
+            abort() {
+              detach(id);
+            },
+          });
+          service.connect({ readable, writable } as Stream, callerFor(next));
+          return true;
         });
-      switching = change;
-      const caller = await change;
-      if (request.type === "suspend_user") {
-        socket.end(JSON.stringify({ ok: true }) + "\n");
+      if (method === "suspend")
+        return switchUser(async () => {
+          if (activeUser && data.generation !== activeUser.generation)
+            throw new Error("user changed");
+          for (const id of views.keys()) detach(id);
+          if (activeUser) {
+            const fenced = await host.suspendCaller(callerFor(activeUser), {
+              timeoutMs: 10000,
+              signal: AbortSignal.timeout(10000),
+            });
+            if (!fenced.ok) throw new Error("user fence unavailable");
+          }
+          activeUser = undefined;
+          return true;
+        });
+      if (method === "detach") {
+        detach(data.channel);
+        return true;
+      }
+      if (method === "save_connection") {
+        const current = activeUser;
+        if (!current || current.generation !== data.generation)
+          return fail("unavailable");
+        const connection = decode(
+          boundedJson(data.connection, defaultLimits),
+          defaultLimits,
+        );
+        if (
+          connection.kind !== "connection" ||
+          !(data.expected === null || Number.isSafeInteger(data.expected)) ||
+          (data.secret != null && typeof data.secret !== "string")
+        )
+          return fail("invalid_input");
+        return host.saveConnection(
+          callerFor(current),
+          connection as Connection,
+          data.expected,
+          { timeoutMs: 90000, signal: AbortSignal.timeout(90000) },
+          data.secret ?? undefined,
+        );
+      }
+      throw new Error("unknown native method");
+    },
+    (id, message) => {
+      const view = views.get(id);
+      if (!view) return;
+      if (
+        view.generation !== activeUser?.generation ||
+        (view.input.desiredSize ?? 0) <= 0 ||
+        Buffer.byteLength(JSON.stringify(message)) > 262144
+      ) {
+        detach(id);
         return;
       }
-      const stream = ndJsonStream(
-        Writable.toWeb(socket) as WritableStream<Uint8Array>,
-        Readable.toWeb(socket) as ReadableStream<Uint8Array>,
-      );
-      service.connect(stream, caller);
-      socket.resume();
-    })().catch(() => socket.destroy());
-  });
-  let closed = false,
-    ownsSocket = false;
-  let socketIdentity: { dev: number; ino: number } | undefined;
+      view.input.enqueue(message);
+    },
+    controlSocket,
+  );
   let closing: Promise<void> | undefined;
-  const close = (): Promise<void> => {
-    if (closed) return Promise.resolve();
-    if (closing) return closing;
-    closing = finishClose().finally(() => {
-      closing = undefined;
-    });
-    return closing;
-  };
-  const finishClose = async () => {
-    if (closed) return;
-    const stopped = new Promise<void>((resolve) =>
-      server.close(() => resolve()),
-    );
-    for (const socket of sockets) socket.destroy();
-    await service.close();
-    await execution?.close();
-    await stopped;
-    const result = await host.close({
-      timeoutMs: 30000,
-      signal: new AbortController().signal,
-    });
-    if (!result.ok) throw new Error(result.error.code);
-    closed = true;
-    if (ownsSocket && socketIdentity) {
-      const remaining = await lstat(local.socketPath).catch((error) => {
-        if (error.code === "ENOENT") return undefined;
-        throw error;
+  const close = () =>
+    (closing ??= (async () => {
+      for (const id of views.keys()) detach(id);
+      await service.close();
+      await execution?.close();
+      const result = await host.close({
+        timeoutMs: 30000,
+        signal: new AbortController().signal,
       });
-      if (
-        remaining?.dev === socketIdentity.dev &&
-        remaining.ino === socketIdentity.ino
-      )
-        await unlink(local.socketPath);
-    }
-  };
-  try {
-    if (activeUser) await credentials.collect(callerFor(activeUser));
-    // A configured path never authorizes deleting an ordinary file or another listener.
-    const prior = await lstat(local.socketPath).catch((error) => {
-      if (error.code === "ENOENT") return undefined;
-      throw error;
-    });
-    if (prior) {
-      if (!prior.isSocket()) throw new Error("socket path is not a socket");
-      await new Promise<void>((resolve, reject) => {
-        const probe = createConnection(local.socketPath);
-        probe.setTimeout(300, () => {
-          probe.destroy();
-          reject(new Error("socket ownership unknown"));
-        });
-        probe.once("connect", () => {
-          probe.destroy();
-          reject(new Error("socket already in use"));
-        });
-        probe.once("error", (error) => {
-          probe.destroy();
-          if ((error as NodeJS.ErrnoException).code === "ECONNREFUSED")
-            resolve();
-          else reject(error);
-        });
-      });
-      await unlink(local.socketPath);
-    }
-    await new Promise<void>((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(local.socketPath, () => {
-        ownsSocket = true;
-        server.off("error", reject);
-        resolve();
-      });
-    });
-    socketIdentity = await lstat(local.socketPath);
-    await chmod(local.socketPath, 0o600);
-    if (execution)
-      void execution.stopped
-        .then(() => close())
-        .catch(() => {
-          process.stderr.write(
-            "AI Host parent connection closed; cleanup incomplete\n",
-          );
-          process.exitCode = 1;
-        });
-    return { host, close };
-  } catch (error) {
-    await close();
-    throw error;
-  }
-}
-
-/** Consumed before ACP is connected; the WebView never supplies this native preface. */
-function nativeHandshake(
-  socket: Socket,
-): Promise<{ type: "attach" | "suspend_user"; generation: string }> {
-  return new Promise((resolve, reject) => {
-    let bytes = Buffer.alloc(0);
-    const timer = setTimeout(
-      () => finish(new Error("native ingress timeout")),
-      10000,
-    );
-    const finish = (
-      error?: Error,
-      value?: { type: "attach" | "suspend_user"; generation: string },
-    ) => {
-      clearTimeout(timer);
-      socket.off("data", data).off("error", failure).off("end", failure);
-      error ? reject(error) : resolve(value!);
-    };
-    const failure = () => finish(new Error("native ingress unavailable"));
-    const data = (chunk: Buffer) => {
-      bytes = Buffer.concat([bytes, chunk]);
-      if (bytes.length > 262144)
-        return finish(new Error("native ingress limit"));
-      const end = bytes.indexOf(10);
-      if (end < 0) return;
-      socket.pause();
-      try {
-        const value = JSON.parse(bytes.subarray(0, end).toString("utf8"));
-        if (
-          Object.keys(value).length !== 2 ||
-          !["attach", "suspend_user"].includes(value.type) ||
-          typeof value.generation !== "string"
-        )
-          throw new Error();
-        if (bytes.length > end + 1) socket.unshift(bytes.subarray(end + 1));
-        finish(undefined, value);
-      } catch {
-        finish(new Error("native ingress rejected"));
-      }
-    };
-    socket.on("data", data).once("error", failure).once("end", failure);
+      control.close();
+      if (!result.ok) throw new Error(result.error.code);
+    })());
+  void control.stopped.then(close).catch(() => {
+    process.exitCode = 1;
   });
+  if (execution)
+    void execution.stopped.then(close).catch(() => {
+      process.exitCode = 1;
+    });
+  return { host, close };
 }

@@ -99,34 +99,34 @@ pub async fn select_test_user(
 }
 
 #[tauri::command]
-pub async fn enter_connection_credential<R: tauri::Runtime>(
+pub async fn save_connection<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, DesktopRuntime>,
     generation: String,
-) -> Result<String> {
+    input: serde_json::Value,
+    expected: Option<u64>,
+    replace_key: bool,
+) -> Result<serde_json::Value> {
     state.current(&generation)?;
-    super::credentials::enter(app, state.users.clone(), state.vault.clone(), generation).await
-}
-
-#[tauri::command]
-pub fn discard_connection_credential(
-    state: State<'_, DesktopRuntime>,
-    generation: String,
-    reference: String,
-) -> Result<()> {
-    let context = state.current(&generation)?;
+    let connection = decode::<ai_session_contract::Connection>(input)?;
+    let data = serde_json::to_value(&connection).map_err(|_| error("input", "无效连接"))?;
+    let secret = if data["source"]["type"] == "custom_api"
+        && data["status"] != "deleted"
+        && (expected.is_none() || replace_key)
+    {
+        Some(super::credentials::enter(app).await?)
+    } else {
+        None
+    };
+    state.current(&generation)?;
     state
-        .vault
-        .lock()
-        .map_err(|_| error("credential_cleanup", "凭据清理未完成"))?
-        .discard(context.user.user_id.as_str(), &reference)
-        .map_err(|_| error("credential_cleanup", "凭据清理未完成"))
+        .save_connection(&generation, connection, expected, secret)
+        .await
 }
 
 pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder.invoke_handler(tauri::generate_handler![
-        enter_connection_credential,
-        discard_connection_credential,
+        save_connection,
         test_users,
         select_test_user,
         self_service_snapshot,
@@ -227,6 +227,7 @@ mod tests {
             "self_service_cancel",
             "self_service_respond",
             "execution_task_details",
+            "save_connection",
             "ai_connect",
             "ai_send",
             "ai_receive",

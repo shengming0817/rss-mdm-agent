@@ -910,12 +910,9 @@ mod tests {
                 let ai = Initiator::Ai {
                     provider: id("codex"),
                     os_session: fixtures::os_session(),
-                    provider_account: ProviderAccountRef {
-                        account: id("test-account"),
-                        config: VersionedRef {
-                            id: id("test-config"),
-                            revision: id("1"),
-                        },
+                    config: VersionedRef {
+                        id: id("test-config"),
+                        revision: id("1"),
                     },
                     conversation: id("conversation-test"),
                     tool_call: id("call-test"),

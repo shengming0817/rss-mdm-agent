@@ -164,7 +164,7 @@ fn namespaces_and_initiators_remain_distinct() {
         assert_ne!(freeze(&v).digest(), &digest);
     }
     for initiator in [
-        serde_json::json!({"kind":"ai","provider":"provider-1","conversation":"c-1","toolCall":"tc-1","osSession":fixture()["request"]["initiator"]["osSession"],"providerAccount":{"account":"provider-user-1","config":{"id":"config-1","revision":"1"}}}),
+        serde_json::json!({"kind":"ai","provider":"provider-1","conversation":"c-1","toolCall":"tc-1","osSession":fixture()["request"]["initiator"]["osSession"],"config":{"id":"config-1","revision":"1"}}),
         serde_json::json!({"kind":"policy","policy":{"id":"p-1","revision":"1"}}),
     ] {
         let mut v = original.clone();

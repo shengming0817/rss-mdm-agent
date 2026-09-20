@@ -17,7 +17,7 @@ import {
 } from "../../packages/ai-contract/dist/testing/index.js";
 const options = {
   provider: "fake",
-  accountRef: "account",
+
   config: { id: "cfg", revision: "1" },
   profile: "conversation",
 };

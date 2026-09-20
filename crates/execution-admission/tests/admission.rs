@@ -150,12 +150,9 @@ fn sources_share_actor_permissions_but_have_distinct_plan_bindings() {
     spec.request.initiator = Initiator::Ai {
         provider: id("ai"),
         os_session: os,
-        provider_account: ProviderAccountRef {
-            account: id("provider-account"),
-            config: VersionedRef {
-                id: id("cfg"),
-                revision: id("1"),
-            },
+        config: VersionedRef {
+            id: id("cfg"),
+            revision: id("1"),
         },
         conversation: id("chat"),
         tool_call: id("call"),

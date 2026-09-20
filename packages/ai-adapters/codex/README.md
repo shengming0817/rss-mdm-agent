@@ -6,9 +6,11 @@
 
 从包主入口导入 `createCodexAdapter`，从 `@rss-mdm-agent/ai-contract/session` 导入 `VerifiedProviderSession`。工厂返回 `{ agent, extensions, diagnostics }`；Host 用 `VerifiedProviderSession.open(instance.agent, configuration, budget)` 准入；失败时检查 `cleanupError`，必要时继续对同一 `instance.agent` 调用 `close`。每个 port 只接受一次 open/restore，关闭后新建实例。
 
-`CodexAdapterOptions.resolveConfiguration(identity, budget)` 必须由可信 Host 实现，返回与请求完全一致的 `CodexConfiguration`、私有 `nativeDirectory`、Responses API 的 `apiUrl`、`apiKey` 和 `model`。URL 只允许 HTTPS 或本地 loopback HTTP；凭据不进入产品 wire。无效配置返回 invalid_input/never，权限或配置层拒绝返回 permission_denied/never；瞬时初始化故障才返回 unavailable，错误不包含配置值。`nativeDirectory` 必须是无别名的规范绝对路径，Unix 权限0700，只归本 adapter/config/account/workspace 的受信 lineage 使用，不能与个人 Codex CLI、其他应用或不同配置共用。适配器以该目录作为 CODEX_HOME，启动 cwd 使用目录内的空白 runtime-workspace，thread cwd 使用 Host 提供的真实工作目录。
+`CodexAdapterOptions.resolveConfiguration(identity, budget)` 由可信 Host 返回完全一致的 `CodexConfiguration`、RSS 私有 `nativeDirectory` 与 `authentication`。`api_key` 模式显式提供 API URL/密钥/模型，URL 仅允许 HTTPS 或 loopback HTTP；`existing_config` 模式只指定官方配置目录，以该目录为 CODEX_HOME，登录、凭据读取和刷新由官方 app-server 完成。RSS 不解析外部凭据、不调用账号读取/登录 RPC、不创建个人配置副本。模型省略时使用官方默认值；固定版本 app-server 不支持命名 profile，故不提供 profile 选择。秘密不进入产品 wire。
 
-恢复或 fork 时 resolver 另收到 `history: Binding`。Host 必须先查可信持久化绑定，核验原 session/thread 属于这一 namespace/config/account/workspace 的 adapter 历史，再返回相等的 `ownedHistory: { nativeSessionId, nativeThreadId }`。直接回显用户输入或原始 history 参数不构成所有权证明。禁止导入任意 Codex 历史、路径或手工编辑的 rollout。
+`nativeDirectory` 是无别名的规范绝对路径、Unix 权限0700，保存 RSS 会话工作目录；自定义 API 模式也用它作为 CODEX_HOME。启动 cwd 使用目录内的空白 runtime-workspace，thread cwd 使用 Host 提供的真实工作目录。已有配置目录由官方工具使用，其原始内容不由 RSS 改写。无效配置返回 invalid_input/never，权限或配置层拒绝返回 permission_denied/never；瞬时初始化故障才返回 unavailable，错误不包含配置值。
+
+恢复或 fork 时 resolver 另收到 `history: Binding`。Host 必须先查可信持久化绑定，核验原 session/thread 属于这一 namespace/config/workspace 的 adapter 历史，再返回相等的 `ownedHistory: { nativeSessionId, nativeThreadId }`。直接回显用户输入或原始 history 参数不构成所有权证明。禁止导入任意 Codex 历史、路径或手工编辑的 rollout。
 
 `tools_disabled` 不创建工具桥。`host_mediated` 需要 A01 `ToolEndpoint` 和可信 `ToolVerifier`；当前只在 macOS arm64 的固定版本提供受控准入，其他平台返回 unsupported。Verifier 仍需对当前 incarnation 签发证明，不能用本包版本声明代替 Host 准入。真实平台扩展由单独证据支持。
 
@@ -23,7 +25,7 @@
 | steer prompt | 仅当前已确认的活动 turn；同 turn 的输出属于普通 prompt，明确终态结束所有已确认 start/steer |
 | cancel | turn/interrupt 只返回 request_only；必须观察 interrupted 或核实原生历史才能确认取消 |
 | resume | 新 port + `VerifiedProviderSession.restore`；Host 消费恢复证据后 rebind，再逐条核实原账本 |
-| fork | Host 先用工厂持有新的 child instance，再调用 `parentSession.fork(child, throughTurnId, childConfiguration, budget)`；A01 验证同租户/主体/config/account/workspace、新逻辑 session，adapter 验证原生终态 turn |
+| fork | Host 先用工厂持有新的 child instance，再调用 `parentSession.fork(child, throughTurnId, childConfiguration, budget)`；A01 验证同租户/主体/config/workspace、新逻辑 session，adapter 验证原生终态 turn |
 
 固定版本实际 fork 返回新的 sessionId 和 threadId，均保存原值；源关系使用 forkedFromId。A01 `ProviderForkPort` 只在 Host 已持有的 child 上执行原生操作，不创建其他 adapter 或反向执行 Host 准入。`VerifiedProviderSession.fork` 复用共同准入与受控 verifier；失败清理 child，`cleanupError` 表示 Host 仍须对同一 `child.agent` 重试 close。创建回执丢失或创建后准入失败返回 unknown，禁止盲目重试创建。Host/A03 持有创建意图、来源与子会话的持久化，成功记录后才对客户端发布；该 adapter 不接管 Host journal。A03/产品装配仍由对应任务交付。
 
@@ -33,7 +35,7 @@
 
 ## 权限与协议边界
 
-启动与恢复都校验配置层、固定版本、真实 cwd、只读且禁止网络的原生 sandbox 以及 required HTTP MCP 的实际连接/目录状态。原生审批策略为 on-request；所有反向审批、动态工具、追问和 elicitation RPC 一律拒绝。内置 shell/exec、文件修改、网络检索、插件、hooks、skills、apps、子代理等入口关闭；不读取个人配置、信任设置或账号目录，原生 stderr 不输出。子进程 PATH 不继承宿主：Unix 固定为 `/usr/bin:/bin`；Windows 使用私有配置目录下的空搜索路径并禁用默认 cwd 查找（Windows 仍需独立平台证据）。同类 Claude adapter 使用相同搜索边界且通过当前 Node 的绝对路径启动。工作目录存在项目配置层会拒绝准入。
+启动与恢复都校验配置层、固定版本、真实 cwd、只读且禁止网络的原生 sandbox 以及 required HTTP MCP 的实际连接/目录状态。原生审批策略为 on-request；所有反向审批、动态工具、追问和 elicitation RPC 一律拒绝。内置 shell/exec、文件修改、网络检索、插件、hooks、skills、apps、子代理等入口关闭；官方已有用户配置可以复用，但继承的 MCP 入口由官方 config/read 枚举并关闭，hooks/skills/plugins 和原生执行能力显式禁用，原生 stderr 不输出。子进程 PATH 不继承宿主：Unix 固定为 `/usr/bin:/bin`；Windows 使用私有配置目录下的空搜索路径并禁用默认 cwd 查找（Windows 仍需独立平台证据）。同类 Claude adapter 使用相同搜索边界且通过当前 Node 的绝对路径启动。工作目录存在项目配置层会拒绝准入。
 
 唯一业务提案路径是带 incarnation bearer 的 loopback `rss_host.propose`，实际执行权仍由 Host/Rust 持有；MCP 的 approve 配置仅准许调用这个提案接缝，不签发执行批准。Codex 同时暴露三项原生 MCP resource 辅助工具：list 返回空集合，read 始终拒绝，不能访问工作目录或其他资源。重新准入必须重新连接并核验同一封闭目录，不能只依赖 required 标记或缓存。
 

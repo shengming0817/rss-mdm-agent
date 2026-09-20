@@ -11,7 +11,7 @@ export const configuration = (
   namespace: fixtureSession().namespace,
   provider: "deepseek",
   config: { id: "config-1", revision: "1" },
-  accountRef: "account-1",
+
   workingDirectory: directory,
   permissions,
 });

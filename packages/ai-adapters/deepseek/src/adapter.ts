@@ -190,7 +190,7 @@ export class DeepSeekAdapter implements ProviderAgentPort {
           });
           const resolved = await bounded(
             this.options.resolveConfiguration(
-              { config: copy(c.config), accountRef: c.accountRef },
+              { config: copy(c.config) },
               remaining(),
             ),
             remaining(),
@@ -220,7 +220,6 @@ export class DeepSeekAdapter implements ProviderAgentPort {
               previous.providerVersion !== providerVersion ||
               previous.adapterVersion !== ADAPTER_VERSION ||
               previous.workspaceId !== workspaceIdentity(c.workingDirectory) ||
-              previous.accountRef !== c.accountRef ||
               !same(previous.config, c.config) ||
               !previous.nativeSessionId.startsWith(prefix))
           )
@@ -230,7 +229,7 @@ export class DeepSeekAdapter implements ProviderAgentPort {
             providerVersion,
             adapterVersion: ADAPTER_VERSION,
             config: copy(c.config),
-            accountRef: c.accountRef,
+
             workspaceId: workspaceIdentity(c.workingDirectory),
             generation: randomUUID(),
             nativeSessionId: previous?.nativeSessionId ?? prefix + randomUUID(),

@@ -803,10 +803,7 @@ fn human_ai_and_policy_use_the_same_actor_authorization_and_test_provenance() {
         Initiator::Ai {
             provider: id("fixture-provider"),
             os_session,
-            provider_account: ProviderAccountRef {
-                account: id("provider-login-not-authority"),
-                config: reference("ai-config"),
-            },
+            config: reference("ai-config"),
             conversation: id("conversation"),
             tool_call: id("tool"),
         },

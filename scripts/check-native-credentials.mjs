@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { once } from "node:events";
 import {
@@ -52,10 +52,8 @@ let validProbeBodies = 0;
 let behavior;
 let exit;
 let failure;
-let keychainEntryAbsent = false;
-let nativeJournalEmpty = false;
+let ciphertextCleared = false;
 let executableSha256;
-let keychainAccount;
 
 const fixture = createServer((request, response) => {
   const chunks = [];
@@ -171,10 +169,13 @@ try {
   let revisions;
   try {
     revisions = database
-      .prepare("SELECT principal_id,json FROM connections ORDER BY revision")
+      .prepare(
+        "SELECT principal_id,json,encrypted_secret FROM connections ORDER BY revision",
+      )
       .all()
       .map((row) => ({
         principalId: row.principal_id,
+        encrypted: row.encrypted_secret,
         value: JSON.parse(row.json),
       }));
   } finally {
@@ -185,85 +186,18 @@ try {
   assert.equal(revisions[0].value.source.type, "custom_api");
   assert.equal(revisions[0].value.status, "ready");
   assert.equal(revisions[1].value.status, "deleted");
-  if (revisions[0].value.credentialRef !== revisions[1].value.credentialRef)
-    throw new Error("credential_reference_changed_during_delete");
-  keychainAccount = `${revisions[0].principalId}:${revisions[0].value.credentialRef}`;
-  const lookup = spawnSync(
-    "/usr/bin/security",
-    [
-      "find-generic-password",
-      "-s",
-      "RSS MDM Agent test-user connections",
-      "-a",
-      keychainAccount,
-    ],
-    { stdio: "ignore" },
+  ciphertextCleared = revisions.every((row) => row.encrypted === null);
+  assert.equal(ciphertextCleared, true);
+  assert.equal(
+    readFileSync(join(directory, "ai.sqlite")).includes(
+      Buffer.from(syntheticSecret),
+    ),
+    false,
   );
-  keychainEntryAbsent = lookup.status === 44;
-  assert.equal(keychainEntryAbsent, true);
-  const journal = JSON.parse(
-    readFileSync(join(directory, "credential-refs.json"), "utf8"),
-  );
-  nativeJournalEmpty = Object.keys(journal).length === 0;
-  assert.equal(nativeJournalEmpty, true);
 } catch (error) {
   failure = error instanceof Error ? error.message : "acceptance_failed";
   process.exitCode = 1;
 } finally {
-  if (existsSync(join(directory, "credential-refs.json"))) {
-    try {
-      const journal = JSON.parse(
-        readFileSync(join(directory, "credential-refs.json"), "utf8"),
-      );
-      for (const [reference, entry] of Object.entries(journal))
-        spawnSync(
-          "/usr/bin/security",
-          [
-            "delete-generic-password",
-            "-s",
-            "RSS MDM Agent test-user connections",
-            "-a",
-            `${entry.user}:${reference}`,
-          ],
-          { stdio: "ignore" },
-        );
-    } catch {
-      // The failed-run cleanup below still uses any connection row it can recover.
-    }
-  }
-  if (!keychainAccount && existsSync(join(directory, "ai.sqlite"))) {
-    const database = new DatabaseSync(join(directory, "ai.sqlite"), {
-      readOnly: true,
-    });
-    try {
-      const row = database
-        .prepare(
-          "SELECT principal_id,json FROM connections ORDER BY revision DESC LIMIT 1",
-        )
-        .get();
-      if (row) {
-        const connection = JSON.parse(row.json);
-        if (connection.source?.type === "custom_api")
-          keychainAccount = `${row.principal_id}:${connection.credentialRef}`;
-      }
-    } catch {
-      // Cleanup is best effort after a failed run; the verdict remains failed.
-    } finally {
-      database.close();
-    }
-  }
-  if (keychainAccount)
-    spawnSync(
-      "/usr/bin/security",
-      [
-        "delete-generic-password",
-        "-s",
-        "RSS MDM Agent test-user connections",
-        "-a",
-        keychainAccount,
-      ],
-      { stdio: "ignore" },
-    );
   await new Promise((resolve) => fixture.close(resolve));
   const end = sourceState(repository);
   const passed =
@@ -271,8 +205,7 @@ try {
     behavior?.step === "passed" &&
     authenticatedRequests === 1 &&
     validProbeBodies === 1 &&
-    keychainEntryAbsent &&
-    nativeJournalEmpty &&
+    ciphertextCleared &&
     sameCommittedSource(start, end);
   mkdirSync(join(repository, ".local-ci-runs"), { recursive: true });
   writeFileSync(
@@ -296,7 +229,7 @@ try {
           platform: process.platform,
           arch: process.arch,
         },
-        mode: "production AppKit secure entry/Keychain/native broker/Host/local OpenAI-compatible protocol probe/delete cleanup",
+        mode: "production AppKit secure entry/private channel/Host/encrypted SQLite; injected test master key; local OpenAI-compatible protocol",
         cloudAuthentication: false,
         syntheticCredential: true,
         fixture: {
@@ -305,7 +238,8 @@ try {
           validProbeBodies,
           responseProtocol: "OpenAI-compatible SSE",
         },
-        cleanup: { keychainEntryAbsent, nativeJournalEmpty },
+        cleanup: { ciphertextCleared },
+        keychainAccess: false,
         behavior,
         exit,
         failure,

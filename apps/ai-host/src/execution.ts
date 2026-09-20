@@ -140,7 +140,7 @@ export async function connectExecution(
             namespace: request.namespace,
             operationId: request.body.operationId,
             provider: binding.provider,
-            accountRef: binding.accountRef,
+
             config: binding.config,
           },
         },

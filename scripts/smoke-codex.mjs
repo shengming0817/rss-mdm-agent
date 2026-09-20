@@ -190,7 +190,7 @@ async function main() {
     const configuration = {
       provider: "codex",
       config: { id: "model-smoke", revision: "1" },
-      accountRef: "model-smoke",
+
       workingDirectory,
       namespace: {
         tenantId: "model-smoke",

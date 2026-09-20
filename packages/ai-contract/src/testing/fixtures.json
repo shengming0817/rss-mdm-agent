@@ -82,13 +82,11 @@
           "stageId": "generation-1",
           "connectionId": "config-1",
           "configRevision": 1,
-          "credentialRevision": 1,
           "binding": {
             "provider": "fake",
             "providerVersion": "fixture-1",
             "adapterVersion": "fixture-1",
             "generation": "generation-1",
-            "accountRef": "account-1",
             "nativeSessionId": "native-1",
             "config": {
               "id": "config-1",
@@ -267,7 +265,7 @@
       "body": {
         "type": "text",
         "messageId": "m-1",
-        "text": "你好 <script> inert"
+        "text": "\u4f60\u597d <script> inert"
       },
       "attemptId": "attempt-command-1"
     },
@@ -1487,7 +1485,7 @@
     },
     {
       "name": "text-missing-attempt",
-      "raw": "{\"schemaVersion\":5,\"kind\":\"event\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"eventId\":\"event-1\",\"sequence\":1,\"commandId\":\"command-1\",\"generation\":\"generation-1\",\"body\":{\"type\":\"text\",\"messageId\":\"m-1\",\"text\":\"你好 <script> inert\"}}",
+      "raw": "{\"schemaVersion\":5,\"kind\":\"event\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"eventId\":\"event-1\",\"sequence\":1,\"commandId\":\"command-1\",\"generation\":\"generation-1\",\"body\":{\"type\":\"text\",\"messageId\":\"m-1\",\"text\":\"\u4f60\u597d <script> inert\"}}",
       "code": "schema"
     },
     {
@@ -1497,12 +1495,12 @@
     },
     {
       "name": "snapshot-watermark-mismatch",
-      "raw": "{\"schemaVersion\":5,\"kind\":\"snapshotPage\",\"snapshotId\":\"snapshot-1\",\"pageIndex\":0,\"session\":{\"schemaVersion\":5,\"kind\":\"session\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"revision\":0,\"lastSequence\":0,\"status\":\"active\",\"currentStageId\":\"generation-1\",\"selectedConnectionId\":\"config-1\",\"stages\":[{\"stageId\":\"generation-1\",\"connectionId\":\"config-1\",\"configRevision\":1,\"credentialRevision\":1,\"binding\":{\"provider\":\"fake\",\"providerVersion\":\"fixture-1\",\"adapterVersion\":\"fixture-1\",\"generation\":\"generation-1\",\"accountRef\":\"account-1\",\"nativeSessionId\":\"native-1\",\"config\":{\"id\":\"config-1\",\"revision\":\"1\"},\"workspaceId\":\"workspace-1\"},\"capabilities\":{\"continuation\":\"unsupported\",\"cancellation\":\"request_only\",\"tools\":\"disabled\",\"steer\":\"unsupported\",\"fork\":\"unsupported\",\"subagent\":\"unsupported\",\"terminal\":\"unsupported\",\"structuredQuestion\":\"unsupported\",\"multimodal\":\"unsupported\"}}]},\"cursor\":1,\"events\":[],\"commands\":[],\"interactions\":[],\"surfaces\":[]}",
+      "raw": "{\"schemaVersion\":5,\"kind\":\"snapshotPage\",\"snapshotId\":\"snapshot-1\",\"pageIndex\":0,\"session\":{\"schemaVersion\":5,\"kind\":\"session\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"revision\":0,\"lastSequence\":0,\"status\":\"active\",\"currentStageId\":\"generation-1\",\"selectedConnectionId\":\"config-1\",\"stages\":[{\"stageId\":\"generation-1\",\"connectionId\":\"config-1\",\"configRevision\":1,\"binding\":{\"provider\":\"fake\",\"providerVersion\":\"fixture-1\",\"adapterVersion\":\"fixture-1\",\"generation\":\"generation-1\",\"nativeSessionId\":\"native-1\",\"config\":{\"id\":\"config-1\",\"revision\":\"1\"},\"workspaceId\":\"workspace-1\"},\"capabilities\":{\"continuation\":\"unsupported\",\"cancellation\":\"request_only\",\"tools\":\"disabled\",\"steer\":\"unsupported\",\"fork\":\"unsupported\",\"subagent\":\"unsupported\",\"terminal\":\"unsupported\",\"structuredQuestion\":\"unsupported\",\"multimodal\":\"unsupported\"}}]},\"cursor\":1,\"events\":[],\"commands\":[],\"interactions\":[],\"surfaces\":[]}",
       "code": "context"
     },
     {
       "name": "nested-command-hash-mismatch",
-      "raw": "{\"schemaVersion\":5,\"kind\":\"snapshotPage\",\"snapshotId\":\"snapshot-1\",\"pageIndex\":0,\"session\":{\"schemaVersion\":5,\"kind\":\"session\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"revision\":0,\"lastSequence\":0,\"status\":\"active\",\"currentStageId\":\"generation-1\",\"selectedConnectionId\":\"config-1\",\"stages\":[{\"stageId\":\"generation-1\",\"connectionId\":\"config-1\",\"configRevision\":1,\"credentialRevision\":1,\"binding\":{\"provider\":\"fake\",\"providerVersion\":\"fixture-1\",\"adapterVersion\":\"fixture-1\",\"generation\":\"generation-1\",\"accountRef\":\"account-1\",\"nativeSessionId\":\"native-1\",\"config\":{\"id\":\"config-1\",\"revision\":\"1\"},\"workspaceId\":\"workspace-1\"},\"capabilities\":{\"continuation\":\"unsupported\",\"cancellation\":\"request_only\",\"tools\":\"disabled\",\"steer\":\"unsupported\",\"fork\":\"unsupported\",\"subagent\":\"unsupported\",\"terminal\":\"unsupported\",\"structuredQuestion\":\"unsupported\",\"multimodal\":\"unsupported\"}}]},\"cursor\":0,\"events\":[],\"commands\":[{\"schemaVersion\":5,\"kind\":\"commandRecord\",\"command\":{\"schemaVersion\":5,\"kind\":\"command\",\"sessionId\":\"session-1\",\"commandId\":\"command-1\",\"expiresAtMs\":1000,\"input\":{\"type\":\"prompt\",\"text\":\"fixture text\",\"policy\":\"queue_next\"}},\"receipt\":{\"schemaVersion\":5,\"kind\":\"receipt\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"commandId\":\"command-1\",\"contentHash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"acceptedAtMs\":0,\"retryUntilMs\":100,\"receiptUntilMs\":200,\"acceptedRevision\":1,\"stageId\":\"generation-1\"},\"state\":\"accepted\"}],\"interactions\":[],\"surfaces\":[]}",
+      "raw": "{\"schemaVersion\":5,\"kind\":\"snapshotPage\",\"snapshotId\":\"snapshot-1\",\"pageIndex\":0,\"session\":{\"schemaVersion\":5,\"kind\":\"session\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"revision\":0,\"lastSequence\":0,\"status\":\"active\",\"currentStageId\":\"generation-1\",\"selectedConnectionId\":\"config-1\",\"stages\":[{\"stageId\":\"generation-1\",\"connectionId\":\"config-1\",\"configRevision\":1,\"binding\":{\"provider\":\"fake\",\"providerVersion\":\"fixture-1\",\"adapterVersion\":\"fixture-1\",\"generation\":\"generation-1\",\"nativeSessionId\":\"native-1\",\"config\":{\"id\":\"config-1\",\"revision\":\"1\"},\"workspaceId\":\"workspace-1\"},\"capabilities\":{\"continuation\":\"unsupported\",\"cancellation\":\"request_only\",\"tools\":\"disabled\",\"steer\":\"unsupported\",\"fork\":\"unsupported\",\"subagent\":\"unsupported\",\"terminal\":\"unsupported\",\"structuredQuestion\":\"unsupported\",\"multimodal\":\"unsupported\"}}]},\"cursor\":0,\"events\":[],\"commands\":[{\"schemaVersion\":5,\"kind\":\"commandRecord\",\"command\":{\"schemaVersion\":5,\"kind\":\"command\",\"sessionId\":\"session-1\",\"commandId\":\"command-1\",\"expiresAtMs\":1000,\"input\":{\"type\":\"prompt\",\"text\":\"fixture text\",\"policy\":\"queue_next\"}},\"receipt\":{\"schemaVersion\":5,\"kind\":\"receipt\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"commandId\":\"command-1\",\"contentHash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"acceptedAtMs\":0,\"retryUntilMs\":100,\"receiptUntilMs\":200,\"acceptedRevision\":1,\"stageId\":\"generation-1\"},\"state\":\"accepted\"}],\"interactions\":[],\"surfaces\":[]}",
       "code": "context"
     },
     {

@@ -25,7 +25,7 @@ test("scripted Host exercises queue, steer, cancel and continuation support and 
         {
           provider: "fake",
           config: { id: "c", revision: "1" },
-          accountRef: "a",
+
           profile: "conversation",
         },
         budget(),

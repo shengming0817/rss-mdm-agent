@@ -16,7 +16,7 @@ import {
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const options = {
   provider: "fake",
-  accountRef: "fixture",
+
   config: { id: "config", revision: "1" },
   profile: "conversation",
 };
@@ -40,9 +40,9 @@ export async function startFixture() {
         name: "Browser fixture",
         provider: "codex",
         configRevision: 1,
-        credentialRevision: 1,
-        accountRef: "fixture",
-        credentialRef: "fixture-ref",
+
+
+
         status: "ready",
         profile: "conversation",
         source: {

@@ -133,13 +133,11 @@ export class ClaudeAdapter implements ProviderAgentPort {
         prior &&
         (prior.provider !== request.provider ||
           !same(prior.config, request.config) ||
-          prior.accountRef !== request.accountRef ||
           prior.workspaceId !== workspaceIdentity(request.workingDirectory))
       )
         return fail("stale_binding");
       const identity = copy({
         config: request.config,
-        accountRef: request.accountRef,
       });
       const supplied = await bounded(
         this.options.resolveConfiguration(identity, budget),
@@ -153,15 +151,14 @@ export class ClaudeAdapter implements ProviderAgentPort {
       const resolved = {
         ...supplied,
         configuration: config,
-        credential: { ...supplied.credential },
+        authentication: structuredClone(supplied.authentication),
       };
       if (epoch !== this.epoch || !liveBudget(remaining()))
         return fail("unavailable");
       if (
         config.provider !== "claude" ||
         request.provider !== "claude" ||
-        !same(config.config, identity.config) ||
-        config.accountRef !== identity.accountRef
+        !same(config.config, identity.config)
       )
         return fail("stale_binding");
       if (
@@ -194,7 +191,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
         providerVersion: PROVIDER_VERSION,
         adapterVersion: ADAPTER_VERSION,
         config: identity.config,
-        accountRef: identity.accountRef,
+
         generation: randomUUID(),
         nativeSessionId: resume ? prior.nativeSessionId : randomUUID(),
       };

@@ -4,9 +4,6 @@ import { readPrivateFile } from "./private-file.js";
 export interface LocalConfiguration {
   readonly version: 1;
   readonly databasePath: string;
-  readonly socketPath: string;
-  readonly credentialSocket: string;
-  readonly usersPath: string;
   readonly nativeDirectory: string;
   readonly workingDirectory: string;
 }
@@ -52,9 +49,6 @@ export async function readConfiguration(
     const value = JSON.parse(content) as LocalConfiguration;
     const paths = [
       "databasePath",
-      "socketPath",
-      "credentialSocket",
-      "usersPath",
       "nativeDirectory",
       "workingDirectory",
     ] as const;

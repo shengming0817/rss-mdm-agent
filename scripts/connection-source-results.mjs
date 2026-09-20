@@ -1,10 +1,6 @@
 /** Expected support is separate from the availability of a local CLI configuration. */
 export function classifySource(row) {
-  const unsupported =
-    row.provider === "claude" && row.source === "existing_login";
-  const expected = unsupported
-    ? "unsupported_capability"
-    : "model_probe_completed";
+  const expected = "model_probe_completed";
   return {
     ...row,
     expected,
@@ -12,7 +8,7 @@ export function classifySource(row) {
     status:
       row.result === expected
         ? "passed"
-        : !unsupported && row.result === "source_absent"
+        : row.result === "source_absent"
           ? "not_applicable"
           : "failed",
   };

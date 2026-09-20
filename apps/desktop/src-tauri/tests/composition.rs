@@ -28,7 +28,7 @@ fn directory() -> PathBuf {
     p.canonicalize().unwrap()
 }
 fn bound(handle: &ExecutionHandle, session: &str, operation: &str) -> Arc<ExecutionHandle> {
-    Arc::new(handle.clone()).bind_call(json!({"com.rss-mdm/ai-origin":{"version":1,"namespace":{"tenantId":"test-users","principalId":"fixture-actor","authorityId":"desktop-fixture","sessionId":session},"operationId":operation,"provider":"codex","accountRef":"test-account","config":{"id":"local","revision":"r1"}}}).as_object().unwrap()).unwrap()
+    Arc::new(handle.clone()).bind_call(json!({"com.rss-mdm/ai-origin":{"version":1,"namespace":{"tenantId":"test-users","principalId":"fixture-actor","authorityId":"desktop-fixture","sessionId":session},"operationId":operation,"provider":"codex","config":{"id":"local","revision":"r1"}}}).as_object().unwrap()).unwrap()
 }
 async fn draft(handle: &ExecutionHandle, request: &str, item: &str) -> ui::PlanView {
     let snapshot = handle.snapshot(Default::default()).await.unwrap();
@@ -188,7 +188,7 @@ async fn ai_origin_is_host_bound_and_recovery_never_redispatches_unknown_attempt
                 .unwrap()
         )
         .is_err());
-    let valid = json!({"version":1,"namespace":{"tenantId":"test-users","principalId":"fixture-actor","authorityId":"desktop-fixture","sessionId":"conversation-a"},"operationId":"preview-delivery","provider":"codex","accountRef":"test-account","config":{"id":"local","revision":"r1"}});
+    let valid = json!({"version":1,"namespace":{"tenantId":"test-users","principalId":"fixture-actor","authorityId":"desktop-fixture","sessionId":"conversation-a"},"operationId":"preview-delivery","provider":"codex","config":{"id":"local","revision":"r1"}});
     for pointer in [
         "/namespace/tenantId",
         "/namespace/principalId",
@@ -228,7 +228,7 @@ async fn ai_origin_is_host_bound_and_recovery_never_redispatches_unknown_attempt
         .await
         .unwrap();
     // The trusted Host can name another connection, but it cannot use that origin to read an old task.
-    for pointer in ["/accountRef", "/config/id", "/config/revision"] {
+    for pointer in ["/config/id", "/config/revision"] {
         let mut changed = valid.clone();
         *changed.pointer_mut(pointer).unwrap() = json!("foreign");
         let other = Arc::new(handle.clone())

@@ -19,7 +19,7 @@ const require = createRequire(
 const { client } = await import(require.resolve("@agentclientprotocol/sdk"));
 const options = {
   provider: "fake",
-  accountRef: "account",
+
   config: { id: "cfg", revision: "1" },
   profile: "conversation",
 };

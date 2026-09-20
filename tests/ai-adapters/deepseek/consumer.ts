@@ -24,7 +24,7 @@ const config: DeepSeekConfiguration = {
   },
   provider: "deepseek",
   config: { id: "official", revision: "1" },
-  accountRef: "account",
+
   workingDirectory: directory,
   permissions: "tools_disabled",
 };

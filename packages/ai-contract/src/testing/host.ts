@@ -183,7 +183,7 @@ export class FakeHost implements HostPort {
           id: session.selectedConnectionId!,
           revision: "1",
         },
-        accountRef: options?.accountRef ?? "account-1",
+
         workingDirectory: ".",
         namespace: session.namespace,
         permissions: "tools_disabled",
@@ -195,7 +195,7 @@ export class FakeHost implements HostPort {
       namespace: session.namespace,
       expectedRevision: session.revision,
       configRevision: 1,
-      credentialRevision: 1,
+
       opened: admitted.value,
     });
     if (activated.ok)

@@ -54,7 +54,7 @@ export interface ResolvedDeepSeekConfiguration {
 export interface DeepSeekAdapterOptions {
   readonly tools?: ToolEndpoint;
   resolveConfiguration(
-    identity: Pick<Binding, "config" | "accountRef">,
+    identity: Pick<Binding, "config">,
     budget: Budget,
   ): Promise<ResolvedDeepSeekConfiguration>;
   clock?: Clock;
@@ -77,7 +77,7 @@ export function identity(c: ProviderConfiguration) {
     namespace: c.namespace,
     provider: c.provider,
     config: c.config,
-    accountRef: c.accountRef,
+
     workspaceId: workspaceIdentity(c.workingDirectory),
     permissions: c.permissions,
   };

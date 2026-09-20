@@ -19,7 +19,7 @@ const result = await createHost({
 
 `SessionStore` 只承载公共会话语义；`WorkerLaunchFenceStore` 及其 artifact/PID/PGID 校验由 `ai-host/launch-fence` 持有。SQLite 同时实现两个窄 port，组合根分别注入，不向 A01/MemoryStore 增加 OS 接口。
 
-Host 默认普通队列上限 64，控制待处理上限 64，worker 总数 8，每 provider/account 2；控制优先 burst 为 8，provider 操作预算 30 秒。`queueLimit`、`workerLimit`、`accountWorkerLimit`、`operationTimeoutMs` 可配置，无效配置通过 `createHost` 返回 `invalid_input`；控制队列上限与 burst 固定。持久 `CommandRecord` 是唯一队列，内存仅持有 mailbox、运行任务和短时重试截止。长时间模型观察不占用 mailbox；健康 worker 的控制派发由测试验证在 1 秒内完成。
+Host 默认普通队列上限 64，控制待处理上限 64，worker 总数 8，每 provider/account 2；控制优先 burst 为 8，provider 操作预算 30 秒。`queueLimit`、`workerLimit`、`operationTimeoutMs` 可配置，无效配置通过 `createHost` 返回 `invalid_input`；控制队列上限与 burst 固定。持久 `CommandRecord` 是唯一队列，内存仅持有 mailbox、运行任务和短时重试截止。长时间模型观察不占用 mailbox；健康 worker 的控制派发由测试验证在 1 秒内完成。
 
 `accepted` 在调用 provider 前持久化，随后持久化 intent。原生排队确认只填入 submitted certainty，仍为 `dispatching`；实际运行观察才进入 `running`。控制命令进入 `acknowledged`，本地排队取消进入 `cancelled`，均不产生模型终态。unknown 始终保留原 attempt / correlation，禁止自动重发。只有核实的 not_submitted 能按原 receipt 窗口重新排队。
 
@@ -37,8 +37,8 @@ Host 默认普通队列上限 64，控制待处理上限 64，worker 总数 8，
 
 `connections`、`saveConnection`、`savePreferences`、`selectConnection`、`previewHistory` 是 Host 的当前用户入口。逻辑 Session 先于 provider 存在；普通 prompt 首次接纳固定阶段，旧命令重试先返回 receipt。选连接后等待已接纳队列排空，下一条输入建立新阶段；不把旧 native context 静默装到新修订。Store 对偏好 patch 的 set/clear 与 revision 更新提供原子性。
 
-`saveConnection` 使用无产品 Session/ledger 的短暂 worker，真实完成模型探针后才激活 ready revision；第一条 ready 成为默认，删除默认不自动替补。原生 credential lifecycle 在提交前激活引用，以当前 catalog 和未决 receipt 的原阶段保留集合回收旧 key；提交后的回收失败记独立闭合诊断，不能把已提交保存改报失败。
+`saveConnection` 使用无产品 Session/ledger 的短暂 worker，真实完成模型探针后才激活 ready revision；第一条 ready 成为默认，删除默认不自动替补。应用组合根通过 `persistConnection` 将内部密文和配置交给同一 Store 事务；秘密不进入公共 wire。没有 staged/active 凭据引用或回收队列。
 
 组合根调用 `suspendCaller(caller,budget)` 并检查 Result 后才提交新用户代际。Host 停止接纳、关闭订阅/验证、请求实际运行取消并持久化所有离线队列的取消；已派发未确认结果保持未知，设备任务保持原 actor。失败不确认切换，`activateCaller` 仅由可信 native ingress 在当前注册表验证后调用。
 
-`resolve` 返回的可选 disposer 管理启动材料，必须确认对应 worker 已停止后执行；普通 native 历史仍由 Session 引用，不随临时 snapshot 删除。
+`resolve` 返回的可选 disposer 管理启动材料，必须确认对应 worker 已停止后执行；普通 native 历史仍由 Session 引用；启动数据仅通过 activation 私有管道传入，不落盘。

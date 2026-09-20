@@ -84,7 +84,7 @@ test("Host SIGKILL closes worker group; restart reconciles the original attempt 
           namespace,
           provider: options.provider,
           config: options.config,
-          accountRef: options.accountRef,
+
           workingDirectory: directory,
           permissions: "tools_disabled",
         },
@@ -171,7 +171,7 @@ test("registration precedes provider import, and rejected registration leaves no
       namespace,
       provider: "fake",
       config: { id: "config", revision: "1" },
-      accountRef: "account",
+
       workingDirectory: directory,
       permissions: "tools_disabled",
     },
@@ -204,7 +204,7 @@ test("blocked SDK activation is killed with real process-exit evidence", async (
           namespace,
           provider: "fake",
           config: { id: "config", revision: "activation_block" },
-          accountRef: "account",
+
           workingDirectory: directory,
           permissions: "tools_disabled",
         },
@@ -366,7 +366,7 @@ for (const hasSession of [true, false])
       {
         provider: "fake",
         config: { id: "c", revision: "1" },
-        accountRef: "a",
+
         profile: "conversation",
       },
       budget(),
@@ -404,7 +404,7 @@ test("worker close cannot finish before an outstanding launch reservation settle
       namespace,
       provider: "fake",
       config: { id: "c", revision: "1" },
-      accountRef: "a",
+
       workingDirectory: directory,
       permissions: "tools_disabled",
     },

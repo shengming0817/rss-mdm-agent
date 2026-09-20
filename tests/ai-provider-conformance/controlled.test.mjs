@@ -1,9 +1,10 @@
+import { ConnectionSecrets } from "../../apps/ai-host/dist/secrets.js";
 import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { writeFile, stat } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { openSqliteStore } from "../../packages/ai-store-sqlite/dist/index.js";
 import { executionServer } from "../ai-host/rust-execution.mjs";
@@ -16,6 +17,7 @@ import {
   unwrap,
   budget,
   clientAt,
+  nativePeer,
   capabilities,
   evidence,
 } from "./support.mjs";
@@ -43,6 +45,14 @@ for (const provider of engines) {
       const catalogStore = unwrap(
         openSqliteStore({ path: f.config.databasePath, mode: "open" }),
       );
+      const candidate = {
+        ...f.config.connection,
+        profile: "controlled_tools",
+        configRevision: 2,
+      };
+      const secrets = new ConnectionSecrets(catalogStore, async () =>
+        Buffer.alloc(32, 7),
+      );
       unwrap(
         await catalogStore.saveConnection(
           f.config.caller,
@@ -52,6 +62,7 @@ for (const provider of engines) {
             configRevision: 2,
           },
           1,
+          await secrets.seal(f.config.caller, candidate, "fixture-only-key"),
         ),
       );
       await catalogStore.close(budget());
@@ -69,7 +80,7 @@ for (const provider of engines) {
         ["apps/ai-host/dist/cli.js", f.path],
         {
           cwd: new URL("../..", import.meta.url),
-          stdio: ["pipe", "pipe", "pipe"],
+          stdio: ["pipe", "pipe", "pipe", "pipe"],
         },
       );
       app.stdout.pipe(rust.stdin);
@@ -83,14 +94,7 @@ for (const provider of engines) {
       }
       let peer;
       try {
-        await until(async () => {
-          assert.equal(app.exitCode, null, stderr);
-          return stat(f.config.socketPath).then(
-            (s) => s.isSocket(),
-            () => false,
-          );
-        }, "production socket");
-        peer = await clientAt(f.config.socketPath);
+        peer = await clientAt(nativePeer(app.stdio[3]));
         if (provider !== "codex") {
           const empty = await peer.client.createSession();
           await assert.rejects(

@@ -10,7 +10,7 @@ import {
 const configuration = {
   provider: "fake",
   config: { id: "config-1", revision: "1" },
-  accountRef: "account-1",
+
   workingDirectory: ".",
   namespace: fixtureSession().namespace,
   permissions: "tools_disabled",
@@ -22,7 +22,7 @@ test("post-create validation failure closes only the consumed provider instance"
   let closes = 0;
   port.createSession = async (...args) => {
     const result = unwrap(await create(...args));
-    result.binding.accountRef = "wrong";
+    result.binding.config = { id: "wrong", revision: "1" };
     return { ok: true, value: result };
   };
   port.close = async (b) => {

@@ -74,7 +74,7 @@ test("thread identity survives dispatch and restore, and cannot change under the
     namespace: session.namespace,
     provider: activeStage(session).binding.provider,
     config: activeStage(session).binding.config,
-    accountRef: activeStage(session).binding.accountRef,
+
     workingDirectory: ".",
     permissions: "tools_disabled",
   };

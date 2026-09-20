@@ -635,9 +635,6 @@ impl<'de> ::serde::Deserialize<'de> for AttachRequestSchemaVersion {
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Binding {
-    #[doc = "Opaque account reference; no token, key or account-directory contents."]
-    #[serde(rename = "accountRef")]
-    pub account_ref: Id,
     #[doc = "Adapter implementation version used for capability verification."]
     #[serde(rename = "adapterVersion")]
     pub adapter_version: Id,
@@ -2486,21 +2483,12 @@ pub struct ConfigRef {
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Connection {
-    #[serde(rename = "accountRef")]
-    #[doc = "`account_ref` member; see its generated type and parent schema."]
-    pub account_ref: Id,
     #[serde(rename = "configRevision")]
     #[doc = "`config_revision` member; see its generated type and parent schema."]
     pub config_revision: Counter,
     #[serde(rename = "connectionId")]
     #[doc = "`connection_id` member; see its generated type and parent schema."]
     pub connection_id: Id,
-    #[serde(rename = "credentialRef")]
-    #[doc = "`credential_ref` member; see its generated type and parent schema."]
-    pub credential_ref: Id,
-    #[serde(rename = "credentialRevision")]
-    #[doc = "`credential_revision` member; see its generated type and parent schema."]
-    pub credential_revision: Counter,
     #[doc = "`kind` member; see its generated type and parent schema."]
     pub kind: ConnectionKind,
     #[doc = "`name` member; see its generated type and parent schema."]
@@ -2880,26 +2868,15 @@ pub enum ConnectionSource {
         #[doc = "`model` member; see its generated type and parent schema."]
         model: ConnectionSourceModel,
     },
-    #[doc = "An existing CLI login whose stable provider account must be verified."]
-    #[serde(rename = "existing_login")]
-    ExistingLogin {
-        #[doc = "`directory` member; see its generated type and parent schema."]
-        directory: ConnectionSourceDirectory,
-        #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-        #[doc = "`model` member; see its generated type and parent schema."]
-        model: ::std::option::Option<ConnectionSourceModel>,
-    },
     #[doc = "Explicit API settings read from a private existing CLI configuration."]
-    #[serde(rename = "existing_api")]
-    ExistingApi {
+    #[serde(rename = "existing_config")]
+    ExistingConfig {
+        #[serde(skip_serializing_if = "::std::option::Option::is_none")]
         #[doc = "`directory` member; see its generated type and parent schema."]
-        directory: ConnectionSourceDirectory,
+        directory: ::std::option::Option<ConnectionSourceDirectory>,
         #[serde(skip_serializing_if = "::std::option::Option::is_none")]
         #[doc = "`model` member; see its generated type and parent schema."]
         model: ::std::option::Option<ConnectionSourceModel>,
-        #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-        #[doc = "`profile` member; see its generated type and parent schema."]
-        profile: ::std::option::Option<ConnectionSourceProfile>,
     },
 }
 #[doc = "`ConnectionSourceApiUrl`"]
@@ -2976,16 +2953,12 @@ pub enum ConnectionSourceCredentialType {
     #[serde(rename = "auth_token")]
     #[doc = "`AuthToken` alternative; see the parent type's schema contract."]
     AuthToken,
-    #[serde(rename = "oauth_token")]
-    #[doc = "`OauthToken` alternative; see the parent type's schema contract."]
-    OauthToken,
 }
 impl ::std::fmt::Display for ConnectionSourceCredentialType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::ApiKey => f.write_str("api_key"),
             Self::AuthToken => f.write_str("auth_token"),
-            Self::OauthToken => f.write_str("oauth_token"),
         }
     }
 }
@@ -2995,7 +2968,6 @@ impl ::std::str::FromStr for ConnectionSourceCredentialType {
         match value {
             "api_key" => Ok(Self::ApiKey),
             "auth_token" => Ok(Self::AuthToken),
-            "oauth_token" => Ok(Self::OauthToken),
             _ => Err("invalid value".into()),
         }
     }
@@ -3113,61 +3085,6 @@ impl ::std::convert::TryFrom<::std::string::String> for ConnectionSourceModel {
     }
 }
 impl<'de> ::serde::Deserialize<'de> for ConnectionSourceModel {
-    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
-    where
-        D: ::serde::Deserializer<'de>,
-    {
-        ::std::string::String::deserialize(deserializer)?
-            .parse()
-            .map_err(|e: self::error::ConversionError| {
-                <D::Error as ::serde::de::Error>::custom(e.to_string())
-            })
-    }
-}
-#[doc = "`ConnectionSourceProfile`"]
-#[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
-#[serde(transparent)]
-pub struct ConnectionSourceProfile(
-    #[doc = "`` member; see its generated type and parent schema."] ::std::string::String,
-);
-impl ::std::ops::Deref for ConnectionSourceProfile {
-    type Target = ::std::string::String;
-    fn deref(&self) -> &::std::string::String {
-        &self.0
-    }
-}
-impl ::std::convert::From<ConnectionSourceProfile> for ::std::string::String {
-    fn from(value: ConnectionSourceProfile) -> Self {
-        value.0
-    }
-}
-impl ::std::str::FromStr for ConnectionSourceProfile {
-    type Err = self::error::ConversionError;
-    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if value.chars().count() > 256usize {
-            return Err("longer than 256 characters".into());
-        }
-        if value.chars().count() < 1usize {
-            return Err("shorter than 1 characters".into());
-        }
-        Ok(Self(value.to_string()))
-    }
-}
-impl ::std::convert::TryFrom<&str> for ConnectionSourceProfile {
-    type Error = self::error::ConversionError;
-    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-impl ::std::convert::TryFrom<::std::string::String> for ConnectionSourceProfile {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: ::std::string::String,
-    ) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-impl<'de> ::serde::Deserialize<'de> for ConnectionSourceProfile {
     fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
     where
         D: ::serde::Deserializer<'de>,
@@ -3353,9 +3270,6 @@ pub struct ContextStage {
     #[serde(rename = "connectionId")]
     #[doc = "`connection_id` member; see its generated type and parent schema."]
     pub connection_id: Id,
-    #[serde(rename = "credentialRevision")]
-    #[doc = "`credential_revision` member; see its generated type and parent schema."]
-    pub credential_revision: Counter,
     #[serde(rename = "stageId")]
     #[doc = "`stage_id` member; see its generated type and parent schema."]
     pub stage_id: Id,
@@ -8492,9 +8406,6 @@ pub struct HistoryPreview {
     #[serde(rename = "contentHash")]
     #[doc = "`content_hash` member; see its generated type and parent schema."]
     pub content_hash: Id,
-    #[serde(rename = "credentialRevision")]
-    #[doc = "`credential_revision` member; see its generated type and parent schema."]
-    pub credential_revision: Counter,
     #[doc = "`kind` member; see its generated type and parent schema."]
     pub kind: HistoryPreviewKind,
     #[serde(rename = "messageIds")]
@@ -12314,11 +12225,6 @@ impl std::fmt::Debug for ConnectionSourceDirectory {
 impl std::fmt::Debug for ConnectionSourceModel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(stringify!(ConnectionSourceModel), "([redacted])"))
-    }
-}
-impl std::fmt::Debug for ConnectionSourceProfile {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(concat!(stringify!(ConnectionSourceProfile), "([redacted])"))
     }
 }
 impl std::fmt::Debug for ConnectionStatus {

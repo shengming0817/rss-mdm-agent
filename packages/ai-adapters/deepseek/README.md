@@ -11,7 +11,7 @@ const port = createDeepSeekAdapter({
     persistenceDirectory, // 私有耐久目录，不能由模型或终端用户任意指定
     model: 'deepseek-chat',
     apiUrl: "https://custom.example.test/v1",
-    apiKey: await credentials.resolve(identity.accountRef, budget),
+    apiKey: await credentials.resolve(identity.config, budget),
   }),
 });
 const admitted = await VerifiedProviderSession.open(port, configuration, budget);

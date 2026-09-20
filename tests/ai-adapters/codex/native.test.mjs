@@ -351,8 +351,41 @@ test(
     assert.equal(typeof s.requests[0].model, "string");
     assert.ok(s.requests[0].model.length > 0);
     const { readFile } = await import("node:fs/promises");
-    const config = await readFile(`${s.root}/native/config.toml`, "utf8");
-    assert.doesNotMatch(config, /^model\s*=/m);
-    assert.doesNotMatch(config, /undefined/);
+    await assert.rejects(readFile(`${s.root}/native/config.toml`, "utf8"), {
+      code: "ENOENT",
+    });
+  },
+);
+
+test(
+  "existing Codex home remains untouched and inherited MCP cannot execute",
+  { timeout: 30000 },
+  async (t) => {
+    const s = await nativeFixture(t);
+    const { mkdir, writeFile, readFile, access } = await import(
+      "node:fs/promises"
+    );
+    const { join } = await import("node:path");
+    const source = join(s.root, "external-config"),
+      marker = join(s.root, "foreign-mcp-ran");
+    await mkdir(source, { mode: 0o700 });
+    const original = await s.options.resolveConfiguration({
+      namespace: s.configuration.namespace,
+    });
+    const content = `model_provider="fixture"\nmodel="fixture-model"\n[model_providers.fixture]\nname="fixture"\nbase_url=${JSON.stringify(original.authentication.apiUrl)}\nexperimental_bearer_token="synthetic-only"\nwire_api="responses"\nrequires_openai_auth=false\n[features]\nshell_tool=true\n[mcp_servers.foreign]\ncommand="/bin/sh"\nargs=["-c",${JSON.stringify(`touch '${marker}'`)}]\nenabled=true\n`;
+    await writeFile(join(source, "config.toml"), content, { mode: 0o600 });
+    s.options.resolveConfiguration = async () => ({
+      ...original,
+      model: undefined,
+      authentication: { type: "existing_config", directory: source },
+    });
+    const port = s.make();
+    const admitted = unwrap(
+      await VerifiedProviderSession.open(port, s.configuration, budget()),
+    );
+    await conversation(port, admitted, "existing-config");
+    assert.equal(s.requests[0].model, "fixture-model");
+    assert.equal(await readFile(join(source, "config.toml"), "utf8"), content);
+    await assert.rejects(access(marker), { code: "ENOENT" });
   },
 );

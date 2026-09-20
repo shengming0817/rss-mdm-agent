@@ -73,7 +73,7 @@ test("binding and attempt identity fence before native submission", async () => 
   for (const patch of [
     { generation: "old" },
     { workspaceId: "other" },
-    { accountRef: "other" },
+    { config: { id: "foreign-config", revision: "99" } },
   ])
     assert.equal(
       (await p.dispatch({ ...b, ...patch }, cmd, a, budget())).certainty,

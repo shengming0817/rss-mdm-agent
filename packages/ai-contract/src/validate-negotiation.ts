@@ -88,11 +88,6 @@ const schema31 = {
           description:
             "Live provider incarnation token; rejects callbacks from previous incarnations.",
         },
-        accountRef: {
-          $ref: "#/$defs/Id",
-          description:
-            "Opaque account reference; no token, key or account-directory contents.",
-        },
         nativeSessionId: {
           $ref: "#/$defs/Id",
           description:
@@ -128,7 +123,6 @@ const schema31 = {
         "providerVersion",
         "adapterVersion",
         "generation",
-        "accountRef",
         "nativeSessionId",
         "config",
         "workspaceId",
@@ -3709,7 +3703,6 @@ const schema31 = {
         stageId: { $ref: "#/$defs/Id" },
         connectionId: { $ref: "#/$defs/Id" },
         configRevision: { $ref: "#/$defs/Counter" },
-        credentialRevision: { $ref: "#/$defs/Counter" },
         binding: { $ref: "#/$defs/Binding" },
         capabilities: { $ref: "#/$defs/Capabilities" },
       },
@@ -3717,7 +3710,6 @@ const schema31 = {
         "stageId",
         "connectionId",
         "configRevision",
-        "credentialRevision",
         "binding",
         "capabilities",
       ],
@@ -3733,10 +3725,7 @@ const schema31 = {
             type: { const: "custom_api", type: "string" },
             apiUrl: { type: "string", minLength: 1, maxLength: 2048 },
             model: { type: "string", minLength: 1, maxLength: 256 },
-            credentialType: {
-              type: "string",
-              enum: ["api_key", "auth_token", "oauth_token"],
-            },
+            credentialType: { type: "string", enum: ["api_key", "auth_token"] },
           },
           required: ["type", "apiUrl", "model"],
           additionalProperties: false,
@@ -3746,24 +3735,11 @@ const schema31 = {
         {
           type: "object",
           properties: {
-            type: { const: "existing_login", type: "string" },
+            type: { const: "existing_config", type: "string" },
             directory: { type: "string", minLength: 1, maxLength: 32768 },
             model: { type: "string", minLength: 1, maxLength: 256 },
           },
-          required: ["type", "directory"],
-          additionalProperties: false,
-          description:
-            "An existing CLI login whose stable provider account must be verified.",
-        },
-        {
-          type: "object",
-          properties: {
-            type: { const: "existing_api", type: "string" },
-            directory: { type: "string", minLength: 1, maxLength: 32768 },
-            profile: { type: "string", minLength: 1, maxLength: 256 },
-            model: { type: "string", minLength: 1, maxLength: 256 },
-          },
-          required: ["type", "directory"],
+          required: ["type"],
           additionalProperties: false,
           description:
             "Explicit API settings read from a private existing CLI configuration.",
@@ -3779,8 +3755,6 @@ const schema31 = {
         name: { type: "string", minLength: 1, maxLength: 64 },
         provider: { type: "string", enum: ["codex", "claude", "deepseek"] },
         configRevision: { $ref: "#/$defs/Counter" },
-        credentialRevision: { $ref: "#/$defs/Counter" },
-        accountRef: { $ref: "#/$defs/Id" },
         profile: { type: "string", enum: ["conversation", "controlled_tools"] },
         status: {
           type: "string",
@@ -3793,7 +3767,6 @@ const schema31 = {
           ],
         },
         source: { $ref: "#/$defs/ConnectionSource" },
-        credentialRef: { $ref: "#/$defs/Id" },
       },
       required: [
         "schemaVersion",
@@ -3802,12 +3775,9 @@ const schema31 = {
         "name",
         "provider",
         "configRevision",
-        "credentialRevision",
-        "accountRef",
         "profile",
         "status",
         "source",
-        "credentialRef",
       ],
       additionalProperties: false,
       description:
@@ -3861,7 +3831,6 @@ const schema31 = {
         sessionId: { $ref: "#/$defs/Id" },
         connectionId: { $ref: "#/$defs/Id" },
         configRevision: { $ref: "#/$defs/Counter" },
-        credentialRevision: { $ref: "#/$defs/Counter" },
         throughSequence: { $ref: "#/$defs/Counter" },
         commandIds: {
           type: "array",
@@ -3882,7 +3851,6 @@ const schema31 = {
         "sessionId",
         "connectionId",
         "configRevision",
-        "credentialRevision",
         "throughSequence",
         "commandIds",
         "text",

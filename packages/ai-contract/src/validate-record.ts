@@ -140,11 +140,6 @@ const schema31 = {
           description:
             "Live provider incarnation token; rejects callbacks from previous incarnations.",
         },
-        accountRef: {
-          $ref: "#/$defs/Id",
-          description:
-            "Opaque account reference; no token, key or account-directory contents.",
-        },
         nativeSessionId: {
           $ref: "#/$defs/Id",
           description:
@@ -180,7 +175,6 @@ const schema31 = {
         "providerVersion",
         "adapterVersion",
         "generation",
-        "accountRef",
         "nativeSessionId",
         "config",
         "workspaceId",
@@ -3761,7 +3755,6 @@ const schema31 = {
         stageId: { $ref: "#/$defs/Id" },
         connectionId: { $ref: "#/$defs/Id" },
         configRevision: { $ref: "#/$defs/Counter" },
-        credentialRevision: { $ref: "#/$defs/Counter" },
         binding: { $ref: "#/$defs/Binding" },
         capabilities: { $ref: "#/$defs/Capabilities" },
       },
@@ -3769,7 +3762,6 @@ const schema31 = {
         "stageId",
         "connectionId",
         "configRevision",
-        "credentialRevision",
         "binding",
         "capabilities",
       ],
@@ -3785,10 +3777,7 @@ const schema31 = {
             type: { const: "custom_api", type: "string" },
             apiUrl: { type: "string", minLength: 1, maxLength: 2048 },
             model: { type: "string", minLength: 1, maxLength: 256 },
-            credentialType: {
-              type: "string",
-              enum: ["api_key", "auth_token", "oauth_token"],
-            },
+            credentialType: { type: "string", enum: ["api_key", "auth_token"] },
           },
           required: ["type", "apiUrl", "model"],
           additionalProperties: false,
@@ -3798,24 +3787,11 @@ const schema31 = {
         {
           type: "object",
           properties: {
-            type: { const: "existing_login", type: "string" },
+            type: { const: "existing_config", type: "string" },
             directory: { type: "string", minLength: 1, maxLength: 32768 },
             model: { type: "string", minLength: 1, maxLength: 256 },
           },
-          required: ["type", "directory"],
-          additionalProperties: false,
-          description:
-            "An existing CLI login whose stable provider account must be verified.",
-        },
-        {
-          type: "object",
-          properties: {
-            type: { const: "existing_api", type: "string" },
-            directory: { type: "string", minLength: 1, maxLength: 32768 },
-            profile: { type: "string", minLength: 1, maxLength: 256 },
-            model: { type: "string", minLength: 1, maxLength: 256 },
-          },
-          required: ["type", "directory"],
+          required: ["type"],
           additionalProperties: false,
           description:
             "Explicit API settings read from a private existing CLI configuration.",
@@ -3831,8 +3807,6 @@ const schema31 = {
         name: { type: "string", minLength: 1, maxLength: 64 },
         provider: { type: "string", enum: ["codex", "claude", "deepseek"] },
         configRevision: { $ref: "#/$defs/Counter" },
-        credentialRevision: { $ref: "#/$defs/Counter" },
-        accountRef: { $ref: "#/$defs/Id" },
         profile: { type: "string", enum: ["conversation", "controlled_tools"] },
         status: {
           type: "string",
@@ -3845,7 +3819,6 @@ const schema31 = {
           ],
         },
         source: { $ref: "#/$defs/ConnectionSource" },
-        credentialRef: { $ref: "#/$defs/Id" },
       },
       required: [
         "schemaVersion",
@@ -3854,12 +3827,9 @@ const schema31 = {
         "name",
         "provider",
         "configRevision",
-        "credentialRevision",
-        "accountRef",
         "profile",
         "status",
         "source",
-        "credentialRef",
       ],
       additionalProperties: false,
       description:
@@ -3913,7 +3883,6 @@ const schema31 = {
         sessionId: { $ref: "#/$defs/Id" },
         connectionId: { $ref: "#/$defs/Id" },
         configRevision: { $ref: "#/$defs/Counter" },
-        credentialRevision: { $ref: "#/$defs/Counter" },
         throughSequence: { $ref: "#/$defs/Counter" },
         commandIds: {
           type: "array",
@@ -3934,7 +3903,6 @@ const schema31 = {
         "sessionId",
         "connectionId",
         "configRevision",
-        "credentialRevision",
         "throughSequence",
         "commandIds",
         "text",
@@ -4065,7 +4033,7 @@ const schema31 = {
     },
   },
 };
-const schema325 = {
+const schema319 = {
   type: "object",
   properties: {
     schemaVersion: { type: "integer", const: 5 },
@@ -4251,7 +4219,6 @@ const schema38 = {
     sessionId: { $ref: "#/$defs/Id" },
     connectionId: { $ref: "#/$defs/Id" },
     configRevision: { $ref: "#/$defs/Counter" },
-    credentialRevision: { $ref: "#/$defs/Counter" },
     throughSequence: { $ref: "#/$defs/Counter" },
     commandIds: {
       type: "array",
@@ -4272,7 +4239,6 @@ const schema38 = {
     "sessionId",
     "connectionId",
     "configRevision",
-    "credentialRevision",
     "throughSequence",
     "commandIds",
     "text",
@@ -4312,8 +4278,6 @@ function validate23(
         (data.sessionId === undefined && (missing0 = "sessionId")) ||
         (data.connectionId === undefined && (missing0 = "connectionId")) ||
         (data.configRevision === undefined && (missing0 = "configRevision")) ||
-        (data.credentialRevision === undefined &&
-          (missing0 = "credentialRevision")) ||
         (data.throughSequence === undefined &&
           (missing0 = "throughSequence")) ||
         (data.commandIds === undefined && (missing0 = "commandIds")) ||
@@ -4614,8 +4578,8 @@ function validate23(
                     var valid0 = true;
                   }
                   if (valid0) {
-                    if (data.credentialRevision !== undefined) {
-                      let data5 = data.credentialRevision;
+                    if (data.throughSequence !== undefined) {
+                      let data5 = data.throughSequence;
                       const _errs15 = errors;
                       const _errs16 = errors;
                       if (
@@ -4628,7 +4592,7 @@ function validate23(
                       ) {
                         validate23.errors = [
                           {
-                            instancePath: instancePath + "/credentialRevision",
+                            instancePath: instancePath + "/throughSequence",
                             schemaPath: "#/$defs/Counter/type",
                             keyword: "type",
                             params: { type: "integer" },
@@ -4642,8 +4606,7 @@ function validate23(
                           if (data5 > 9007199254740991 || isNaN(data5)) {
                             validate23.errors = [
                               {
-                                instancePath:
-                                  instancePath + "/credentialRevision",
+                                instancePath: instancePath + "/throughSequence",
                                 schemaPath: "#/$defs/Counter/maximum",
                                 keyword: "maximum",
                                 params: {
@@ -4659,7 +4622,7 @@ function validate23(
                               validate23.errors = [
                                 {
                                   instancePath:
-                                    instancePath + "/credentialRevision",
+                                    instancePath + "/throughSequence",
                                   schemaPath: "#/$defs/Counter/minimum",
                                   keyword: "minimum",
                                   params: { comparison: ">=", limit: 0 },
@@ -4676,61 +4639,117 @@ function validate23(
                       var valid0 = true;
                     }
                     if (valid0) {
-                      if (data.throughSequence !== undefined) {
-                        let data6 = data.throughSequence;
+                      if (data.commandIds !== undefined) {
+                        let data6 = data.commandIds;
                         const _errs18 = errors;
-                        const _errs19 = errors;
-                        if (
-                          !(
-                            typeof data6 == "number" &&
-                            !(data6 % 1) &&
-                            !isNaN(data6) &&
-                            isFinite(data6)
-                          )
-                        ) {
-                          validate23.errors = [
-                            {
-                              instancePath: instancePath + "/throughSequence",
-                              schemaPath: "#/$defs/Counter/type",
-                              keyword: "type",
-                              params: { type: "integer" },
-                              message: "must be integer",
-                            },
-                          ];
-                          return false;
-                        }
-                        if (errors === _errs19) {
-                          if (typeof data6 == "number" && isFinite(data6)) {
-                            if (data6 > 9007199254740991 || isNaN(data6)) {
+                        if (errors === _errs18) {
+                          if (Array.isArray(data6)) {
+                            if (data6.length > 10000) {
                               validate23.errors = [
                                 {
-                                  instancePath:
-                                    instancePath + "/throughSequence",
-                                  schemaPath: "#/$defs/Counter/maximum",
-                                  keyword: "maximum",
-                                  params: {
-                                    comparison: "<=",
-                                    limit: 9007199254740991,
-                                  },
-                                  message: "must be <= 9007199254740991",
+                                  instancePath: instancePath + "/commandIds",
+                                  schemaPath:
+                                    "#/properties/commandIds/maxItems",
+                                  keyword: "maxItems",
+                                  params: { limit: 10000 },
+                                  message:
+                                    "must NOT have more than 10000 items",
                                 },
                               ];
                               return false;
                             } else {
-                              if (data6 < 0 || isNaN(data6)) {
-                                validate23.errors = [
-                                  {
-                                    instancePath:
-                                      instancePath + "/throughSequence",
-                                    schemaPath: "#/$defs/Counter/minimum",
-                                    keyword: "minimum",
-                                    params: { comparison: ">=", limit: 0 },
-                                    message: "must be >= 0",
-                                  },
-                                ];
-                                return false;
+                              var valid5 = true;
+                              const len0 = data6.length;
+                              for (let i0 = 0; i0 < len0; i0++) {
+                                let data7 = data6[i0];
+                                const _errs20 = errors;
+                                const _errs21 = errors;
+                                if (errors === _errs21) {
+                                  if (typeof data7 === "string") {
+                                    if (func1(data7) > 128) {
+                                      validate23.errors = [
+                                        {
+                                          instancePath:
+                                            instancePath + "/commandIds/" + i0,
+                                          schemaPath: "#/$defs/Id/maxLength",
+                                          keyword: "maxLength",
+                                          params: { limit: 128 },
+                                          message:
+                                            "must NOT have more than 128 characters",
+                                        },
+                                      ];
+                                      return false;
+                                    } else {
+                                      if (func1(data7) < 1) {
+                                        validate23.errors = [
+                                          {
+                                            instancePath:
+                                              instancePath +
+                                              "/commandIds/" +
+                                              i0,
+                                            schemaPath: "#/$defs/Id/minLength",
+                                            keyword: "minLength",
+                                            params: { limit: 1 },
+                                            message:
+                                              "must NOT have fewer than 1 characters",
+                                          },
+                                        ];
+                                        return false;
+                                      } else {
+                                        if (!pattern4.test(data7)) {
+                                          validate23.errors = [
+                                            {
+                                              instancePath:
+                                                instancePath +
+                                                "/commandIds/" +
+                                                i0,
+                                              schemaPath: "#/$defs/Id/pattern",
+                                              keyword: "pattern",
+                                              params: {
+                                                pattern:
+                                                  "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
+                                              },
+                                              message:
+                                                'must match pattern "' +
+                                                "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$" +
+                                                '"',
+                                            },
+                                          ];
+                                          return false;
+                                        }
+                                      }
+                                    }
+                                  } else {
+                                    validate23.errors = [
+                                      {
+                                        instancePath:
+                                          instancePath + "/commandIds/" + i0,
+                                        schemaPath: "#/$defs/Id/type",
+                                        keyword: "type",
+                                        params: { type: "string" },
+                                        message: "must be string",
+                                      },
+                                    ];
+                                    return false;
+                                  }
+                                }
+                                var valid5 = _errs20 === errors;
+                                if (!valid5) {
+                                  break;
+                                }
                               }
                             }
+                          } else {
+                            validate23.errors = [
+                              {
+                                instancePath: instancePath + "/commandIds",
+                                schemaPath: "#/properties/commandIds/type",
+                                keyword: "type",
+                                params: { type: "array" },
+                                message: "must be array",
+                              },
+                            ];
+                            return false;
                           }
                         }
                         var valid0 = _errs18 === errors;
@@ -4738,151 +4757,102 @@ function validate23(
                         var valid0 = true;
                       }
                       if (valid0) {
-                        if (data.commandIds !== undefined) {
-                          let data7 = data.commandIds;
-                          const _errs21 = errors;
-                          if (errors === _errs21) {
-                            if (Array.isArray(data7)) {
-                              if (data7.length > 10000) {
+                        if (data.text !== undefined) {
+                          let data8 = data.text;
+                          const _errs23 = errors;
+                          if (errors === _errs23) {
+                            if (typeof data8 === "string") {
+                              if (func1(data8) > 131072) {
                                 validate23.errors = [
                                   {
-                                    instancePath: instancePath + "/commandIds",
-                                    schemaPath:
-                                      "#/properties/commandIds/maxItems",
-                                    keyword: "maxItems",
-                                    params: { limit: 10000 },
+                                    instancePath: instancePath + "/text",
+                                    schemaPath: "#/properties/text/maxLength",
+                                    keyword: "maxLength",
+                                    params: { limit: 131072 },
                                     message:
-                                      "must NOT have more than 10000 items",
+                                      "must NOT have more than 131072 characters",
                                   },
                                 ];
                                 return false;
-                              } else {
-                                var valid6 = true;
-                                const len0 = data7.length;
-                                for (let i0 = 0; i0 < len0; i0++) {
-                                  let data8 = data7[i0];
-                                  const _errs23 = errors;
-                                  const _errs24 = errors;
-                                  if (errors === _errs24) {
-                                    if (typeof data8 === "string") {
-                                      if (func1(data8) > 128) {
-                                        validate23.errors = [
-                                          {
-                                            instancePath:
-                                              instancePath +
-                                              "/commandIds/" +
-                                              i0,
-                                            schemaPath: "#/$defs/Id/maxLength",
-                                            keyword: "maxLength",
-                                            params: { limit: 128 },
-                                            message:
-                                              "must NOT have more than 128 characters",
-                                          },
-                                        ];
-                                        return false;
-                                      } else {
-                                        if (func1(data8) < 1) {
-                                          validate23.errors = [
-                                            {
-                                              instancePath:
-                                                instancePath +
-                                                "/commandIds/" +
-                                                i0,
-                                              schemaPath:
-                                                "#/$defs/Id/minLength",
-                                              keyword: "minLength",
-                                              params: { limit: 1 },
-                                              message:
-                                                "must NOT have fewer than 1 characters",
-                                            },
-                                          ];
-                                          return false;
-                                        } else {
-                                          if (!pattern4.test(data8)) {
-                                            validate23.errors = [
-                                              {
-                                                instancePath:
-                                                  instancePath +
-                                                  "/commandIds/" +
-                                                  i0,
-                                                schemaPath:
-                                                  "#/$defs/Id/pattern",
-                                                keyword: "pattern",
-                                                params: {
-                                                  pattern:
-                                                    "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
-                                                },
-                                                message:
-                                                  'must match pattern "' +
-                                                  "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$" +
-                                                  '"',
-                                              },
-                                            ];
-                                            return false;
-                                          }
-                                        }
-                                      }
-                                    } else {
-                                      validate23.errors = [
-                                        {
-                                          instancePath:
-                                            instancePath + "/commandIds/" + i0,
-                                          schemaPath: "#/$defs/Id/type",
-                                          keyword: "type",
-                                          params: { type: "string" },
-                                          message: "must be string",
-                                        },
-                                      ];
-                                      return false;
-                                    }
-                                  }
-                                  var valid6 = _errs23 === errors;
-                                  if (!valid6) {
-                                    break;
-                                  }
-                                }
                               }
                             } else {
                               validate23.errors = [
                                 {
-                                  instancePath: instancePath + "/commandIds",
-                                  schemaPath: "#/properties/commandIds/type",
+                                  instancePath: instancePath + "/text",
+                                  schemaPath: "#/properties/text/type",
                                   keyword: "type",
-                                  params: { type: "array" },
-                                  message: "must be array",
+                                  params: { type: "string" },
+                                  message: "must be string",
                                 },
                               ];
                               return false;
                             }
                           }
-                          var valid0 = _errs21 === errors;
+                          var valid0 = _errs23 === errors;
                         } else {
                           var valid0 = true;
                         }
                         if (valid0) {
-                          if (data.text !== undefined) {
-                            let data9 = data.text;
+                          if (data.contentHash !== undefined) {
+                            let data9 = data.contentHash;
+                            const _errs25 = errors;
                             const _errs26 = errors;
                             if (errors === _errs26) {
                               if (typeof data9 === "string") {
-                                if (func1(data9) > 131072) {
+                                if (func1(data9) > 128) {
                                   validate23.errors = [
                                     {
-                                      instancePath: instancePath + "/text",
-                                      schemaPath: "#/properties/text/maxLength",
+                                      instancePath:
+                                        instancePath + "/contentHash",
+                                      schemaPath: "#/$defs/Id/maxLength",
                                       keyword: "maxLength",
-                                      params: { limit: 131072 },
+                                      params: { limit: 128 },
                                       message:
-                                        "must NOT have more than 131072 characters",
+                                        "must NOT have more than 128 characters",
                                     },
                                   ];
                                   return false;
+                                } else {
+                                  if (func1(data9) < 1) {
+                                    validate23.errors = [
+                                      {
+                                        instancePath:
+                                          instancePath + "/contentHash",
+                                        schemaPath: "#/$defs/Id/minLength",
+                                        keyword: "minLength",
+                                        params: { limit: 1 },
+                                        message:
+                                          "must NOT have fewer than 1 characters",
+                                      },
+                                    ];
+                                    return false;
+                                  } else {
+                                    if (!pattern4.test(data9)) {
+                                      validate23.errors = [
+                                        {
+                                          instancePath:
+                                            instancePath + "/contentHash",
+                                          schemaPath: "#/$defs/Id/pattern",
+                                          keyword: "pattern",
+                                          params: {
+                                            pattern:
+                                              "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
+                                          },
+                                          message:
+                                            'must match pattern "' +
+                                            "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$" +
+                                            '"',
+                                        },
+                                      ];
+                                      return false;
+                                    }
+                                  }
                                 }
                               } else {
                                 validate23.errors = [
                                   {
-                                    instancePath: instancePath + "/text",
-                                    schemaPath: "#/properties/text/type",
+                                    instancePath: instancePath + "/contentHash",
+                                    schemaPath: "#/$defs/Id/type",
                                     keyword: "type",
                                     params: { type: "string" },
                                     message: "must be string",
@@ -4891,63 +4861,116 @@ function validate23(
                                 return false;
                               }
                             }
-                            var valid0 = _errs26 === errors;
+                            var valid0 = _errs25 === errors;
                           } else {
                             var valid0 = true;
                           }
                           if (valid0) {
-                            if (data.contentHash !== undefined) {
-                              let data10 = data.contentHash;
+                            if (data.messageIds !== undefined) {
+                              let data10 = data.messageIds;
                               const _errs28 = errors;
-                              const _errs29 = errors;
-                              if (errors === _errs29) {
-                                if (typeof data10 === "string") {
-                                  if (func1(data10) > 128) {
+                              if (errors === _errs28) {
+                                if (Array.isArray(data10)) {
+                                  if (data10.length > 10000) {
                                     validate23.errors = [
                                       {
                                         instancePath:
-                                          instancePath + "/contentHash",
-                                        schemaPath: "#/$defs/Id/maxLength",
-                                        keyword: "maxLength",
-                                        params: { limit: 128 },
+                                          instancePath + "/messageIds",
+                                        schemaPath:
+                                          "#/properties/messageIds/maxItems",
+                                        keyword: "maxItems",
+                                        params: { limit: 10000 },
                                         message:
-                                          "must NOT have more than 128 characters",
+                                          "must NOT have more than 10000 items",
                                       },
                                     ];
                                     return false;
                                   } else {
-                                    if (func1(data10) < 1) {
-                                      validate23.errors = [
-                                        {
-                                          instancePath:
-                                            instancePath + "/contentHash",
-                                          schemaPath: "#/$defs/Id/minLength",
-                                          keyword: "minLength",
-                                          params: { limit: 1 },
-                                          message:
-                                            "must NOT have fewer than 1 characters",
-                                        },
-                                      ];
-                                      return false;
-                                    } else {
-                                      if (!pattern4.test(data10)) {
-                                        validate23.errors = [
-                                          {
-                                            instancePath:
-                                              instancePath + "/contentHash",
-                                            schemaPath: "#/$defs/Id/pattern",
-                                            keyword: "pattern",
-                                            params: {
-                                              pattern:
-                                                "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
+                                    var valid8 = true;
+                                    const len1 = data10.length;
+                                    for (let i1 = 0; i1 < len1; i1++) {
+                                      let data11 = data10[i1];
+                                      const _errs30 = errors;
+                                      const _errs31 = errors;
+                                      if (errors === _errs31) {
+                                        if (typeof data11 === "string") {
+                                          if (func1(data11) > 128) {
+                                            validate23.errors = [
+                                              {
+                                                instancePath:
+                                                  instancePath +
+                                                  "/messageIds/" +
+                                                  i1,
+                                                schemaPath:
+                                                  "#/$defs/Id/maxLength",
+                                                keyword: "maxLength",
+                                                params: { limit: 128 },
+                                                message:
+                                                  "must NOT have more than 128 characters",
+                                              },
+                                            ];
+                                            return false;
+                                          } else {
+                                            if (func1(data11) < 1) {
+                                              validate23.errors = [
+                                                {
+                                                  instancePath:
+                                                    instancePath +
+                                                    "/messageIds/" +
+                                                    i1,
+                                                  schemaPath:
+                                                    "#/$defs/Id/minLength",
+                                                  keyword: "minLength",
+                                                  params: { limit: 1 },
+                                                  message:
+                                                    "must NOT have fewer than 1 characters",
+                                                },
+                                              ];
+                                              return false;
+                                            } else {
+                                              if (!pattern4.test(data11)) {
+                                                validate23.errors = [
+                                                  {
+                                                    instancePath:
+                                                      instancePath +
+                                                      "/messageIds/" +
+                                                      i1,
+                                                    schemaPath:
+                                                      "#/$defs/Id/pattern",
+                                                    keyword: "pattern",
+                                                    params: {
+                                                      pattern:
+                                                        "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
+                                                    },
+                                                    message:
+                                                      'must match pattern "' +
+                                                      "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$" +
+                                                      '"',
+                                                  },
+                                                ];
+                                                return false;
+                                              }
+                                            }
+                                          }
+                                        } else {
+                                          validate23.errors = [
+                                            {
+                                              instancePath:
+                                                instancePath +
+                                                "/messageIds/" +
+                                                i1,
+                                              schemaPath: "#/$defs/Id/type",
+                                              keyword: "type",
+                                              params: { type: "string" },
+                                              message: "must be string",
                                             },
-                                            message:
-                                              'must match pattern "' +
-                                              "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$" +
-                                              '"',
-                                          },
-                                        ];
-                                        return false;
+                                          ];
+                                          return false;
+                                        }
+                                      }
+                                      var valid8 = _errs30 === errors;
+                                      if (!valid8) {
+                                        break;
                                       }
                                     }
                                   }
@@ -4955,11 +4978,12 @@ function validate23(
                                   validate23.errors = [
                                     {
                                       instancePath:
-                                        instancePath + "/contentHash",
-                                      schemaPath: "#/$defs/Id/type",
+                                        instancePath + "/messageIds",
+                                      schemaPath:
+                                        "#/properties/messageIds/type",
                                       keyword: "type",
-                                      params: { type: "string" },
-                                      message: "must be string",
+                                      params: { type: "array" },
+                                      message: "must be array",
                                     },
                                   ];
                                   return false;
@@ -4968,135 +4992,6 @@ function validate23(
                               var valid0 = _errs28 === errors;
                             } else {
                               var valid0 = true;
-                            }
-                            if (valid0) {
-                              if (data.messageIds !== undefined) {
-                                let data11 = data.messageIds;
-                                const _errs31 = errors;
-                                if (errors === _errs31) {
-                                  if (Array.isArray(data11)) {
-                                    if (data11.length > 10000) {
-                                      validate23.errors = [
-                                        {
-                                          instancePath:
-                                            instancePath + "/messageIds",
-                                          schemaPath:
-                                            "#/properties/messageIds/maxItems",
-                                          keyword: "maxItems",
-                                          params: { limit: 10000 },
-                                          message:
-                                            "must NOT have more than 10000 items",
-                                        },
-                                      ];
-                                      return false;
-                                    } else {
-                                      var valid9 = true;
-                                      const len1 = data11.length;
-                                      for (let i1 = 0; i1 < len1; i1++) {
-                                        let data12 = data11[i1];
-                                        const _errs33 = errors;
-                                        const _errs34 = errors;
-                                        if (errors === _errs34) {
-                                          if (typeof data12 === "string") {
-                                            if (func1(data12) > 128) {
-                                              validate23.errors = [
-                                                {
-                                                  instancePath:
-                                                    instancePath +
-                                                    "/messageIds/" +
-                                                    i1,
-                                                  schemaPath:
-                                                    "#/$defs/Id/maxLength",
-                                                  keyword: "maxLength",
-                                                  params: { limit: 128 },
-                                                  message:
-                                                    "must NOT have more than 128 characters",
-                                                },
-                                              ];
-                                              return false;
-                                            } else {
-                                              if (func1(data12) < 1) {
-                                                validate23.errors = [
-                                                  {
-                                                    instancePath:
-                                                      instancePath +
-                                                      "/messageIds/" +
-                                                      i1,
-                                                    schemaPath:
-                                                      "#/$defs/Id/minLength",
-                                                    keyword: "minLength",
-                                                    params: { limit: 1 },
-                                                    message:
-                                                      "must NOT have fewer than 1 characters",
-                                                  },
-                                                ];
-                                                return false;
-                                              } else {
-                                                if (!pattern4.test(data12)) {
-                                                  validate23.errors = [
-                                                    {
-                                                      instancePath:
-                                                        instancePath +
-                                                        "/messageIds/" +
-                                                        i1,
-                                                      schemaPath:
-                                                        "#/$defs/Id/pattern",
-                                                      keyword: "pattern",
-                                                      params: {
-                                                        pattern:
-                                                          "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
-                                                      },
-                                                      message:
-                                                        'must match pattern "' +
-                                                        "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$" +
-                                                        '"',
-                                                    },
-                                                  ];
-                                                  return false;
-                                                }
-                                              }
-                                            }
-                                          } else {
-                                            validate23.errors = [
-                                              {
-                                                instancePath:
-                                                  instancePath +
-                                                  "/messageIds/" +
-                                                  i1,
-                                                schemaPath: "#/$defs/Id/type",
-                                                keyword: "type",
-                                                params: { type: "string" },
-                                                message: "must be string",
-                                              },
-                                            ];
-                                            return false;
-                                          }
-                                        }
-                                        var valid9 = _errs33 === errors;
-                                        if (!valid9) {
-                                          break;
-                                        }
-                                      }
-                                    }
-                                  } else {
-                                    validate23.errors = [
-                                      {
-                                        instancePath:
-                                          instancePath + "/messageIds",
-                                        schemaPath:
-                                          "#/properties/messageIds/type",
-                                        keyword: "type",
-                                        params: { type: "array" },
-                                        message: "must be array",
-                                      },
-                                    ];
-                                    return false;
-                                  }
-                                }
-                                var valid0 = _errs31 === errors;
-                              } else {
-                                var valid0 = true;
-                              }
                             }
                           }
                         }
@@ -5130,7 +5025,7 @@ validate23.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema53 = {
+const schema52 = {
   type: "object",
   properties: {
     instanceId: {
@@ -6856,7 +6751,7 @@ validate21.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema56 = {
+const schema55 = {
   type: "object",
   properties: {
     schemaVersion: {
@@ -6926,7 +6821,7 @@ const schema56 = {
   description:
     "Immutable acceptance fact. Only an actual committed store makes it durable; it is not a model terminal.",
 };
-const schema57 = {
+const schema56 = {
   type: "object",
   properties: {
     tenantId: {
@@ -7357,7 +7252,7 @@ function validate29(
       } else {
         const _errs1 = errors;
         for (const key0 in data) {
-          if (!func8.call(schema56.properties, key0)) {
+          if (!func8.call(schema55.properties, key0)) {
             validate29.errors = [
               {
                 instancePath,
@@ -7917,7 +7812,7 @@ validate29.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema68 = {
+const schema67 = {
   oneOf: [
     {
       type: "object",
@@ -8322,7 +8217,7 @@ const schema68 = {
   description:
     "Closed command lifecycle; acceptance is immutable, local invalidation does not assert a model terminal.",
 };
-const schema78 = {
+const schema77 = {
   type: "string",
   enum: [
     "completed",
@@ -8335,7 +8230,7 @@ const schema78 = {
   description:
     "Definite model-turn outcome; does not establish process exit or business-side-effect completion.",
 };
-const schema83 = {
+const schema82 = {
   oneOf: [
     {
       type: "object",
@@ -8382,7 +8277,7 @@ const schema83 = {
   ],
   description: "Native control acknowledgement; never a model turn outcome.",
 };
-const schema69 = {
+const schema68 = {
   type: "object",
   properties: {
     nativeSessionId: {
@@ -8488,7 +8383,7 @@ function validate38(
       } else {
         const _errs1 = errors;
         for (const key0 in data) {
-          if (!func8.call(schema69.properties, key0)) {
+          if (!func8.call(schema68.properties, key0)) {
             validate38.errors = [
               {
                 instancePath,
@@ -8732,7 +8627,7 @@ function validate38(
                         schemaPath: "#/properties/certainty/enum",
                         keyword: "enum",
                         params: {
-                          allowedValues: schema69.properties.certainty.enum,
+                          allowedValues: schema68.properties.certainty.enum,
                         },
                         message: "must be equal to one of the allowed values",
                       },
@@ -9136,7 +9031,7 @@ validate38.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema79 = {
+const schema78 = {
   type: "object",
   properties: {
     code: {
@@ -9153,7 +9048,7 @@ const schema79 = {
   additionalProperties: false,
   description: "Value-free failure and explicit retry discipline.",
 };
-const schema80 = {
+const schema79 = {
   type: "string",
   enum: [
     "invalid_input",
@@ -9179,7 +9074,7 @@ const schema80 = {
   description:
     "Closed value-free error category; diagnostics never include model text or credentials.",
 };
-const schema81 = {
+const schema80 = {
   type: "string",
   enum: ["same_command", "reconcile_first", "never"],
   description:
@@ -9282,7 +9177,7 @@ function validate51(
                   instancePath: instancePath + "/code",
                   schemaPath: "#/$defs/ErrorCode/enum",
                   keyword: "enum",
-                  params: { allowedValues: schema80.enum },
+                  params: { allowedValues: schema79.enum },
                   message: "must be equal to one of the allowed values",
                 },
               ];
@@ -9320,7 +9215,7 @@ function validate51(
                     instancePath: instancePath + "/retry",
                     schemaPath: "#/$defs/Retry/enum",
                     keyword: "enum",
-                    params: { allowedValues: schema81.enum },
+                    params: { allowedValues: schema80.enum },
                     message: "must be equal to one of the allowed values",
                   },
                 ];
@@ -10450,7 +10345,7 @@ function validate33(
                                 instancePath: instancePath + "/outcome",
                                 schemaPath: "#/$defs/Outcome/enum",
                                 keyword: "enum",
-                                params: { allowedValues: schema78.enum },
+                                params: { allowedValues: schema77.enum },
                                 message:
                                   "must be equal to one of the allowed values",
                               };
@@ -11812,7 +11707,7 @@ function validate33(
                                                     keyword: "enum",
                                                     params: {
                                                       allowedValues:
-                                                        schema83.oneOf[0]
+                                                        schema82.oneOf[0]
                                                           .properties
                                                           .confirmation.enum,
                                                     },
@@ -12750,7 +12645,7 @@ function validate33(
   return errors === 0;
 }
 validate33.evaluated = { dynamicProps: true, dynamicItems: false };
-const schema85 = {
+const schema84 = {
   oneOf: [
     {
       type: "object",
@@ -14513,19 +14408,19 @@ const schema85 = {
   description:
     "Closed stable events. Session events have no command, attempt observations name their exact attempt.",
 };
-const schema130 = {
+const schema129 = {
   type: "object",
   additionalProperties: true,
   description:
     "Immutable untrusted provider question payload. Subject to whole-record JSON budgets; never authentication, permission or execution approval.",
 };
-const schema132 = {
+const schema131 = {
   type: "string",
   enum: ["generation_bound"],
   description:
     "A live-generation callback. Restore preserves display history but always makes the previous callback unavailable.",
 };
-const schema169 = {
+const schema168 = {
   type: "object",
   properties: {
     schemaVersion: {
@@ -14686,7 +14581,7 @@ function validate82(
       } else {
         const _errs1 = errors;
         for (const key0 in data) {
-          if (!func8.call(schema169.properties, key0)) {
+          if (!func8.call(schema168.properties, key0)) {
             validate82.errors = [
               {
                 instancePath,
@@ -15582,7 +15477,7 @@ function validate82(
                                               keyword: "enum",
                                               params: {
                                                 allowedValues:
-                                                  schema169.properties.status
+                                                  schema168.properties.status
                                                     .enum,
                                               },
                                               message:
@@ -15770,7 +15665,7 @@ function validate61(
       } else {
         const _errs3 = errors;
         for (const key0 in data) {
-          if (!func8.call(schema85.oneOf[0].properties, key0)) {
+          if (!func8.call(schema84.oneOf[0].properties, key0)) {
             const err1 = {
               instancePath,
               schemaPath: "#/oneOf/0/additionalProperties",
@@ -17274,7 +17169,7 @@ function validate61(
         } else {
           const _errs62 = errors;
           for (const key4 in data) {
-            if (!func8.call(schema85.oneOf[2].properties, key4)) {
+            if (!func8.call(schema84.oneOf[2].properties, key4)) {
               const err65 = {
                 instancePath,
                 schemaPath: "#/oneOf/2/additionalProperties",
@@ -17844,7 +17739,7 @@ function validate61(
                                             keyword: "enum",
                                             params: {
                                               allowedValues:
-                                                schema85.oneOf[2].properties
+                                                schema84.oneOf[2].properties
                                                   .body.properties.state.enum,
                                             },
                                             message:
@@ -18038,7 +17933,7 @@ function validate61(
           } else {
             const _errs92 = errors;
             for (const key6 in data) {
-              if (!func8.call(schema85.oneOf[3].properties, key6)) {
+              if (!func8.call(schema84.oneOf[3].properties, key6)) {
                 const err98 = {
                   instancePath,
                   schemaPath: "#/oneOf/3/additionalProperties",
@@ -18616,7 +18511,7 @@ function validate61(
                                                 "#/$defs/Outcome/enum",
                                               keyword: "enum",
                                               params: {
-                                                allowedValues: schema78.enum,
+                                                allowedValues: schema77.enum,
                                               },
                                               message:
                                                 "must be equal to one of the allowed values",
@@ -18811,7 +18706,7 @@ function validate61(
             } else {
               const _errs123 = errors;
               for (const key8 in data) {
-                if (!func8.call(schema85.oneOf[4].properties, key8)) {
+                if (!func8.call(schema84.oneOf[4].properties, key8)) {
                   const err131 = {
                     instancePath,
                     schemaPath: "#/oneOf/4/additionalProperties",
@@ -19402,7 +19297,7 @@ function validate61(
                                                 keyword: "enum",
                                                 params: {
                                                   allowedValues:
-                                                    schema85.oneOf[4].properties
+                                                    schema84.oneOf[4].properties
                                                       .body.properties
                                                       .confirmation.enum,
                                                 },
@@ -19600,7 +19495,7 @@ function validate61(
               } else {
                 const _errs153 = errors;
                 for (const key10 in data) {
-                  if (!func8.call(schema85.oneOf[5].properties, key10)) {
+                  if (!func8.call(schema84.oneOf[5].properties, key10)) {
                     const err164 = {
                       instancePath,
                       schemaPath: "#/oneOf/5/additionalProperties",
@@ -20596,7 +20491,7 @@ function validate61(
                 } else {
                   const _errs190 = errors;
                   for (const key12 in data) {
-                    if (!func8.call(schema85.oneOf[6].properties, key12)) {
+                    if (!func8.call(schema84.oneOf[6].properties, key12)) {
                       const err204 = {
                         instancePath,
                         schemaPath: "#/oneOf/6/additionalProperties",
@@ -21320,7 +21215,7 @@ function validate61(
                                                       keyword: "enum",
                                                       params: {
                                                         allowedValues:
-                                                          schema85.oneOf[6]
+                                                          schema84.oneOf[6]
                                                             .properties.body
                                                             .properties
                                                             .disposition.enum,
@@ -21595,7 +21490,7 @@ function validate61(
                   } else {
                     const _errs225 = errors;
                     for (const key14 in data) {
-                      if (!func8.call(schema85.oneOf[7].properties, key14)) {
+                      if (!func8.call(schema84.oneOf[7].properties, key14)) {
                         const err243 = {
                           instancePath,
                           schemaPath: "#/oneOf/7/additionalProperties",
@@ -22596,7 +22491,7 @@ function validate61(
                                                               keyword: "enum",
                                                               params: {
                                                                 allowedValues:
-                                                                  schema132.enum,
+                                                                  schema131.enum,
                                                               },
                                                               message:
                                                                 "must be equal to one of the allowed values",
@@ -22814,7 +22709,7 @@ function validate61(
                     } else {
                       const _errs268 = errors;
                       for (const key16 in data) {
-                        if (!func8.call(schema85.oneOf[8].properties, key16)) {
+                        if (!func8.call(schema84.oneOf[8].properties, key16)) {
                           const err286 = {
                             instancePath,
                             schemaPath: "#/oneOf/8/additionalProperties",
@@ -23965,7 +23860,7 @@ function validate61(
                         const _errs304 = errors;
                         for (const key18 in data) {
                           if (
-                            !func8.call(schema85.oneOf[9].properties, key18)
+                            !func8.call(schema84.oneOf[9].properties, key18)
                           ) {
                             const err327 = {
                               instancePath,
@@ -24769,7 +24664,7 @@ function validate61(
                                                             keyword: "enum",
                                                             params: {
                                                               allowedValues:
-                                                                schema85
+                                                                schema84
                                                                   .oneOf[9]
                                                                   .properties
                                                                   .body
@@ -26550,7 +26445,7 @@ function validate61(
                               for (const key24 in data) {
                                 if (
                                   !func8.call(
-                                    schema85.oneOf[12].properties,
+                                    schema84.oneOf[12].properties,
                                     key24,
                                   )
                                 ) {
@@ -27489,7 +27384,7 @@ function validate61(
                                 for (const key26 in data) {
                                   if (
                                     !func8.call(
-                                      schema85.oneOf[13].properties,
+                                      schema84.oneOf[13].properties,
                                       key26,
                                     )
                                   ) {
@@ -28291,7 +28186,7 @@ function validate61(
                                                                         "enum",
                                                                       params: {
                                                                         allowedValues:
-                                                                          schema85
+                                                                          schema84
                                                                             .oneOf[13]
                                                                             .properties
                                                                             .body
@@ -28575,7 +28470,7 @@ function validate61(
                                   for (const key28 in data) {
                                     if (
                                       !func8.call(
-                                        schema85.oneOf[14].properties,
+                                        schema84.oneOf[14].properties,
                                         key28,
                                       )
                                     ) {
@@ -31310,7 +31205,7 @@ function validate61(
                                         for (const key34 in data) {
                                           if (
                                             !func8.call(
-                                              schema85.oneOf[17].properties,
+                                              schema84.oneOf[17].properties,
                                               key34,
                                             )
                                           ) {
@@ -32469,7 +32364,7 @@ function validate61(
                                                                                         params:
                                                                                           {
                                                                                             allowedValues:
-                                                                                              schema83
+                                                                                              schema82
                                                                                                 .oneOf[0]
                                                                                                 .properties
                                                                                                 .confirmation
@@ -40826,7 +40721,7 @@ function validate61(
   return errors === 0;
 }
 validate61.evaluated = { dynamicProps: true, dynamicItems: false };
-const schema221 = {
+const schema220 = {
   type: "object",
   properties: {
     schemaVersion: {
@@ -40887,13 +40782,12 @@ const schema221 = {
   description:
     "Logical session state and stable event watermark committed at one revision.",
 };
-const schema226 = {
+const schema225 = {
   type: "object",
   properties: {
     stageId: { $ref: "#/$defs/Id" },
     connectionId: { $ref: "#/$defs/Id" },
     configRevision: { $ref: "#/$defs/Counter" },
-    credentialRevision: { $ref: "#/$defs/Counter" },
     binding: { $ref: "#/$defs/Binding" },
     capabilities: { $ref: "#/$defs/Capabilities" },
   },
@@ -40901,7 +40795,6 @@ const schema226 = {
     "stageId",
     "connectionId",
     "configRevision",
-    "credentialRevision",
     "binding",
     "capabilities",
   ],
@@ -40909,7 +40802,7 @@ const schema226 = {
   description:
     "One provider context phase. Native generations may change only through verified recovery; binding is owned here.",
 };
-const schema231 = {
+const schema229 = {
   type: "object",
   properties: {
     provider: { $ref: "#/$defs/Id", description: "Provider adapter identity." },
@@ -40926,11 +40819,6 @@ const schema231 = {
       $ref: "#/$defs/Id",
       description:
         "Live provider incarnation token; rejects callbacks from previous incarnations.",
-    },
-    accountRef: {
-      $ref: "#/$defs/Id",
-      description:
-        "Opaque account reference; no token, key or account-directory contents.",
     },
     nativeSessionId: {
       $ref: "#/$defs/Id",
@@ -40967,7 +40855,6 @@ const schema231 = {
     "providerVersion",
     "adapterVersion",
     "generation",
-    "accountRef",
     "nativeSessionId",
     "config",
     "workspaceId",
@@ -40976,7 +40863,7 @@ const schema231 = {
   description:
     "Provider context identity. Version, configuration, account and generation bind every capability and callback.",
 };
-const schema238 = {
+const schema235 = {
   type: "object",
   properties: {
     id: {
@@ -41234,7 +41121,6 @@ function validate97(
           (missing0 = "providerVersion")) ||
         (data.adapterVersion === undefined && (missing0 = "adapterVersion")) ||
         (data.generation === undefined && (missing0 = "generation")) ||
-        (data.accountRef === undefined && (missing0 = "accountRef")) ||
         (data.nativeSessionId === undefined &&
           (missing0 = "nativeSessionId")) ||
         (data.config === undefined && (missing0 = "config")) ||
@@ -41253,7 +41139,7 @@ function validate97(
       } else {
         const _errs1 = errors;
         for (const key0 in data) {
-          if (!func8.call(schema231.properties, key0)) {
+          if (!func8.call(schema229.properties, key0)) {
             validate97.errors = [
               {
                 instancePath,
@@ -41536,8 +41422,8 @@ function validate97(
                   var valid0 = true;
                 }
                 if (valid0) {
-                  if (data.accountRef !== undefined) {
-                    let data4 = data.accountRef;
+                  if (data.nativeSessionId !== undefined) {
+                    let data4 = data.nativeSessionId;
                     const _errs14 = errors;
                     const _errs15 = errors;
                     if (errors === _errs15) {
@@ -41545,7 +41431,7 @@ function validate97(
                         if (func1(data4) > 128) {
                           validate97.errors = [
                             {
-                              instancePath: instancePath + "/accountRef",
+                              instancePath: instancePath + "/nativeSessionId",
                               schemaPath: "#/$defs/Id/maxLength",
                               keyword: "maxLength",
                               params: { limit: 128 },
@@ -41557,7 +41443,7 @@ function validate97(
                           if (func1(data4) < 1) {
                             validate97.errors = [
                               {
-                                instancePath: instancePath + "/accountRef",
+                                instancePath: instancePath + "/nativeSessionId",
                                 schemaPath: "#/$defs/Id/minLength",
                                 keyword: "minLength",
                                 params: { limit: 1 },
@@ -41570,7 +41456,8 @@ function validate97(
                             if (!pattern4.test(data4)) {
                               validate97.errors = [
                                 {
-                                  instancePath: instancePath + "/accountRef",
+                                  instancePath:
+                                    instancePath + "/nativeSessionId",
                                   schemaPath: "#/$defs/Id/pattern",
                                   keyword: "pattern",
                                   params: {
@@ -41589,7 +41476,7 @@ function validate97(
                       } else {
                         validate97.errors = [
                           {
-                            instancePath: instancePath + "/accountRef",
+                            instancePath: instancePath + "/nativeSessionId",
                             schemaPath: "#/$defs/Id/type",
                             keyword: "type",
                             params: { type: "string" },
@@ -41604,102 +41491,101 @@ function validate97(
                     var valid0 = true;
                   }
                   if (valid0) {
-                    if (data.nativeSessionId !== undefined) {
-                      let data5 = data.nativeSessionId;
+                    if (data.config !== undefined) {
                       const _errs17 = errors;
-                      const _errs18 = errors;
-                      if (errors === _errs18) {
-                        if (typeof data5 === "string") {
-                          if (func1(data5) > 128) {
-                            validate97.errors = [
-                              {
-                                instancePath: instancePath + "/nativeSessionId",
-                                schemaPath: "#/$defs/Id/maxLength",
-                                keyword: "maxLength",
-                                params: { limit: 128 },
-                                message:
-                                  "must NOT have more than 128 characters",
-                              },
-                            ];
-                            return false;
-                          } else {
-                            if (func1(data5) < 1) {
-                              validate97.errors = [
-                                {
-                                  instancePath:
-                                    instancePath + "/nativeSessionId",
-                                  schemaPath: "#/$defs/Id/minLength",
-                                  keyword: "minLength",
-                                  params: { limit: 1 },
-                                  message:
-                                    "must NOT have fewer than 1 characters",
-                                },
-                              ];
-                              return false;
-                            } else {
-                              if (!pattern4.test(data5)) {
-                                validate97.errors = [
-                                  {
-                                    instancePath:
-                                      instancePath + "/nativeSessionId",
-                                    schemaPath: "#/$defs/Id/pattern",
-                                    keyword: "pattern",
-                                    params: {
-                                      pattern:
-                                        "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
-                                    },
-                                    message:
-                                      'must match pattern "' +
-                                      "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$" +
-                                      '"',
-                                  },
-                                ];
-                                return false;
-                              }
-                            }
-                          }
-                        } else {
-                          validate97.errors = [
-                            {
-                              instancePath: instancePath + "/nativeSessionId",
-                              schemaPath: "#/$defs/Id/type",
-                              keyword: "type",
-                              params: { type: "string" },
-                              message: "must be string",
-                            },
-                          ];
-                          return false;
-                        }
+                      if (
+                        !validate98(data.config, {
+                          instancePath: instancePath + "/config",
+                          parentData: data,
+                          parentDataProperty: "config",
+                          rootData,
+                          dynamicAnchors,
+                        })
+                      ) {
+                        vErrors =
+                          vErrors === null
+                            ? validate98.errors
+                            : vErrors.concat(validate98.errors);
+                        errors = vErrors.length;
                       }
                       var valid0 = _errs17 === errors;
                     } else {
                       var valid0 = true;
                     }
                     if (valid0) {
-                      if (data.config !== undefined) {
-                        const _errs20 = errors;
-                        if (
-                          !validate98(data.config, {
-                            instancePath: instancePath + "/config",
-                            parentData: data,
-                            parentDataProperty: "config",
-                            rootData,
-                            dynamicAnchors,
-                          })
-                        ) {
-                          vErrors =
-                            vErrors === null
-                              ? validate98.errors
-                              : vErrors.concat(validate98.errors);
-                          errors = vErrors.length;
+                      if (data.nativeRunId !== undefined) {
+                        let data6 = data.nativeRunId;
+                        const _errs18 = errors;
+                        const _errs19 = errors;
+                        if (errors === _errs19) {
+                          if (typeof data6 === "string") {
+                            if (func1(data6) > 128) {
+                              validate97.errors = [
+                                {
+                                  instancePath: instancePath + "/nativeRunId",
+                                  schemaPath: "#/$defs/Id/maxLength",
+                                  keyword: "maxLength",
+                                  params: { limit: 128 },
+                                  message:
+                                    "must NOT have more than 128 characters",
+                                },
+                              ];
+                              return false;
+                            } else {
+                              if (func1(data6) < 1) {
+                                validate97.errors = [
+                                  {
+                                    instancePath: instancePath + "/nativeRunId",
+                                    schemaPath: "#/$defs/Id/minLength",
+                                    keyword: "minLength",
+                                    params: { limit: 1 },
+                                    message:
+                                      "must NOT have fewer than 1 characters",
+                                  },
+                                ];
+                                return false;
+                              } else {
+                                if (!pattern4.test(data6)) {
+                                  validate97.errors = [
+                                    {
+                                      instancePath:
+                                        instancePath + "/nativeRunId",
+                                      schemaPath: "#/$defs/Id/pattern",
+                                      keyword: "pattern",
+                                      params: {
+                                        pattern:
+                                          "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
+                                      },
+                                      message:
+                                        'must match pattern "' +
+                                        "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$" +
+                                        '"',
+                                    },
+                                  ];
+                                  return false;
+                                }
+                              }
+                            }
+                          } else {
+                            validate97.errors = [
+                              {
+                                instancePath: instancePath + "/nativeRunId",
+                                schemaPath: "#/$defs/Id/type",
+                                keyword: "type",
+                                params: { type: "string" },
+                                message: "must be string",
+                              },
+                            ];
+                            return false;
+                          }
                         }
-                        var valid0 = _errs20 === errors;
+                        var valid0 = _errs18 === errors;
                       } else {
                         var valid0 = true;
                       }
                       if (valid0) {
-                        if (data.nativeRunId !== undefined) {
-                          let data7 = data.nativeRunId;
+                        if (data.nativeRequestId !== undefined) {
+                          let data7 = data.nativeRequestId;
                           const _errs21 = errors;
                           const _errs22 = errors;
                           if (errors === _errs22) {
@@ -41707,7 +41593,8 @@ function validate97(
                               if (func1(data7) > 128) {
                                 validate97.errors = [
                                   {
-                                    instancePath: instancePath + "/nativeRunId",
+                                    instancePath:
+                                      instancePath + "/nativeRequestId",
                                     schemaPath: "#/$defs/Id/maxLength",
                                     keyword: "maxLength",
                                     params: { limit: 128 },
@@ -41721,7 +41608,7 @@ function validate97(
                                   validate97.errors = [
                                     {
                                       instancePath:
-                                        instancePath + "/nativeRunId",
+                                        instancePath + "/nativeRequestId",
                                       schemaPath: "#/$defs/Id/minLength",
                                       keyword: "minLength",
                                       params: { limit: 1 },
@@ -41735,7 +41622,7 @@ function validate97(
                                     validate97.errors = [
                                       {
                                         instancePath:
-                                          instancePath + "/nativeRunId",
+                                          instancePath + "/nativeRequestId",
                                         schemaPath: "#/$defs/Id/pattern",
                                         keyword: "pattern",
                                         params: {
@@ -41755,7 +41642,8 @@ function validate97(
                             } else {
                               validate97.errors = [
                                 {
-                                  instancePath: instancePath + "/nativeRunId",
+                                  instancePath:
+                                    instancePath + "/nativeRequestId",
                                   schemaPath: "#/$defs/Id/type",
                                   keyword: "type",
                                   params: { type: "string" },
@@ -41770,8 +41658,8 @@ function validate97(
                           var valid0 = true;
                         }
                         if (valid0) {
-                          if (data.nativeRequestId !== undefined) {
-                            let data8 = data.nativeRequestId;
+                          if (data.workspaceId !== undefined) {
+                            let data8 = data.workspaceId;
                             const _errs24 = errors;
                             const _errs25 = errors;
                             if (errors === _errs25) {
@@ -41780,7 +41668,7 @@ function validate97(
                                   validate97.errors = [
                                     {
                                       instancePath:
-                                        instancePath + "/nativeRequestId",
+                                        instancePath + "/workspaceId",
                                       schemaPath: "#/$defs/Id/maxLength",
                                       keyword: "maxLength",
                                       params: { limit: 128 },
@@ -41794,7 +41682,7 @@ function validate97(
                                     validate97.errors = [
                                       {
                                         instancePath:
-                                          instancePath + "/nativeRequestId",
+                                          instancePath + "/workspaceId",
                                         schemaPath: "#/$defs/Id/minLength",
                                         keyword: "minLength",
                                         params: { limit: 1 },
@@ -41808,7 +41696,7 @@ function validate97(
                                       validate97.errors = [
                                         {
                                           instancePath:
-                                            instancePath + "/nativeRequestId",
+                                            instancePath + "/workspaceId",
                                           schemaPath: "#/$defs/Id/pattern",
                                           keyword: "pattern",
                                           params: {
@@ -41828,8 +41716,7 @@ function validate97(
                               } else {
                                 validate97.errors = [
                                   {
-                                    instancePath:
-                                      instancePath + "/nativeRequestId",
+                                    instancePath: instancePath + "/workspaceId",
                                     schemaPath: "#/$defs/Id/type",
                                     keyword: "type",
                                     params: { type: "string" },
@@ -41844,8 +41731,8 @@ function validate97(
                             var valid0 = true;
                           }
                           if (valid0) {
-                            if (data.workspaceId !== undefined) {
-                              let data9 = data.workspaceId;
+                            if (data.nativeThreadId !== undefined) {
+                              let data9 = data.nativeThreadId;
                               const _errs27 = errors;
                               const _errs28 = errors;
                               if (errors === _errs28) {
@@ -41854,7 +41741,7 @@ function validate97(
                                     validate97.errors = [
                                       {
                                         instancePath:
-                                          instancePath + "/workspaceId",
+                                          instancePath + "/nativeThreadId",
                                         schemaPath: "#/$defs/Id/maxLength",
                                         keyword: "maxLength",
                                         params: { limit: 128 },
@@ -41868,7 +41755,7 @@ function validate97(
                                       validate97.errors = [
                                         {
                                           instancePath:
-                                            instancePath + "/workspaceId",
+                                            instancePath + "/nativeThreadId",
                                           schemaPath: "#/$defs/Id/minLength",
                                           keyword: "minLength",
                                           params: { limit: 1 },
@@ -41882,7 +41769,7 @@ function validate97(
                                         validate97.errors = [
                                           {
                                             instancePath:
-                                              instancePath + "/workspaceId",
+                                              instancePath + "/nativeThreadId",
                                             schemaPath: "#/$defs/Id/pattern",
                                             keyword: "pattern",
                                             params: {
@@ -41903,7 +41790,7 @@ function validate97(
                                   validate97.errors = [
                                     {
                                       instancePath:
-                                        instancePath + "/workspaceId",
+                                        instancePath + "/nativeThreadId",
                                       schemaPath: "#/$defs/Id/type",
                                       keyword: "type",
                                       params: { type: "string" },
@@ -41916,82 +41803,6 @@ function validate97(
                               var valid0 = _errs27 === errors;
                             } else {
                               var valid0 = true;
-                            }
-                            if (valid0) {
-                              if (data.nativeThreadId !== undefined) {
-                                let data10 = data.nativeThreadId;
-                                const _errs30 = errors;
-                                const _errs31 = errors;
-                                if (errors === _errs31) {
-                                  if (typeof data10 === "string") {
-                                    if (func1(data10) > 128) {
-                                      validate97.errors = [
-                                        {
-                                          instancePath:
-                                            instancePath + "/nativeThreadId",
-                                          schemaPath: "#/$defs/Id/maxLength",
-                                          keyword: "maxLength",
-                                          params: { limit: 128 },
-                                          message:
-                                            "must NOT have more than 128 characters",
-                                        },
-                                      ];
-                                      return false;
-                                    } else {
-                                      if (func1(data10) < 1) {
-                                        validate97.errors = [
-                                          {
-                                            instancePath:
-                                              instancePath + "/nativeThreadId",
-                                            schemaPath: "#/$defs/Id/minLength",
-                                            keyword: "minLength",
-                                            params: { limit: 1 },
-                                            message:
-                                              "must NOT have fewer than 1 characters",
-                                          },
-                                        ];
-                                        return false;
-                                      } else {
-                                        if (!pattern4.test(data10)) {
-                                          validate97.errors = [
-                                            {
-                                              instancePath:
-                                                instancePath +
-                                                "/nativeThreadId",
-                                              schemaPath: "#/$defs/Id/pattern",
-                                              keyword: "pattern",
-                                              params: {
-                                                pattern:
-                                                  "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
-                                              },
-                                              message:
-                                                'must match pattern "' +
-                                                "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$" +
-                                                '"',
-                                            },
-                                          ];
-                                          return false;
-                                        }
-                                      }
-                                    }
-                                  } else {
-                                    validate97.errors = [
-                                      {
-                                        instancePath:
-                                          instancePath + "/nativeThreadId",
-                                        schemaPath: "#/$defs/Id/type",
-                                        keyword: "type",
-                                        params: { type: "string" },
-                                        message: "must be string",
-                                      },
-                                    ];
-                                    return false;
-                                  }
-                                }
-                                var valid0 = _errs30 === errors;
-                              } else {
-                                var valid0 = true;
-                              }
                             }
                           }
                         }
@@ -42025,7 +41836,7 @@ validate97.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema245 = {
+const schema242 = {
   type: "object",
   properties: {
     continuation: {
@@ -42090,7 +41901,7 @@ const schema245 = {
   description:
     "Capabilities established for one exact provider binding, never execution authorization.",
 };
-const schema246 = {
+const schema243 = {
   type: "string",
   enum: ["supported", "unsupported", "unknown"],
   description:
@@ -42143,7 +41954,7 @@ function validate101(
       } else {
         const _errs1 = errors;
         for (const key0 in data) {
-          if (!func8.call(schema245.properties, key0)) {
+          if (!func8.call(schema242.properties, key0)) {
             validate101.errors = [
               {
                 instancePath,
@@ -42187,7 +41998,7 @@ function validate101(
                   schemaPath: "#/properties/continuation/enum",
                   keyword: "enum",
                   params: {
-                    allowedValues: schema245.properties.continuation.enum,
+                    allowedValues: schema242.properties.continuation.enum,
                   },
                   message: "must be equal to one of the allowed values",
                 },
@@ -42228,7 +42039,7 @@ function validate101(
                     schemaPath: "#/properties/cancellation/enum",
                     keyword: "enum",
                     params: {
-                      allowedValues: schema245.properties.cancellation.enum,
+                      allowedValues: schema242.properties.cancellation.enum,
                     },
                     message: "must be equal to one of the allowed values",
                   },
@@ -42269,7 +42080,7 @@ function validate101(
                       schemaPath: "#/properties/tools/enum",
                       keyword: "enum",
                       params: {
-                        allowedValues: schema245.properties.tools.enum,
+                        allowedValues: schema242.properties.tools.enum,
                       },
                       message: "must be equal to one of the allowed values",
                     },
@@ -42308,7 +42119,7 @@ function validate101(
                         instancePath: instancePath + "/steer",
                         schemaPath: "#/$defs/CapabilityState/enum",
                         keyword: "enum",
-                        params: { allowedValues: schema246.enum },
+                        params: { allowedValues: schema243.enum },
                         message: "must be equal to one of the allowed values",
                       },
                     ];
@@ -42346,7 +42157,7 @@ function validate101(
                           instancePath: instancePath + "/fork",
                           schemaPath: "#/$defs/CapabilityState/enum",
                           keyword: "enum",
-                          params: { allowedValues: schema246.enum },
+                          params: { allowedValues: schema243.enum },
                           message: "must be equal to one of the allowed values",
                         },
                       ];
@@ -42384,7 +42195,7 @@ function validate101(
                             instancePath: instancePath + "/subagent",
                             schemaPath: "#/$defs/CapabilityState/enum",
                             keyword: "enum",
-                            params: { allowedValues: schema246.enum },
+                            params: { allowedValues: schema243.enum },
                             message:
                               "must be equal to one of the allowed values",
                           },
@@ -42423,7 +42234,7 @@ function validate101(
                               instancePath: instancePath + "/terminal",
                               schemaPath: "#/$defs/CapabilityState/enum",
                               keyword: "enum",
-                              params: { allowedValues: schema246.enum },
+                              params: { allowedValues: schema243.enum },
                               message:
                                 "must be equal to one of the allowed values",
                             },
@@ -42464,7 +42275,7 @@ function validate101(
                                   instancePath + "/structuredQuestion",
                                 schemaPath: "#/$defs/CapabilityState/enum",
                                 keyword: "enum",
-                                params: { allowedValues: schema246.enum },
+                                params: { allowedValues: schema243.enum },
                                 message:
                                   "must be equal to one of the allowed values",
                               },
@@ -42503,7 +42314,7 @@ function validate101(
                                   instancePath: instancePath + "/multimodal",
                                   schemaPath: "#/$defs/CapabilityState/enum",
                                   keyword: "enum",
-                                  params: { allowedValues: schema246.enum },
+                                  params: { allowedValues: schema243.enum },
                                   message:
                                     "must be equal to one of the allowed values",
                                 },
@@ -42571,8 +42382,6 @@ function validate96(
         (data.stageId === undefined && (missing0 = "stageId")) ||
         (data.connectionId === undefined && (missing0 = "connectionId")) ||
         (data.configRevision === undefined && (missing0 = "configRevision")) ||
-        (data.credentialRevision === undefined &&
-          (missing0 = "credentialRevision")) ||
         (data.binding === undefined && (missing0 = "binding")) ||
         (data.capabilities === undefined && (missing0 = "capabilities"))
       ) {
@@ -42594,7 +42403,6 @@ function validate96(
               key0 === "stageId" ||
               key0 === "connectionId" ||
               key0 === "configRevision" ||
-              key0 === "credentialRevision" ||
               key0 === "binding" ||
               key0 === "capabilities"
             )
@@ -42804,110 +42612,48 @@ function validate96(
                 var valid0 = true;
               }
               if (valid0) {
-                if (data.credentialRevision !== undefined) {
-                  let data3 = data.credentialRevision;
+                if (data.binding !== undefined) {
                   const _errs11 = errors;
-                  const _errs12 = errors;
                   if (
-                    !(
-                      typeof data3 == "number" &&
-                      !(data3 % 1) &&
-                      !isNaN(data3) &&
-                      isFinite(data3)
-                    )
+                    !validate97(data.binding, {
+                      instancePath: instancePath + "/binding",
+                      parentData: data,
+                      parentDataProperty: "binding",
+                      rootData,
+                      dynamicAnchors,
+                    })
                   ) {
-                    validate96.errors = [
-                      {
-                        instancePath: instancePath + "/credentialRevision",
-                        schemaPath: "#/$defs/Counter/type",
-                        keyword: "type",
-                        params: { type: "integer" },
-                        message: "must be integer",
-                      },
-                    ];
-                    return false;
-                  }
-                  if (errors === _errs12) {
-                    if (typeof data3 == "number" && isFinite(data3)) {
-                      if (data3 > 9007199254740991 || isNaN(data3)) {
-                        validate96.errors = [
-                          {
-                            instancePath: instancePath + "/credentialRevision",
-                            schemaPath: "#/$defs/Counter/maximum",
-                            keyword: "maximum",
-                            params: {
-                              comparison: "<=",
-                              limit: 9007199254740991,
-                            },
-                            message: "must be <= 9007199254740991",
-                          },
-                        ];
-                        return false;
-                      } else {
-                        if (data3 < 0 || isNaN(data3)) {
-                          validate96.errors = [
-                            {
-                              instancePath:
-                                instancePath + "/credentialRevision",
-                              schemaPath: "#/$defs/Counter/minimum",
-                              keyword: "minimum",
-                              params: { comparison: ">=", limit: 0 },
-                              message: "must be >= 0",
-                            },
-                          ];
-                          return false;
-                        }
-                      }
-                    }
+                    vErrors =
+                      vErrors === null
+                        ? validate97.errors
+                        : vErrors.concat(validate97.errors);
+                    errors = vErrors.length;
                   }
                   var valid0 = _errs11 === errors;
                 } else {
                   var valid0 = true;
                 }
                 if (valid0) {
-                  if (data.binding !== undefined) {
-                    const _errs14 = errors;
+                  if (data.capabilities !== undefined) {
+                    const _errs12 = errors;
                     if (
-                      !validate97(data.binding, {
-                        instancePath: instancePath + "/binding",
+                      !validate101(data.capabilities, {
+                        instancePath: instancePath + "/capabilities",
                         parentData: data,
-                        parentDataProperty: "binding",
+                        parentDataProperty: "capabilities",
                         rootData,
                         dynamicAnchors,
                       })
                     ) {
                       vErrors =
                         vErrors === null
-                          ? validate97.errors
-                          : vErrors.concat(validate97.errors);
+                          ? validate101.errors
+                          : vErrors.concat(validate101.errors);
                       errors = vErrors.length;
                     }
-                    var valid0 = _errs14 === errors;
+                    var valid0 = _errs12 === errors;
                   } else {
                     var valid0 = true;
-                  }
-                  if (valid0) {
-                    if (data.capabilities !== undefined) {
-                      const _errs15 = errors;
-                      if (
-                        !validate101(data.capabilities, {
-                          instancePath: instancePath + "/capabilities",
-                          parentData: data,
-                          parentDataProperty: "capabilities",
-                          rootData,
-                          dynamicAnchors,
-                        })
-                      ) {
-                        vErrors =
-                          vErrors === null
-                            ? validate101.errors
-                            : vErrors.concat(validate101.errors);
-                        errors = vErrors.length;
-                      }
-                      var valid0 = _errs15 === errors;
-                    } else {
-                      var valid0 = true;
-                    }
                   }
                 }
               }
@@ -42980,7 +42726,7 @@ function validate94(
       } else {
         const _errs1 = errors;
         for (const key0 in data) {
-          if (!func8.call(schema221.properties, key0)) {
+          if (!func8.call(schema220.properties, key0)) {
             validate94.errors = [
               {
                 instancePath,
@@ -43236,7 +42982,7 @@ function validate94(
                             schemaPath: "#/properties/status/enum",
                             keyword: "enum",
                             params: {
-                              allowedValues: schema221.properties.status.enum,
+                              allowedValues: schema220.properties.status.enum,
                             },
                             message:
                               "must be equal to one of the allowed values",
@@ -43527,7 +43273,7 @@ validate94.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema252 = {
+const schema249 = {
   type: "object",
   properties: {
     schemaVersion: {
@@ -43672,7 +43418,7 @@ function validate105(
       } else {
         const _errs1 = errors;
         for (const key0 in data) {
-          if (!func8.call(schema252.properties, key0)) {
+          if (!func8.call(schema249.properties, key0)) {
             validate105.errors = [
               {
                 instancePath,
@@ -44147,7 +43893,7 @@ function validate105(
                                   keyword: "enum",
                                   params: {
                                     allowedValues:
-                                      schema252.properties.status.enum,
+                                      schema249.properties.status.enum,
                                   },
                                   message:
                                     "must be equal to one of the allowed values",
@@ -44260,7 +44006,7 @@ function validate105(
                                       schemaPath:
                                         "#/$defs/CallbackLifetime/enum",
                                       keyword: "enum",
-                                      params: { allowedValues: schema132.enum },
+                                      params: { allowedValues: schema131.enum },
                                       message:
                                         "must be equal to one of the allowed values",
                                     },
@@ -44455,7 +44201,7 @@ validate105.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema262 = {
+const schema259 = {
   type: "object",
   properties: {
     schemaVersion: {
@@ -44584,7 +44330,7 @@ function validate108(
       } else {
         const _errs1 = errors;
         for (const key0 in data) {
-          if (!func8.call(schema262.properties, key0)) {
+          if (!func8.call(schema259.properties, key0)) {
             validate108.errors = [
               {
                 instancePath,
@@ -44965,7 +44711,7 @@ function validate108(
                                 keyword: "enum",
                                 params: {
                                   allowedValues:
-                                    schema262.properties.retry.enum,
+                                    schema259.properties.retry.enum,
                                 },
                                 message:
                                   "must be equal to one of the allowed values",
@@ -45008,7 +44754,7 @@ function validate108(
                                   keyword: "enum",
                                   params: {
                                     allowedValues:
-                                      schema262.properties.status.enum,
+                                      schema259.properties.status.enum,
                                   },
                                   message:
                                     "must be equal to one of the allowed values",
@@ -45198,7 +44944,7 @@ validate108.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema268 = {
+const schema265 = {
   type: "object",
   properties: {
     schemaVersion: {
@@ -45310,7 +45056,7 @@ function validate112(
       } else {
         const _errs1 = errors;
         for (const key0 in data) {
-          if (!func8.call(schema268.properties, key0)) {
+          if (!func8.call(schema265.properties, key0)) {
             validate112.errors = [
               {
                 instancePath,
@@ -45908,7 +45654,7 @@ validate112.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema276 = {
+const schema273 = {
   type: "object",
   properties: {
     schemaVersion: {
@@ -46025,7 +45771,7 @@ function validate114(
       } else {
         const _errs1 = errors;
         for (const key0 in data) {
-          if (!func8.call(schema276.properties, key0)) {
+          if (!func8.call(schema273.properties, key0)) {
             validate114.errors = [
               {
                 instancePath,
@@ -46617,7 +46363,7 @@ validate114.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema281 = {
+const schema278 = {
   type: "object",
   properties: {
     schemaVersion: {
@@ -46915,7 +46661,7 @@ validate121.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema283 = {
+const schema280 = {
   type: "object",
   properties: {
     schemaVersion: {
@@ -46942,7 +46688,7 @@ const schema283 = {
   required: ["schemaVersion", "kind", "sessionId", "query"],
   additionalProperties: false,
 };
-const schema285 = {
+const schema282 = {
   type: "object",
   properties: {
     limit: {
@@ -47405,7 +47151,7 @@ validate124.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema287 = {
+const schema284 = {
   type: "object",
   properties: {
     schemaVersion: {
@@ -47601,7 +47347,7 @@ validate128.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema288 = {
+const schema285 = {
   type: "object",
   properties: {
     schemaVersion: {
@@ -47989,7 +47735,7 @@ validate131.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema292 = {
+const schema289 = {
   type: "object",
   properties: {
     schemaVersion: {
@@ -48309,7 +48055,7 @@ validate133.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema295 = {
+const schema292 = {
   type: "object",
   properties: {
     schemaVersion: {
@@ -48554,7 +48300,7 @@ validate135.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema297 = {
+const schema294 = {
   type: "object",
   properties: {
     schemaVersion: {
@@ -48857,7 +48603,7 @@ validate137.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema299 = {
+const schema296 = {
   type: "object",
   properties: {
     schemaVersion: {
@@ -48889,7 +48635,7 @@ const schema299 = {
   required: ["schemaVersion", "kind", "sessionId", "attachmentId", "update"],
   additionalProperties: false,
 };
-const schema302 = {
+const schema299 = {
   oneOf: [
     {
       type: "object",
@@ -49927,7 +49673,7 @@ validate140.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema306 = {
+const schema303 = {
   type: "object",
   properties: {
     schemaVersion: {
@@ -50314,7 +50060,7 @@ validate145.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema310 = {
+const schema307 = {
   type: "object",
   properties: {
     schemaVersion: { type: "integer", const: 5 },
@@ -50323,8 +50069,6 @@ const schema310 = {
     name: { type: "string", minLength: 1, maxLength: 64 },
     provider: { type: "string", enum: ["codex", "claude", "deepseek"] },
     configRevision: { $ref: "#/$defs/Counter" },
-    credentialRevision: { $ref: "#/$defs/Counter" },
-    accountRef: { $ref: "#/$defs/Id" },
     profile: { type: "string", enum: ["conversation", "controlled_tools"] },
     status: {
       type: "string",
@@ -50337,7 +50081,6 @@ const schema310 = {
       ],
     },
     source: { $ref: "#/$defs/ConnectionSource" },
-    credentialRef: { $ref: "#/$defs/Id" },
   },
   required: [
     "schemaVersion",
@@ -50346,18 +50089,15 @@ const schema310 = {
     "name",
     "provider",
     "configRevision",
-    "credentialRevision",
-    "accountRef",
     "profile",
     "status",
     "source",
-    "credentialRef",
   ],
   additionalProperties: false,
   description:
     "A user-owned named provider connection with immutable configuration and credential revisions; contains opaque references, never secrets.",
 };
-const schema315 = {
+const schema310 = {
   oneOf: [
     {
       type: "object",
@@ -50365,10 +50105,7 @@ const schema315 = {
         type: { const: "custom_api", type: "string" },
         apiUrl: { type: "string", minLength: 1, maxLength: 2048 },
         model: { type: "string", minLength: 1, maxLength: 256 },
-        credentialType: {
-          type: "string",
-          enum: ["api_key", "auth_token", "oauth_token"],
-        },
+        credentialType: { type: "string", enum: ["api_key", "auth_token"] },
       },
       required: ["type", "apiUrl", "model"],
       additionalProperties: false,
@@ -50378,24 +50115,11 @@ const schema315 = {
     {
       type: "object",
       properties: {
-        type: { const: "existing_login", type: "string" },
+        type: { const: "existing_config", type: "string" },
         directory: { type: "string", minLength: 1, maxLength: 32768 },
         model: { type: "string", minLength: 1, maxLength: 256 },
       },
-      required: ["type", "directory"],
-      additionalProperties: false,
-      description:
-        "An existing CLI login whose stable provider account must be verified.",
-    },
-    {
-      type: "object",
-      properties: {
-        type: { const: "existing_api", type: "string" },
-        directory: { type: "string", minLength: 1, maxLength: 32768 },
-        profile: { type: "string", minLength: 1, maxLength: 256 },
-        model: { type: "string", minLength: 1, maxLength: 256 },
-      },
-      required: ["type", "directory"],
+      required: ["type"],
       additionalProperties: false,
       description:
         "Explicit API settings read from a private existing CLI configuration.",
@@ -50431,13 +50155,9 @@ function validate147(
         (data.name === undefined && (missing0 = "name")) ||
         (data.provider === undefined && (missing0 = "provider")) ||
         (data.configRevision === undefined && (missing0 = "configRevision")) ||
-        (data.credentialRevision === undefined &&
-          (missing0 = "credentialRevision")) ||
-        (data.accountRef === undefined && (missing0 = "accountRef")) ||
         (data.profile === undefined && (missing0 = "profile")) ||
         (data.status === undefined && (missing0 = "status")) ||
-        (data.source === undefined && (missing0 = "source")) ||
-        (data.credentialRef === undefined && (missing0 = "credentialRef"))
+        (data.source === undefined && (missing0 = "source"))
       ) {
         validate147.errors = [
           {
@@ -50452,7 +50172,7 @@ function validate147(
       } else {
         const _errs1 = errors;
         for (const key0 in data) {
-          if (!func8.call(schema310.properties, key0)) {
+          if (!func8.call(schema307.properties, key0)) {
             validate147.errors = [
               {
                 instancePath,
@@ -50681,7 +50401,7 @@ function validate147(
                           schemaPath: "#/properties/provider/enum",
                           keyword: "enum",
                           params: {
-                            allowedValues: schema310.properties.provider.enum,
+                            allowedValues: schema307.properties.provider.enum,
                           },
                           message: "must be equal to one of the allowed values",
                         },
@@ -50754,1333 +50474,724 @@ function validate147(
                       var valid0 = true;
                     }
                     if (valid0) {
-                      if (data.credentialRevision !== undefined) {
-                        let data6 = data.credentialRevision;
+                      if (data.profile !== undefined) {
+                        let data6 = data.profile;
                         const _errs16 = errors;
-                        const _errs17 = errors;
-                        if (
-                          !(
-                            typeof data6 == "number" &&
-                            !(data6 % 1) &&
-                            !isNaN(data6) &&
-                            isFinite(data6)
-                          )
-                        ) {
+                        if (typeof data6 !== "string") {
                           validate147.errors = [
                             {
-                              instancePath:
-                                instancePath + "/credentialRevision",
-                              schemaPath: "#/$defs/Counter/type",
+                              instancePath: instancePath + "/profile",
+                              schemaPath: "#/properties/profile/type",
                               keyword: "type",
-                              params: { type: "integer" },
-                              message: "must be integer",
+                              params: { type: "string" },
+                              message: "must be string",
                             },
                           ];
                           return false;
                         }
-                        if (errors === _errs17) {
-                          if (typeof data6 == "number" && isFinite(data6)) {
-                            if (data6 > 9007199254740991 || isNaN(data6)) {
-                              validate147.errors = [
-                                {
-                                  instancePath:
-                                    instancePath + "/credentialRevision",
-                                  schemaPath: "#/$defs/Counter/maximum",
-                                  keyword: "maximum",
-                                  params: {
-                                    comparison: "<=",
-                                    limit: 9007199254740991,
-                                  },
-                                  message: "must be <= 9007199254740991",
-                                },
-                              ];
-                              return false;
-                            } else {
-                              if (data6 < 0 || isNaN(data6)) {
-                                validate147.errors = [
-                                  {
-                                    instancePath:
-                                      instancePath + "/credentialRevision",
-                                    schemaPath: "#/$defs/Counter/minimum",
-                                    keyword: "minimum",
-                                    params: { comparison: ">=", limit: 0 },
-                                    message: "must be >= 0",
-                                  },
-                                ];
-                                return false;
-                              }
-                            }
-                          }
+                        if (
+                          !(
+                            data6 === "conversation" ||
+                            data6 === "controlled_tools"
+                          )
+                        ) {
+                          validate147.errors = [
+                            {
+                              instancePath: instancePath + "/profile",
+                              schemaPath: "#/properties/profile/enum",
+                              keyword: "enum",
+                              params: {
+                                allowedValues:
+                                  schema307.properties.profile.enum,
+                              },
+                              message:
+                                "must be equal to one of the allowed values",
+                            },
+                          ];
+                          return false;
                         }
                         var valid0 = _errs16 === errors;
                       } else {
                         var valid0 = true;
                       }
                       if (valid0) {
-                        if (data.accountRef !== undefined) {
-                          let data7 = data.accountRef;
-                          const _errs19 = errors;
-                          const _errs20 = errors;
-                          if (errors === _errs20) {
-                            if (typeof data7 === "string") {
-                              if (func1(data7) > 128) {
-                                validate147.errors = [
-                                  {
-                                    instancePath: instancePath + "/accountRef",
-                                    schemaPath: "#/$defs/Id/maxLength",
-                                    keyword: "maxLength",
-                                    params: { limit: 128 },
-                                    message:
-                                      "must NOT have more than 128 characters",
-                                  },
-                                ];
-                                return false;
-                              } else {
-                                if (func1(data7) < 1) {
-                                  validate147.errors = [
-                                    {
-                                      instancePath:
-                                        instancePath + "/accountRef",
-                                      schemaPath: "#/$defs/Id/minLength",
-                                      keyword: "minLength",
-                                      params: { limit: 1 },
-                                      message:
-                                        "must NOT have fewer than 1 characters",
-                                    },
-                                  ];
-                                  return false;
-                                } else {
-                                  if (!pattern4.test(data7)) {
-                                    validate147.errors = [
-                                      {
-                                        instancePath:
-                                          instancePath + "/accountRef",
-                                        schemaPath: "#/$defs/Id/pattern",
-                                        keyword: "pattern",
-                                        params: {
-                                          pattern:
-                                            "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
-                                        },
-                                        message:
-                                          'must match pattern "' +
-                                          "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$" +
-                                          '"',
-                                      },
-                                    ];
-                                    return false;
-                                  }
-                                }
-                              }
-                            } else {
-                              validate147.errors = [
-                                {
-                                  instancePath: instancePath + "/accountRef",
-                                  schemaPath: "#/$defs/Id/type",
-                                  keyword: "type",
-                                  params: { type: "string" },
-                                  message: "must be string",
-                                },
-                              ];
-                              return false;
-                            }
+                        if (data.status !== undefined) {
+                          let data7 = data.status;
+                          const _errs18 = errors;
+                          if (typeof data7 !== "string") {
+                            validate147.errors = [
+                              {
+                                instancePath: instancePath + "/status",
+                                schemaPath: "#/properties/status/type",
+                                keyword: "type",
+                                params: { type: "string" },
+                                message: "must be string",
+                              },
+                            ];
+                            return false;
                           }
-                          var valid0 = _errs19 === errors;
+                          if (
+                            !(
+                              data7 === "unverified" ||
+                              data7 === "ready" ||
+                              data7 === "authentication_required" ||
+                              data7 === "invalid" ||
+                              data7 === "deleted"
+                            )
+                          ) {
+                            validate147.errors = [
+                              {
+                                instancePath: instancePath + "/status",
+                                schemaPath: "#/properties/status/enum",
+                                keyword: "enum",
+                                params: {
+                                  allowedValues:
+                                    schema307.properties.status.enum,
+                                },
+                                message:
+                                  "must be equal to one of the allowed values",
+                              },
+                            ];
+                            return false;
+                          }
+                          var valid0 = _errs18 === errors;
                         } else {
                           var valid0 = true;
                         }
                         if (valid0) {
-                          if (data.profile !== undefined) {
-                            let data8 = data.profile;
+                          if (data.source !== undefined) {
+                            let data8 = data.source;
+                            const _errs20 = errors;
                             const _errs22 = errors;
-                            if (typeof data8 !== "string") {
-                              validate147.errors = [
-                                {
-                                  instancePath: instancePath + "/profile",
-                                  schemaPath: "#/properties/profile/type",
-                                  keyword: "type",
-                                  params: { type: "string" },
-                                  message: "must be string",
-                                },
-                              ];
-                              return false;
-                            }
-                            if (
-                              !(
-                                data8 === "conversation" ||
-                                data8 === "controlled_tools"
-                              )
-                            ) {
-                              validate147.errors = [
-                                {
-                                  instancePath: instancePath + "/profile",
-                                  schemaPath: "#/properties/profile/enum",
-                                  keyword: "enum",
-                                  params: {
-                                    allowedValues:
-                                      schema310.properties.profile.enum,
-                                  },
-                                  message:
-                                    "must be equal to one of the allowed values",
-                                },
-                              ];
-                              return false;
-                            }
-                            var valid0 = _errs22 === errors;
-                          } else {
-                            var valid0 = true;
-                          }
-                          if (valid0) {
-                            if (data.status !== undefined) {
-                              let data9 = data.status;
-                              const _errs24 = errors;
-                              if (typeof data9 !== "string") {
-                                validate147.errors = [
-                                  {
-                                    instancePath: instancePath + "/status",
-                                    schemaPath: "#/properties/status/type",
-                                    keyword: "type",
-                                    params: { type: "string" },
-                                    message: "must be string",
-                                  },
-                                ];
-                                return false;
-                              }
+                            let valid4 = false;
+                            let passing0 = null;
+                            const _errs23 = errors;
+                            if (errors === _errs23) {
                               if (
-                                !(
-                                  data9 === "unverified" ||
-                                  data9 === "ready" ||
-                                  data9 === "authentication_required" ||
-                                  data9 === "invalid" ||
-                                  data9 === "deleted"
-                                )
+                                data8 &&
+                                typeof data8 == "object" &&
+                                !Array.isArray(data8)
                               ) {
-                                validate147.errors = [
-                                  {
-                                    instancePath: instancePath + "/status",
-                                    schemaPath: "#/properties/status/enum",
-                                    keyword: "enum",
-                                    params: {
-                                      allowedValues:
-                                        schema310.properties.status.enum,
-                                    },
+                                let missing1;
+                                if (
+                                  (data8.type === undefined &&
+                                    (missing1 = "type")) ||
+                                  (data8.apiUrl === undefined &&
+                                    (missing1 = "apiUrl")) ||
+                                  (data8.model === undefined &&
+                                    (missing1 = "model"))
+                                ) {
+                                  const err0 = {
+                                    instancePath: instancePath + "/source",
+                                    schemaPath:
+                                      "#/$defs/ConnectionSource/oneOf/0/required",
+                                    keyword: "required",
+                                    params: { missingProperty: missing1 },
                                     message:
-                                      "must be equal to one of the allowed values",
-                                  },
-                                ];
-                                return false;
-                              }
-                              var valid0 = _errs24 === errors;
-                            } else {
-                              var valid0 = true;
-                            }
-                            if (valid0) {
-                              if (data.source !== undefined) {
-                                let data10 = data.source;
-                                const _errs26 = errors;
-                                const _errs28 = errors;
-                                let valid6 = false;
-                                let passing0 = null;
-                                const _errs29 = errors;
-                                if (errors === _errs29) {
-                                  if (
-                                    data10 &&
-                                    typeof data10 == "object" &&
-                                    !Array.isArray(data10)
-                                  ) {
-                                    let missing1;
+                                      "must have required property '" +
+                                      missing1 +
+                                      "'",
+                                  };
+                                  if (vErrors === null) {
+                                    vErrors = [err0];
+                                  } else {
+                                    vErrors.push(err0);
+                                  }
+                                  errors++;
+                                } else {
+                                  const _errs25 = errors;
+                                  for (const key1 in data8) {
                                     if (
-                                      (data10.type === undefined &&
-                                        (missing1 = "type")) ||
-                                      (data10.apiUrl === undefined &&
-                                        (missing1 = "apiUrl")) ||
-                                      (data10.model === undefined &&
-                                        (missing1 = "model"))
+                                      !(
+                                        key1 === "type" ||
+                                        key1 === "apiUrl" ||
+                                        key1 === "model" ||
+                                        key1 === "credentialType"
+                                      )
                                     ) {
-                                      const err0 = {
+                                      const err1 = {
                                         instancePath: instancePath + "/source",
                                         schemaPath:
-                                          "#/$defs/ConnectionSource/oneOf/0/required",
-                                        keyword: "required",
-                                        params: { missingProperty: missing1 },
+                                          "#/$defs/ConnectionSource/oneOf/0/additionalProperties",
+                                        keyword: "additionalProperties",
+                                        params: { additionalProperty: key1 },
                                         message:
-                                          "must have required property '" +
-                                          missing1 +
-                                          "'",
+                                          "must NOT have additional properties",
                                       };
                                       if (vErrors === null) {
-                                        vErrors = [err0];
+                                        vErrors = [err1];
                                       } else {
-                                        vErrors.push(err0);
+                                        vErrors.push(err1);
                                       }
                                       errors++;
-                                    } else {
-                                      const _errs31 = errors;
-                                      for (const key1 in data10) {
-                                        if (
-                                          !(
-                                            key1 === "type" ||
-                                            key1 === "apiUrl" ||
-                                            key1 === "model" ||
-                                            key1 === "credentialType"
-                                          )
-                                        ) {
-                                          const err1 = {
-                                            instancePath:
-                                              instancePath + "/source",
-                                            schemaPath:
-                                              "#/$defs/ConnectionSource/oneOf/0/additionalProperties",
-                                            keyword: "additionalProperties",
-                                            params: {
-                                              additionalProperty: key1,
-                                            },
-                                            message:
-                                              "must NOT have additional properties",
-                                          };
-                                          if (vErrors === null) {
-                                            vErrors = [err1];
-                                          } else {
-                                            vErrors.push(err1);
-                                          }
-                                          errors++;
-                                          break;
-                                        }
-                                      }
-                                      if (_errs31 === errors) {
-                                        if (data10.type !== undefined) {
-                                          let data11 = data10.type;
-                                          const _errs32 = errors;
-                                          if (typeof data11 !== "string") {
-                                            const err2 = {
-                                              instancePath:
-                                                instancePath + "/source/type",
-                                              schemaPath:
-                                                "#/$defs/ConnectionSource/oneOf/0/properties/type/type",
-                                              keyword: "type",
-                                              params: { type: "string" },
-                                              message: "must be string",
-                                            };
-                                            if (vErrors === null) {
-                                              vErrors = [err2];
-                                            } else {
-                                              vErrors.push(err2);
-                                            }
-                                            errors++;
-                                          }
-                                          if ("custom_api" !== data11) {
-                                            const err3 = {
-                                              instancePath:
-                                                instancePath + "/source/type",
-                                              schemaPath:
-                                                "#/$defs/ConnectionSource/oneOf/0/properties/type/const",
-                                              keyword: "const",
-                                              params: {
-                                                allowedValue: "custom_api",
-                                              },
-                                              message:
-                                                "must be equal to constant",
-                                            };
-                                            if (vErrors === null) {
-                                              vErrors = [err3];
-                                            } else {
-                                              vErrors.push(err3);
-                                            }
-                                            errors++;
-                                          }
-                                          var valid7 = _errs32 === errors;
+                                      break;
+                                    }
+                                  }
+                                  if (_errs25 === errors) {
+                                    if (data8.type !== undefined) {
+                                      let data9 = data8.type;
+                                      const _errs26 = errors;
+                                      if (typeof data9 !== "string") {
+                                        const err2 = {
+                                          instancePath:
+                                            instancePath + "/source/type",
+                                          schemaPath:
+                                            "#/$defs/ConnectionSource/oneOf/0/properties/type/type",
+                                          keyword: "type",
+                                          params: { type: "string" },
+                                          message: "must be string",
+                                        };
+                                        if (vErrors === null) {
+                                          vErrors = [err2];
                                         } else {
-                                          var valid7 = true;
+                                          vErrors.push(err2);
                                         }
-                                        if (valid7) {
-                                          if (data10.apiUrl !== undefined) {
-                                            let data12 = data10.apiUrl;
-                                            const _errs34 = errors;
-                                            if (errors === _errs34) {
-                                              if (typeof data12 === "string") {
-                                                if (func1(data12) > 2048) {
-                                                  const err4 = {
-                                                    instancePath:
-                                                      instancePath +
-                                                      "/source/apiUrl",
-                                                    schemaPath:
-                                                      "#/$defs/ConnectionSource/oneOf/0/properties/apiUrl/maxLength",
-                                                    keyword: "maxLength",
-                                                    params: { limit: 2048 },
-                                                    message:
-                                                      "must NOT have more than 2048 characters",
-                                                  };
-                                                  if (vErrors === null) {
-                                                    vErrors = [err4];
-                                                  } else {
-                                                    vErrors.push(err4);
-                                                  }
-                                                  errors++;
-                                                } else {
-                                                  if (func1(data12) < 1) {
-                                                    const err5 = {
-                                                      instancePath:
-                                                        instancePath +
-                                                        "/source/apiUrl",
-                                                      schemaPath:
-                                                        "#/$defs/ConnectionSource/oneOf/0/properties/apiUrl/minLength",
-                                                      keyword: "minLength",
-                                                      params: { limit: 1 },
-                                                      message:
-                                                        "must NOT have fewer than 1 characters",
-                                                    };
-                                                    if (vErrors === null) {
-                                                      vErrors = [err5];
-                                                    } else {
-                                                      vErrors.push(err5);
-                                                    }
-                                                    errors++;
-                                                  }
-                                                }
+                                        errors++;
+                                      }
+                                      if ("custom_api" !== data9) {
+                                        const err3 = {
+                                          instancePath:
+                                            instancePath + "/source/type",
+                                          schemaPath:
+                                            "#/$defs/ConnectionSource/oneOf/0/properties/type/const",
+                                          keyword: "const",
+                                          params: {
+                                            allowedValue: "custom_api",
+                                          },
+                                          message: "must be equal to constant",
+                                        };
+                                        if (vErrors === null) {
+                                          vErrors = [err3];
+                                        } else {
+                                          vErrors.push(err3);
+                                        }
+                                        errors++;
+                                      }
+                                      var valid5 = _errs26 === errors;
+                                    } else {
+                                      var valid5 = true;
+                                    }
+                                    if (valid5) {
+                                      if (data8.apiUrl !== undefined) {
+                                        let data10 = data8.apiUrl;
+                                        const _errs28 = errors;
+                                        if (errors === _errs28) {
+                                          if (typeof data10 === "string") {
+                                            if (func1(data10) > 2048) {
+                                              const err4 = {
+                                                instancePath:
+                                                  instancePath +
+                                                  "/source/apiUrl",
+                                                schemaPath:
+                                                  "#/$defs/ConnectionSource/oneOf/0/properties/apiUrl/maxLength",
+                                                keyword: "maxLength",
+                                                params: { limit: 2048 },
+                                                message:
+                                                  "must NOT have more than 2048 characters",
+                                              };
+                                              if (vErrors === null) {
+                                                vErrors = [err4];
                                               } else {
-                                                const err6 = {
+                                                vErrors.push(err4);
+                                              }
+                                              errors++;
+                                            } else {
+                                              if (func1(data10) < 1) {
+                                                const err5 = {
                                                   instancePath:
                                                     instancePath +
                                                     "/source/apiUrl",
                                                   schemaPath:
-                                                    "#/$defs/ConnectionSource/oneOf/0/properties/apiUrl/type",
-                                                  keyword: "type",
-                                                  params: { type: "string" },
-                                                  message: "must be string",
+                                                    "#/$defs/ConnectionSource/oneOf/0/properties/apiUrl/minLength",
+                                                  keyword: "minLength",
+                                                  params: { limit: 1 },
+                                                  message:
+                                                    "must NOT have fewer than 1 characters",
                                                 };
                                                 if (vErrors === null) {
-                                                  vErrors = [err6];
+                                                  vErrors = [err5];
                                                 } else {
-                                                  vErrors.push(err6);
+                                                  vErrors.push(err5);
                                                 }
                                                 errors++;
                                               }
                                             }
-                                            var valid7 = _errs34 === errors;
                                           } else {
-                                            var valid7 = true;
-                                          }
-                                          if (valid7) {
-                                            if (data10.model !== undefined) {
-                                              let data13 = data10.model;
-                                              const _errs36 = errors;
-                                              if (errors === _errs36) {
-                                                if (
-                                                  typeof data13 === "string"
-                                                ) {
-                                                  if (func1(data13) > 256) {
-                                                    const err7 = {
-                                                      instancePath:
-                                                        instancePath +
-                                                        "/source/model",
-                                                      schemaPath:
-                                                        "#/$defs/ConnectionSource/oneOf/0/properties/model/maxLength",
-                                                      keyword: "maxLength",
-                                                      params: { limit: 256 },
-                                                      message:
-                                                        "must NOT have more than 256 characters",
-                                                    };
-                                                    if (vErrors === null) {
-                                                      vErrors = [err7];
-                                                    } else {
-                                                      vErrors.push(err7);
-                                                    }
-                                                    errors++;
-                                                  } else {
-                                                    if (func1(data13) < 1) {
-                                                      const err8 = {
-                                                        instancePath:
-                                                          instancePath +
-                                                          "/source/model",
-                                                        schemaPath:
-                                                          "#/$defs/ConnectionSource/oneOf/0/properties/model/minLength",
-                                                        keyword: "minLength",
-                                                        params: { limit: 1 },
-                                                        message:
-                                                          "must NOT have fewer than 1 characters",
-                                                      };
-                                                      if (vErrors === null) {
-                                                        vErrors = [err8];
-                                                      } else {
-                                                        vErrors.push(err8);
-                                                      }
-                                                      errors++;
-                                                    }
-                                                  }
-                                                } else {
-                                                  const err9 = {
-                                                    instancePath:
-                                                      instancePath +
-                                                      "/source/model",
-                                                    schemaPath:
-                                                      "#/$defs/ConnectionSource/oneOf/0/properties/model/type",
-                                                    keyword: "type",
-                                                    params: { type: "string" },
-                                                    message: "must be string",
-                                                  };
-                                                  if (vErrors === null) {
-                                                    vErrors = [err9];
-                                                  } else {
-                                                    vErrors.push(err9);
-                                                  }
-                                                  errors++;
-                                                }
-                                              }
-                                              var valid7 = _errs36 === errors;
-                                            } else {
-                                              var valid7 = true;
-                                            }
-                                            if (valid7) {
-                                              if (
-                                                data10.credentialType !==
-                                                undefined
-                                              ) {
-                                                let data14 =
-                                                  data10.credentialType;
-                                                const _errs38 = errors;
-                                                if (
-                                                  typeof data14 !== "string"
-                                                ) {
-                                                  const err10 = {
-                                                    instancePath:
-                                                      instancePath +
-                                                      "/source/credentialType",
-                                                    schemaPath:
-                                                      "#/$defs/ConnectionSource/oneOf/0/properties/credentialType/type",
-                                                    keyword: "type",
-                                                    params: { type: "string" },
-                                                    message: "must be string",
-                                                  };
-                                                  if (vErrors === null) {
-                                                    vErrors = [err10];
-                                                  } else {
-                                                    vErrors.push(err10);
-                                                  }
-                                                  errors++;
-                                                }
-                                                if (
-                                                  !(
-                                                    data14 === "api_key" ||
-                                                    data14 === "auth_token" ||
-                                                    data14 === "oauth_token"
-                                                  )
-                                                ) {
-                                                  const err11 = {
-                                                    instancePath:
-                                                      instancePath +
-                                                      "/source/credentialType",
-                                                    schemaPath:
-                                                      "#/$defs/ConnectionSource/oneOf/0/properties/credentialType/enum",
-                                                    keyword: "enum",
-                                                    params: {
-                                                      allowedValues:
-                                                        schema315.oneOf[0]
-                                                          .properties
-                                                          .credentialType.enum,
-                                                    },
-                                                    message:
-                                                      "must be equal to one of the allowed values",
-                                                  };
-                                                  if (vErrors === null) {
-                                                    vErrors = [err11];
-                                                  } else {
-                                                    vErrors.push(err11);
-                                                  }
-                                                  errors++;
-                                                }
-                                                var valid7 = _errs38 === errors;
-                                              } else {
-                                                var valid7 = true;
-                                              }
-                                            }
-                                          }
-                                        }
-                                      }
-                                    }
-                                  } else {
-                                    const err12 = {
-                                      instancePath: instancePath + "/source",
-                                      schemaPath:
-                                        "#/$defs/ConnectionSource/oneOf/0/type",
-                                      keyword: "type",
-                                      params: { type: "object" },
-                                      message: "must be object",
-                                    };
-                                    if (vErrors === null) {
-                                      vErrors = [err12];
-                                    } else {
-                                      vErrors.push(err12);
-                                    }
-                                    errors++;
-                                  }
-                                }
-                                var _valid0 = _errs29 === errors;
-                                if (_valid0) {
-                                  valid6 = true;
-                                  passing0 = 0;
-                                  var props0 = true;
-                                }
-                                const _errs40 = errors;
-                                if (errors === _errs40) {
-                                  if (
-                                    data10 &&
-                                    typeof data10 == "object" &&
-                                    !Array.isArray(data10)
-                                  ) {
-                                    let missing2;
-                                    if (
-                                      (data10.type === undefined &&
-                                        (missing2 = "type")) ||
-                                      (data10.directory === undefined &&
-                                        (missing2 = "directory"))
-                                    ) {
-                                      const err13 = {
-                                        instancePath: instancePath + "/source",
-                                        schemaPath:
-                                          "#/$defs/ConnectionSource/oneOf/1/required",
-                                        keyword: "required",
-                                        params: { missingProperty: missing2 },
-                                        message:
-                                          "must have required property '" +
-                                          missing2 +
-                                          "'",
-                                      };
-                                      if (vErrors === null) {
-                                        vErrors = [err13];
-                                      } else {
-                                        vErrors.push(err13);
-                                      }
-                                      errors++;
-                                    } else {
-                                      const _errs42 = errors;
-                                      for (const key2 in data10) {
-                                        if (
-                                          !(
-                                            key2 === "type" ||
-                                            key2 === "directory" ||
-                                            key2 === "model"
-                                          )
-                                        ) {
-                                          const err14 = {
-                                            instancePath:
-                                              instancePath + "/source",
-                                            schemaPath:
-                                              "#/$defs/ConnectionSource/oneOf/1/additionalProperties",
-                                            keyword: "additionalProperties",
-                                            params: {
-                                              additionalProperty: key2,
-                                            },
-                                            message:
-                                              "must NOT have additional properties",
-                                          };
-                                          if (vErrors === null) {
-                                            vErrors = [err14];
-                                          } else {
-                                            vErrors.push(err14);
-                                          }
-                                          errors++;
-                                          break;
-                                        }
-                                      }
-                                      if (_errs42 === errors) {
-                                        if (data10.type !== undefined) {
-                                          let data15 = data10.type;
-                                          const _errs43 = errors;
-                                          if (typeof data15 !== "string") {
-                                            const err15 = {
+                                            const err6 = {
                                               instancePath:
-                                                instancePath + "/source/type",
+                                                instancePath + "/source/apiUrl",
                                               schemaPath:
-                                                "#/$defs/ConnectionSource/oneOf/1/properties/type/type",
+                                                "#/$defs/ConnectionSource/oneOf/0/properties/apiUrl/type",
                                               keyword: "type",
                                               params: { type: "string" },
                                               message: "must be string",
                                             };
                                             if (vErrors === null) {
-                                              vErrors = [err15];
+                                              vErrors = [err6];
                                             } else {
-                                              vErrors.push(err15);
+                                              vErrors.push(err6);
                                             }
                                             errors++;
                                           }
-                                          if ("existing_login" !== data15) {
-                                            const err16 = {
-                                              instancePath:
-                                                instancePath + "/source/type",
-                                              schemaPath:
-                                                "#/$defs/ConnectionSource/oneOf/1/properties/type/const",
-                                              keyword: "const",
-                                              params: {
-                                                allowedValue: "existing_login",
-                                              },
-                                              message:
-                                                "must be equal to constant",
-                                            };
-                                            if (vErrors === null) {
-                                              vErrors = [err16];
-                                            } else {
-                                              vErrors.push(err16);
-                                            }
-                                            errors++;
-                                          }
-                                          var valid8 = _errs43 === errors;
-                                        } else {
-                                          var valid8 = true;
                                         }
-                                        if (valid8) {
-                                          if (data10.directory !== undefined) {
-                                            let data16 = data10.directory;
-                                            const _errs45 = errors;
-                                            if (errors === _errs45) {
-                                              if (typeof data16 === "string") {
-                                                if (func1(data16) > 32768) {
-                                                  const err17 = {
-                                                    instancePath:
-                                                      instancePath +
-                                                      "/source/directory",
-                                                    schemaPath:
-                                                      "#/$defs/ConnectionSource/oneOf/1/properties/directory/maxLength",
-                                                    keyword: "maxLength",
-                                                    params: { limit: 32768 },
-                                                    message:
-                                                      "must NOT have more than 32768 characters",
-                                                  };
-                                                  if (vErrors === null) {
-                                                    vErrors = [err17];
-                                                  } else {
-                                                    vErrors.push(err17);
-                                                  }
-                                                  errors++;
-                                                } else {
-                                                  if (func1(data16) < 1) {
-                                                    const err18 = {
-                                                      instancePath:
-                                                        instancePath +
-                                                        "/source/directory",
-                                                      schemaPath:
-                                                        "#/$defs/ConnectionSource/oneOf/1/properties/directory/minLength",
-                                                      keyword: "minLength",
-                                                      params: { limit: 1 },
-                                                      message:
-                                                        "must NOT have fewer than 1 characters",
-                                                    };
-                                                    if (vErrors === null) {
-                                                      vErrors = [err18];
-                                                    } else {
-                                                      vErrors.push(err18);
-                                                    }
-                                                    errors++;
-                                                  }
-                                                }
-                                              } else {
-                                                const err19 = {
+                                        var valid5 = _errs28 === errors;
+                                      } else {
+                                        var valid5 = true;
+                                      }
+                                      if (valid5) {
+                                        if (data8.model !== undefined) {
+                                          let data11 = data8.model;
+                                          const _errs30 = errors;
+                                          if (errors === _errs30) {
+                                            if (typeof data11 === "string") {
+                                              if (func1(data11) > 256) {
+                                                const err7 = {
                                                   instancePath:
                                                     instancePath +
-                                                    "/source/directory",
+                                                    "/source/model",
                                                   schemaPath:
-                                                    "#/$defs/ConnectionSource/oneOf/1/properties/directory/type",
-                                                  keyword: "type",
-                                                  params: { type: "string" },
-                                                  message: "must be string",
+                                                    "#/$defs/ConnectionSource/oneOf/0/properties/model/maxLength",
+                                                  keyword: "maxLength",
+                                                  params: { limit: 256 },
+                                                  message:
+                                                    "must NOT have more than 256 characters",
                                                 };
                                                 if (vErrors === null) {
-                                                  vErrors = [err19];
+                                                  vErrors = [err7];
                                                 } else {
-                                                  vErrors.push(err19);
+                                                  vErrors.push(err7);
                                                 }
                                                 errors++;
-                                              }
-                                            }
-                                            var valid8 = _errs45 === errors;
-                                          } else {
-                                            var valid8 = true;
-                                          }
-                                          if (valid8) {
-                                            if (data10.model !== undefined) {
-                                              let data17 = data10.model;
-                                              const _errs47 = errors;
-                                              if (errors === _errs47) {
-                                                if (
-                                                  typeof data17 === "string"
-                                                ) {
-                                                  if (func1(data17) > 256) {
-                                                    const err20 = {
-                                                      instancePath:
-                                                        instancePath +
-                                                        "/source/model",
-                                                      schemaPath:
-                                                        "#/$defs/ConnectionSource/oneOf/1/properties/model/maxLength",
-                                                      keyword: "maxLength",
-                                                      params: { limit: 256 },
-                                                      message:
-                                                        "must NOT have more than 256 characters",
-                                                    };
-                                                    if (vErrors === null) {
-                                                      vErrors = [err20];
-                                                    } else {
-                                                      vErrors.push(err20);
-                                                    }
-                                                    errors++;
-                                                  } else {
-                                                    if (func1(data17) < 1) {
-                                                      const err21 = {
-                                                        instancePath:
-                                                          instancePath +
-                                                          "/source/model",
-                                                        schemaPath:
-                                                          "#/$defs/ConnectionSource/oneOf/1/properties/model/minLength",
-                                                        keyword: "minLength",
-                                                        params: { limit: 1 },
-                                                        message:
-                                                          "must NOT have fewer than 1 characters",
-                                                      };
-                                                      if (vErrors === null) {
-                                                        vErrors = [err21];
-                                                      } else {
-                                                        vErrors.push(err21);
-                                                      }
-                                                      errors++;
-                                                    }
-                                                  }
-                                                } else {
-                                                  const err22 = {
+                                              } else {
+                                                if (func1(data11) < 1) {
+                                                  const err8 = {
                                                     instancePath:
                                                       instancePath +
                                                       "/source/model",
                                                     schemaPath:
-                                                      "#/$defs/ConnectionSource/oneOf/1/properties/model/type",
-                                                    keyword: "type",
-                                                    params: { type: "string" },
-                                                    message: "must be string",
+                                                      "#/$defs/ConnectionSource/oneOf/0/properties/model/minLength",
+                                                    keyword: "minLength",
+                                                    params: { limit: 1 },
+                                                    message:
+                                                      "must NOT have fewer than 1 characters",
                                                   };
                                                   if (vErrors === null) {
-                                                    vErrors = [err22];
+                                                    vErrors = [err8];
                                                   } else {
-                                                    vErrors.push(err22);
+                                                    vErrors.push(err8);
                                                   }
                                                   errors++;
                                                 }
                                               }
-                                              var valid8 = _errs47 === errors;
                                             } else {
-                                              var valid8 = true;
-                                            }
-                                          }
-                                        }
-                                      }
-                                    }
-                                  } else {
-                                    const err23 = {
-                                      instancePath: instancePath + "/source",
-                                      schemaPath:
-                                        "#/$defs/ConnectionSource/oneOf/1/type",
-                                      keyword: "type",
-                                      params: { type: "object" },
-                                      message: "must be object",
-                                    };
-                                    if (vErrors === null) {
-                                      vErrors = [err23];
-                                    } else {
-                                      vErrors.push(err23);
-                                    }
-                                    errors++;
-                                  }
-                                }
-                                var _valid0 = _errs40 === errors;
-                                if (_valid0 && valid6) {
-                                  valid6 = false;
-                                  passing0 = [passing0, 1];
-                                } else {
-                                  if (_valid0) {
-                                    valid6 = true;
-                                    passing0 = 1;
-                                    if (props0 !== true) {
-                                      props0 = true;
-                                    }
-                                  }
-                                  const _errs49 = errors;
-                                  if (errors === _errs49) {
-                                    if (
-                                      data10 &&
-                                      typeof data10 == "object" &&
-                                      !Array.isArray(data10)
-                                    ) {
-                                      let missing3;
-                                      if (
-                                        (data10.type === undefined &&
-                                          (missing3 = "type")) ||
-                                        (data10.directory === undefined &&
-                                          (missing3 = "directory"))
-                                      ) {
-                                        const err24 = {
-                                          instancePath:
-                                            instancePath + "/source",
-                                          schemaPath:
-                                            "#/$defs/ConnectionSource/oneOf/2/required",
-                                          keyword: "required",
-                                          params: { missingProperty: missing3 },
-                                          message:
-                                            "must have required property '" +
-                                            missing3 +
-                                            "'",
-                                        };
-                                        if (vErrors === null) {
-                                          vErrors = [err24];
-                                        } else {
-                                          vErrors.push(err24);
-                                        }
-                                        errors++;
-                                      } else {
-                                        const _errs51 = errors;
-                                        for (const key3 in data10) {
-                                          if (
-                                            !(
-                                              key3 === "type" ||
-                                              key3 === "directory" ||
-                                              key3 === "profile" ||
-                                              key3 === "model"
-                                            )
-                                          ) {
-                                            const err25 = {
-                                              instancePath:
-                                                instancePath + "/source",
-                                              schemaPath:
-                                                "#/$defs/ConnectionSource/oneOf/2/additionalProperties",
-                                              keyword: "additionalProperties",
-                                              params: {
-                                                additionalProperty: key3,
-                                              },
-                                              message:
-                                                "must NOT have additional properties",
-                                            };
-                                            if (vErrors === null) {
-                                              vErrors = [err25];
-                                            } else {
-                                              vErrors.push(err25);
-                                            }
-                                            errors++;
-                                            break;
-                                          }
-                                        }
-                                        if (_errs51 === errors) {
-                                          if (data10.type !== undefined) {
-                                            let data18 = data10.type;
-                                            const _errs52 = errors;
-                                            if (typeof data18 !== "string") {
-                                              const err26 = {
+                                              const err9 = {
                                                 instancePath:
-                                                  instancePath + "/source/type",
+                                                  instancePath +
+                                                  "/source/model",
                                                 schemaPath:
-                                                  "#/$defs/ConnectionSource/oneOf/2/properties/type/type",
+                                                  "#/$defs/ConnectionSource/oneOf/0/properties/model/type",
                                                 keyword: "type",
                                                 params: { type: "string" },
                                                 message: "must be string",
                                               };
                                               if (vErrors === null) {
-                                                vErrors = [err26];
+                                                vErrors = [err9];
                                               } else {
-                                                vErrors.push(err26);
+                                                vErrors.push(err9);
                                               }
                                               errors++;
                                             }
-                                            if ("existing_api" !== data18) {
-                                              const err27 = {
+                                          }
+                                          var valid5 = _errs30 === errors;
+                                        } else {
+                                          var valid5 = true;
+                                        }
+                                        if (valid5) {
+                                          if (
+                                            data8.credentialType !== undefined
+                                          ) {
+                                            let data12 = data8.credentialType;
+                                            const _errs32 = errors;
+                                            if (typeof data12 !== "string") {
+                                              const err10 = {
                                                 instancePath:
-                                                  instancePath + "/source/type",
+                                                  instancePath +
+                                                  "/source/credentialType",
                                                 schemaPath:
-                                                  "#/$defs/ConnectionSource/oneOf/2/properties/type/const",
-                                                keyword: "const",
-                                                params: {
-                                                  allowedValue: "existing_api",
-                                                },
-                                                message:
-                                                  "must be equal to constant",
+                                                  "#/$defs/ConnectionSource/oneOf/0/properties/credentialType/type",
+                                                keyword: "type",
+                                                params: { type: "string" },
+                                                message: "must be string",
                                               };
                                               if (vErrors === null) {
-                                                vErrors = [err27];
+                                                vErrors = [err10];
                                               } else {
-                                                vErrors.push(err27);
+                                                vErrors.push(err10);
                                               }
                                               errors++;
                                             }
-                                            var valid9 = _errs52 === errors;
-                                          } else {
-                                            var valid9 = true;
-                                          }
-                                          if (valid9) {
                                             if (
-                                              data10.directory !== undefined
+                                              !(
+                                                data12 === "api_key" ||
+                                                data12 === "auth_token"
+                                              )
                                             ) {
-                                              let data19 = data10.directory;
-                                              const _errs54 = errors;
-                                              if (errors === _errs54) {
-                                                if (
-                                                  typeof data19 === "string"
-                                                ) {
-                                                  if (func1(data19) > 32768) {
-                                                    const err28 = {
-                                                      instancePath:
-                                                        instancePath +
-                                                        "/source/directory",
-                                                      schemaPath:
-                                                        "#/$defs/ConnectionSource/oneOf/2/properties/directory/maxLength",
-                                                      keyword: "maxLength",
-                                                      params: { limit: 32768 },
-                                                      message:
-                                                        "must NOT have more than 32768 characters",
-                                                    };
-                                                    if (vErrors === null) {
-                                                      vErrors = [err28];
-                                                    } else {
-                                                      vErrors.push(err28);
-                                                    }
-                                                    errors++;
-                                                  } else {
-                                                    if (func1(data19) < 1) {
-                                                      const err29 = {
-                                                        instancePath:
-                                                          instancePath +
-                                                          "/source/directory",
-                                                        schemaPath:
-                                                          "#/$defs/ConnectionSource/oneOf/2/properties/directory/minLength",
-                                                        keyword: "minLength",
-                                                        params: { limit: 1 },
-                                                        message:
-                                                          "must NOT have fewer than 1 characters",
-                                                      };
-                                                      if (vErrors === null) {
-                                                        vErrors = [err29];
-                                                      } else {
-                                                        vErrors.push(err29);
-                                                      }
-                                                      errors++;
-                                                    }
-                                                  }
+                                              const err11 = {
+                                                instancePath:
+                                                  instancePath +
+                                                  "/source/credentialType",
+                                                schemaPath:
+                                                  "#/$defs/ConnectionSource/oneOf/0/properties/credentialType/enum",
+                                                keyword: "enum",
+                                                params: {
+                                                  allowedValues:
+                                                    schema310.oneOf[0]
+                                                      .properties.credentialType
+                                                      .enum,
+                                                },
+                                                message:
+                                                  "must be equal to one of the allowed values",
+                                              };
+                                              if (vErrors === null) {
+                                                vErrors = [err11];
+                                              } else {
+                                                vErrors.push(err11);
+                                              }
+                                              errors++;
+                                            }
+                                            var valid5 = _errs32 === errors;
+                                          } else {
+                                            var valid5 = true;
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              } else {
+                                const err12 = {
+                                  instancePath: instancePath + "/source",
+                                  schemaPath:
+                                    "#/$defs/ConnectionSource/oneOf/0/type",
+                                  keyword: "type",
+                                  params: { type: "object" },
+                                  message: "must be object",
+                                };
+                                if (vErrors === null) {
+                                  vErrors = [err12];
+                                } else {
+                                  vErrors.push(err12);
+                                }
+                                errors++;
+                              }
+                            }
+                            var _valid0 = _errs23 === errors;
+                            if (_valid0) {
+                              valid4 = true;
+                              passing0 = 0;
+                              var props0 = true;
+                            }
+                            const _errs34 = errors;
+                            if (errors === _errs34) {
+                              if (
+                                data8 &&
+                                typeof data8 == "object" &&
+                                !Array.isArray(data8)
+                              ) {
+                                let missing2;
+                                if (
+                                  data8.type === undefined &&
+                                  (missing2 = "type")
+                                ) {
+                                  const err13 = {
+                                    instancePath: instancePath + "/source",
+                                    schemaPath:
+                                      "#/$defs/ConnectionSource/oneOf/1/required",
+                                    keyword: "required",
+                                    params: { missingProperty: missing2 },
+                                    message:
+                                      "must have required property '" +
+                                      missing2 +
+                                      "'",
+                                  };
+                                  if (vErrors === null) {
+                                    vErrors = [err13];
+                                  } else {
+                                    vErrors.push(err13);
+                                  }
+                                  errors++;
+                                } else {
+                                  const _errs36 = errors;
+                                  for (const key2 in data8) {
+                                    if (
+                                      !(
+                                        key2 === "type" ||
+                                        key2 === "directory" ||
+                                        key2 === "model"
+                                      )
+                                    ) {
+                                      const err14 = {
+                                        instancePath: instancePath + "/source",
+                                        schemaPath:
+                                          "#/$defs/ConnectionSource/oneOf/1/additionalProperties",
+                                        keyword: "additionalProperties",
+                                        params: { additionalProperty: key2 },
+                                        message:
+                                          "must NOT have additional properties",
+                                      };
+                                      if (vErrors === null) {
+                                        vErrors = [err14];
+                                      } else {
+                                        vErrors.push(err14);
+                                      }
+                                      errors++;
+                                      break;
+                                    }
+                                  }
+                                  if (_errs36 === errors) {
+                                    if (data8.type !== undefined) {
+                                      let data13 = data8.type;
+                                      const _errs37 = errors;
+                                      if (typeof data13 !== "string") {
+                                        const err15 = {
+                                          instancePath:
+                                            instancePath + "/source/type",
+                                          schemaPath:
+                                            "#/$defs/ConnectionSource/oneOf/1/properties/type/type",
+                                          keyword: "type",
+                                          params: { type: "string" },
+                                          message: "must be string",
+                                        };
+                                        if (vErrors === null) {
+                                          vErrors = [err15];
+                                        } else {
+                                          vErrors.push(err15);
+                                        }
+                                        errors++;
+                                      }
+                                      if ("existing_config" !== data13) {
+                                        const err16 = {
+                                          instancePath:
+                                            instancePath + "/source/type",
+                                          schemaPath:
+                                            "#/$defs/ConnectionSource/oneOf/1/properties/type/const",
+                                          keyword: "const",
+                                          params: {
+                                            allowedValue: "existing_config",
+                                          },
+                                          message: "must be equal to constant",
+                                        };
+                                        if (vErrors === null) {
+                                          vErrors = [err16];
+                                        } else {
+                                          vErrors.push(err16);
+                                        }
+                                        errors++;
+                                      }
+                                      var valid6 = _errs37 === errors;
+                                    } else {
+                                      var valid6 = true;
+                                    }
+                                    if (valid6) {
+                                      if (data8.directory !== undefined) {
+                                        let data14 = data8.directory;
+                                        const _errs39 = errors;
+                                        if (errors === _errs39) {
+                                          if (typeof data14 === "string") {
+                                            if (func1(data14) > 32768) {
+                                              const err17 = {
+                                                instancePath:
+                                                  instancePath +
+                                                  "/source/directory",
+                                                schemaPath:
+                                                  "#/$defs/ConnectionSource/oneOf/1/properties/directory/maxLength",
+                                                keyword: "maxLength",
+                                                params: { limit: 32768 },
+                                                message:
+                                                  "must NOT have more than 32768 characters",
+                                              };
+                                              if (vErrors === null) {
+                                                vErrors = [err17];
+                                              } else {
+                                                vErrors.push(err17);
+                                              }
+                                              errors++;
+                                            } else {
+                                              if (func1(data14) < 1) {
+                                                const err18 = {
+                                                  instancePath:
+                                                    instancePath +
+                                                    "/source/directory",
+                                                  schemaPath:
+                                                    "#/$defs/ConnectionSource/oneOf/1/properties/directory/minLength",
+                                                  keyword: "minLength",
+                                                  params: { limit: 1 },
+                                                  message:
+                                                    "must NOT have fewer than 1 characters",
+                                                };
+                                                if (vErrors === null) {
+                                                  vErrors = [err18];
                                                 } else {
-                                                  const err30 = {
+                                                  vErrors.push(err18);
+                                                }
+                                                errors++;
+                                              }
+                                            }
+                                          } else {
+                                            const err19 = {
+                                              instancePath:
+                                                instancePath +
+                                                "/source/directory",
+                                              schemaPath:
+                                                "#/$defs/ConnectionSource/oneOf/1/properties/directory/type",
+                                              keyword: "type",
+                                              params: { type: "string" },
+                                              message: "must be string",
+                                            };
+                                            if (vErrors === null) {
+                                              vErrors = [err19];
+                                            } else {
+                                              vErrors.push(err19);
+                                            }
+                                            errors++;
+                                          }
+                                        }
+                                        var valid6 = _errs39 === errors;
+                                      } else {
+                                        var valid6 = true;
+                                      }
+                                      if (valid6) {
+                                        if (data8.model !== undefined) {
+                                          let data15 = data8.model;
+                                          const _errs41 = errors;
+                                          if (errors === _errs41) {
+                                            if (typeof data15 === "string") {
+                                              if (func1(data15) > 256) {
+                                                const err20 = {
+                                                  instancePath:
+                                                    instancePath +
+                                                    "/source/model",
+                                                  schemaPath:
+                                                    "#/$defs/ConnectionSource/oneOf/1/properties/model/maxLength",
+                                                  keyword: "maxLength",
+                                                  params: { limit: 256 },
+                                                  message:
+                                                    "must NOT have more than 256 characters",
+                                                };
+                                                if (vErrors === null) {
+                                                  vErrors = [err20];
+                                                } else {
+                                                  vErrors.push(err20);
+                                                }
+                                                errors++;
+                                              } else {
+                                                if (func1(data15) < 1) {
+                                                  const err21 = {
                                                     instancePath:
                                                       instancePath +
-                                                      "/source/directory",
+                                                      "/source/model",
                                                     schemaPath:
-                                                      "#/$defs/ConnectionSource/oneOf/2/properties/directory/type",
-                                                    keyword: "type",
-                                                    params: { type: "string" },
-                                                    message: "must be string",
+                                                      "#/$defs/ConnectionSource/oneOf/1/properties/model/minLength",
+                                                    keyword: "minLength",
+                                                    params: { limit: 1 },
+                                                    message:
+                                                      "must NOT have fewer than 1 characters",
                                                   };
                                                   if (vErrors === null) {
-                                                    vErrors = [err30];
+                                                    vErrors = [err21];
                                                   } else {
-                                                    vErrors.push(err30);
+                                                    vErrors.push(err21);
                                                   }
                                                   errors++;
                                                 }
                                               }
-                                              var valid9 = _errs54 === errors;
                                             } else {
-                                              var valid9 = true;
-                                            }
-                                            if (valid9) {
-                                              if (
-                                                data10.profile !== undefined
-                                              ) {
-                                                let data20 = data10.profile;
-                                                const _errs56 = errors;
-                                                if (errors === _errs56) {
-                                                  if (
-                                                    typeof data20 === "string"
-                                                  ) {
-                                                    if (func1(data20) > 256) {
-                                                      const err31 = {
-                                                        instancePath:
-                                                          instancePath +
-                                                          "/source/profile",
-                                                        schemaPath:
-                                                          "#/$defs/ConnectionSource/oneOf/2/properties/profile/maxLength",
-                                                        keyword: "maxLength",
-                                                        params: { limit: 256 },
-                                                        message:
-                                                          "must NOT have more than 256 characters",
-                                                      };
-                                                      if (vErrors === null) {
-                                                        vErrors = [err31];
-                                                      } else {
-                                                        vErrors.push(err31);
-                                                      }
-                                                      errors++;
-                                                    } else {
-                                                      if (func1(data20) < 1) {
-                                                        const err32 = {
-                                                          instancePath:
-                                                            instancePath +
-                                                            "/source/profile",
-                                                          schemaPath:
-                                                            "#/$defs/ConnectionSource/oneOf/2/properties/profile/minLength",
-                                                          keyword: "minLength",
-                                                          params: { limit: 1 },
-                                                          message:
-                                                            "must NOT have fewer than 1 characters",
-                                                        };
-                                                        if (vErrors === null) {
-                                                          vErrors = [err32];
-                                                        } else {
-                                                          vErrors.push(err32);
-                                                        }
-                                                        errors++;
-                                                      }
-                                                    }
-                                                  } else {
-                                                    const err33 = {
-                                                      instancePath:
-                                                        instancePath +
-                                                        "/source/profile",
-                                                      schemaPath:
-                                                        "#/$defs/ConnectionSource/oneOf/2/properties/profile/type",
-                                                      keyword: "type",
-                                                      params: {
-                                                        type: "string",
-                                                      },
-                                                      message: "must be string",
-                                                    };
-                                                    if (vErrors === null) {
-                                                      vErrors = [err33];
-                                                    } else {
-                                                      vErrors.push(err33);
-                                                    }
-                                                    errors++;
-                                                  }
-                                                }
-                                                var valid9 = _errs56 === errors;
-                                              } else {
-                                                var valid9 = true;
-                                              }
-                                              if (valid9) {
-                                                if (
-                                                  data10.model !== undefined
-                                                ) {
-                                                  let data21 = data10.model;
-                                                  const _errs58 = errors;
-                                                  if (errors === _errs58) {
-                                                    if (
-                                                      typeof data21 === "string"
-                                                    ) {
-                                                      if (func1(data21) > 256) {
-                                                        const err34 = {
-                                                          instancePath:
-                                                            instancePath +
-                                                            "/source/model",
-                                                          schemaPath:
-                                                            "#/$defs/ConnectionSource/oneOf/2/properties/model/maxLength",
-                                                          keyword: "maxLength",
-                                                          params: {
-                                                            limit: 256,
-                                                          },
-                                                          message:
-                                                            "must NOT have more than 256 characters",
-                                                        };
-                                                        if (vErrors === null) {
-                                                          vErrors = [err34];
-                                                        } else {
-                                                          vErrors.push(err34);
-                                                        }
-                                                        errors++;
-                                                      } else {
-                                                        if (func1(data21) < 1) {
-                                                          const err35 = {
-                                                            instancePath:
-                                                              instancePath +
-                                                              "/source/model",
-                                                            schemaPath:
-                                                              "#/$defs/ConnectionSource/oneOf/2/properties/model/minLength",
-                                                            keyword:
-                                                              "minLength",
-                                                            params: {
-                                                              limit: 1,
-                                                            },
-                                                            message:
-                                                              "must NOT have fewer than 1 characters",
-                                                          };
-                                                          if (
-                                                            vErrors === null
-                                                          ) {
-                                                            vErrors = [err35];
-                                                          } else {
-                                                            vErrors.push(err35);
-                                                          }
-                                                          errors++;
-                                                        }
-                                                      }
-                                                    } else {
-                                                      const err36 = {
-                                                        instancePath:
-                                                          instancePath +
-                                                          "/source/model",
-                                                        schemaPath:
-                                                          "#/$defs/ConnectionSource/oneOf/2/properties/model/type",
-                                                        keyword: "type",
-                                                        params: {
-                                                          type: "string",
-                                                        },
-                                                        message:
-                                                          "must be string",
-                                                      };
-                                                      if (vErrors === null) {
-                                                        vErrors = [err36];
-                                                      } else {
-                                                        vErrors.push(err36);
-                                                      }
-                                                      errors++;
-                                                    }
-                                                  }
-                                                  var valid9 =
-                                                    _errs58 === errors;
-                                                } else {
-                                                  var valid9 = true;
-                                                }
-                                              }
-                                            }
-                                          }
-                                        }
-                                      }
-                                    } else {
-                                      const err37 = {
-                                        instancePath: instancePath + "/source",
-                                        schemaPath:
-                                          "#/$defs/ConnectionSource/oneOf/2/type",
-                                        keyword: "type",
-                                        params: { type: "object" },
-                                        message: "must be object",
-                                      };
-                                      if (vErrors === null) {
-                                        vErrors = [err37];
-                                      } else {
-                                        vErrors.push(err37);
-                                      }
-                                      errors++;
-                                    }
-                                  }
-                                  var _valid0 = _errs49 === errors;
-                                  if (_valid0 && valid6) {
-                                    valid6 = false;
-                                    passing0 = [passing0, 2];
-                                  } else {
-                                    if (_valid0) {
-                                      valid6 = true;
-                                      passing0 = 2;
-                                      if (props0 !== true) {
-                                        props0 = true;
-                                      }
-                                    }
-                                  }
-                                }
-                                if (!valid6) {
-                                  const err38 = {
-                                    instancePath: instancePath + "/source",
-                                    schemaPath:
-                                      "#/$defs/ConnectionSource/oneOf",
-                                    keyword: "oneOf",
-                                    params: { passingSchemas: passing0 },
-                                    message:
-                                      "must match exactly one schema in oneOf",
-                                  };
-                                  if (vErrors === null) {
-                                    vErrors = [err38];
-                                  } else {
-                                    vErrors.push(err38);
-                                  }
-                                  errors++;
-                                  validate147.errors = vErrors;
-                                  return false;
-                                } else {
-                                  errors = _errs28;
-                                  if (vErrors !== null) {
-                                    if (_errs28) {
-                                      vErrors.length = _errs28;
-                                    } else {
-                                      vErrors = null;
-                                    }
-                                  }
-                                }
-                                var valid0 = _errs26 === errors;
-                              } else {
-                                var valid0 = true;
-                              }
-                              if (valid0) {
-                                if (data.credentialRef !== undefined) {
-                                  let data22 = data.credentialRef;
-                                  const _errs60 = errors;
-                                  const _errs61 = errors;
-                                  if (errors === _errs61) {
-                                    if (typeof data22 === "string") {
-                                      if (func1(data22) > 128) {
-                                        validate147.errors = [
-                                          {
-                                            instancePath:
-                                              instancePath + "/credentialRef",
-                                            schemaPath: "#/$defs/Id/maxLength",
-                                            keyword: "maxLength",
-                                            params: { limit: 128 },
-                                            message:
-                                              "must NOT have more than 128 characters",
-                                          },
-                                        ];
-                                        return false;
-                                      } else {
-                                        if (func1(data22) < 1) {
-                                          validate147.errors = [
-                                            {
-                                              instancePath:
-                                                instancePath + "/credentialRef",
-                                              schemaPath:
-                                                "#/$defs/Id/minLength",
-                                              keyword: "minLength",
-                                              params: { limit: 1 },
-                                              message:
-                                                "must NOT have fewer than 1 characters",
-                                            },
-                                          ];
-                                          return false;
-                                        } else {
-                                          if (!pattern4.test(data22)) {
-                                            validate147.errors = [
-                                              {
+                                              const err22 = {
                                                 instancePath:
                                                   instancePath +
-                                                  "/credentialRef",
+                                                  "/source/model",
                                                 schemaPath:
-                                                  "#/$defs/Id/pattern",
-                                                keyword: "pattern",
-                                                params: {
-                                                  pattern:
-                                                    "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
-                                                },
-                                                message:
-                                                  'must match pattern "' +
-                                                  "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$" +
-                                                  '"',
-                                              },
-                                            ];
-                                            return false;
+                                                  "#/$defs/ConnectionSource/oneOf/1/properties/model/type",
+                                                keyword: "type",
+                                                params: { type: "string" },
+                                                message: "must be string",
+                                              };
+                                              if (vErrors === null) {
+                                                vErrors = [err22];
+                                              } else {
+                                                vErrors.push(err22);
+                                              }
+                                              errors++;
+                                            }
                                           }
+                                          var valid6 = _errs41 === errors;
+                                        } else {
+                                          var valid6 = true;
                                         }
                                       }
-                                    } else {
-                                      validate147.errors = [
-                                        {
-                                          instancePath:
-                                            instancePath + "/credentialRef",
-                                          schemaPath: "#/$defs/Id/type",
-                                          keyword: "type",
-                                          params: { type: "string" },
-                                          message: "must be string",
-                                        },
-                                      ];
-                                      return false;
                                     }
                                   }
-                                  var valid0 = _errs60 === errors;
+                                }
+                              } else {
+                                const err23 = {
+                                  instancePath: instancePath + "/source",
+                                  schemaPath:
+                                    "#/$defs/ConnectionSource/oneOf/1/type",
+                                  keyword: "type",
+                                  params: { type: "object" },
+                                  message: "must be object",
+                                };
+                                if (vErrors === null) {
+                                  vErrors = [err23];
                                 } else {
-                                  var valid0 = true;
+                                  vErrors.push(err23);
+                                }
+                                errors++;
+                              }
+                            }
+                            var _valid0 = _errs34 === errors;
+                            if (_valid0 && valid4) {
+                              valid4 = false;
+                              passing0 = [passing0, 1];
+                            } else {
+                              if (_valid0) {
+                                valid4 = true;
+                                passing0 = 1;
+                                if (props0 !== true) {
+                                  props0 = true;
                                 }
                               }
                             }
+                            if (!valid4) {
+                              const err24 = {
+                                instancePath: instancePath + "/source",
+                                schemaPath: "#/$defs/ConnectionSource/oneOf",
+                                keyword: "oneOf",
+                                params: { passingSchemas: passing0 },
+                                message:
+                                  "must match exactly one schema in oneOf",
+                              };
+                              if (vErrors === null) {
+                                vErrors = [err24];
+                              } else {
+                                vErrors.push(err24);
+                              }
+                              errors++;
+                              validate147.errors = vErrors;
+                              return false;
+                            } else {
+                              errors = _errs22;
+                              if (vErrors !== null) {
+                                if (_errs22) {
+                                  vErrors.length = _errs22;
+                                } else {
+                                  vErrors = null;
+                                }
+                              }
+                            }
+                            var valid0 = _errs20 === errors;
+                          } else {
+                            var valid0 = true;
                           }
                         }
                       }
@@ -52113,7 +51224,7 @@ validate147.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema317 = {
+const schema311 = {
   type: "object",
   properties: {
     schemaVersion: { type: "integer", const: 5 },
@@ -52419,7 +51530,7 @@ validate149.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema320 = {
+const schema314 = {
   type: "object",
   properties: {
     schemaVersion: { type: "integer", const: 5 },
@@ -52758,7 +51869,7 @@ validate151.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema322 = {
+const schema316 = {
   type: "object",
   properties: {
     schemaVersion: { type: "integer", const: 5 },
@@ -53019,7 +52130,7 @@ validate153.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema324 = {
+const schema318 = {
   type: "object",
   properties: {
     schemaVersion: { type: "integer", const: 5 },
@@ -53275,7 +52386,7 @@ validate157.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema326 = {
+const schema320 = {
   type: "object",
   properties: {
     schemaVersion: { type: "integer", const: 5 },
@@ -53596,7 +52707,7 @@ validate161.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema328 = {
+const schema322 = {
   type: "object",
   properties: {
     schemaVersion: { type: "integer", const: 5 },
@@ -53606,7 +52717,7 @@ const schema328 = {
   required: ["schemaVersion", "kind", "patch"],
   additionalProperties: false,
 };
-const schema329 = {
+const schema323 = {
   type: "object",
   description:
     "Missing fields remain unchanged; set replaces and clear removes one preference atomically.",
@@ -53616,7 +52727,7 @@ const schema329 = {
   },
   additionalProperties: false,
 };
-const schema330 = {
+const schema324 = {
   oneOf: [
     {
       type: "object",
@@ -54201,7 +53312,7 @@ validate164.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema332 = {
+const schema326 = {
   type: "object",
   properties: {
     schemaVersion: { type: "integer", const: 5 },
@@ -54534,7 +53645,7 @@ validate171.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema335 = {
+const schema329 = {
   type: "object",
   properties: {
     schemaVersion: { type: "integer", const: 5 },
@@ -54897,7 +54008,7 @@ validate173.evaluated = {
   dynamicProps: false,
   dynamicItems: false,
 };
-const schema338 = {
+const schema332 = {
   type: "object",
   properties: {
     schemaVersion: { type: "integer", const: 5 },

@@ -118,7 +118,7 @@ test("reconcile snapshots caller data and validates the exact admitted observer 
         namespace: session.namespace,
         provider: activeStage(session).binding.provider,
         config: activeStage(session).binding.config,
-        accountRef: activeStage(session).binding.accountRef,
+
         workingDirectory: ".",
         permissions: "tools_disabled",
       },

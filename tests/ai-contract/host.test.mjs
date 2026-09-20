@@ -12,7 +12,7 @@ import {
 const options = {
   provider: "fake",
   config: { id: "cfg", revision: "1" },
-  accountRef: "account-1",
+
   profile: "conversation",
 };
 const budget = () => ({ timeoutMs: 1000, signal: AbortSignal.timeout(1000) });

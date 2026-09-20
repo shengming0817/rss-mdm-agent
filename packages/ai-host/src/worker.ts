@@ -8,5 +8,7 @@ import type {
 export type WorkerFactory = (input: {
   configuration: ProviderConfiguration;
   previous: Binding | null;
+  /** Transient provider composition data; never stored in launch fences or bindings. */
+  activation?: unknown;
   tools?: ToolEndpoint;
 }) => ProviderAgentPort | Promise<ProviderAgentPort>;

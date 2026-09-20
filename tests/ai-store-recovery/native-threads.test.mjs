@@ -110,7 +110,7 @@ test("SQLite rebind retains native thread and all steer attempts; terminal closu
           namespace: head.namespace,
           provider: activeStage(head).binding.provider,
           config: activeStage(head).binding.config,
-          accountRef: activeStage(head).binding.accountRef,
+
           workingDirectory: ".",
           permissions: "tools_disabled",
         },

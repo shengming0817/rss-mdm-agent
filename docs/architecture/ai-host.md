@@ -18,10 +18,12 @@ Host 独立 `WorkerLaunchFenceStore` 持有进程 fence 类型与校验，SQLite
 
 ## 个人连接与 provider 阶段
 
-AGENT-AI-01 将产品会话生命周期与 native context 分开。`Session.stages` 从同一 JSON Schema 生成，空会话无 binding；`currentStageId` 指向当前阶段，`selectedConnectionId` 是下一次普通输入所用连接。`freshContext` 仅表达下一条输入的新上下文意图。Receipt 固定接纳 stageId；每个阶段保留 connectionId、configRevision、credentialRevision、binding 与 capabilities。原阶段历史不被切换覆盖。
+AGENT-AI-01 将产品会话生命周期与 native context 分开。`Session.stages` 从同一 JSON Schema 生成，空会话无 binding；`currentStageId` 指向当前阶段，`selectedConnectionId` 是下一次普通输入所用连接。`freshContext` 仅表达下一条输入的新上下文意图。Receipt 固定接纳 stageId；每个阶段保留 connectionId、configRevision、binding 与 capabilities。原阶段历史不被切换覆盖。
 
 Host 先检查原 commandId 回执，后核对已确认历史，再等待旧队列全部结算并打开新阶段。连接修订与偏好按 Caller 的 tenant/principal/authority 存储，revision 只追加。原生 caller 由本地 ingress 根据用户 registry 与 generation 注入。一个 Host 承接所有用户；用户切换取消模型工作及验证 worker，Rust 设备任务继续持有冻结原 actor，不重绑定执行 app。
 
-配置快照仅含非秘密连接声明，credentialRef 由 native broker 解析；临时验证 namespace 不生成产品会话。模型探针完成和 worker 停止后才保存新连接。登录观察身份按用户/连接修订固定，API secret 不参与身份哈希。恢复读取原阶段修订与 native context 索引；普通 token 刷新仅允许同来源、同账号。历史预览是普通新输入的一部分，不建立独立切换任务或隐式重发链。
+provider activation 通过既有 worker 私有管道传递，不写快照或来源账号文件。配置声明与内部密文由同一 SQLite 事务持有；Host 组合根解密，只把当次所需秘密交给 worker。主密钥由 Native 延迟提供，worker 不持有主密钥。已有配置直接交由官方 CLI/SDK 解析及认证，RSS 不处理外部 token、账户身份或刷新。临时验证 namespace 不生成产品 Session，探针完成且进程停止后才保存；编辑保留或替换密钥，删除清除全部密文并阻止新 worker。恢复只读取 RSS 自有 native context 索引。历史预览仍是普通新输入的一部分。
 
-`test-users` 与旧 `s1` 数据根隔离，无默认 actor、自动数据归属或兼容配置分支。相关操作及来源证据见 [Host 应用](../../apps/ai-host/README.md)。
+Native–Host 使用匿名 socketpair；Native 用户注册表产生可信 Caller/generation，UI 只能在绑定逻辑通道内通信。设备执行服务按 authority/device 绑定，用户操作显式携带 RequestContext，内部核对以任务冻结 actor 授权。仅一个队列、SQLite owner 和执行线程，无按用户服务池；无任务时阻塞等待。
+
+当前没有历史数据兼容或迁移。本 PR 不新增 HMAC、防重放 nonce、凭据票据或 worker grant；S2 必要补充见 [#2462](https://dev.azure.com/shengming0923/rss/_workitems/edit/2462)。AES-GCM 随机 IV 保留。运行和验证边界见 [Host 应用](../../apps/ai-host/README.md)。

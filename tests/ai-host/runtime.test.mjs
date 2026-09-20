@@ -82,7 +82,7 @@ async function setup(t, revision = "1", extras = {}) {
   const options = {
     provider: "fake",
     config: { id: "config", revision },
-    accountRef: "account",
+
     profile: extras.admission ? "controlled_tools" : "conversation",
   };
   host = unwrap(
@@ -123,7 +123,7 @@ async function setup(t, revision = "1", extras = {}) {
           namespace,
           provider: options.provider,
           config: options.config,
-          accountRef: options.accountRef,
+
           workingDirectory: directory,
           permissions: extras.admission ? "host_mediated" : "tools_disabled",
         },
@@ -414,13 +414,7 @@ test("slow subscriber is asked to resync while another account remains usable", 
   abort.abort();
   await iterator.return();
   const second = unwrap(
-    await openFixture(
-      f.host,
-      f.store,
-      caller,
-      { ...f.options, accountRef: "separate-account" },
-      budget(),
-    ),
+    await openFixture(f.host, f.store, caller, { ...f.options }, budget()),
   );
   const command = {
     ...f.command("isolated", "quick"),
@@ -433,34 +427,12 @@ test("slow subscriber is asked to resync while another account remains usable", 
       "terminal",
   );
 });
-test("worker quotas bind provider/account and count real process owners", async (t) => {
-  const f = await setup(t, "1", {
-    hostOptions: { workerLimit: 2, accountWorkerLimit: 1 },
-  });
+test("global worker limit counts process owners across multiple sessions using the same configuration", async (t) => {
+  const f = await setup(t, "1", { hostOptions: { workerLimit: 2 } });
+  unwrap(await openFixture(f.host, f.store, caller, f.options, budget()));
   assert.equal(
     (await openFixture(f.host, f.store, caller, f.options, budget())).error
       .code,
-    "limit_exceeded",
-  );
-  unwrap(
-    await openFixture(
-      f.host,
-      f.store,
-      caller,
-      { ...f.options, accountRef: "second" },
-      budget(),
-    ),
-  );
-  assert.equal(
-    (
-      await openFixture(
-        f.host,
-        f.store,
-        caller,
-        { ...f.options, accountRef: "third" },
-        budget(),
-      )
-    ).error.code,
     "limit_exceeded",
   );
   assert.equal(unwrap(await f.store.launches()).length, 2);
@@ -537,7 +509,7 @@ test("worker tool bridge stays closed through factory/session creation and paren
     f.host,
     f.store,
     caller,
-    { ...f.options, accountRef: "rejected" },
+    { ...f.options },
     budget(),
   );
   assert.equal(rejected.ok, false);
@@ -560,7 +532,7 @@ test("Host close drains admission without reading a session that is not yet pers
     f.host,
     f.store,
     caller,
-    { ...f.options, accountRef: "closing" },
+    { ...f.options },
     budget(),
   );
   await until(() => entered);
@@ -665,12 +637,7 @@ test("explicit supported steer is attempt-bound and never starts a competing mod
   );
 });
 
-for (const option of [
-  "queueLimit",
-  "workerLimit",
-  "accountWorkerLimit",
-  "operationTimeoutMs",
-])
+for (const option of ["queueLimit", "workerLimit", "operationTimeoutMs"])
   test(`Host factory returns invalid_input for invalid ${option}`, async () => {
     for (const value of [0, -1, NaN, Infinity, 1.5]) {
       const result = await createHost({

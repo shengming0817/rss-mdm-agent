@@ -60,7 +60,7 @@ export async function checkDesktopBundle(root, runtimeTreeSha256) {
   });
   try {
     const deadline = Date.now() + 30000;
-    while (!existsSync(join(data, "ai.sock")) && Date.now() < deadline) {
+    while (!existsSync(join(data, "ai.sqlite")) && Date.now() < deadline) {
       if (failure) throw failure;
       assert.equal(
         child.exitCode,
@@ -71,8 +71,8 @@ export async function checkDesktopBundle(root, runtimeTreeSha256) {
       await delay(100);
     }
     assert.ok(
-      existsSync(join(data, "ai.sock")),
-      "bundled Host must create its private socket",
+      existsSync(join(data, "ai.sqlite")),
+      "bundled Host must open its store without a socket listener",
     );
     assert.ok(
       existsSync(join(data, "users.json")),
@@ -80,8 +80,8 @@ export async function checkDesktopBundle(root, runtimeTreeSha256) {
     );
     assert.equal(
       existsSync(join(data, "execution.sqlite")),
-      false,
-      "no device actor is created before user selection",
+      true,
+      "one device execution service starts independently of user selection",
     );
     assert.ok(
       existsSync(join(data, "ai.sqlite")),

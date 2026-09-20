@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch, onBeforeUnmount } from "vue";
+import { computed, ref, watch } from "vue";
 import type {
   Connection,
   ConnectionSource,
@@ -7,30 +7,9 @@ import type {
   UserPreferences,
 } from "@rss-mdm-agent/ai-contract";
 import { operationMessage, type AssistantController } from "./controller";
-import {
-  enterCredential,
-  discardCredential,
-  userGeneration,
-  nativeTestMode,
-} from "../test-users";
+import { saveNativeConnection, nativeTestMode } from "../test-users";
 const props = defineProps<{ controller: AssistantController }>();
 const c = props.controller;
-const generation = nativeTestMode ? userGeneration() : "";
-let stagedCredential = "";
-async function discardStaged() {
-  const reference = stagedCredential;
-  stagedCredential = "";
-  if (reference) {
-    try {
-      await discardCredential(reference, generation);
-    } catch {
-      error.value = "凭据清理未完成，切换用户或重新启动时会再次核对。";
-    }
-  }
-}
-onBeforeUnmount(() => {
-  void discardStaged();
-});
 const rows = ref<Connection[]>([]),
   prefs = ref<UserPreferences>({ schemaVersion: 5, kind: "userPreferences" });
 const busy = ref(false),
@@ -40,14 +19,13 @@ const pendingRemoval = ref<Connection>();
 const draftId = ref<string>(crypto.randomUUID());
 const name = ref(""),
   provider = ref<Connection["provider"]>("codex"),
-  sourceType = ref<ConnectionSource["type"]>("existing_login");
+  sourceType = ref<ConnectionSource["type"]>("existing_config");
 const directory = ref(""),
   apiUrl = ref(""),
   model = ref(""),
-  profile = ref<Connection["profile"]>("conversation"),
-  credentialRef = ref("");
-const credentialType = ref<"api_key" | "auth_token" | "oauth_token">("api_key"),
-  cliProfile = ref("");
+  profile = ref<Connection["profile"]>("conversation");
+const replaceKey = ref(false);
+const credentialType = ref<"api_key" | "auth_token">("api_key");
 const historyMode = ref("none"),
   recent = ref(5),
   preview = ref<HistoryPreview>();
@@ -97,45 +75,24 @@ watch(
 );
 watch(provider, (value) => {
   if (value === "deepseek") sourceType.value = "custom_api";
-  if (value === "claude" && sourceType.value === "existing_login")
-    sourceType.value = "existing_api";
   if (value !== "codex") profile.value = "conversation";
 });
-watch(
-  [provider, sourceType, credentialType],
-  () => {
-    void discardStaged();
-    credentialRef.value = "";
-  },
-  { flush: "sync" },
-);
 function edit(row?: Connection) {
-  void discardStaged();
+  replaceKey.value = false;
   draftId.value = row?.connectionId ?? crypto.randomUUID();
   editing.value = row;
   name.value = row?.name ?? "";
   provider.value = row?.provider ?? "codex";
-  sourceType.value = row?.source.type ?? "existing_login";
+  sourceType.value = row?.source.type ?? "existing_config";
   directory.value =
-    row && row.source.type !== "custom_api" ? row.source.directory : "";
+    row && row.source.type !== "custom_api" ? (row.source.directory ?? "") : "";
   apiUrl.value = row?.source.type === "custom_api" ? row.source.apiUrl : "";
   credentialType.value =
     row?.source.type === "custom_api"
       ? (row.source.credentialType ?? "api_key")
       : "api_key";
-  cliProfile.value =
-    row?.source.type === "existing_api" ? (row.source.profile ?? "") : "";
   model.value = row?.source.model ?? "";
   profile.value = row?.profile ?? "conversation";
-  credentialRef.value =
-    row?.source.type === "custom_api" ? row.credentialRef : "";
-}
-async function secure() {
-  const previous = stagedCredential;
-  await discardStaged();
-  if (credentialRef.value === previous) credentialRef.value = "";
-  credentialRef.value = await enterCredential();
-  stagedCredential = credentialRef.value;
 }
 async function save() {
   await run(async () => {
@@ -151,54 +108,37 @@ async function save() {
             credentialType:
               provider.value === "claude" ? credentialType.value : "api_key",
           }
-        : sourceType.value === "existing_api"
-          ? {
-              type: "existing_api",
-              directory: directory.value.trim(),
-              ...(provider.value === "codex" && cliProfile.value.trim()
-                ? { profile: cliProfile.value.trim() }
-                : {}),
-              ...(model.value.trim() ? { model: model.value.trim() } : {}),
-            }
-          : {
-              type: "existing_login",
-              directory: directory.value.trim(),
-              ...(model.value.trim() ? { model: model.value.trim() } : {}),
-            };
-    const reference =
-      source.type === "custom_api"
-        ? credentialRef.value
-        : (old?.credentialRef ?? `external-${crypto.randomUUID()}`);
-    if (!reference) throw new Error("credential_required");
+        : {
+            type: "existing_config",
+            ...(directory.value.trim()
+              ? { directory: directory.value.trim() }
+              : {}),
+            ...(model.value.trim() ? { model: model.value.trim() } : {}),
+          };
     try {
-      await runtime.saveConnection(
-        {
-          schemaVersion: 5,
-          kind: "connection",
-          connectionId: draftId.value,
-          name: name.value.trim(),
-          provider: provider.value,
-          configRevision: (old?.configRevision ?? 0) + 1,
-          credentialRevision: old
-            ? old.credentialRevision + Number(reference !== old.credentialRef)
-            : 1,
-          accountRef: old?.accountRef ?? crypto.randomUUID(),
-          profile: profile.value,
-          status: "unverified",
-          source,
-          credentialRef: reference,
-        },
-        old?.configRevision ?? null,
-      );
+      const candidate: Connection = {
+        schemaVersion: 5,
+        kind: "connection",
+        connectionId: draftId.value,
+        name: name.value.trim(),
+        provider: provider.value,
+        configRevision: (old?.configRevision ?? 0) + 1,
+        profile: profile.value,
+        status: "unverified",
+        source,
+      };
+      const expected = old?.configRevision ?? null;
+      if (nativeTestMode)
+        await saveNativeConnection(
+          candidate,
+          expected,
+          replaceKey.value || old?.source.type !== "custom_api",
+        );
+      else await runtime.saveConnection(candidate, expected);
     } catch (failure) {
-      if (stagedCredential) {
-        await discardStaged();
-        credentialRef.value = "";
-      }
       await load().catch(() => {});
       throw failure;
     }
-    stagedCredential = "";
     edit();
     await load();
     c.state.history.clear();
@@ -279,7 +219,7 @@ async function history() {
         <p>
           确认删除 {{ pendingRemoval.name }}（{{
             labels.get(pendingRemoval.provider)
-          }}）？连接配置将移除，不再使用的凭据会清理；所有会话历史保留。
+          }}）？连接将不可再使用，保存的 API 密钥会删除；所有会话历史保留。
         </p>
         <button :disabled="busy" @click="pendingRemoval = undefined">
           取消删除
@@ -288,10 +228,6 @@ async function history() {
           确认删除
         </button>
       </div>
-      <p v-if="provider === 'claude' && sourceType === 'existing_login'">
-        当前无法可靠核验 Claude 已有登录的账号身份，请选择已有 API 配置或自定义
-        API。
-      </p>
       <form class="connection-form" @submit.prevent="save">
         <h3>{{ editing ? "编辑连接" : "添加连接" }}</h3>
         <label>名称<input v-model="name" required maxlength="64" /></label>
@@ -304,11 +240,8 @@ async function history() {
         >
         <label
           >认证来源<select v-model="sourceType">
-            <option v-if="provider === 'codex'" value="existing_login">
-              已有 CLI 登录
-            </option>
-            <option v-if="provider !== 'deepseek'" value="existing_api">
-              已有 CLI API 配置
+            <option v-if="provider !== 'deepseek'" value="existing_config">
+              本机已有配置
             </option>
             <option value="custom_api">自定义 API</option>
           </select></label
@@ -316,39 +249,33 @@ async function history() {
         <label v-if="sourceType !== 'custom_api'"
           >配置目录<input
             v-model="directory"
-            required
-            placeholder="配置目录的绝对路径"
-        /></label>
-        <label v-if="sourceType === 'existing_api' && provider === 'codex'"
-          >Codex profile<input
-            v-model="cliProfile"
-            placeholder="留空使用 CLI 默认 profile"
+            placeholder="留空使用 ~/.codex 或 ~/.claude"
         /></label>
         <template v-if="sourceType === 'custom_api'"
           ><label v-if="provider === 'claude'"
             >凭据类型<select v-model="credentialType">
               <option value="api_key">API Key</option>
               <option value="auth_token">Auth Token</option>
-              <option value="oauth_token">OAuth Token</option>
             </select></label
           ><label
             >API 地址<input v-model="apiUrl" required placeholder="https://…"
           /></label>
-          <div>
-            <button
-              type="button"
-              :disabled="busy || !nativeTestMode"
-              @click="run(secure)"
-            >
-              {{ credentialRef ? "更换安全凭据" : "填写安全凭据" }}</button
-            ><span v-if="credentialRef"> 已选择凭据</span>
-          </div></template
-        >
+          <label v-if="editing?.source.type === 'custom_api'">
+            <input v-model="replaceKey" type="checkbox" />更换 API 密钥
+          </label>
+          <p>
+            {{
+              editing?.source.type === "custom_api" && !replaceKey
+                ? "保存时保留原密钥。"
+                : "点击验证并保存后，在原生输入框填写 API 密钥。"
+            }}
+          </p>
+        </template>
         <label
           >模型<input
             v-model="model"
             :required="sourceType === 'custom_api'"
-            placeholder="模型名称"
+            placeholder="留空使用官方配置的默认模型"
         /></label>
         <label
           >工具<select v-model="profile">
@@ -363,8 +290,7 @@ async function history() {
             :disabled="
               busy ||
               c.state.connection !== 'connected' ||
-              (sourceType === 'custom_api' && !credentialRef) ||
-              (provider === 'claude' && sourceType === 'existing_login')
+              (sourceType === 'custom_api' && !nativeTestMode)
             "
           >
             验证并保存</button

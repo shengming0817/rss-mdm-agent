@@ -98,7 +98,7 @@ export async function nativeFixture(
     namespace: fixtureSession().namespace,
     provider: "codex",
     config: { id: "native-fixture", revision: "1" },
-    accountRef: "fixture-account",
+
     workingDirectory: cwd,
     permissions: controlled ? "host_mediated" : "tools_disabled",
   };

@@ -1,6 +1,5 @@
 import { promptText } from "@rss-mdm-agent/ai-contract";
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
 import {
   boundedJson,
   decode,
@@ -175,7 +174,6 @@ export class CodexAdapter implements ProviderAgentPort {
       if (
         source &&
         (!compatible(source) ||
-          source.accountRef !== config.accountRef ||
           !same(source.config, config.config) ||
           source.workspaceId !== workspaceIdentity(config.workingDirectory))
       )
@@ -186,7 +184,7 @@ export class CodexAdapter implements ProviderAgentPort {
             namespace: copy(config.namespace),
             provider: config.provider,
             config: copy(config.config),
-            accountRef: config.accountRef,
+
             ...(source ? { history: copy(source) } : {}),
           },
           nextBudget(),
@@ -257,50 +255,32 @@ export class CodexAdapter implements ProviderAgentPort {
         nextBudget(),
       );
       if (
-        handshake.codexHome !== resolved.nativeDirectory ||
+        handshake.codexHome !== launch.spec.env.CODEX_HOME ||
         typeof handshake.userAgent !== "string" ||
         !handshake.userAgent.includes(CODEX_VERSION)
       )
         return fail("unsupported_version");
       connection.notify("initialized");
-      if (resolved.authentication.type === "chatgpt_tokens") {
-        const login = await rpc(
-          connection,
-          "account/login/start",
-          {
-            type: "chatgptAuthTokens",
-            accessToken: resolved.authentication.accessToken,
-            chatgptAccountId: resolved.authentication.accountId,
-          },
-          nextBudget(),
-        );
-        const account = await rpc(
-          connection,
-          "account/read",
-          { refreshToken: false },
-          nextBudget(),
-        );
-        if (
-          login.type !== "chatgptAuthTokens" ||
-          !account.requiresOpenaiAuth ||
-          account.account?.type !== "chatgpt"
-        )
-          return fail("permission_denied");
-      }
-      await this.checkConfiguration(
+      // Config tables merge recursively upstream. Explicitly disable every inherited MCP server.
+      const effective = await this.checkConfiguration(
         launch.settings,
         launch.overrides,
         nextBudget(),
       );
+      const servers = effective.mcp_servers ?? {};
+      const mcp = Object.fromEntries(
+        Object.keys(servers).map((name) => [name, { enabled: false }]),
+      );
+      Object.assign(mcp, launch.overrides.mcp_servers ?? {});
+      launch.overrides.mcp_servers = mcp;
       const params = {
         ...(resolved.model === undefined ? {} : { model: resolved.model }),
         ...(resolved.developerInstructions
           ? { developerInstructions: resolved.developerInstructions }
           : {}),
-        modelProvider:
-          resolved.authentication.type === "api_key"
-            ? "rss_host_model"
-            : "openai",
+        ...(resolved.authentication.type === "api_key"
+          ? { modelProvider: "rss_host_model" }
+          : {}),
         cwd: config.workingDirectory,
         approvalPolicy: "on-request" as const,
         sandbox: "read-only" as const,
@@ -345,7 +325,12 @@ export class CodexAdapter implements ProviderAgentPort {
         response = await rpc(
           connection,
           "thread/start",
-          { ...params, dynamicTools: [], environments: [], ephemeral: false },
+          {
+            ...params,
+            dynamicTools: [],
+            environments: [],
+            ephemeral: resolved.verification ?? false,
+          },
           nextBudget(),
         );
       }
@@ -376,7 +361,7 @@ export class CodexAdapter implements ProviderAgentPort {
         adapterVersion: ADAPTER_VERSION,
         generation: randomUUID(),
         workspaceId: workspaceIdentity(config.workingDirectory),
-        accountRef: config.accountRef,
+
         config: copy(config.config),
         nativeSessionId: thread.sessionId,
         nativeThreadId: thread.id,
@@ -386,7 +371,14 @@ export class CodexAdapter implements ProviderAgentPort {
         launch.overrides,
         nextBudget(),
       );
-      await this.checkMcp(nextBudget());
+      await this.checkMcp(
+        nextBudget(),
+        new Set(
+          Object.keys(servers).filter(
+            (name) => !this.bridge || name !== HOST_SERVER,
+          ),
+        ),
+      );
       if (this.closed || this.failed || !live(nextBudget()))
         return fail("unavailable");
       this.initialized = true;
@@ -416,63 +408,40 @@ export class CodexAdapter implements ProviderAgentPort {
     settings: Record<string, unknown>,
     overrides: Record<string, unknown>,
     budget: Budget,
-  ): Promise<void> {
+  ): Promise<Record<string, any>> {
     const result = await rpc(
       this.connection!,
       "config/read",
       { includeLayers: true, cwd: this.configuration!.workingDirectory },
       budget,
     );
-    if (!Array.isArray(result.layers))
+    if (result.layers?.some((layer) => layer.name.type === "project"))
       throw new CodexConfigurationFailure("permission_denied");
-    let user = 0,
-      flags = 0;
-    for (const layer of result.layers) {
-      if (layer.disabledReason)
-        throw new CodexConfigurationFailure("permission_denied");
-      if (
-        layer.name.type === "user" &&
-        layer.name.file ===
-          join(this.resolved!.nativeDirectory, "config.toml") &&
-        layer.name.profile === null &&
-        same(layer.config, settings)
-      )
-        user++;
-      else if (
-        layer.name.type === "sessionFlags" &&
-        same(layer.config, overrides) &&
-        Object.keys(overrides).length
-      )
-        flags++;
-      else if (layer.name.type === "system" && same(layer.config, {})) {
-        /* Empty system policy contributes no settings. */
-      } else throw new CodexConfigurationFailure("permission_denied");
-    }
-    if (user !== 1 || flags !== (Object.keys(overrides).length ? 1 : 0))
-      throw new CodexConfigurationFailure("permission_denied");
-    const effective = result.config as any;
+    const effective = result.config as Record<string, any>;
+    const subset = (actual: any, expected: any): boolean => {
+      if (expected && typeof expected === "object" && !Array.isArray(expected))
+        return (
+          !!actual &&
+          Object.entries(expected).every(([key, value]) =>
+            subset(actual[key], value),
+          )
+        );
+      return same(actual, expected);
+    };
+    // User layers may supply models/authentication. CLI flags must still seal product capabilities.
+    const { mcp_servers: _, tools, ...restrictions } = settings;
     if (
-      effective.approval_policy !== "on-request" ||
-      effective.sandbox_mode !== "read-only" ||
-      effective.web_search !== "disabled"
-    )
-      throw new CodexConfigurationFailure("permission_denied");
-    const expected = (overrides.mcp_servers ?? settings.mcp_servers) as Record<
-      string,
-      unknown
-    >;
-    if (
-      !same(
-        Object.keys(effective.mcp_servers ?? {}).sort(),
-        Object.keys(expected).sort(),
+      !subset(effective, restrictions) ||
+      !result.layers?.some(
+        (layer) =>
+          layer.name.type === "sessionFlags" &&
+          subset((layer.config as any).tools, tools),
       )
     )
       throw new CodexConfigurationFailure("permission_denied");
-    for (const [name, fields] of Object.entries(expected))
-      for (const [key, value] of Object.entries(fields as object))
-        if (!same(effective.mcp_servers[name]?.[key], value))
-          throw new CodexConfigurationFailure("permission_denied");
+    return effective;
   }
+
   private checkThread(thread: Thread, restored: boolean): void {
     // 0.155.0 resume/fork reconstitute the local environment even when the owned
     // source selected none. Every turn explicitly selects none again.
@@ -497,7 +466,10 @@ export class CodexAdapter implements ProviderAgentPort {
     )
       throw new Error("foreign native thread");
   }
-  private async checkMcp(budget: Budget): Promise<void> {
+  private async checkMcp(
+    budget: Budget,
+    disabled: ReadonlySet<string>,
+  ): Promise<void> {
     const nextBudget = scope(budget),
       servers: any[] = [],
       cursors = new Set<string>();
@@ -528,6 +500,18 @@ export class CodexAdapter implements ProviderAgentPort {
         cursors.add(cursor);
       }
     } while (cursor);
+    for (let index = servers.length - 1; index >= 0; index--) {
+      const server = servers[index];
+      if (!disabled.has(server.name)) continue;
+      if (
+        server.runtimeStatus !== "disabled" ||
+        !same(server.tools, {}) ||
+        !same(server.resources, []) ||
+        !same(server.resourceTemplates, [])
+      )
+        throw new Error("inherited MCP not disabled");
+      servers.splice(index, 1);
+    }
     if (!this.bridge) {
       if (servers.length) throw new Error("unexpected tools");
       return;
@@ -852,50 +836,9 @@ export class CodexAdapter implements ProviderAgentPort {
       body,
     });
   }
-  private async refreshAuthentication(message: NativeMessage): Promise<void> {
-    const auth = this.resolved?.authentication;
-    const params =
-      message.params as import("./protocol/v2/ChatgptAuthTokensRefreshParams.js").ChatgptAuthTokensRefreshParams;
-    try {
-      if (
-        this.closed ||
-        auth?.type !== "chatgpt_tokens" ||
-        params?.reason !== "unauthorized" ||
-        params.previousAccountId !== auth.accountId
-      )
-        throw new Error("authentication unavailable");
-      const b = { timeoutMs: 5000, signal: AbortSignal.timeout(5000) };
-      const next = await bounded(auth.refresh(b), b);
-      if (
-        this.closed ||
-        next.accountId !== auth.accountId ||
-        !next.accessToken ||
-        next.accessToken === auth.accessToken
-      )
-        throw new Error("authentication unavailable");
-      const response: import("./protocol/v2/ChatgptAuthTokensRefreshResponse.js").ChatgptAuthTokensRefreshResponse =
-        {
-          accessToken: next.accessToken,
-          chatgptAccountId: next.accountId,
-          chatgptPlanType: null,
-        };
-      auth.accessToken = next.accessToken;
-      this.connection!.reply(message.id!, response);
-    } catch {
-      this.connection?.reject(message.id!);
-      this.breakIncarnation();
-    }
-  }
   private onNative(message: NativeMessage, replay = false): void {
     if (this.closed) return;
     if (message.id !== undefined) {
-      if (
-        message.method === "account/chatgptAuthTokens/refresh" &&
-        this.resolved?.authentication.type === "chatgpt_tokens"
-      ) {
-        void this.refreshAuthentication(message);
-        return;
-      }
       this.connection!.reject(message.id);
       return;
     }

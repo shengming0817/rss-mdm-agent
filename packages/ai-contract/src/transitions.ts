@@ -1666,12 +1666,7 @@ export function activateStage(
         status: "active",
         revision: copy.session.revision + 1,
       },
-      providerStage(
-        binding,
-        input.opened.capabilities,
-        input.configRevision,
-        input.credentialRevision,
-      ),
+      providerStage(binding, input.opened.capabilities, input.configRevision),
     );
     valid(copy.session, defaultLimits);
     copy.generations.add(binding.generation);

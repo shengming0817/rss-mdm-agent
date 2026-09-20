@@ -109,7 +109,6 @@ function validRow(row, installations) {
     binding.adapterVersion === expected.adapterVersion &&
     binding.config?.id === "local" &&
     binding.config.revision === (controlled ? "2" : "1") &&
-    binding.accountRef === "test-account" &&
     id(binding.generation) &&
     id(binding.nativeSessionId) &&
     (row.provider !== "codex" || id(binding.nativeThreadId)) &&

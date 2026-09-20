@@ -46,7 +46,7 @@ async function setup(t, overrides = {}, admit = true) {
     namespace: { ...fixtureCaller, sessionId: "session-1" },
     provider: "codex",
     config: { id: "cfg", revision: "1" },
-    accountRef: "account",
+
     workingDirectory: cwd,
     permissions: "tools_disabled",
   };
@@ -109,9 +109,7 @@ async function setup(t, overrides = {}, admit = true) {
             layers: [
               {
                 name: {
-                  type: "user",
-                  file: join(resolved.nativeDirectory, "config.toml"),
-                  profile: null,
+                  type: "sessionFlags",
                 },
                 config: nativeSettings(resolved),
               },
@@ -224,58 +222,28 @@ async function setup(t, overrides = {}, admit = true) {
   };
 }
 
-test("existing ChatGPT tokens authenticate in the private home and refresh only the original account", async (t) => {
+test("existing configuration is passed to Codex without login/account/token RPC", async (t) => {
   const f = await setup(t, {}, false);
-  delete f.resolved.apiUrl;
-  delete f.resolved.apiKey;
-  let refreshAccount = "account-1";
   f.resolved.authentication = {
-    type: "chatgpt_tokens",
-    accessToken: "access-fixture",
-    accountId: "account-1",
-    refresh: async () => ({
-      accessToken: "refreshed-fixture",
-      accountId: refreshAccount,
-    }),
+    type: "existing_config",
+    directory: f.resolved.nativeDirectory,
   };
-  f.fault((method) => {
-    if (method === "account/login/start") return { type: "chatgptAuthTokens" };
-    if (method === "account/read")
-      return {
-        requiresOpenaiAuth: true,
-        account: {
-          type: "chatgpt",
-          email: "fixture@example.test",
-          planType: "plus",
-        },
-      };
-  });
+  f.resolved.verification = true;
   unwrap(
     await VerifiedProviderSession.open(f.adapter, f.configuration, budget()),
   );
   assert.equal(
-    f.calls.find((c) => c.method === "account/login/start").params.type,
-    "chatgptAuthTokens",
+    f.calls.some((c) => c.method.startsWith("account/")),
+    false,
   );
   assert.equal(
     f.calls.find((c) => c.method === "thread/start").params.modelProvider,
-    "openai",
+    undefined,
   );
-  f.emit(
-    "account/chatgptAuthTokens/refresh",
-    { reason: "unauthorized", previousAccountId: "account-1" },
-    80,
+  assert.equal(
+    f.calls.find((c) => c.method === "thread/start").params.ephemeral,
+    true,
   );
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.equal(f.replies[0].result.chatgptAccountId, "account-1");
-  refreshAccount = "different-account";
-  f.emit(
-    "account/chatgptAuthTokens/refresh",
-    { reason: "unauthorized", previousAccountId: "account-1" },
-    81,
-  );
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.ok(f.rejected.includes(81));
 });
 
 // Each completed dispatch retains submitted + running + terminal observations.
@@ -517,9 +485,7 @@ test("Codex participates in shared ProviderAgentPort conformance", async (t) => 
             layers: [
               {
                 name: {
-                  type: "user",
-                  file: join(fixture.resolved.nativeDirectory, "config.toml"),
-                  profile: null,
+                  type: "sessionFlags",
                 },
                 config: nativeSettings(fixture.resolved),
               },

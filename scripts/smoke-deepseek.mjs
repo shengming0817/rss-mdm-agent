@@ -135,7 +135,7 @@ async function main() {
     },
     provider: "deepseek",
     config: { id: "deepseek-smoke", revision: "1" },
-    accountRef: "smoke-account",
+
     workingDirectory: directory,
     permissions: "tools_disabled",
   };

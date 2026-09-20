@@ -12,7 +12,7 @@ import {
 const configuration = {
   provider: "fake",
   config: { id: "config-1", revision: "1" },
-  accountRef: "account-1",
+
   workingDirectory: ".",
   namespace: fixtureSession().namespace,
   permissions: "tools_disabled",
@@ -102,16 +102,12 @@ for (const [name, mutate] of [
       return x;
     },
   ],
-  ...[
-    "accountRef",
-    "nativeSessionId",
-    "nativeRequestId",
-    "provider",
-    "nativeRunId",
-  ].map((key) => [
-    key,
-    (x) => ({ ...x, binding: { ...x.binding, [key]: "wrong" } }),
-  ]),
+  ...["nativeSessionId", "nativeRequestId", "provider", "nativeRunId"].map(
+    (key) => [
+      key,
+      (x) => ({ ...x, binding: { ...x.binding, [key]: "wrong" } }),
+    ],
+  ),
 ])
   test(`provider conformance rejects ${name}`, () =>
     assert.rejects(callbackHarness(mutate)));
@@ -325,7 +321,7 @@ test("controlled admission requires a trusted verifier and binds immutable evide
     { providerVersion: "other" },
     { adapterVersion: "other" },
     { generation: "other" },
-    { accountRef: "other" },
+    { config: { id: "foreign-config", revision: "99" } },
     { nativeSessionId: "other" },
     { config: { id: "config-1", revision: "other" } },
   ])
@@ -358,9 +354,15 @@ test("controlled admission requires a trusted verifier and binds immutable evide
     (
       await VerifiedProviderSession.open(
         port,
-        providerConfiguration({ ...config, accountRef: "other" }),
+        providerConfiguration({
+          ...config,
+          config: { id: "foreign-config", revision: "99" },
+        }),
         budget(),
-        providerAdmission({ ...config, accountRef: "other" }),
+        providerAdmission({
+          ...config,
+          config: { id: "foreign-config", revision: "99" },
+        }),
       )
     ).ok,
     false,
@@ -682,7 +684,7 @@ test("verified resume rejects stale incarnation, foreign session and configurati
   for (const patch of [
     { generation: prior.generation },
     { nativeSessionId: "foreign" },
-    { accountRef: "foreign" },
+    { config: { id: "foreign-config", revision: "99" } },
   ]) {
     let closed = 0;
     const port = new ScriptedProvider();

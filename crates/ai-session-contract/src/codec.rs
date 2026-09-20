@@ -236,7 +236,6 @@ fn context(v: &Value) -> Result<(), ContractError> {
                     !ids.insert(stage["stageId"].as_str())
                         || stage["connectionId"] != stage["binding"]["config"]["id"]
                         || stage["configRevision"].as_u64() == Some(0)
-                        || stage["credentialRevision"].as_u64() == Some(0)
                 })
         }
         Some("sessionPage") => {

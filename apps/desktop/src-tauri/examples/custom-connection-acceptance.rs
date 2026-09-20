@@ -1,4 +1,5 @@
-//! Real WebView -> AppKit secure entry -> Keychain -> native broker -> Host acceptance.
+//! Real WebView -> AppKit secure entry -> private Host channel -> encrypted SQLite.
+//! The master-key backend is injected; this test never accesses the user Keychain.
 //! The supplied credential is synthetic and is never written to the report or stdout.
 use rss_mdm_desktop::composition::{ipc, lifecycle::Lifecycle, runtime::DesktopRuntime};
 use std::{
@@ -13,6 +14,15 @@ use tauri::Manager;
 #[path = "../src/navigation.rs"]
 mod navigation;
 
+struct TestKey;
+impl rss_mdm_desktop::composition::credentials::KeyBackend for TestKey {
+    fn read(&self) -> Result<Option<Vec<u8>>, ()> {
+        Ok(Some(vec![7; 32]))
+    }
+    fn create(&self, _: &[u8]) -> Result<(), ()> {
+        Err(())
+    }
+}
 struct Evidence {
     path: PathBuf,
     finished: AtomicBool,
@@ -168,9 +178,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let setup = evidence.clone();
     let app = ipc::register(tauri::Builder::default())
         .setup(move |app| {
-            app.manage(tauri::async_runtime::block_on(DesktopRuntime::start(
-                &root, &artifact,
-            ))?);
+            app.manage(tauri::async_runtime::block_on(
+                DesktopRuntime::start_with_key_backend(&root, &artifact, TestKey),
+            )?);
             window(app.handle(), setup.clone())?;
             automate_secure_entry(secret.clone(), setup.clone());
             let handle = app.handle().clone();

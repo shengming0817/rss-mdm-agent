@@ -37,14 +37,20 @@ export type ClaudeConfiguration = ProviderConfiguration & {
 export interface ResolvedClaudeConfiguration {
   configuration: ClaudeConfiguration;
   configurationDirectory: string;
-  apiUrl: string;
-  credential: { type: "api_key" | "auth_token" | "oauth_token"; value: string };
+  authentication:
+    | { type: "existing_config"; directory: string }
+    | {
+        type: "custom_api";
+        apiUrl: string;
+        credential: { type: "api_key" | "auth_token"; value: string };
+      };
+  verification?: boolean;
   model?: string;
 }
 export interface ClaudeAdapterOptions {
   readonly tools?: ToolEndpoint;
   resolveConfiguration(
-    identity: Pick<Binding, "config" | "accountRef">,
+    identity: Pick<Binding, "config">,
     budget: Budget,
   ): Promise<ResolvedClaudeConfiguration>;
   clock?: Clock;
@@ -73,47 +79,49 @@ function privateDirectory(path: string): string {
 }
 /** No raw SDK option passthrough. Settings, child environment and tool inventory are sealed. */
 export function sdkOptions(resolved: ResolvedClaudeConfiguration): Options {
-  const { configuration: config, credential } = resolved;
-  const url = new URL(resolved.apiUrl);
-  if (
-    url.protocol !== "https:" &&
-    !(
-      url.protocol === "http:" &&
-      ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)
-    )
-  )
+  const { configuration: config, authentication } = resolved;
+  if (!isAbsolute(config.workingDirectory))
     throw new Error("invalid configuration");
-  if (
-    url.username ||
-    url.password ||
-    url.search ||
-    url.hash ||
-    !credential.value ||
-    !["api_key", "auth_token", "oauth_token"].includes(credential.type) ||
-    !isAbsolute(config.workingDirectory) ||
-    !isAbsolute(resolved.configurationDirectory)
-  )
-    throw new Error("invalid configuration");
+  const directory =
+    authentication.type === "existing_config"
+      ? authentication.directory
+      : privateDirectory(resolved.configurationDirectory);
+  if (!isAbsolute(directory)) throw new Error("invalid configuration");
   const env: Record<string, string> = {
-    ANTHROPIC_BASE_URL: resolved.apiUrl,
-    CLAUDE_CONFIG_DIR: privateDirectory(resolved.configurationDirectory),
+    CLAUDE_CONFIG_DIR: directory,
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+    PATH:
+      process.platform === "win32"
+        ? join(resolved.configurationDirectory, "empty-bin")
+        : "/usr/bin:/bin",
+    NoDefaultCurrentDirectoryInExePath: "1",
   };
-  // No host search path: native metadata helpers must not select user shims.
-  env.PATH =
-    process.platform === "win32"
-      ? join(resolved.configurationDirectory, "empty-bin")
-      : "/usr/bin:/bin";
-  env.NoDefaultCurrentDirectoryInExePath = "1";
-  for (const key of ["SystemRoot", "WINDIR", "TEMP", "TMP", "TMPDIR"])
+  for (const key of ["HOME", "SystemRoot", "WINDIR", "TEMP", "TMP", "TMPDIR"])
     if (process.env[key]) env[key] = process.env[key]!;
-  env[
-    credential.type === "api_key"
-      ? "ANTHROPIC_API_KEY"
-      : credential.type === "oauth_token"
-        ? "CLAUDE_CODE_OAUTH_TOKEN"
+  if (authentication.type === "custom_api") {
+    const url = new URL(authentication.apiUrl),
+      credential = authentication.credential;
+    if (
+      (url.protocol !== "https:" &&
+        !(
+          url.protocol === "http:" &&
+          ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)
+        )) ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash ||
+      !credential.value ||
+      !["api_key", "auth_token"].includes(credential.type)
+    )
+      throw new Error("invalid configuration");
+    env.ANTHROPIC_BASE_URL = authentication.apiUrl;
+    env[
+      credential.type === "api_key"
+        ? "ANTHROPIC_API_KEY"
         : "ANTHROPIC_AUTH_TOKEN"
-  ] = credential.value;
+    ] = credential.value;
+  }
 
   return {
     cwd: config.workingDirectory,
@@ -123,8 +131,9 @@ export function sdkOptions(resolved: ResolvedClaudeConfiguration): Options {
     allowedTools: [],
     permissionMode: "default",
     allowDangerouslySkipPermissions: false,
-    settingSources: [],
+    settingSources: authentication.type === "existing_config" ? ["user"] : [],
     settings: {
+      disableAllHooks: true,
       disableBundledSkills: true,
       skillOverrides: { doctor: "off" },
       disableSkillShellExecution: true,
@@ -138,7 +147,7 @@ export function sdkOptions(resolved: ResolvedClaudeConfiguration): Options {
     agents: {},
     additionalDirectories: [],
     includePartialMessages: true,
-    persistSession: true,
+    persistSession: !resolved.verification,
     enableFileCheckpointing: false,
     maxTurns: 32,
     stderr: () => {},

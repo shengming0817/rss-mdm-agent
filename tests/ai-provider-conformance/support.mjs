@@ -1,13 +1,13 @@
 import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import { openSqliteStore } from "../../packages/ai-store-sqlite/dist/index.js";
-import { createServer as credentialServer } from "node:net";
+import { ConnectionSecrets } from "../../apps/ai-host/dist/secrets.js";
+import { NativeControl } from "../../apps/ai-host/dist/native.js";
 import { spawn } from "node:child_process";
 import { executionServer } from "../ai-host/rust-execution.mjs";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { connect } from "node:net";
 import { once } from "node:events";
-import { Readable, Writable } from "node:stream";
+import { Duplex, PassThrough } from "node:stream";
 import { mkdtemp, mkdir, writeFile, rm, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -174,9 +174,6 @@ export async function configuration(
   const config = {
     version: 1,
     databasePath: join(directory, "ai.sqlite"),
-    socketPath: join(directory, "ai.sock"),
-    credentialSocket: join(directory, "credentials.sock"),
-    usersPath: join(directory, "users.json"),
     nativeDirectory,
     workingDirectory: directory,
     caller: {
@@ -187,7 +184,7 @@ export async function configuration(
     session: {
       provider,
       config: { id: "local", revision: "1" },
-      accountRef: "test-account",
+
       profile,
     },
     connection: {
@@ -197,9 +194,7 @@ export async function configuration(
       name: "Native fixture",
       provider,
       configRevision: 1,
-      credentialRevision: 1,
-      accountRef: "test-account",
-      credentialRef: "fixture-reference",
+
       profile,
       status: "ready",
       source: {
@@ -210,81 +205,86 @@ export async function configuration(
       },
     },
   };
-  const user = {
-    schemaVersion: 5,
-    kind: "testUser",
-    userId: "fixture-actor",
-    displayName: "Fixture",
-    nameKey: "fixture",
-  };
-  const current = {
-    schemaVersion: 5,
-    kind: "userContext",
-    user,
-    generation: "fixture-generation",
-  };
-  await writeFile(
-    config.usersPath,
-    JSON.stringify({
-      schemaVersion: 5,
-      kind: "testUserPage",
-      users: [user],
-      current,
-    }),
-    { mode: 0o600 },
-  );
   const store = unwrap(
     openSqliteStore({ path: config.databasePath, mode: "create" }),
   );
-  unwrap(await store.saveConnection(config.caller, config.connection, null));
-  await store.close(budget());
-  // The broker supplies a fixture key to real SDK processes. It is not Keychain evidence.
-  const broker = credentialServer((socket) =>
-    socket.once("data", () =>
-      socket.end(
-        JSON.stringify({ ok: true, value: { value: "fixture-only-key" } }) +
-          "\n",
-      ),
+  const secrets = new ConnectionSecrets(store, async () => Buffer.alloc(32, 7));
+  unwrap(
+    await store.saveConnection(
+      config.caller,
+      config.connection,
+      null,
+      await secrets.seal(config.caller, config.connection, "fixture-only-key"),
     ),
   );
-  broker.listen(config.credentialSocket);
-  await once(broker, "listening");
-  broker.unref();
+  await store.close(budget());
   const path = join(directory, "configuration.json");
   await writeConfiguration(path, config);
-  return { config, path, broker };
+  return { config, path };
 }
 export async function writeConfiguration(path, config) {
   const { caller, session, connection, ...paths } = config;
   await writeFile(path, JSON.stringify(paths), { mode: 0o600 });
 }
-export async function clientAt(socketPath) {
-  const socket = connect(socketPath);
-  await once(socket, "connect");
-  socket.write(
-    JSON.stringify({ type: "attach", generation: "fixture-generation" }) + "\n",
+export function nativePeer(socket) {
+  const inputs = new Map();
+  const control = new NativeControl(
+    async (method) => {
+      if (method !== "master_key") throw Error("unexpected parent request");
+      return [...Buffer.alloc(32, 7)];
+    },
+    (id, message) => inputs.get(id)?.enqueue(message),
+    socket,
   );
-  const client = new RuntimeClient(
-    ndJsonStream(Writable.toWeb(socket), Readable.toWeb(socket)),
-  );
+  return { control, inputs, next: 0 };
+}
+export async function clientAt(parent) {
+  const channel = `fixture-view-${++parent.next}`;
+  const readable = new ReadableStream({
+    start(input) {
+      parent.inputs.set(channel, input);
+    },
+  });
+  const writable = new WritableStream({
+    write(message) {
+      parent.control.emit(channel, message);
+    },
+  });
+  await parent.control.call("attach", {
+    channel,
+    context: {
+      schemaVersion: 5,
+      kind: "userContext",
+      generation: "fixture-generation",
+      user: {
+        schemaVersion: 5,
+        kind: "testUser",
+        userId: "fixture-actor",
+        displayName: "Fixture",
+        nameKey: "fixture",
+      },
+    },
+  });
+  const client = new RuntimeClient({ readable, writable });
   await client.initialize();
   return {
     client,
     close() {
       client.close();
-      socket.destroy();
+      parent.inputs.delete(channel);
+      void parent.control.call("detach", { channel }).catch(() => {});
     },
   };
 }
 export async function fixture(t, provider) {
   const directory = await realpath(await mkdtemp(join(tmpdir(), "rss-a06-")));
   const model = await modelServer(provider);
-  const { config, path, broker } = await configuration(
+  const { config, path } = await configuration(
     directory,
     provider,
     model.apiUrl,
   );
-  let app, rust;
+  let app, rust, parent;
   const peers = [];
   const f = {
     directory,
@@ -305,16 +305,24 @@ export async function fixture(t, provider) {
         { stdio: ["pipe", "pipe", "ignore"] },
       );
       rust.stdin.on("error", () => {});
-      app = await startLocalApp(path, {
-        input: rust.stdout,
-        output: rust.stdin,
-      });
+      const toHost = new PassThrough(),
+        fromHost = new PassThrough();
+      const native = Duplex.from({ readable: fromHost, writable: toHost });
+      const hostPipe = Duplex.from({ readable: toHost, writable: fromHost });
+      parent = nativePeer(native);
+      app = await startLocalApp(
+        path,
+        { input: rust.stdout, output: rust.stdin },
+        hostPipe,
+      );
       return app;
     },
     async stop() {
       for (const peer of peers.splice(0)) peer.close();
       await app?.close();
       app = undefined;
+      parent?.control.close();
+      parent = undefined;
       if (rust && rust.exitCode === null && rust.signalCode === null) {
         const exited = once(rust, "exit");
         rust.kill("SIGTERM");
@@ -323,7 +331,7 @@ export async function fixture(t, provider) {
       rust = undefined;
     },
     async connect() {
-      const peer = await clientAt(config.socketPath);
+      const peer = await clientAt(parent);
       peers.push(peer);
       return peer;
     },
@@ -333,7 +341,6 @@ export async function fixture(t, provider) {
       await f.stop();
     } finally {
       await model.close();
-      await new Promise((resolve) => broker.close(resolve));
     }
     await rm(directory, { recursive: true, force: true });
   });

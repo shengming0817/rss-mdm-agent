@@ -519,7 +519,6 @@ export class VerifiedProviderSession {
         parentId === childId ||
         !same(parentScope, childScope) ||
         configuration.provider !== this.#binding.provider ||
-        configuration.accountRef !== this.#binding.accountRef ||
         !same(configuration.config, this.#binding.config) ||
         workspaceIdentity(configuration.workingDirectory) !==
           this.#binding.workspaceId ||
@@ -651,7 +650,6 @@ export class VerifiedProviderSession {
     // are captured separately, so concurrent caller mutation cannot switch the verifier.
     const namespace = structuredClone(configuration.namespace);
     const config = structuredClone(configuration.config),
-      accountRef = configuration.accountRef,
       provider = configuration.provider;
     const tools = admission?.tools,
       verifier = admission?.verifier;
@@ -660,7 +658,6 @@ export class VerifiedProviderSession {
       ...configuration,
       namespace: structuredClone(namespace),
       config: structuredClone(config),
-      accountRef,
     };
     let initialized;
     if (fork) {
@@ -729,7 +726,6 @@ export class VerifiedProviderSession {
       binding.workspaceId !== workspaceId ||
       binding.provider !== provider ||
       !same(binding.config, config) ||
-      binding.accountRef !== accountRef ||
       capabilities.tools !== (controlled ? "host_mediated" : "disabled")
     )
       return denied();
@@ -741,7 +737,6 @@ export class VerifiedProviderSession {
         binding.provider !== prior.provider ||
         binding.providerVersion !== prior.providerVersion ||
         binding.adapterVersion !== prior.adapterVersion ||
-        binding.accountRef !== prior.accountRef ||
         !same(binding.config, prior.config) ||
         binding.nativeSessionId !== prior.nativeSessionId ||
         binding.nativeThreadId !== prior.nativeThreadId ||

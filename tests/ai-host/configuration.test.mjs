@@ -64,7 +64,7 @@ test("invalid local configuration fails before listening and emits only a closed
       session: {
         provider: "claude",
         config: { id: "c", revision: "1" },
-        accountRef: "a",
+
         profile: "conversation",
       },
       workingDirectory: directory,
@@ -109,9 +109,6 @@ test("invalid local configuration fails before listening and emits only a closed
   const current = {
     version: 1,
     databasePath: base.databasePath,
-    socketPath: base.socketPath,
-    credentialSocket: join(directory, "credentials.sock"),
-    usersPath: join(directory, "users.json"),
     nativeDirectory: directory,
     workingDirectory: directory,
   };

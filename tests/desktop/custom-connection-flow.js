@@ -64,9 +64,6 @@
     set(panel, "模型", window.__RSS_CUSTOM_CONNECTION__.model);
 
     progress("secure_entry");
-    await click("填写安全凭据", panel);
-    await wait(() => panel.textContent.includes("已选择凭据"));
-    progress("model_probe");
     await click("验证并保存", panel);
     const row = await wait(() =>
       [...panel.querySelectorAll("li")].find(

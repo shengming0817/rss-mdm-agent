@@ -57,7 +57,7 @@ export function fixtureSession(): Session {
         providerVersion: "fixture-1",
         adapterVersion: "fixture-1",
         generation: "generation-1",
-        accountRef: "account-1",
+
         nativeSessionId: "native-1",
         config: { id: "config-1", revision: "1" },
       },
@@ -433,7 +433,10 @@ async function runStoreBoundaries(
     { ...activeStage(s).binding, provider: "other" },
     { ...activeStage(s).binding, providerVersion: "other" },
     { ...activeStage(s).binding, adapterVersion: "other" },
-    { ...activeStage(s).binding, accountRef: "other" },
+    {
+      ...activeStage(s).binding,
+      config: { id: "foreign-config", revision: "99" },
+    },
     { ...activeStage(s).binding, nativeSessionId: "other" },
     {
       ...activeStage(s).binding,
@@ -1283,12 +1286,10 @@ async function runPreferencesConformance(store: SessionStore): Promise<void> {
     name: "Personal",
     provider: "codex",
     configRevision: 1,
-    credentialRevision: 1,
-    accountRef: "account",
-    credentialRef: "reference",
+
     status: "ready",
     profile: "conversation",
-    source: { type: "existing_login", directory: "/fixture" },
+    source: { type: "existing_config", directory: "/fixture" },
   };
   unwrap(await store.saveConnection(fixtureCaller, connection, null));
   await Promise.all([

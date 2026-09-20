@@ -15,8 +15,7 @@ const connection = (id) => ({
   name: id,
   provider: "deepseek",
   configRevision: 1,
-  credentialRevision: 1,
-  accountRef: `account-${id}`,
+
   profile: "conversation",
   status: "ready",
   source: {
@@ -24,7 +23,6 @@ const connection = (id) => ({
     apiUrl: "https://api.deepseek.com",
     model: "deepseek-chat",
   },
-  credentialRef: `credential-${id}`,
 });
 test("empty sessions and per-user connection revisions persist without provider credentials", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "rss-connections-")),

@@ -280,10 +280,7 @@ fn human_and_ai_share_the_same_approval_outcomes() {
     spec.request.initiator = Initiator::Ai {
         provider: id("test-provider"),
         os_session,
-        provider_account: ProviderAccountRef {
-            account: id("test-account"),
-            config: reference("config"),
-        },
+        config: reference("config"),
         conversation: id("conversation"),
         tool_call: id("call"),
     };

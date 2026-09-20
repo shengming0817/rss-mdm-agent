@@ -28,14 +28,6 @@ export function connectionRevision(
       return fail("invalid_input");
     if (!next.name.trim() || /\p{Cc}/u.test(next.name))
       return fail("invalid_input");
-    if (
-      previous
-        ? next.credentialRevision !==
-          previous.credentialRevision +
-            Number(next.credentialRef !== previous.credentialRef)
-        : next.credentialRevision !== 1
-    )
-      return fail("invalid_input");
     if (next.source.type === "custom_api") {
       const url = new URL(next.source.apiUrl);
       if (

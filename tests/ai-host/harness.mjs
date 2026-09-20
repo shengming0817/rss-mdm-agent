@@ -1,11 +1,7 @@
 import { unwrap } from "../../packages/ai-contract/dist/testing/index.js";
 /** An already admitted scripted context for process/recovery tests, never a product API. */
 export async function openFixture(host, store, caller, options, budget) {
-  const connectionId = [
-    options.config.id,
-    options.accountRef,
-    options.config.revision,
-  ].join(":");
+  const connectionId = [options.config.id, options.config.revision].join(":");
   const found = await store.connection(caller, connectionId);
   if (!found.ok)
     unwrap(
@@ -18,8 +14,7 @@ export async function openFixture(host, store, caller, options, budget) {
           name: connectionId,
           provider: "codex",
           configRevision: 1,
-          credentialRevision: 1,
-          accountRef: options.accountRef,
+
           profile: options.profile,
           status: "ready",
           source: {
@@ -27,7 +22,6 @@ export async function openFixture(host, store, caller, options, budget) {
             apiUrl: "https://example.invalid/v1",
             model: options.config.revision,
           },
-          credentialRef: "fixture-key",
         },
         null,
       ),

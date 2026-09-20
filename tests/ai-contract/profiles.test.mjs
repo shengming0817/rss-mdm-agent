@@ -36,8 +36,7 @@ test("connection summaries cannot carry secrets or an owner supplied by a page",
     name: "Work",
     provider: "codex",
     configRevision: 1,
-    credentialRevision: 1,
-    accountRef: "account",
+
     profile: "conversation",
     status: "unverified",
     source: {
@@ -45,7 +44,6 @@ test("connection summaries cannot carry secrets or an owner supplied by a page",
       apiUrl: "https://api.example.test/v1",
       model: "model",
     },
-    credentialRef: "opaque-ref",
   };
   assert.deepEqual(decode(JSON.stringify(row)), row);
   for (const bad of [

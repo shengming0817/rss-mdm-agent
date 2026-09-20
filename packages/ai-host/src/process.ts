@@ -58,6 +58,7 @@ export class WorkerPort implements ProviderAgentPort {
     private readonly namespace: Namespace,
     private readonly artifact: string,
     private readonly bridge?: ToolEndpoint,
+    private activation?: unknown,
   ) {}
   async start(
     configuration: ProviderConfiguration,
@@ -204,9 +205,17 @@ export class WorkerPort implements ProviderAgentPort {
       check();
       await this.control.call(
         "activate",
-        { artifact: this.artifact, configuration, previous },
+        {
+          artifact: this.artifact,
+          configuration,
+          previous,
+          ...(this.activation === undefined
+            ? {}
+            : { activation: this.activation }),
+        },
         budget,
       );
+      this.activation = undefined;
       check();
       return ok(undefined);
     } catch (error) {

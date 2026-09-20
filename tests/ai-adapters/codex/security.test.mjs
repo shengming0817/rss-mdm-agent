@@ -390,7 +390,7 @@ test("restore rejects a compatible-looking thread without host lineage", async (
       adapterVersion: "0.1.0",
       generation: "foreign-generation",
       workspaceId: workspaceIdentity(s.configuration.workingDirectory),
-      accountRef: s.configuration.accountRef,
+
       config: s.configuration.config,
       nativeSessionId: "foreign-session",
       nativeThreadId: "foreign-thread",

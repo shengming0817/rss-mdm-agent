@@ -1,6 +1,6 @@
 # 本地 AI Host 应用
 
-本应用装配 V5 契约、SQLite schema 4、独立 provider worker 和 ACP–A2UI 服务。原生桌面持有测试用户选择、IPC generation、Keychain 与设备执行句柄；Host 持有个人连接、产品 Session、provider 阶段及持久交付。当前验证平台为 macOS arm64。
+本应用装配 V5 契约、SQLite schema 4、独立 provider worker 和 ACP–A2UI 服务。原生桌面持有测试用户选择、UI generation 和一个设备执行服务；Host 持有个人连接、产品 Session、provider 阶段及持久交付。当前验证平台为 macOS arm64。
 
 ```sh
 pnpm build:ai-host
@@ -8,42 +8,39 @@ pnpm bundle:ai-host
 pnpm desktop:build
 ```
 
-桌面在新的 `test-users` 数据根生成仅含路径的 `host.json`：`version: 1`、`databasePath`、`socketPath`、`credentialSocket`、`usersPath`、`nativeDirectory` 和 `workingDirectory`。原生管道提供 Rust MCP，私有 socket 的 native ingress 先核对注册表中的 generation，再注入当前 caller。WebView 不能选择 principal。`s1/client.json`、旧 caller/session 配置、明文凭据路径及旧数据库均不读取、不迁移。
+`host.json` 只包含 `version: 1`、`databasePath`、`nativeDirectory`、`workingDirectory`。Native 与 Host 通过匿名 socketpair 的继承 fd 3 通信，stdio 单独承载 Rust 执行 MCP。每条 UI 逻辑连接固定可信 Caller 和 generation；用户切换先完成旧用户模型工作的隔离，再提交新选择。没有可发现的 AI/凭据 socket、入站监听或按用户启动的服务池。设备执行服务只绑定 authority/device，每次用户请求显式传入主体，后台核对使用任务冻结主体。
 
 ## 连接来源
 
-个人连接通过桌面面板创建、验证和保存；不编辑 bootstrap JSON。配置包含命名 connectionId、provider、configRevision、credentialRevision、opaque accountRef、credentialRef、profile 和明确的 source。秘密不进入 wire、SQLite、配置快照或日志。
-
 | 来源 | Codex | Claude | DeepSeek |
 |---|---|---|---|
-| 自定义 API | URL、API Key、模型 | URL、API Key/Auth Token/OAuth Token、模型 | URL、API Key、模型 |
-| 已有 CLI 登录 | `config.toml` 存储策略及 native broker 获取的 ChatGPT token | 当前固定 SDK 缺少稳定账号身份接口，明确返回不支持 | 不提供 |
-| 已有 CLI API 配置 | profile/model provider 与显式 API 认证字段 | settings 中显式 API key/auth token | 不提供 |
+| 本机已有配置 | 直接设置官方 `CODEX_HOME`，默认 `~/.codex` | 直接设置官方 `CLAUDE_CONFIG_DIR`，默认 `~/.claude` | 不提供 |
+| 自定义 API | URL、API Key、模型 | URL、API Key/Auth Token、模型 | URL、API Key、模型 |
 
-自定义凭据通过 AppKit 安全字段进入 Keychain，网页只得到按测试用户隔离的随机引用。URL 允许 HTTPS 或 loopback HTTP，拒绝 URL 凭据、query 和 fragment。用户配置目录不得由其他用户写入；含秘密的文件必须为当前用户的私有普通文件，拒绝符号链接和超限读取。不导入用户工具权限、插件、任意 MCP 或自动批准。
+本机已有配置的登录、账号识别、凭据读取与刷新均由官方工具负责。RSS 不解析 auth.json、提取 OAuth token、访问外部工具 Keychain 或复制登录状态；模型留空时采用官方默认配置。固定 Codex 0.155.0 app-server 不支持 CLI 命名 profile，界面不提供该选项，也不实现替代配置解析器。
 
-保存前启动固定 provider，并发送一条简短测试请求，收到完成结果后原子激活新版本；请求可能产生服务费用。失败保留旧连接。第一条可用连接成为默认，后续新增不替换默认；删除默认会清空选择，无自动替补。删除保留不可变修订和所有会话历史。
+用户的配置目录与 RSS 运行目录分开。RSS 不向用户目录写入 config.toml；Codex 通过运行参数限制工具、hooks、plugins 和 MCP。官方配置表递归合并，因此在创建线程前读取官方配置 API，对每个非 RSS MCP 显式禁用，并校验实际工具清单。Claude 使用 user 设置来源，同时显式关闭 hooks、plugins、skills 和任意 MCP，只保留产品允许的工具。项目设置不能覆盖产品限制。恢复只使用 RSS 自己登记的原生会话 ID，不枚举或清理用户的其它会话。
 
-Codex 0.155.0 遵循 file/keyring/auto/ephemeral 存储策略；auto 仅在 Keychain 条目不存在时尝试文件，权限错误不回退。登录通过 `chatgptAuthTokens` 接入隔离目录，不复制 refresh token、不修改原登录。刷新只重读同一来源、同一账号且发生变化的 access token。
+自定义 API 的密钥在 AppKit 安全输入框填写，直接进入同一次验证保存操作，WebView 不持有秘密或凭据引用。Keychain 只保存一个应用级 256 位主密钥；Node 使用 AES-256-GCM（随机 96 位 IV、128 位 tag），AAD 绑定 tenant/principal/authority、connectionId 和 configRevision。密文存入现有 SQLite 连接修订行，与配置和默认偏好在同一事务提交。只使用已有配置时不访问应用 Keychain；已有密文而主密钥缺失时拒绝使用，不重建密钥或删除数据。
 
-Claude SDK 0.3.277 / CLI 2.1.277 的公开 `accountInfo()` 只提供可选展示元数据，不提供可验证的稳定账号 UUID。macOS 已有登录明确为外部依赖阻塞，返回 `unsupported_capability`；不使用 email、缓存账号、私有未验证 OAuth 协议或秘密哈希替代身份。已有 API 配置和自定义 API 可独立使用；它们不算已有登录验收。所有阶段继续封闭设置、插件和工具旁路。
-
-原生凭据引用记录 staged/active 生命周期并核对当前用户与 generation。未保存引用在取消编辑、验证失败、切用户或重启时回收；Host 在提交连接前激活引用，再依据当前连接和未决命令的原阶段回收旧引用。轮换/删除保留未决阶段需要的凭据，终态后再次收集。外部 CLI 的凭据和配置从不删除。
+保存必须收到一条简短模型探针的完成结果，并确认 worker 已停止。Codex 验证采用 ephemeral 线程，Claude 使用 persistSession:false。取消、验证失败、修订冲突或用户切换不提交连接；编辑默认保留原密钥，显式选择更换才重新输入。删除在同一事务中清除该连接全部修订的密文和默认选择，保留元数据及会话历史。已经运行的 worker 可处理已接纳工作，删除后不能启动新的 worker。第一条可用连接成为默认，后续新增不替换默认，删除默认后无自动替补。
 
 ## 产品会话与交付
 
-创建产品 Session 不启动 provider。首条输入才打开阶段；阶段固定连接和凭据修订。选择新连接后已接收队列先完成，期间拒绝新的普通输入；下一条输入建立新阶段。显式新上下文意图不建立额外任务。原命令重试先返回旧回执，不重新创建阶段。原生恢复失败需要用户明确选择恢复或新上下文，不静默重放。
+创建产品 Session 不启动 provider。首条输入才打开阶段，阶段固定 connectionId/configRevision；选择新连接后已接收队列按原阶段完成，下一条输入建立新阶段。每个 Session 最多一个 live worker，加应用总量上限，没有外部账号配额。原命令重试先返回旧回执；恢复失败不静默重放或换上下文。
 
-历史预览只包含已完成用户输入和稳定助手文本；用户选择最近 N 轮或全部并确认。预览绑定目标修订、水位、命令/消息 ID 和内容哈希，不包含工具、系统指令或原始附件，不截断。回执保存接纳阶段，跨阶段设备交付继续用原 caller/binding。
+worker 的 activation 数据通过既有私有管道传入，包含该次启动所需的配置与秘密；不写参数快照、artifact URL、公共 wire 或日志。主密钥不进入 worker。持久 launch fence 继续承担进程恢复核对，原生会话索引继续承担 RSS 自有历史定位。
 
-同一设备 journal 由不可变用户执行句柄共享。切换用户终止旧 UI 连接，取消旧模型工作，未确认取消保持未知；设备工作保持原 actor。后台交付先保存 intent，丢失回复后核实原业务 ID 和精确计划。AI terminal 不等于业务完成。
+历史预览只包含已完成用户输入和稳定助手文本；用户选择最近 N 轮或全部并确认。预览绑定目标配置版本、水位、命令/消息 ID 和内容哈希，不包含工具、系统指令或原始附件。设备任务始终保留冻结 actor；模型终态不等于设备业务完成。
 
-## 验证
+当前无历史数据升级要求，不实现旧凭据、账号或参数快照的兼容读取、迁移和清理流程。本 PR 不新增 HMAC、防重放 nonce、凭据授权票据或 worker grant。后续 S2 独立服务/跨权限进程边界按 [#2462](https://dev.azure.com/shengming0923/rss/_workitems/edit/2462) 评估并补充必要机制；AES-GCM 随机 IV 不属于该延期范围。
 
-`pnpm test:ai-host` 覆盖真实 SQLite、worker 进程、取消、阶段和交付恢复；`pnpm test:ai-acceptance` 使用固定 SDK/native 进程和本地模型协议服务，不代表真实云端凭据验收。
+## 验证与来源
 
-显式执行 `node scripts/check-connection-sources.mjs` 使用生产 Rust broker、当前 OS 用户已有 Codex/Claude 来源和真实模型探针；它只输出来源与闭合结果码，不输出路径、账号或秘密。结果按支持矩阵归并：Claude existing_login 必须返回 unsupported_capability；支持来源缺失记为 not_applicable（汇总 partial），不可用来源仍判失败，不冒充模型验收通过。此入口不纳入无凭据 CI。原生窗口与平台凭据入口另按[桌面指南](../../docs/guides/desktop-development.md)验收。
+`pnpm test:ai-host` 覆盖真实 SQLite、worker 进程、取消、阶段和交付恢复；`pnpm test:ai-acceptance` 使用固定 SDK/native 进程和本地模型协议服务。加密测试注入测试主密钥，不访问用户 Keychain。
 
-上游依据：Codex 0.155.0 `codex-rs/login/src/auth/storage.rs`（commit `f0a1b8f0849d90960bc406b848f32e5a129b0457`）；Claude Agent SDK 0.3.277 `sdk.mjs` / bundled CLI（secure storage selector、accountInfo）；security-framework 3.5.1 `src/passwords.rs`；objc2-app-kit 0.3.2 `NSAlert` / `NSSecureTextField`。
+`node scripts/check-native-credentials.mjs` 验证真实 WebView → AppKit 输入 → 私有通道 → Host 模型探针 → 加密 SQLite 保存和删除。验收程序注入主密钥 backend，脚本不调用系统钥匙串命令。它使用同一 clean commit 的固定 runtime artifact，输出 `.local-ci-runs/native-credentials.json`，证明本地接缝而非云端认证。
 
-`node scripts/check-native-credentials.mjs` 在 macOS arm64 使用独立临时目录、一次性 synthetic credential 和 localhost OpenAI-compatible SSE 服务，执行真实 WebView → AppKit 安全输入 → Keychain → 生产 broker/Host 验证保存 → 确认删除，检查同一 Keychain 引用及 journal 已清理。先 `pnpm bundle:ai-host` 构建同一 clean commit 的固定产物；证据写入 `.local-ci-runs/native-credentials.json`，绑定源码、locks、runtime/native executable 哈希。它证明原生凭据和本地协议接缝，不证明云端账号认证。
+`node scripts/check-connection-sources.mjs` 把当前用户已有配置目录交给官方 Codex/Claude，发送最小真实模型请求。两个来源均须完成探针；目录缺失记 partial，认证或能力失败仍判失败。报告不包含账号、目录或秘密，该入口不纳入无凭据 CI。平台窗口验收见[桌面指南](../../docs/guides/desktop-development.md)。
+
+来源：Rust `std::os::unix::net::UnixStream::pair`；[Codex 0.155.0 config merge](https://github.com/openai/codex/blob/rust-v0.155.0/codex-rs/config/src/merge.rs) 与 [CLI profile 入口](https://github.com/openai/codex/blob/rust-v0.155.0/codex-rs/cli/src/main.rs)；Claude Agent SDK 0.3.277 `sdk.d.ts`；[Node crypto](https://nodejs.org/api/crypto.html)；security-framework 3.5.1 `src/passwords.rs`、`src/random.rs`；objc2-app-kit 0.3.2 `NSAlert` / `NSSecureTextField`。没有复制上游认证实现。

@@ -46,12 +46,10 @@ function setup(now = () => 100) {
           name: "Fixture",
           provider: "codex",
           configRevision: 1,
-          credentialRevision: 1,
-          accountRef: "fixture",
-          credentialRef: "fixture",
+
           profile: "conversation",
           status: "ready",
-          source: { type: "existing_login", directory: "/fixture" },
+          source: { type: "existing_config", directory: "/fixture" },
         },
       ],
     }),
@@ -511,7 +509,7 @@ it("connection panel sends exactly the confirmed preview once and never includes
     sessionId: "session-1",
     connectionId: "config-1",
     configRevision: 1,
-    credentialRevision: 1,
+
     throughSequence: 4,
     commandIds: ["previous"],
     messageIds: ["answer"],
@@ -640,13 +638,13 @@ it("external references cannot become custom API credentials and Claude exposes 
         .find((b) => b.text() === "验证并保存")!
         .attributes("disabled"),
     ).toBeDefined();
-    await field("认证来源").setValue("existing_login");
+    await field("认证来源").setValue("existing_config");
     await field("服务").setValue("claude");
-    expect(field("认证来源").element.value).toBe("existing_api");
+    expect(field("认证来源").element.value).toBe("existing_config");
     expect(
       field("认证来源")
         .findAll("option")
-        .some((o) => o.attributes("value") === "existing_login"),
+        .some((o) => o.attributes("value") === "existing_config"),
     ).toBe(false);
   } finally {
     wrapper.unmount();

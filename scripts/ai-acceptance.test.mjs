@@ -47,7 +47,7 @@ function fixture() {
               providerVersion: installations[provider].providerVersion,
               adapterVersion: "adapter-1",
               config: { id: "local", revision: controlled ? "2" : "1" },
-              accountRef: "test-account",
+
               generation: "generation-" + index,
               nativeSessionId: "session-" + index,
               ...(provider === "codex"
@@ -158,7 +158,6 @@ test("evidence cannot omit or misbind its native/profile/configuration identity"
     "providerVersion",
     "adapterVersion",
     "config",
-    "accountRef",
     "generation",
     "nativeSessionId",
     "nativeThreadId",

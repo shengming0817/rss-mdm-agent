@@ -68,7 +68,7 @@ for (const provider of engines) {
           );
       }
       for (const patch of [
-        { accountRef: "foreign" },
+        { config: { id: "foreign-config", revision: "99" } },
         { config: { id: "local", revision: "r2" } },
         { profile: "controlled_tools" },
         { provider: "foreign" },
@@ -108,8 +108,8 @@ for (const provider of engines) {
         f.config.session.config,
       );
       assert.equal(
-        activeStage(session).binding.accountRef,
-        f.config.session.accountRef,
+        activeStage(session).binding.config.id,
+        f.config.session.config.id,
       );
 
       await assert.rejects(

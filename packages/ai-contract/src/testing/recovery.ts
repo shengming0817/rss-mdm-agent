@@ -32,7 +32,7 @@ export async function restoredSession(session: Session, generation: string) {
   const configuration = {
     provider: previous.provider,
     config: previous.config,
-    accountRef: previous.accountRef,
+
     workingDirectory: ".",
     namespace: session.namespace,
     permissions: "tools_disabled" as const,
@@ -103,7 +103,7 @@ export async function verifiedReconciliation(
         namespace: session.namespace,
         provider: binding.provider,
         config: binding.config,
-        accountRef: binding.accountRef,
+
         workingDirectory,
         permissions: "tools_disabled",
       },

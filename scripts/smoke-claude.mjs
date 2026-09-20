@@ -166,7 +166,7 @@ async function main() {
   const configuration = {
     provider: "claude",
     config: { id: "model-smoke", revision: "1" },
-    accountRef: "model-smoke",
+
     workingDirectory: join(directory, "project"),
     namespace: {
       tenantId: "model-smoke",
@@ -181,10 +181,14 @@ async function main() {
       resolveConfiguration: async () => ({
         configuration,
         configurationDirectory: join(directory, "config"),
-        apiUrl: selected.apiUrl,
-        credential: key
-          ? { type: "api_key", value: key }
-          : { type: "auth_token", value: token },
+        authentication: {
+          type: "custom_api",
+          apiUrl: selected.apiUrl,
+          credential: key
+            ? { type: "api_key", value: key }
+            : { type: "auth_token", value: token },
+        },
+
         ...(credentials.ANTHROPIC_MODEL
           ? { model: credentials.ANTHROPIC_MODEL }
           : {}),

@@ -3,7 +3,7 @@ use execution_contract::RequestId;
 use execution_mcp::{
     CatalogCandidate, ExecutionMcp, ExecutionServicePort, McpLimits, PreviewRequest,
 };
-use rss_mdm_desktop::composition::{execution::ExecutionHandle, origin::AiBinding};
+use rss_mdm_desktop::composition::execution::ExecutionHandle;
 use serde_json::json;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 use tokio_util::sync::CancellationToken;
@@ -16,8 +16,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "usage: execution-acceptance-server DATABASE AUDIT OPERATION_REQUEST_ID".into(),
         );
     }
-    let binding = AiBinding::for_user("fixture-actor")?;
-    let execution = ExecutionHandle::start(&PathBuf::from(&args[0]), binding)?;
+    let execution =
+        ExecutionHandle::start(&PathBuf::from(&args[0]))?.for_caller("fixture-actor")?;
     let catalog = rss_mdm_desktop::composition::execution::catalog()?;
     let selected = catalog.select(
         &serde_json::to_vec(&json!({
@@ -50,8 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
             "operationId": "preflight-preview",
             "provider": "codex",
-            "accountRef": "test-account",
-            "config": { "id": "local", "revision": "r1" }
+                        "config": { "id": "local", "revision": "r1" }
         }
     });
     let preview = Arc::new(execution.clone())

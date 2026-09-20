@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile, realpath, lstat } from "node:fs/promises";
+import { mkdir, realpath, lstat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import type {
   Binding,
@@ -21,21 +21,14 @@ export class CodexConfigurationFailure extends Error {
 export type CodexConfiguration = ProviderConfiguration & {
   readonly provider: "codex";
 };
-/** Trusted host resolution only. Native storage belongs exclusively to this adapter version. */
+/** Trusted host resolution only. Existing configuration stays owned by the official CLI; runtime files belong to RSS. */
 export interface ResolvedCodexConfiguration {
   configuration: CodexConfiguration;
   nativeDirectory: string;
   authentication:
     | { type: "api_key"; apiUrl: string; apiKey: string }
-    | {
-        type: "chatgpt_tokens";
-        apiUrl?: string;
-        accessToken: string;
-        accountId: string;
-        refresh(
-          budget: Budget,
-        ): Promise<{ accessToken: string; accountId: string }>;
-      };
+    | { type: "existing_config"; directory: string };
+  verification?: boolean;
   /** Omit to use the pinned Codex runtime default. */
   model?: string;
   /** Host-owned product instructions; never loaded from native user permissions/settings. */
@@ -48,7 +41,7 @@ export interface CodexAdapterOptions {
   resolveConfiguration(
     identity: Pick<
       ProviderConfiguration,
-      "namespace" | "provider" | "config" | "accountRef"
+      "namespace" | "provider" | "config"
     > & { history?: Binding },
     budget: Budget,
   ): Promise<ResolvedCodexConfiguration>;
@@ -106,13 +99,9 @@ export function nativeSettings(
 ): Record<string, unknown> {
   return {
     ...(resolved.model === undefined ? {} : { model: resolved.model }),
-    ...(resolved.authentication.type === "chatgpt_tokens"
-      ? { forced_chatgpt_workspace_id: resolved.authentication.accountId }
-      : {}),
-    model_provider:
-      resolved.authentication.type === "api_key" ? "rss_host_model" : "openai",
     ...(resolved.authentication.type === "api_key"
       ? {
+          model_provider: "rss_host_model",
           model_providers: {
             rss_host_model: {
               name: "RSS host model",
@@ -126,18 +115,7 @@ export function nativeSettings(
             },
           },
         }
-      : resolved.authentication.apiUrl
-        ? {
-            model_providers: {
-              openai: {
-                name: "OpenAI",
-                base_url: resolved.authentication.apiUrl,
-                wire_api: "responses",
-                requires_openai_auth: true,
-              },
-            },
-          }
-        : {}),
+      : {}),
     approval_policy: "on-request",
     sandbox_mode: "read-only",
     web_search: "disabled",
@@ -175,7 +153,9 @@ export async function launchSpec(
   let url: URL;
   try {
     url = new URL(
-      resolved.authentication.apiUrl ?? "https://api.openai.com/v1",
+      resolved.authentication.type === "api_key"
+        ? resolved.authentication.apiUrl
+        : "https://api.openai.com/v1",
     );
   } catch {
     throw new CodexConfigurationFailure("invalid_input");
@@ -192,10 +172,8 @@ export async function launchSpec(
     url.hash ||
     !(resolved.authentication.type === "api_key"
       ? resolved.authentication.apiKey
-      : resolved.authentication.type === "chatgpt_tokens" &&
-        resolved.authentication.accessToken &&
-        resolved.authentication.accountId &&
-        typeof resolved.authentication.refresh === "function") ||
+      : resolved.authentication.type === "existing_config" &&
+        isAbsolute(resolved.authentication.directory)) ||
     (resolved.model !== undefined &&
       (typeof resolved.model !== "string" || !resolved.model.trim())) ||
     !isAbsolute(resolved.nativeDirectory) ||
@@ -213,18 +191,6 @@ export async function launchSpec(
   if ((await realpath(resolved.nativeDirectory)) !== resolved.nativeDirectory)
     throw new CodexConfigurationFailure("permission_denied");
   const settings = nativeSettings(resolved);
-  const content =
-    Object.entries(settings)
-      .map(([key, value]) => `${key} = ${toml(value)}`)
-      .join("\n") + "\n";
-  const path = join(resolved.nativeDirectory, "config.toml");
-  try {
-    await writeFile(path, content, { flag: "wx", mode: 0o600 });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    if ((await readFile(path, "utf8")) !== content)
-      throw new CodexConfigurationFailure("permission_denied");
-  }
   const overrides = bridge
     ? {
         mcp_servers: {
@@ -242,7 +208,10 @@ export async function launchSpec(
       }
     : {};
   const env: Record<string, string> = {
-    CODEX_HOME: resolved.nativeDirectory,
+    CODEX_HOME:
+      resolved.authentication.type === "existing_config"
+        ? resolved.authentication.directory
+        : resolved.nativeDirectory,
     ...(resolved.authentication.type === "api_key"
       ? { RSS_CODEX_API_KEY: resolved.authentication.apiKey }
       : {}),
@@ -253,11 +222,12 @@ export async function launchSpec(
       ? join(resolved.nativeDirectory, "empty-bin")
       : "/usr/bin:/bin";
   env.NoDefaultCurrentDirectoryInExePath = "1";
-  for (const key of ["SystemRoot", "WINDIR", "TEMP", "TMP", "TMPDIR"])
+  for (const key of ["HOME", "SystemRoot", "WINDIR", "TEMP", "TMP", "TMPDIR"])
     if (process.env[key]) env[key] = process.env[key]!;
   if (bridge) env.RSS_CODEX_MCP_TOKEN = bridge.token;
   const args = ["app-server", "--stdio", "--strict-config"];
-  if (bridge) args.push("-c", `mcp_servers=${toml(overrides.mcp_servers)}`);
+  for (const [key, value] of Object.entries({ ...settings, ...overrides }))
+    args.push("-c", `${key}=${toml(value)}`);
   const runtimeDirectory = join(resolved.nativeDirectory, "runtime-workspace");
   await mkdir(runtimeDirectory, { mode: 0o700, recursive: true });
   return { spec: { cwd: runtimeDirectory, env, args }, settings, overrides };

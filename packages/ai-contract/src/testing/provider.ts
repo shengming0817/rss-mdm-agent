@@ -58,7 +58,6 @@ export class ScriptedProvider implements ProviderAgentPort {
       generation: `generation-${this.instance}-${++this.incarnation}`,
       nativeSessionId: `native-${this.instance}-${this.incarnation}`,
       config: structuredClone(configuration.config),
-      accountRef: configuration.accountRef,
     };
     return ok({
       binding: structuredClone(this.binding),
@@ -190,7 +189,6 @@ export async function runProviderConformance(
         );
         const { binding, capabilities } = admitted;
         assert.deepEqual(binding.config, configuration.config);
-        assert.equal(binding.accountRef, configuration.accountRef);
         const command = fixtureCommand();
         const attempt: DispatchAttempt = {
           attemptId: "attempt-command-1",

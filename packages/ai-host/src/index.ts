@@ -76,17 +76,20 @@ export interface HostDiagnostic {
   readonly code: import("@rss-mdm-agent/ai-contract").Failure["code"];
 }
 export interface HostOptions {
-  readonly credentials?: {
-    activate(caller: Caller, connection: Connection): Promise<void>;
-    discard(caller: Caller, connection: Connection): Promise<void>;
-    collect(caller: Caller): Promise<void>;
-  };
+  /** Trusted persistence composition; secrets never enter public wire records. */
+  readonly persistConnection?: (
+    caller: Caller,
+    connection: Connection,
+    expected: number | null,
+    secret: string | undefined,
+    budget: Budget,
+  ) => Promise<Result<Connection>>;
   readonly callerAvailable?: (caller: Caller) => boolean;
   readonly onDiagnostic?: (diagnostic: HostDiagnostic) => void;
   readonly store: SessionStore;
   readonly launchFences: WorkerLaunchFenceStore;
   readonly delivery: DeliveryRouter | null;
-  /** Trusted composition. Account references are not credentials. */
+  /** Trusted composition resolves metadata and memory-only worker activation. */
   resolve(
     caller: Caller,
     options: ConnectionOptions,
@@ -94,15 +97,16 @@ export interface HostOptions {
     budget: Budget,
     previous: Binding | null,
     candidate?: Connection,
+    secret?: string,
   ): Promise<{
     configuration: ProviderConfiguration;
     artifact: string;
+    activation?: unknown;
     dispose?: () => Promise<void>;
     admission?: Pick<ProviderAdmission, "verifier">;
   }>;
   readonly queueLimit?: number;
   readonly workerLimit?: number;
-  readonly accountWorkerLimit?: number;
   readonly operationTimeoutMs?: number;
   readonly now?: () => number;
 }
@@ -111,7 +115,6 @@ interface Runtime {
   dispose?: () => Promise<void>;
   worker: WorkerPort;
   verified?: VerifiedProviderSession;
-  account: string;
   observing: Set<string>;
   inFlight: Set<string>;
   controlBurst: number;
@@ -155,49 +158,18 @@ export class SessionHost implements HostPort {
   private readonly blocked = new Set<string>();
   private readonly suspended = new Set<string>();
   private readonly disposals = new Set<() => Promise<void>>();
-  private readonly credentialMutations = new Map<string, Promise<unknown>>();
-  private credentialMutation<T>(
-    caller: Caller,
-    action: () => Promise<T>,
-  ): Promise<T> {
-    const key = this.callerKey(caller),
-      previous = this.credentialMutations.get(key) ?? Promise.resolve();
-    const task = previous.catch(() => {}).then(action);
-    this.credentialMutations.set(key, task);
-    void task
-      .finally(() => {
-        if (this.credentialMutations.get(key) === task)
-          this.credentialMutations.delete(key);
-      })
-      .catch(() => {});
-    return task;
-  }
   private saveValidatedConnection(
     caller: Caller,
     connection: Connection,
     expected: number | null,
     b: Budget,
+    secret?: string,
   ): Promise<Result<Connection>> {
-    return this.credentialMutation(caller, async () => {
-      if (!this.callerAvailable(caller) || b.signal.aborted)
-        return fail("unavailable");
-      if (connection.status !== "deleted")
-        await this.options.credentials?.activate(caller, connection);
-      if (!this.callerAvailable(caller) || b.signal.aborted)
-        return fail("unavailable");
-      const result = await this.store.saveConnection(
-        caller,
-        connection,
-        expected,
-      );
-      // The database commit is authoritative. Retain failed cleanup in the native journal for retry.
-      try {
-        await this.options.credentials?.collect(caller);
-      } catch (error) {
-        this.diagnose("credential", error);
-      }
-      return result;
-    });
+    if (!this.callerAvailable(caller) || b.signal.aborted)
+      return Promise.resolve(fail("unavailable"));
+    return this.options.persistConnection
+      ? this.options.persistConnection(caller, connection, expected, secret, b)
+      : this.store.saveConnection(caller, connection, expected);
   }
   private callerKey(caller: Caller) {
     return JSON.stringify([
@@ -222,7 +194,6 @@ export class SessionHost implements HostPort {
   private readonly now: () => number;
   private readonly queueLimit: number;
   private readonly workerLimit: number;
-  private readonly accountLimit: number;
   private readonly timeout: number;
   private readonly deliveries?: Deliveries;
   private readonly deliveryAbort = new AbortController();
@@ -231,7 +202,6 @@ export class SessionHost implements HostPort {
     this.now = options.now ?? Date.now;
     this.queueLimit = options.queueLimit ?? 64;
     this.workerLimit = options.workerLimit ?? 8;
-    this.accountLimit = options.accountWorkerLimit ?? 2;
     this.timeout = options.operationTimeoutMs ?? 30000;
     if (options.delivery)
       this.deliveries = new Deliveries(
@@ -247,7 +217,6 @@ export class SessionHost implements HostPort {
       [
         options.queueLimit ?? 64,
         options.workerLimit ?? 8,
-        options.accountWorkerLimit ?? 2,
         options.operationTimeoutMs ?? 30000,
       ].some((n) => !Number.isSafeInteger(n) || n < 1 || n > 2147483647)
     )
@@ -523,7 +492,6 @@ export class SessionHost implements HostPort {
       configuration.provider !== options.provider ||
       configuration.config.id !== options.config.id ||
       configuration.config.revision !== options.config.revision ||
-      configuration.accountRef !== options.accountRef ||
       configuration.permissions !==
         (options.profile === "controlled_tools"
           ? "host_mediated"
@@ -532,15 +500,7 @@ export class SessionHost implements HostPort {
       await this.releaseDispose(dispose);
       return fail("permission_denied");
     }
-    const account = JSON.stringify([
-      configuration.provider,
-      configuration.accountRef,
-    ]);
-    if (
-      this.runtimes.size >= this.workerLimit ||
-      [...this.runtimes.values()].filter((r) => r.account === account).length >=
-        this.accountLimit
-    ) {
+    if (this.runtimes.size >= this.workerLimit) {
       await this.releaseDispose(dispose);
       return fail("limit_exceeded");
     }
@@ -562,11 +522,11 @@ export class SessionHost implements HostPort {
       namespace,
       resolved.artifact,
       admission?.tools,
+      resolved.activation,
     );
     const runtime: Runtime = {
       dispose,
       worker,
-      account,
       observing: new Set(),
       inFlight: new Set(),
       controlBurst: 0,
@@ -621,7 +581,7 @@ export class SessionHost implements HostPort {
             namespace,
             expectedRevision: session.revision,
             configRevision: connection.configRevision,
-            credentialRevision: connection.credentialRevision,
+
             opened: verified,
           }),
         );
@@ -669,6 +629,7 @@ export class SessionHost implements HostPort {
     connection: Connection,
     expected: number | null,
     b: Budget,
+    secret?: string,
   ): Promise<Result<Connection>> {
     const namespace = {
       ...caller,
@@ -688,7 +649,13 @@ export class SessionHost implements HostPort {
         );
         if (!checked.ok) return checked;
         if (connection.status === "deleted")
-          return this.saveValidatedConnection(caller, connection, expected, b);
+          return this.saveValidatedConnection(
+            caller,
+            connection,
+            expected,
+            b,
+            secret,
+          );
         if (this.runtimes.size >= this.workerLimit)
           return fail("limit_exceeded");
         const probe = {
@@ -702,6 +669,7 @@ export class SessionHost implements HostPort {
           b,
           null,
           connection,
+          secret,
         );
         const dispose = this.ownDispose(resolved.dispose);
         const tools: ToolEndpoint = {
@@ -712,12 +680,12 @@ export class SessionHost implements HostPort {
           probe,
           resolved.artifact,
           resolved.admission ? tools : undefined,
+          resolved.activation,
         );
         const runtime: Runtime = {
           verification: true,
           dispose,
           worker,
-          account: connection.accountRef,
           observing: new Set(),
           inFlight: new Set(),
           controlBurst: 0,
@@ -789,6 +757,7 @@ export class SessionHost implements HostPort {
             { ...connection, status: "ready" },
             expected,
             b,
+            secret,
           );
         } finally {
           const stopped = await worker.close(budget(2000));
@@ -801,13 +770,7 @@ export class SessionHost implements HostPort {
           }
         }
       }),
-    ).finally(async () => {
-      try {
-        await this.options.credentials?.discard(caller, connection);
-      } catch (error) {
-        this.diagnose("credential", error);
-      }
-    });
+    );
   }
   savePreferences(
     caller: Caller,
@@ -874,10 +837,7 @@ export class SessionHost implements HostPort {
     const connection = requireValue(
       await this.store.connection(session.namespace, preview.connectionId),
     );
-    if (
-      connection.configRevision !== preview.configRevision ||
-      connection.credentialRevision !== preview.credentialRevision
-    )
+    if (connection.configRevision !== preview.configRevision)
       return fail("content_conflict");
     if (
       !session.freshContext &&
@@ -928,7 +888,7 @@ export class SessionHost implements HostPort {
         id: connection.connectionId,
         revision: String(connection.configRevision),
       },
-      accountRef: connection.accountRef,
+
       profile: connection.profile,
     };
   }
@@ -974,8 +934,7 @@ export class SessionHost implements HostPort {
       session.freshContext ||
       !stage ||
       stage.connectionId !== selected ||
-      stage.configRevision !== connection.configRevision ||
-      stage.credentialRevision !== connection.credentialRevision;
+      stage.configRevision !== connection.configRevision;
     if (!changed) {
       if (session.status !== "active") return fail("context_unavailable");
       const runtime = this.runtimes.get(namespaceKey(session.namespace));
@@ -1060,7 +1019,7 @@ export class SessionHost implements HostPort {
     };
     return this.result(() =>
       this.admit(namespace, b, (b) =>
-        this.credentialMutation(caller, async () => {
+        (async () => {
           const previous = requireValue(await this.store.session(namespace));
           if (previous.status === "retired") return fail("session_gone");
           if (
@@ -1093,7 +1052,7 @@ export class SessionHost implements HostPort {
             await this.unavailable(namespace);
             throw error;
           }
-        }),
+        })(),
       ),
     );
   }
@@ -1238,10 +1197,7 @@ export class SessionHost implements HostPort {
               await this.publishSince(namespace, session.lastSequence);
             return receipt;
           };
-          return command.input.type === "prompt" &&
-            command.input.policy === "queue_next"
-            ? this.credentialMutation(caller, operation)
-            : operation();
+          return operation();
         },
         closing,
       );
@@ -1857,16 +1813,6 @@ export class SessionHost implements HostPort {
       }, 100);
       this.retryTimers.add(timer);
     } else this.kick(namespace);
-    if (
-      isSettled(next) &&
-      this.options.credentials &&
-      this.callerAvailable(session.namespace)
-    )
-      this.track(
-        this.credentialMutation(session.namespace, () =>
-          this.options.credentials!.collect(session.namespace),
-        ),
-      );
   }
   private isolate(namespace: Namespace): Runtime | undefined {
     const key = namespaceKey(namespace),
@@ -2136,9 +2082,6 @@ export class SessionHost implements HostPort {
           }
           continuation = page.next;
         } while (continuation);
-        await this.credentialMutation(caller, async () => {
-          await this.options.credentials?.collect(caller);
-        });
         return ok(undefined);
       } finally {
         deadline.dispose();

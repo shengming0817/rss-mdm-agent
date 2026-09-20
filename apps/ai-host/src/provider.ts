@@ -4,27 +4,20 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { WorkerFactory } from "@rss-mdm-agent/ai-host/worker";
 import { readPrivateFile } from "./private-file.js";
-import { resolveConnection, type ProviderSnapshot } from "./connection.js";
+import { resolveConnection, type ProviderActivation } from "./connection.js";
 /** Activated worker composition; this is the sole credential/SDK loading entry. */
 export const createProvider: WorkerFactory = async ({
   configuration,
   tools,
   previous,
+  activation,
 }) => {
-  const url = new URL(import.meta.url),
-    path = url.searchParams.get("snapshot");
-  if (!path) throw new Error("missing composition input");
-  const content = await readPrivateFile(path, 65536);
-  if (
-    createHash("sha256").update(content).digest("hex") !==
-    url.searchParams.get("fingerprint")
-  )
-    throw new Error("configuration identity changed");
-  const snapshot = JSON.parse(content) as ProviderSnapshot,
+  if (!activation || typeof activation !== "object")
+    throw new Error("missing composition input");
+  const snapshot = activation as ProviderActivation,
     { local } = snapshot;
   if (
     snapshot.connection.provider !== configuration.provider ||
-    snapshot.connection.accountRef !== configuration.accountRef ||
     snapshot.connection.connectionId !== configuration.config.id ||
     String(snapshot.connection.configRevision) !==
       configuration.config.revision ||
@@ -87,6 +80,7 @@ export const createProvider: WorkerFactory = async ({
               configuration: { ...configuration, provider: "codex" },
               nativeDirectory: directory,
               authentication: connection.codex!,
+              verification: snapshot.verification,
               model: connection.model,
               developerInstructions:
                 configuration.permissions === "host_mediated"
@@ -116,8 +110,8 @@ export const createProvider: WorkerFactory = async ({
           resolveConfiguration: async () => ({
             configuration: { ...configuration, provider: "claude" },
             configurationDirectory: directory,
-            apiUrl: connection.apiUrl,
-            credential: connection.credential,
+            authentication: connection.claude!,
+            verification: snapshot.verification,
             model: connection.model,
           }),
         }),
@@ -127,14 +121,14 @@ export const createProvider: WorkerFactory = async ({
       const { createDeepSeekAdapter } = await import(
         "@rss-mdm-agent/ai-adapter-deepseek"
       );
-      const apiKey = connection.credential.value;
+      const apiKey = connection.apiKey!;
       return own(
         createDeepSeekAdapter({
           tools,
           resolveConfiguration: async () => ({
             configuration: { ...configuration, provider: "deepseek" },
             persistenceDirectory: directory,
-            apiUrl: connection.apiUrl,
+            apiUrl: connection.apiUrl!,
             apiKey,
             model: connection.model!,
           }),
