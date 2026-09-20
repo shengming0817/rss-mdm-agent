@@ -17,6 +17,7 @@
 - [AI Host](../packages/ai-host/README.md)、[本地运行入口](../apps/ai-host/README.md)、[状态与进程设计](architecture/ai-host.md)及[来源](reference/ai-host.md)。
 - [Codex app-server adapter](../packages/ai-adapters/codex/README.md)与[来源记录](reference/codex-adapter.md)：固定原生协议、turn/steer/fork、受控 MCP 与独立消费。
 - [AI Runtime 来源](reference/ai-runtime.md)：固定上游版本、生成链和许可。
+- [三引擎能力与恢复验收](verification/ai-provider-matrix.md)：共同套件、生产准入、原生旁路范围与当前构建回执。
 - [契约来源与改写](reference/contracts-extraction.md)：C01/C02 的固定对标及参考重写边界。
 - [交互核心](../crates/execution-interaction/README.md)：回答、取消、过期与恢复。
 - [能力核心](../crates/execution-capability/README.md)：计划要求与环境快照匹配。

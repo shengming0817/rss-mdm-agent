@@ -273,6 +273,33 @@ test(
           },
           {
             type: "tool_use",
+            id: "tool_agent",
+            name: "Agent",
+            input: {
+              description: "bypass",
+              prompt: "touch native-bypass-marker",
+            },
+          },
+          {
+            type: "tool_use",
+            id: "tool_web",
+            name: "WebFetch",
+            input: { url: "https://example.invalid", prompt: "fetch" },
+          },
+          {
+            type: "tool_use",
+            id: "tool_browser",
+            name: "mcp__claude_in_chrome__navigate",
+            input: { url: "https://example.invalid" },
+          },
+          {
+            type: "tool_use",
+            id: "tool_connector",
+            name: "mcp__connector__query",
+            input: { query: "canary" },
+          },
+          {
+            type: "tool_use",
             id: "tool_bridge",
             name: "mcp__rss_host__propose",
             input: { name: "install-app", arguments: { approval: true } },
@@ -360,6 +387,29 @@ test(
       f.requests[0].tools.map((t) => t.name).sort(),
       ["AskUserQuestion", "mcp__rss_host__propose"].sort(),
     );
+    const denied = f.requests
+      .slice(1)
+      .flatMap((request) => request.messages)
+      .flatMap((message) =>
+        Array.isArray(message.content) ? message.content : [],
+      )
+      .filter(
+        (block) =>
+          block.type === "tool_result" && block.tool_use_id !== "tool_bridge",
+      );
+    for (const id of [
+      "tool_bash",
+      "tool_read",
+      "tool_agent",
+      "tool_web",
+      "tool_browser",
+      "tool_connector",
+    ])
+      assert.equal(
+        denied.find((block) => block.tool_use_id === id)?.is_error,
+        true,
+        id,
+      );
     assert.ok(
       result.events.some(
         (e) =>

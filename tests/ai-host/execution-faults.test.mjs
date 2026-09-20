@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync, fork, spawn } from "node:child_process";
+import { fork, spawn } from "node:child_process";
 import { once } from "node:events";
 import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,6 +14,8 @@ import {
   restoredSession,
   unwrap,
 } from "../../packages/ai-contract/dist/testing/index.js";
+
+import { executionServer } from "./rust-execution.mjs";
 
 const budget = (timeoutMs = 10_000) => ({
   timeoutMs,
@@ -105,34 +107,7 @@ async function crashAfterRustAcceptance(
 }
 
 test("lost submit receipt recovers the same Rust attempt and keeps process exit separate from cancellation", async (t) => {
-  // Compilation is not part of the production MCP handshake budget.
-  const messages = execFileSync(
-    "cargo",
-    [
-      "build",
-      "--locked",
-      "--message-format=json",
-      "-p",
-      "rss-mdm-desktop",
-      "--example",
-      "execution-acceptance-server",
-    ],
-    {
-      cwd: new URL("../..", import.meta.url),
-      encoding: "utf8",
-      maxBuffer: 10 * 1024 * 1024,
-    },
-  )
-    .trim()
-    .split("\n")
-    .map((line) => JSON.parse(line));
-  const executable = messages.find(
-    (message) =>
-      message.reason === "compiler-artifact" &&
-      message.target.name === "execution-acceptance-server" &&
-      message.executable,
-  )?.executable;
-  assert.ok(executable, "Cargo must produce the actual acceptance server");
+  const executable = executionServer();
   const root = await realpath(
     await mkdtemp(join(tmpdir(), "rss-execution-fault-")),
   );

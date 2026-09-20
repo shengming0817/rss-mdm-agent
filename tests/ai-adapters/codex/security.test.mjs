@@ -286,6 +286,24 @@ test(
             task_name: "escape",
             message: "create native-tool-marker",
           }),
+          functionCall(
+            "network-call",
+            "run",
+            { search_query: [{ q: "canary" }] },
+            "web",
+          ),
+          functionCall(
+            "browser-call",
+            "open",
+            { url: "https://example.invalid" },
+            "mcp__browser",
+          ),
+          functionCall(
+            "connector-call",
+            "query",
+            { query: "canary" },
+            "mcp__connector",
+          ),
           responseCompleted("response-hostile"),
         ]);
       },
@@ -313,9 +331,26 @@ test(
         )
         .map((item) => item.call_id)
         .sort(),
-      ["agent-call", "patch-call", "shell-call"],
+      [
+        "agent-call",
+        "browser-call",
+        "connector-call",
+        "network-call",
+        "patch-call",
+        "shell-call",
+      ],
     );
     await assert.rejects(() => access(marker));
+    for (const item of s.requests
+      .slice(1)
+      .flatMap((request) => request.input ?? []))
+      if (
+        ["function_call_output", "custom_tool_call_output"].includes(item.type)
+      )
+        assert.match(
+          JSON.stringify(item.output),
+          /unknown tool|unsupported|not found|not allowed/i,
+        );
   },
 );
 

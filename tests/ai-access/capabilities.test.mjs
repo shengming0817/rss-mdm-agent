@@ -7,14 +7,15 @@ import {
 } from "../../packages/ai-contract/dist/testing/index.js";
 const budget = () => ({ signal: AbortSignal.timeout(1000), timeoutMs: 1000 });
 test("scripted Host exercises queue, steer, cancel and continuation support and rejection", async () => {
-  for (const supported of [true, false]) {
+  for (const status of ["supported", "unsupported", "unknown"]) {
+    const supported = status === "supported";
     const host = new FakeHost(
       undefined,
       { now: () => 0 },
       {
-        steer: supported ? "supported" : "unsupported",
-        cancellation: supported ? "request_only" : "unsupported",
-        continuation: supported ? "same_process" : "unsupported",
+        steer: status,
+        cancellation: supported ? "request_only" : status,
+        continuation: supported ? "same_process" : status,
       },
     );
     const s = unwrap(

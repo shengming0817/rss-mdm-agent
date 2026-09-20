@@ -7,8 +7,47 @@ import { tmpdir } from "node:os";
 import {
   closeAdapters,
   deliverable,
+  smokeConfiguration,
 } from "../../../scripts/smoke-deepseek.mjs";
-test("official evidence requires unchanged committed source, lock and complete cleanup", () => {
+test("smoke evidence describes the endpoint actually selected, without leaking it", () => {
+  const official = smokeConfiguration({});
+  assert.equal(official.apiUrl, "https://api.deepseek.com");
+  assert.equal(official.endpoint.kind, "official");
+  const env = {
+    DEEPSEEK_BASE_URL: "https://private.example/v1",
+    DEEPSEEK_MODEL: "custom",
+  };
+  const custom = smokeConfiguration(env);
+  env.DEEPSEEK_BASE_URL = "https://api.deepseek.com";
+  assert.equal(custom.apiUrl, "https://private.example/v1");
+  assert.equal(custom.model, "custom");
+  assert.equal(custom.endpoint.kind, "configured");
+  assert.doesNotMatch(JSON.stringify(custom.endpoint), /private\.example/);
+  assert.notEqual(custom.endpoint.originSha256, official.endpoint.originSha256);
+  assert.equal(
+    smokeConfiguration({ DEEPSEEK_BASE_URL: "http://127.0.0.1:1234" }).endpoint
+      .kind,
+    "local_fixture",
+  );
+  assert.equal(
+    smokeConfiguration({
+      DEEPSEEK_BASE_URL: "https://api.deepseek.com.example",
+    }).endpoint.kind,
+    "configured",
+  );
+  for (const url of [
+    "http://private.example",
+    "https://secret@api.deepseek.com",
+    "https://api.deepseek.com?key=secret",
+    "not a URL",
+  ]) {
+    assert.throws(
+      () => smokeConfiguration({ DEEPSEEK_BASE_URL: url }),
+      /^Error: Invalid smoke configuration$/,
+    );
+  }
+});
+test("smoke evidence requires unchanged committed source, lock and complete cleanup", () => {
   const source = {
       head: "a",
       base: "b",

@@ -166,7 +166,7 @@ export class FakeHost implements HostPort {
       )
         return fail("stale_binding");
       if (command.input.type === "cancel") {
-        if (s.capabilities.cancellation === "unsupported")
+        if (["unsupported", "unknown"].includes(s.capabilities.cancellation))
           return fail("unsupported_capability");
         const target = await this.store.command(
           namespace,
