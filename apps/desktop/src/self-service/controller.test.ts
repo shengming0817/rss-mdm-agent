@@ -347,7 +347,10 @@ describe("self-service controller", () => {
     await c.submit();
     wrapper.unmount();
     expect(port.respond).not.toHaveBeenCalled();
-    expect(c.state.snapshot?.requests).toHaveLength(1);
+    expect(c.state.snapshot?.referencedRequests).toHaveLength(1);
+    expect(c.state.snapshot?.referencedRequests[0].plan.requestId).toBe(
+      c.state.requestId,
+    );
   });
 });
 it("form sends original numeric tokens and explicit false, without applying defaults", async () => {
@@ -386,7 +389,7 @@ it("browser uses the same readonly pages and task views without a fake service",
     (r) => r.status === "approval",
   )!.plan.requestId;
   await flushPromises();
-  expect(wrapper.text()).toContain("此处没有管理员批准入口");
+  expect(wrapper.text()).toContain("本测试服务不签发批准");
   expect(
     wrapper
       .findAll(".interaction-card button")
@@ -409,6 +412,63 @@ it("a delayed snapshot cannot erase a newer acceptance receipt", async () => {
   await c.submit();
   finish();
   await refresh;
-  expect(c.state.snapshot?.requests).toHaveLength(1);
+  expect(c.state.snapshot?.referencedRequests).toHaveLength(1);
+  expect(c.state.snapshot?.referencedRequests[0].plan.requestId).toBe(
+    c.state.requestId,
+  );
   expect(c.state.accepted).toBe(true);
+});
+
+it("pages past an empty preview page, preserves off-page selection and polls its current status", async () => {
+  const { c, port, snapshot, task } = fixture();
+  const selected = { ...structuredClone(task), status: "approval" as const };
+  selected.plan.requestId = "selected";
+  const other = structuredClone(task);
+  other.plan.requestId = "later";
+  port.snapshot.mockImplementation(async (query) => ({
+    ...structuredClone(snapshot),
+    requests: query.after === "page-1" ? [structuredClone(other)] : [],
+    next: query.after ? null : "page-1",
+    referencedRequests: query.requestIds.includes("selected")
+      ? [structuredClone(selected)]
+      : [],
+  }));
+  const wrapper = mount(SelfService, { props: { controller: c } });
+  await flushPromises();
+  c.state.page = "tasks";
+  c.state.taskId = "selected";
+  c.state.requestId = "later";
+  await c.refresh();
+  await flushPromises();
+  expect(wrapper.text()).toContain("本页暂无已提交请求");
+  expect(wrapper.get(".task-detail").text()).toContain("selected");
+  await c.nextPage();
+  await flushPromises();
+  expect(c.state.after).toBe("page-1");
+  expect(c.state.taskId).toBe("selected");
+  expect(wrapper.get(".task-detail").text()).toContain("selected");
+  expect(wrapper.findAll(".task-row")).toHaveLength(1);
+  selected.message = "fresh off-page status";
+  await c.refresh();
+  await flushPromises();
+  expect(wrapper.get(".task-detail").text()).toContain("fresh off-page status");
+  await c.previousPage();
+  expect(c.state.after).toBeNull();
+  expect(c.state.pageHistory).toEqual([]);
+  expect(c.state.taskId).toBe("selected");
+  wrapper.unmount();
+});
+
+it("keeps the current page after a failed next-page read and retries the same cursor", async () => {
+  const { c, port, snapshot } = fixture();
+  snapshot.next = "next-page";
+  await c.refresh();
+  port.snapshot.mockRejectedValueOnce(new Error("lost page"));
+  await c.nextPage();
+  expect(c.state.after).toBeNull();
+  expect(c.state.pageHistory).toEqual([]);
+  expect(c.state.loading).toBe(false);
+  await c.nextPage();
+  expect(port.snapshot.mock.calls.at(-1)?.[0].after).toBe("next-page");
+  expect(c.state.after).toBe("next-page");
 });

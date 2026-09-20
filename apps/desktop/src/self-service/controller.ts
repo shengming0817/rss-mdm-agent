@@ -55,6 +55,9 @@ export function createController(
     taskId: "",
     replying: false,
     replyUnknown: false,
+    after: null as string | null,
+    pageHistory: [] as (string | null)[],
+    loading: false,
   });
   let generation = 0;
   let snapshotWrites = 0;
@@ -69,12 +72,10 @@ export function createController(
     snapshotWrites++;
     const snapshot = state.snapshot;
     if (!snapshot) return;
-    snapshot.requests = [
-      ...snapshot.requests.filter(
-        (r) => r.plan.requestId !== task.plan.requestId,
-      ),
-      task,
-    ];
+    snapshot.requests = snapshot.requests.map((r) =>
+      r.plan.requestId === task.plan.requestId ? task : r,
+    );
+    snapshot.referencedRequests = [task];
     state.taskId = task.plan.requestId;
     if (task.plan.requestId === state.requestId) {
       state.accepted = true;
@@ -114,12 +115,22 @@ export function createController(
       }
     }
   }
-  async function refresh() {
+  async function refresh(after = state.after, history = state.pageHistory) {
     if (!port) return;
     const sequence = ++refreshSequence;
     const writes = snapshotWrites;
+    state.loading = true;
     try {
-      const snapshot = await port.snapshot();
+      const snapshot = await port.snapshot({
+        after,
+        requestIds: [
+          state.taskId,
+          state.uncertain ? state.requestId : "",
+          pendingReply?.requestId ?? "",
+        ].filter(
+          (value, index, ids) => value !== "" && ids.indexOf(value) === index,
+        ),
+      });
       if (
         sequence !== refreshSequence ||
         (snapshot.instanceId === state.snapshot?.instanceId &&
@@ -139,21 +150,25 @@ export function createController(
         pendingReply = null;
         state.replyUnknown = false;
         state.taskId = "";
+        after = null;
+        history = [];
         if (state.page === "detail") state.page = "home";
         setError("测试服务已重启；旧测试数据已清空，请明确新建请求。");
       }
       if (errorSource === "snapshot") setError("");
       state.snapshot = snapshot;
+      state.after = after;
+      state.pageHistory = history;
       rebindSelection(snapshot);
-      const task = snapshot.requests.find(
-        (r) => r.plan.requestId === state.requestId,
-      );
+      const tasks = [...snapshot.requests, ...snapshot.referencedRequests];
+      const task = tasks.find((r) => r.plan.requestId === state.requestId);
       if (task) {
-        record(task);
+        state.accepted = true;
+        state.uncertain = false;
         if (errorSource === "submission") setError("");
       }
       if (pendingReply) {
-        const interaction = snapshot.requests
+        const interaction = tasks
           .find((r) => r.plan.requestId === pendingReply?.requestId)
           ?.interactions.find((i) => i.id === pendingReply?.interactionId);
         if (interaction && interaction.status !== "pending") {
@@ -168,7 +183,17 @@ export function createController(
           "无法读取桌面测试服务。请重试；不会切换为演示成功。",
           "snapshot",
         );
+    } finally {
+      if (sequence === refreshSequence) state.loading = false;
     }
+  }
+  async function nextPage() {
+    if (state.loading || !state.snapshot?.next) return;
+    await refresh(state.snapshot.next, [...state.pageHistory, state.after]);
+  }
+  async function previousPage() {
+    if (state.loading || !state.pageHistory.length) return;
+    await refresh(state.pageHistory.at(-1)!, state.pageHistory.slice(0, -1));
   }
   function select(item: CatalogItem, fresh = false) {
     if (state.busy || state.uncertain) return;
@@ -365,6 +390,8 @@ export function createController(
     state,
     interactive: port !== null,
     refresh,
+    nextPage,
+    previousPage,
     select,
     change,
     prepare,

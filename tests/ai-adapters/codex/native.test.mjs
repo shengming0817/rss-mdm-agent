@@ -328,3 +328,28 @@ test(
     assert.equal(s.requests.length, 0);
   },
 );
+
+test(
+  "fixed app-server selects its native default when model is omitted",
+  { timeout: 30000 },
+  async (t) => {
+    const s = await nativeFixture(t);
+    const resolve = s.options.resolveConfiguration;
+    s.options.resolveConfiguration = async (...args) => {
+      const resolved = await resolve(...args);
+      delete resolved.model;
+      return resolved;
+    };
+    const port = s.make();
+    const admitted = unwrap(
+      await VerifiedProviderSession.open(port, s.configuration, budget()),
+    );
+    await conversation(port, admitted, "native-default");
+    assert.equal(typeof s.requests[0].model, "string");
+    assert.ok(s.requests[0].model.length > 0);
+    const { readFile } = await import("node:fs/promises");
+    const config = await readFile(`${s.root}/native/config.toml`, "utf8");
+    assert.doesNotMatch(config, /^model\s*=/m);
+    assert.doesNotMatch(config, /undefined/);
+  },
+);

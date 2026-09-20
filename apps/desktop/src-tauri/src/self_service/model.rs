@@ -109,6 +109,9 @@ pub struct CatalogView {
 #[serde(rename_all = "camelCase")]
 #[schemars(rename = "Plan")]
 pub struct PlanView {
+    pub authority: execution_contract::Authority,
+    pub actor: execution_contract::ActorId,
+    pub initiator: execution_contract::Initiator,
     pub request_id: RequestId,
     pub revision: u32,
     pub plan_id: PlanId,
@@ -154,6 +157,14 @@ pub struct RequestView {
     pub message: &'static str,
     pub interactions: Vec<InteractionView>,
 }
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SnapshotQuery {
+    pub after: Option<RequestId>,
+    /// Independently refresh selection and unresolved submit/reply identities (at most three).
+    #[schemars(length(max = 3))]
+    pub request_ids: Vec<RequestId>,
+}
 #[derive(Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
@@ -162,6 +173,8 @@ pub struct Snapshot {
     pub target_label: &'static str,
     pub catalog: Vec<CatalogView>,
     pub requests: Vec<RequestView>,
+    pub next: Option<RequestId>,
+    pub referenced_requests: Vec<RequestView>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

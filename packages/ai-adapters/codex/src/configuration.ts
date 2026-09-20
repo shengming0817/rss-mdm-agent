@@ -36,7 +36,8 @@ export interface ResolvedCodexConfiguration {
           budget: Budget,
         ): Promise<{ accessToken: string; accountId: string }>;
       };
-  model: string;
+  /** Omit to use the pinned Codex runtime default. */
+  model?: string;
   /** Host-owned product instructions; never loaded from native user permissions/settings. */
   developerInstructions?: string;
   /** Returned only after the host finds the requested native IDs in its trusted lineage records. */
@@ -104,7 +105,7 @@ export function nativeSettings(
   resolved: ResolvedCodexConfiguration,
 ): Record<string, unknown> {
   return {
-    model: resolved.model,
+    ...(resolved.model === undefined ? {} : { model: resolved.model }),
     ...(resolved.authentication.type === "chatgpt_tokens"
       ? { forced_chatgpt_workspace_id: resolved.authentication.accountId }
       : {}),
@@ -195,7 +196,8 @@ export async function launchSpec(
         resolved.authentication.accessToken &&
         resolved.authentication.accountId &&
         typeof resolved.authentication.refresh === "function") ||
-    !resolved.model ||
+    (resolved.model !== undefined &&
+      (typeof resolved.model !== "string" || !resolved.model.trim())) ||
     !isAbsolute(resolved.nativeDirectory) ||
     !isAbsolute(resolved.configuration.workingDirectory)
   )

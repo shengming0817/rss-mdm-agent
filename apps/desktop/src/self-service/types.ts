@@ -101,30 +101,12 @@ export type InteractionStatus =
  */
 export type Id = string;
 /**
- * Exact architecture selector; support remains a capability-owner decision.
+ * Product actor reference, not an authenticated principal.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Architecture".
+ * via the `definition` "ActorId".
  */
-export type Architecture = "x86_64" | "aarch64";
-/**
- * Target OS semantics for validation; an enum value is not a platform support claim.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Platform".
- */
-export type Platform = "windows" | "macos" | "linux";
-/**
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "RequestStatus".
- */
-export type RequestStatus =
-  | "waiting"
-  | "approval"
-  | "complete"
-  | "stopped"
-  | "restartRequired"
-  | "unknownEffect";
+export type ActorId = string;
 /**
  * Separate namespaces: none of these serializable references authenticates its issuer.
  *
@@ -157,6 +139,82 @@ export type Authority =
       id: Id;
       kind: "test";
     };
+/**
+ * Request origin and account provenance; never grants the product actor additional authority.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Initiator".
+ */
+export type Initiator =
+  | {
+      kind: "human";
+      /**
+       * Originating OS account/session reference, separate from requested run-as identity.
+       */
+      osSession: OsSessionRef;
+    }
+  | {
+      /**
+       * Originating AI conversation reference in the provider namespace.
+       */
+      conversation: Id;
+      kind: "ai";
+      /**
+       * Originating OS account/session reference, separate from requested run-as identity.
+       */
+      osSession: OsSessionRef;
+      /**
+       * Provider/CLI namespace of the recorded AI account; not product authentication.
+       */
+      provider: Id;
+      /**
+       * Explicit provider account and configuration references at initiation.
+       */
+      providerAccount: ProviderAccountRef;
+      /**
+       * Originating tool-call reference; cannot act as a product approval.
+       */
+      toolCall: Id;
+    }
+  | {
+      kind: "policy";
+      /**
+       * Exact policy revision associated with this request or audit decision.
+       */
+      policy: VersionedRef;
+    };
+/**
+ * Target OS semantics for validation; an enum value is not a platform support claim.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Platform".
+ */
+export type Platform = "windows" | "macos" | "linux";
+/**
+ * Device reference, not verified registration evidence.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "DeviceId".
+ */
+export type DeviceId = string;
+/**
+ * Exact architecture selector; support remains a capability-owner decision.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Architecture".
+ */
+export type Architecture = "x86_64" | "aarch64";
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "RequestStatus".
+ */
+export type RequestStatus =
+  | "waiting"
+  | "approval"
+  | "complete"
+  | "stopped"
+  | "restartRequired"
+  | "unknownEffect";
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "FieldInput".
@@ -353,9 +411,12 @@ export interface Choice {
  */
 export interface Plan {
   action: Id;
+  actor: ActorId;
+  authority: Authority;
   dataScope: string;
   digest: Digest;
   expiresAtUnixMs: number;
+  initiator: Initiator;
   itemId: Id;
   network: string;
   parameters: ParameterSummary[];
@@ -367,6 +428,74 @@ export interface Plan {
   runAs: string;
   target: string;
   title: string;
+}
+/**
+ * Claimed OS login provenance at the request origin, separate from target and run-as identity.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "OsSessionRef".
+ */
+export interface OsSessionRef {
+  /**
+   * Login account at the origin; never implicitly equated to the product actor.
+   */
+  account: OsAccountRef;
+  /**
+   * Origin device reference; it does not establish registration or target authority.
+   */
+  device: DeviceId;
+  /**
+   * Origin OS login/session reference, including an explicit test reference in fixtures.
+   */
+  session: Id;
+}
+/**
+ * Opaque account reference in an OS namespace, independent of product or provider identity.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "OsAccountRef".
+ */
+export interface OsAccountRef {
+  /**
+   * OS namespace of this reference or target; does not assert platform support.
+   */
+  platform: Platform;
+  /**
+   * Opaque stable OS account reference, such as a SID/UID reference, not an authentication credential.
+   */
+  subject: Id;
+}
+/**
+ * Non-secret provider/CLI account provenance. Neither field proves product authentication.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "ProviderAccountRef".
+ */
+export interface ProviderAccountRef {
+  /**
+   * Opaque account reference scoped by Initiator's provider, not a token or email credential.
+   */
+  account: Id;
+  /**
+   * Exact configuration revision used by the originating AI session.
+   */
+  config: VersionedRef;
+}
+/**
+ * Exact resource/configuration reference. Resolution and authenticity belong to the owner.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "VersionedRef".
+ */
+export interface VersionedRef {
+  /**
+   * Opaque reference identity; the revision must be supplied separately.
+   */
+  id: Id;
+  /**
+   * Exact immutable revision reference; does not resolve or follow a moving alias.
+   */
+  revision: Id;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -395,22 +524,6 @@ export interface ResourceBinding {
    * SHA-256 of the owner's resource version definition, NOT file byte SHA-256.
    */
   versionDigest: Digest;
-}
-/**
- * Exact resource/configuration reference. Resolution and authenticity belong to the owner.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "VersionedRef".
- */
-export interface VersionedRef {
-  /**
-   * Opaque reference identity; the revision must be supplied separately.
-   */
-  id: Id;
-  /**
-   * Exact immutable revision reference; does not resolve or follow a moving alias.
-   */
-  revision: Id;
 }
 /**
  * Exact variant coordinates, not a platform support assertion.
@@ -499,8 +612,21 @@ export interface Reply {
  * via the `definition` "Command".
  */
 export interface Command {
-  input: null;
+  input: SnapshotQuery;
   output: Snapshot;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SnapshotQuery".
+ */
+export interface SnapshotQuery {
+  after: RequestId | null;
+  /**
+   * Independently refresh selection and unresolved submit/reply identities (at most three).
+   *
+   * @maxItems 3
+   */
+  requestIds: RequestId[];
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -510,6 +636,8 @@ export interface Snapshot {
   catalog: CatalogItem[];
   instanceId: string;
   mode: ServiceMode;
+  next: RequestId | null;
+  referencedRequests: RequestView[];
   requests: RequestView[];
   targetLabel: string;
 }

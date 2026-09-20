@@ -17,7 +17,10 @@ const items = computed(
     ) ?? [],
 );
 const task = computed(() =>
-  s.snapshot?.requests.find((item) => item.plan.requestId === s.taskId),
+  [
+    ...(s.snapshot?.requests ?? []),
+    ...(s.snapshot?.referencedRequests ?? []),
+  ].find((item) => item.plan.requestId === s.taskId),
 );
 function decision(value: Decision): string {
   switch (value) {
@@ -56,7 +59,7 @@ let polling: ReturnType<typeof setInterval>;
 onMounted(() => {
   polling = setInterval(() => {
     now.value = Date.now();
-    if (!s.busy && !s.replying) void c.refresh();
+    if (!s.busy && !s.replying && !s.loading) void c.refresh();
   }, 1500);
   void c.refresh();
 });
@@ -68,7 +71,7 @@ onUnmounted(() => clearInterval(polling));
     <div v-if="!s.snapshot" class="empty-state">
       <h1>正在连接桌面测试服务</h1>
       <p>服务不可用时不会切换为演示成功。</p>
-      <button @click="c.refresh">重试连接</button>
+      <button @click="c.refresh()">重试连接</button>
     </div>
     <template v-else-if="s.page === 'home'">
       <section class="hero">
@@ -114,7 +117,11 @@ onUnmounted(() => clearInterval(polling));
           <h1>{{ s.page === "software" ? "软件中心" : "工具中心" }}</h1>
           <p>选择项目，查看条件与精确计划。</p>
         </div>
-        <button class="secondary" :disabled="!c.interactive" @click="c.refresh">
+        <button
+          class="secondary"
+          :disabled="!c.interactive"
+          @click="c.refresh()"
+        >
           刷新目录
         </button>
       </div>
@@ -221,7 +228,7 @@ onUnmounted(() => clearInterval(polling));
           }}
         </button></template
       >
-      <button v-if="s.uncertain" class="secondary" @click="c.refresh">
+      <button v-if="s.uncertain" class="secondary" @click="c.refresh()">
         查询原请求
       </button>
     </template>
@@ -236,12 +243,20 @@ onUnmounted(() => clearInterval(polling));
           <h1>请求与任务</h1>
           <p>交互提示与任务结果分别记录。</p>
         </div>
-        <button class="secondary" :disabled="!c.interactive" @click="c.refresh">
+        <button
+          class="secondary"
+          :disabled="!c.interactive"
+          @click="c.refresh()"
+        >
           刷新任务
         </button>
       </div>
       <p v-if="s.snapshot.requests.length === 0" class="empty-state">
-        暂无请求。先从软件或工具目录开始。
+        {{
+          s.snapshot.next || s.after
+            ? "本页暂无已提交请求，可继续翻页。"
+            : "暂无请求。先从软件或工具目录开始。"
+        }}
       </p>
       <div class="task-layout">
         <div class="task-list">
@@ -256,6 +271,23 @@ onUnmounted(() => clearInterval(polling));
             ><span>{{ status(request.status) }}</span
             ><small class="identifier">{{ request.plan.requestId }}</small>
           </button>
+          <nav class="actions" aria-label="任务分页">
+            <button
+              class="secondary"
+              :disabled="s.loading || !s.pageHistory.length"
+              @click="c.previousPage()"
+            >
+              上一页
+            </button>
+            <span>第 {{ s.pageHistory.length + 1 }} 页</span>
+            <button
+              class="secondary"
+              :disabled="s.loading || !s.snapshot.next"
+              @click="c.nextPage()"
+            >
+              下一页
+            </button>
+          </nav>
         </div>
         <TaskDetail
           v-if="task"

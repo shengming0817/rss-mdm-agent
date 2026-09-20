@@ -646,6 +646,22 @@ const snapshot: Snapshot = {
   requests: [
     {
       plan: {
+        authority: {
+          kind: "test",
+          id: "desktop-fixture",
+        },
+        actor: "fixture-actor",
+        initiator: {
+          kind: "human",
+          osSession: {
+            device: "fixture-device",
+            account: {
+              platform: "macos",
+              subject: "fixture-user",
+            },
+            session: "fixture-session",
+          },
+        },
         requestId: "preview-diagnostics",
         revision: 1,
         planId: "plan-browser-preview-1",
@@ -710,6 +726,22 @@ const snapshot: Snapshot = {
     },
     {
       plan: {
+        authority: {
+          kind: "test",
+          id: "desktop-fixture",
+        },
+        actor: "fixture-actor",
+        initiator: {
+          kind: "human",
+          osSession: {
+            device: "fixture-device",
+            account: {
+              platform: "macos",
+              subject: "fixture-user",
+            },
+            session: "fixture-session",
+          },
+        },
         requestId: "preview-office",
         revision: 1,
         planId: "plan-browser-preview-2",
@@ -763,6 +795,22 @@ const snapshot: Snapshot = {
     },
     {
       plan: {
+        authority: {
+          kind: "test",
+          id: "desktop-fixture",
+        },
+        actor: "fixture-actor",
+        initiator: {
+          kind: "human",
+          osSession: {
+            device: "fixture-device",
+            account: {
+              platform: "macos",
+              subject: "fixture-user",
+            },
+            session: "fixture-session",
+          },
+        },
         requestId: "preview-restart",
         revision: 1,
         planId: "plan-browser-preview-3",
@@ -819,6 +867,22 @@ const snapshot: Snapshot = {
     },
     {
       plan: {
+        authority: {
+          kind: "test",
+          id: "desktop-fixture",
+        },
+        actor: "fixture-actor",
+        initiator: {
+          kind: "human",
+          osSession: {
+            device: "fixture-device",
+            account: {
+              platform: "macos",
+              subject: "fixture-user",
+            },
+            session: "fixture-session",
+          },
+        },
         requestId: "preview-unknown",
         revision: 1,
         planId: "plan-browser-preview-4",
@@ -853,5 +917,7 @@ const snapshot: Snapshot = {
       interactions: [],
     },
   ],
+  next: null,
+  referencedRequests: [],
 };
 export default snapshot;

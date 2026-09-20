@@ -72,6 +72,8 @@ impl FixtureService {
             target_label: fixtures::TARGET,
             catalog,
             requests,
+            next: None,
+            referenced_requests: vec![],
         })
     }
     pub fn preview(&mut self, draft: Draft, now: u64) -> Result<PlanView> {
@@ -311,6 +313,9 @@ impl FixtureService {
             })
             .collect();
         Ok(PlanView {
+            authority: spec.request.authority.clone(),
+            actor: spec.request.actor.clone(),
+            initiator: spec.request.initiator.clone(),
             request_id: spec.request.request_id.clone(),
             revision: record.revision,
             plan_id: spec.plan_id.clone(),

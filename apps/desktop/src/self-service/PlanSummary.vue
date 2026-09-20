@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import RequestOrigin from "./RequestOrigin.vue";
 import type { Plan } from "./types";
 defineProps<{ plan: Plan }>();
 </script>
@@ -8,6 +9,7 @@ defineProps<{ plan: Plan }>();
       <h2>计划摘要</h2>
       <span class="badge">固定测试计划</span>
     </div>
+    <RequestOrigin :plan="plan" />
     <dl class="facts">
       <dt>计划 ID</dt>
       <dd class="identifier">{{ plan.planId }}</dd>

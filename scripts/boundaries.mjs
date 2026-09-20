@@ -230,6 +230,11 @@ export function checkSource(file, source) {
         errors.push(`${file}: host dependency ${name}`);
       if (
         name.startsWith(".") &&
+        // The assistant shares only this data-only frozen-origin projection.
+        !(
+          file === "apps/desktop/src/assistant/ExecutionDetails.vue" &&
+          name === "../self-service/RequestOrigin.vue"
+        ) &&
         !resolve(dirname(resolve(root, file)), name)
           .replaceAll("\\", "/")
           .startsWith(resolve(root, sourceDir).replaceAll("\\", "/") + "/")
@@ -562,11 +567,7 @@ export function checkTree(treeRoot = root) {
     [];
   if (
     JSON.stringify(commands.toSorted()) !==
-      JSON.stringify(
-        selfServiceCommands
-          .filter((c) => c !== "self_service_snapshot")
-          .toSorted(),
-      ) ||
+      JSON.stringify(selfServiceCommands.toSorted()) ||
     (main.match(/app\.manage\(/g) ?? []).length !== 1 ||
     (ipc.match(/\.invoke_handler\(/g) ?? []).length !== 1
   )

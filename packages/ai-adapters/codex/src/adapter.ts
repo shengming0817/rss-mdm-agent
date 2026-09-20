@@ -292,7 +292,7 @@ export class CodexAdapter implements ProviderAgentPort {
         nextBudget(),
       );
       const params = {
-        model: resolved.model,
+        ...(resolved.model === undefined ? {} : { model: resolved.model }),
         ...(resolved.developerInstructions
           ? { developerInstructions: resolved.developerInstructions }
           : {}),

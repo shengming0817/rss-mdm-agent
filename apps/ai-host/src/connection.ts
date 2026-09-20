@@ -117,7 +117,9 @@ export async function resolveConnection(
     const auth = JSON.parse(await readUserFile(authPath));
     const provider = selected.model_provider ?? "openai";
     const providerSettings = selected.model_providers?.[provider] ?? {};
-    const model = text(source.model ?? selected.model);
+    const model = source.model ?? selected.model;
+    if (model !== undefined && (typeof model !== "string" || !model.trim()))
+      throw new ConfigurationError("configuration_invalid");
     const apiUrl = endpoint(
       providerSettings.base_url ??
         (provider === "openai" ? "https://api.openai.com/v1" : undefined),

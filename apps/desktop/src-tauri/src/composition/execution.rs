@@ -194,8 +194,8 @@ impl ExecutionHandle {
             .map_err(|_| Error::OutcomeUnknown)?
             .map_err(|_| Error::Unavailable)?
     }
-    pub async fn snapshot(&self) -> ui::Result<ui::Snapshot> {
-        self.call(|o| o.snapshot()).await.map_err(bad)
+    pub async fn snapshot(&self, query: ui::SnapshotQuery) -> ui::Result<ui::Snapshot> {
+        self.call(move |o| o.snapshot(query)).await.map_err(bad)
     }
     pub async fn preview_ui(&self, draft: ui::Draft) -> ui::Result<ui::PlanView> {
         self.call(move |o| {
@@ -392,6 +392,9 @@ impl Owner {
             .find(|i| i.operations[0].resource.reference == spec.request.operation.resource)
             .ok_or(Error::NotFound)?;
         Ok(ui::PlanView {
+            authority: spec.request.authority.clone(),
+            actor: spec.request.actor.clone(),
+            initiator: spec.request.initiator.clone(),
             request_id: spec.request.request_id.clone(),
             revision,
             plan_id: spec.plan_id.clone(),
@@ -487,7 +490,10 @@ impl Owner {
             interactions,
         })
     }
-    fn snapshot(&self) -> Result<ui::Snapshot, Error> {
+    fn snapshot(&self, query: ui::SnapshotQuery) -> Result<ui::Snapshot, Error> {
+        if query.request_ids.len() > 3 {
+            return Err(Error::InvalidInput);
+        }
         let catalog = self
             .catalog
             .snapshot()
@@ -528,20 +534,31 @@ impl Owner {
                 })
             })
             .collect::<Result<_, Error>>()?;
-        let requests = self
-            .app
-            .tasks(None, 128)?
+        let page = self.app.tasks(query.after.as_ref(), 128)?;
+        let requests = page
             .items
             .iter()
             .filter(|task| task.status.submitted)
             .map(|task| self.request_view(&task.status.operation_request_id))
             .collect::<Result<_, _>>()?;
+        let mut referenced_requests = Vec::new();
+        for request in query.request_ids {
+            match self.app.status(&request) {
+                Ok(status) if status.submitted => {
+                    referenced_requests.push(self.request_view(&request)?)
+                }
+                Ok(_) | Err(Error::NotFound) => (),
+                Err(error) => return Err(error),
+            }
+        }
         Ok(ui::Snapshot {
             mode: ui::ServiceMode::S1,
             instance_id: BINDING.into(),
             target_label: fixtures::TARGET,
             catalog,
             requests,
+            next: page.next,
+            referenced_requests,
         })
     }
 }
@@ -709,5 +726,161 @@ impl mcp::ExecutionServicePort for ExecutionHandle {
         })
         .await
         .map_err(mcp_error)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn fixture() -> (ExecutionHandle, std::path::PathBuf) {
+        let root = std::env::temp_dir().join(format!(
+            "rss-task-pages-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let root = root.canonicalize().unwrap();
+        let ai = super::super::origin::AiBinding::from_configuration(&serde_json::json!({
+            "caller": {"tenantId":"s1-test","principalId":"fixture-actor","authorityId":"desktop-fixture"},
+            "session": {"provider":"codex","accountRef":"test-account","config":{"id":"test-config","revision":"1"},"profile":"controlled_tools"}
+        })).unwrap();
+        (
+            ExecutionHandle::start(&root.join("execution.sqlite"), ai).unwrap(),
+            root,
+        )
+    }
+
+    fn add(o: &mut Owner, index: usize, submitted: bool, origin: Initiator) -> Result<(), Error> {
+        let draft = ui::Draft {
+            instance_id: BINDING.into(),
+            request_id: RequestId::new(format!("page-{index:03}")).unwrap(),
+            revision: 1,
+            catalog: o.catalog.reference(),
+            item_id: id("office"),
+            variant_id: id("test"),
+            fields: Default::default(),
+        };
+        let selected = selection::select(&o.catalog, &draft).map_err(|_| Error::InvalidInput)?;
+        o.preview(&draft.request_id, selected, origin)?;
+        if submitted {
+            o.submit(&draft.request_id)?;
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn preview_only_page_keeps_continuation_to_submitted_tasks() {
+        let (handle, root) = fixture().await;
+        handle
+            .call(|o| {
+                for i in 0..130 {
+                    add(o, i, i >= 128, super::super::origin::human())?;
+                }
+                let first =
+                    serde_json::to_value(o.snapshot(ui::SnapshotQuery::default())?).unwrap();
+                assert_eq!(first["requests"].as_array().unwrap().len(), 0);
+                assert_eq!(first["next"], "page-127");
+                let second = o.snapshot(ui::SnapshotQuery {
+                    after: Some(RequestId::new("page-127").unwrap()),
+                    request_ids: vec![],
+                })?;
+                assert_eq!(second.requests.len(), 2);
+                assert_eq!(second.requests[0].plan.request_id.as_str(), "page-128");
+                assert!(second.next.is_none());
+                Ok(())
+            })
+            .await
+            .unwrap();
+        handle.close().await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn approval_projection_contains_the_frozen_actor_and_origin() {
+        let (handle, root) = fixture().await;
+        handle
+            .call(|o| {
+                let human = super::super::origin::human();
+                let ai = Initiator::Ai {
+                    provider: id("codex"),
+                    os_session: super::super::origin::os_session(),
+                    provider_account: ProviderAccountRef {
+                        account: id("test-account"),
+                        config: VersionedRef {
+                            id: id("test-config"),
+                            revision: id("1"),
+                        },
+                    },
+                    conversation: id("conversation-test"),
+                    tool_call: id("call-test"),
+                };
+                for (index, origin) in [human, ai].into_iter().enumerate() {
+                    add(o, index, true, origin.clone())?;
+                    let request = RequestId::new(format!("page-{index:03}")).unwrap();
+                    let p = o.app.frozen_plan(&request)?;
+                    let view = serde_json::to_value(o.request_view(&request)?).unwrap();
+                    assert_eq!(view["status"], "approval");
+                    assert_eq!(
+                        view["plan"]["actor"],
+                        serde_json::to_value(&p.spec().request.actor).unwrap()
+                    );
+                    assert_eq!(
+                        view["plan"]["authority"],
+                        serde_json::to_value(&p.spec().request.authority).unwrap()
+                    );
+                    assert_eq!(
+                        view["plan"]["initiator"],
+                        serde_json::to_value(origin).unwrap()
+                    );
+                    assert_eq!(view["plan"]["digest"], p.digest().as_str());
+                }
+                Ok(())
+            })
+            .await
+            .unwrap();
+        handle.close().await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[tokio::test]
+    async fn pages_cover_all_tasks_and_refresh_off_page_selection_without_dispatch() {
+        let (handle, root) = fixture().await;
+        handle
+            .call(|o| {
+                for i in 0..130 {
+                    add(o, i, true, super::super::origin::human())?;
+                }
+                let first = o.snapshot(ui::SnapshotQuery::default())?;
+                assert_eq!(first.requests.len(), 128);
+                let selected = first.requests[0].plan.request_id.clone();
+                let second = o.snapshot(ui::SnapshotQuery {
+                    after: first.next,
+                    request_ids: vec![selected.clone()],
+                })?;
+                assert_eq!(second.requests.len(), 2);
+                assert!(second.next.is_none());
+                assert_eq!(second.referenced_requests.len(), 1);
+                assert_eq!(second.referenced_requests[0].plan.request_id, selected);
+                assert_eq!(o.app.status(&selected)?.attempts, 0);
+                assert!(o
+                    .snapshot(ui::SnapshotQuery {
+                        after: None,
+                        request_ids: vec![selected; 4]
+                    })
+                    .is_err());
+                Ok(())
+            })
+            .await
+            .unwrap();
+        handle.close().await;
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

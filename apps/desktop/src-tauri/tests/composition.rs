@@ -31,7 +31,7 @@ fn bound(handle: &ExecutionHandle, session: &str, operation: &str) -> Arc<Execut
     Arc::new(handle.clone()).bind_call(json!({"com.rss-mdm/ai-origin":{"version":1,"namespace":{"tenantId":"s1-test","principalId":"fixture-actor","authorityId":"desktop-fixture","sessionId":session},"operationId":operation,"provider":"codex","accountRef":"test-account","config":{"id":"local","revision":"r1"}}}).as_object().unwrap()).unwrap()
 }
 async fn draft(handle: &ExecutionHandle, request: &str, item: &str) -> ui::PlanView {
-    let snapshot = handle.snapshot().await.unwrap();
+    let snapshot = handle.snapshot(Default::default()).await.unwrap();
     let item = snapshot
         .catalog
         .into_iter()
@@ -68,7 +68,12 @@ async fn shared_durable_service_distinguishes_preview_submission_approval_and_re
     assert!(!before.status.submitted);
     assert_eq!(before.status.attempts, 0);
     assert!(matches!(before.plan.initiator, Initiator::Human { .. }));
-    assert!(handle.snapshot().await.unwrap().requests.is_empty());
+    assert!(handle
+        .snapshot(Default::default())
+        .await
+        .unwrap()
+        .requests
+        .is_empty());
     assert_eq!(
         handle.submit_ui(submission(&plan)).await.unwrap().status,
         ui::RequestStatus::Approval

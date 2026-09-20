@@ -200,3 +200,14 @@ test("inline credentials require private settings and connection lineage rejects
     bindConnection(f.local, await resolveConnection(f.local)),
   );
 });
+
+test("existing Codex configuration may omit model but rejects an invalid explicit model", async (t) => {
+  const { write, local } = await setup(t, "codex");
+  await write("auth.json", JSON.stringify({ OPENAI_API_KEY: "fixture-key" }));
+  await write("config.toml", "");
+  assert.equal((await resolveConnection(local)).model, undefined);
+  for (const value of ['""', '"  "', "17"]) {
+    await write("config.toml", `model=${value}\n`);
+    await assert.rejects(resolveConnection(local));
+  }
+});

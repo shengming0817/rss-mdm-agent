@@ -22,9 +22,36 @@
     );
   const click = async (text) => (await wait(() => button(text))).click();
   const snapshot = () =>
-    window.__TAURI_INTERNALS__.invoke("self_service_snapshot");
+    window.__TAURI_INTERNALS__.invoke("self_service_snapshot", {
+      input: { after: null, requestIds: [] },
+    });
   const details = (requestId) =>
     window.__TAURI_INTERNALS__.invoke("execution_task_details", { requestId });
+  const verifyOrigin = async (plan) => {
+    await wait(() => {
+      const text =
+        document.querySelector(".task-detail .request-origin")?.textContent ??
+        "";
+      const source = plan.initiator;
+      const expected = [
+        plan.actor,
+        plan.authority.id,
+        source.kind === "ai" ? "AI 发起" : "人工发起",
+        source.osSession.account.subject,
+        source.osSession.session,
+      ];
+      if (source.kind === "ai")
+        expected.push(
+          source.provider,
+          source.providerAccount.account,
+          source.providerAccount.config.id,
+          source.providerAccount.config.revision,
+          source.conversation,
+          source.toolCall,
+        );
+      return expected.every((value) => text.includes(value));
+    });
+  };
   const report = (value) => {
     document.title = "RSS_ACCEPTANCE:" + JSON.stringify(value);
   };
@@ -54,6 +81,7 @@
           ),
         )
       ).click();
+      await verifyOrigin(human.plan);
       await click("批准此测试计划一次");
       await wait(
         async () =>
@@ -113,6 +141,7 @@
           ),
         )
       ).click();
+      await verifyOrigin(ai.plan);
       await click("批准此测试计划一次");
       await wait(
         async () =>
@@ -127,6 +156,7 @@
         humanCompleted: true,
         aiApprovedOnce: true,
         sharedCatalog: true,
+        frozenOriginsVisible: true,
         detachedRunContinued: true,
         nativeHistoryVisible: true,
         testTasks: 2,

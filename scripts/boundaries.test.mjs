@@ -445,3 +445,19 @@ test("only the narrow native adapter can call literal fixture commands", () => {
     [],
   );
 });
+
+test("trusted execution details share only the frozen-origin view across feature directories", () => {
+  const file = "apps/desktop/src/assistant/ExecutionDetails.vue";
+  const source = (name) =>
+    `<script setup>import View from "${name}";</script><template><View /></template>`;
+  assert.deepEqual(
+    checkSource(file, source("../self-service/RequestOrigin.vue")),
+    [],
+  );
+  for (const name of [
+    "../self-service/native",
+    "../self-service/controller",
+    "../self-service/TaskDetail.vue",
+  ])
+    assert.ok(checkSource(file, source(name)).length);
+});

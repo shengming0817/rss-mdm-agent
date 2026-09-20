@@ -15,8 +15,6 @@ fn decode<T: serde::de::DeserializeOwned>(input: serde_json::Value) -> Result<T>
 // Production commands and generated UI contract share these signatures.
 macro_rules! commands {
     ($($name:ident($input:ty) -> $output:ty = $method:ident),+ $(,)?) => {
-        #[tauri::command]
-        pub async fn self_service_snapshot(state: State<'_, DesktopRuntime>) -> Result<Snapshot> { state.execution.snapshot().await }
         $(#[tauri::command]
         pub async fn $name(state: State<'_, DesktopRuntime>, input: serde_json::Value) -> Result<$output> {
             state.execution.$method(decode::<$input>(input)?).await
@@ -27,12 +25,13 @@ macro_rules! commands {
             struct Command<I: schemars::JsonSchema, O: schemars::JsonSchema> { input: I, output: O }
             #[derive(schemars::JsonSchema)]
             #[allow(dead_code)]
-            struct SelfServiceCommands { self_service_snapshot: Command<(), Snapshot>, $($name: Command<$input, $output>),+ }
+            struct SelfServiceCommands { $($name: Command<$input, $output>),+ }
             schemars::generate::SchemaSettings::draft07().for_serialize().into_generator().into_root_schema_for::<SelfServiceCommands>()
         }
     }
 }
 commands! {
+    self_service_snapshot(SnapshotQuery) -> Snapshot = snapshot,
     self_service_preview(Draft) -> PlanView = preview_ui,
     self_service_submit(Submission) -> RequestView = submit_ui,
     self_service_cancel(Submission) -> RequestView = cancel_ui,
@@ -151,7 +150,7 @@ mod tests {
             &main,
             "self_service_snapshot",
             "tauri://localhost",
-            serde_json::json!({}),
+            serde_json::json!({"input":{"after":null,"requestIds":[]}}),
         )
         .unwrap()
         .deserialize::<serde_json::Value>()
