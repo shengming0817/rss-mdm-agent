@@ -3,6 +3,11 @@ import { fileURLToPath } from "node:url";
 import { join, dirname, resolve } from "node:path";
 import ts from "typescript";
 const root = fileURLToPath(new URL("../", import.meta.url));
+const appExternalDependencies = {
+  "@iarna/toml": "2.2.5",
+  "@modelcontextprotocol/sdk": "1.30.0",
+  yaml: "2.9.1",
+};
 const allowed = {
   "apps/ai-host": [
     "@rss-mdm-agent/ai-contract",
@@ -10,6 +15,9 @@ const allowed = {
     "@rss-mdm-agent/ai-store-sqlite",
     "@rss-mdm-agent/ai-access",
     "@rss-mdm-agent/ai-adapter-claude",
+    "@rss-mdm-agent/ai-adapter-codex",
+    "@rss-mdm-agent/ai-adapter-deepseek",
+    ...Object.keys(appExternalDependencies),
   ],
   "packages/ai-host": ["@rss-mdm-agent/ai-contract"],
   "packages/ai-contract": ["@noble/hashes", "canonicalize", "jsonc-parser"],
@@ -40,6 +48,7 @@ const serverFiles = new Map([
 for (const [file, imports] of Object.entries({
   "index.ts": ["node:crypto"],
   "channel.ts": ["node:crypto", "node:stream"],
+  "delivery.ts": ["node:crypto"],
   "bootstrap.ts": ["node:net", "node:child_process"],
   "process.ts": [
     "node:child_process",
@@ -51,7 +60,10 @@ for (const [file, imports] of Object.entries({
   serverFiles.set(join(root, "packages/ai-host/src", file), imports);
 for (const [file, imports] of Object.entries({
   "index.ts": ["node:net", "node:stream", "node:fs/promises", "node:path"],
-  "configuration.ts": ["node:path"],
+  "configuration.ts": ["node:path", "node:crypto"],
+  "connection.ts": ["node:crypto", "node:fs", "node:fs/promises", "node:path"],
+  "execution.ts": ["node:stream", "node:crypto"],
+  "provider.ts": ["node:crypto", "node:fs/promises", "node:path"],
   "private-file.ts": ["node:fs", "node:fs/promises", "node:path"],
 }))
   serverFiles.set(join(root, "apps/ai-host/src", file), imports);
@@ -72,8 +84,12 @@ for (const [name, dependencies] of Object.entries(allowed)) {
     JSON.stringify(Object.keys(manifest.dependencies ?? {}).sort()) !==
       JSON.stringify(dependencies.toSorted()) ||
     (name === "apps/ai-host" &&
-      Object.values(manifest.dependencies ?? {}).some(
-        (value) => value !== "workspace:*",
+      Object.entries(manifest.dependencies ?? {}).some(
+        ([dependency, value]) =>
+          value !==
+          (dependency.startsWith("@rss-mdm-agent/")
+            ? "workspace:*"
+            : appExternalDependencies[dependency]),
       )) ||
     manifest.optionalDependencies ||
     manifest.peerDependencies

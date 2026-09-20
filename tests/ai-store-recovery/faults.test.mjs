@@ -186,7 +186,10 @@ test("schema creation is transactional and partial/newer/foreign files are not r
     store = unwrap(h.open(newer));
   unwrap(await store.close(budget()));
   const future = new DatabaseSync(newer);
-  future.exec("PRAGMA user_version=3");
+  const currentVersion = future
+    .prepare("PRAGMA user_version")
+    .get().user_version;
+  future.exec(`PRAGMA user_version=${currentVersion + 1}`);
   future.close();
   const bytes = readFileSync(newer);
   assert.equal(h.open(newer, "open").error.code, "unsupported_version");
