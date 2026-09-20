@@ -42,6 +42,8 @@ Claude SDK 0.3.277 / CLI 2.1.277 的公开 `accountInfo()` 只提供可选展示
 
 `pnpm test:ai-host` 覆盖真实 SQLite、worker 进程、取消、阶段和交付恢复；`pnpm test:ai-acceptance` 使用固定 SDK/native 进程和本地模型协议服务，不代表真实云端凭据验收。
 
-显式执行 `node scripts/check-connection-sources.mjs` 使用生产 Rust broker、当前 OS 用户已有 Codex/Claude 来源和真实模型探针；它只输出来源与闭合结果码，不输出路径、账号或秘密。缺失或不可用来源不能算通过。此入口不纳入无凭据 CI。原生窗口与平台凭据入口另按[桌面指南](../../docs/guides/desktop-development.md)验收。
+显式执行 `node scripts/check-connection-sources.mjs` 使用生产 Rust broker、当前 OS 用户已有 Codex/Claude 来源和真实模型探针；它只输出来源与闭合结果码，不输出路径、账号或秘密。结果按支持矩阵归并：Claude existing_login 必须返回 unsupported_capability；支持来源缺失记为 not_applicable（汇总 partial），不可用来源仍判失败，不冒充模型验收通过。此入口不纳入无凭据 CI。原生窗口与平台凭据入口另按[桌面指南](../../docs/guides/desktop-development.md)验收。
 
 上游依据：Codex 0.155.0 `codex-rs/login/src/auth/storage.rs`（commit `f0a1b8f0849d90960bc406b848f32e5a129b0457`）；Claude Agent SDK 0.3.277 `sdk.mjs` / bundled CLI（secure storage selector、accountInfo）；security-framework 3.5.1 `src/passwords.rs`；objc2-app-kit 0.3.2 `NSAlert` / `NSSecureTextField`。
+
+`node scripts/check-native-credentials.mjs` 在 macOS arm64 使用独立临时目录、一次性 synthetic credential 和 localhost OpenAI-compatible SSE 服务，执行真实 WebView → AppKit 安全输入 → Keychain → 生产 broker/Host 验证保存 → 确认删除，检查同一 Keychain 引用及 journal 已清理。先 `pnpm bundle:ai-host` 构建同一 clean commit 的固定产物；证据写入 `.local-ci-runs/native-credentials.json`，绑定源码、locks、runtime/native executable 哈希。它证明原生凭据和本地协议接缝，不证明云端账号认证。

@@ -1,3 +1,4 @@
+import { sourceSummary } from "./connection-source-results.mjs";
 import { spawn, execFileSync } from "node:child_process";
 import { once } from "node:events";
 import {
@@ -100,7 +101,7 @@ try {
       const directory = await realpath(
         join(homedir(), provider === "codex" ? ".codex" : ".claude"),
       ).catch(() => undefined);
-      if (!directory) {
+      if (!directory && !(provider === "claude" && type === "existing_login")) {
         results.push({ provider, source: type, result: "source_absent" });
         continue;
       }
@@ -118,7 +119,7 @@ try {
           credentialRef: crypto.randomUUID(),
           profile: "conversation",
           status: "unverified",
-          source: { type, directory },
+          source: { type, directory: directory ?? root },
         },
         null,
         budget(),
@@ -161,9 +162,9 @@ try {
           arch: process.arch,
         },
         mode: "production-native-broker/isolated-provider/minimal-real-model-probe",
-        results,
+        ...sourceSummary(results),
         notCovered: [
-          "custom_api_requires_explicit_native_credential_entry",
+          "custom_api_covered_separately_by_check_native_credentials",
           "windows",
           "enterprise_identity",
         ],
@@ -174,5 +175,4 @@ try {
   );
   if (!sameCommittedSource(start, end)) process.exitCode = 1;
 }
-if (results.some((row) => row.result !== "model_probe_completed"))
-  process.exitCode = 1;
+if (sourceSummary(results).status === "failed") process.exitCode = 1;

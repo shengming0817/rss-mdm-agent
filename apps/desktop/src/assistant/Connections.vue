@@ -36,6 +36,7 @@ const rows = ref<Connection[]>([]),
 const busy = ref(false),
   error = ref(""),
   editing = ref<Connection>();
+const pendingRemoval = ref<Connection>();
 const draftId = ref<string>(crypto.randomUUID());
 const name = ref(""),
   provider = ref<Connection["provider"]>("codex"),
@@ -228,6 +229,7 @@ async function remove(row: Connection) {
       { ...row, configRevision: row.configRevision + 1, status: "deleted" },
       row.configRevision,
     );
+    pendingRemoval.value = undefined;
     await load();
   });
 }
@@ -270,9 +272,22 @@ async function history() {
             @click="defaultConnection(row.connectionId)"
           >
             设为默认</button
-          ><button :disabled="busy" @click="remove(row)">删除</button>
+          ><button :disabled="busy" @click="pendingRemoval = row">删除</button>
         </li>
       </ul>
+      <div v-if="pendingRemoval" role="alertdialog" aria-label="删除连接确认">
+        <p>
+          确认删除 {{ pendingRemoval.name }}（{{
+            labels.get(pendingRemoval.provider)
+          }}）？连接配置将移除，不再使用的凭据会清理；所有会话历史保留。
+        </p>
+        <button :disabled="busy" @click="pendingRemoval = undefined">
+          取消删除
+        </button>
+        <button :disabled="busy" @click="remove(pendingRemoval)">
+          确认删除
+        </button>
+      </div>
       <p v-if="provider === 'claude' && sourceType === 'existing_login'">
         当前无法可靠核验 Claude 已有登录的账号身份，请选择已有 API 配置或自定义
         API。

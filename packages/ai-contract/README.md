@@ -18,9 +18,9 @@ V5 直接替换 V4 及更早版本。测试用户、个人连接与配置/凭据
 
 能力声明必须绑定 provider/adapter version、config、账号及 generation；Host 在使用观察事件前核对完整 binding 与命令账本的 native run/request 关联。resume 必须核对 provider/config/account，跨 generation 仅在 across_processes 能力与 provider 成功响应后成立。展示历史不恢复模型上下文。`ProviderConfiguration` 是纯数据，权限为 tools_disabled 或 host_mediated；ToolEndpoint 与可信平台 verifier 通过 parent-only ProviderAdmission 参数单独注入，verifier 不跨 worker IPC。Host 通过 `VerifiedProviderSession.open` 或 `VerifiedProviderSession.restore(port, previousSession, configuration, budget)` 消费原子结果并完成验证；恢复显式消费当前配置，核对原 session ID、新 generation 与 across_processes 能力，重新执行 verifier；已打开 runtime 的准入失败会以独立有界预算关闭，调用方仍须处理/重试未完成的关闭。私有构造和运行时 token 阻止同形对象/JSON 冒充 admission；证据固定完整 binding、capabilities 与 endpoint 对象身份，跨 incarnation 使用须重新验证。verifier 是受信代码边界，具体平台/版本的原生工具旁路证明由 adapter 持有；本包不从字符串或模型声明推导该证明。
 
-`HostPort` 接受可信 ingress 提供的 Caller，提供 createSession、submit/cancel/respond、negotiate、snapshot/subscribe/close。Caller 是组合根的认证前置，不是本包签发的证书；禁止从模型内容、工具参数或 A2UI context 构造它。snapshot 包含稳定事件、命令、交互和 surface 与同一水位；超过明确输出上限返回 limit_exceeded，不静默裁掉历史。subscribe 从 exclusive cursor 回放后接实时；临时 delta 保留 commandId/generation/messageId/text，同一命令的交错消息按 messageId 归并；detach/AbortSignal 只结束订阅。过期 cursor、丢失事件或输出背压必须要求 resync，不伪造终态。
+`HostPort` 接受可信 ingress 提供的 Caller，提供 connections/saveConnection/savePreferences、createSession/selectConnection/previewHistory、submit/cancel/respond、negotiate、snapshotPage/listSessions/subscribe/resume/close。Caller 是组合根的认证前置，不是本包签发的证书；禁止从模型内容、工具参数或 A2UI context 构造它。snapshot 包含稳定事件、命令、交互和 surface 与同一水位；超过明确输出上限返回 limit_exceeded，不静默裁掉历史。subscribe 从 exclusive cursor 回放后接实时；临时 delta 保留 commandId/generation/messageId/text，同一命令的交错消息按 messageId 归并；detach/AbortSignal 只结束订阅。过期 cursor、丢失事件或输出背压必须要求 resync，不伪造终态。
 
-`SessionStore` 提供 create/session/accept/command/commit/rebind/snapshot/events/surface/recovery/delivery/deliveries/retire/pruneRetired/close。所有持久化操作统一返回 Result，分页为 Result<Page<T>>，pruneRetired 为 Result<number>；参数错误返回 invalid_input，后端错误保留 unavailable 和 retry。accept 和 commit 是原子事务接缝；commit 核对 expectedRevision + expectedGeneration、推进 revision、提交稳定事件及必要 delivery，不接纳任意 async 事务回调。普通 commit 不得改变 provider/version、config、account、native session、generation 或 capabilities，运行坐标只能指向已确认 submitted 的活动命令 dispatch，清空须对应命令已 terminal/invalidated 或有明确未提交证据；它不是跨 generation 恢复入口。interaction 的原命令、native run、nativeCallbackId、request、期限和 callbackLifetime 不可重绑。恢复查询和 delivery 查询有页大小与 opaque continuation，不承诺多 worker lease。
+`SessionStore` 提供 connections/connection/saveConnection/preferences/savePreferences、create/session/selectConnection/activateStage/suspend、accept/command/commit/rebind/snapshotPage/listSessions/events/surface/recovery/delivery/deliveries/retire/pruneRetired/close。所有持久化操作统一返回 Result，分页为 Result<Page<T>>，pruneRetired 为 Result<number>；参数错误返回 invalid_input，后端错误保留 unavailable 和 retry。accept 和 commit 是原子事务接缝；commit 核对 expectedRevision + expectedGeneration、推进 revision、提交稳定事件及必要 delivery，不接纳任意 async 事务回调。普通 commit 不得改变 provider/version、config、account、native session、generation 或 capabilities，运行坐标只能指向已确认 submitted 的活动命令 dispatch，清空须对应命令已 terminal/invalidated 或有明确未提交证据；它不是跨 generation 恢复入口。interaction 的原命令、native run、nativeCallbackId、request、期限和 callbackLifetime 不可重绑。恢复查询和 delivery 查询有页大小与 opaque continuation，不承诺多 worker lease。
 
 ## 可靠性与交互
 
@@ -123,3 +123,13 @@ Binding 和 DispatchAttempt 增加可选 nativeThreadId；拥有独立 thread �
 `ProviderInstance` 明确分成 `agent: ProviderAgentPort`、`extensions.fork?: ProviderForkPort` 和 `diagnostics: ProviderDiagnosticsPort`。正式方法不返回 provider 生成的实验 DTO；history 由 adapter 内部恢复算法持有。diagnostics 只包含封闭种类与丢弃计数，不承接可靠业务事件。
 
 Host 先持有 child instance，再用已经准入的 `parentSession.fork(child, throughTurnId, configuration, budget)` 执行 A01 共同准入。源 namespace/绑定取自名义 parent proof，不接收调用方伪造来源。该操作验证权限域、账号、配置、workspace、新原生身份及 child 的受控工具 verifier；失败消费并关闭 child，保留 unknown 与 cleanupError，绝不重试 native 创建。adapter 的 extension 只返回原生事实，不反向构造或准入子会话。Host/A03 持有创建意图和结果的持久化、未确认实例清理与客户端发布；现有基础 ProviderAgentPort 消费者可继续只消费 agent。
+
+## 连接、偏好与阶段（V5）
+
+原生组合根持有测试用户、generation 与秘密入口；Host 持有 Caller 范围的连接目录和验证探针。`saveConnection(caller, candidate, expectedRevision, budget)` 完成实际模型探针后原子保存；失败保留旧修订。更新和删除必须给出期望修订，删除产生不可重用的 tombstone，历史与原 receipt 不删除。
+
+`savePreferences(caller, patch, budget)` 只接受字段 patch：`{defaultConnectionId:{set:id}}`、`{selectedSessionId:{clear:true}}`；省略字段保持不变。Store 事务内合并与校验，禁止客户端先读后整体覆盖。`createSession` 仅创建逻辑会话，首条普通输入调用 `activateStage` 固定连接/凭据修订；同一 Session 仅一个 live provider。`selectConnection`/显式 fresh context 先等待旧接纳队列结束，下一条输入才建立阶段。
+
+`previewHistory` 只返回已完成用户输入和稳定助手文本，绑定目标 revision、历史水位、消息 ID 与内容哈希。未经确认不带入，确认文本仅随下一条 prompt 消费一次。`connection_required` 要求选择可用连接；`connection_switch_pending` 要求等待已接纳输入；`reconciliation_required` 要求核对原命令；`context_unavailable` 要求显式恢复或新上下文，不能自动重发。
+
+`suspend` 是 Store 的原子持久用户 fence：已接纳但未派发普通输入生成本地 cancel receipt/event，已派发但未确认终态的工作保持不确定；它不取消设备执行。OS 子进程生命周期和凭据回收继续由 Host/原生接缝负责。

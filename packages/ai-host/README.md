@@ -32,3 +32,13 @@ Host 默认普通队列上限 64，控制待处理上限 64，worker 总数 8，
 验证入口：`pnpm test:ai-host`、`pnpm check:ai-host-consumer`。测试区分真实 SQLite/OS 进程、固定模型 HTTP transport + 实际 Claude SDK，以及外部模型实测；前两者不能替代后者。macOS arm64 是本次运行包的实际验证平台。桌面 Tauri 装配继续由 #2413 持有。
 
 参见[本地应用](../../apps/ai-host/README.md)、[设计](../../docs/architecture/ai-host.md)及[来源](../../docs/reference/ai-host.md)。
+
+## V5 连接与用户生命周期
+
+`connections`、`saveConnection`、`savePreferences`、`selectConnection`、`previewHistory` 是 Host 的当前用户入口。逻辑 Session 先于 provider 存在；普通 prompt 首次接纳固定阶段，旧命令重试先返回 receipt。选连接后等待已接纳队列排空，下一条输入建立新阶段；不把旧 native context 静默装到新修订。Store 对偏好 patch 的 set/clear 与 revision 更新提供原子性。
+
+`saveConnection` 使用无产品 Session/ledger 的短暂 worker，真实完成模型探针后才激活 ready revision；第一条 ready 成为默认，删除默认不自动替补。原生 credential lifecycle 在提交前激活引用，以当前 catalog 和未决 receipt 的原阶段保留集合回收旧 key；提交后的回收失败记独立闭合诊断，不能把已提交保存改报失败。
+
+组合根调用 `suspendCaller(caller,budget)` 并检查 Result 后才提交新用户代际。Host 停止接纳、关闭订阅/验证、请求实际运行取消并持久化所有离线队列的取消；已派发未确认结果保持未知，设备任务保持原 actor。失败不确认切换，`activateCaller` 仅由可信 native ingress 在当前注册表验证后调用。
+
+`resolve` 返回的可选 disposer 管理启动材料，必须确认对应 worker 已停止后执行；普通 native 历史仍由 Session 引用，不随临时 snapshot 删除。

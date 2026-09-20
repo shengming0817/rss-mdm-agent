@@ -7,6 +7,7 @@ import {
   nativeTestMode,
   loadTestUsers,
   selectTestUser,
+  selectionMessage,
 } from "./test-users";
 import type { TestUser } from "@rss-mdm-agent/ai-contract";
 defineProps<{ assistantServices?: AssistantServices }>();
@@ -32,8 +33,8 @@ async function select(value = name.value) {
     await selectTestUser(value);
     name.value = "";
     await refresh();
-  } catch {
-    message.value = "无法切换测试用户，请检查用户名并重试";
+  } catch (error) {
+    message.value = selectionMessage(error);
   } finally {
     loading.value = false;
   }

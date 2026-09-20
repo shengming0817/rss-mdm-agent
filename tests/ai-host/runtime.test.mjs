@@ -390,7 +390,7 @@ test("slow subscriber is asked to resync while another account remains usable", 
   t.after(() => abort.abort());
   const ready = iterator.next();
   // A draining peer proves the Host has published enough bytes to overflow the paused peer.
-  // No assumption about how many provider callbacks fit in 700 ms under parallel CI load.
+  // Text alone reaches the 1 MiB Output cap; JSON envelopes make overflow strict.
   const fast = f.host
     .subscribe(caller, f.session.namespace.sessionId, 0, {
       timeoutMs: 5000,
@@ -404,10 +404,10 @@ test("slow subscriber is asked to resync while another account remains usable", 
   for await (const item of fast) {
     assert.notEqual(item.type, "resync_required", "draining peer remains live");
     if (item.type === "delta") bytes += Buffer.byteLength(item.text);
-    if (bytes >= 2 * 1024 * 1024) break;
+    if (bytes >= 1024 * 1024) break;
   }
   assert.ok(
-    bytes >= 2 * 1024 * 1024,
+    bytes >= 1024 * 1024,
     `Host published ${bytes} bytes, exceeding the paused peer's budget`,
   );
   assert.equal((await iterator.next()).value.type, "resync_required");

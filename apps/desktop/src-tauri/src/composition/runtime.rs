@@ -401,6 +401,7 @@ fn diagnostic(line: &str) -> Option<String> {
         "dispatch",
         "observe",
         "recovery",
+        "credential",
         "close",
     ]
     .contains(&stage)
@@ -441,6 +442,8 @@ mod tests {
             Some("AI Host could not start: authentication_required")
         );
         assert!(super::diagnostic("AI Host recovery: unavailable").is_some());
+        assert!(super::diagnostic("AI Host credential: unavailable").is_some());
+        assert!(super::diagnostic("AI Host credential: secret-token").is_none());
         assert!(super::diagnostic("AI Host cleanup incomplete").is_some());
         for line in [
             "native secret-token",

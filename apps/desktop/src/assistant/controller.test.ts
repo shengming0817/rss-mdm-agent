@@ -589,6 +589,22 @@ it("deleting the selected connection preserves history and immediately disables 
       .find((b) => b.text() === "删除")!
       .trigger("click");
     await flushPromises();
+    expect(saveConnection).not.toHaveBeenCalled();
+    expect(wrapper.get('[role="alertdialog"]').text()).toContain("Fixture");
+    await wrapper
+      .findAll("button")
+      .find((b) => b.text() === "取消删除")!
+      .trigger("click");
+    expect(saveConnection).not.toHaveBeenCalled();
+    await wrapper
+      .findAll("button")
+      .find((b) => b.text() === "删除")!
+      .trigger("click");
+    await wrapper
+      .findAll("button")
+      .find((b) => b.text() === "确认删除")!
+      .trigger("click");
+    await flushPromises();
     expect(saveConnection.mock.calls[0][0].status).toBe("deleted");
     expect(t.c.view.value).toEqual(before);
     expect(t.c.canSend.value).toBe(false);
