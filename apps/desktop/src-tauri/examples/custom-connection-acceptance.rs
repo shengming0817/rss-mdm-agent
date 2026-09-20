@@ -34,31 +34,62 @@ fn fill_secure_field(view: &objc2_app_kit::NSView, value: &str) -> bool {
 }
 
 #[cfg(target_os = "macos")]
-fn automate_secure_entry(app: tauri::AppHandle, secret: String, evidence: Arc<Evidence>) {
+struct SecureEntryAttempt {
+    secret: Arc<String>,
+    entered: Arc<AtomicBool>,
+}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" fn attempt_secure_entry(context: *mut std::ffi::c_void) {
+    let attempt = unsafe { Box::from_raw(context.cast::<SecureEntryAttempt>()) };
+    if attempt.entered.load(Ordering::Acquire) {
+        return;
+    }
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSAlertFirstButtonReturn, NSApplication};
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    let application = NSApplication::sharedApplication(mtm);
+    let Some(window) = application.modalWindow() else {
+        return;
+    };
+    let Some(content) = window.contentView() else {
+        return;
+    };
+    if fill_secure_field(&content, &attempt.secret) {
+        attempt.entered.store(true, Ordering::Release);
+        application.stopModalWithCode(NSAlertFirstButtonReturn);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn automate_secure_entry(secret: String, evidence: Arc<Evidence>) {
+    unsafe extern "C" {
+        static _dispatch_main_q: u8;
+        fn dispatch_async_f(
+            queue: *mut std::ffi::c_void,
+            context: *mut std::ffi::c_void,
+            work: unsafe extern "C" fn(*mut std::ffi::c_void),
+        );
+    }
     std::thread::spawn(move || {
         let entered = Arc::new(AtomicBool::new(false));
         let secret = Arc::new(secret);
         while !evidence.finished.load(Ordering::Acquire) && !entered.load(Ordering::Acquire) {
-            let entered_on_main = entered.clone();
-            let value = Arc::clone(&secret);
-            let _ = app.run_on_main_thread(move || {
-                use objc2::MainThreadMarker;
-                use objc2_app_kit::{NSAlertFirstButtonReturn, NSApplication};
-                let Some(mtm) = MainThreadMarker::new() else {
-                    return;
-                };
-                let application = NSApplication::sharedApplication(mtm);
-                let Some(window) = application.modalWindow() else {
-                    return;
-                };
-                let Some(content) = window.contentView() else {
-                    return;
-                };
-                if fill_secure_field(&content, &value) {
-                    entered_on_main.store(true, Ordering::Release);
-                    application.stopModalWithCode(NSAlertFirstButtonReturn);
-                }
+            let attempt = Box::new(SecureEntryAttempt {
+                secret: Arc::clone(&secret),
+                entered: Arc::clone(&entered),
             });
+            unsafe {
+                dispatch_async_f(
+                    std::ptr::addr_of!(_dispatch_main_q)
+                        .cast_mut()
+                        .cast::<std::ffi::c_void>(),
+                    Box::into_raw(attempt).cast(),
+                    attempt_secure_entry,
+                );
+            }
             std::thread::sleep(Duration::from_millis(50));
         }
     });
@@ -141,7 +172,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &root, &artifact,
             ))?);
             window(app.handle(), setup.clone())?;
-            automate_secure_entry(app.handle().clone(), secret.clone(), setup.clone());
+            automate_secure_entry(secret.clone(), setup.clone());
             let handle = app.handle().clone();
             let timeout = setup.clone();
             tauri::async_runtime::spawn(async move {

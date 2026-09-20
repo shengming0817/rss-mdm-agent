@@ -149,11 +149,14 @@ try {
     child.once("exit", (code, signal) => {
       clearTimeout(timer);
       exit = { code, signal };
-      if (code === 0 && signal === null) resolve();
-      else reject(new Error("native process did not exit cleanly"));
+      resolve();
     });
   });
-  behavior = JSON.parse(readFileSync(resultPath, "utf8"));
+  behavior = existsSync(resultPath)
+    ? JSON.parse(readFileSync(resultPath, "utf8"))
+    : { step: "failed", stage: "native_exit_without_report" };
+  if (exit.code !== 0 || exit.signal !== null)
+    throw new Error(`native_process_failed_at_${behavior.stage ?? "unknown"}`);
   assert.equal(behavior.step, "passed");
   assert.equal(behavior.secureEntry, true);
   assert.equal(behavior.deleted, true);
@@ -182,9 +185,7 @@ try {
   assert.equal(revisions[0].value.source.type, "custom_api");
   assert.equal(revisions[0].value.status, "ready");
   assert.equal(revisions[1].value.status, "deleted");
-  if (
-    revisions[0].value.credentialRef !== revisions[1].value.credentialRef
-  )
+  if (revisions[0].value.credentialRef !== revisions[1].value.credentialRef)
     throw new Error("credential_reference_changed_during_delete");
   keychainAccount = `${revisions[0].principalId}:${revisions[0].value.credentialRef}`;
   const lookup = spawnSync(
