@@ -66,7 +66,13 @@ import { Deadline } from "./deadline.js";
 import type { WorkerLaunchFenceStore } from "./launch-fence.js";
 
 export interface HostDiagnostic {
-  readonly stage: "admission" | "dispatch" | "observe" | "recovery" | "close";
+  readonly stage:
+    | "admission"
+    | "dispatch"
+    | "observe"
+    | "recovery"
+    | "credential"
+    | "close";
   readonly code: import("@rss-mdm-agent/ai-contract").Failure["code"];
 }
 export interface HostOptions {
@@ -148,6 +154,7 @@ export class SessionHost implements HostPort {
   private readonly retryTimers = new Set<ReturnType<typeof setTimeout>>();
   private readonly blocked = new Set<string>();
   private readonly suspended = new Set<string>();
+  private readonly disposals = new Set<() => Promise<void>>();
   private readonly credentialMutations = new Map<string, Promise<unknown>>();
   private credentialMutation<T>(
     caller: Caller,
@@ -187,7 +194,7 @@ export class SessionHost implements HostPort {
       try {
         await this.options.credentials?.collect(caller);
       } catch (error) {
-        this.diagnose("close", error);
+        this.diagnose("credential", error);
       }
       return result;
     });
@@ -262,6 +269,31 @@ export class SessionHost implements HostPort {
   }
   private get store() {
     return this.options.store;
+  }
+  private ownDispose(dispose: (() => Promise<void>) | undefined) {
+    if (dispose) this.disposals.add(dispose);
+    return dispose;
+  }
+  private async releaseDispose(
+    dispose: (() => Promise<void>) | undefined,
+  ): Promise<boolean> {
+    if (!dispose) return true;
+    try {
+      await dispose();
+      this.disposals.delete(dispose);
+      return true;
+    } catch (error) {
+      this.diagnose("close", error);
+      return false;
+    }
+  }
+  private async releaseRuntime(
+    key: string,
+    runtime: Runtime,
+  ): Promise<boolean> {
+    if (!(await this.releaseDispose(runtime.dispose))) return false;
+    if (this.runtimes.get(key) === runtime) this.runtimes.delete(key);
+    return true;
   }
   private mailbox<T>(
     namespace: Namespace,
@@ -446,6 +478,16 @@ export class SessionHost implements HostPort {
       }
     }
     const key = namespaceKey(namespace);
+    const incomplete = this.runtimes.get(key);
+    if (incomplete && incomplete.abort.signal.aborted && !incomplete.verified) {
+      const stopped = await incomplete.worker.close(b);
+      if (
+        stopped.ok &&
+        stopped.value.processStopped &&
+        (await this.releaseRuntime(key, incomplete))
+      )
+        this.blocked.delete(key);
+    }
     if (this.runtimes.has(key))
       return fail("reconciliation_required", "reconcile_first");
     if (this.blocked.has(key)) {
@@ -470,8 +512,12 @@ export class SessionHost implements HostPort {
         b,
         previous?.currentStageId ? activeStage(previous).binding : null,
       ),
+      dispose = this.ownDispose(resolved.dispose),
       configuration = structuredClone(resolved.configuration);
-    if (this.closing || b.signal.aborted) return fail("unavailable");
+    if (this.closing || b.signal.aborted) {
+      await this.releaseDispose(dispose);
+      return fail("unavailable");
+    }
     if (
       namespaceKey(configuration.namespace) !== namespaceKey(namespace) ||
       configuration.provider !== options.provider ||
@@ -482,8 +528,10 @@ export class SessionHost implements HostPort {
         (options.profile === "controlled_tools"
           ? "host_mediated"
           : "tools_disabled")
-    )
+    ) {
+      await this.releaseDispose(dispose);
       return fail("permission_denied");
+    }
     const account = JSON.stringify([
       configuration.provider,
       configuration.accountRef,
@@ -492,13 +540,17 @@ export class SessionHost implements HostPort {
       this.runtimes.size >= this.workerLimit ||
       [...this.runtimes.values()].filter((r) => r.account === account).length >=
         this.accountLimit
-    )
+    ) {
+      await this.releaseDispose(dispose);
       return fail("limit_exceeded");
+    }
     if (
       options.profile === "controlled_tools" &&
       (!resolved.admission || !this.deliveries)
-    )
+    ) {
+      await this.releaseDispose(dispose);
       return fail("unsupported_capability");
+    }
     const tools: ToolEndpoint = {
       propose: (proposal, b) => this.propose(namespace, proposal, b),
     };
@@ -512,6 +564,7 @@ export class SessionHost implements HostPort {
       admission?.tools,
     );
     const runtime: Runtime = {
+      dispose,
       worker,
       account,
       observing: new Set(),
@@ -588,9 +641,14 @@ export class SessionHost implements HostPort {
       return ok(session);
     } catch (error) {
       this.diagnose("admission", error);
+      runtime.abort.abort();
       const stopped = await worker.close(budget(2000));
-      if (stopped.ok && stopped.value.processStopped) this.runtimes.delete(key);
-      else this.blocked.add(key);
+      if (
+        !stopped.ok ||
+        !stopped.value.processStopped ||
+        !(await this.releaseRuntime(key, runtime))
+      )
+        this.blocked.add(key);
       throw error;
     }
   }
@@ -645,6 +703,7 @@ export class SessionHost implements HostPort {
           null,
           connection,
         );
+        const dispose = this.ownDispose(resolved.dispose);
         const tools: ToolEndpoint = {
           propose: async () => fail("permission_denied"),
         };
@@ -656,7 +715,7 @@ export class SessionHost implements HostPort {
         );
         const runtime: Runtime = {
           verification: true,
-          dispose: resolved.dispose,
+          dispose,
           worker,
           account: connection.accountRef,
           observing: new Set(),
@@ -734,12 +793,7 @@ export class SessionHost implements HostPort {
         } finally {
           const stopped = await worker.close(budget(2000));
           if (stopped.ok && stopped.value.processStopped) {
-            try {
-              await runtime.dispose?.();
-              this.runtimes.delete(key);
-            } catch (error) {
-              this.diagnose("close", error);
-            }
+            await this.releaseRuntime(key, runtime);
           } else {
             runtime.abort.abort();
             worker.terminate();
@@ -751,7 +805,7 @@ export class SessionHost implements HostPort {
       try {
         await this.options.credentials?.discard(caller, connection);
       } catch (error) {
-        this.diagnose("close", error);
+        this.diagnose("credential", error);
       }
     });
   }
@@ -948,7 +1002,8 @@ export class SessionHost implements HostPort {
       const stopped = await runtime.worker.close(b);
       if (!stopped.ok || !stopped.value.processStopped)
         return fail("reconciliation_required", "reconcile_first");
-      this.runtimes.delete(key);
+      if (!(await this.releaseRuntime(key, runtime)))
+        return fail("reconciliation_required", "reconcile_first");
     }
     return this.open(
       session.namespace,
@@ -1858,7 +1913,8 @@ export class SessionHost implements HostPort {
           await deadline.wait(() => runtime.worker.close(deadline.budget())),
         );
         if (!stopped.processStopped) throw new Error("worker still present");
-        if (this.runtimes.get(key) === runtime) this.runtimes.delete(key);
+        if (!(await this.releaseRuntime(key, runtime)))
+          throw new Error("worker cleanup incomplete");
         this.blocked.delete(key);
       }
       return ok(undefined);
@@ -1991,8 +2047,8 @@ export class SessionHost implements HostPort {
             await deadline.wait(() => runtime.worker.close(deadline.budget())),
           );
           if (!stopped.processStopped) return fail("unavailable");
-          await runtime.dispose?.();
-          this.runtimes.delete(key);
+          if (!(await this.releaseRuntime(key, runtime)))
+            return fail("unavailable");
         }
         let continuation: string | undefined;
         do {
@@ -2170,8 +2226,8 @@ export class SessionHost implements HostPort {
             await deadline.wait(() => runtime.worker.close(deadline.budget())),
           );
           if (!result.processStopped) throw new Error("worker still present");
-          await runtime.dispose?.();
-          this.runtimes.delete(key);
+          if (!(await this.releaseRuntime(key, runtime)))
+            throw new Error("worker cleanup incomplete");
           continue;
         }
         runtime.abort.abort();
@@ -2186,6 +2242,9 @@ export class SessionHost implements HostPort {
           ),
         );
       }
+      for (const dispose of [...this.disposals])
+        if (!(await deadline.wait(() => this.releaseDispose(dispose))))
+          throw new Error("worker cleanup incomplete");
       const result = await deadline.wait(() =>
         this.store.close(deadline.budget()),
       );

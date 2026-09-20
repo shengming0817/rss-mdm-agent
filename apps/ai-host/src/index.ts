@@ -1,7 +1,7 @@
 import { createServer, createConnection, type Socket } from "node:net";
 import { Readable, Writable } from "node:stream";
-import { chmod, lstat, mkdir, unlink } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { chmod, lstat, mkdir, readdir, unlink } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
 import { createHost } from "@rss-mdm-agent/ai-host";
 import { openSqliteStore } from "@rss-mdm-agent/ai-store-sqlite";
 import { createAccessService, ndJsonStream } from "@rss-mdm-agent/ai-access";
@@ -17,6 +17,45 @@ import { defaultLimits } from "@rss-mdm-agent/ai-contract/transitions";
 import { credentialLifecycle } from "./credential-lifecycle.js";
 import { localResolver } from "./resolver.js";
 export type { LocalConfiguration } from "./configuration.js";
+const snapshotName = /^[a-f0-9]{64}\.json$/;
+/** Called only while the application owns the exclusive SQLite connection. */
+export async function removeUnfencedSnapshots(
+  nativeDirectory: string,
+  launches: readonly { artifact: string }[],
+): Promise<void> {
+  const directory = resolve(nativeDirectory, "snapshots");
+  const stat = await lstat(directory).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return undefined;
+    throw error;
+  });
+  if (!stat) return;
+  if (
+    !stat.isDirectory() ||
+    stat.isSymbolicLink() ||
+    (process.platform !== "win32" && (stat.mode & 0o077) !== 0) ||
+    (process.getuid && stat.uid !== process.getuid())
+  )
+    throw new Error("snapshot directory ownership");
+  const retained = new Set<string>();
+  for (const launch of launches) {
+    const artifact = new URL(launch.artifact);
+    const snapshot = artifact.searchParams.get("snapshot");
+    if (!snapshot) throw new Error("snapshot ownership unknown");
+    const path = resolve(snapshot);
+    if (
+      artifact.protocol !== "file:" ||
+      dirname(path) !== directory ||
+      !snapshotName.test(basename(path))
+    )
+      throw new Error("snapshot ownership unknown");
+    retained.add(path);
+  }
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    if (!entry.isFile() || !snapshotName.test(entry.name)) continue;
+    const path = join(directory, entry.name);
+    if (!retained.has(path)) await unlink(path);
+  }
+}
 /** A private local ACP endpoint. Disconnecting a socket only detaches that client. */
 export async function startLocalApp(
   configurationPath: string,
@@ -56,6 +95,17 @@ export async function startLocalApp(
   });
   if (!opened.ok) throw new Error(opened.error.code);
   const store = opened.value;
+  try {
+    const launches = await store.launches();
+    if (!launches.ok) throw new Error(launches.error.code);
+    await removeUnfencedSnapshots(local.nativeDirectory, launches.value);
+  } catch (error) {
+    await store.close({
+      timeoutMs: 1000,
+      signal: new AbortController().signal,
+    });
+    throw error;
+  }
   const readUser = async (): Promise<UserContext | undefined> => {
     const record = decode(
       await readPrivateFile(local.usersPath, 65536),

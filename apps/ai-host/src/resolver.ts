@@ -58,30 +58,29 @@ export function localResolver(
     artifact.searchParams.set("snapshot", path);
     artifact.searchParams.set("fingerprint", fingerprint);
     return {
-      ...(candidate
-        ? {
-            dispose: async () => {
-              const owner = createHash("sha256")
-                .update(JSON.stringify(namespace))
-                .digest("hex");
-              await rm(join(local.nativeDirectory, "contexts", owner), {
-                recursive: true,
-                force: true,
-              });
-              await rm(path, { force: true });
-              const saved = await store.connection(
-                caller,
-                candidate.connectionId,
-                candidate.configRevision,
-              );
-              if (!saved.ok && saved.error.code === "connection_required")
-                await rm(
-                  principalPath(JSON.parse(content) as ProviderSnapshot),
-                  { force: true },
-                );
-            },
-          }
-        : {}),
+      dispose: async () => {
+        if (candidate) {
+          const owner = createHash("sha256")
+            .update(JSON.stringify(namespace))
+            .digest("hex");
+          await rm(join(local.nativeDirectory, "contexts", owner), {
+            recursive: true,
+            force: true,
+          });
+        }
+        await rm(path, { force: true });
+        if (candidate) {
+          const saved = await store.connection(
+            caller,
+            candidate.connectionId,
+            candidate.configRevision,
+          );
+          if (!saved.ok && saved.error.code === "connection_required")
+            await rm(principalPath(JSON.parse(content) as ProviderSnapshot), {
+              force: true,
+            });
+        }
+      },
       configuration: {
         namespace,
         provider: connection.provider,

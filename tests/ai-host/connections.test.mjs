@@ -49,7 +49,8 @@ test("real Host lazily opens phases, drains accepted work before switching, and 
   const store = unwrap(
     openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
   );
-  let opened = 0;
+  let opened = 0,
+    disposed = 0;
   const host = unwrap(
     await createHost({
       store,
@@ -58,6 +59,9 @@ test("real Host lazily opens phases, drains accepted work before switching, and 
       resolve: async (_caller, options, namespace) => {
         opened++;
         return {
+          dispose: async () => {
+            disposed++;
+          },
           configuration: {
             namespace,
             provider: options.provider,
@@ -146,6 +150,7 @@ test("real Host lazily opens phases, drains accepted work before switching, and 
   const next = unwrap(await host.submit(caller, command("next"), budget()));
   assert.notEqual(next.stageId, receipt.stageId);
   assert.equal(opened, 2);
+  assert.equal(disposed, 1, "the stopped first-stage snapshot is released");
   const head = unwrap(await store.session(empty.namespace));
   assert.equal(head.stages.length, 2);
   assert.equal(head.stages[0].connectionId, "one");
@@ -276,6 +281,8 @@ test("real Host lazily opens phases, drains accepted work before switching, and 
     },
     beforeDelete,
   );
+  unwrap(await host.close(budget()));
+  assert.equal(disposed, opened, "shutdown releases the active-stage snapshot");
 });
 
 test("switching test users cancels queued model work and keeps the old user's receipts scoped", async (t) => {
@@ -396,6 +403,65 @@ test("switching test users cancels queued model work and keeps the old user's re
   );
 });
 
+test("ordinary runtime snapshot cleanup is retained and retried after a failure", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "rss-runtime-cleanup-"));
+  const store = unwrap(
+    openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
+  );
+  let attempts = 0;
+  const host = unwrap(
+    await createHost({
+      store,
+      launchFences: store,
+      delivery: null,
+      resolve: async (_caller, options, namespace) => ({
+        dispose: async () => {
+          attempts++;
+          if (attempts === 1) throw Error("fixture snapshot cleanup failure");
+        },
+        configuration: {
+          namespace,
+          provider: options.provider,
+          config: options.config,
+          accountRef: options.accountRef,
+          workingDirectory: root,
+          permissions: "tools_disabled",
+        },
+        artifact: new URL("./provider.mjs", import.meta.url).href,
+      }),
+    }),
+  );
+  t.after(async () => {
+    await host.close(budget());
+    await rm(root, { recursive: true, force: true });
+  });
+  unwrap(await store.saveConnection(caller, connection("one"), null));
+  const session = unwrap(await host.createSession(caller, {}, budget()));
+  unwrap(
+    await host.submit(
+      caller,
+      {
+        schemaVersion: 5,
+        kind: "command",
+        sessionId: session.namespace.sessionId,
+        commandId: "quick",
+        expiresAtMs: Date.now() + 60000,
+        input: { type: "prompt", policy: "queue_next", text: "quick" },
+      },
+      budget(),
+    ),
+  );
+  await until(
+    async () =>
+      unwrap(await store.command(session.namespace, "quick")).state ===
+      "terminal",
+  );
+  assert.equal((await host.close(budget())).ok, false);
+  assert.equal(attempts, 1);
+  unwrap(await host.close(budget()));
+  assert.equal(attempts, 2);
+});
+
 test("saving a connection requires a completed model probe and preserves the previous revision on rejection", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "rss-connection-probe-"));
   const store = unwrap(
@@ -404,11 +470,13 @@ test("saving a connection requires a completed model probe and preserves the pre
   let reject = false,
     disposed = 0,
     cleanupAttempts = 0;
+  const diagnostics = [];
   const host = unwrap(
     await createHost({
       store,
       launchFences: store,
       delivery: null,
+      onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
       credentials: {
         activate: async () => {},
         discard: async () => {},
@@ -455,6 +523,7 @@ test("saving a connection requires a completed model probe and preserves the pre
     1,
     "cleanup failure cannot turn a committed save into failure",
   );
+  assert.equal(diagnostics.at(-1).stage, "credential");
   assert.equal(
     disposed,
     1,
