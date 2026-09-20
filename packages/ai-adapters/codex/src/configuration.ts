@@ -137,6 +137,8 @@ export function nativeSettings(
     orchestrator: { skills: { enabled: false }, mcp: { enabled: false } },
     features: {
       ...Object.fromEntries(disabledFeatures.map((key) => [key, false])),
+      // Upstream FeatureToml supports booleans or tables; preserve the table shape when merging user settings.
+      multi_agent_v2: { enabled: false },
       skip_host_skill_discovery: true,
     },
     mcp_servers: {},
@@ -210,7 +212,7 @@ export async function launchSpec(
   const env: Record<string, string> = {
     CODEX_HOME:
       resolved.authentication.type === "existing_config"
-        ? resolved.authentication.directory
+        ? await realpath(resolved.authentication.directory)
         : resolved.nativeDirectory,
     ...(resolved.authentication.type === "api_key"
       ? { RSS_CODEX_API_KEY: resolved.authentication.apiKey }
@@ -225,7 +227,9 @@ export async function launchSpec(
   for (const key of ["HOME", "SystemRoot", "WINDIR", "TEMP", "TMP", "TMPDIR"])
     if (process.env[key]) env[key] = process.env[key]!;
   if (bridge) env.RSS_CODEX_MCP_TOKEN = bridge.token;
-  const args = ["app-server", "--stdio", "--strict-config"];
+  const args = ["app-server", "--stdio"];
+  // The official CLI decides how to handle extra user settings. RSS checks its own effective restrictions.
+  if (resolved.authentication.type === "api_key") args.push("--strict-config");
   for (const [key, value] of Object.entries({ ...settings, ...overrides }))
     args.push("-c", `${key}=${toml(value)}`);
   const runtimeDirectory = join(resolved.nativeDirectory, "runtime-workspace");

@@ -480,7 +480,7 @@ test("test-user adapter owns only literal user and native credential commands", 
   assert.deepEqual(
     checkSource(
       file,
-      'import { invoke } from "@tauri-apps/api/core"; void invoke("test_users"); void invoke("discard_connection_credential", {});',
+      'import { invoke } from "@tauri-apps/api/core"; void invoke("test_users"); void invoke("save_connection", {});',
     ),
     [],
   );

@@ -4,7 +4,6 @@ import { join, dirname, resolve } from "node:path";
 import ts from "typescript";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const appExternalDependencies = {
-  "@iarna/toml": "2.2.5",
   "@modelcontextprotocol/sdk": "1.30.0",
   yaml: "2.9.1",
 };
@@ -59,11 +58,12 @@ for (const [file, imports] of Object.entries({
 }))
   serverFiles.set(join(root, "packages/ai-host/src", file), imports);
 for (const [file, imports] of Object.entries({
-  "index.ts": ["node:net", "node:stream", "node:fs/promises", "node:path"],
+  "index.ts": ["node:stream", "node:fs/promises", "node:path"],
   "configuration.ts": ["node:path", "node:crypto"],
-  "credentials.ts": ["node:net"],
+  "native.ts": ["node:net", "node:stream", "node:string_decoder"],
+  "secrets.ts": ["node:crypto"],
   "resolver.ts": ["node:crypto", "node:fs/promises", "node:path"],
-  "connection.ts": ["node:crypto", "node:fs", "node:fs/promises", "node:path"],
+  "connection.ts": ["node:os", "node:path"],
   "execution.ts": ["node:stream", "node:crypto"],
   "provider.ts": ["node:crypto", "node:fs/promises", "node:path"],
   "private-file.ts": ["node:fs", "node:fs/promises", "node:path"],

@@ -10,22 +10,24 @@ fn unavailable() -> crate::self_service::ServiceError {
         "连接密钥不可用，请检查应用钥匙串访问权限",
     )
 }
+#[derive(Debug)]
+pub struct KeyUnavailable;
 /// Injected in deterministic tests; tests must never use the current user's Keychain.
 pub trait KeyBackend: Send + Sync {
-    fn read(&self) -> std::result::Result<Option<Vec<u8>>, ()>;
-    fn create(&self, key: &[u8]) -> std::result::Result<(), ()>;
+    fn read(&self) -> std::result::Result<Option<Vec<u8>>, KeyUnavailable>;
+    fn create(&self, key: &[u8]) -> std::result::Result<(), KeyUnavailable>;
 }
 pub struct Keychain;
 impl KeyBackend for Keychain {
-    fn read(&self) -> std::result::Result<Option<Vec<u8>>, ()> {
+    fn read(&self) -> std::result::Result<Option<Vec<u8>>, KeyUnavailable> {
         match get_generic_password(SERVICE, ACCOUNT) {
             Ok(value) => Ok(Some(value)),
             Err(error) if error.code() == -25300 => Ok(None),
-            Err(_) => Err(()),
+            Err(_) => Err(KeyUnavailable),
         }
     }
-    fn create(&self, key: &[u8]) -> std::result::Result<(), ()> {
-        set_generic_password(SERVICE, ACCOUNT, key).map_err(|_| ())
+    fn create(&self, key: &[u8]) -> std::result::Result<(), KeyUnavailable> {
+        set_generic_password(SERVICE, ACCOUNT, key).map_err(|_| KeyUnavailable)
     }
 }
 pub struct MasterKey<B: KeyBackend = Keychain> {
@@ -115,10 +117,10 @@ mod tests {
         writes: Arc<AtomicUsize>,
     }
     impl KeyBackend for Fake {
-        fn read(&self) -> std::result::Result<Option<Vec<u8>>, ()> {
+        fn read(&self) -> std::result::Result<Option<Vec<u8>>, KeyUnavailable> {
             Ok(self.stored.lock().unwrap().clone())
         }
-        fn create(&self, key: &[u8]) -> std::result::Result<(), ()> {
+        fn create(&self, key: &[u8]) -> std::result::Result<(), KeyUnavailable> {
             *self.stored.lock().unwrap() = Some(key.to_vec());
             self.writes.fetch_add(1, Ordering::SeqCst);
             Ok(())

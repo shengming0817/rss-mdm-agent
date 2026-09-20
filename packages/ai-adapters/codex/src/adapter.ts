@@ -352,7 +352,8 @@ export class CodexAdapter implements ProviderAgentPort {
         response.approvalPolicy !== "on-request" ||
         response.sandbox.type !== "readOnly" ||
         response.sandbox.networkAccess !== false ||
-        !same(response.instructionSources, [])
+        (resolved.authentication.type === "api_key" &&
+          !same(response.instructionSources, []))
       )
         return fail("permission_denied");
       this.binding = {

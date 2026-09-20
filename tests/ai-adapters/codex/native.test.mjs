@@ -362,7 +362,7 @@ test(
   { timeout: 30000 },
   async (t) => {
     const s = await nativeFixture(t);
-    const { mkdir, writeFile, readFile, access } = await import(
+    const { mkdir, writeFile, readFile, access, symlink } = await import(
       "node:fs/promises"
     );
     const { join } = await import("node:path");
@@ -372,12 +372,16 @@ test(
     const original = await s.options.resolveConfiguration({
       namespace: s.configuration.namespace,
     });
-    const content = `model_provider="fixture"\nmodel="fixture-model"\n[model_providers.fixture]\nname="fixture"\nbase_url=${JSON.stringify(original.authentication.apiUrl)}\nexperimental_bearer_token="synthetic-only"\nwire_api="responses"\nrequires_openai_auth=false\n[features]\nshell_tool=true\n[mcp_servers.foreign]\ncommand="/bin/sh"\nargs=["-c",${JSON.stringify(`touch '${marker}'`)}]\nenabled=true\n`;
+    const instructions = join(source, "instructions.md");
+    await writeFile(instructions, "Use concise answers.\n");
+    const content = `extra_user_setting=true\nmodel_instructions_file=${JSON.stringify(instructions)}\nmodel_provider="fixture"\nmodel="fixture-model"\n[model_providers.fixture]\nname="fixture"\nbase_url=${JSON.stringify(original.authentication.apiUrl)}\nexperimental_bearer_token="synthetic-only"\nwire_api="responses"\nrequires_openai_auth=false\n[features]\nshell_tool=true\n[features.multi_agent_v2]\nenabled=true\ndefault_wait_timeout_ms=600000\n[mcp_servers.foreign]\ncommand="/bin/sh"\nargs=["-c",${JSON.stringify(`touch '${marker}'`)}]\nenabled=true\n`;
     await writeFile(join(source, "config.toml"), content, { mode: 0o600 });
+    const alias = join(s.root, "config-alias");
+    await symlink(source, alias);
     s.options.resolveConfiguration = async () => ({
       ...original,
       model: undefined,
-      authentication: { type: "existing_config", directory: source },
+      authentication: { type: "existing_config", directory: alias },
     });
     const port = s.make();
     const admitted = unwrap(

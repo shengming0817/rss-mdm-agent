@@ -144,6 +144,9 @@ fn main() {
         &limits.plan,
     )
     .unwrap();
+    let caller = RequestContext {
+        actor: plan.spec().request.actor.clone(),
+    };
     let host = FixtureHost(plan.clone());
     // Establish that the provisioned policy is a real C07 consumer, not a parallel allow decision.
     let admission = execution_admission::decide(
@@ -176,6 +179,7 @@ fn main() {
     let worker_runner = runner.clone();
     let worker_db = db.clone();
     let worker_plan = plan.clone();
+    let worker_caller = caller.clone();
     std::thread::spawn(move || {
         let mut app = ExecutionApp::start(
             &worker_db,
@@ -186,7 +190,7 @@ fn main() {
         )
         .unwrap();
         let request = &worker_plan.spec().request.request_id;
-        let accepted = app.submit(&caller(), request, &worker_plan).unwrap();
+        let accepted = app.submit(&worker_caller, request, &worker_plan).unwrap();
         assert!(response.send(accepted).is_err()); // transport loss does not own/cancel execution
         assert_eq!(
             app.reconcile(request).unwrap().phase,
@@ -205,38 +209,20 @@ fn main() {
     .unwrap();
     let request = &plan.spec().request.request_id;
     assert_eq!(
-        app.submit(&caller(), request, &plan).unwrap().phase,
+        app.submit(&caller, request, &plan).unwrap().phase,
         TaskPhase::TestCompleted
     );
     let results = app
-        .pull_results(&caller(), request, &id("consumer"), 32)
+        .pull_results(&caller, request, &id("consumer"), 32)
         .unwrap();
     for result in results {
-        app.confirm(&caller(), request, &id("consumer"), &result.event_id)
+        app.confirm(&caller, request, &id("consumer"), &result.event_id)
             .unwrap();
     }
     assert!(app
-        .pull_results(&caller(), request, &id("consumer"), 32)
+        .pull_results(&caller, request, &id("consumer"), 32)
         .unwrap()
         .is_empty());
     assert_eq!(runner.dispatch_count(), 1);
     println!("execution-app: Test-only submit/reconnect/reconcile/delivery passed");
-}
-
-fn caller() -> RequestContext {
-    RequestContext {
-        actor: FrozenPlan::freeze(
-            decode_plan(
-                include_bytes!("../../execution-contract/tests/fixtures/plan.json"),
-                &test_store_limits().plan,
-            )
-            .unwrap(),
-            &test_store_limits().plan,
-        )
-        .unwrap()
-        .spec()
-        .request
-        .actor
-        .clone(),
-    }
 }

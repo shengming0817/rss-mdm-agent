@@ -8,7 +8,7 @@
 
 `CodexAdapterOptions.resolveConfiguration(identity, budget)` 由可信 Host 返回完全一致的 `CodexConfiguration`、RSS 私有 `nativeDirectory` 与 `authentication`。`api_key` 模式显式提供 API URL/密钥/模型，URL 仅允许 HTTPS 或 loopback HTTP；`existing_config` 模式只指定官方配置目录，以该目录为 CODEX_HOME，登录、凭据读取和刷新由官方 app-server 完成。RSS 不解析外部凭据、不调用账号读取/登录 RPC、不创建个人配置副本。模型省略时使用官方默认值；固定版本 app-server 不支持命名 profile，故不提供 profile 选择。秘密不进入产品 wire。
 
-`nativeDirectory` 是无别名的规范绝对路径、Unix 权限0700，保存 RSS 会话工作目录；自定义 API 模式也用它作为 CODEX_HOME。启动 cwd 使用目录内的空白 runtime-workspace，thread cwd 使用 Host 提供的真实工作目录。已有配置目录由官方工具使用，其原始内容不由 RSS 改写。无效配置返回 invalid_input/never，权限或配置层拒绝返回 permission_denied/never；瞬时初始化故障才返回 unavailable，错误不包含配置值。
+`nativeDirectory` 是无别名的规范绝对路径、Unix 权限0700，保存 RSS 会话工作目录；自定义 API 模式也用它作为 CODEX_HOME。启动 cwd 使用目录内的空白 runtime-workspace，thread cwd 使用 Host 提供的真实工作目录。已有配置目录及用户配置指定的模型指令由官方工具使用，其原始内容不由 RSS 改写；RSS 的工具权限限制仍显式覆盖并核验。无效配置返回 invalid_input/never，权限或配置层拒绝返回 permission_denied/never；瞬时初始化故障才返回 unavailable，错误不包含配置值。
 
 恢复或 fork 时 resolver 另收到 `history: Binding`。Host 必须先查可信持久化绑定，核验原 session/thread 属于这一 namespace/config/workspace 的 adapter 历史，再返回相等的 `ownedHistory: { nativeSessionId, nativeThreadId }`。直接回显用户输入或原始 history 参数不构成所有权证明。禁止导入任意 Codex 历史、路径或手工编辑的 rollout。
 

@@ -615,7 +615,7 @@ it("deleting the selected connection preserves history and immediately disables 
   }
 });
 
-it("external references cannot become custom API credentials and Claude exposes only supported sources", async () => {
+it("existing configuration cannot become a custom API key and Claude supports configuration reuse", async () => {
   const t = setup();
   await t.c.connect();
   const wrapper = mount(Connections, { props: { controller: t.c } });
@@ -645,7 +645,7 @@ it("external references cannot become custom API credentials and Claude exposes 
       field("认证来源")
         .findAll("option")
         .some((o) => o.attributes("value") === "existing_config"),
-    ).toBe(false);
+    ).toBe(true);
   } finally {
     wrapper.unmount();
     t.c.dispose();

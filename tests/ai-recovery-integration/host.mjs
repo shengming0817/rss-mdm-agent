@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { ConnectionSecrets } from "../../apps/ai-host/dist/secrets.js";
 import { createHost } from "../../packages/ai-host/dist/index.js";
 import { openSqliteStore } from "../../packages/ai-store-sqlite/dist/index.js";
 import { readConfiguration } from "../../apps/ai-host/dist/configuration.js";
@@ -25,17 +25,20 @@ export async function openHost(path, mode, beforeCommit) {
       launchFences: store,
       delivery: null,
       onDiagnostic: (row) => diagnostics.push(row),
-      resolve: localResolver(local, store),
+      resolve: localResolver(
+        local,
+        store,
+        new ConnectionSecrets(store, async () => Buffer.alloc(32, 7)),
+      ),
     }),
   );
-  const registry = JSON.parse(await readFile(local.usersPath, "utf8"));
   return {
     host,
     store,
     local,
     caller: {
       tenantId: "test-users",
-      principalId: registry.current.user.userId,
+      principalId: "fixture-actor",
       authorityId: "desktop-fixture",
     },
     diagnostics,

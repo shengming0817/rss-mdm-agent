@@ -20,12 +20,7 @@ const assistantCommands = [
   "ai_disconnect",
   "execution_task_details",
 ];
-const userCommands = [
-  "test_users",
-  "select_test_user",
-  "enter_connection_credential",
-  "discard_connection_credential",
-];
+const userCommands = ["test_users", "select_test_user", "save_connection"];
 const compositionCommands = [
   ...selfServiceCommands,
   ...assistantCommands,

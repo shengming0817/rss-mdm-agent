@@ -14,13 +14,14 @@ use tauri::Manager;
 #[path = "../src/navigation.rs"]
 mod navigation;
 
+use rss_mdm_desktop::composition::credentials::KeyUnavailable;
 struct TestKey;
 impl rss_mdm_desktop::composition::credentials::KeyBackend for TestKey {
-    fn read(&self) -> Result<Option<Vec<u8>>, ()> {
+    fn read(&self) -> Result<Option<Vec<u8>>, KeyUnavailable> {
         Ok(Some(vec![7; 32]))
     }
-    fn create(&self, _: &[u8]) -> Result<(), ()> {
-        Err(())
+    fn create(&self, _: &[u8]) -> Result<(), KeyUnavailable> {
+        Err(KeyUnavailable)
     }
 }
 struct Evidence {
