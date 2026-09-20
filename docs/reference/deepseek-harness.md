@@ -22,7 +22,7 @@ A05 #2443 直接消费 DeepSeek Harness `0.1.6-alpha.2` 的 npm 产物；研究�
 
 - A01 fixture：提交确定性、attempt/correlation 绑定、旧 observer 拒绝、一次性准入、迟到初始化和 cleanupError。它不证明模型或设备效果。
 - 真实 Harness + 本地 HTTP 模型协议：真实 delta、稳定文本、JSONL、完整 restore/rebind/reconcile/commit、冷续接上下文、模型/工具 flush、崩溃窗口、交互/取消、权限负测、guard 单调性、必需 fiber 配置/生命周期失效与进程启动失败收尾。恢复期间比对原生日志字节和模型请求数。
-- 官方 DeepSeek：显式 smoke 使用实际凭据验证增量、历史和冷上下文续接；验证结构化问题和受控 proposal；记录平台、模型、执行前后相同 clean commit、lock hash、组合版本、脱敏诊断及所有进程和临时目录清理结论。成功和失败均写入 `.local-ci-runs/deepseek-model.json`，未满足源码或清理门不算通过。测试工具结果只声明 S1；不能改写 Rust Evidence。
+- 配置 endpoint 的 DeepSeek 模型协议：显式 smoke 使用实际凭据验证增量、历史和冷上下文续接；验证结构化问题和受控 proposal；记录平台、模型、执行前后相同 clean commit、lock hash、组合版本、脱敏诊断及所有进程和临时目录清理结论。成功和失败均写入 `.local-ci-runs/deepseek-model.json`，未满足源码或清理门不算通过。endpoint/model 在开始时冻结，official/configured/local_fixture 按实际 origin 分类，完整规范化 endpoint（含路径）以 endpointSha256 绑定且不输出明文；不以配置模型名证明后端身份。测试工具结果只声明 S1；不能改写 Rust Evidence。
 - 固定 artifact：打包 contract/adapter，临时独立 workspace 用自身 lock 安装，公共类型及真实子进程 cold session 通过；记录 archive SHA-256 与 consumer lock SHA-256，禁止回指本仓源码。
 
 这些组件证据不承诺生产 Host/A02 存储实现、操作系统 sandbox、Windows 实测或企业接线。Host 必须持有可信 namespace、平台 verifier、原子状态转移与恢复凭证流程。未知提交不能自动重发；即使日志没有对应请求也不能证明未发送。

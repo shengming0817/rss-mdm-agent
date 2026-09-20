@@ -888,7 +888,8 @@ export class SessionHost implements HostPort {
               ...(session.binding.nativeRunId
                 ? { nativeRunId: session.binding.nativeRunId }
                 : {}),
-              ...(session.binding.nativeRequestId
+              ...(record.command.input.type !== "prompt" &&
+              session.binding.nativeRequestId
                 ? { nativeRequestId: session.binding.nativeRequestId }
                 : {}),
             }

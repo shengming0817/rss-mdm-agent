@@ -5,11 +5,40 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+import { createHash } from "node:crypto";
 import {
   closeAdapters,
   describeFailure,
   loadSmokeConfiguration,
 } from "../../../scripts/smoke-codex.mjs";
+
+test("smoke endpoint identity includes its normalized route", () => {
+  const config = (apiUrl) =>
+    loadSmokeConfiguration([], {
+      RSS_CODEX_SMOKE_MODE: "real_model",
+      RSS_CODEX_SMOKE_API_URL: apiUrl,
+      RSS_CODEX_SMOKE_API_KEY: "PRIVATE_CANARY",
+      RSS_CODEX_SMOKE_MODEL: "fixture",
+    });
+  const first = config("https://private.example/one/v1");
+  assert.notDeepEqual(
+    first.endpoint,
+    config("https://private.example/two/v1").endpoint,
+  );
+  assert.deepEqual(
+    first.endpoint,
+    config("https://PRIVATE.example:443/discard/../one/v1/").endpoint,
+  );
+  assert.equal(
+    first.endpoint.endpointSha256,
+    createHash("sha256").update(first.apiUrl).digest("hex"),
+  );
+  assert.equal("originSha256" in first.endpoint, false);
+  assert.doesNotMatch(
+    JSON.stringify(first.endpoint),
+    /private|PRIVATE_CANARY|\/one/,
+  );
+});
 
 test("missing and malformed smoke configuration never reports a pass or leaks input", () => {
   assert.throws(

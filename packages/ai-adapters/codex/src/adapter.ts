@@ -794,6 +794,17 @@ export class CodexAdapter implements ProviderAgentPort {
           commandId: entry.command.commandId,
           attemptId: entry.dispatch.attemptId,
         });
+      if (
+        announce &&
+        entry.command.input.type === "prompt" &&
+        entry.command.input.policy === "queue_next"
+      )
+        this.observations.push({
+          type: "running",
+          binding: copy(entry.binding),
+          commandId: entry.command.commandId,
+          attemptId: entry.dispatch.attemptId,
+        });
     }
     const terminal = this.completedTurns.get(turnId);
     if (announce && terminal && !entry.outcome) {
@@ -1066,7 +1077,21 @@ export class CodexAdapter implements ProviderAgentPort {
     binding: Binding,
     budget: Budget,
   ): AsyncIterable<ProviderObservation> {
-    if (this.owns(binding)) yield* this.observations.read(budget);
+    if (!this.owns(binding)) return;
+    // A Host observation owns one dispatched request. Release the native queue
+    // after its terminal so the next turn cannot compete with an old reader.
+    // Session-only observers (e.g. the native extension consumer) have no request
+    // coordinate and remain scoped to their caller's budget.
+    for await (const observation of this.observations.read(budget)) {
+      yield observation;
+      if (
+        binding.nativeRequestId !== undefined &&
+        observation.binding.nativeRequestId === binding.nativeRequestId &&
+        observation.type === "event" &&
+        observation.body.type === "terminal"
+      )
+        return;
+    }
   }
   async *diagnostics(
     binding: Binding,

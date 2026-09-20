@@ -100,6 +100,37 @@ export async function closeAdapters(adapters, directory) {
     ...(!processesStopped ? { retainedDirectory: basename(directory) } : {}),
   };
 }
+export function smokeEndpoint(value) {
+  try {
+    const parsed = new URL(value);
+    const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(
+      parsed.hostname,
+    );
+    if (
+      parsed.username ||
+      parsed.password ||
+      parsed.search ||
+      parsed.hash ||
+      (parsed.protocol !== "https:" &&
+        !(parsed.protocol === "http:" && loopback))
+    )
+      throw new Error();
+    const apiUrl = parsed.href.replace(/\/$/, "");
+    return {
+      apiUrl,
+      endpoint: {
+        endpointSha256: createHash("sha256").update(apiUrl).digest("hex"),
+        mode: loopback
+          ? "loopback-compatible-endpoint"
+          : parsed.hostname === "api.anthropic.com"
+            ? "anthropic-api"
+            : "configured-compatible-endpoint",
+      },
+    };
+  } catch {
+    throw new Error("Invalid endpoint configuration");
+  }
+}
 async function main() {
   const root = fileURLToPath(new URL("../", import.meta.url)),
     start = sourceState(root);
@@ -122,20 +153,7 @@ async function main() {
     url = credentials.ANTHROPIC_BASE_URL;
   if (!url || !!key === !!token)
     throw new Error("Set API URL and exactly one API key or auth token");
-  let endpoint;
-  try {
-    const parsed = new URL(url);
-    endpoint = {
-      originSha256: createHash("sha256").update(parsed.origin).digest("hex"),
-      mode: ["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname)
-        ? "loopback-compatible-endpoint"
-        : parsed.hostname === "api.anthropic.com"
-          ? "anthropic-api"
-          : "configured-compatible-endpoint",
-    };
-  } catch {
-    throw new Error("Invalid endpoint configuration");
-  }
+  const selected = smokeEndpoint(url);
   const directory = mkdtempSync(join(tmpdir(), "rss-claude-model-"));
   mkdirSync(join(directory, "config"), { mode: 0o700 });
   mkdirSync(join(directory, "project"));
@@ -157,7 +175,7 @@ async function main() {
       resolveConfiguration: async () => ({
         configuration,
         configurationDirectory: join(directory, "config"),
-        apiUrl: url,
+        apiUrl: selected.apiUrl,
         credential: key
           ? { type: "api_key", value: key }
           : { type: "auth_token", value: token },
@@ -283,7 +301,7 @@ async function main() {
     if (!deliverable) process.exitCode = 1;
     const evidence = {
       evidence: "real-sdk-configured-endpoint-smoke",
-      endpoint,
+      endpoint: selected.endpoint,
       requestedModel: credentials.ANTHROPIC_MODEL || "provider_default",
       backendIdentityVerified: false,
       status: deliverable ? "passed" : "failed",

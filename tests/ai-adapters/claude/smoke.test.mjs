@@ -5,6 +5,41 @@ import { mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
+import { smokeEndpoint } from "../../../scripts/smoke-claude.mjs";
+
+test("smoke endpoint identity includes the route and excludes private input", () => {
+  const first = smokeEndpoint("https://private.example/one");
+  assert.notDeepEqual(
+    first.endpoint,
+    smokeEndpoint("https://private.example/two").endpoint,
+  );
+  assert.deepEqual(
+    first.endpoint,
+    smokeEndpoint("https://PRIVATE.example:443/discard/../one/").endpoint,
+  );
+  assert.equal(
+    first.endpoint.endpointSha256,
+    createHash("sha256").update(first.apiUrl).digest("hex"),
+  );
+  assert.equal("originSha256" in first.endpoint, false);
+  assert.doesNotMatch(JSON.stringify(first.endpoint), /private|\/one/);
+  for (const value of [
+    "https://secret@private.example",
+    "https://private.example?key=secret",
+    "https://private.example#secret",
+    "http://private.example",
+    "malformed",
+  ])
+    assert.throws(
+      () => smokeEndpoint(value),
+      /^Error: Invalid endpoint configuration$/,
+    );
+  assert.equal(
+    smokeEndpoint("http://127.0.0.1:1234").endpoint.mode,
+    "loopback-compatible-endpoint",
+  );
+});
 
 test("live smoke commands and resume sessions use the current public wire without credentials", async () => {
   const { smokeCommand, smokeSession } = await import(

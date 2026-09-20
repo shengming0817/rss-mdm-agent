@@ -185,6 +185,11 @@ for (const name of [
   "delegate",
   "mcp__evil",
   "host_propose",
+  "read_file",
+  "write_file",
+  "browser",
+  "web_fetch",
+  "mcp__connector__query",
 ])
   test(`conversation native bypass refused: ${name}`, async (t) => {
     const env = await environment(t, (_b, res, n) =>

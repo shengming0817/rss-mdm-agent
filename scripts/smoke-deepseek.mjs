@@ -14,6 +14,40 @@ import { createHash } from "node:crypto";
 import { sourceState, sameCommittedSource } from "./source-state.mjs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+/** Snapshot the selected endpoint once; a configured endpoint is not backend identity proof. */
+export function smokeConfiguration(env) {
+  try {
+    const url = new URL(env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com");
+    const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+    const model = env.DEEPSEEK_MODEL ?? "deepseek-chat";
+    if (
+      (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash ||
+      typeof model !== "string" ||
+      !model.trim()
+    )
+      throw new Error();
+    const apiUrl = url.href.replace(/\/$/, "");
+    return Object.freeze({
+      apiUrl,
+      model,
+      endpoint: Object.freeze({
+        kind: loopback
+          ? "local_fixture"
+          : url.origin === "https://api.deepseek.com"
+            ? "official"
+            : "configured",
+        endpointSha256: createHash("sha256").update(apiUrl).digest("hex"),
+      }),
+    });
+  } catch {
+    throw new Error("Invalid smoke configuration");
+  }
+}
+
 export async function closeAdapters(ports, directory) {
   const attempts = [];
   let processesStopped = true,
@@ -61,6 +95,7 @@ export function deliverable(
   );
 }
 async function main() {
+  const selected = smokeConfiguration(process.env);
   const apiKey =
     process.env.DEEPSEEK_API_KEY ??
     (process.env.RSS_DEEPSEEK_KEY_FILE
@@ -68,7 +103,7 @@ async function main() {
       : undefined);
   if (!apiKey)
     throw Error(
-      "Official smoke requires DEEPSEEK_API_KEY or RSS_DEEPSEEK_KEY_FILE; no fixture fallback",
+      "Smoke requires DEEPSEEK_API_KEY or RSS_DEEPSEEK_KEY_FILE; no fixture fallback",
     );
   const root = fileURLToPath(new URL("../", import.meta.url)),
     start = sourceState(root);
@@ -85,7 +120,7 @@ async function main() {
     behaviorPassed = false,
     failure,
     results = {};
-  const directory = await mkdtemp(join(tmpdir(), "rss-deepseek-official-"));
+  const directory = await mkdtemp(join(tmpdir(), "rss-deepseek-smoke-"));
   const config = {
     namespace: {
       tenantId: "smoke-tenant",
@@ -94,7 +129,7 @@ async function main() {
       sessionId: "smoke-session",
     },
     provider: "deepseek",
-    config: { id: "official-deepseek", revision: "1" },
+    config: { id: "deepseek-smoke", revision: "1" },
     accountRef: "smoke-account",
     workingDirectory: directory,
     permissions: "tools_disabled",
@@ -108,9 +143,9 @@ async function main() {
     resolveConfiguration: async () => ({
       configuration: config,
       persistenceDirectory: directory,
-      apiUrl: process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
+      apiUrl: selected.apiUrl,
       apiKey,
-      model: process.env.DEEPSEEK_MODEL ?? "deepseek-chat",
+      model: selected.model,
     }),
   };
   const ports = [];
@@ -138,11 +173,11 @@ async function main() {
     assert.equal(
       events.at(-1)?.body?.outcome,
       "completed",
-      "official turn must complete",
+      "configured turn must complete",
     );
     assert.ok(
       events.some((e) => e.type === "delta"),
-      "official native incremental text required",
+      "configured native incremental text required",
     );
     return {
       attempt,
@@ -238,7 +273,7 @@ async function main() {
     const controlled = {
       ...config,
       namespace: { ...config.namespace, sessionId: "controlled-smoke" },
-      config: { id: "official-controlled", revision: "1" },
+      config: { id: "controlled-smoke", revision: "1" },
       permissions: "host_mediated",
     };
     const admission = {
@@ -255,7 +290,7 @@ async function main() {
             ok: true,
             value: {
               platform: process.platform,
-              verificationRef: "official-smoke-test-verifier",
+              verificationRef: "smoke-test-verifier",
             },
           };
         },
@@ -280,9 +315,9 @@ async function main() {
       resolveConfiguration: async () => ({
         configuration: controlled,
         persistenceDirectory: directory,
-        apiUrl: process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
+        apiUrl: selected.apiUrl,
         apiKey,
-        model: process.env.DEEPSEEK_MODEL ?? "deepseek-chat",
+        model: selected.model,
       }),
     });
     ports.push(third);
@@ -378,11 +413,15 @@ async function main() {
     );
     if (!passed) process.exitCode = 1;
     const evidence = {
-      evidence: "official_deepseek",
+      evidence:
+        selected.endpoint.kind === "local_fixture"
+          ? "real-deepseek-local-model-fixture"
+          : "real-deepseek-configured-endpoint-smoke",
       status: passed ? "passed" : "failed",
       behaviorPassed,
-      endpoint: "https://api.deepseek.com",
-      model: process.env.DEEPSEEK_MODEL ?? "deepseek-chat",
+      endpoint: selected.endpoint,
+      model: selected.model,
+      backendIdentityVerified: false,
       platform: process.platform,
       arch: process.arch,
       node: process.version,
