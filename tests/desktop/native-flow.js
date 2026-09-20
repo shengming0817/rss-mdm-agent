@@ -190,6 +190,14 @@
           e.textContent.includes("RSS_S1_DONE"),
         ),
       );
+      // A streamed marker is not completion. User switching correctly cancels any
+      // remaining model work, so durable-history acceptance must await its terminal.
+      setStage("ai_terminal");
+      await wait(() =>
+        [...document.querySelectorAll(".assistant .command-state")].some((e) =>
+          e.textContent.includes("模型本轮结束：completed"),
+        ),
+      );
       setStage("ai_facts");
       const ai = await details("ai-s1-smoke"),
         tool = await details("ai-s1-tool");
@@ -272,6 +280,7 @@
         generation === alice.generation
       )
         throw new Error("original user not restored with fresh generation");
+      setStage("user_a_task_continued");
       const completed = await wait(async () => {
         const value = await details("ai-s1-smoke");
         return value.status.phase === "testCompleted" && value;
@@ -286,6 +295,7 @@
           (await details("ai-s1-tool")).status.phase === "testCompleted",
       );
       await click("AI 助手");
+      setStage("user_a_history");
       await wait(() =>
         [...document.querySelectorAll(".assistant .message")].some((e) =>
           e.textContent.includes("RSS_S1_DONE"),
@@ -306,6 +316,7 @@
         frozenOriginsVisible: true,
         detachedRunContinued: true,
         nativeHistoryVisible: true,
+        modelCompletedBeforeSwitch: true,
         testTasks: 2,
         userIsolation: true,
         oldGenerationRejected: true,
