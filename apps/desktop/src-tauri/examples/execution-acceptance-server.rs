@@ -27,14 +27,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .parent()
         .ok_or("execution database must have a parent")?
         .join("execution-users");
-    std::fs::create_dir(&user_root)?;
-    std::fs::OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .mode(0o600)
-        .open(user_root.join("users.json"))?
-        .write_all(
-            serde_json::to_vec(&json!({
+    std::fs::create_dir_all(&user_root)?;
+    let users_path = user_root.join("users.json");
+    if !users_path.try_exists()? {
+        std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .open(&users_path)?
+            .write_all(
+                serde_json::to_vec(&json!({
                 "schemaVersion": 5,
                 "kind": "testUserPage",
                 "users": [{
@@ -56,9 +58,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     },
                     "generation": "fixture-generation"
                 }
-            }))?
-            .as_slice(),
-        )?;
+                }))?
+                .as_slice(),
+            )?;
+    }
     let users = rss_mdm_desktop::composition::users::Users::open(&user_root)?;
     let generation = users.current()?.generation.to_string();
     std::fs::write(
