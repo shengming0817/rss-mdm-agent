@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "pnpm dev:web",
     "devUrl": "http://127.0.0.1:1420",
-    "beforeBuildCommand": "pnpm -w build",
+    "beforeBuildCommand": "pnpm -w bundle:ai-host && pnpm -w stage:desktop-runtime && pnpm -w build",
     "frontendDist": "../dist"
   },
   "app": {

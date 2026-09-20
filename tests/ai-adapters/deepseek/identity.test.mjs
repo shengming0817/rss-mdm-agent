@@ -181,6 +181,7 @@ test("late resolver cannot spawn after close; incomplete child cleanup is preser
     resolved = {
       configuration: c,
       persistenceDirectory: "/tmp/dsh",
+      apiUrl: "https://custom.example.test/v1",
       apiKey: "fixture",
       model: "deepseek-chat",
     };
@@ -282,6 +283,7 @@ test("raw port admission also requires a complete trusted namespace before spawn
         resolveConfiguration: async () => ({
           configuration: c,
           persistenceDirectory: "/tmp/dsh",
+          apiUrl: "https://custom.example.test/v1",
           apiKey: "fixture",
           model: "deepseek-chat",
         }),
@@ -309,6 +311,7 @@ test("initialize NativeFault produces one sanitized operation diagnostic", async
       resolveConfiguration: async () => ({
         configuration: c,
         persistenceDirectory: "/tmp/dsh",
+        apiUrl: "https://custom.example.test/v1",
         apiKey: "fixture",
         model: "deepseek-chat",
       }),

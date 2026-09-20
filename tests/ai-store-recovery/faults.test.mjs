@@ -71,7 +71,7 @@ test("delivery is atomically tied to the event, content and stable operation ide
   const head = unwrap(await store.session(initial.namespace)),
     event = unwrap(await store.events(initial.namespace, 0, 1))[0];
   const delivery = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     kind: "delivery",
     namespace: initial.namespace,
     operationId: "operation-1",
@@ -186,7 +186,10 @@ test("schema creation is transactional and partial/newer/foreign files are not r
     store = unwrap(h.open(newer));
   unwrap(await store.close(budget()));
   const future = new DatabaseSync(newer);
-  future.exec("PRAGMA user_version=3");
+  const currentVersion = future
+    .prepare("PRAGMA user_version")
+    .get().user_version;
+  future.exec(`PRAGMA user_version=${currentVersion + 1}`);
   future.close();
   const bytes = readFileSync(newer);
   assert.equal(h.open(newer, "open").error.code, "unsupported_version");

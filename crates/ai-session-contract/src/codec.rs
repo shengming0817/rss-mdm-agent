@@ -50,7 +50,7 @@ fn error(code: Diagnostic) -> ContractError {
 }
 fn serde_error<E: serde::de::Error>(code: Diagnostic) -> E {
     E::custom(format!(
-        "ai-v3:{}",
+        "ai-v4:{}",
         serde_json::to_string(&code).expect("closed diagnostic")
     ))
 }
@@ -62,7 +62,7 @@ fn from_serde(e: serde_json::Error) -> ContractError {
         return error(Diagnostic::Number);
     }
     let code = message
-        .strip_prefix("ai-v3:")
+        .strip_prefix("ai-v4:")
         .and_then(|s| serde_json::from_str(s.split(" at line ").next().unwrap_or(s)).ok())
         .unwrap_or(Diagnostic::Encoding);
     error(code)
@@ -210,7 +210,7 @@ pub fn decode(bytes: &[u8], limits: &Limits) -> Result<WireRecord, ContractError
     .deserialize(&mut deserializer)
     .map_err(from_serde)?;
     deserializer.end().map_err(from_serde)?;
-    if value.get("schemaVersion").is_some_and(|v| v != 3) {
+    if value.get("schemaVersion").is_some_and(|v| v != 4) {
         return Err(error(Diagnostic::Version));
     }
     if !VALIDATOR.is_valid(&value) {

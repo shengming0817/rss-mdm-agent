@@ -227,11 +227,15 @@ fn directory_and_instance_fail_closed_and_plan_is_immutable() {
     );
     draft.instance_id = "fixture-test".into();
     assert_eq!(
-        service.preview(draft, 3601000).err().unwrap().code,
+        service
+            .preview(draft, 4_102_444_800_001)
+            .err()
+            .unwrap()
+            .code,
         "unavailable"
     );
     assert!(service
-        .snapshot(3601000)
+        .snapshot(4_102_444_800_001)
         .unwrap()
         .catalog
         .iter()

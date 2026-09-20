@@ -501,7 +501,7 @@ export function createAssistant(
       return;
     state.pending.set(id, {
       command: {
-        schemaVersion: 3,
+        schemaVersion: 4,
         kind: "command",
         sessionId: id,
         commandId: identity(),

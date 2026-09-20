@@ -31,7 +31,7 @@ function setup(now = () => 100) {
   view.connection = "attached";
   const submit = vi.fn().mockResolvedValue({ kind: "receipt" });
   const client = {
-    initialize: vi.fn().mockResolvedValue({ contractVersion: 3, acp: 1 }),
+    initialize: vi.fn().mockResolvedValue({ contractVersion: 4, acp: 1 }),
     listSessions: vi.fn().mockResolvedValue({ items: [session] }),
     restore: vi.fn().mockResolvedValue(view),
     createSession: vi.fn().mockResolvedValue(view),
@@ -75,7 +75,7 @@ describe("assistant application ownership", () => {
     await t.c.select("session-1");
     t.view.commands.p = {
       command: {
-        schemaVersion: 3,
+        schemaVersion: 4,
         kind: "command",
         sessionId: "session-1",
         commandId: "p",

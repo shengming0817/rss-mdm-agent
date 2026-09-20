@@ -50,21 +50,36 @@ importers:
 
   apps/ai-host:
     dependencies:
-      "@rss-mdm-agent/ai-access":
+      '@iarna/toml':
+        specifier: 2.2.5
+        version: 2.2.5
+      '@modelcontextprotocol/sdk':
+        specifier: 1.30.0
+        version: 1.30.0(zod@4.6.5)
+      '@rss-mdm-agent/ai-access':
         specifier: workspace:*
         version: link:../../packages/ai-access
-      "@rss-mdm-agent/ai-adapter-claude":
+      '@rss-mdm-agent/ai-adapter-claude':
         specifier: workspace:*
         version: link:../../packages/ai-adapters/claude
-      "@rss-mdm-agent/ai-contract":
+      '@rss-mdm-agent/ai-adapter-codex':
+        specifier: workspace:*
+        version: link:../../packages/ai-adapters/codex
+      '@rss-mdm-agent/ai-adapter-deepseek':
+        specifier: workspace:*
+        version: link:../../packages/ai-adapters/deepseek
+      '@rss-mdm-agent/ai-contract':
         specifier: workspace:*
         version: link:../../packages/ai-contract
-      "@rss-mdm-agent/ai-host":
+      '@rss-mdm-agent/ai-host':
         specifier: workspace:*
         version: link:../../packages/ai-host
-      "@rss-mdm-agent/ai-store-sqlite":
+      '@rss-mdm-agent/ai-store-sqlite':
         specifier: workspace:*
         version: link:../../packages/ai-store-sqlite
+      yaml:
+        specifier: 2.9.1
+        version: 2.9.1
 
   apps/desktop:
     dependencies:
@@ -253,7 +268,7 @@ importers:
 
   packages/ai-host:
     dependencies:
-      "@rss-mdm-agent/ai-contract":
+      '@rss-mdm-agent/ai-contract':
         specifier: workspace:*
         version: link:../ai-contract
 
@@ -262,7 +277,7 @@ importers:
       '@rss-mdm-agent/ai-contract':
         specifier: workspace:*
         version: link:../ai-contract
-      "@rss-mdm-agent/ai-host":
+      '@rss-mdm-agent/ai-host':
         specifier: workspace:*
         version: link:../ai-host
 
@@ -1207,6 +1222,9 @@ packages:
     engines: {node: '>=20'}
     peerDependencies:
       hono: ^4
+
+  '@iarna/toml@2.2.5':
+    resolution: {integrity: sha512-trnsAYxU3xnS1gPHPyU961coFyLkh4gAD/0zQ5mymY4yOZ+CYvsPqUbOFSw0aDM4y0tV7tiFxL/1XfXPNC6IPg==}
 
   '@img/colour@1.1.0':
     resolution: {integrity: sha512-Td76q7j57o/tLVdgS746cYARfSyxk8iEfRxewL9h4OMzYhbW4TAcppl0mT4eyqXddh6L/jwoM75mo7ixa/pCeQ==}
@@ -3632,6 +3650,8 @@ snapshots:
   '@hono/node-server@2.1.1(hono@4.13.8)':
     dependencies:
       hono: 4.13.8
+
+  '@iarna/toml@2.2.5': {}
 
   '@img/colour@1.1.0': {}
 

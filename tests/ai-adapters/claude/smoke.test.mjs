@@ -23,8 +23,14 @@ test("live smoke commands and resume sessions use the current public wire withou
     session.binding,
     session.capabilities,
   );
-  assert.equal(decode(JSON.stringify(command), accessLimits).schemaVersion, 3);
-  assert.equal(decode(JSON.stringify(restored), accessLimits).schemaVersion, 3);
+  assert.equal(
+    decode(JSON.stringify(command), accessLimits).schemaVersion,
+    session.schemaVersion,
+  );
+  assert.equal(
+    decode(JSON.stringify(restored), accessLimits).schemaVersion,
+    session.schemaVersion,
+  );
 });
 
 test("malformed smoke credentials never enter parser diagnostics", () => {

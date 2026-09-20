@@ -17,6 +17,12 @@ pub use model::{
 };
 pub use port::ExecutionServicePort;
 
+/// Exact exported tool definitions for host-owned product instructions and drift checks.
+/// The implementation and this projection share the same Rust schema owner.
+pub fn tool_definitions() -> serde_json::Value {
+    serde_json::to_value(server::tools()).expect("static tool schema serializes")
+}
+
 use rmcp::ServiceExt;
 use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncWrite};

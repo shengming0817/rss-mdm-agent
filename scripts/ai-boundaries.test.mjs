@@ -53,7 +53,8 @@ test("AI boundary gate covers app dependencies, builtins and computed imports", 
     "const worker = require(process.env.MODULE);",
     'import x from "../../../packages/ai-host/src/process.js";',
   ]) {
-    assert.equal(run().status, 0, "unmodified tree passes");
+    const baseline = run();
+    assert.equal(baseline.status, 0, baseline.stderr);
     writeFileSync(source, original + "\n" + injected);
     const failed = run();
     assert.notEqual(failed.status, 0, injected);
@@ -68,6 +69,12 @@ test("AI boundary gate covers app dependencies, builtins and computed imports", 
     },
     (m) => {
       m.dependencies["@anthropic-ai/claude-agent-sdk"] = "0.3.277";
+    },
+    (m) => {
+      m.dependencies.yaml = "^2.9.1";
+    },
+    (m) => {
+      m.dependencies["@modelcontextprotocol/sdk"] = "*";
     },
     (m) => {
       m.optionalDependencies = { "node-pty": "1.0.0" };

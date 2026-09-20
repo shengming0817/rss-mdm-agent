@@ -1,9 +1,8 @@
 //! Explicit in-memory fixtures, not an execution service or trusted approval authority.
-mod fixtures;
+pub(crate) mod fixtures;
 mod interaction;
-pub mod ipc;
 mod model;
-mod selection;
+pub(crate) mod selection;
 use execution_contract::{FrozenPlan, Id, RequestId};
 use execution_interaction::{Interaction, Status};
 pub use model::*;
@@ -73,6 +72,8 @@ impl FixtureService {
             target_label: fixtures::TARGET,
             catalog,
             requests,
+            next: None,
+            referenced_requests: vec![],
         })
     }
     pub fn preview(&mut self, draft: Draft, now: u64) -> Result<PlanView> {
@@ -126,6 +127,7 @@ impl FixtureService {
                     &draft.request_id,
                     format!("plan-{}-{}", self.instance_id, self.next_plan),
                     now,
+                    &fixtures::human(),
                 )?;
                 let display = self.display(&draft.item_id, now);
                 selected.display_status(
@@ -311,6 +313,9 @@ impl FixtureService {
             })
             .collect();
         Ok(PlanView {
+            authority: spec.request.authority.clone(),
+            actor: spec.request.actor.clone(),
+            initiator: spec.request.initiator.clone(),
             request_id: spec.request.request_id.clone(),
             revision: record.revision,
             plan_id: spec.plan_id.clone(),

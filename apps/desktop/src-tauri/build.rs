@@ -6,6 +6,13 @@ fn main() {
             "self_service_preview",
             "self_service_submit",
             "self_service_respond",
+            "self_service_approve",
+            "self_service_cancel",
+            "execution_task_details",
+            "ai_connect",
+            "ai_receive",
+            "ai_send",
+            "ai_disconnect",
         ]),
     ))
     .expect("desktop capability manifest");

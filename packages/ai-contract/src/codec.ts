@@ -129,7 +129,7 @@ export function decode(input: string | Uint8Array, limits: Limits): WireRecord {
     value &&
     typeof value === "object" &&
     "schemaVersion" in value &&
-    value.schemaVersion !== 3
+    value.schemaVersion !== 4
   )
     throw new ContractError("version");
   if (!valid(value)) throw new ContractError("schema");

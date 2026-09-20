@@ -10,6 +10,7 @@ const port = createDeepSeekAdapter({
     configuration, // DeepSeekConfiguration，必须含可信 namespace
     persistenceDirectory, // 私有耐久目录，不能由模型或终端用户任意指定
     model: 'deepseek-chat',
+    apiUrl: "https://custom.example.test/v1",
     apiKey: await credentials.resolve(identity.accountRef, budget),
   }),
 });

@@ -5,7 +5,11 @@ import { dirname, resolve } from "node:path";
 import { createHost } from "@rss-mdm-agent/ai-host";
 import { openSqliteStore } from "@rss-mdm-agent/ai-store-sqlite";
 import { createAccessService, ndJsonStream } from "@rss-mdm-agent/ai-access";
-import { readConfiguration } from "./configuration.js";
+import { connectExecution } from "./execution.js";
+import {
+  readConfiguration,
+  configurationFingerprint,
+} from "./configuration.js";
 export type { LocalConfiguration } from "./configuration.js";
 /** A private local ACP endpoint. Disconnecting a socket only detaches that client. */
 export async function startLocalApp(configurationPath: string) {
@@ -40,9 +44,23 @@ export async function startLocalApp(configurationPath: string) {
   });
   if (!opened.ok) throw new Error(opened.error.code);
   const store = opened.value;
-  const artifact = new URL("./claude-provider.js", import.meta.url);
+  const artifact = new URL("./provider.js", import.meta.url);
   artifact.searchParams.set("configuration", path);
+  artifact.searchParams.set("fingerprint", configurationFingerprint(local));
+  const execution =
+    local.session.profile === "controlled_tools"
+      ? await connectExecution(process.stdin, process.stdout, local).catch(
+          async (error) => {
+            await store.close({
+              timeoutMs: 1000,
+              signal: new AbortController().signal,
+            });
+            throw error;
+          },
+        )
+      : undefined;
   const created = await createHost({
+    delivery: execution?.router ?? null,
     store,
     launchFences: store,
     onDiagnostic: (diagnostic) =>
@@ -66,13 +84,47 @@ export async function startLocalApp(configurationPath: string) {
           config: options.config,
           accountRef: options.accountRef,
           workingDirectory: local.workingDirectory,
-          permissions: "tools_disabled",
+          permissions:
+            options.profile === "controlled_tools"
+              ? "host_mediated"
+              : "tools_disabled",
         },
         artifact: artifact.href,
+        ...(options.profile === "controlled_tools"
+          ? {
+              admission: {
+                verifier: {
+                  verify: async (
+                    session: import("@rss-mdm-agent/ai-contract").ProviderSessionBinding,
+                  ) =>
+                    process.platform === "darwin" &&
+                    process.arch === "arm64" &&
+                    session.binding.provider === "codex" &&
+                    session.binding.providerVersion === "0.155.0" &&
+                    session.capabilities.tools === "host_mediated"
+                      ? {
+                          ok: true as const,
+                          value: {
+                            platform: "darwin-arm64",
+                            verificationRef: "codex-0.155.0-controlled",
+                          },
+                        }
+                      : {
+                          ok: false as const,
+                          error: {
+                            code: "unsupported_capability" as const,
+                            retry: "never" as const,
+                          },
+                        },
+                },
+              },
+            }
+          : {}),
       };
     },
   });
   if (!created.ok) {
+    await execution?.close();
     await store.close({
       timeoutMs: 1000,
       signal: new AbortController().signal,
@@ -95,13 +147,23 @@ export async function startLocalApp(configurationPath: string) {
   let closed = false,
     ownsSocket = false;
   let socketIdentity: { dev: number; ino: number } | undefined;
-  const close = async () => {
+  let closing: Promise<void> | undefined;
+  const close = (): Promise<void> => {
+    if (closed) return Promise.resolve();
+    if (closing) return closing;
+    closing = finishClose().finally(() => {
+      closing = undefined;
+    });
+    return closing;
+  };
+  const finishClose = async () => {
     if (closed) return;
     const stopped = new Promise<void>((resolve) =>
       server.close(() => resolve()),
     );
     for (const socket of sockets) socket.destroy();
     await service.close();
+    await execution?.close();
     await stopped;
     const result = await host.close({
       timeoutMs: 30000,
@@ -158,6 +220,15 @@ export async function startLocalApp(configurationPath: string) {
     });
     socketIdentity = await lstat(local.socketPath);
     await chmod(local.socketPath, 0o600);
+    if (execution)
+      void execution.stopped
+        .then(() => close())
+        .catch(() => {
+          process.stderr.write(
+            "AI Host parent connection closed; cleanup incomplete\n",
+          );
+          process.exitCode = 1;
+        });
     return { host, close };
   } catch (error) {
     await close();

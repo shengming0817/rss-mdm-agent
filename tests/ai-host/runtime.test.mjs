@@ -85,6 +85,35 @@ async function setup(t, revision = "1", extras = {}) {
   };
   host = unwrap(
     await createHost({
+      delivery: extras.admission
+        ? {
+            prepare: () => ({
+              ok: true,
+              value: { operationId: "fixture-delivery", target: "fixture" },
+            }),
+            send: async (request, b) => {
+              const saved = unwrap(
+                await store.delivery(request.namespace, "fixture-delivery"),
+              );
+              assert.equal(saved.delivery.status, "reconciliation_required");
+              const reply = await extras.admission.tools.propose(
+                request.body.proposal,
+                b,
+              );
+              return reply.ok
+                ? {
+                    ok: true,
+                    value: {
+                      receiptRef: "fixture-receipt",
+                      reply: reply.value,
+                    },
+                  }
+                : reply;
+            },
+            reconcile: async () => ({ ok: true, value: { state: "unknown" } }),
+            acknowledge: async () => ({ ok: true, value: undefined }),
+          }
+        : null,
       store,
       launchFences: store,
       resolve: async (caller, options, namespace) => ({
@@ -108,7 +137,7 @@ async function setup(t, revision = "1", extras = {}) {
   });
   const session = unwrap(await host.createSession(caller, options, budget()));
   const command = (id, text = "hold") => ({
-    schemaVersion: 3,
+    schemaVersion: 4,
     kind: "command",
     sessionId: session.namespace.sessionId,
     commandId: id,
@@ -301,7 +330,7 @@ test("standard ACP queued input outlives the request budget and executes in FIFO
     await f.host.cancel(
       caller,
       {
-        schemaVersion: 3,
+        schemaVersion: 4,
         kind: "command",
         sessionId: session.namespace.sessionId,
         commandId: "release-long-run",
@@ -347,7 +376,6 @@ test("question response is timely during a long run and has its own acknowledgem
 });
 test("slow subscriber is asked to resync while another account remains usable", async (t) => {
   const f = await setup(t);
-  unwrap(await f.host.submit(caller, f.command("flood", "flood"), budget()));
   const abort = new AbortController(),
     iterator = f.host
       .subscribe(caller, f.session.namespace.sessionId, 0, {
@@ -355,8 +383,29 @@ test("slow subscriber is asked to resync while another account remains usable", 
         signal: abort.signal,
       })
       [Symbol.asyncIterator]();
-  await iterator.next();
-  await new Promise((resolve) => setTimeout(resolve, 700));
+  t.after(() => abort.abort());
+  const ready = iterator.next();
+  // A draining peer proves the Host has published enough bytes to overflow the paused peer.
+  // No assumption about how many provider callbacks fit in 700 ms under parallel CI load.
+  const fast = f.host
+    .subscribe(caller, f.session.namespace.sessionId, 0, {
+      timeoutMs: 5000,
+      signal: AbortSignal.any([abort.signal, AbortSignal.timeout(5000)]),
+    })
+    [Symbol.asyncIterator]();
+  const fastReady = fast.next();
+  unwrap(await f.host.submit(caller, f.command("flood", "flood"), budget()));
+  await Promise.all([ready, fastReady]);
+  let bytes = 0;
+  for await (const item of fast) {
+    assert.notEqual(item.type, "resync_required", "draining peer remains live");
+    if (item.type === "delta") bytes += Buffer.byteLength(item.text);
+    if (bytes >= 2 * 1024 * 1024) break;
+  }
+  assert.ok(
+    bytes >= 2 * 1024 * 1024,
+    "Host published more than the paused peer's byte budget",
+  );
   assert.equal((await iterator.next()).value.type, "resync_required");
   abort.abort();
   await iterator.return();
@@ -431,7 +480,7 @@ test("worker reverse tool RPC reaches the parent-admitted endpoint without seria
   const f = await setup(t, "1", { admission });
   unwrap(await f.host.submit(caller, f.command("tool", "quick"), budget()));
   await until(() => calls.length === 1);
-  assert.equal(verifications[0].tools, admission.tools);
+  assert.equal(typeof verifications[0].tools.propose, "function");
   assert.deepEqual(calls[0].caller, caller);
   assert.equal(calls[0].proposal.name, "fixture");
 });
@@ -594,6 +643,7 @@ for (const option of [
   test(`Host factory returns invalid_input for invalid ${option}`, async () => {
     for (const value of [0, -1, NaN, Infinity, 1.5]) {
       const result = await createHost({
+        delivery: null,
         store: {},
         resolve: async () => {},
         [option]: value,

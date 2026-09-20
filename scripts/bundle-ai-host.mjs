@@ -17,6 +17,7 @@ import {
   installArtifacts,
   run,
   runtimeArtifact,
+  runtimeTreeSha256 as hashRuntimeTree,
 } from "./ai-host-artifacts.mjs";
 import { sourceState, sameCommittedSource } from "./source-state.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url)),
@@ -94,7 +95,17 @@ try {
 } finally {
   rmSync(scratch, { recursive: true, force: true });
   const end = sourceState(root),
-    deliverable = behaviorPassed && sameCommittedSource(start, end);
+    sourceUnchanged = sameCommittedSource(start, end);
+  let deliverable = behaviorPassed && sourceUnchanged,
+    runtimeTreeSha256;
+  if (deliverable) {
+    try {
+      runtimeTreeSha256 = hashRuntimeTree(directory);
+    } catch (error) {
+      failure = String(error);
+      deliverable = false;
+    }
+  }
   if (!deliverable) process.exitCode = 1;
   mkdirSync(directory, { recursive: true });
   writeFileSync(
@@ -108,6 +119,7 @@ try {
         artifacts,
         lockSha256: hash(readFileSync(join(root, "pnpm-lock.yaml"))),
         deploymentLockSha256,
+        runtimeTreeSha256,
         verification: {
           platform: process.platform,
           arch: process.arch,
@@ -122,6 +134,6 @@ try {
     ),
   );
   if (failure) console.error(failure);
-  if (!sameCommittedSource(start, end))
+  if (!sourceUnchanged)
     console.error("Runtime artifact requires clean committed source");
 }

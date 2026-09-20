@@ -1,6 +1,6 @@
 # RSS MDM Client / Agent 协作说明
 
-本仓拥有桌面自助、AI引擎适配和客户端受控执行。需求以[产品PRD](docs/product/rss-mdm-agent-prd.md)为准；当前包含需求基线、UI 包、桌面自助页面与内存固定测试服务；不能把样本或规划当作真实执行能力。
+本仓拥有桌面自助、AI引擎适配和客户端受控执行。需求以[产品PRD](docs/product/rss-mdm-agent-prd.md)为准；当前桌面通过 Rust 执行服务与独立 AI Host 装配持久化 S1 闭环，执行器仅为显式测试实现；不能把样本或规划当作真实 OS 执行能力。
 
 - [仓库入口](README.md)与[文档导航](docs/README.md)。
 - 稳定规则：[范围](docs/rules/project-scope.md)、[依赖](docs/rules/dependencies.md)、[验证](docs/rules/verification-scope.md)、[文档维护](docs/rules/documentation.md)。

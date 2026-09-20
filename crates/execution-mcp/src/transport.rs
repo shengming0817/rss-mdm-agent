@@ -29,6 +29,8 @@ use tokio_util::{
 
 #[derive(Clone)]
 pub(crate) struct OriginalArguments(pub Arc<str>);
+#[derive(Clone)]
+pub(crate) struct OriginalMetadata(pub RequestMetaObject);
 struct Lease {
     _permit: OwnedSemaphorePermit,
 }
@@ -286,7 +288,10 @@ where
                     }
                     // rmcp traces public request DTOs before dispatch. Business input
                     // travels only through opaque, non-Debug Extensions above.
-                    *r.request.get_meta_mut() = RequestMetaObject::new();
+                    let metadata = std::mem::take(r.request.get_meta_mut());
+                    r.request
+                        .extensions_mut()
+                        .insert(OriginalMetadata(metadata));
                     if let ClientRequest::CallToolRequest(call) = &mut r.request {
                         call.params.arguments = None;
                         call.params.input_responses = None;

@@ -53,11 +53,15 @@ async function setup(t, overrides = {}, admit = true) {
   const resolved = {
     configuration,
     nativeDirectory: join(root, "native"),
-    apiUrl: "http://127.0.0.1:9/v1",
-    apiKey: "fixture-only",
+    authentication: {
+      type: "api_key",
+      apiUrl: "http://127.0.0.1:9/v1",
+      apiKey: "fixture-only",
+    },
     model: "fixture",
   };
   const calls = [],
+    replies = [],
     rejected = [],
     ports = [];
   const thread = {
@@ -82,7 +86,7 @@ async function setup(t, overrides = {}, admit = true) {
       },
       notify: (method) => calls.push({ method }),
       reject: (id) => rejected.push(id),
-      reply: () => assert.fail("unsolicited request allowed"),
+      reply: (id, result) => replies.push({ id, result }),
       close: async () => {
         calls.push({ method: "runtime/close" });
         stopped();
@@ -205,6 +209,7 @@ async function setup(t, overrides = {}, admit = true) {
     admitted,
     configuration,
     calls,
+    replies,
     rejected,
     thread,
     resolved,
@@ -218,6 +223,60 @@ async function setup(t, overrides = {}, admit = true) {
     },
   };
 }
+
+test("existing ChatGPT tokens authenticate in the private home and refresh only the original account", async (t) => {
+  const f = await setup(t, {}, false);
+  delete f.resolved.apiUrl;
+  delete f.resolved.apiKey;
+  let refreshAccount = "account-1";
+  f.resolved.authentication = {
+    type: "chatgpt_tokens",
+    accessToken: "access-fixture",
+    accountId: "account-1",
+    refresh: async () => ({
+      accessToken: "refreshed-fixture",
+      accountId: refreshAccount,
+    }),
+  };
+  f.fault((method) => {
+    if (method === "account/login/start") return { type: "chatgptAuthTokens" };
+    if (method === "account/read")
+      return {
+        requiresOpenaiAuth: true,
+        account: {
+          type: "chatgpt",
+          email: "fixture@example.test",
+          planType: "plus",
+        },
+      };
+  });
+  unwrap(
+    await VerifiedProviderSession.open(f.adapter, f.configuration, budget()),
+  );
+  assert.equal(
+    f.calls.find((c) => c.method === "account/login/start").params.type,
+    "chatgptAuthTokens",
+  );
+  assert.equal(
+    f.calls.find((c) => c.method === "thread/start").params.modelProvider,
+    "openai",
+  );
+  f.emit(
+    "account/chatgptAuthTokens/refresh",
+    { reason: "unauthorized", previousAccountId: "account-1" },
+    80,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(f.replies[0].result.chatgptAccountId, "account-1");
+  refreshAccount = "different-account";
+  f.emit(
+    "account/chatgptAuthTokens/refresh",
+    { reason: "unauthorized", previousAccountId: "account-1" },
+    81,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.ok(f.rejected.includes(81));
+});
 
 async function fillObservationQueue(s, count = 511) {
   let index = 0;
@@ -242,7 +301,7 @@ async function fillObservationQueue(s, count = 511) {
 }
 
 const reconciliationRecord = (s, command, attempt) => ({
-  schemaVersion: 3,
+  schemaVersion: 4,
   kind: "commandRecord",
   command,
   receipt: { namespace: s.configuration.namespace },
@@ -355,7 +414,7 @@ test("lost submit response is reconciled by clientId; no blind second start", as
   );
   assert.equal(s.calls.filter((v) => v.method === "turn/start").length, 1);
   const record = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     kind: "commandRecord",
     command,
     receipt: { namespace: s.configuration.namespace },
@@ -382,7 +441,7 @@ test("missing native history is unknown and reverse dynamic/approval calls canno
   });
   await s.adapter.dispatch(s.admitted.binding, command, attempt, budget());
   const record = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     kind: "commandRecord",
     command,
     receipt: { namespace: s.configuration.namespace },

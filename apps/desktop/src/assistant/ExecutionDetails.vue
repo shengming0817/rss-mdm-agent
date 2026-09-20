@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import RequestOrigin from "../self-service/RequestOrigin.vue";
 import type { ExecutionTaskDetails, TaskPhase } from "./execution-types";
 const props = defineProps<{ details: ExecutionTaskDetails; now: number }>();
 const validity = computed(() =>
@@ -58,6 +59,7 @@ const text = (value: unknown) => JSON.stringify(value, null, 2);
     <p v-if="details.status.cancelRequested">
       执行取消已请求；取消意图、停止响应和效果验证分别记录。
     </p>
+    <RequestOrigin :plan="details.plan" />
     <dl>
       <dt>原始执行请求</dt>
       <dd>{{ details.status.operationRequestId }}</dd>

@@ -1,6 +1,6 @@
 # AI 助手页面
 
-`apps/desktop/src/assistant` 消费 A04 公共客户端与 renderer，和自助服务共享 AppShell / NavigationList。首页仍是默认入口；切导航仅改变可见区域，会话控制器、草稿、原回调和附着订阅存活到应用卸载。真实服务由 `AssistantServices` 注入；默认入口没有注入时明确显示未连接。正式 Tauri/Host/provider/执行桥接由 C20 #2413 持有。`App.vue` 组合根注入随机 ID；assistant 与 self-service 的相对导入各自封闭在所属目录，不能经兄弟页面或组合根反向取得能力。
+`apps/desktop/src/assistant` 消费 A04 公共客户端与 renderer，和自助服务共享 AppShell / NavigationList。首页仍是默认入口；切导航仅改变可见区域，会话控制器、草稿、原回调和附着订阅存活到应用卸载。真实服务由 `AssistantServices` 注入；默认 Tauri 入口注入真实本地组合，连接失败明确显示未连接；浏览器没有原生注入。C20 的持久执行与窗口生命周期见[桌面指南](desktop-development.md)。`App.vue` 组合根注入随机 ID；assistant 与 self-service 的相对导入各自封闭在所属目录，不能经兄弟页面或组合根反向取得能力。
 
 `AssistantServices.connect(options, signal)` 与 `taskDetails(id, signal)` 必须把 owner signal 传给实际 I/O。控制器在重连、新详情查询和卸载时取消旧请求，并对连接/初始化与详情查询分别设置 15 秒等待上限；即使服务忽略 signal，页面也会结束等待并关闭迟到的客户端。页面超时不证明远端操作或进程已终止。
 
@@ -32,7 +32,7 @@ pnpm test
 
 ## 直接版本切换
 
-产品 wire 与协商为 V3 / contractVersion=3；标准 ACP1、A2UI v0.9.1 不变。删除旧 `status/accepted`，用携带完整不可变命令的 `command_accepted`；store accept 原子构造事件、命令与 receipt，禁止调用方提供另一份事件正文。AI SQLite schema 从1改为2；旧库只读拒绝，不原地迁移、清空或重建，也没有历史兼容 reader。
+产品 wire 与协商为 V4 / contractVersion=4；标准 ACP1、A2UI v0.9.1 不变。删除旧 `status/accepted`，用携带完整不可变命令的 `command_accepted`；store accept 原子构造事件、命令与 receipt，禁止调用方提供另一份事件正文。C20 的 delivery 请求/回执事件进入同一持久日志，AI SQLite schema 为3；旧库只读拒绝，不原地迁移、清空或重建，也没有历史兼容 reader。
 
 ## 固定来源与改写范围
 
@@ -48,6 +48,6 @@ pnpm test
 - ref: [Node.js v24.0.0 lib/internal/abort_controller.js](https://github.com/nodejs/node/blob/v24.0.0/lib/internal/abort_controller.js)：owner cancellation 与超时信号；页面另外保留有界 Promise 结算及迟到资源清理。
 - ref: [Vue v3.5.13 packages/reactivity/src/computed.ts](https://github.com/vuejs/core/blob/v3.5.13/packages/reactivity/src/computed.ts)：computed 依赖显式响应式输入，时间经共享 ref 更新。
 
-完整验收在已提交源码上执行本仓 `make ci CI_BASE=origin/develop`，结果绑定 SHA、lock 与运行环境；不将 #2413 的真实产品装配宣称为本项已完成。
+完整验收在已提交源码上执行本仓 `make ci CI_BASE=origin/develop`，结果绑定 SHA、lock 与运行环境；真实 macOS arm64 Codex 产品装配由独立原生验收记录证明，浏览器 fixture 不替代该证据。
 
 AI 命令队列由 Host 持有，普通 prompt 在当前轮运行时仍可排队，不读取 provider queue capability。客户端分别呈现 acknowledged 控制确认、cancelled 未派发排队取消与普通 prompt 的模型终态；已结算控制命令不占用 busy 状态。

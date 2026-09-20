@@ -1,6 +1,6 @@
 # AI Session Host 的状态与进程所有权
 
-对应 [A03 #2441](https://dev.azure.com/shengming0923/rss/_workitems/edit/2441)。本方案按依赖顺序统一修改 A01 schema/ports/transition、A02 SQLite、Host/worker、A04 与客户端投影、Claude adapter，最后装配本地入口及独立产物验收。所有实现文件由主任务串行维护；探索和交付审查可独立并行。V3 wire 与 SQLite schema version 1 直接协同替换，没有数据升级、迁移或兼容读取分支。
+对应 [A03 #2441](https://dev.azure.com/shengming0923/rss/_workitems/edit/2441)。本方案按依赖顺序统一修改 A01 schema/ports/transition、A02 SQLite、Host/worker、A04 与客户端投影、Claude adapter，最后装配本地入口及独立产物验收。所有实现文件由主任务串行维护；探索和交付审查可独立并行。C20 当前为 V4 wire 与 SQLite schema version 3，直接协同替换旧版本，没有数据升级、迁移或兼容读取分支。
 
 持久事实只有一份：Session 持有绑定及可用状态，CommandRecord 持有队列和 attempt，Event 持有稳定展示，Interaction / SurfaceState 持有回调展示关联。`ProviderAgentPort.dispatch` 覆盖 prompt / steer / cancel / respond；Host 北向仍保留各语义方法。`VerifiedProviderFact` 将 dispatch、observe、reconcile 的证据绑定到 namespace、完整 provider identity 与原 attempt，Store 在提交时另做 revision / generation CAS。新接纳命令改变 revision，不使已发起的异步结果失效。
 

@@ -22,6 +22,7 @@ const steps = [
       "--test",
       "scripts/source-state.test.mjs",
       "scripts/ci-result.test.mjs",
+      "scripts/runtime-integrity.test.mjs",
       "scripts/rust-consumers.test.mjs",
       "scripts/execution-evolution.test.mjs",
     ],

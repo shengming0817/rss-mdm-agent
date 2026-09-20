@@ -187,6 +187,13 @@ impl TestService {
     }
 }
 impl ExecutionServicePort for TestService {
+    fn bind_call(
+        self: &Arc<Self>,
+        _: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<Arc<Self>, ServiceError> {
+        self.check_binding()?;
+        Ok(self.clone())
+    }
     fn check_binding(&self) -> Result<(), ServiceError> {
         if self.bound.load(Ordering::SeqCst) {
             Ok(())
@@ -309,6 +316,8 @@ impl ExecutionServicePort for TestService {
                 }
                 self.attempts.fetch_add(1, Ordering::SeqCst);
                 let status = OperationStatus {
+                    submitted: true,
+                    cancel_requested: false,
                     operation_request_id: request.operation_request_id,
                     plan: request.plan,
                     phase: OperationPhase::Accepted,

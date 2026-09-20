@@ -127,8 +127,11 @@ export async function nativeFixture(
     resolveConfiguration: async (identity) => ({
       configuration: { ...configuration, namespace: identity.namespace },
       nativeDirectory: join(root, "native"),
-      apiUrl: `http://127.0.0.1:${model.address().port}/v1`,
-      apiKey: "fixture-not-a-real-key",
+      authentication: {
+        type: "api_key",
+        apiUrl: `http://127.0.0.1:${model.address().port}/v1`,
+        apiKey: "fixture-not-a-real-key",
+      },
       model: "fixture-model",
       ...(identity.history && lineage.has(identity.history.nativeThreadId)
         ? { ownedHistory: lineage.get(identity.history.nativeThreadId) }
@@ -160,7 +163,7 @@ export async function nativeFixture(
 export function prompt(binding, commandId) {
   return {
     command: {
-      schemaVersion: 3,
+      schemaVersion: 4,
       kind: "command",
       sessionId: "session-1",
       commandId,

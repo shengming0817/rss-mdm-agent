@@ -1,6 +1,6 @@
 {
   "identifier": "main",
-  "description": "Local main window: fixed self-service fixtures only; no OS execution.",
+  "description": "Local main window: S1 execution service and private AI transport.",
   "windows": [
     "main"
   ],
@@ -8,6 +8,13 @@
     "allow-self-service-snapshot",
     "allow-self-service-preview",
     "allow-self-service-submit",
-    "allow-self-service-respond"
+    "allow-self-service-respond",
+    "allow-self-service-approve",
+    "allow-execution-task-details",
+    "allow-ai-connect",
+    "allow-ai-receive",
+    "allow-ai-send",
+    "allow-ai-disconnect",
+    "allow-self-service-cancel"
   ]
 }

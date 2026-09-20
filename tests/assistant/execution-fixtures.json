@@ -9,14 +9,24 @@
         "requireSandbox": true,
         "writePathCount": 0
       },
+      "actor": "actor-1",
       "artifact": {
         "resource": { "id": "script-1", "revision": "1" },
         "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
       },
+      "authority": { "id": "test-authority", "kind": "test" },
       "budget": {
         "maxAttempts": 1,
         "totalOutputBytes": 4096,
         "totalTimeoutMs": 1000
+      },
+      "initiator": {
+        "kind": "human",
+        "osSession": {
+          "account": { "platform": "linux", "subject": "uid:1000" },
+          "device": "origin-device",
+          "session": "login-1"
+        }
       },
       "interpreter": {
         "artifact": {
@@ -61,7 +71,8 @@
       "phase": "approvalRequired",
       "planDigest": "b3e4d8b7e04694d4a2401818b1bd36790b154932ebf2ecc855ed596766d84537",
       "planId": "plan-1",
-      "stopOutcome": null
+      "stopOutcome": null,
+      "submitted": true
     }
   },
   "cancelled": {
@@ -74,14 +85,24 @@
         "requireSandbox": true,
         "writePathCount": 0
       },
+      "actor": "actor-1",
       "artifact": {
         "resource": { "id": "script-1", "revision": "1" },
         "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
       },
+      "authority": { "id": "test-authority", "kind": "test" },
       "budget": {
         "maxAttempts": 1,
         "totalOutputBytes": 4096,
         "totalTimeoutMs": 1000
+      },
+      "initiator": {
+        "kind": "human",
+        "osSession": {
+          "account": { "platform": "linux", "subject": "uid:1000" },
+          "device": "origin-device",
+          "session": "login-1"
+        }
       },
       "interpreter": {
         "artifact": {
@@ -143,7 +164,8 @@
       "phase": "cancelled",
       "planDigest": "b3e4d8b7e04694d4a2401818b1bd36790b154932ebf2ecc855ed596766d84537",
       "planId": "plan-1",
-      "stopOutcome": "acknowledged"
+      "stopOutcome": "acknowledged",
+      "submitted": true
     }
   },
   "outcomeUnknown": {
@@ -156,14 +178,24 @@
         "requireSandbox": true,
         "writePathCount": 0
       },
+      "actor": "actor-1",
       "artifact": {
         "resource": { "id": "script-1", "revision": "1" },
         "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
       },
+      "authority": { "id": "test-authority", "kind": "test" },
       "budget": {
         "maxAttempts": 1,
         "totalOutputBytes": 4096,
         "totalTimeoutMs": 1000
+      },
+      "initiator": {
+        "kind": "human",
+        "osSession": {
+          "account": { "platform": "linux", "subject": "uid:1000" },
+          "device": "origin-device",
+          "session": "login-1"
+        }
       },
       "interpreter": {
         "artifact": {
@@ -208,7 +240,8 @@
       "phase": "outcomeUnknown",
       "planDigest": "b3e4d8b7e04694d4a2401818b1bd36790b154932ebf2ecc855ed596766d84537",
       "planId": "plan-1",
-      "stopOutcome": null
+      "stopOutcome": null,
+      "submitted": true
     }
   },
   "running": {
@@ -221,14 +254,24 @@
         "requireSandbox": true,
         "writePathCount": 0
       },
+      "actor": "actor-1",
       "artifact": {
         "resource": { "id": "script-1", "revision": "1" },
         "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
       },
+      "authority": { "id": "test-authority", "kind": "test" },
       "budget": {
         "maxAttempts": 1,
         "totalOutputBytes": 4096,
         "totalTimeoutMs": 1000
+      },
+      "initiator": {
+        "kind": "human",
+        "osSession": {
+          "account": { "platform": "linux", "subject": "uid:1000" },
+          "device": "origin-device",
+          "session": "login-1"
+        }
       },
       "interpreter": {
         "artifact": {
@@ -273,7 +316,8 @@
       "phase": "running",
       "planDigest": "b3e4d8b7e04694d4a2401818b1bd36790b154932ebf2ecc855ed596766d84537",
       "planId": "plan-1",
-      "stopOutcome": null
+      "stopOutcome": null,
+      "submitted": true
     }
   },
   "testCompleted": {
@@ -286,14 +330,24 @@
         "requireSandbox": true,
         "writePathCount": 0
       },
+      "actor": "actor-1",
       "artifact": {
         "resource": { "id": "script-1", "revision": "1" },
         "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
       },
+      "authority": { "id": "test-authority", "kind": "test" },
       "budget": {
         "maxAttempts": 1,
         "totalOutputBytes": 4096,
         "totalTimeoutMs": 1000
+      },
+      "initiator": {
+        "kind": "human",
+        "osSession": {
+          "account": { "platform": "linux", "subject": "uid:1000" },
+          "device": "origin-device",
+          "session": "login-1"
+        }
       },
       "interpreter": {
         "artifact": {
@@ -355,7 +409,8 @@
       "phase": "testCompleted",
       "planDigest": "b3e4d8b7e04694d4a2401818b1bd36790b154932ebf2ecc855ed596766d84537",
       "planId": "plan-1",
-      "stopOutcome": null
+      "stopOutcome": null,
+      "submitted": true
     }
   }
 }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import type { Controller } from "./controller";
 import type { Decision, RequestView } from "./types";
 import ParameterForm from "./ParameterForm.vue";
@@ -17,7 +17,10 @@ const items = computed(
     ) ?? [],
 );
 const task = computed(() =>
-  s.snapshot?.requests.find((item) => item.plan.requestId === s.taskId),
+  [
+    ...(s.snapshot?.requests ?? []),
+    ...(s.snapshot?.referencedRequests ?? []),
+  ].find((item) => item.plan.requestId === s.taskId),
 );
 function decision(value: Decision): string {
   switch (value) {
@@ -51,9 +54,16 @@ function status(value: RequestView["status"]): string {
       return "效果未知";
   }
 }
+const now = ref(Date.now());
+let polling: ReturnType<typeof setInterval>;
 onMounted(() => {
+  polling = setInterval(() => {
+    now.value = Date.now();
+    if (!s.busy && !s.replying && !s.loading) void c.refresh();
+  }, 1500);
   void c.refresh();
 });
+onUnmounted(() => clearInterval(polling));
 </script>
 <template>
   <div class="self-service">
@@ -61,7 +71,7 @@ onMounted(() => {
     <div v-if="!s.snapshot" class="empty-state">
       <h1>正在连接桌面测试服务</h1>
       <p>服务不可用时不会切换为演示成功。</p>
-      <button @click="c.refresh">重试连接</button>
+      <button @click="c.refresh()">重试连接</button>
     </div>
     <template v-else-if="s.page === 'home'">
       <section class="hero">
@@ -96,7 +106,8 @@ onMounted(() => {
         </article>
       </div>
       <p class="notice">
-        这是固定测试服务。不会安装软件、运行系统命令或更改设备；退出应用后测试数据清空。
+        这是 S1
+        受控测试服务，不修改设备。关闭窗口或退出不会取消已登记任务；重开后可查询持久状态。
       </p>
     </template>
     <template v-else-if="s.page === 'software' || s.page === 'tools'">
@@ -106,7 +117,11 @@ onMounted(() => {
           <h1>{{ s.page === "software" ? "软件中心" : "工具中心" }}</h1>
           <p>选择项目，查看条件与精确计划。</p>
         </div>
-        <button class="secondary" :disabled="!c.interactive" @click="c.refresh">
+        <button
+          class="secondary"
+          :disabled="!c.interactive"
+          @click="c.refresh()"
+        >
           刷新目录
         </button>
       </div>
@@ -213,7 +228,7 @@ onMounted(() => {
           }}
         </button></template
       >
-      <button v-if="s.uncertain" class="secondary" @click="c.refresh">
+      <button v-if="s.uncertain" class="secondary" @click="c.refresh()">
         查询原请求
       </button>
     </template>
@@ -228,12 +243,20 @@ onMounted(() => {
           <h1>请求与任务</h1>
           <p>交互提示与任务结果分别记录。</p>
         </div>
-        <button class="secondary" :disabled="!c.interactive" @click="c.refresh">
+        <button
+          class="secondary"
+          :disabled="!c.interactive"
+          @click="c.refresh()"
+        >
           刷新任务
         </button>
       </div>
       <p v-if="s.snapshot.requests.length === 0" class="empty-state">
-        暂无请求。先从软件或工具目录开始。
+        {{
+          s.snapshot.next || s.after
+            ? "本页暂无已提交请求，可继续翻页。"
+            : "暂无请求。先从软件或工具目录开始。"
+        }}
       </p>
       <div class="task-layout">
         <div class="task-list">
@@ -248,15 +271,35 @@ onMounted(() => {
             ><span>{{ status(request.status) }}</span
             ><small class="identifier">{{ request.plan.requestId }}</small>
           </button>
+          <nav class="actions" aria-label="任务分页">
+            <button
+              class="secondary"
+              :disabled="s.loading || !s.pageHistory.length"
+              @click="c.previousPage()"
+            >
+              上一页
+            </button>
+            <span>第 {{ s.pageHistory.length + 1 }} 页</span>
+            <button
+              class="secondary"
+              :disabled="s.loading || !s.snapshot.next"
+              @click="c.nextPage()"
+            >
+              下一页
+            </button>
+          </nav>
         </div>
         <TaskDetail
           v-if="task"
           :key="task.plan.requestId"
           :task="task"
+          :now="now"
           :item="
             s.snapshot.catalog.find((item) => item.itemId === task?.plan.itemId)
           "
-          :disabled="!c.interactive || s.replying || s.replyUnknown"
+          :disabled="!c.interactive || s.busy || s.replying || s.replyUnknown"
+          @approve="task && c.approve(task)"
+          @cancel="task && c.cancel(task)"
           @respond="(id, answer) => task && c.respond(task, id, answer)"
         />
       </div>
@@ -267,10 +310,10 @@ onMounted(() => {
       <p>{{ s.snapshot.targetLabel }}</p>
       <p>这是固定的模拟目标，不代表当前电脑的身份、权限或适用性。</p>
       <p>
-        页面关闭不会取消任务。测试服务仅保存当前进程内存数据，退出应用后清空。
+        关闭窗口不会取消任务。S1 任务与会话分别保存在本地，重开后可查询原请求。
       </p>
       <p>
-        真实安装、可信管理员批准与持久恢复将在后续执行服务中接入。
+        测试批准仅授权精确的 S1 计划；当前没有真实安装、脚本执行或企业权限。
       </p></template
     >
   </div>

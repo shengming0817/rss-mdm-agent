@@ -1,0 +1,13 @@
+{
+  "bundle": {
+    "active": true,
+    "targets": [
+      "app"
+    ],
+    "macOS": {
+      "files": {
+        "Resources/ai-host-runtime": "resources/ai-host-runtime"
+      }
+    }
+  }
+}

@@ -92,11 +92,11 @@ test("real Harness process: true deltas, durable terminal, cold read and native 
   );
   assert.equal(env.requests.length, 1, "restore must not request a model");
   const record = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     kind: "commandRecord",
     command: c,
     receipt: {
-      schemaVersion: 3,
+      schemaVersion: 4,
       kind: "receipt",
       namespace: env.config.namespace,
       commandId: c.commandId,
@@ -411,11 +411,11 @@ test("request checkpoint precedes HTTP dispatch; crash and synthetic interrupted
       ),
     );
   const record = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     kind: "commandRecord",
     command: c,
     receipt: {
-      schemaVersion: 3,
+      schemaVersion: 4,
       kind: "receipt",
       namespace: env.config.namespace,
       commandId: c.commandId,
@@ -528,6 +528,7 @@ test("real worker restoration fault survives IPC and budget classification", asy
           persistenceDirectory: env.dir,
           scope: digest(identity(env.config)),
           model: "deepseek-chat",
+          apiUrl: "https://custom.example.test/v1",
           apiKey: "fixture",
           apiUrl: "https://api.deepseek.com",
           controlled: false,

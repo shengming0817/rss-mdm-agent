@@ -15,7 +15,7 @@
 
 本次已集成 #1047/#1050 的恢复契约和真实 SQLite adapter；A01 #2439 已完成，本次 #2442 在同一 PR 内演进其 owner 契约。删除单次 `snapshot`/`Snapshot` 和 `maxSnapshotRecords`，以 `snapshotPage`、`PageQuery`、`SnapshotPage` 替代；加入 caller 范围的 session 列表、surface 读取及 resume port。`SurfaceBinding` 直接替换为 `SurfaceState`，必须持有完整有界官方恢复消息，其稳定事件与投影同批提交。`Outcome` 删除 `interrupted`/`limit_reached`，改为 `cancelled`/`max_tokens`/`max_turn_requests`，唯一终态直接映射 ACP stopReason。Capabilities 新增明确 queue 能力。
 
-C16 将产品 wire 升级到 V3，删除旧 accepted 事件形状；旧版本直接拒绝；没有 alias、旧 reader、双写、历史数据迁移或另一个浏览器 codec。新建产品扩展、协商 DTO 与冻结 catalog identity 全部由同一个 schema 生成，selection 在双端只能减少 offer 能力。pending 事件/快照共同保留权威期限和 callback lifetime，answered 保留首答 commandId；没有旧事件兼容 reader。通用入口使用静态 Ajv 校验器及固定 noble SHA-256；文件读取、Ajv 编译只发生于生成脚本。Node 恢复准入通过明确的 `/session` 入口消费，持久化同步规则通过 `/transitions` 消费，两者不进入浏览器依赖闭包。生成的校验器中的纯 helper 来自固定 Ajv 包，不依赖浏览器运行时 CommonJS。
+当前产品 wire 为 V4；C16 删除旧 accepted 事件形状，C20 加入持久交付请求与回执事件；旧版本直接拒绝；没有 alias、旧 reader、双写、历史数据迁移或另一个浏览器 codec。新建产品扩展、协商 DTO 与冻结 catalog identity 全部由同一个 schema 生成，selection 在双端只能减少 offer 能力。pending 事件/快照共同保留权威期限和 callback lifetime，answered 保留首答 commandId；没有旧事件兼容 reader。通用入口使用静态 Ajv 校验器及固定 noble SHA-256；文件读取、Ajv 编译只发生于生成脚本。Node 恢复准入通过明确的 `/session` 入口消费，持久化同步规则通过 `/transitions` 消费，两者不进入浏览器依赖闭包。生成的校验器中的纯 helper 来自固定 Ajv 包，不依赖浏览器运行时 CommonJS。
 
 ## 验证入口与证据范围
 

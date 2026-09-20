@@ -29,6 +29,10 @@ function fixture() {
         digest: input.digest,
       },
     })),
+    cancel: vi.fn<SelfServicePort["cancel"]>(async () => structuredClone(task)),
+    approve: vi.fn<SelfServicePort["approve"]>(async () =>
+      structuredClone(task),
+    ),
     respond: vi.fn<SelfServicePort["respond"]>(async () =>
       structuredClone(task),
     ),
@@ -103,7 +107,7 @@ describe("self-service controller", () => {
       wrapper.unmount();
     },
   );
-  it("keeps one request through draft changes and double clicks, then requires explicit new intent", async () => {
+  it("changes request identity with draft content and preserves it for submission retries", async () => {
     const { c, port, snapshot } = fixture();
     await c.refresh();
     const item = snapshot.catalog.find((i) => i.itemId === "diagnostics")!;
@@ -114,12 +118,13 @@ describe("self-service controller", () => {
     c.change("count", { kind: "integer", value: "3.0" });
     expect(c.state.plan).toBeNull();
     await c.prepare();
-    expect(c.state.requestId).toBe(id);
+    expect(c.state.requestId).not.toBe(id);
+    const frozenId = c.state.requestId;
     await Promise.all([c.submit(), c.submit()]);
     expect(port.submit).toHaveBeenCalledTimes(1);
     expect(c.state.accepted).toBe(true);
     c.select(item);
-    expect(c.state.requestId).toBe(id);
+    expect(c.state.requestId).toBe(frozenId);
     c.select(item, true);
     expect(c.state.requestId).not.toBe(id);
   });
@@ -342,7 +347,10 @@ describe("self-service controller", () => {
     await c.submit();
     wrapper.unmount();
     expect(port.respond).not.toHaveBeenCalled();
-    expect(c.state.snapshot?.requests).toHaveLength(1);
+    expect(c.state.snapshot?.referencedRequests).toHaveLength(1);
+    expect(c.state.snapshot?.referencedRequests[0].plan.requestId).toBe(
+      c.state.requestId,
+    );
   });
 });
 it("form sends original numeric tokens and explicit false, without applying defaults", async () => {
@@ -381,7 +389,7 @@ it("browser uses the same readonly pages and task views without a fake service",
     (r) => r.status === "approval",
   )!.plan.requestId;
   await flushPromises();
-  expect(wrapper.text()).toContain("此处没有管理员批准入口");
+  expect(wrapper.text()).toContain("本测试服务不签发批准");
   expect(
     wrapper
       .findAll(".interaction-card button")
@@ -404,6 +412,133 @@ it("a delayed snapshot cannot erase a newer acceptance receipt", async () => {
   await c.submit();
   finish();
   await refresh;
-  expect(c.state.snapshot?.requests).toHaveLength(1);
+  expect(c.state.snapshot?.referencedRequests).toHaveLength(1);
+  expect(c.state.snapshot?.referencedRequests[0].plan.requestId).toBe(
+    c.state.requestId,
+  );
   expect(c.state.accepted).toBe(true);
+});
+
+it("pages past an empty preview page, preserves off-page selection and polls its current status", async () => {
+  const { c, port, snapshot, task } = fixture();
+  const selected = { ...structuredClone(task), status: "approval" as const };
+  selected.plan.requestId = "selected";
+  const other = structuredClone(task);
+  other.plan.requestId = "later";
+  port.snapshot.mockImplementation(async (query) => ({
+    ...structuredClone(snapshot),
+    requests: query.after === "page-1" ? [structuredClone(other)] : [],
+    next: query.after ? null : "page-1",
+    referencedRequests: query.requestIds.includes("selected")
+      ? [structuredClone(selected)]
+      : [],
+  }));
+  const wrapper = mount(SelfService, { props: { controller: c } });
+  await flushPromises();
+  c.state.page = "tasks";
+  c.state.taskId = "selected";
+  c.state.requestId = "later";
+  await c.refresh();
+  await flushPromises();
+  expect(wrapper.text()).toContain("本页暂无已提交请求");
+  expect(wrapper.get(".task-detail").text()).toContain("selected");
+  await c.nextPage();
+  await flushPromises();
+  expect(c.state.after).toBe("page-1");
+  expect(c.state.taskId).toBe("selected");
+  expect(wrapper.get(".task-detail").text()).toContain("selected");
+  expect(wrapper.findAll(".task-row")).toHaveLength(1);
+  selected.message = "fresh off-page status";
+  await c.refresh();
+  await flushPromises();
+  expect(wrapper.get(".task-detail").text()).toContain("fresh off-page status");
+  await c.previousPage();
+  expect(c.state.after).toBeNull();
+  expect(c.state.pageHistory).toEqual([]);
+  expect(c.state.taskId).toBe("selected");
+  wrapper.unmount();
+});
+
+it("keeps the current page after a failed next-page read and retries the same cursor", async () => {
+  const { c, port, snapshot } = fixture();
+  snapshot.next = "next-page";
+  await c.refresh();
+  port.snapshot.mockRejectedValueOnce(new Error("lost page"));
+  await c.nextPage();
+  expect(c.state.after).toBeNull();
+  expect(c.state.pageHistory).toEqual([]);
+  expect(c.state.loading).toBe(false);
+  await c.nextPage();
+  expect(port.snapshot.mock.calls.at(-1)?.[0].after).toBe("next-page");
+  expect(c.state.after).toBe("next-page");
+});
+
+it.each(["outcomeUnknown", "confirmationUnknown"])(
+  "keeps the frozen submit identity after IPC %s and reconciles the original request",
+  async (code) => {
+    const { c, port, snapshot, task } = fixture();
+    await c.refresh();
+    c.select(snapshot.catalog.find((i) => i.itemId === "diagnostics")!);
+    await c.prepare();
+    const plan = JSON.parse(JSON.stringify(c.state.plan)) as Plan;
+    port.submit.mockRejectedValueOnce({ code, message: "结果未知" });
+    await c.submit();
+    expect(c.state.uncertain).toBe(true);
+    expect(c.state.plan).toEqual(plan);
+    await c.refresh();
+    expect(port.snapshot.mock.calls.at(-1)![0].requestIds).toContain(
+      plan.requestId,
+    );
+    expect(c.state.uncertain).toBe(true);
+    snapshot.referencedRequests = [{ ...task, plan }];
+    await c.refresh();
+    expect(c.state.accepted).toBe(true);
+    expect(c.state.uncertain).toBe(false);
+    expect(c.state.error).toBe("");
+    expect(port.submit).toHaveBeenCalledTimes(1);
+  },
+);
+it.each(["cancel", "approve"] as const)(
+  "clears the unconfirmed %s only after the original plan reaches authoritative state",
+  async (action) => {
+    const { c, port, snapshot, task } = fixture();
+    task.status = action === "approve" ? "approval" : "waiting";
+    snapshot.requests = [task];
+    await c.refresh();
+    port[action].mockRejectedValueOnce({
+      code: "outcomeUnknown",
+      message: "结果未知",
+    });
+    await c[action](task);
+    const pending = c.state.error;
+    expect(pending).not.toBe("");
+    await c.refresh();
+    expect(port.snapshot.mock.calls.at(-1)![0].requestIds).toContain(
+      task.plan.requestId,
+    );
+    expect(c.state.error).toBe(pending);
+    task.status = action === "approve" ? "waiting" : "stopped";
+    const digest = task.plan.digest;
+    task.plan.digest = "another-plan";
+    await c.refresh();
+    expect(c.state.error).toBe(pending);
+    task.plan.digest = digest;
+    await c.refresh();
+    expect(c.state.error).toBe("");
+  },
+);
+it("retains an ambiguous interaction reply across a structured confirmation error", async () => {
+  const { c, port, task } = fixture();
+  await c.refresh();
+  port.respond.mockRejectedValueOnce({
+    code: "confirmationUnknown",
+    message: "结果未知",
+  });
+  await c.respond(task, task.interactions[0].id, {
+    kind: "confirmation",
+    accepted: true,
+  });
+  expect(c.state.replyUnknown).toBe(true);
+  await c.retryReply();
+  expect(port.respond.mock.calls[1]).toEqual(port.respond.mock.calls[0]);
 });

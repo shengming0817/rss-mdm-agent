@@ -42,18 +42,24 @@ async function configuration() {
       permissions: "tools_disabled",
     },
     nativeDirectory: join(root, "native"),
-    apiUrl: "http://127.0.0.1:9/v1",
-    apiKey: "fixture-only",
+    authentication: {
+      type: "api_key",
+      apiUrl: "http://127.0.0.1:9/v1",
+      apiKey: "fixture-only",
+    },
     model: "fixture",
   };
 }
 
 test("permanent launch configuration errors preserve invalid_input", async (t) => {
   for (const [name, mutate] of [
-    ["malformed URL", (resolved) => (resolved.apiUrl = "://invalid")],
+    [
+      "malformed URL",
+      (resolved) => (resolved.authentication.apiUrl = "://invalid"),
+    ],
     [
       "non-loopback HTTP",
-      (resolved) => (resolved.apiUrl = "http://example.com/v1"),
+      (resolved) => (resolved.authentication.apiUrl = "http://example.com/v1"),
     ],
     [
       "relative native directory",

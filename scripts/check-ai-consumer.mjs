@@ -107,7 +107,7 @@ const value=decode(JSON.stringify(fixtures.valid[0]),fixtureLimits);assert.equal
 await runStoreConformance(()=>new MemorySessionStore());
 await runProviderConformance(scenario=>{const port=new ScriptedProvider();port.submission=scenario;return port;},{provider:'fake',config:{id:'config-1',revision:'1'},accountRef:'account-1',namespace:fixtureSession().namespace,workingDirectory:'.',permissions:'tools_disabled'},()=>({timeoutMs:1000,signal:new AbortController().signal}));
 await runHostConformance(()=>new FakeHost());
-assert.equal(host.negotiate({contractVersion:3,acp:1,durableReceipts:false,cursorAttach:false}).ok,true);
+assert.equal(host.negotiate({contractVersion:4,acp:1,durableReceipts:false,cursorAttach:false}).ok,true);
 await host.close({timeoutMs:1000,signal:new AbortController().signal});await store.close({timeoutMs:1000,signal:new AbortController().signal});await provider.close({timeoutMs:1000,signal:new AbortController().signal});assert.ok(store);console.log('Isolated AI tarball consumer: types, wire, Host and conformance passed');`,
   );
   run("pnpm", ["install", "--offline"]);

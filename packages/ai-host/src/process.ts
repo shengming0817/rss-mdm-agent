@@ -62,12 +62,17 @@ export class WorkerPort implements ProviderAgentPort {
   async start(
     configuration: ProviderConfiguration,
     budget: Budget,
+    previous: Binding | null = null,
   ): Promise<Result<void>> {
     if (this.closing || this.starting || this.child) return fail("unavailable");
-    const task = this.launch(configuration, {
-      ...budget,
-      signal: AbortSignal.any([budget.signal, this.startupAbort.signal]),
-    });
+    const task = this.launch(
+      configuration,
+      {
+        ...budget,
+        signal: AbortSignal.any([budget.signal, this.startupAbort.signal]),
+      },
+      previous,
+    );
     this.starting = task;
     const result = await task;
     this.starting = undefined;
@@ -85,6 +90,7 @@ export class WorkerPort implements ProviderAgentPort {
   private async launch(
     configuration: ProviderConfiguration,
     budget: Budget,
+    previous: Binding | null,
   ): Promise<Result<void>> {
     if (process.platform === "win32" || !this.artifact.startsWith("file:"))
       return fail("unsupported_capability");
@@ -198,7 +204,7 @@ export class WorkerPort implements ProviderAgentPort {
       check();
       await this.control.call(
         "activate",
-        { artifact: this.artifact, configuration },
+        { artifact: this.artifact, configuration, previous },
         budget,
       );
       check();

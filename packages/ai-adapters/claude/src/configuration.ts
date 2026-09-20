@@ -38,7 +38,7 @@ export interface ResolvedClaudeConfiguration {
   configuration: ClaudeConfiguration;
   configurationDirectory: string;
   apiUrl: string;
-  credential: { type: "api_key" | "auth_token"; value: string };
+  credential: { type: "api_key" | "auth_token" | "oauth_token"; value: string };
   model?: string;
 }
 export interface ClaudeAdapterOptions {
@@ -89,7 +89,7 @@ export function sdkOptions(resolved: ResolvedClaudeConfiguration): Options {
     url.search ||
     url.hash ||
     !credential.value ||
-    !["api_key", "auth_token"].includes(credential.type) ||
+    !["api_key", "auth_token", "oauth_token"].includes(credential.type) ||
     !isAbsolute(config.workingDirectory) ||
     !isAbsolute(resolved.configurationDirectory)
   )
@@ -108,7 +108,11 @@ export function sdkOptions(resolved: ResolvedClaudeConfiguration): Options {
   for (const key of ["SystemRoot", "WINDIR", "TEMP", "TMP", "TMPDIR"])
     if (process.env[key]) env[key] = process.env[key]!;
   env[
-    credential.type === "api_key" ? "ANTHROPIC_API_KEY" : "ANTHROPIC_AUTH_TOKEN"
+    credential.type === "api_key"
+      ? "ANTHROPIC_API_KEY"
+      : credential.type === "oauth_token"
+        ? "CLAUDE_CODE_OAUTH_TOKEN"
+        : "ANTHROPIC_AUTH_TOKEN"
   ] = credential.value;
   return {
     cwd: config.workingDirectory,

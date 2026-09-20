@@ -98,6 +98,24 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         self.check_binding(execution.plan())?;
         Ok(execution)
     }
+    /// Persist a preview without submitting it or obtaining dispatch authority.
+    pub fn register_plan(
+        &mut self,
+        request: &RequestId,
+        plan: &FrozenPlan,
+    ) -> Result<ExecutionStatus, Error> {
+        self.check_binding(plan)?;
+        if request != &plan.spec().request.request_id {
+            return Err(Error::Conflict);
+        }
+        let op = operation(plan, "preview", "")?;
+        self.store.open_execution(
+            &op,
+            plan,
+            &Host::new(&self.host, &self.binding, &self.config).with_plan(Some(plan)),
+        )?;
+        self.status_for(request, ExecutionAccess::Submission)
+    }
     /// Submit an immutable plan under its original business request ID. Replays return current
     /// durable state without consuming approval, checking new execution policy or dispatching.
     pub fn submit(
@@ -466,6 +484,33 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
     pub fn task_details(&self, request: &RequestId) -> Result<crate::ExecutionTaskDetails, Error> {
         self.details_for(request, ExecutionAccess::Result)
     }
+    /// Trusted Rust composition read of the original plan. Contains private launch inputs;
+    /// UI/model transports must expose only task_details, never serialize this value.
+    pub fn frozen_plan(&self, request: &RequestId) -> Result<FrozenPlan, Error> {
+        Ok(self.load(request, ExecutionAccess::Result)?.plan().clone())
+    }
+    /// Authorized bounded task page for this exact actor and device.
+    pub fn tasks(&self, after: Option<&RequestId>, limit: usize) -> Result<crate::TaskPage, Error> {
+        if self.host.binding()? != self.binding {
+            return Err(Error::Denied);
+        }
+        let page = self.store.execution_requests(
+            &self.binding.actor,
+            &self.binding.device,
+            after,
+            limit,
+            &self.adapter(None),
+        )?;
+        let items = page
+            .requests
+            .iter()
+            .map(|id| self.task_details(id))
+            .collect::<Result<_, _>>()?;
+        Ok(crate::TaskPage {
+            items,
+            next: page.next,
+        })
+    }
     fn status_for(
         &self,
         request: &RequestId,
@@ -523,6 +568,12 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             }
         };
         let status = ExecutionStatus {
+            submitted: self.store.has_execution_receipt(
+                &Scope::from_plan(execution.plan()),
+                &operation(execution.plan(), "register", "")?,
+                access,
+                &self.adapter(Some(execution.plan())),
+            )?,
             operation_request_id: request.clone(),
             plan_id: s.plan_id.clone(),
             plan_digest: s.plan_digest.clone(),

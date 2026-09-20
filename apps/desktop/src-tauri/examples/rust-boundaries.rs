@@ -7,6 +7,8 @@ use syn::visit::{self, Visit};
 struct Guard {
     fixture: bool,
     ipc: bool,
+    composition: bool,
+    main: bool,
     forbidden: bool,
 }
 impl Guard {
@@ -14,7 +16,17 @@ impl Guard {
         if parts.iter().any(|p| p == "prmonitor_lib") {
             self.forbidden = true;
         }
-        self.forbidden |= parts.windows(2).any(|p| p == ["Command", "new"]);
+        self.forbidden |= !self.composition && parts.windows(2).any(|p| p == ["Command", "new"]);
+        self.forbidden |= self.fixture
+            && parts.first().is_some_and(|p| {
+                [
+                    "tokio",
+                    "execution_app",
+                    "execution_sqlite",
+                    "execution_mcp",
+                ]
+                .contains(&p.as_str())
+            });
         if self.fixture && parts.len() >= 2 {
             self.forbidden |= match parts[0].as_str() {
                 "std" | "core" => {
@@ -24,6 +36,7 @@ impl Guard {
                 _ => false,
             };
         }
+        self.forbidden |= self.fixture && parts.iter().any(|part| part == "composition");
         self.forbidden |= !self.ipc && parts == ["tauri", "command"];
     }
     fn imports(&mut self, prefix: &mut Vec<String>, tree: &syn::UseTree) {
@@ -123,6 +136,18 @@ impl Guard {
     }
 }
 impl<'ast> Visit<'ast> for Guard {
+    fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+        // Test-only mock runtimes do not add capabilities to the production binary.
+        if item.attrs.iter().any(|attribute| {
+            attribute.path().is_ident("cfg")
+                && attribute
+                    .parse_args::<syn::Path>()
+                    .is_ok_and(|path| path.is_ident("test"))
+        }) {
+            return;
+        }
+        visit::visit_item_mod(self, item);
+    }
     fn visit_path(&mut self, path: &'ast syn::Path) {
         self.path(
             &path
@@ -148,7 +173,10 @@ impl<'ast> Visit<'ast> for Guard {
     fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
         let name = call.method.to_string();
         self.forbidden |= name == "plugin"
-            || (!self.ipc && ["manage", "invoke_handler"].contains(&name.as_str()))
+            || (!self.ipc && name == "invoke_handler")
+            || (name == "manage"
+                && !(self.main
+                    && matches!(&*call.receiver, syn::Expr::Path(path) if path.path.is_ident("app"))))
             || (self.fixture
                 && ["path", "shell", "spawn", "spawn_blocking"].contains(&name.as_str()));
         visit::visit_expr_method_call(self, call);
@@ -165,7 +193,9 @@ fn main() {
     for (file, source) in sources {
         let mut guard = Guard {
             fixture: file.contains("/self_service/"),
-            ipc: file.ends_with("/self_service/ipc.rs"),
+            ipc: file.ends_with("/composition/ipc.rs"),
+            composition: file.contains("/composition/"),
+            main: file.ends_with("/src/main.rs"),
             forbidden: false,
         };
         match syn::parse_file(&source) {
@@ -176,7 +206,9 @@ fn main() {
             }
         }
         if guard.forbidden {
-            errors.push(format!("{file}: unexpected host capability; fixture service cannot access host I/O or background execution"));
+            errors.push(format!(
+                "{file}: unexpected host capability outside its composition owner"
+            ));
         }
     }
     println!("{}", serde_json::to_string(&errors).unwrap());

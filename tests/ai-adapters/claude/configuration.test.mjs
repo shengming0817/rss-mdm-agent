@@ -44,3 +44,16 @@ test("Claude persistence accepts only private owned real directories before SDK 
     realpathSync(shared),
   );
 });
+
+test("Claude SDK rejects directory-only credentials before launching a native session", (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "rss-claude-login-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  assert.throws(
+    () =>
+      sdkOptions({
+        ...resolved(directory),
+        credential: { type: "user_login", sourceDirectory: directory },
+      }),
+    /configuration/,
+  );
+});

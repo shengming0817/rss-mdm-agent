@@ -33,6 +33,7 @@ const options = {
 };
 const host = unwrap(
   await createHost({
+    delivery: null,
     store,
     launchFences: store,
     resolve: async (caller, options, namespace) => ({
@@ -54,7 +55,7 @@ unwrap(
   await host.submit(
     caller,
     {
-      schemaVersion: 3,
+      schemaVersion: 4,
       kind: "command",
       sessionId: session.namespace.sessionId,
       commandId: "uncertain",

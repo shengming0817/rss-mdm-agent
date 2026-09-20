@@ -453,7 +453,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
       decode(
         boundedJson(
           {
-            schemaVersion: 3,
+            schemaVersion: 4,
             kind: "event",
             namespace: this.session?.configuration.namespace,
             eventId: "control-attempt",
@@ -523,7 +523,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
     try {
       c = this.checked(command);
       const attemptEvent = {
-        schemaVersion: 3,
+        schemaVersion: 4,
         kind: "event",
         namespace: this.session?.configuration.namespace,
         eventId: "validate-attempt",

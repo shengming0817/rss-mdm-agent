@@ -41,6 +41,13 @@ test("Rust guard distinguishes syntax from harmless words and literal contents",
 test("UI and desktop satisfy the dependency and permission boundaries", () => {
   assert.deepEqual(checkTree(), []);
 });
+test("Rust guard excludes explicit test modules while guarding production IPC assembly", () => {
+  const file = "apps/desktop/src-tauri/src/composition/ipc.rs";
+  const mock = "mod tests { fn check() { builder.manage(state); } }";
+  assert.deepEqual(checkRustSources({ [file]: `#[cfg(test)] ${mock}` }), []);
+  for (const source of [mock, `#[cfg(feature = "test")] ${mock}`])
+    assert.ok(checkRustSources({ [file]: source }).length);
+});
 test("UI boundary rejects prohibited imports and rendering even through alternate syntax", () => {
   for (const source of [
     `import x from '@tauri-apps/api/core'`,
@@ -345,7 +352,7 @@ test("each host boundary mutation independently fails the tree scan", () => {
       "app.path().app_data_dir();",
       'extern "C" { fn system(); }',
     ].map((capability) => [
-      "apps/desktop/src-tauri/src/self_service/ipc.rs",
+      "apps/desktop/src-tauri/src/self_service/model.rs",
       (source) => source + `\nfn forbidden() { ${capability} }\n`,
     ]),
   ];
@@ -437,4 +444,33 @@ test("only the narrow native adapter can call literal fixture commands", () => {
     ),
     [],
   );
+});
+
+test("trusted execution details share only the frozen-origin view across feature directories", () => {
+  const file = "apps/desktop/src/assistant/ExecutionDetails.vue";
+  const source = (name) =>
+    `<script setup>import View from "${name}";</script><template><View /></template>`;
+  assert.deepEqual(
+    checkSource(file, source("../self-service/RequestOrigin.vue")),
+    [],
+  );
+  for (const name of [
+    "../self-service/native",
+    "../self-service/controller",
+    "../self-service/TaskDetail.vue",
+  ])
+    assert.ok(checkSource(file, source(name)).length);
+});
+
+test("fixture presentation cannot import the desktop composition owner", () => {
+  for (const source of [
+    "fn preview() { crate::composition::origin::human(); }",
+    "use crate::{composition::origin as trusted}; fn preview() { trusted::human(); }",
+    "use super::super::composition;",
+  ])
+    assert.ok(
+      checkRustSources({
+        "apps/desktop/src-tauri/src/self_service/example.rs": source,
+      }).length,
+    );
 });

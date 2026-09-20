@@ -1,10 +1,28 @@
 use super::model::*;
-use execution_contract::{FrozenPlan, PlanLimits};
+use execution_contract::{
+    DeviceId, FrozenPlan, Id, Initiator, OsAccountRef, OsSessionRef, PlanLimits, Platform,
+};
 use serde_json::json;
 use service_catalog::{CatalogLimits, FrozenCatalog, ParameterLimits, SelectedOperation};
 use sha2::{Digest as _, Sha256};
 
-pub const TARGET: &str = "模拟 Windows x86_64 · 测试设备 fixture-device · 测试用户 fixture-user";
+pub fn os_session() -> OsSessionRef {
+    OsSessionRef {
+        device: DeviceId::new("fixture-device").unwrap(),
+        account: OsAccountRef {
+            platform: Platform::Macos,
+            subject: Id::new("fixture-user").unwrap(),
+        },
+        session: Id::new("fixture-session").unwrap(),
+    }
+}
+pub fn human() -> Initiator {
+    Initiator::Human {
+        os_session: os_session(),
+    }
+}
+
+pub const TARGET: &str = "macOS arm64 · 测试设备 fixture-device · 测试用户 fixture-user";
 pub const ARTIFACT: &[u8] = b"RSS desktop fixed test artifact. Not executable.\n";
 pub const CATALOG_LIMITS: CatalogLimits = CatalogLimits {
     max_bytes: 65536,
@@ -24,7 +42,7 @@ pub const PLAN_LIMITS: PlanLimits = PlanLimits {
     max_nodes: 2048,
     max_string_bytes: 4096,
     max_collection_items: 128,
-    max_timeout_ms: 1000,
+    max_timeout_ms: 60_000,
     max_output_bytes: 4096,
     max_stdin_bytes: 1024,
     max_attempts: 1,
@@ -33,7 +51,7 @@ pub fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
-pub fn catalog(now: u64) -> Result<FrozenCatalog> {
+pub fn catalog(_now: u64) -> Result<FrozenCatalog> {
     let mut items = Vec::new();
     for (id, kind, name, description) in [
         (
@@ -108,11 +126,11 @@ pub fn catalog(now: u64) -> Result<FrozenCatalog> {
             "aiDiscoverable":true,"distributionHint":if id == "office" {"request"} else {"optional"},
             "state":if id == "withdrawn" {"withdrawn"} else {"listed"},
             "operations":[{"id":"test","action":if kind == "software" {"install"} else {"diagnose"},
-            "resource":{"reference":{"id":format!("fixture-{id}"),"revision":"r1"},"versionDigest":digest(format!("fixture resource definition v1: {id}").as_bytes()),"selector":{"platform":"windows","architecture":"x86_64","key":"fixture"}},
+            "resource":{"reference":{"id":format!("fixture-{id}"),"revision":"r1"},"versionDigest":digest(format!("fixture resource definition v1: {id}").as_bytes()),"selector":{"platform":"macos","architecture":"aarch64","key":"fixture"}},
             "parameters":parameters,"requirements":{"capabilities":["fixture-only"],"runAs":"targetUser","interaction":"userSession","evidence":["fixture-result"]}}]
         }));
     }
-    let bytes=serde_json::to_vec(&json!({"schemaVersion":1,"authority":{"kind":"test","id":"desktop-fixture"},"identity":{"id":"self-service","revision":"r1"},"expiresAtUnixMs":now+3_600_000,"items":items})).map_err(|_|error("fixture","测试目录编码失败"))?;
+    let bytes=serde_json::to_vec(&json!({"schemaVersion":1,"authority":{"kind":"test","id":"desktop-fixture"},"identity":{"id":"self-service","revision":"r1"},"expiresAtUnixMs":4_102_444_800_000_u64,"items":items})).map_err(|_|error("fixture","测试目录编码失败"))?;
     Ok(service_catalog::decode_catalog(&bytes, &CATALOG_LIMITS)?)
 }
 
@@ -121,16 +139,17 @@ pub fn freeze(
     request_id: &execution_contract::RequestId,
     plan_id: String,
     now: u64,
+    initiator: &execution_contract::Initiator,
 ) -> Result<FrozenPlan> {
     let operation = selected.operation();
-    let account = json!({"platform":"windows","subject":"fixture-user"});
+    let account = json!({"platform":"macos","subject":"fixture-user"});
     let artifact = json!({"resource":operation.resource.reference,"sha256":digest(ARTIFACT)});
     let spec = json!({
         "schemaVersion":1,"planId":plan_id,
-        "request":{"schemaVersion":1,"requestId":request_id,"authority":{"kind":"test","id":"desktop-fixture"},"actor":"fixture-actor","initiator":{"kind":"human","osSession":{"device":"fixture-device","account":account,"session":"fixture-session"}},"delegation":null,
-        "target":{"device":"fixture-device","platform":"windows","scope":{"kind":"user","account":account}},"operation":{"action":operation.action,"resource":operation.resource.reference},"parameters":selected.parameters()},
-        "launch":{"artifact":artifact,"interpreter":{"artifact":{"resource":{"id":"fixture-interpreter","revision":"r1"},"sha256":digest(b"fixed interpreter marker; no interpreter exists")},"profile":{"id":"fixture-only","revision":"r1"}},"argv":[{"kind":"artifactPath"}],"artifactEncoding":"utf8","stdin":{"kind":"closed"},"output":{"stdout":"utf8","stderr":"utf8"},"cwd":"C:\\fixture","env":{}},
-        "runAs":{"kind":"user","account":account},"constraints":{"network":{"kind":"denied"},"readPaths":[],"writePaths":[],"allowChildProcesses":false,"requireSandbox":true},"budget":{"totalTimeoutMs":1000,"totalOutputBytes":4096,"maxAttempts":1},"validity":{"notBeforeUnixMs":now,"expiresAtUnixMs":now+300_000},"policy":{"id":"fixture-policy","revision":"r1"},"sessionRequirement":{"kind":"notRequired"}
+        "request":{"schemaVersion":1,"requestId":request_id,"authority":{"kind":"test","id":"desktop-fixture"},"actor":"fixture-actor","initiator":initiator,"delegation":null,
+        "target":{"device":"fixture-device","platform":"macos","scope":{"kind":"user","account":account}},"operation":{"action":operation.action,"resource":operation.resource.reference},"parameters":selected.parameters()},
+        "launch":{"artifact":artifact,"interpreter":{"artifact":{"resource":{"id":"fixture-interpreter","revision":"r1"},"sha256":digest(b"fixed interpreter marker; no interpreter exists")},"profile":{"id":"fixture-only","revision":"r1"}},"argv":[{"kind":"artifactPath"}],"artifactEncoding":"utf8","stdin":{"kind":"closed"},"output":{"stdout":"utf8","stderr":"utf8"},"cwd":"/s1-fixture","env":{}},
+        "runAs":{"kind":"user","account":account},"constraints":{"network":{"kind":"denied"},"readPaths":[],"writePaths":[],"allowChildProcesses":false,"requireSandbox":true},"budget":{"totalTimeoutMs":60_000,"totalOutputBytes":4096,"maxAttempts":1},"validity":{"notBeforeUnixMs":now,"expiresAtUnixMs":now+300_000},"policy":{"id":"fixture-policy","revision":"r1"},"sessionRequirement":{"kind":"notRequired"}
     });
     let spec = serde_json::from_value(spec).map_err(|_| error("fixture", "测试计划结构错误"))?;
     FrozenPlan::freeze(spec, &PLAN_LIMITS).map_err(|_| error("fixture", "测试计划校验失败"))

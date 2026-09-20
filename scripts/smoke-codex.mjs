@@ -102,8 +102,7 @@ export function loadSmokeConfiguration(args, env) {
     url.search ||
     url.hash ||
     !url.pathname.replace(/\/$/, "").endsWith("/v1") ||
-    (value.mode === "real_model" &&
-      url.toString().replace(/\/$/, "") !== "https://api.openai.com/v1") ||
+    (value.mode === "real_model" && url.protocol !== "https:") ||
     (value.mode === "local_fixture" && !loopback) ||
     (url.protocol !== "https:" && url.protocol !== "http:")
   )
@@ -201,8 +200,11 @@ async function main() {
         resolveConfiguration: async (identity) => ({
           configuration,
           nativeDirectory,
-          apiUrl: gateway?.apiUrl ?? settings.apiUrl,
-          apiKey: gateway?.apiKey ?? settings.apiKey,
+          authentication: {
+            type: "api_key",
+            apiUrl: gateway?.apiUrl ?? settings.apiUrl,
+            apiKey: gateway?.apiKey ?? settings.apiKey,
+          },
           model: settings.model,
           ...(identity.history
             ? {
@@ -230,7 +232,7 @@ async function main() {
       const sent = await adapter.dispatch(
         binding,
         {
-          schemaVersion: 3,
+          schemaVersion: 4,
           kind: "command",
           sessionId: configuration.namespace.sessionId,
           commandId: id,
@@ -311,7 +313,7 @@ async function main() {
       await VerifiedProviderSession.restore(
         resumed,
         {
-          schemaVersion: 3,
+          schemaVersion: 4,
           kind: "session",
           namespace: configuration.namespace,
           revision: 0,

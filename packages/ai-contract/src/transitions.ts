@@ -144,7 +144,7 @@ function reduceAcceptance(
   );
   if (!check.ok) return check;
   const receipt: import("./wire.js").Receipt = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     kind: "receipt",
     namespace: clone(input.namespace),
     commandId: input.command.commandId,
@@ -158,7 +158,7 @@ function reduceAcceptance(
     acceptedRevision: state.session.revision + 1,
   };
   const record: CommandRecord = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     kind: "commandRecord",
     command: clone(input.command),
     receipt,
@@ -216,7 +216,7 @@ function reduceAcceptance(
       commands: [record],
       events: [
         {
-          schemaVersion: 3,
+          schemaVersion: 4,
           kind: "event",
           namespace: clone(input.namespace),
           eventId: input.eventId,
@@ -226,7 +226,7 @@ function reduceAcceptance(
           body: { type: "command_accepted", command: clone(input.command) },
         },
         ...interactions.map((row, i) => ({
-          schemaVersion: 3 as const,
+          schemaVersion: 4 as const,
           kind: "event" as const,
           namespace: input.namespace,
           eventId: eventId(input.eventId, `answer-${i}`),
@@ -266,6 +266,30 @@ export function checkState(
   return ok(undefined);
 }
 
+/** Durable Host delivery is independent of a runnable provider incarnation.
+ * This exception can change only existing deliveries and append their receipt references. */
+export function isDeliveryCommit(
+  state: SessionState,
+  batch: SessionCommit,
+): boolean {
+  return (
+    batch.deliveries.length > 0 &&
+    batch.commands.length === 0 &&
+    batch.interactions.length === 0 &&
+    batch.surfaces.length === 0 &&
+    (batch.providerFacts?.length ?? 0) === 0 &&
+    batch.events.every((e) => e.body.type === "delivery_recorded") &&
+    batch.deliveries.every((d) => state.deliveries.has(d.operationId)) &&
+    same(
+      {
+        ...batch.session,
+        revision: state.session.revision,
+        lastSequence: state.session.lastSequence,
+      },
+      state.session,
+    )
+  );
+}
 export function commitSession(
   state: SessionState,
   batch: SessionCommit,
@@ -279,8 +303,11 @@ function reduceCommit(
   limits: Limits,
   accepting: boolean,
 ): Result<SessionState> {
+  const deliveryOnly = isDeliveryCommit(state, batch);
   const check = checkState(
-    state,
+    deliveryOnly
+      ? { ...state, session: { ...state.session, status: "active" } }
+      : state,
     batch.expectedRevision,
     batch.expectedGeneration,
   );
@@ -305,7 +332,7 @@ function reduceCommit(
     batch.session.revision !== state.session.revision + 1 ||
     batch.session.lastSequence !==
       state.session.lastSequence + batch.events.length ||
-    batch.session.status !== "active"
+    (!deliveryOnly && batch.session.status !== "active")
   )
     return fail("invalid_input");
   if (
@@ -730,6 +757,46 @@ function reduceCommit(
     if (event.commandId === undefined) return fail("invalid_input");
     const source = copy.commands.get(event.commandId)!;
     const prior = state.commands.get(event.commandId);
+    if (event.body.type === "delivery_requested") {
+      const body = event.body;
+      const row = batch.deliveries.find(
+        (d) => d.operationId === body.operationId,
+      );
+      if (
+        !row ||
+        state.deliveries.has(row.operationId) ||
+        row.eventId !== event.eventId ||
+        row.target !== body.target ||
+        row.status !== "pending" ||
+        row.attempts !== 0 ||
+        source.command.input.type !== "prompt" ||
+        isSettled(source) ||
+        !source.dispatch ||
+        source.dispatch.observerGeneration !== batch.expectedGeneration
+      )
+        return fail("invalid_input");
+    }
+    if (event.body.type === "delivery_recorded") {
+      const body = event.body;
+      const old = state.deliveries.get(body.operationId);
+      const request =
+        old && state.events.find((e) => e.eventId === old.eventId);
+      const row = batch.deliveries.find(
+        (d) => d.operationId === body.operationId,
+      );
+      if (
+        !old ||
+        old.status === "delivered" ||
+        old.status === "receipt_recorded" ||
+        !row ||
+        row.status !== "receipt_recorded" ||
+        body.target !== old.target ||
+        body.contentHash !== old.contentHash ||
+        request?.body.type !== "delivery_requested" ||
+        request.commandId !== event.commandId
+      )
+        return fail("invalid_input");
+    }
     if (
       event.attemptId !== undefined &&
       (event.attemptId !== (source.dispatch ?? prior?.dispatch)?.attemptId ||
@@ -940,12 +1007,32 @@ function reduceCommit(
     )
       return fail("invalid_input");
     const old = copy.deliveries.get(row.operationId);
+    const request = copy.events.find((e) => e.eventId === row.eventId)!;
+    if (
+      request.body.type === "delivery_requested" &&
+      (request.body.operationId !== row.operationId ||
+        request.body.target !== row.target ||
+        (old?.status !== "receipt_recorded" &&
+          row.status === "receipt_recorded" &&
+          !batch.events.some(
+            (e) =>
+              e.body.type === "delivery_recorded" &&
+              e.body.operationId === row.operationId,
+          )))
+    )
+      return fail("invalid_input");
     if (
       old &&
       (old.contentHash !== row.contentHash ||
         old.target !== row.target ||
         old.eventId !== row.eventId ||
         old.retry !== row.retry ||
+        (request.body.type === "delivery_requested" &&
+          row.status === "delivered" &&
+          old.status !== "receipt_recorded" &&
+          old.status !== "delivered") ||
+        (old.status === "receipt_recorded" &&
+          !["receipt_recorded", "delivered"].includes(row.status)) ||
         row.attempts < old.attempts ||
         (old.status === "delivered" && row.status !== "delivered"))
     )
@@ -1101,7 +1188,7 @@ function reduceHandoff(
     label: string,
   ) => {
     const event = {
-      schemaVersion: 3,
+      schemaVersion: 4,
       kind: "event",
       namespace: input.namespace,
       eventId: eventId(input.eventId, label),
@@ -1133,7 +1220,7 @@ function reduceHandoff(
         observerGeneration: binding.generation,
       };
       copy.commands.set(id, {
-        schemaVersion: 3,
+        schemaVersion: 4,
         kind: "commandRecord",
         command: c.command,
         receipt: c.receipt,
@@ -1157,7 +1244,7 @@ function reduceHandoff(
         retry: "never" as const,
       };
       copy.commands.set(id, {
-        schemaVersion: 3,
+        schemaVersion: 4,
         kind: "commandRecord",
         command: c.command,
         receipt: c.receipt,
@@ -1241,7 +1328,7 @@ function reduceRetirement(
     lastSequence: copy.session.lastSequence + 1,
   };
   const event: Event = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     kind: "event",
     namespace: copy.session.namespace,
     eventId: eventId(

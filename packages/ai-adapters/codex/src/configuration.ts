@@ -25,9 +25,21 @@ export type CodexConfiguration = ProviderConfiguration & {
 export interface ResolvedCodexConfiguration {
   configuration: CodexConfiguration;
   nativeDirectory: string;
-  apiUrl: string;
-  apiKey: string;
-  model: string;
+  authentication:
+    | { type: "api_key"; apiUrl: string; apiKey: string }
+    | {
+        type: "chatgpt_tokens";
+        apiUrl?: string;
+        accessToken: string;
+        accountId: string;
+        refresh(
+          budget: Budget,
+        ): Promise<{ accessToken: string; accountId: string }>;
+      };
+  /** Omit to use the pinned Codex runtime default. */
+  model?: string;
+  /** Host-owned product instructions; never loaded from native user permissions/settings. */
+  developerInstructions?: string;
   /** Returned only after the host finds the requested native IDs in its trusted lineage records. */
   ownedHistory?: { nativeSessionId: string; nativeThreadId: string };
 }
@@ -93,20 +105,39 @@ export function nativeSettings(
   resolved: ResolvedCodexConfiguration,
 ): Record<string, unknown> {
   return {
-    model: resolved.model,
-    model_provider: "rss_host_model",
-    model_providers: {
-      rss_host_model: {
-        name: "RSS host model",
-        base_url: resolved.apiUrl,
-        env_key: "RSS_CODEX_API_KEY",
-        wire_api: "responses",
-        requires_openai_auth: false,
-        request_max_retries: 0,
-        stream_max_retries: 0,
-        stream_idle_timeout_ms: 30000,
-      },
-    },
+    ...(resolved.model === undefined ? {} : { model: resolved.model }),
+    ...(resolved.authentication.type === "chatgpt_tokens"
+      ? { forced_chatgpt_workspace_id: resolved.authentication.accountId }
+      : {}),
+    model_provider:
+      resolved.authentication.type === "api_key" ? "rss_host_model" : "openai",
+    ...(resolved.authentication.type === "api_key"
+      ? {
+          model_providers: {
+            rss_host_model: {
+              name: "RSS host model",
+              base_url: resolved.authentication.apiUrl,
+              env_key: "RSS_CODEX_API_KEY",
+              wire_api: "responses",
+              requires_openai_auth: false,
+              request_max_retries: 0,
+              stream_max_retries: 0,
+              stream_idle_timeout_ms: 30000,
+            },
+          },
+        }
+      : resolved.authentication.apiUrl
+        ? {
+            model_providers: {
+              openai: {
+                name: "OpenAI",
+                base_url: resolved.authentication.apiUrl,
+                wire_api: "responses",
+                requires_openai_auth: true,
+              },
+            },
+          }
+        : {}),
     approval_policy: "on-request",
     sandbox_mode: "read-only",
     web_search: "disabled",
@@ -143,7 +174,9 @@ export async function launchSpec(
 }> {
   let url: URL;
   try {
-    url = new URL(resolved.apiUrl);
+    url = new URL(
+      resolved.authentication.apiUrl ?? "https://api.openai.com/v1",
+    );
   } catch {
     throw new CodexConfigurationFailure("invalid_input");
   }
@@ -157,8 +190,14 @@ export async function launchSpec(
     url.password ||
     url.search ||
     url.hash ||
-    !resolved.apiKey ||
-    !resolved.model ||
+    !(resolved.authentication.type === "api_key"
+      ? resolved.authentication.apiKey
+      : resolved.authentication.type === "chatgpt_tokens" &&
+        resolved.authentication.accessToken &&
+        resolved.authentication.accountId &&
+        typeof resolved.authentication.refresh === "function") ||
+    (resolved.model !== undefined &&
+      (typeof resolved.model !== "string" || !resolved.model.trim())) ||
     !isAbsolute(resolved.nativeDirectory) ||
     !isAbsolute(resolved.configuration.workingDirectory)
   )
@@ -204,7 +243,9 @@ export async function launchSpec(
     : {};
   const env: Record<string, string> = {
     CODEX_HOME: resolved.nativeDirectory,
-    RSS_CODEX_API_KEY: resolved.apiKey,
+    ...(resolved.authentication.type === "api_key"
+      ? { RSS_CODEX_API_KEY: resolved.authentication.apiKey }
+      : {}),
   };
   // No host search path: native metadata helpers must not select user shims.
   env.PATH =

@@ -3,8 +3,7 @@ import type { Snapshot } from "./types";
 const snapshot: Snapshot = {
   mode: "fixture",
   instanceId: "browser-preview",
-  targetLabel:
-    "模拟 Windows x86_64 · 测试设备 fixture-device · 测试用户 fixture-user",
+  targetLabel: "macOS arm64 · 测试设备 fixture-device · 测试用户 fixture-user",
   catalog: [
     {
       catalog: {
@@ -17,7 +16,7 @@ const snapshot: Snapshot = {
           revision: "r1",
         },
         digest:
-          "006a6a656b7263ab6ff9c555c58edf892c7176ba7e9c8902851055d9f92e091f",
+          "def728f9c136e7b3dff4a70dab3fe7adcd7347522798cfaf27438cb7a5391fe6",
       },
       itemId: "blocked",
       variantId: "test",
@@ -33,8 +32,8 @@ const snapshot: Snapshot = {
         versionDigest:
           "96c70d18ed44a6ab1dd066c4ea7039219ed4ffea2367870ed8b4518529662e44",
         selector: {
-          platform: "windows",
-          architecture: "x86_64",
+          platform: "macos",
+          architecture: "aarch64",
           key: "fixture",
         },
       },
@@ -65,7 +64,7 @@ const snapshot: Snapshot = {
           revision: "r1",
         },
         digest:
-          "006a6a656b7263ab6ff9c555c58edf892c7176ba7e9c8902851055d9f92e091f",
+          "def728f9c136e7b3dff4a70dab3fe7adcd7347522798cfaf27438cb7a5391fe6",
       },
       itemId: "diagnostics",
       variantId: "test",
@@ -81,8 +80,8 @@ const snapshot: Snapshot = {
         versionDigest:
           "eac22f39e822b9b78301322d2784b71306b769d92ce84a4bce291c2d9357b5b5",
         selector: {
-          platform: "windows",
-          architecture: "x86_64",
+          platform: "macos",
+          architecture: "aarch64",
           key: "fixture",
         },
       },
@@ -204,7 +203,7 @@ const snapshot: Snapshot = {
           revision: "r1",
         },
         digest:
-          "006a6a656b7263ab6ff9c555c58edf892c7176ba7e9c8902851055d9f92e091f",
+          "def728f9c136e7b3dff4a70dab3fe7adcd7347522798cfaf27438cb7a5391fe6",
       },
       itemId: "maintenance",
       variantId: "test",
@@ -220,8 +219,8 @@ const snapshot: Snapshot = {
         versionDigest:
           "15f7f10668b4c73214413942b7f87e8a01596d7fa9ab829504b44eceae0e14c8",
         selector: {
-          platform: "windows",
-          architecture: "x86_64",
+          platform: "macos",
+          architecture: "aarch64",
           key: "fixture",
         },
       },
@@ -252,7 +251,7 @@ const snapshot: Snapshot = {
           revision: "r1",
         },
         digest:
-          "006a6a656b7263ab6ff9c555c58edf892c7176ba7e9c8902851055d9f92e091f",
+          "def728f9c136e7b3dff4a70dab3fe7adcd7347522798cfaf27438cb7a5391fe6",
       },
       itemId: "office",
       variantId: "test",
@@ -268,8 +267,8 @@ const snapshot: Snapshot = {
         versionDigest:
           "3030918a3b2b48f626f2be192a97066424162a5ad52cf6b72da0d3373413f0ad",
         selector: {
-          platform: "windows",
-          architecture: "x86_64",
+          platform: "macos",
+          architecture: "aarch64",
           key: "fixture",
         },
       },
@@ -323,7 +322,7 @@ const snapshot: Snapshot = {
           revision: "r1",
         },
         digest:
-          "006a6a656b7263ab6ff9c555c58edf892c7176ba7e9c8902851055d9f92e091f",
+          "def728f9c136e7b3dff4a70dab3fe7adcd7347522798cfaf27438cb7a5391fe6",
       },
       itemId: "parameter-check",
       variantId: "test",
@@ -339,8 +338,8 @@ const snapshot: Snapshot = {
         versionDigest:
           "bb43d5a108d3996d0fa81f61eb7129cd75c0b8a1901cbe35fc53f129bbd79cd5",
         selector: {
-          platform: "windows",
-          architecture: "x86_64",
+          platform: "macos",
+          architecture: "aarch64",
           key: "fixture",
         },
       },
@@ -462,7 +461,7 @@ const snapshot: Snapshot = {
           revision: "r1",
         },
         digest:
-          "006a6a656b7263ab6ff9c555c58edf892c7176ba7e9c8902851055d9f92e091f",
+          "def728f9c136e7b3dff4a70dab3fe7adcd7347522798cfaf27438cb7a5391fe6",
       },
       itemId: "restart",
       variantId: "test",
@@ -478,8 +477,8 @@ const snapshot: Snapshot = {
         versionDigest:
           "06110b6b40dd281f01b9824d4c4a73ec03a2c6a68e4c69e6f5bcbadaf6e6e8b3",
         selector: {
-          platform: "windows",
-          architecture: "x86_64",
+          platform: "macos",
+          architecture: "aarch64",
           key: "fixture",
         },
       },
@@ -510,7 +509,7 @@ const snapshot: Snapshot = {
           revision: "r1",
         },
         digest:
-          "006a6a656b7263ab6ff9c555c58edf892c7176ba7e9c8902851055d9f92e091f",
+          "def728f9c136e7b3dff4a70dab3fe7adcd7347522798cfaf27438cb7a5391fe6",
       },
       itemId: "unknown",
       variantId: "test",
@@ -526,8 +525,8 @@ const snapshot: Snapshot = {
         versionDigest:
           "47e1c9c969794a12afd03e09a5a35e1a241327973eeded3663e102e4cd3a9de2",
         selector: {
-          platform: "windows",
-          architecture: "x86_64",
+          platform: "macos",
+          architecture: "aarch64",
           key: "fixture",
         },
       },
@@ -558,7 +557,7 @@ const snapshot: Snapshot = {
           revision: "r1",
         },
         digest:
-          "006a6a656b7263ab6ff9c555c58edf892c7176ba7e9c8902851055d9f92e091f",
+          "def728f9c136e7b3dff4a70dab3fe7adcd7347522798cfaf27438cb7a5391fe6",
       },
       itemId: "unsupported",
       variantId: "test",
@@ -574,8 +573,8 @@ const snapshot: Snapshot = {
         versionDigest:
           "72a238978c1add51020e20a2026b57b044b66dfa910b47fdcf32f6bc0b684d4f",
         selector: {
-          platform: "windows",
-          architecture: "x86_64",
+          platform: "macos",
+          architecture: "aarch64",
           key: "fixture",
         },
       },
@@ -606,7 +605,7 @@ const snapshot: Snapshot = {
           revision: "r1",
         },
         digest:
-          "006a6a656b7263ab6ff9c555c58edf892c7176ba7e9c8902851055d9f92e091f",
+          "def728f9c136e7b3dff4a70dab3fe7adcd7347522798cfaf27438cb7a5391fe6",
       },
       itemId: "withdrawn",
       variantId: "test",
@@ -622,8 +621,8 @@ const snapshot: Snapshot = {
         versionDigest:
           "5c4fe62db86994f677567d36d1d9640fc0dc9c4b4e1f34cfea48a0a952a3378f",
         selector: {
-          platform: "windows",
-          architecture: "x86_64",
+          platform: "macos",
+          architecture: "aarch64",
           key: "fixture",
         },
       },
@@ -647,11 +646,27 @@ const snapshot: Snapshot = {
   requests: [
     {
       plan: {
+        authority: {
+          kind: "test",
+          id: "desktop-fixture",
+        },
+        actor: "fixture-actor",
+        initiator: {
+          kind: "human",
+          osSession: {
+            device: "fixture-device",
+            account: {
+              platform: "macos",
+              subject: "fixture-user",
+            },
+            session: "fixture-session",
+          },
+        },
         requestId: "preview-diagnostics",
         revision: 1,
         planId: "plan-browser-preview-1",
         digest:
-          "158d355ec353cc37a6df5dc2d7fc31f9fa41651abc8a7ff31a37b8bf80968444",
+          "a7fbf7214f14c580d7e54b47c329b8eef8a887ee950e2ee5657b0405d36af782",
         itemId: "diagnostics",
         title: "网络诊断",
         action: "diagnose",
@@ -663,13 +678,12 @@ const snapshot: Snapshot = {
           versionDigest:
             "eac22f39e822b9b78301322d2784b71306b769d92ce84a4bce291c2d9357b5b5",
           selector: {
-            platform: "windows",
-            architecture: "x86_64",
+            platform: "macos",
+            architecture: "aarch64",
             key: "fixture",
           },
         },
-        target:
-          "模拟 Windows x86_64 · 测试设备 fixture-device · 测试用户 fixture-user",
+        target: "macOS arm64 · 测试设备 fixture-device · 测试用户 fixture-user",
         runAs: "测试用户 fixture-user；不使用宿主登录身份",
         network: "禁止网络；不会发起连接",
         dataScope: "无文件读写、无子进程；仅内存测试数据",
@@ -712,11 +726,27 @@ const snapshot: Snapshot = {
     },
     {
       plan: {
+        authority: {
+          kind: "test",
+          id: "desktop-fixture",
+        },
+        actor: "fixture-actor",
+        initiator: {
+          kind: "human",
+          osSession: {
+            device: "fixture-device",
+            account: {
+              platform: "macos",
+              subject: "fixture-user",
+            },
+            session: "fixture-session",
+          },
+        },
         requestId: "preview-office",
         revision: 1,
         planId: "plan-browser-preview-2",
         digest:
-          "a218cc1e899ab83e89ae9cfecfb57f11d784d0cbc72984126fa50035faff1a06",
+          "942845add43fe5f340851da6c7f6427751f60a217b594af93d3484363f3c61c5",
         itemId: "office",
         title: "办公套件",
         action: "install",
@@ -728,13 +758,12 @@ const snapshot: Snapshot = {
           versionDigest:
             "3030918a3b2b48f626f2be192a97066424162a5ad52cf6b72da0d3373413f0ad",
           selector: {
-            platform: "windows",
-            architecture: "x86_64",
+            platform: "macos",
+            architecture: "aarch64",
             key: "fixture",
           },
         },
-        target:
-          "模拟 Windows x86_64 · 测试设备 fixture-device · 测试用户 fixture-user",
+        target: "macOS arm64 · 测试设备 fixture-device · 测试用户 fixture-user",
         runAs: "测试用户 fixture-user；不使用宿主登录身份",
         network: "禁止网络；不会发起连接",
         dataScope: "无文件读写、无子进程；仅内存测试数据",
@@ -766,11 +795,27 @@ const snapshot: Snapshot = {
     },
     {
       plan: {
+        authority: {
+          kind: "test",
+          id: "desktop-fixture",
+        },
+        actor: "fixture-actor",
+        initiator: {
+          kind: "human",
+          osSession: {
+            device: "fixture-device",
+            account: {
+              platform: "macos",
+              subject: "fixture-user",
+            },
+            session: "fixture-session",
+          },
+        },
         requestId: "preview-restart",
         revision: 1,
         planId: "plan-browser-preview-3",
         digest:
-          "98844953c041009dcfe118efe3227cd683c6d3a4aa2355df3118cf025fade057",
+          "db9a3b56a50c476c95ac2099c6fabde9ebe2905fefa06e00889dc56a8e0887ac",
         itemId: "restart",
         title: "重启提示",
         action: "diagnose",
@@ -782,13 +827,12 @@ const snapshot: Snapshot = {
           versionDigest:
             "06110b6b40dd281f01b9824d4c4a73ec03a2c6a68e4c69e6f5bcbadaf6e6e8b3",
           selector: {
-            platform: "windows",
-            architecture: "x86_64",
+            platform: "macos",
+            architecture: "aarch64",
             key: "fixture",
           },
         },
-        target:
-          "模拟 Windows x86_64 · 测试设备 fixture-device · 测试用户 fixture-user",
+        target: "macOS arm64 · 测试设备 fixture-device · 测试用户 fixture-user",
         runAs: "测试用户 fixture-user；不使用宿主登录身份",
         network: "禁止网络；不会发起连接",
         dataScope: "无文件读写、无子进程；仅内存测试数据",
@@ -823,11 +867,27 @@ const snapshot: Snapshot = {
     },
     {
       plan: {
+        authority: {
+          kind: "test",
+          id: "desktop-fixture",
+        },
+        actor: "fixture-actor",
+        initiator: {
+          kind: "human",
+          osSession: {
+            device: "fixture-device",
+            account: {
+              platform: "macos",
+              subject: "fixture-user",
+            },
+            session: "fixture-session",
+          },
+        },
         requestId: "preview-unknown",
         revision: 1,
         planId: "plan-browser-preview-4",
         digest:
-          "8c62518455975ab2f362fe55002d4a1a75520a9f6b0aa8262e57ee8ac0638af1",
+          "a32c22aaacccb202338a6f5d2a673622c431fb30a588433de50cdbb31f85569e",
         itemId: "unknown",
         title: "未知效果示例",
         action: "diagnose",
@@ -839,13 +899,12 @@ const snapshot: Snapshot = {
           versionDigest:
             "47e1c9c969794a12afd03e09a5a35e1a241327973eeded3663e102e4cd3a9de2",
           selector: {
-            platform: "windows",
-            architecture: "x86_64",
+            platform: "macos",
+            architecture: "aarch64",
             key: "fixture",
           },
         },
-        target:
-          "模拟 Windows x86_64 · 测试设备 fixture-device · 测试用户 fixture-user",
+        target: "macOS arm64 · 测试设备 fixture-device · 测试用户 fixture-user",
         runAs: "测试用户 fixture-user；不使用宿主登录身份",
         network: "禁止网络；不会发起连接",
         dataScope: "无文件读写、无子进程；仅内存测试数据",
@@ -858,5 +917,7 @@ const snapshot: Snapshot = {
       interactions: [],
     },
   ],
+  next: null,
+  referencedRequests: [],
 };
 export default snapshot;
