@@ -1,3 +1,4 @@
+import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { appendFileSync } from "node:fs";
@@ -7,6 +8,9 @@ import { workspaceIdentity } from "../../packages/ai-contract/dist/session.js";
 
 // Scripted model semantics inside a real OS process. This is not model-quality evidence.
 export async function createProvider({ configuration, tools }) {
+  const scenario =
+    new URL(import.meta.url).searchParams.get("scenario") ??
+    configuration.config.revision;
   const runs = new Map();
   let current,
     closed = false;
@@ -23,7 +27,7 @@ export async function createProvider({ configuration, tools }) {
     );
   trace("activate");
   const earlyTool = async () => {
-    if (configuration.config.revision !== "early_tool") return;
+    if (scenario !== "early_tool") return;
     const result = await tools.propose(
       { name: "early", arguments: {} },
       { timeoutMs: 1000, signal: new AbortController().signal },
@@ -31,13 +35,13 @@ export async function createProvider({ configuration, tools }) {
     trace("early-tool-result", { ok: result.ok });
   };
   await earlyTool();
-  if (configuration.config.revision === "unknown_grandchild") {
+  if (scenario === "unknown_grandchild") {
     const child = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], {
       stdio: "ignore",
     });
     trace("grandchild", { childPid: child.pid });
   }
-  if (configuration.config.revision === "activation_block") while (true) {}
+  if (scenario === "activation_block") while (true) {}
   const emit = (run, value) => {
     run.values.push({
       binding: { ...run.binding },
@@ -61,7 +65,7 @@ export async function createProvider({ configuration, tools }) {
   };
   const open = (previous) => {
     current = {
-      ...fixtureSession().binding,
+      ...activeStage(fixtureSession()).binding,
       provider: configuration.provider,
       workspaceId: workspaceIdentity(configuration.workingDirectory),
       config: configuration.config,
@@ -74,12 +78,9 @@ export async function createProvider({ configuration, tools }) {
       value: {
         binding: current,
         capabilities: {
-          ...fixtureSession().capabilities,
+          ...activeStage(fixtureSession()).capabilities,
           continuation: "across_processes",
-          steer:
-            configuration.config.revision === "steer"
-              ? "supported"
-              : "unsupported",
+          steer: scenario === "steer" ? "supported" : "unsupported",
           tools: tools ? "host_mediated" : "disabled",
         },
       },
@@ -91,7 +92,7 @@ export async function createProvider({ configuration, tools }) {
       return open();
     },
     async resume(previous) {
-      if (configuration.config.revision === "restore_unavailable")
+      if (scenario === "restore_unavailable")
         return { ok: false, error: { code: "unavailable", retry: "never" } };
       return open(previous);
     },
@@ -128,7 +129,7 @@ export async function createProvider({ configuration, tools }) {
           binding,
           acknowledgement: { type: "steer" },
         };
-      if (configuration.config.revision === "block") while (true) {}
+      if (scenario === "block") while (true) {}
       current = {
         ...binding,
         nativeRunId: randomUUID(),
@@ -142,7 +143,7 @@ export async function createProvider({ configuration, tools }) {
         done: false,
       };
       runs.set(command.commandId, run);
-      if (configuration.config.revision.startsWith("unknown"))
+      if (scenario.startsWith("unknown"))
         return { certainty: "unknown", correlationId: "native-correlation" };
       emit(run, { type: "submitted" });
       if (command.input.text !== "queued-native")
@@ -180,7 +181,10 @@ export async function createProvider({ configuration, tools }) {
           });
         }, 1);
       }
-      if (command.input.text === "quick")
+      if (
+        command.input.text === "quick" ||
+        command.input.text === "Reply with OK only. Do not use any tools."
+      )
         setTimeout(() => {
           emit(run, {
             type: "event",

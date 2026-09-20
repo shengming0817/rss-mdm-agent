@@ -33,7 +33,7 @@ export async function startFixture() {
   const service = createAccessService({
     host,
     now: Date.now,
-    sessionOptions: options,
+    sessionOptions: { connectionId: "cfg" },
   });
   const peers = new Map(),
     permissions = [];
@@ -131,9 +131,9 @@ export async function startFixture() {
     execution,
     async seed(count = 23) {
       for (let i = 0; i < count; i++)
-        unwrap(await host.createSession(fixtureCaller, options, budget()));
+        unwrap(await host.openSessionForTest(fixtureCaller, options, budget()));
       unwrap(
-        await host.createSession(
+        await host.openSessionForTest(
           { ...fixtureCaller, principalId: "other-user" },
           options,
           budget(),

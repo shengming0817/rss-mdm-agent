@@ -4,6 +4,7 @@ import { MessageComposer, MessageStream } from "@rss-mdm-agent/ui";
 import { RuntimeSurface } from "@rss-mdm-agent/ai-ui-bridge";
 import type { CommandView, TimelineItem } from "@rss-mdm-agent/ai-client";
 import { permissionPresentation, type AssistantController } from "./controller";
+import Connections from "./Connections.vue";
 import QuestionCard from "./QuestionCard.vue";
 import ExecutionDetails from "./ExecutionDetails.vue";
 const props = defineProps<{ controller: AssistantController }>();
@@ -119,6 +120,7 @@ const cancellations = computed(() =>
         >S1 测试装配 · 无真实执行</span
       >
     </div>
+    <Connections :controller="c" />
     <div class="assistant-facts" role="status">
       <span>连接：{{ connectionLabel.get(c.sessionConnection.value) }}</span>
       <span>AI：{{ c.busy.value ? "本轮处理中" : "空闲 / 历史可读" }}</span>

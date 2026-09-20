@@ -1,3 +1,4 @@
+import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createRequire } from "node:module";
@@ -34,7 +35,7 @@ function setup(t, capabilities = {}) {
   const host = new FakeHost(undefined, { now: () => 0 }, capabilities);
   const service = createAccessService({
     host,
-    sessionOptions: options,
+    sessionOptions: { connectionId: "cfg" },
     now: () => 0,
     timeoutMs: 5000,
   });
@@ -143,7 +144,7 @@ test("standard ACP prompt waits for terminal, carries text/tool updates, and sup
   );
   await assert.rejects(
     agent.request(extension.list, {
-      schemaVersion: 4,
+      schemaVersion: 5,
       kind: "listRequest",
       query: { limit: 2 },
     }),
@@ -207,7 +208,7 @@ test("product receipt, paged recovery and late delta use only the shared stable 
   const view = await runtime.createSession(),
     id = view.namespace.sessionId;
   const prompt = {
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "command",
     sessionId: id,
     commandId: "product-1",
@@ -233,7 +234,7 @@ test("product receipt, paged recovery and late delta use only the shared stable 
     (
       await host.publishDelta(fixtureCaller, id, {
         type: "delta",
-        binding: s.binding,
+        binding: activeStage(s).binding,
         commandId: prompt.commandId,
         attemptId: `attempt-${prompt.commandId}`,
         messageId: "m",

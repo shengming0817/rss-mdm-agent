@@ -16,8 +16,11 @@ fn decode<T: serde::de::DeserializeOwned>(input: serde_json::Value) -> Result<T>
 macro_rules! commands {
     ($($name:ident($input:ty) -> $output:ty = $method:ident),+ $(,)?) => {
         $(#[tauri::command]
-        pub async fn $name(state: State<'_, DesktopRuntime>, input: serde_json::Value) -> Result<$output> {
-            state.execution.$method(decode::<$input>(input)?).await
+        pub async fn $name(state: State<'_, DesktopRuntime>, generation: String, input: serde_json::Value) -> Result<$output> {
+            let handle = state.execution_for(&generation)?;
+            let output = handle.$method(decode::<$input>(input)?).await;
+            state.current(&generation)?;
+            output
         })+
         pub fn wire_schema() -> schemars::Schema {
             #[derive(schemars::JsonSchema)]
@@ -42,18 +45,21 @@ commands! {
 pub async fn execution_task_details(
     state: State<'_, DesktopRuntime>,
     request_id: String,
+    generation: String,
 ) -> Result<execution_app::ExecutionTaskDetails> {
     let request = execution_contract::RequestId::new(request_id)
         .map_err(|_| error("input", "无效任务编号"))?;
-    state
-        .execution
+    let handle = state.execution_for(&generation)?;
+    let result = handle
         .details(request)
         .await
-        .map_err(|_| error("task_unavailable", "任务不存在或当前无权读取"))
+        .map_err(|_| error("task_unavailable", "任务不存在或当前无权读取"));
+    state.current(&generation)?;
+    result
 }
 #[tauri::command]
-pub async fn ai_connect(state: State<'_, DesktopRuntime>) -> Result<String> {
-    state.connect().await
+pub async fn ai_connect(state: State<'_, DesktopRuntime>, generation: String) -> Result<String> {
+    state.connect(&generation).await
 }
 #[tauri::command]
 pub async fn ai_receive(
@@ -76,8 +82,36 @@ pub async fn ai_disconnect(state: State<'_, DesktopRuntime>, connection_id: Stri
     Ok(())
 }
 
+#[tauri::command]
+pub fn test_users(state: State<'_, DesktopRuntime>) -> Result<ai_session_contract::TestUserPage> {
+    Ok(state
+        .users
+        .lock()
+        .map_err(|_| error("users_unavailable", "测试用户记录不可用"))?
+        .page())
+}
+#[tauri::command]
+pub async fn select_test_user(
+    state: State<'_, DesktopRuntime>,
+    name: String,
+) -> Result<ai_session_contract::UserContext> {
+    state.select_user(&name).await
+}
+
+#[tauri::command]
+pub async fn enter_connection_credential<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, DesktopRuntime>,
+    generation: String,
+) -> Result<String> {
+    super::credentials::enter(app, state.users.clone(), generation).await
+}
+
 pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder.invoke_handler(tauri::generate_handler![
+        enter_connection_credential,
+        test_users,
+        select_test_user,
         self_service_snapshot,
         self_service_preview,
         self_service_submit,
@@ -103,8 +137,19 @@ mod tests {
         window: &tauri::WebviewWindow<tauri::test::MockRuntime>,
         command: &str,
         url: &str,
-        body: serde_json::Value,
+        mut body: serde_json::Value,
     ) -> std::result::Result<tauri::ipc::InvokeResponseBody, serde_json::Value> {
+        if let Some(object) = body.as_object_mut() {
+            if let Ok(context) = window
+                .state::<DesktopRuntime>()
+                .users
+                .lock()
+                .unwrap()
+                .current()
+            {
+                object.insert("generation".into(), serde_json::json!(context.generation));
+            }
+        }
         get_ipc_response(
             window,
             tauri::webview::InvokeRequest {
@@ -136,6 +181,7 @@ mod tests {
             &root.join("missing-artifact"),
         ))
         .unwrap();
+        tauri::async_runtime::block_on(runtime.select_user("Alice")).unwrap();
         let app = register(mock_builder())
             .manage(runtime)
             .build(tauri::generate_context!())

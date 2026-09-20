@@ -37,6 +37,10 @@ struct Connection {
 }
 pub struct DesktopRuntime {
     pub execution: ExecutionHandle,
+    pub users: Arc<std::sync::Mutex<super::users::Users>>,
+    scopes: Arc<std::sync::Mutex<BTreeMap<String, ExecutionHandle>>>,
+    root: PathBuf,
+    switching: Mutex<()>,
     socket: PathBuf,
     child: Mutex<Option<Child>>,
     mcp_stop: CancellationToken,
@@ -60,66 +64,47 @@ fn private_directory(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     }
     Ok(())
 }
-fn configuration(
-    root: &Path,
-) -> Result<(PathBuf, PathBuf, super::origin::AiBinding), Box<dyn std::error::Error>> {
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-    let path = root.join("client.json");
-    if !path.exists() {
-        let home = std::env::var_os("HOME").ok_or("user home unavailable")?;
-        let user = std::env::var_os("CODEX_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(home).join(".codex"));
-        let value = json!({"databasePath":root.join("ai.sqlite"),"socketPath":root.join("ai.sock"),"nativeDirectory":root.join("native"),"workingDirectory":root.join("workspace"),
-            "caller":{"tenantId":"s1-test","principalId":"fixture-actor","authorityId":"desktop-fixture"},
-            "session":{"provider":"codex","accountRef":"s1-user-codex","config":{"id":"s1-local","revision":"r1"},"profile":"controlled_tools"},
-            "connection":{"source":"existing_user_config","directory":user}});
-        std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&path)?
-            .write_all(&serde_json::to_vec_pretty(&value)?)?;
-    }
-    // The Node configuration owner performs exact validation; Rust reads only the endpoint.
-    use std::io::Read;
-    use std::os::unix::fs::{MetadataExt, PermissionsExt};
-    let before = std::fs::symlink_metadata(&path)?;
-    if !before.is_file()
-        || before.file_type().is_symlink()
-        || before.permissions().mode() & 0o077 != 0
-    {
-        return Err("private configuration file required".into());
-    }
-    let file = std::fs::File::open(&path)?;
-    let actual = file.metadata()?;
-    if before.ino() != actual.ino() || before.dev() != actual.dev() {
-        return Err("configuration identity changed".into());
-    }
-    let mut bytes = Vec::new();
-    file.take(65537).read_to_end(&mut bytes)?;
-    if bytes.len() > 65536 {
-        return Err("configuration size".into());
-    }
-    let value: Value = serde_json::from_slice(&bytes)?;
-    let socket = PathBuf::from(value["socketPath"].as_str().ok_or("socket configuration")?);
-    if socket != root.join("ai.sock") {
-        return Err("desktop socket must remain in its private directory".into());
-    }
-    Ok((
-        path,
-        socket,
-        super::origin::AiBinding::from_configuration(&value)?,
-    ))
+fn configuration(root: &Path) -> Result<(PathBuf, PathBuf), Box<dyn std::error::Error>> {
+    use std::{io::Write, os::unix::fs::OpenOptionsExt};
+    let path = root.join("host.json");
+    let socket = root.join("ai.sock");
+    let value = json!({"version":1,"databasePath":root.join("ai.sqlite"),"socketPath":socket,"credentialSocket":root.join("credentials.sock"),"usersPath":root.join("users.json"),"nativeDirectory":root.join("native"),"workingDirectory":root.join("workspace")});
+    let temporary = root.join(format!("host-{}.tmp", uuid::Uuid::new_v4()));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&temporary)?;
+    file.write_all(&serde_json::to_vec(&value)?)?;
+    file.sync_all()?;
+    std::fs::rename(temporary, &path)?;
+    Ok((path, socket))
 }
 impl DesktopRuntime {
     pub async fn start(root: &Path, artifact: &Path) -> Result<Self, Box<dyn std::error::Error>> {
         private_directory(root)?;
         private_directory(&root.join("workspace"))?;
-        let (configuration, socket, ai_binding) = configuration(root)?;
-        let execution = ExecutionHandle::start(&root.join("execution.sqlite"), ai_binding)?;
+        let users = Arc::new(std::sync::Mutex::new(
+            super::users::Users::open(root).map_err(|_| "user registry unavailable")?,
+        ));
+        let scopes = Arc::new(std::sync::Mutex::new(BTreeMap::new()));
+        for user in &users.lock().map_err(|_| "user registry lock")?.page().users {
+            let binding = super::origin::AiBinding::for_user(user.user_id.as_str())?;
+            let handle = ExecutionHandle::start(&root.join("execution.sqlite"), binding)?;
+            scopes
+                .lock()
+                .map_err(|_| "execution registry lock")?
+                .insert(user.user_id.to_string(), handle);
+        }
+        let (configuration, socket) = configuration(root)?;
+        let execution = ExecutionHandle::router(scopes.clone());
         let mcp_stop = CancellationToken::new();
+        super::credentials::serve(
+            root.join("credentials.sock"),
+            users.clone(),
+            mcp_stop.child_token(),
+        )
+        .await?;
         let mut child = None;
         // Missing AI credentials/artifact never substitute fixture conversations or erase tasks.
         let launched = Command::new(artifact.join("bin/rss-ai-host"))
@@ -167,6 +152,10 @@ impl DesktopRuntime {
         }
         Ok(Self {
             execution,
+            users,
+            scopes,
+            root: root.to_path_buf(),
+            switching: Mutex::new(()),
             socket,
             child: Mutex::new(child),
             mcp_stop,
@@ -174,7 +163,52 @@ impl DesktopRuntime {
             next: AtomicU64::new(1),
         })
     }
-    pub async fn connect(&self) -> ui::Result<String> {
+    pub fn current(&self, generation: &str) -> ui::Result<ai_session_contract::UserContext> {
+        self.users
+            .lock()
+            .map_err(|_| unavailable())?
+            .require(generation)
+    }
+    pub fn execution_for(&self, generation: &str) -> ui::Result<ExecutionHandle> {
+        let context = self.current(generation)?;
+        self.scopes
+            .lock()
+            .map_err(|_| unavailable())?
+            .get(context.user.user_id.as_str())
+            .cloned()
+            .ok_or_else(unavailable)
+    }
+    pub async fn select_user(&self, name: &str) -> ui::Result<ai_session_contract::UserContext> {
+        let _switch = self.switching.lock().await;
+        self.detach_views().await;
+        let context = self.users.lock().map_err(|_| unavailable())?.select(name)?;
+        {
+            let mut scopes = self.scopes.lock().map_err(|_| unavailable())?;
+            if !scopes.contains_key(context.user.user_id.as_str()) {
+                let binding = super::origin::AiBinding::for_user(context.user.user_id.as_str())
+                    .map_err(|_| unavailable())?;
+                let handle = ExecutionHandle::start(&self.root.join("execution.sqlite"), binding)
+                    .map_err(|_| unavailable())?;
+                scopes.insert(context.user.user_id.to_string(), handle);
+            }
+        }
+        // The same private Host remains alive. An attach also performs this fence if startup is still pending.
+        if let Ok(stream) = UnixStream::connect(&self.socket).await {
+            let (reader, writer) = stream.into_split();
+            let mut writer = FramedWrite::new(writer, LinesCodec::new_with_max_length(262144));
+            let mut reader = FramedRead::new(reader, LinesCodec::new_with_max_length(262144));
+            if writer
+                .send(json!({"type":"select_user","generation":context.generation}).to_string())
+                .await
+                .is_ok()
+            {
+                let _ = tokio::time::timeout(Duration::from_secs(15), reader.next()).await;
+            }
+        }
+        Ok(context)
+    }
+    pub async fn connect(&self, generation: &str) -> ui::Result<String> {
+        self.current(generation)?;
         let mut connections = self.connections.lock().await;
         if connections.len() >= 4 || self.mcp_stop.is_cancelled() {
             return Err(unavailable());
@@ -201,7 +235,13 @@ impl DesktopRuntime {
         })
         .await
         .map_err(|_| unavailable())??;
+        self.current(generation)?;
         let (reader, writer) = stream.into_split();
+        let mut writer = FramedWrite::new(writer, LinesCodec::new_with_max_length(262144));
+        writer
+            .send(json!({"type":"attach","generation":generation}).to_string())
+            .await
+            .map_err(|_| unavailable())?;
         let id = format!("view-{}", self.next.fetch_add(1, Ordering::Relaxed));
         connections.insert(
             id.clone(),
@@ -210,10 +250,7 @@ impl DesktopRuntime {
                     reader,
                     LinesCodec::new_with_max_length(262144),
                 )),
-                writer: Mutex::new(FramedWrite::new(
-                    writer,
-                    LinesCodec::new_with_max_length(262144),
-                )),
+                writer: Mutex::new(writer),
                 stop: self.mcp_stop.child_token(),
             }),
         );
@@ -281,6 +318,14 @@ impl DesktopRuntime {
             }
         }
         self.mcp_stop.cancel();
+        let handles = self
+            .scopes
+            .lock()
+            .map(|rows| rows.values().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        for handle in handles {
+            handle.close().await;
+        }
         self.execution.close().await;
     }
 }

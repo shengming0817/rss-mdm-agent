@@ -35,7 +35,7 @@ await store.close({ timeoutMs: 1000, signal: new AbortController().signal });
 
 ## Schema、安全与容量
 
-独立 application ID 与 schema version 3（AI wire V4）。`open` 先通过临时只读连接验证身份与 schema，不改变外部数据库；取得长期写连接后，在写事务内重新验证，再设置持久配置。首次建库的 DDL、版本和 checksum 在同一事务；已有 schema v1/v2、缺版本、缺表、对象变化、较新版本或校验失败时拒绝打开；旧库只读检查，不自动修改、删除或重建。没有旧 PR 数据库导入、双读、fallback 或损坏后重建。首次建库失败可能留下无 schema 的文件；必须由操作方检查并处置，`open` 不将其当成新库。
+独立 application ID 与 schema version 4（AI wire V5）。`open` 先通过临时只读连接验证身份与 schema，不改变外部数据库；取得长期写连接后，在写事务内重新验证，再设置持久配置。首次建库的 DDL、版本和 checksum 在同一事务；已有 schema v1/v2/v3、缺版本、缺表、对象变化、较新版本或校验失败时拒绝打开；旧库只读检查，不自动修改、删除或重建。没有旧 PR 数据库导入、双读、fallback 或损坏后重建。首次建库失败可能留下无 schema 的文件；必须由操作方检查并处置，`open` 不将其当成新库。
 
 `path` 必须是本机私有目录中的绝对文件路径。所有数值必须为安全整数；组合根通过 `StoreOptions` 选择下列范围内的值，超过边界返回 `invalid_input`。运行中超过容量预算返回 `limit_exceeded`。
 

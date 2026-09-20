@@ -106,12 +106,21 @@ test("invalid local configuration fails before listening and emits only a closed
   assert.equal(cli.status, 1);
   assert.match(cli.stderr, /configuration_invalid/);
   assert.doesNotMatch(cli.stderr, /remote\.example\.test|secret-value/);
-  await writeFile(path, JSON.stringify(base), { mode: 0o600 });
-  assert.equal(
-    (await readConfiguration(path)).connection.apiUrl,
-    base.connection.apiUrl,
-  );
-  await writeFile(base.socketPath, "preserve this file");
-  await assert.rejects(startLocalApp(path), /socket path is not a socket/);
-  assert.equal(await readFile(base.socketPath, "utf8"), "preserve this file");
+  const current = {
+    version: 1,
+    databasePath: base.databasePath,
+    socketPath: base.socketPath,
+    credentialSocket: join(directory, "credentials.sock"),
+    usersPath: join(directory, "users.json"),
+    nativeDirectory: directory,
+    workingDirectory: directory,
+  };
+  await writeFile(path, JSON.stringify(current), { mode: 0o600 });
+  assert.deepEqual(await readConfiguration(path), current);
+  await writeFile(path, JSON.stringify({ ...current, caller: base.caller }), {
+    mode: 0o600,
+  });
+  await assert.rejects(readConfiguration(path), {
+    code: "configuration_invalid",
+  });
 });

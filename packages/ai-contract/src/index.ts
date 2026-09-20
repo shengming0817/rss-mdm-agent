@@ -35,3 +35,15 @@ export { boundedStream } from "./stream.js";
 export { withinBudget } from "./budget.js";
 
 export { errorCodes } from "./identity.js";
+
+export {
+  activeStage,
+  productSession,
+  providerStage,
+  startStage,
+  replaceStage,
+} from "./contexts.js";
+
+export { emptyPreferences, connectionRevision } from "./connections.js";
+
+export { historyPreview, promptText } from "./history.js";

@@ -1,3 +1,4 @@
+import { activeStage } from "@rss-mdm-agent/ai-contract";
 import {
   agent,
   RequestError,
@@ -333,10 +334,29 @@ export function createAccessService(options: AccessOptions) {
     own(
       (async () => {
         try {
-          for await (const item of host.subscribe(peer.caller, id, after, {
-            signal: pump.controller.signal,
-            timeoutMs,
-          })) {
+          async function* updates(): AsyncIterable<Subscription> {
+            let retriedAt: number | undefined;
+            while (!pump.controller.signal.aborted) {
+              let retry = false;
+              for await (const item of host.subscribe(
+                peer.caller,
+                id,
+                pump.after,
+                { signal: pump.controller.signal, timeoutMs },
+              )) {
+                if (item.type === "resync_required" && !pump.attachmentId) {
+                  if (retriedAt === pump.after)
+                    throw new PumpFailure("sequence_gap");
+                  retriedAt = pump.after;
+                  retry = true;
+                  break;
+                }
+                yield item;
+              }
+              if (!retry) return;
+            }
+          }
+          for await (const item of updates()) {
             if (pump.controller.signal.aborted) break;
             if (item.type === "event") {
               if (item.event.sequence <= pump.after) continue;
@@ -355,7 +375,7 @@ export function createAccessService(options: AccessOptions) {
               continue;
             if (pump.attachmentId) {
               const update: AccessUpdate = {
-                schemaVersion: 4,
+                schemaVersion: 5,
                 kind: "accessUpdate",
                 sessionId: id,
                 attachmentId: pump.attachmentId,
@@ -384,7 +404,7 @@ export function createAccessService(options: AccessOptions) {
             if (pump.attachmentId) {
               try {
                 await peer.connection.client.notify(extension.update, {
-                  schemaVersion: 4,
+                  schemaVersion: 5,
                   kind: "accessUpdate",
                   sessionId: id,
                   attachmentId: pump.attachmentId,
@@ -423,7 +443,7 @@ export function createAccessService(options: AccessOptions) {
         return fail("unavailable");
       if (previous?.attachmentId)
         await peer.connection.client.notify(extension.update, {
-          schemaVersion: 4,
+          schemaVersion: 5,
           kind: "accessUpdate",
           sessionId: id,
           attachmentId: previous.attachmentId,
@@ -476,7 +496,7 @@ export function createAccessService(options: AccessOptions) {
         }
         if (
           !n ||
-          n.contractVersion !== 4 ||
+          n.contractVersion !== 5 ||
           n.acp !== 1 ||
           typeof n.cursorAttach !== "boolean" ||
           typeof n.durableReceipts !== "boolean"
@@ -596,7 +616,7 @@ export function createAccessService(options: AccessOptions) {
         })
         .join("\n");
       const command = parse("command").parse({
-        schemaVersion: 4,
+        schemaVersion: 5,
         kind: "command",
         sessionId: params.sessionId,
         commandId: crypto.randomUUID(),
@@ -658,10 +678,11 @@ export function createAccessService(options: AccessOptions) {
             continue;
           }
           if (
-            dispatch.observerGeneration !== s.binding.generation ||
-            dispatch.nativeSessionId !== s.binding.nativeSessionId ||
-            dispatch.nativeThreadId !== s.binding.nativeThreadId ||
-            dispatch.nativeRunId !== s.binding.nativeRunId
+            dispatch.observerGeneration !== activeStage(s).binding.generation ||
+            dispatch.nativeSessionId !==
+              activeStage(s).binding.nativeSessionId ||
+            dispatch.nativeThreadId !== activeStage(s).binding.nativeThreadId ||
+            dispatch.nativeRunId !== activeStage(s).binding.nativeRunId
           )
             continue;
           const key = JSON.stringify([
@@ -689,7 +710,7 @@ export function createAccessService(options: AccessOptions) {
         await submit(
           peer,
           {
-            schemaVersion: 4,
+            schemaVersion: 5,
             kind: "command",
             sessionId: params.sessionId,
             commandId: crypto.randomUUID(),
@@ -697,9 +718,9 @@ export function createAccessService(options: AccessOptions) {
             input: {
               type: "cancel",
               targetCommandId,
-              generation: s.binding.generation,
-              ...(s.binding.nativeRunId
-                ? { nativeRunId: s.binding.nativeRunId }
+              generation: activeStage(s).binding.generation,
+              ...(activeStage(s).binding.nativeRunId
+                ? { nativeRunId: activeStage(s).binding.nativeRunId }
                 : {}),
             },
           },
@@ -707,6 +728,75 @@ export function createAccessService(options: AccessOptions) {
         );
       }
     });
+    app.onRequest(
+      extension.connections,
+      parse("connectionsRequest"),
+      async ({ signal }) => {
+        ready(peer, true);
+        return value(await host.connections(peer.caller, budget(signal)));
+      },
+    );
+    app.onRequest(
+      extension.saveConnection,
+      parse("saveConnectionRequest"),
+      async ({ params, signal }) => {
+        ready(peer, true);
+        return value(
+          await host.saveConnection(
+            peer.caller,
+            params.connection,
+            params.expectedRevision,
+            budget(signal),
+          ),
+        );
+      },
+    );
+    app.onRequest(
+      extension.preferences,
+      parse("preferencesRequest"),
+      async ({ params, signal }) => {
+        ready(peer, true);
+        return value(
+          await host.savePreferences(
+            peer.caller,
+            params.preferences,
+            budget(signal),
+          ),
+        );
+      },
+    );
+    app.onRequest(
+      extension.selectConnection,
+      parse("selectConnectionRequest"),
+      async ({ params, signal }) => {
+        ready(peer, true);
+        return value(
+          await host.selectConnection(
+            peer.caller,
+            params.sessionId,
+            params.connectionId,
+            budget(signal),
+            params.freshContext,
+          ),
+        );
+      },
+    );
+    app.onRequest(
+      extension.history,
+      parse("historyRequest"),
+      async ({ params, signal }) => {
+        ready(peer, true);
+        return value(
+          await host.previewHistory(
+            peer.caller,
+            params.sessionId,
+            params.connectionId,
+            params.recent,
+            budget(signal),
+          ),
+        );
+      },
+    );
     app.onRequest(
       extension.submit,
       parse("command"),
@@ -802,7 +892,7 @@ export function createAccessService(options: AccessOptions) {
         return submit(
           peer,
           {
-            schemaVersion: 4,
+            schemaVersion: 5,
             kind: "command",
             sessionId: metadata.sessionId,
             commandId: metadata.commandId,

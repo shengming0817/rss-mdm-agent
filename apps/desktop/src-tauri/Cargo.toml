@@ -10,6 +10,10 @@ publish = false
 tauri-build.workspace = true
 
 [dependencies]
+ai-session-contract = { path = "../../../crates/ai-session-contract" }
+unicode-normalization = "=0.1.25"
+uuid = { version = "=1.26.0", features = ["v4"] }
+libc = "=0.2.189"
 schemars.workspace = true
 tauri.workspace = true
 serde.workspace = true
@@ -28,6 +32,12 @@ execution-lifecycle = { path = "../../../crates/execution-lifecycle" }
 tokio = { workspace = true, features = ["process", "net", "rt-multi-thread"] }
 tokio-util.workspace = true
 futures-util.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "=3.5.1"
+objc2 = "=0.6.4"
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSAlert", "NSButton", "NSControl", "NSSecureTextField", "NSTextField", "NSView", "NSResponder", "NSWindow", "NSApplication"] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSString", "NSGeometry"] }
 
 [features]
 default = ["custom-protocol"]

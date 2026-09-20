@@ -1,3 +1,8 @@
+import { activeStage } from "../../packages/ai-contract/dist/index.js";
+import { openSqliteStore } from "../../packages/ai-store-sqlite/dist/index.js";
+import { createServer as credentialServer } from "node:net";
+import { spawn } from "node:child_process";
+import { executionServer } from "../ai-host/rust-execution.mjs";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { connect } from "node:net";
@@ -40,7 +45,7 @@ export async function until(check, label = "condition", timeoutMs = 15000) {
 }
 export function command(sessionId, commandId, text = "hello") {
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "command",
     sessionId,
     commandId,
@@ -166,39 +171,99 @@ export async function configuration(
 ) {
   const nativeDirectory = join(directory, "native");
   await mkdir(nativeDirectory, { mode: 0o700 });
-  const credentialPath = join(directory, "credential");
-  await writeFile(credentialPath, "fixture-only-key", { mode: 0o600 });
   const config = {
+    version: 1,
     databasePath: join(directory, "ai.sqlite"),
     socketPath: join(directory, "ai.sock"),
+    credentialSocket: join(directory, "credentials.sock"),
+    usersPath: join(directory, "users.json"),
+    nativeDirectory,
+    workingDirectory: directory,
     caller: {
-      tenantId: "s1-test",
+      tenantId: "test-users",
       principalId: "fixture-actor",
       authorityId: "desktop-fixture",
     },
     session: {
       provider,
-      config: { id: "local", revision: "r1" },
+      config: { id: "local", revision: "1" },
       accountRef: "test-account",
       profile,
     },
-    workingDirectory: directory,
-    nativeDirectory,
     connection: {
-      source: "custom_endpoint",
-      credentialPath,
-      credentialType: "api_key",
-      apiUrl,
-      model: provider === "deepseek" ? "deepseek-chat" : "fixture-model",
+      schemaVersion: 5,
+      kind: "connection",
+      connectionId: "local",
+      name: "Native fixture",
+      provider,
+      configRevision: 1,
+      credentialRevision: 1,
+      accountRef: "test-account",
+      credentialRef: "fixture-reference",
+      profile,
+      status: "ready",
+      source: {
+        type: "custom_api",
+        apiUrl,
+        credentialType: "api_key",
+        model: provider === "deepseek" ? "deepseek-chat" : "fixture-model",
+      },
     },
   };
+  const user = {
+    schemaVersion: 5,
+    kind: "testUser",
+    userId: "fixture-actor",
+    displayName: "Fixture",
+    nameKey: "fixture",
+  };
+  const current = {
+    schemaVersion: 5,
+    kind: "userContext",
+    user,
+    generation: "fixture-generation",
+  };
+  await writeFile(
+    config.usersPath,
+    JSON.stringify({
+      schemaVersion: 5,
+      kind: "testUserPage",
+      users: [user],
+      current,
+    }),
+    { mode: 0o600 },
+  );
+  const store = unwrap(
+    openSqliteStore({ path: config.databasePath, mode: "create" }),
+  );
+  unwrap(await store.saveConnection(config.caller, config.connection, null));
+  await store.close(budget());
+  // The broker supplies a fixture key to real SDK processes. It is not Keychain evidence.
+  const broker = credentialServer((socket) =>
+    socket.once("data", () =>
+      socket.end(
+        JSON.stringify({ ok: true, value: { value: "fixture-only-key" } }) +
+          "\n",
+      ),
+    ),
+  );
+  broker.listen(config.credentialSocket);
+  await once(broker, "listening");
+  broker.unref();
   const path = join(directory, "configuration.json");
-  await writeFile(path, JSON.stringify(config), { mode: 0o600 });
-  return { config, path };
+  await writeConfiguration(path, config);
+  return { config, path, broker };
+}
+export async function writeConfiguration(path, config) {
+  const { caller, session, connection, ...paths } = config;
+  await writeFile(path, JSON.stringify(paths), { mode: 0o600 });
 }
 export async function clientAt(socketPath) {
   const socket = connect(socketPath);
   await once(socket, "connect");
+  socket.write(
+    JSON.stringify({ type: "attach", generation: "fixture-generation" }) + "\n",
+  );
   const client = new RuntimeClient(
     ndJsonStream(Writable.toWeb(socket), Readable.toWeb(socket)),
   );
@@ -214,12 +279,12 @@ export async function clientAt(socketPath) {
 export async function fixture(t, provider) {
   const directory = await realpath(await mkdtemp(join(tmpdir(), "rss-a06-")));
   const model = await modelServer(provider);
-  const { config, path } = await configuration(
+  const { config, path, broker } = await configuration(
     directory,
     provider,
     model.apiUrl,
   );
-  let app;
+  let app, rust;
   const peers = [];
   const f = {
     directory,
@@ -230,13 +295,32 @@ export async function fixture(t, provider) {
       return app;
     },
     async start() {
-      app = await startLocalApp(path);
+      rust = spawn(
+        executionServer(),
+        [
+          join(directory, "execution.sqlite"),
+          join(directory, "audit.json"),
+          "ai-unknown",
+        ],
+        { stdio: ["pipe", "pipe", "ignore"] },
+      );
+      rust.stdin.on("error", () => {});
+      app = await startLocalApp(path, {
+        input: rust.stdout,
+        output: rust.stdin,
+      });
       return app;
     },
     async stop() {
       for (const peer of peers.splice(0)) peer.close();
       await app?.close();
       app = undefined;
+      if (rust && rust.exitCode === null && rust.signalCode === null) {
+        const exited = once(rust, "exit");
+        rust.kill("SIGTERM");
+        await exited;
+      }
+      rust = undefined;
     },
     async connect() {
       const peer = await clientAt(config.socketPath);
@@ -249,13 +333,14 @@ export async function fixture(t, provider) {
       await f.stop();
     } finally {
       await model.close();
+      await new Promise((resolve) => broker.close(resolve));
     }
     await rm(directory, { recursive: true, force: true });
   });
   return f;
 }
 export function evidence(t, scenario, session, requests, extra = {}) {
-  const { workspaceId: _workspace, ...binding } = session.binding;
+  const { workspaceId: _workspace, ...binding } = activeStage(session).binding;
   t.diagnostic(
     JSON.stringify({
       a06: 1,
@@ -264,11 +349,11 @@ export function evidence(t, scenario, session, requests, extra = {}) {
       proof: "real_process_local_model",
       provider: binding.provider,
       profile:
-        session.capabilities.tools === "disabled"
+        activeStage(session).capabilities.tools === "disabled"
           ? "conversation"
           : "controlled_tools",
       binding,
-      capabilities: session.capabilities,
+      capabilities: activeStage(session).capabilities,
       ...extra,
       modelRequests: requests.length,
       nativeTools: nativeToolInventory(requests),

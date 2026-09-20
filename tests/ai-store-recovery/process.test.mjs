@@ -1,3 +1,4 @@
+import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import { readSnapshot } from "../../packages/ai-contract/dist/testing/index.js";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -88,7 +89,7 @@ test("an idle Host excludes a second process; SIGKILL releases ownership without
     await next.rebind({
       namespace: head.namespace,
       expectedRevision: head.revision,
-      expectedGeneration: head.binding.generation,
+      expectedGeneration: activeStage(head).binding.generation,
       restored,
       eventId: "successor",
     }),
@@ -149,16 +150,16 @@ for (const scenario of [
         await store.rebind({
           namespace: initial.namespace,
           expectedRevision: snapshot.session.revision,
-          expectedGeneration: initial.binding.generation,
+          expectedGeneration: activeStage(initial).binding.generation,
           restored,
           eventId: "intent-rollback-rebind",
         }),
       );
       const attempt = {
         attemptId: "fresh-after-rollback",
-        originGeneration: current.binding.generation,
-        observerGeneration: current.binding.generation,
-        nativeSessionId: current.binding.nativeSessionId,
+        originGeneration: activeStage(current).binding.generation,
+        observerGeneration: activeStage(current).binding.generation,
+        nativeSessionId: activeStage(current).binding.nativeSessionId,
         certainty: "intent",
       };
       const dispatching = {
@@ -195,7 +196,7 @@ for (const scenario of [
         await store.rebind({
           namespace: initial.namespace,
           expectedRevision: snapshot.session.revision,
-          expectedGeneration: initial.binding.generation,
+          expectedGeneration: activeStage(initial).binding.generation,
           restored,
           eventId: "crash-rebind",
         }),
@@ -215,7 +216,7 @@ for (const scenario of [
         await reopened.rebind({
           namespace: head.namespace,
           expectedRevision: head.revision,
-          expectedGeneration: head.binding.generation,
+          expectedGeneration: activeStage(head).binding.generation,
           restored: restoredAgain,
           eventId: "crash-third-rebind",
         }),
@@ -228,7 +229,7 @@ for (const scenario of [
         observerGeneration: "crash-third",
       });
       const accepted = {
-        schemaVersion: 4,
+        schemaVersion: 5,
         kind: "commandRecord",
         command: record.command,
         receipt: record.receipt,

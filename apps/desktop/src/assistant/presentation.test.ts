@@ -1,3 +1,4 @@
+import { activeStage } from "@rss-mdm-agent/ai-contract";
 import { mount } from "@vue/test-utils";
 import { expect, it } from "vitest";
 import QuestionCard from "./QuestionCard.vue";
@@ -131,9 +132,9 @@ it.each(["prompt", "cancel", "respond"] as const)(
     c.state.selected = session.namespace.sessionId;
     const v: SessionView = {
       namespace: session.namespace,
-      generation: session.binding.generation,
+      generation: activeStage(session).binding.generation,
       cursor: 1,
-      capabilities: session.capabilities,
+      capabilities: activeStage(session).capabilities,
       sessionStatus: "active",
       connection: "attached",
       timeline:
@@ -145,7 +146,7 @@ it.each(["prompt", "cancel", "respond"] as const)(
       commands: {
         p: {
           command: {
-            schemaVersion: 4,
+            schemaVersion: 5,
             kind: "command",
             sessionId: session.namespace.sessionId,
             commandId: "p",
@@ -157,12 +158,12 @@ it.each(["prompt", "cancel", "respond"] as const)(
                   ? {
                       type: "cancel",
                       targetCommandId: "target",
-                      generation: session.binding.generation,
+                      generation: activeStage(session).binding.generation,
                     }
                   : {
                       type: "respond",
                       interactionId: "q",
-                      generation: session.binding.generation,
+                      generation: activeStage(session).binding.generation,
                       answer: { answers: {} },
                     },
           },

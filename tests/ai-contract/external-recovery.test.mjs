@@ -1,3 +1,4 @@
+import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import { readSnapshot } from "../../packages/ai-contract/dist/testing/index.js";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -93,14 +94,14 @@ test("interaction expiry requires time strictly after its inclusive deadline", a
 test("rebind refuses malformed seeds before hashing them into event ids", async () => {
   const store = new MemorySessionStore(),
     initial = fixtureSession();
-  initial.capabilities.continuation = "across_processes";
+  activeStage(initial).capabilities.continuation = "across_processes";
   unwrap(await store.create(initial));
   for (const eventId of ["", "bad space", "x".repeat(129)]) {
     const restored = await restoredSession(initial, "new-generation");
     const result = await store.rebind({
       namespace: initial.namespace,
       expectedRevision: 0,
-      expectedGeneration: initial.binding.generation,
+      expectedGeneration: activeStage(initial).binding.generation,
       restored,
       eventId,
     });
@@ -121,7 +122,7 @@ test("raw reconciliation cannot reset an ambiguous attempt", async () => {
     "unknown",
   );
   const accepted = {
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "commandRecord",
     command: record.command,
     receipt: record.receipt,
@@ -142,7 +143,7 @@ test("raw reconciliation cannot reset an ambiguous attempt", async () => {
       {
         commandId: record.command.commandId,
         attemptId: record.dispatch.attemptId,
-        binding: session.binding,
+        binding: activeStage(session).binding,
         status: "not_submitted",
       },
     ],

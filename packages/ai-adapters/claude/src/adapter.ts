@@ -1,3 +1,4 @@
+import { promptText } from "@rss-mdm-agent/ai-contract";
 import { workspaceIdentity } from "@rss-mdm-agent/ai-contract/session";
 import { randomUUID } from "node:crypto";
 import {
@@ -78,6 +79,7 @@ interface Session {
   displayBudget: ByteBudget;
   active?: Turn;
   initialized: boolean;
+  existingLogin: boolean;
   closing: boolean;
   stopped: boolean;
   failed: boolean;
@@ -377,6 +379,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
         turns: new Map(),
         displayBudget: new ByteBudget(4 * 1024 * 1024),
         initialized: false,
+        existingLogin: resolved.credential.type === "existing_login",
         closing: false,
         stopped: false,
         failed: false,
@@ -391,6 +394,33 @@ export class ClaudeAdapter implements ProviderAgentPort {
       );
       void this.pump(session);
       await bounded(runtime.query.initializationResult(), remaining());
+      if (resolved.credential.type === "existing_login") {
+        const account = await bounded(runtime.query.accountInfo(), remaining());
+        if (
+          account.apiProvider !== "firstParty" ||
+          !account.email ||
+          !account.organization ||
+          !account.tokenSource ||
+          [
+            "ANTHROPIC_API_KEY",
+            "apiKeyHelper",
+            "project",
+            "org",
+            "temporary",
+          ].includes(account.apiKeySource ?? "")
+        )
+          throw new Error("authentication_required");
+        if (!resolved.verifyAccount) throw new Error("authentication_required");
+        await bounded(
+          resolved.verifyAccount({
+            email: account.email,
+            organization: account.organization,
+            tokenSource: account.tokenSource,
+            apiKeySource: account.apiKeySource ?? "none",
+          }),
+          remaining(),
+        );
+      }
       if (
         epoch !== this.epoch ||
         budget.signal.aborted ||
@@ -453,7 +483,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
       decode(
         boundedJson(
           {
-            schemaVersion: 4,
+            schemaVersion: 5,
             kind: "event",
             namespace: this.session?.configuration.namespace,
             eventId: "control-attempt",
@@ -523,7 +553,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
     try {
       c = this.checked(command);
       const attemptEvent = {
-        schemaVersion: 4,
+        schemaVersion: 5,
         kind: "event",
         namespace: this.session?.configuration.namespace,
         eventId: "validate-attempt",
@@ -601,7 +631,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
         type: "user",
         session_id: binding.nativeSessionId,
         uuid: live.nativeRequestId as `${string}-${string}-${string}-${string}-${string}`,
-        message: { role: "user", content: c.input.text },
+        message: { role: "user", content: promptText(c.input) },
         parent_tool_use_id: null,
       });
       const accepted = await bounded(turn.acceptance.promise, budget);
@@ -664,6 +694,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
         ...(s.configuration.permissions === "host_mediated" ? [bridge] : []),
       ]);
       if (
+        (s.existingLogin && !["oauth", "none"].includes(m.apiKeySource)) ||
         m.claude_code_version !== CLI_VERSION ||
         m.permissionMode !== "default" ||
         m.tools.some((t) => !allowed.has(t)) ||

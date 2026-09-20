@@ -1,3 +1,8 @@
+import {
+  startStage,
+  providerStage,
+  replaceStage,
+} from "../../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createRequire } from "node:module";
@@ -24,14 +29,17 @@ const binding = {
   config: { id: "cfg", revision: "1" },
   workspaceId: "workspace",
 };
-const session = {
-  schemaVersion: 4,
-  kind: "session",
-  namespace,
-  revision: 1,
-  lastSequence: 0,
-  binding,
-  capabilities: {
+const session = startStage(
+  {
+    schemaVersion: 5,
+    kind: "session",
+    namespace,
+    revision: 1,
+    lastSequence: 0,
+    status: "active",
+    stages: [],
+  },
+  providerStage(binding, {
     continuation: "across_processes",
     cancellation: "request_only",
     tools: "disabled",
@@ -41,14 +49,13 @@ const session = {
     terminal: "unsupported",
     structuredQuestion: "unsupported",
     multimodal: "unsupported",
-  },
-  status: "active",
-};
+  }),
+);
 const prompt = (commandId, policy, state, dispatch) => ({
-  schemaVersion: 4,
+  schemaVersion: 5,
   kind: "commandRecord",
   command: {
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "command",
     sessionId: namespace.sessionId,
     commandId,
@@ -61,7 +68,7 @@ const prompt = (commandId, policy, state, dispatch) => ({
     },
   },
   receipt: {
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "receipt",
     namespace,
     commandId,
@@ -121,12 +128,7 @@ async function cancel(t, activeSession, records) {
   };
   const service = createAccessService({
     host,
-    sessionOptions: {
-      provider: activeSession.binding.provider,
-      accountRef: "account",
-      config: { id: "cfg", revision: "1" },
-      profile: "conversation",
-    },
+    sessionOptions: { connectionId: "cfg" },
     now: () => 0,
     timeoutMs: 1_000,
   });
@@ -204,7 +206,7 @@ test("ACP cancel preserves providers without a native run identifier", async (t)
   const noRun = { ...binding, provider: "claude" };
   delete noRun.nativeRunId;
   delete noRun.nativeThreadId;
-  const activeSession = { ...session, binding: noRun };
+  const activeSession = replaceStage({ ...session }, noRun, undefined);
   const attempt = dispatch("a-no-run", "request-no-run", {
     nativeRunId: undefined,
     nativeThreadId: undefined,

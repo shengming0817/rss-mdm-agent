@@ -11,7 +11,7 @@ Owner repository：rss-mdm-agent。任务容器：[EPIC #2392](https://dev.azure
 C05 经用户扩大范围：提取独立 Vue UI 包和可启动的 Tauri 桌面基础壳，采用根级 `apps/`、`packages/`、`crates/` 组织。
 C20 将 C15/C16 桌面页面通过受限 IPC 接入 Rust SQLite 执行 owner、S1 测试 runner 和独立 AI Host；浏览器继续使用明确的只读样本。UI 与 AI 共用冻结计划、授权、批准和原请求恢复，旧内存生产入口直接替换；具体启动与验证见[桌面指南](../guides/desktop-development.md)。
 
-C16 在同一应用壳直接增加 AI 助手导航，消费公共 ai-client / ai-ui-bridge。固定 Host 测试装配复用同一 App；Tauri 普通启动注入真实本地 AI 服务，不可用时显示未连接。执行详情来自 Rust execution-app 的单次授权记录读取，冻结计划摘要及 TypeScript 类型由 Rust 生成，S1 结果持续标识测试。AI wire V4 与 AI SQLite schema v3 直接替换旧版，不迁移或双读；C20 已接入同一 Rust 持久执行 owner 和独立 Node Host；真实平台执行仍不在 S1 内。页面与故障验收见[助手指南](../guides/assistant-development.md)。
+C16 在同一应用壳直接增加 AI 助手导航，消费公共 ai-client / ai-ui-bridge。固定 Host 测试装配复用同一 App；Tauri 普通启动注入真实本地 AI 服务，不可用时显示未连接。执行详情来自 Rust execution-app 的单次授权记录读取，冻结计划摘要及 TypeScript 类型由 Rust 生成，S1 结果持续标识测试。AI wire V5 与 AI SQLite schema v4 直接替换旧版，不迁移或双读；C20 已接入同一 Rust 持久执行 owner 和独立 Node Host；真实平台执行仍不在 S1 内。页面与故障验收见[助手指南](../guides/assistant-development.md)。
 
 ## 1. 产品定位与完成边界
 
@@ -388,3 +388,17 @@ C20必须证明选定AI宿主自身没有不受控原生工具旁路；做不到
 
 每次证据绑定源码SHA、依赖lock、provider版本、配置/运行模式、命令与原始结果及未覆盖项。
 本仓已有本地 make ci、Cargo/pnpm 工程与独立消费验证；各能力 owner 随实施扩展既有入口。完整 make ci 一次收集失败后集中修复，不跑父仓 CI 代替，不新增远端 CI。
+
+## AI 测试用户、连接与上下文（AGENT-AI-01）
+
+[AGENT-AI-01 #2454](https://dev.azure.com/shengming0923/rss/_workitems/edit/2454) 统一桌面测试主体、个人连接和产品会话。用户手动填写或选择名称：Unicode 去首尾空白、NFC 规范化、ASCII 大小写不敏感，1–64 个字符且不含控制字符；保留首次显示名称，以随机内部 ID 持久归属。重启恢复最后选择并生成新 UI generation。此入口始终显示测试模式，不提供防冒用认证。
+
+原生组合根持有用户注册表、当前 generation 和平台凭据入口；WebView 不提交 caller。每用户独立会话、连接、默认/选中偏好与 UI 状态。切换用户关闭旧订阅、清空草稿与回调、取消旧模型队列和运行；未取得 terminal 的工作保留不确定状态。设备任务继续使用冻结原 actor，同一设备 journal 由各用户不可变执行句柄访问。
+
+每用户可创建多条命名 Codex、Claude、DeepSeek 连接。自定义 API 使用原生安全输入和 macOS Keychain；已有 Codex/Claude 登录及 API 配置单独选择来源，仅导入允许的连接字段，不导入权限、插件或任意 MCP。验证发送简短模型请求，完成后原子保存；失败保留原版本。首条可用连接成为默认，新增连接不替换默认；删除默认后无自动替补，连接删除不删除历史。配置 revision、凭据 revision、opaque account reference 分离，不使用秘密哈希充当身份。
+
+产品 Session 可在无凭据时创建和读取。首条输入懒创建 provider 阶段，后续连接选择先等待已接收队列按原阶段完成；切换等待期间拒绝新的普通输入。每个阶段固定连接及版本，一次仅有一个 live worker。原生 resume 与新上下文意图分别操作，原命令重试优先返回原回执，不触发新阶段。原生恢复失败不静默换上下文。
+
+跨上下文发送历史默认关闭；用户选择最近 N 轮或全部已完成的用户/助手稳定文本并确认预览。预览冻结目标版本、水位、命令/消息 ID 与内容哈希；不包含工具、系统指令和原始附件，不静默截断或重发。完整历史持续可读。
+
+应用使用新的 `test-users` 数据根；旧 `s1` 数据独立保留，不迁移、不双读、不自动归给首位测试用户。macOS 的来源验收与适配回归分别记录；Windows/Linux 和企业登录/配置下发仍不在已验证能力内。

@@ -1,3 +1,8 @@
+import {
+  startStage,
+  providerStage,
+} from "../../../packages/ai-contract/dist/index.js";
+import { replaceStage } from "../../../packages/ai-contract/dist/index.js";
 import { acknowledge } from "../control.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -222,12 +227,10 @@ test(
       nativeSessionId: admitted.binding.nativeSessionId,
       nativeThreadId: admitted.binding.nativeThreadId,
     });
-    const previous = {
-      ...fixtureSession(),
-      namespace: s.configuration.namespace,
-      binding: first.submission.binding,
-      capabilities: admitted.capabilities,
-    };
+    const previous = startStage(
+      { ...fixtureSession(), namespace: s.configuration.namespace, stages: [] },
+      providerStage(first.submission.binding, admitted.capabilities),
+    );
     unwrap(await port.close(budget()));
     const restoredPort = s.make();
     const restored = unwrap(

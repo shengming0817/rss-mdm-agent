@@ -1,3 +1,4 @@
+import { activeStage } from "../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 // Real macOS WebView acceptance; uses the fixed runtime artifact and existing user login.
@@ -33,28 +34,10 @@ const directory = realpathSync(mkdtempSync(join(tmpdir(), "rss-desktop-"))),
   report = join(directory, "result.json");
 const model = process.env.CODEX_SMOKE_MODEL ?? "gpt-5.5";
 writeFileSync(
-  join(directory, "client.json"),
+  join(directory, "acceptance.json"),
   JSON.stringify({
-    databasePath: join(directory, "ai.sqlite"),
-    socketPath: join(directory, "ai.sock"),
-    nativeDirectory: join(directory, "native"),
-    workingDirectory: join(directory, "workspace"),
-    caller: {
-      tenantId: "s1-test",
-      principalId: "fixture-actor",
-      authorityId: "desktop-fixture",
-    },
-    session: {
-      provider: "codex",
-      accountRef: "s1-user-codex",
-      config: { id: "s1-local", revision: "r1" },
-      profile: "controlled_tools",
-    },
-    connection: {
-      source: "existing_user_config",
-      directory: process.env.CODEX_HOME ?? join(homedir(), ".codex"),
-      model,
-    },
+    directory: process.env.CODEX_HOME ?? join(homedir(), ".codex"),
+    model,
   }),
   { mode: 0o600 },
 );
@@ -109,9 +92,9 @@ try {
       .map((row) => JSON.parse(row.json));
     assert.equal(sessions.length, 1);
     const session = sessions[0];
-    assert.equal(session.binding.provider, "codex");
-    assert.equal(session.binding.providerVersion, "0.155.0");
-    assert.equal(session.capabilities.tools, "host_mediated");
+    assert.equal(activeStage(session).binding.provider, "codex");
+    assert.equal(activeStage(session).binding.providerVersion, "0.155.0");
+    assert.equal(activeStage(session).capabilities.tools, "host_mediated");
     assert.equal(
       ai.prepare("SELECT count(*) n FROM worker_launches").get().n,
       0,
@@ -163,7 +146,7 @@ try {
     assert.equal(tasks.length, 3);
     facts = {
       sessionId: session.namespace.sessionId,
-      binding: session.binding,
+      binding: activeStage(session).binding,
       tasks,
       deliveries,
       workerLaunchesRemaining: 0,

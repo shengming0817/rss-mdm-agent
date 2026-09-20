@@ -1,3 +1,4 @@
+import { activeStage } from "../contexts.js";
 import { readSnapshot } from "./snapshot.js";
 import assert from "node:assert/strict";
 import { deliveryFingerprint } from "../codec.js";
@@ -26,7 +27,7 @@ import {
 
 /** Scripted admission proof, never actual provider/process restoration evidence. */
 export async function restoredSession(session: Session, generation: string) {
-  const previous = session.binding;
+  const previous = activeStage(session).binding;
   const binding = { ...previous, generation };
   const configuration = {
     provider: previous.provider,
@@ -43,7 +44,7 @@ export async function restoredSession(session: Session, generation: string) {
       value: {
         binding,
         capabilities: {
-          ...fixtureSession().capabilities,
+          ...activeStage(fixtureSession()).capabilities,
           continuation: "across_processes" as const,
         },
       },
@@ -69,7 +70,7 @@ export async function verifiedReconciliation(
   acknowledgement?: import("../wire.js").Acknowledgement,
 ) {
   const binding = {
-    ...session.binding,
+    ...activeStage(session).binding,
     ...(record.dispatch?.nativeRunId
       ? { nativeRunId: record.dispatch.nativeRunId }
       : {}),
@@ -80,7 +81,7 @@ export async function verifiedReconciliation(
   const port = {
     createSession: async () => ({
       ok: true as const,
-      value: { binding, capabilities: session.capabilities },
+      value: { binding, capabilities: activeStage(session).capabilities },
     }),
     reconcile: async () => ({
       ok: true as const,
@@ -122,14 +123,14 @@ export async function runRecoveryConformance(
   for (const rebindFirst of [true, false]) {
     const racing = await create(),
       session = fixtureSession();
-    session.capabilities.continuation = "across_processes";
+    activeStage(session).capabilities.continuation = "across_processes";
     unwrap(await racing.create(session));
     const restored = await restoredSession(session, "race-winner");
     const rebind = () =>
       racing.rebind({
         namespace: session.namespace,
         expectedRevision: 0,
-        expectedGeneration: session.binding.generation,
+        expectedGeneration: activeStage(session).binding.generation,
         restored,
         eventId: "race-rebind",
       });
@@ -142,15 +143,15 @@ export async function runRecoveryConformance(
     assert.equal(head.revision, 1);
     const rebindWon = results[rebindFirst ? 0 : 1].ok;
     assert.equal(
-      head.binding.generation,
-      rebindWon ? "race-winner" : session.binding.generation,
+      activeStage(head).binding.generation,
+      rebindWon ? "race-winner" : activeStage(session).binding.generation,
     );
     assert.equal(head.lastSequence, rebindWon ? 1 : 0);
     unwrap(await racing.close(defaultBudget()));
   }
   const store = await create();
   const initial = fixtureSession();
-  initial.capabilities.continuation = "across_processes";
+  activeStage(initial).capabilities.continuation = "across_processes";
   unwrap(await store.create(initial));
   unwrap(await store.accept(acceptance(initial)));
   let head = unwrap(await store.session(initial.namespace));
@@ -162,7 +163,7 @@ export async function runRecoveryConformance(
     input: {
       type: "cancel" as const,
       targetCommandId: "command-1",
-      generation: head.binding.generation,
+      generation: activeStage(head).binding.generation,
     },
   };
   unwrap(await store.accept(acceptance(head, control)));
@@ -172,7 +173,7 @@ export async function runRecoveryConformance(
   const input = {
     namespace: head.namespace,
     expectedRevision: head.revision,
-    expectedGeneration: head.binding.generation,
+    expectedGeneration: activeStage(head).binding.generation,
     restored,
     eventId: "rebind-1",
   };
@@ -227,7 +228,7 @@ export async function runRecoveryConformance(
         ...late,
         events: late.events.map((e) => ({
           ...e,
-          generation: oldHead.binding.generation,
+          generation: activeStage(oldHead).binding.generation,
         })),
       })
     ).ok,
@@ -244,12 +245,17 @@ export async function runRecoveryConformance(
   );
   head = unwrap(await store.session(head.namespace));
   assert.equal(
-    (await store.retire(head.namespace, head.revision, head.binding.generation))
-      .ok,
+    (
+      await store.retire(
+        head.namespace,
+        head.revision,
+        activeStage(head).binding.generation,
+      )
+    ).ok,
     false,
   );
   const accepted: CommandRecord = {
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "commandRecord",
     command: rebound.command,
     receipt: rebound.receipt,
@@ -290,8 +296,8 @@ export async function runRecoveryConformance(
   const nextAttempt = {
     ...original,
     attemptId: "attempt-second",
-    originGeneration: head.binding.generation,
-    observerGeneration: head.binding.generation,
+    originGeneration: activeStage(head).binding.generation,
+    observerGeneration: activeStage(head).binding.generation,
     certainty: "intent" as const,
   };
   delete nextAttempt.correlationId;
@@ -347,7 +353,7 @@ export async function runRecoveryConformance(
     await store.rebind({
       ...input,
       expectedRevision: head.revision,
-      expectedGeneration: head.binding.generation,
+      expectedGeneration: activeStage(head).binding.generation,
       restored: third,
       eventId: "rebind-3",
     }),
@@ -358,7 +364,7 @@ export async function runRecoveryConformance(
       await store.rebind({
         ...input,
         expectedRevision: head.revision,
-        expectedGeneration: head.binding.generation,
+        expectedGeneration: activeStage(head).binding.generation,
         restored: reused,
         eventId: "rebind-reuse",
       })
@@ -392,7 +398,7 @@ export async function runRecoveryConformance(
     await surfaceStore.rebind({
       namespace: before.session.namespace,
       expectedRevision: before.session.revision,
-      expectedGeneration: before.session.binding.generation,
+      expectedGeneration: activeStage(before.session).binding.generation,
       restored: restoredSurface,
       eventId: "surface-rebind",
     }),
@@ -463,7 +469,7 @@ async function failureAndDelivery(store: SessionStore) {
   let head = unwrap(await store.session(initial.namespace));
   const event = unwrap(await store.events(initial.namespace, 0, 1))[0];
   const delivery: import("../wire.js").Delivery = {
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "delivery",
     namespace: initial.namespace,
     operationId: "delivery-1",
@@ -479,8 +485,13 @@ async function failureAndDelivery(store: SessionStore) {
   head = unwrap(await store.session(initial.namespace));
   assert.deepEqual(unwrap(await store.deliveries(10, 0)).items, [delivery]);
   assert.equal(
-    (await store.retire(head.namespace, head.revision, head.binding.generation))
-      .ok,
+    (
+      await store.retire(
+        head.namespace,
+        head.revision,
+        activeStage(head).binding.generation,
+      )
+    ).ok,
     false,
     "unsettled delivery must remain writable",
   );
@@ -492,7 +503,11 @@ async function failureAndDelivery(store: SessionStore) {
   );
   head = unwrap(await store.session(initial.namespace));
   unwrap(
-    await store.retire(head.namespace, head.revision, head.binding.generation),
+    await store.retire(
+      head.namespace,
+      head.revision,
+      activeStage(head).binding.generation,
+    ),
   );
   assert.equal(unwrap(await store.pruneRetired(201)), 1);
 }

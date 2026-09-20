@@ -1,3 +1,5 @@
+import { replaceStage } from "../../packages/ai-contract/dist/index.js";
+import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
@@ -257,8 +259,11 @@ test("controlled admission requires a trusted verifier and binds immutable evide
     }),
   };
   const facts = {
-    binding: fixtureSession().binding,
-    capabilities: { ...fixtureSession().capabilities, tools: "host_mediated" },
+    binding: activeStage(fixtureSession()).binding,
+    capabilities: {
+      ...activeStage(fixtureSession()).capabilities,
+      tools: "host_mediated",
+    },
   };
   const port = new ScriptedProvider();
   port.createSession = async () => {
@@ -559,11 +564,11 @@ function intent(binding) {
 }
 
 test("verified resume re-admits the new incarnation and the exact endpoint", async () => {
-  const prior = fixtureSession().binding;
+  const prior = activeStage(fixtureSession()).binding;
   const facts = {
     binding: { ...prior, generation: "resumed-generation" },
     capabilities: {
-      ...fixtureSession().capabilities,
+      ...activeStage(fixtureSession()).capabilities,
       tools: "host_mediated",
       continuation: "across_processes",
     },
@@ -602,7 +607,7 @@ test("verified resume re-admits the new incarnation and the exact endpoint", asy
   const admitted = unwrap(
     await VerifiedProviderSession.restore(
       port,
-      { ...fixtureSession(), binding: prior },
+      replaceStage({ ...fixtureSession() }, prior, undefined),
       providerConfiguration(config),
       budget(),
       providerAdmission(config),
@@ -616,11 +621,11 @@ test("verified resume re-admits the new incarnation and the exact endpoint", asy
 
 for (const operation of ["open", "resume"])
   test(`${operation} admission failure closes the unverified runtime`, async () => {
-    const prior = fixtureSession().binding;
+    const prior = activeStage(fixtureSession()).binding;
     const facts = {
       binding: { ...prior, generation: "resumed-generation" },
       capabilities: {
-        ...fixtureSession().capabilities,
+        ...activeStage(fixtureSession()).capabilities,
         tools: "host_mediated",
         continuation: "across_processes",
       },
@@ -661,7 +666,7 @@ for (const operation of ["open", "resume"])
             )
           : await VerifiedProviderSession.restore(
               port,
-              { ...fixtureSession(), binding: prior },
+              replaceStage({ ...fixtureSession() }, prior, undefined),
               providerConfiguration(config),
               budget(),
               providerAdmission(config),
@@ -673,7 +678,7 @@ for (const operation of ["open", "resume"])
   });
 
 test("verified resume rejects stale incarnation, foreign session and configuration", async () => {
-  const prior = fixtureSession().binding;
+  const prior = activeStage(fixtureSession()).binding;
   for (const patch of [
     { generation: prior.generation },
     { nativeSessionId: "foreign" },
@@ -686,7 +691,7 @@ test("verified resume rejects stale incarnation, foreign session and configurati
       value: {
         binding: { ...prior, generation: "new", ...patch },
         capabilities: {
-          ...fixtureSession().capabilities,
+          ...activeStage(fixtureSession()).capabilities,
           continuation: "across_processes",
         },
       },
@@ -699,7 +704,7 @@ test("verified resume rejects stale incarnation, foreign session and configurati
       (
         await VerifiedProviderSession.restore(
           port,
-          { ...fixtureSession(), binding: prior },
+          replaceStage({ ...fixtureSession() }, prior, undefined),
           providerConfiguration(configuration),
           budget(),
           providerAdmission(configuration),
@@ -712,20 +717,20 @@ test("verified resume rejects stale incarnation, foreign session and configurati
 });
 
 test("verified resume requires across-process continuation capability", async () => {
-  const prior = fixtureSession().binding;
+  const prior = activeStage(fixtureSession()).binding;
   const port = new ScriptedProvider();
   port.resume = async () => ({
     ok: true,
     value: {
       binding: { ...prior, generation: "next" },
-      capabilities: fixtureSession().capabilities,
+      capabilities: activeStage(fixtureSession()).capabilities,
     },
   });
   assert.equal(
     (
       await VerifiedProviderSession.restore(
         port,
-        { ...fixtureSession(), binding: prior },
+        replaceStage({ ...fixtureSession() }, prior, undefined),
         providerConfiguration(configuration),
         budget(),
         providerAdmission(configuration),

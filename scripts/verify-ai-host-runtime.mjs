@@ -1,3 +1,5 @@
+import { configuration as fixtureConfiguration } from "../tests/ai-provider-conformance/support.mjs";
+import { executionServer } from "../tests/ai-host/rust-execution.mjs";
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
 import { once } from "node:events";
@@ -38,45 +40,38 @@ for (const signal of ["SIGTERM", "SIGINT"]) {
       [[{ type: "text", text: "bundled runtime" }]],
       requests,
     );
-  let child, socket, client, database;
+  let child, socket, client, database, rust, broker;
   let groups = [],
     stderr = "";
   try {
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-    const configurationDirectory = join(directory, "claude");
-    await mkdir(configurationDirectory, { mode: 0o700 });
-    const credentialPath = join(directory, "credential");
-    await writeFile(credentialPath, "fixture-only-key", { mode: 0o600 });
-    const configuration = {
-      databasePath: join(directory, "host.sqlite"),
-      socketPath: join(directory, "host.sock"),
-      caller: { tenantId: "t", principalId: "p", authorityId: "a" },
-      session: {
-        provider: "claude",
-        config: { id: "bundled", revision: "1" },
-        accountRef: "fixture",
-        profile: "conversation",
-      },
-      workingDirectory: directory,
-      nativeDirectory: configurationDirectory,
-      connection: {
-        source: "custom_endpoint",
-        credentialPath,
-        credentialType: "api_key",
-        apiUrl: `http://127.0.0.1:${server.address().port}`,
-        model: "fixture-model",
-      },
-    };
-    const configurationPath = join(directory, "configuration.json");
-    await writeFile(configurationPath, JSON.stringify(configuration), {
-      mode: 0o600,
-    });
+    const setup = await fixtureConfiguration(
+      directory,
+      "claude",
+      `http://127.0.0.1:${server.address().port}`,
+    );
+    const configuration = setup.config,
+      configurationPath = setup.path;
+    broker = setup.broker;
+    rust = spawn(
+      executionServer(),
+      [
+        join(directory, "execution.sqlite"),
+        join(directory, "audit.json"),
+        "ai-unknown",
+      ],
+      { stdio: ["pipe", "pipe", "ignore"] },
+    );
+    rust.stdin.on("error", () => {});
     child = spawn(executable, [configurationPath], {
       cwd: directory,
-      stdio: ["ignore", "ignore", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
       detached: true,
       env: { PATH: "/usr/bin:/bin", HOME: directory, TMPDIR: tmpdir() },
     });
+    child.stdout.pipe(rust.stdin);
+    rust.stdout.pipe(child.stdin);
+    child.stdin.on("error", () => {});
     child.stderr.on("data", (chunk) => {
       stderr = (stderr + chunk).slice(-16384);
     });
@@ -90,13 +85,17 @@ for (const signal of ["SIGTERM", "SIGINT"]) {
     assert.equal((await lstat(configuration.socketPath)).mode & 0o777, 0o600);
     socket = connect(configuration.socketPath);
     await once(socket, "connect");
+    socket.write(
+      JSON.stringify({ type: "attach", generation: "fixture-generation" }) +
+        "\n",
+    );
     client = new RuntimeClient(
       ndJsonStream(Writable.toWeb(socket), Readable.toWeb(socket)),
     );
     await client.initialize();
     const session = await client.createSession();
     await client.submit({
-      schemaVersion: 4,
+      schemaVersion: 5,
       kind: "command",
       commandId: "bundled",
       sessionId: session.namespace.sessionId,
@@ -174,6 +173,12 @@ for (const signal of ["SIGTERM", "SIGINT"]) {
           process.kill(-pgid, "SIGKILL");
         } catch {}
       }
+    if (rust && rust.exitCode === null && rust.signalCode === null) {
+      const exited = once(rust, "exit");
+      rust.kill("SIGTERM");
+      await exited;
+    }
+    if (broker) await new Promise((resolve) => broker.close(resolve));
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
     await rm(directory, { recursive: true, force: true });

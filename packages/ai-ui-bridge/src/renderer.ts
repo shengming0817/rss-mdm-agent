@@ -124,10 +124,10 @@ export class SurfaceRenderer implements SurfaceRendererHandle {
         }
         const now = this.now();
         this.pending = {
-          schemaVersion: 4,
+          schemaVersion: 5,
           kind: "actionRequest",
           metadata: {
-            schemaVersion: 4,
+            schemaVersion: 5,
             kind: "surfaceAction",
             sessionId: state.namespace.sessionId,
             commandId: crypto.randomUUID(),

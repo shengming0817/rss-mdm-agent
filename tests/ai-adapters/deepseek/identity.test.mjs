@@ -1,3 +1,5 @@
+import { replaceStage } from "../../../packages/ai-contract/dist/index.js";
+import { activeStage } from "../../../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { DeepSeekAdapter } from "../../../packages/ai-adapters/deepseek/dist/adapter.js";
@@ -100,11 +102,11 @@ test("unknown correlation is attempt-specific, survives records and cannot autho
     ...fixtureDispatchedRecord(b, cmd),
     dispatch: { ...a, certainty: "unknown", correlationId: sent.correlationId },
   };
-  const session = {
-    ...fixtureSession(),
-    binding: b,
-    capabilities: admitted.capabilities,
-  };
+  const session = replaceStage(
+    { ...fixtureSession() },
+    b,
+    admitted.capabilities,
+  );
   assert.equal(
     unwrap(
       await admitted.reconcile(
@@ -146,11 +148,11 @@ test("restore rejects tenant, workspace and configuration drift before creating 
       await VerifiedProviderSession.open(original, c, budget()),
     );
   await original.close(budget());
-  const session = {
-    ...fixtureSession(),
-    binding: admitted.binding,
-    capabilities: admitted.capabilities,
-  };
+  const session = replaceStage(
+    { ...fixtureSession() },
+    admitted.binding,
+    admitted.capabilities,
+  );
   for (const changed of [
     { ...c, namespace: { ...c.namespace, tenantId: "other" } },
     { ...c, workingDirectory: "/tmp/other" },
@@ -165,7 +167,10 @@ test("restore rejects tenant, workspace and configuration drift before creating 
   assert.equal(
     (
       await p.resume(
-        { ...session.binding, config: { id: "drift", revision: "2" } },
+        {
+          ...activeStage(session).binding,
+          config: { id: "drift", revision: "2" },
+        },
         c,
         budget(),
       )

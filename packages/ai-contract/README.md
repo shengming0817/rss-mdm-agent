@@ -38,7 +38,7 @@ V4 直接替换 V3 及更早版本。C20 增加配对的 delivery_requested / de
 
 ACP 固定官方 SDK 1.4.0 / schema-v1.21.0。标准 session/new、session/prompt、session/update、session/cancel、session/request_permission 保持上游语义；prompt 的最终响应必须有真实 stopReason，不能提前返回 accepted receipt。无 stopReason 的错误走标准错误路径，不制造成功响应。
 
-产品能力在 capabilities._meta 的 `rss-mdm-agent.ai-runtime` 下协商 contractVersion=4、durableReceipts、cursorAttach，以及可选 A2UI version/catalogId/catalogVersion。`_rss-mdm-agent/submit`、`/snapshot`、`/attach` 和 `/update` 是扩展方法的完整产品前缀约定（代码中的 extension 常量为准），只有协商后使用；未知 request 按 ACP 返回 method-not-found，未知 notification 按上游规则忽略。A01 只冻结约定和 fixtures；实际 transport/协议 service 归 A04。
+产品能力在 capabilities._meta 的 `rss-mdm-agent.ai-runtime` 下协商 contractVersion=5、durableReceipts、cursorAttach，以及可选 A2UI version/catalogId/catalogVersion。`_rss-mdm-agent/submit`、`/snapshot`、`/attach` 和 `/update` 是扩展方法的完整产品前缀约定（代码中的 extension 常量为准），只有协商后使用；未知 request 按 ACP 返回 method-not-found，未知 notification 按上游规则忽略。A01 只冻结约定和 fixtures；实际 transport/协议 service 归 A04。
 
 A2UI 固定 v0.9.1 snapshot，客户端 action、服务端 surface 生命周期、basic catalog 与 common types schema 原样保留在 [upstream](schema/upstream/a2ui/NOTICE.md)。`SurfaceState` 绑定 session/run、surfaceId、surfaceInstanceId、revision、interaction、component/event、catalog/version。create/update/delete 的上游 payload 不改写；产品扩展携带关联 metadata。一次新建 surface 使用新 instance ID，创建 revision 为0，更新/删除以 session revision/generation CAS 为前提严格递增1，身份字段不可重绑；active→deleted 持久化 tombstone 且不可复活，同时使 pending interaction unavailable。snapshotPage 与事件恢复这些关联和实际内容；完整有界 messages 与 surface 稳定事件同批发布，内容校验由公共 validateSurface 完成，A04 在发布和渲染前消费。
 

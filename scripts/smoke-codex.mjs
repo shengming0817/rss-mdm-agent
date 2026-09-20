@@ -1,3 +1,7 @@
+import {
+  startStage,
+  providerStage,
+} from "../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
@@ -233,7 +237,7 @@ async function main() {
       const sent = await adapter.dispatch(
         binding,
         {
-          schemaVersion: 4,
+          schemaVersion: 5,
           kind: "command",
           sessionId: configuration.namespace.sessionId,
           commandId: id,
@@ -313,16 +317,18 @@ async function main() {
     const restored = requireResult(
       await VerifiedProviderSession.restore(
         resumed,
-        {
-          schemaVersion: 4,
-          kind: "session",
-          namespace: configuration.namespace,
-          revision: 0,
-          lastSequence: 0,
-          status: "active",
-          binding: second,
-          capabilities: opened.capabilities,
-        },
+        startStage(
+          {
+            schemaVersion: 5,
+            kind: "session",
+            namespace: configuration.namespace,
+            revision: 0,
+            lastSequence: 0,
+            status: "active",
+            stages: [],
+          },
+          providerStage(second, opened.capabilities),
+        ),
         configuration,
         budget(30000),
       ),

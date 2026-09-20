@@ -46,7 +46,7 @@ function fixture() {
               provider,
               providerVersion: installations[provider].providerVersion,
               adapterVersion: "adapter-1",
-              config: { id: "local", revision: "r1" },
+              config: { id: "local", revision: controlled ? "2" : "1" },
               accountRef: "test-account",
               generation: "generation-" + index,
               nativeSessionId: "session-" + index,

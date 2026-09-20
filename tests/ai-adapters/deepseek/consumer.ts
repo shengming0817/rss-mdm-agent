@@ -1,3 +1,7 @@
+import {
+  startStage,
+  providerStage,
+} from "../../../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -42,16 +46,18 @@ try {
   const admitted = await VerifiedProviderSession.open(first, config, budget());
   assert.ok(admitted.ok);
   assert.equal((await first.close(budget())).ok, true);
-  const previous: Session = {
-    schemaVersion: 4,
-    kind: "session",
-    namespace: config.namespace,
-    revision: 0,
-    lastSequence: 0,
-    status: "active",
-    binding: admitted.value.binding,
-    capabilities: admitted.value.capabilities,
-  };
+  const previous: Session = startStage(
+    {
+      schemaVersion: 5,
+      kind: "session",
+      namespace: config.namespace,
+      revision: 0,
+      lastSequence: 0,
+      status: "active",
+      stages: [],
+    },
+    providerStage(admitted.value.binding, admitted.value.capabilities),
+  );
   const restored = await VerifiedProviderSession.restore(
     second,
     previous,

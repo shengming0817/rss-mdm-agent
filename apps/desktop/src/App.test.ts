@@ -1,3 +1,4 @@
+import { activeStage } from "@rss-mdm-agent/ai-contract";
 import { mount } from "@vue/test-utils";
 import { expect, it, vi } from "vitest";
 import App from "./App.vue";
@@ -38,10 +39,10 @@ it("expires navigation badge, background entry and question card together withou
     for (const id of ["selected", "background"]) {
       const v: SessionView = {
         namespace: { ...session.namespace, sessionId: id },
-        generation: session.binding.generation,
+        generation: activeStage(session).binding.generation,
         cursor: 1,
         capabilities: {
-          ...session.capabilities,
+          ...activeStage(session).capabilities,
           structuredQuestion: "supported",
         },
         sessionStatus: "active",
@@ -54,7 +55,7 @@ it("expires navigation badge, background entry and question card together withou
         interactions: {
           q: {
             commandId: "p",
-            generation: session.binding.generation,
+            generation: activeStage(session).binding.generation,
             status: "pending",
             expiresAtMs: 1000,
             callbackLifetime: "generation_bound",

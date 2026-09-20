@@ -1,9 +1,22 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { currentUser } from "../test-users";
 import { nativePort } from "./native";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(), isTauri: vi.fn() }));
 beforeEach(() => {
+  currentUser.value = {
+    schemaVersion: 5,
+    kind: "userContext",
+    user: {
+      schemaVersion: 5,
+      kind: "testUser",
+      userId: "alice",
+      displayName: "Alice",
+      nameKey: "alice",
+    },
+    generation: "generation-alice",
+  };
   vi.mocked(invoke).mockReset();
   vi.mocked(isTauri).mockReturnValue(true);
 });
@@ -24,7 +37,7 @@ it.each(["snapshot", "preview", "submit", "respond"] as const)(
     expect(await call()).toBe(response);
     expect(vi.mocked(invoke).mock.calls[0]).toEqual([
       `self_service_${method}`,
-      { input },
+      { input, generation: "generation-alice" },
     ]);
     vi.mocked(invoke).mockRejectedValueOnce(error);
     await expect(call()).rejects.toBe(error);

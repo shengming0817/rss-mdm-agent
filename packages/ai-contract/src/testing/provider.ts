@@ -1,3 +1,6 @@
+import { startStage, providerStage } from "../contexts.js";
+import { replaceStage } from "../contexts.js";
+import { activeStage } from "../contexts.js";
 import assert from "node:assert/strict";
 import canonicalize from "canonicalize";
 import { withinBudget, withCleanup, type BudgetFactory } from "./budget.js";
@@ -25,8 +28,13 @@ let nextProviderInstance = 0;
 /** Scripted provider contract double. Never spawns a process or executes a tool. */
 export class ScriptedProvider implements ProviderAgentPort {
   readonly evidence = "scripted_provider" as const;
+  constructor(
+    private readonly capabilities: Partial<
+      import("../wire.js").Capabilities
+    > = {},
+  ) {}
   private configuration?: ProviderConfiguration;
-  private binding = fixtureSession().binding;
+  private binding = activeStage(fixtureSession()).binding;
   observations: ProviderObservation[] = [];
   submission: "submitted" | "unknown" | "not_sent" = "submitted";
   dispatched = 0;
@@ -45,7 +53,7 @@ export class ScriptedProvider implements ProviderAgentPort {
       return fail("unsupported_capability");
     this.configuration = configuration;
     this.binding = {
-      ...fixtureSession().binding,
+      ...activeStage(fixtureSession()).binding,
       workspaceId: workspaceIdentity(configuration.workingDirectory),
       generation: `generation-${this.instance}-${++this.incarnation}`,
       nativeSessionId: `native-${this.instance}-${this.incarnation}`,
@@ -54,7 +62,11 @@ export class ScriptedProvider implements ProviderAgentPort {
     };
     return ok({
       binding: structuredClone(this.binding),
-      capabilities: fixtureSession().capabilities,
+      capabilities: {
+        ...activeStage(fixtureSession()).capabilities,
+        ...this.capabilities,
+        tools: "disabled",
+      },
     });
   }
   async resume(
@@ -200,13 +212,14 @@ export async function runProviderConformance(
             throw new Error("expected unknown");
           assert.ok(submission.correlationId);
           const record: CommandRecord = {
-            schemaVersion: 4,
+            schemaVersion: 5,
             kind: "commandRecord",
             command,
             receipt: {
-              schemaVersion: 4,
+              schemaVersion: 5,
               kind: "receipt",
-              namespace: fixtureSession().namespace,
+              stageId: binding.generation,
+              namespace: configuration.namespace,
               commandId: command.commandId,
               contentHash: fingerprint(command, fixtureLimits),
               acceptedAtMs: 0,
@@ -224,12 +237,14 @@ export async function runProviderConformance(
           const reconciled = unwrap(
             await withinBudget(budget, (b) =>
               admitted.reconcile(
-                {
-                  ...fixtureSession(),
-                  namespace: configuration.namespace,
-                  binding,
-                  capabilities,
-                },
+                startStage(
+                  {
+                    ...fixtureSession(),
+                    namespace: configuration.namespace,
+                    stages: [],
+                  },
+                  providerStage(binding, capabilities),
+                ),
                 record,
                 b,
               ),
@@ -310,7 +325,7 @@ export async function runProviderConformance(
                     : binding,
                 );
                 const context = {
-                  schemaVersion: 4,
+                  schemaVersion: 5,
                   namespace: fixtureSession().namespace,
                   commandId: command.commandId,
                   generation: observation.binding.generation,
@@ -495,11 +510,11 @@ async function lateAdmission(
                 budget(),
               ),
             );
-            previous = {
-              ...previous,
-              binding: admitted.binding,
-              capabilities: admitted.capabilities,
-            };
+            previous = replaceStage(
+              { ...previous },
+              admitted.binding,
+              admitted.capabilities,
+            );
           },
           async () => {
             unwrap(await withinBudget(budget, (b) => original.close(b)));
@@ -531,7 +546,7 @@ async function lateAdmission(
               await withinBudget(budget, (b) =>
                 operation === "resume"
                   ? (initialize as NonNullable<ProviderAgentPort["resume"]>)(
-                      previous.binding,
+                      activeStage(previous).binding,
                       configuration,
                       b,
                     )

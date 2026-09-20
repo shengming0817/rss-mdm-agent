@@ -1,3 +1,14 @@
+import { isDeepStrictEqual } from "node:util";
+import {
+  productSession,
+  replaceStage,
+  historyPreview,
+  type HistoryPreview,
+  type ConnectionPage,
+  type UserPreferences,
+  connectionRevision,
+} from "@rss-mdm-agent/ai-contract";
+import { activeStage } from "@rss-mdm-agent/ai-contract";
 import { randomUUID } from "node:crypto";
 import {
   boundedJson,
@@ -21,7 +32,9 @@ import {
   type Result,
   type Session,
   type SessionCommit,
+  type ConnectionOptions,
   type SessionOptions,
+  type Connection,
   type SessionStore,
   type SnapshotPage,
   type Subscription,
@@ -56,6 +69,7 @@ export interface HostDiagnostic {
   readonly code: import("@rss-mdm-agent/ai-contract").Failure["code"];
 }
 export interface HostOptions {
+  readonly callerAvailable?: (caller: Caller) => boolean;
   readonly onDiagnostic?: (diagnostic: HostDiagnostic) => void;
   readonly store: SessionStore;
   readonly launchFences: WorkerLaunchFenceStore;
@@ -63,10 +77,11 @@ export interface HostOptions {
   /** Trusted composition. Account references are not credentials. */
   resolve(
     caller: Caller,
-    options: SessionOptions,
+    options: ConnectionOptions,
     namespace: Namespace,
     budget: Budget,
     previous: Binding | null,
+    candidate?: Connection,
   ): Promise<{
     configuration: ProviderConfiguration;
     artifact: string;
@@ -79,6 +94,7 @@ export interface HostOptions {
   readonly now?: () => number;
 }
 interface Runtime {
+  verification?: true;
   worker: WorkerPort;
   verified?: VerifiedProviderSession;
   account: string;
@@ -93,7 +109,7 @@ const budget = (timeoutMs = 30000): Budget => ({
   signal: new AbortController().signal,
 });
 const baseRecord = (record: CommandRecord) => ({
-  schemaVersion: 4 as const,
+  schemaVersion: 5 as const,
   kind: "commandRecord" as const,
   command: record.command,
   receipt: record.receipt,
@@ -123,6 +139,20 @@ export class SessionHost implements HostPort {
   private readonly tasks = new Set<Promise<unknown>>();
   private readonly retryTimers = new Set<ReturnType<typeof setTimeout>>();
   private readonly blocked = new Set<string>();
+  private readonly suspended = new Set<string>();
+  private callerKey(caller: Caller) {
+    return JSON.stringify([
+      caller.tenantId,
+      caller.principalId,
+      caller.authorityId,
+    ]);
+  }
+  private callerAvailable(caller: Caller) {
+    return (
+      !this.suspended.has(this.callerKey(caller)) &&
+      (this.options.callerAvailable?.(caller) ?? true)
+    );
+  }
   private readonly admissions = new Map<Promise<unknown>, AbortController>();
   private closingTask?: Promise<Result<void>>;
   private closing = false;
@@ -227,7 +257,7 @@ export class SessionHost implements HostPort {
   }
   negotiate(offered: Negotiation): Result<Negotiation> {
     if (this.closed) return fail("unavailable");
-    if (offered.contractVersion !== 4 || offered.acp !== 1)
+    if (offered.contractVersion !== 5 || offered.acp !== 1)
       return fail("unsupported_version");
     if (
       offered.a2ui &&
@@ -267,8 +297,15 @@ export class SessionHost implements HostPort {
           );
         after = page.next;
       } while (after);
-      for (const namespace of namespaces.values())
-        await this.resume(namespace, namespace.sessionId, budget(this.timeout));
+      for (const namespace of namespaces.values()) {
+        if (this.callerAvailable(namespace))
+          await this.resume(
+            namespace,
+            namespace.sessionId,
+            budget(this.timeout),
+          );
+        else await this.unavailable(namespace);
+      }
       this.sweepDeliveries();
       return ok(undefined);
     });
@@ -324,10 +361,13 @@ export class SessionHost implements HostPort {
   }
   private async open(
     namespace: Namespace,
-    options: SessionOptions,
+    options: ConnectionOptions,
     b: Budget,
-    previous?: Session,
+    session: Session,
+    connection: Connection,
+    restore: boolean,
   ): Promise<Result<Session>> {
+    const previous = restore ? session : undefined;
     if (this.closing || b.signal.aborted) return fail("unavailable");
     // Retry orphan collection on admission, without a heartbeat or signaling old PIDs.
     for (const launch of requireValue(
@@ -370,7 +410,7 @@ export class SessionHost implements HostPort {
         options,
         namespace,
         b,
-        previous?.binding ?? null,
+        previous?.currentStageId ? activeStage(previous).binding : null,
       ),
       configuration = structuredClone(resolved.configuration);
     if (this.closing || b.signal.aborted) return fail("unavailable");
@@ -429,7 +469,11 @@ export class SessionHost implements HostPort {
     };
     try {
       requireValue(
-        await worker.start(configuration, b, previous?.binding ?? null),
+        await worker.start(
+          configuration,
+          b,
+          previous?.currentStageId ? activeStage(previous).binding : null,
+        ),
       );
       if (this.closing || b.signal.aborted)
         throw new HostFailure({ code: "unavailable", retry: "never" });
@@ -450,31 +494,29 @@ export class SessionHost implements HostPort {
       const verified = requireValue(admitted);
       if (this.closing || b.signal.aborted)
         throw new HostFailure({ code: "unavailable", retry: "never" });
-      let session: Session;
       if (previous)
         session = requireValue(
           await this.store.rebind({
             namespace,
             expectedRevision: previous.revision,
-            expectedGeneration: previous.binding.generation,
+            expectedGeneration: activeStage(previous).binding.generation,
             restored: verified,
             eventId: randomUUID(),
           }),
         );
       else {
-        session = {
-          schemaVersion: 4,
-          kind: "session",
-          namespace,
-          revision: 0,
-          lastSequence: 0,
-          status: "active",
-          binding: verified.binding,
-          capabilities: verified.capabilities,
-        };
-        requireValue(await this.store.create(session));
+        session = requireValue(
+          await this.store.activateStage({
+            namespace,
+            expectedRevision: session.revision,
+            configRevision: connection.configRevision,
+            credentialRevision: connection.credentialRevision,
+            opened: verified,
+          }),
+        );
       }
       runtime.verified = verified;
+      this.publish(namespace, { type: "resync_required" });
       worker.admitTools();
       if (previous) {
         await this.publishSince(namespace, previous.lastSequence);
@@ -494,6 +536,354 @@ export class SessionHost implements HostPort {
       throw error;
     }
   }
+  connections(caller: Caller, b: Budget): Promise<Result<ConnectionPage>> {
+    return this.result(async () => {
+      if (b.signal.aborted || this.closing) return fail("unavailable");
+      return ok({
+        schemaVersion: 5,
+        kind: "connectionPage",
+        connections: [...requireValue(await this.store.connections(caller))],
+        preferences: requireValue(await this.store.preferences(caller)),
+      });
+    });
+  }
+  saveConnection(
+    caller: Caller,
+    connection: Connection,
+    expected: number | null,
+    b: Budget,
+  ): Promise<Result<Connection>> {
+    const namespace = {
+      ...caller,
+      sessionId: `connection-${connection.connectionId}`,
+    };
+    return this.result(() =>
+      this.admit(namespace, b, async (b) => {
+        if (!this.callerAvailable(caller)) return fail("unavailable");
+        const old = await this.store.connection(
+          caller,
+          connection.connectionId,
+        );
+        const checked = connectionRevision(
+          connection,
+          old.ok ? old.value : undefined,
+          expected,
+        );
+        if (!checked.ok) return checked;
+        if (connection.status === "deleted")
+          return this.store.saveConnection(caller, connection, expected);
+        if (this.runtimes.size >= this.workerLimit)
+          return fail("limit_exceeded");
+        const probe = {
+          ...namespace,
+          sessionId: `verification-${randomUUID()}`,
+        };
+        const resolved = await this.options.resolve(
+          caller,
+          this.connectionOptions(connection),
+          probe,
+          b,
+          null,
+          connection,
+        );
+        const tools: ToolEndpoint = {
+          propose: async () => fail("permission_denied"),
+        };
+        const worker = new WorkerPort(
+          this.options.launchFences,
+          probe,
+          resolved.artifact,
+          resolved.admission ? tools : undefined,
+        );
+        const runtime: Runtime = {
+          verification: true,
+          worker,
+          account: connection.accountRef,
+          observing: new Set(),
+          inFlight: new Set(),
+          controlBurst: 0,
+          retryAfter: new Map(),
+          abort: new AbortController(),
+        };
+        const key = namespaceKey(probe);
+        this.runtimes.set(key, runtime);
+        b = { ...b, signal: AbortSignal.any([b.signal, runtime.abort.signal]) };
+        try {
+          requireValue(await worker.start(resolved.configuration, b, null));
+          const verified = requireValue(
+            await VerifiedProviderSession.open(
+              worker,
+              resolved.configuration,
+              b,
+              resolved.admission
+                ? { verifier: resolved.admission.verifier, tools }
+                : undefined,
+            ),
+          );
+          const command: Command = {
+            schemaVersion: 5,
+            kind: "command",
+            sessionId: probe.sessionId,
+            commandId: randomUUID(),
+            expiresAtMs: this.now() + b.timeoutMs,
+            input: {
+              type: "prompt",
+              policy: "queue_next",
+              text: "Reply with OK only. Do not use any tools.",
+            },
+          };
+          const binding = verified.binding;
+          const sent = await worker.dispatch(
+            binding,
+            command,
+            {
+              attemptId: randomUUID(),
+              originGeneration: binding.generation,
+              observerGeneration: binding.generation,
+              nativeSessionId: binding.nativeSessionId,
+              ...(binding.nativeThreadId
+                ? { nativeThreadId: binding.nativeThreadId }
+                : {}),
+              certainty: "intent",
+            },
+            b,
+          );
+          if (sent.certainty !== "submitted")
+            return fail("authentication_required");
+          let completed = false;
+          for await (const item of worker.observe(sent.binding, b)) {
+            if (item.type === "event" && item.body.type === "terminal") {
+              completed = item.body.outcome === "completed";
+              break;
+            }
+          }
+          if (!completed) return fail("authentication_required");
+          const stopped = requireValue(await worker.close(b));
+          if (
+            !stopped.processStopped ||
+            b.signal.aborted ||
+            !this.callerAvailable(caller)
+          )
+            return fail("unavailable");
+          return this.store.saveConnection(
+            caller,
+            { ...connection, status: "ready" },
+            expected,
+          );
+        } finally {
+          const stopped = await worker.close(budget(2000));
+          if (stopped.ok && stopped.value.processStopped)
+            this.runtimes.delete(key);
+          else {
+            runtime.abort.abort();
+            worker.terminate();
+            this.blocked.add(key);
+          }
+        }
+      }),
+    );
+  }
+  savePreferences(
+    caller: Caller,
+    preferences: UserPreferences,
+    b: Budget,
+  ): Promise<Result<UserPreferences>> {
+    return b.signal.aborted || this.closing
+      ? Promise.resolve(fail("unavailable"))
+      : this.store.savePreferences(caller, preferences);
+  }
+  previewHistory(
+    caller: Caller,
+    sessionId: string,
+    connectionId: string,
+    recent: number | undefined,
+    b: Budget,
+  ): Promise<Result<HistoryPreview>> {
+    return this.result(async () => {
+      if (b.signal.aborted || this.closing) return fail("unavailable");
+      const namespace = { ...caller, sessionId };
+      const connection = requireValue(
+        await this.store.connection(caller, connectionId),
+      );
+      if (connection.status !== "ready") return fail("connection_required");
+      const snapshot = await this.snapshot(namespace),
+        events: Event[] = [];
+      let after = 0;
+      while (after < snapshot.session.lastSequence) {
+        const rows = requireValue(
+          await this.store.events(namespace, after, 256),
+        );
+        if (!rows.length) return fail("storage_corrupt");
+        events.push(
+          ...rows.filter(
+            (row) => row.sequence <= snapshot.session.lastSequence,
+          ),
+        );
+        after = rows.at(-1)!.sequence;
+      }
+      return ok(
+        historyPreview(
+          snapshot.session,
+          snapshot.commands,
+          events,
+          connection,
+          recent,
+        ),
+      );
+    });
+  }
+  private async checkHistory(
+    session: Session,
+    preview: HistoryPreview,
+  ): Promise<Result<void>> {
+    if (
+      preview.sessionId !== session.namespace.sessionId ||
+      preview.connectionId !== session.selectedConnectionId ||
+      preview.throughSequence > session.lastSequence
+    )
+      return fail("content_conflict");
+    const connection = requireValue(
+      await this.store.connection(session.namespace, preview.connectionId),
+    );
+    if (
+      connection.configRevision !== preview.configRevision ||
+      connection.credentialRevision !== preview.credentialRevision
+    )
+      return fail("content_conflict");
+    if (
+      !session.freshContext &&
+      session.currentStageId &&
+      activeStage(session).connectionId === connection.connectionId &&
+      activeStage(session).configRevision === connection.configRevision
+    )
+      return fail("context_unavailable");
+    const snapshot = await this.snapshot(session.namespace),
+      events: Event[] = [];
+    let after = 0;
+    while (after < preview.throughSequence) {
+      const rows = requireValue(
+        await this.store.events(session.namespace, after, 256),
+      );
+      if (!rows.length) return fail("storage_corrupt");
+      events.push(
+        ...rows.filter((row) => row.sequence <= preview.throughSequence),
+      );
+      after = rows.at(-1)!.sequence;
+    }
+    const completed = new Set(
+      events
+        .filter(
+          (row) =>
+            row.body.type === "terminal" && row.body.outcome === "completed",
+        )
+        .map((row) => row.commandId),
+    );
+    if (preview.commandIds.some((id) => !completed.has(id)))
+      return fail("content_conflict");
+    const expected = historyPreview(
+      { ...session, lastSequence: preview.throughSequence },
+      snapshot.commands.filter((row) =>
+        preview.commandIds.includes(row.command.commandId),
+      ),
+      events,
+      connection,
+    );
+    return isDeepStrictEqual(expected, preview)
+      ? ok(undefined)
+      : fail("content_conflict");
+  }
+  private connectionOptions(connection: Connection): ConnectionOptions {
+    return {
+      provider: connection.provider,
+      config: {
+        id: connection.connectionId,
+        revision: String(connection.configRevision),
+      },
+      accountRef: connection.accountRef,
+      profile: connection.profile,
+    };
+  }
+  selectConnection(
+    caller: Caller,
+    sessionId: string,
+    connectionId: string,
+    b: Budget,
+    freshContext = false,
+  ): Promise<Result<Session>> {
+    const namespace = { ...caller, sessionId };
+    return this.result(() =>
+      this.admit(namespace, b, async () => {
+        const session = requireValue(await this.store.session(namespace));
+        const selected = await this.store.selectConnection(
+          namespace,
+          connectionId,
+          session.revision,
+          freshContext,
+        );
+        if (selected.ok) this.publish(namespace, { type: "resync_required" });
+        return selected;
+      }),
+    );
+  }
+  private async ensureContext(
+    session: Session,
+    b: Budget,
+  ): Promise<Result<Session>> {
+    const selected = session.selectedConnectionId;
+    if (!selected) return fail("connection_required");
+    const connection = requireValue(
+      await this.store.connection(session.namespace, selected),
+    );
+    if (connection.status !== "ready")
+      return fail(
+        connection.status === "authentication_required"
+          ? "authentication_required"
+          : "connection_required",
+      );
+    const stage = session.currentStageId ? activeStage(session) : undefined;
+    const changed =
+      session.freshContext ||
+      !stage ||
+      stage.connectionId !== selected ||
+      stage.configRevision !== connection.configRevision ||
+      stage.credentialRevision !== connection.credentialRevision;
+    if (!changed) {
+      if (session.status !== "active") return fail("context_unavailable");
+      const runtime = this.runtimes.get(namespaceKey(session.namespace));
+      if (runtime)
+        return runtime.verified
+          ? ok(session)
+          : fail("reconciliation_required", "reconcile_first");
+      return this.open(
+        session.namespace,
+        this.connectionOptions(connection),
+        b,
+        session,
+        connection,
+        true,
+      );
+    }
+    const snapshot = await this.snapshot(session.namespace);
+    if (snapshot.commands.some((row) => !isSettled(row)))
+      return fail("connection_switch_pending");
+    const key = namespaceKey(session.namespace),
+      runtime = this.runtimes.get(key);
+    if (runtime) {
+      runtime.abort.abort();
+      const stopped = await runtime.worker.close(b);
+      if (!stopped.ok || !stopped.value.processStopped)
+        return fail("reconciliation_required", "reconcile_first");
+      this.runtimes.delete(key);
+    }
+    return this.open(
+      session.namespace,
+      this.connectionOptions(connection),
+      b,
+      session,
+      connection,
+      false,
+    );
+  }
   createSession(
     caller: Caller,
     options: SessionOptions,
@@ -508,9 +898,21 @@ export class SessionHost implements HostPort {
       sessionId: randomUUID(),
     };
     return this.result(() =>
-      this.admit(namespace, b, (admissionBudget) =>
-        this.open(namespace, options, admissionBudget),
-      ),
+      this.admit(namespace, b, async () => {
+        if (Object.keys(options).some((key) => key !== "connectionId"))
+          return fail("invalid_input");
+        const prefs = requireValue(await this.store.preferences(caller));
+        const selected = options.connectionId ?? prefs.defaultConnectionId;
+        if (selected) {
+          const connection = requireValue(
+            await this.store.connection(caller, selected),
+          );
+          if (connection.status !== "ready") return fail("connection_required");
+        }
+        const session = productSession(namespace, selected);
+        requireValue(await this.store.create(session));
+        return ok(session);
+      }),
     );
   }
   resume(
@@ -537,19 +939,22 @@ export class SessionHost implements HostPort {
         )
           return ok(previous);
         try {
+          if (!previous.currentStageId) return ok(previous);
+          const stage = activeStage(previous);
+          const connection = requireValue(
+            await this.store.connection(
+              namespace,
+              stage.connectionId,
+              stage.configRevision,
+            ),
+          );
           const result = await this.open(
             namespace,
-            {
-              provider: previous.binding.provider,
-              config: previous.binding.config,
-              accountRef: previous.binding.accountRef,
-              profile:
-                previous.capabilities.tools === "host_mediated"
-                  ? "controlled_tools"
-                  : "conversation",
-            },
+            this.connectionOptions(connection),
             b,
             previous,
+            connection,
+            true,
           );
           if (!result.ok) await this.unavailable(namespace);
           return result;
@@ -581,7 +986,10 @@ export class SessionHost implements HostPort {
     b: Budget,
     closing = false,
   ): Promise<Result<Receipt>> {
-    if ((this.closing && !closing) || b.signal.aborted)
+    if (
+      ((this.closing || !this.callerAvailable(caller)) && !closing) ||
+      b.signal.aborted
+    )
       return Promise.resolve(fail("unavailable"));
     return this.result(async () => {
       const decoded = decode(
@@ -599,9 +1007,26 @@ export class SessionHost implements HostPort {
       const result = await this.mailbox(namespace, async () => {
         if (b.signal.aborted)
           return fail<Receipt>("unavailable", "same_command");
-        const session = requireValue(await this.store.session(namespace)),
-          prior = await this.store.command(namespace, command.commandId);
+        let session = requireValue(await this.store.session(namespace));
+        const prior = await this.store.command(namespace, command.commandId);
         if (!prior.ok) {
+          if (command.input.type === "prompt" && command.input.history) {
+            if (command.input.policy !== "queue_next")
+              return fail("invalid_input");
+            const checked = await this.checkHistory(
+              session,
+              command.input.history,
+            );
+            if (!checked.ok) return checked;
+          }
+          if (
+            command.input.type === "prompt" &&
+            command.input.policy === "queue_next"
+          ) {
+            const prepared = await this.ensureContext(session, b);
+            if (!prepared.ok) return prepared;
+            session = prepared.value;
+          }
           if (
             session.status !== "active" ||
             !this.runtimes.get(namespaceKey(namespace))?.verified
@@ -621,13 +1046,13 @@ export class SessionHost implements HostPort {
           if (
             input.type === "prompt" &&
             input.policy === "steer" &&
-            (session.capabilities.steer !== "supported" ||
-              input.targetRunId !== session.binding.nativeRunId)
+            (activeStage(session).capabilities.steer !== "supported" ||
+              input.targetRunId !== activeStage(session).binding.nativeRunId)
           )
             return fail<Receipt>("unsupported_capability");
           if (
             input.type !== "prompt" &&
-            input.generation !== session.binding.generation
+            input.generation !== activeStage(session).binding.generation
           )
             return fail<Receipt>("stale_binding");
           if (input.type === "cancel") {
@@ -639,13 +1064,13 @@ export class SessionHost implements HostPort {
             if (
               target.dispatch &&
               (input.nativeRunId !== target.dispatch.nativeRunId ||
-                input.nativeRunId !== session.binding.nativeRunId)
+                input.nativeRunId !== activeStage(session).binding.nativeRunId)
             )
               return fail<Receipt>("stale_binding");
             if (
               target.dispatch &&
               ["unsupported", "unknown"].includes(
-                session.capabilities.cancellation,
+                activeStage(session).capabilities.cancellation,
               )
             )
               return fail<Receipt>("unsupported_capability");
@@ -657,7 +1082,7 @@ export class SessionHost implements HostPort {
           namespace,
           command,
           expectedRevision: session.revision,
-          expectedGeneration: session.binding.generation,
+          expectedGeneration: activeStage(session).binding.generation,
           nowMs: this.now(),
           retention: { retryWindowMs: 60000, receiptWindowMs: 86400000 },
           eventId: randomUUID(),
@@ -710,12 +1135,12 @@ export class SessionHost implements HostPort {
     )
       attemptId = undefined;
     return {
-      schemaVersion: 4,
+      schemaVersion: 5,
       kind: "event",
       namespace: session.namespace,
       eventId: randomUUID(),
       sequence: session.lastSequence + offset + 1,
-      generation: session.binding.generation,
+      generation: activeStage(session).binding.generation,
       ...(commandId ? { commandId } : {}),
       ...(attemptId ? { attemptId } : {}),
       body,
@@ -730,7 +1155,7 @@ export class SessionHost implements HostPort {
     const batch: SessionCommit = {
       namespace: session.namespace,
       expectedRevision: session.revision,
-      expectedGeneration: session.binding.generation,
+      expectedGeneration: activeStage(session).binding.generation,
       session: {
         ...session,
         revision: session.revision + 1,
@@ -785,12 +1210,12 @@ export class SessionHost implements HostPort {
       const record =
         control && (runtime.controlBurst < 8 || occupied || !ordinary)
           ? control
-          : !occupied && !this.closing
+          : !occupied && !this.closing && this.callerAvailable(namespace)
             ? ordinary
             : control;
       if (!record || runtime.inFlight.size >= 16) return;
       if (isOrdinary(record)) {
-        if (this.closing) return;
+        if (this.closing || !this.callerAvailable(namespace)) return;
         runtime.controlBurst = 0;
       } else runtime.controlBurst++;
       if (record.command.expiresAtMs < this.now()) {
@@ -876,21 +1301,24 @@ export class SessionHost implements HostPort {
       }
       const attempt = {
         attemptId: randomUUID(),
-        originGeneration: session.binding.generation,
-        observerGeneration: session.binding.generation,
-        nativeSessionId: session.binding.nativeSessionId,
-        ...(session.binding.nativeThreadId
-          ? { nativeThreadId: session.binding.nativeThreadId }
+        originGeneration: activeStage(session).binding.generation,
+        observerGeneration: activeStage(session).binding.generation,
+        nativeSessionId: activeStage(session).binding.nativeSessionId,
+        ...(activeStage(session).binding.nativeThreadId
+          ? { nativeThreadId: activeStage(session).binding.nativeThreadId }
           : {}),
         certainty: "intent" as const,
         ...(!isOrdinary(record)
           ? {
-              ...(session.binding.nativeRunId
-                ? { nativeRunId: session.binding.nativeRunId }
+              ...(activeStage(session).binding.nativeRunId
+                ? { nativeRunId: activeStage(session).binding.nativeRunId }
                 : {}),
               ...(record.command.input.type !== "prompt" &&
-              session.binding.nativeRequestId
-                ? { nativeRequestId: session.binding.nativeRequestId }
+              activeStage(session).binding.nativeRequestId
+                ? {
+                    nativeRequestId:
+                      activeStage(session).binding.nativeRequestId,
+                  }
                 : {}),
             }
           : {}),
@@ -1064,7 +1492,7 @@ export class SessionHost implements HostPort {
       if (observed.type === "delta") {
         this.publish(namespace, {
           type: "delta",
-          generation: session.binding.generation,
+          generation: activeStage(session).binding.generation,
           commandId: record.command.commandId,
           messageId: observed.messageId,
           text: observed.text,
@@ -1078,11 +1506,11 @@ export class SessionHost implements HostPort {
         append(observed.body);
       } else if (observed.type === "interaction") {
         const row: Interaction = {
-          schemaVersion: 4,
+          schemaVersion: 5,
           kind: "interaction",
           namespace,
           commandId: record.command.commandId,
-          generation: session.binding.generation,
+          generation: activeStage(session).binding.generation,
           ...(fact.binding.nativeRunId
             ? { nativeRunId: fact.binding.nativeRunId }
             : {}),
@@ -1250,17 +1678,20 @@ export class SessionHost implements HostPort {
       fact.status === "running" ||
       fact.status === "terminal"
         ? fact.binding
-        : session.binding;
+        : activeStage(session).binding;
     await this.commit(session, [next], events, {
       providerFacts: [proof],
       interactions,
       surfaces,
-      session: {
-        ...session,
+      session: replaceStage(
+        {
+          ...session,
+          revision: session.revision + 1,
+          lastSequence: session.lastSequence + events.length,
+        },
         binding,
-        revision: session.revision + 1,
-        lastSequence: session.lastSequence + events.length,
-      },
+        undefined,
+      ),
     });
     if (fact.status === "not_submitted" && next.state === "accepted") {
       this.runtimes
@@ -1295,14 +1726,18 @@ export class SessionHost implements HostPort {
       const session = await deadline.wait(() => this.store.session(namespace));
       if (!session.ok && session.error.code !== "session_gone")
         throw new HostFailure(session.error);
-      if (session.ok && session.value.status === "active") {
+      if (
+        session.ok &&
+        session.value.status === "active" &&
+        session.value.currentStageId
+      ) {
         const s = session.value;
         requireValue(
           await deadline.wait(() =>
             this.store.recoverUnavailable({
               namespace,
               expectedRevision: s.revision,
-              expectedGeneration: s.binding.generation,
+              expectedGeneration: activeStage(s).binding.generation,
               eventId: randomUUID(),
             }),
           ),
@@ -1417,6 +1852,71 @@ export class SessionHost implements HostPort {
       if (!listeners?.size) this.subscribers.delete(key);
     }
   }
+  activateCaller(caller: Caller): void {
+    this.suspended.delete(this.callerKey(caller));
+  }
+  async suspendCaller(caller: Caller, b: Budget): Promise<Result<void>> {
+    this.suspended.add(this.callerKey(caller));
+    return this.result(async () => {
+      for (const [key, runtime] of this.runtimes) {
+        const [tenantId, principalId, authorityId] = JSON.parse(key);
+        if (
+          runtime.verification &&
+          this.callerKey({ tenantId, principalId, authorityId }) ===
+            this.callerKey(caller)
+        ) {
+          runtime.abort.abort();
+          runtime.worker.terminate();
+        }
+      }
+      const targets = [...this.runtimes]
+        .filter(([, runtime]) => !runtime.verification)
+        .map(([key]) => {
+          const [tenantId, principalId, authorityId, sessionId] =
+            JSON.parse(key);
+          return { tenantId, principalId, authorityId, sessionId };
+        })
+        .filter(
+          (namespace) => this.callerKey(namespace) === this.callerKey(caller),
+        );
+      for (const namespace of targets) {
+        for (const stream of this.subscribers.get(namespaceKey(namespace)) ??
+          [])
+          stream.end({ type: "resync_required" });
+        const snapshot = await this.snapshot(namespace);
+        for (const record of snapshot.commands.filter(
+          (row) => isOrdinary(row) && !isSettled(row),
+        )) {
+          await this.accept(
+            caller,
+            {
+              schemaVersion: 5,
+              kind: "command",
+              sessionId: namespace.sessionId,
+              commandId: randomUUID(),
+              expiresAtMs: this.now() + b.timeoutMs,
+              input: {
+                type: "cancel",
+                targetCommandId: record.command.commandId,
+                generation: activeStage(snapshot.session).binding.generation,
+                ...(record.dispatch?.nativeRunId
+                  ? { nativeRunId: record.dispatch.nativeRunId }
+                  : {}),
+              },
+            },
+            b,
+            true,
+          );
+        }
+      }
+      const until = Date.now() + Math.min(1000, b.timeoutMs);
+      while (this.tasks.size && Date.now() < until && !b.signal.aborted)
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      for (const namespace of targets)
+        await this.mailbox(namespace, () => this.unavailable(namespace, b));
+      return ok(undefined);
+    });
+  }
   close(b: Budget): Promise<Result<void>> {
     if (this.closingTask) return this.closingTask;
     const task = this.result(() => this.stop(b));
@@ -1447,7 +1947,7 @@ export class SessionHost implements HostPort {
         Promise.allSettled([...this.admissions.keys()]),
       );
       for (const [key, runtime] of this.runtimes) {
-        if (runtime.abort.signal.aborted) continue;
+        if (runtime.verification || runtime.abort.signal.aborted) continue;
         const [tenantId, principalId, authorityId, sessionId] = JSON.parse(key);
         const namespace = { tenantId, principalId, authorityId, sessionId };
         const snapshot = await this.snapshot(namespace, deadline);
@@ -1459,7 +1959,7 @@ export class SessionHost implements HostPort {
               this.accept(
                 namespace,
                 {
-                  schemaVersion: 4,
+                  schemaVersion: 5,
                   kind: "command",
                   sessionId,
                   commandId: randomUUID(),
@@ -1467,7 +1967,8 @@ export class SessionHost implements HostPort {
                   input: {
                     type: "cancel",
                     targetCommandId: record.command.commandId,
-                    generation: snapshot.session.binding.generation,
+                    generation: activeStage(snapshot.session).binding
+                      .generation,
                     ...(record.dispatch?.nativeRunId
                       ? { nativeRunId: record.dispatch.nativeRunId }
                       : {}),
@@ -1490,6 +1991,14 @@ export class SessionHost implements HostPort {
           () => new Promise((resolve) => setTimeout(resolve, 10)),
         );
       for (const [key, runtime] of [...this.runtimes]) {
+        if (runtime.verification) {
+          const result = requireValue(
+            await deadline.wait(() => runtime.worker.close(deadline.budget())),
+          );
+          if (!result.processStopped) throw new Error("worker still present");
+          this.runtimes.delete(key);
+          continue;
+        }
         runtime.abort.abort();
         runtime.worker.terminate();
         const [tenantId, principalId, authorityId, sessionId] = JSON.parse(key);

@@ -1,76 +1,108 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from "vue";
-import { AppShell, NavigationList } from "@rss-mdm-agent/ui";
-import Assistant from "./assistant/Assistant.vue";
+import { onMounted, ref } from "vue";
+import Workspace from "./Workspace.vue";
+import type { AssistantServices } from "./assistant/controller";
 import {
-  createAssistant,
-  type AssistantServices,
-} from "./assistant/controller";
-import SelfService from "./self-service/SelfService.vue";
-import { createController } from "./self-service/controller";
-import { nativePort } from "./self-service/native";
-import preview from "./self-service/preview";
-import "./self-service/style.css";
-import "./assistant/style.css";
-const props = defineProps<{ assistantServices?: AssistantServices }>();
-const newIdentity = () => crypto.randomUUID();
-const controller = createController(nativePort(), newIdentity, preview);
-const assistant = createAssistant(props.assistantServices, newIdentity);
-const page = ref("self-service");
-const attention = assistant.attention;
-function navigate(id: string) {
-  page.value = id === "assistant" ? "assistant" : "self-service";
-  if (page.value === "self-service") controller.navigate(id);
+  currentUser,
+  nativeTestMode,
+  loadTestUsers,
+  selectTestUser,
+} from "./test-users";
+import type { TestUser } from "@rss-mdm-agent/ai-contract";
+defineProps<{ assistantServices?: AssistantServices }>();
+const users = ref<TestUser[]>([]),
+  name = ref(""),
+  loading = ref(nativeTestMode),
+  message = ref("");
+async function refresh() {
+  try {
+    const page = await loadTestUsers();
+    users.value = page.users;
+  } catch {
+    message.value = "无法读取测试用户记录";
+  } finally {
+    loading.value = false;
+  }
+}
+async function select(value = name.value) {
+  if (loading.value || !value.trim()) return;
+  loading.value = true;
+  message.value = "";
+  try {
+    await selectTestUser(value);
+    name.value = "";
+    await refresh();
+  } catch {
+    message.value = "无法切换测试用户，请检查用户名并重试";
+  } finally {
+    loading.value = false;
+  }
 }
 onMounted(() => {
-  void assistant.connect();
+  if (nativeTestMode) void refresh();
 });
-onBeforeUnmount(assistant.dispose);
 </script>
 <template>
-  <AppShell>
-    <template #header
-      ><div class="brand">
-        <div>
-          <span class="eyebrow">RSS / WORKSPACE</span
-          ><strong>自助服务中心</strong>
-        </div>
-        <span class="mode-label">{{
-          page === "assistant"
-            ? assistant.state.mode === "s1"
-              ? "S1 AI 测试装配 · 无真实执行"
-              : assistant.state.connection === "connected"
-                ? "AI 会话"
-                : "AI 服务未连接"
-            : controller.interactive
-              ? "S1 受控测试 · 无真实执行"
-              : "浏览器只读预览"
-        }}</span>
-      </div></template
+  <section v-if="nativeTestMode" class="test-users" aria-label="测试用户">
+    <strong>测试模式</strong>
+    <span>{{
+      currentUser
+        ? `当前用户：${currentUser.user.displayName}`
+        : "请先选择或创建测试用户"
+    }}</span>
+    <select
+      aria-label="已有测试用户"
+      :disabled="loading"
+      :value="currentUser?.user.userId ?? ''"
+      @change="
+        select(
+          users.find(
+            (user) =>
+              user.userId === ($event.target as HTMLSelectElement).value,
+          )?.displayName ?? '',
+        )
+      "
     >
-    <template #navigation
-      ><NavigationList
-        :items="[
-          { id: 'home', label: '首页' },
-          { id: 'software', label: '软件中心' },
-          { id: 'tools', label: '工具中心' },
-          { id: 'tasks', label: '请求与任务' },
-          {
-            id: 'assistant',
-            label: attention ? `AI 助手（待回应 ${attention}）` : 'AI 助手',
-          },
-          { id: 'help', label: '设备与帮助' },
-        ]"
-        :active-id="page === 'assistant' ? 'assistant' : controller.state.page"
-        @select="navigate"
-    /></template>
-    <SelfService v-show="page === 'self-service'" :controller="controller" />
-    <Assistant v-show="page === 'assistant'" :controller="assistant" />
-    <template #status
-      ><div class="footer-note">
-        <span>S1 测试服务 · 无系统副作用 · 独立测试批准</span
-        ><span>AI 对话与设备执行分别核对</span>
-      </div></template
-    >
-  </AppShell>
+      <option value="" disabled>选择测试用户</option>
+      <option v-for="user in users" :key="user.userId" :value="user.userId">
+        {{ user.displayName }}
+      </option>
+    </select>
+    <form @submit.prevent="select()">
+      <input
+        v-model="name"
+        aria-label="测试用户名"
+        placeholder="新建或切换测试用户"
+        :disabled="loading"
+      /><button :disabled="loading || !name.trim()">进入</button>
+    </form>
+    <span v-if="loading" role="status">正在切换并清理旧视图…</span
+    ><span v-if="message" role="alert">{{ message }}</span>
+  </section>
+  <Workspace
+    v-if="!nativeTestMode || (currentUser && !loading)"
+    :key="currentUser?.generation ?? 'browser-preview'"
+    :assistant-services="assistantServices"
+  />
 </template>
+<style scoped>
+.test-users {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 24px;
+  background: #eef5f1;
+  border-bottom: 1px solid #d4e4dc;
+}
+.test-users form {
+  display: flex;
+  gap: 8px;
+}
+.test-users input,
+.test-users select {
+  padding: 7px 10px;
+  border: 1px solid #b9cfc2;
+  border-radius: 6px;
+}
+</style>

@@ -1,3 +1,4 @@
+import { promptText } from "@rss-mdm-agent/ai-contract";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import {
@@ -716,7 +717,11 @@ export class CodexAdapter implements ProviderAgentPort {
     let acknowledged = false;
     try {
       const prompt = [
-        { type: "text" as const, text: input.input.text, text_elements: [] },
+        {
+          type: "text" as const,
+          text: promptText(input.input),
+          text_elements: [],
+        },
       ];
       if (steering) {
         const result = await rpc(
@@ -825,7 +830,7 @@ export class CodexAdapter implements ProviderAgentPort {
     decode(
       boundedJson(
         {
-          schemaVersion: 4,
+          schemaVersion: 5,
           kind: "event",
           namespace: this.configuration!.namespace,
           eventId: "validation",

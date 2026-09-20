@@ -1,3 +1,4 @@
+import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { spawn } from "node:child_process";
@@ -39,7 +40,21 @@ for (const provider of engines) {
     async (t) => {
       const f = await fixture(t, provider);
       f.config.session.profile = "controlled_tools";
-      await writeFile(f.path, JSON.stringify(f.config), { mode: 0o600 });
+      const catalogStore = unwrap(
+        openSqliteStore({ path: f.config.databasePath, mode: "open" }),
+      );
+      unwrap(
+        await catalogStore.saveConnection(
+          f.config.caller,
+          {
+            ...f.config.connection,
+            profile: "controlled_tools",
+            configRevision: 2,
+          },
+          1,
+        ),
+      );
+      await catalogStore.close(budget());
       const rust = spawn(
         executable,
         [
@@ -77,8 +92,9 @@ for (const provider of engines) {
         }, "production socket");
         peer = await clientAt(f.config.socketPath);
         if (provider !== "codex") {
+          const empty = await peer.client.createSession();
           await assert.rejects(
-            peer.client.createSession(),
+            peer.client.submit(command(empty.namespace.sessionId, "rejected")),
             /unsupported_capability/,
           );
           assert.equal(f.model.requests.length, 0);
@@ -98,10 +114,7 @@ for (const provider of engines) {
         }
         const view = await peer.client.createSession(),
           id = view.namespace.sessionId;
-        assert.deepEqual(
-          view.capabilities,
-          capabilities(provider, "host_mediated"),
-        );
+
         f.model.replies.push((res) => {
           const responseId = "catalog-proposal";
           const events = [
@@ -149,6 +162,10 @@ for (const provider of engines) {
           "catalog terminal",
         );
         const terminal = peer.client.getSession(id);
+        assert.deepEqual(
+          terminal.capabilities,
+          capabilities(provider, "host_mediated"),
+        );
         assert.equal(terminal.commands.catalog.outcome, "completed");
         const proposals = Object.values(terminal.tools);
         assert.equal(proposals.length, 1);
@@ -164,7 +181,7 @@ for (const provider of engines) {
         );
         try {
           const session = unwrap(await store.session(view.namespace));
-          assert.equal(session.binding.providerVersion, "0.155.0");
+          assert.equal(activeStage(session).binding.providerVersion, "0.155.0");
           evidence(
             t,
             "production-controlled-admission",

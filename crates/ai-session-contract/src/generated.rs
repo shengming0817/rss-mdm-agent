@@ -240,7 +240,7 @@ impl ::std::convert::From<AccessUpdateSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for AccessUpdateSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -413,7 +413,7 @@ impl ::std::convert::From<ActionRequestSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for ActionRequestSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -514,7 +514,7 @@ impl ::std::convert::From<AttachReceiptSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for AttachReceiptSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -615,7 +615,7 @@ impl ::std::convert::From<AttachRequestSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for AttachRequestSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -1003,7 +1003,7 @@ pub struct Command {
     pub input: Input,
     #[doc = "Closed product record discriminator."]
     pub kind: CommandKind,
-    #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+    #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
     #[serde(rename = "schemaVersion")]
     pub schema_version: CommandSchemaVersion,
     #[doc = "Logical session identifier, never reusable after retirement."]
@@ -1069,7 +1069,7 @@ pub enum CommandRecord {
         kind: CommandRecordVariant0Kind,
         #[doc = "Immutable original committed acceptance fact."]
         receipt: Receipt,
-        #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+        #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: CommandRecordVariant0SchemaVersion,
         #[doc = "Closed command lifecycle projection."]
@@ -1085,7 +1085,7 @@ pub enum CommandRecord {
         kind: CommandRecordVariant1Kind,
         #[doc = "Immutable original committed acceptance fact."]
         receipt: Receipt,
-        #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+        #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: CommandRecordVariant1SchemaVersion,
         #[doc = "Closed command lifecycle projection."]
@@ -1101,7 +1101,7 @@ pub enum CommandRecord {
         kind: CommandRecordVariant2Kind,
         #[doc = "Immutable original committed acceptance fact."]
         receipt: Receipt,
-        #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+        #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: CommandRecordVariant2SchemaVersion,
         #[doc = "Closed command lifecycle projection."]
@@ -1119,7 +1119,7 @@ pub enum CommandRecord {
         outcome: Outcome,
         #[doc = "Immutable original committed acceptance fact."]
         receipt: Receipt,
-        #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+        #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: CommandRecordVariant3SchemaVersion,
         #[doc = "Closed command lifecycle projection."]
@@ -1135,7 +1135,7 @@ pub enum CommandRecord {
         kind: CommandRecordVariant4Kind,
         #[doc = "Immutable original committed acceptance fact."]
         receipt: Receipt,
-        #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+        #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: CommandRecordVariant4SchemaVersion,
         #[doc = "Closed command lifecycle projection."]
@@ -1151,7 +1151,7 @@ pub enum CommandRecord {
         kind: CommandRecordVariant5Kind,
         #[doc = "Immutable original committed acceptance fact."]
         receipt: Receipt,
-        #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+        #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: CommandRecordVariant5SchemaVersion,
         #[doc = "Closed command lifecycle projection."]
@@ -1168,7 +1168,7 @@ pub enum CommandRecord {
         kind: CommandRecordVariant6Kind,
         #[doc = "Immutable original committed acceptance fact."]
         receipt: Receipt,
-        #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+        #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: CommandRecordVariant6SchemaVersion,
         #[doc = "Closed command lifecycle projection."]
@@ -1186,7 +1186,7 @@ pub enum CommandRecord {
         kind: CommandRecordVariant7Kind,
         #[doc = "Immutable original committed acceptance fact."]
         receipt: Receipt,
-        #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+        #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: CommandRecordVariant7SchemaVersion,
         #[doc = "Closed command lifecycle projection."]
@@ -1202,7 +1202,7 @@ pub enum CommandRecord {
         kind: CommandRecordVariant8Kind,
         #[doc = "Immutable original committed acceptance fact."]
         receipt: Receipt,
-        #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+        #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: CommandRecordVariant8SchemaVersion,
         #[doc = "Closed command lifecycle projection."]
@@ -1256,7 +1256,7 @@ impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant0Kin
         value.parse()
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct CommandRecordVariant0SchemaVersion(
@@ -1276,7 +1276,7 @@ impl ::std::convert::From<CommandRecordVariant0SchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for CommandRecordVariant0SchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -1386,7 +1386,7 @@ impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant1Kin
         value.parse()
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct CommandRecordVariant1SchemaVersion(
@@ -1406,7 +1406,7 @@ impl ::std::convert::From<CommandRecordVariant1SchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for CommandRecordVariant1SchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -1516,7 +1516,7 @@ impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant2Kin
         value.parse()
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct CommandRecordVariant2SchemaVersion(
@@ -1536,7 +1536,7 @@ impl ::std::convert::From<CommandRecordVariant2SchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for CommandRecordVariant2SchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -1646,7 +1646,7 @@ impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant3Kin
         value.parse()
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct CommandRecordVariant3SchemaVersion(
@@ -1666,7 +1666,7 @@ impl ::std::convert::From<CommandRecordVariant3SchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for CommandRecordVariant3SchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -1776,7 +1776,7 @@ impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant4Kin
         value.parse()
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct CommandRecordVariant4SchemaVersion(
@@ -1796,7 +1796,7 @@ impl ::std::convert::From<CommandRecordVariant4SchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for CommandRecordVariant4SchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -1906,7 +1906,7 @@ impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant5Kin
         value.parse()
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct CommandRecordVariant5SchemaVersion(
@@ -1926,7 +1926,7 @@ impl ::std::convert::From<CommandRecordVariant5SchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for CommandRecordVariant5SchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -2036,7 +2036,7 @@ impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant6Kin
         value.parse()
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct CommandRecordVariant6SchemaVersion(
@@ -2056,7 +2056,7 @@ impl ::std::convert::From<CommandRecordVariant6SchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for CommandRecordVariant6SchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -2166,7 +2166,7 @@ impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant7Kin
         value.parse()
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct CommandRecordVariant7SchemaVersion(
@@ -2186,7 +2186,7 @@ impl ::std::convert::From<CommandRecordVariant7SchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for CommandRecordVariant7SchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -2354,7 +2354,7 @@ impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant8Kin
         value.parse()
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct CommandRecordVariant8SchemaVersion(
@@ -2374,7 +2374,7 @@ impl ::std::convert::From<CommandRecordVariant8SchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for CommandRecordVariant8SchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -2437,7 +2437,7 @@ impl ::std::convert::TryFrom<::std::string::String> for CommandRecordVariant8Sta
         value.parse()
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct CommandSchemaVersion(
@@ -2457,7 +2457,7 @@ impl ::std::convert::From<CommandSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for CommandSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -2481,6 +2481,884 @@ pub struct ConfigRef {
     pub id: Id,
     #[doc = "Immutable configuration revision; changing it invalidates prior capability evidence."]
     pub revision: Id,
+}
+#[doc = ""]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct Connection {
+    #[serde(rename = "accountRef")]
+    #[doc = "`account_ref` member; see its generated type and parent schema."]
+    pub account_ref: Id,
+    #[serde(rename = "configRevision")]
+    #[doc = "`config_revision` member; see its generated type and parent schema."]
+    pub config_revision: Counter,
+    #[serde(rename = "connectionId")]
+    #[doc = "`connection_id` member; see its generated type and parent schema."]
+    pub connection_id: Id,
+    #[serde(rename = "credentialRef")]
+    #[doc = "`credential_ref` member; see its generated type and parent schema."]
+    pub credential_ref: Id,
+    #[serde(rename = "credentialRevision")]
+    #[doc = "`credential_revision` member; see its generated type and parent schema."]
+    pub credential_revision: Counter,
+    #[doc = "`kind` member; see its generated type and parent schema."]
+    pub kind: ConnectionKind,
+    #[doc = "`name` member; see its generated type and parent schema."]
+    pub name: ConnectionName,
+    #[doc = "`profile` member; see its generated type and parent schema."]
+    pub profile: ConnectionProfile,
+    #[doc = "`provider` member; see its generated type and parent schema."]
+    pub provider: ConnectionProvider,
+    #[serde(rename = "schemaVersion")]
+    #[doc = "`schema_version` member; see its generated type and parent schema."]
+    pub schema_version: ConnectionSchemaVersion,
+    #[doc = "`source` member; see its generated type and parent schema."]
+    pub source: ConnectionSource,
+    #[doc = "`status` member; see its generated type and parent schema."]
+    pub status: ConnectionStatus,
+}
+#[doc = "`ConnectionKind`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ConnectionKind {
+    #[serde(rename = "connection")]
+    #[doc = "`Connection` alternative; see the parent type's schema contract."]
+    Connection,
+}
+impl ::std::fmt::Display for ConnectionKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Connection => f.write_str("connection"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnectionKind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "connection" => Ok(Self::Connection),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnectionKind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnectionKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`ConnectionName`"]
+#[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct ConnectionName(
+    #[doc = "`` member; see its generated type and parent schema."] ::std::string::String,
+);
+impl ::std::ops::Deref for ConnectionName {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<ConnectionName> for ::std::string::String {
+    fn from(value: ConnectionName) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for ConnectionName {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() > 64usize {
+            return Err("longer than 64 characters".into());
+        }
+        if value.chars().count() < 1usize {
+            return Err("shorter than 1 characters".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnectionName {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnectionName {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for ConnectionName {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
+}
+#[doc = "`ConnectionPage`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectionPage {
+    #[doc = "`connections` member; see its generated type and parent schema."]
+    pub connections: ::std::vec::Vec<Connection>,
+    #[doc = "`kind` member; see its generated type and parent schema."]
+    pub kind: ConnectionPageKind,
+    #[doc = "`preferences` member; see its generated type and parent schema."]
+    pub preferences: UserPreferences,
+    #[serde(rename = "schemaVersion")]
+    #[doc = "`schema_version` member; see its generated type and parent schema."]
+    pub schema_version: ConnectionPageSchemaVersion,
+}
+#[doc = "`ConnectionPageKind`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ConnectionPageKind {
+    #[serde(rename = "connectionPage")]
+    #[doc = "`ConnectionPage` alternative; see the parent type's schema contract."]
+    ConnectionPage,
+}
+impl ::std::fmt::Display for ConnectionPageKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::ConnectionPage => f.write_str("connectionPage"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnectionPageKind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "connectionPage" => Ok(Self::ConnectionPage),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnectionPageKind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnectionPageKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`ConnectionPageSchemaVersion`"]
+#[derive(:: serde :: Serialize, Clone)]
+#[serde(transparent)]
+pub struct ConnectionPageSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
+impl ::std::ops::Deref for ConnectionPageSchemaVersion {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::std::convert::From<ConnectionPageSchemaVersion> for i64 {
+    fn from(value: ConnectionPageSchemaVersion) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::TryFrom<i64> for ConnectionPageSchemaVersion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if ![5_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for ConnectionPageSchemaVersion {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
+#[doc = "`ConnectionProfile`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ConnectionProfile {
+    #[serde(rename = "conversation")]
+    #[doc = "`Conversation` alternative; see the parent type's schema contract."]
+    Conversation,
+    #[serde(rename = "controlled_tools")]
+    #[doc = "`ControlledTools` alternative; see the parent type's schema contract."]
+    ControlledTools,
+}
+impl ::std::fmt::Display for ConnectionProfile {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Conversation => f.write_str("conversation"),
+            Self::ControlledTools => f.write_str("controlled_tools"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnectionProfile {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "conversation" => Ok(Self::Conversation),
+            "controlled_tools" => Ok(Self::ControlledTools),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnectionProfile {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnectionProfile {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`ConnectionProvider`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ConnectionProvider {
+    #[serde(rename = "codex")]
+    #[doc = "`Codex` alternative; see the parent type's schema contract."]
+    Codex,
+    #[serde(rename = "claude")]
+    #[doc = "`Claude` alternative; see the parent type's schema contract."]
+    Claude,
+    #[serde(rename = "deepseek")]
+    #[doc = "`Deepseek` alternative; see the parent type's schema contract."]
+    Deepseek,
+}
+impl ::std::fmt::Display for ConnectionProvider {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Codex => f.write_str("codex"),
+            Self::Claude => f.write_str("claude"),
+            Self::Deepseek => f.write_str("deepseek"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnectionProvider {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "codex" => Ok(Self::Codex),
+            "claude" => Ok(Self::Claude),
+            "deepseek" => Ok(Self::Deepseek),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnectionProvider {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnectionProvider {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`ConnectionSchemaVersion`"]
+#[derive(:: serde :: Serialize, Clone)]
+#[serde(transparent)]
+pub struct ConnectionSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
+impl ::std::ops::Deref for ConnectionSchemaVersion {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::std::convert::From<ConnectionSchemaVersion> for i64 {
+    fn from(value: ConnectionSchemaVersion) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::TryFrom<i64> for ConnectionSchemaVersion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if ![5_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for ConnectionSchemaVersion {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
+#[doc = "`ConnectionSource`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(tag = "type", deny_unknown_fields)]
+pub enum ConnectionSource {
+    #[doc = ""]
+    #[serde(rename = "custom_api")]
+    CustomApi {
+        #[serde(rename = "apiUrl")]
+        #[doc = "`api_url` member; see its generated type and parent schema."]
+        api_url: ConnectionSourceApiUrl,
+        #[serde(
+            rename = "credentialType",
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        #[doc = "`credential_type` member; see its generated type and parent schema."]
+        credential_type: ::std::option::Option<ConnectionSourceCredentialType>,
+        #[doc = "`model` member; see its generated type and parent schema."]
+        model: ConnectionSourceModel,
+    },
+    #[doc = ""]
+    #[serde(rename = "existing_login")]
+    ExistingLogin {
+        #[doc = "`directory` member; see its generated type and parent schema."]
+        directory: ConnectionSourceDirectory,
+        #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+        #[doc = "`model` member; see its generated type and parent schema."]
+        model: ::std::option::Option<ConnectionSourceModel>,
+    },
+    #[doc = ""]
+    #[serde(rename = "existing_api")]
+    ExistingApi {
+        #[doc = "`directory` member; see its generated type and parent schema."]
+        directory: ConnectionSourceDirectory,
+        #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+        #[doc = "`model` member; see its generated type and parent schema."]
+        model: ::std::option::Option<ConnectionSourceModel>,
+        #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+        #[doc = "`profile` member; see its generated type and parent schema."]
+        profile: ::std::option::Option<ConnectionSourceProfile>,
+    },
+}
+#[doc = "`ConnectionSourceApiUrl`"]
+#[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct ConnectionSourceApiUrl(
+    #[doc = "`` member; see its generated type and parent schema."] ::std::string::String,
+);
+impl ::std::ops::Deref for ConnectionSourceApiUrl {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<ConnectionSourceApiUrl> for ::std::string::String {
+    fn from(value: ConnectionSourceApiUrl) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for ConnectionSourceApiUrl {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() > 2048usize {
+            return Err("longer than 2048 characters".into());
+        }
+        if value.chars().count() < 1usize {
+            return Err("shorter than 1 characters".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnectionSourceApiUrl {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnectionSourceApiUrl {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for ConnectionSourceApiUrl {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
+}
+#[doc = "`ConnectionSourceCredentialType`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ConnectionSourceCredentialType {
+    #[serde(rename = "api_key")]
+    #[doc = "`ApiKey` alternative; see the parent type's schema contract."]
+    ApiKey,
+    #[serde(rename = "auth_token")]
+    #[doc = "`AuthToken` alternative; see the parent type's schema contract."]
+    AuthToken,
+    #[serde(rename = "oauth_token")]
+    #[doc = "`OauthToken` alternative; see the parent type's schema contract."]
+    OauthToken,
+}
+impl ::std::fmt::Display for ConnectionSourceCredentialType {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::ApiKey => f.write_str("api_key"),
+            Self::AuthToken => f.write_str("auth_token"),
+            Self::OauthToken => f.write_str("oauth_token"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnectionSourceCredentialType {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "api_key" => Ok(Self::ApiKey),
+            "auth_token" => Ok(Self::AuthToken),
+            "oauth_token" => Ok(Self::OauthToken),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnectionSourceCredentialType {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnectionSourceCredentialType {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`ConnectionSourceDirectory`"]
+#[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct ConnectionSourceDirectory(
+    #[doc = "`` member; see its generated type and parent schema."] ::std::string::String,
+);
+impl ::std::ops::Deref for ConnectionSourceDirectory {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<ConnectionSourceDirectory> for ::std::string::String {
+    fn from(value: ConnectionSourceDirectory) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for ConnectionSourceDirectory {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() > 32768usize {
+            return Err("longer than 32768 characters".into());
+        }
+        if value.chars().count() < 1usize {
+            return Err("shorter than 1 characters".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnectionSourceDirectory {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnectionSourceDirectory {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for ConnectionSourceDirectory {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
+}
+#[doc = "`ConnectionSourceModel`"]
+#[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct ConnectionSourceModel(
+    #[doc = "`` member; see its generated type and parent schema."] ::std::string::String,
+);
+impl ::std::ops::Deref for ConnectionSourceModel {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<ConnectionSourceModel> for ::std::string::String {
+    fn from(value: ConnectionSourceModel) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for ConnectionSourceModel {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() > 256usize {
+            return Err("longer than 256 characters".into());
+        }
+        if value.chars().count() < 1usize {
+            return Err("shorter than 1 characters".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnectionSourceModel {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnectionSourceModel {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for ConnectionSourceModel {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
+}
+#[doc = "`ConnectionSourceProfile`"]
+#[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct ConnectionSourceProfile(
+    #[doc = "`` member; see its generated type and parent schema."] ::std::string::String,
+);
+impl ::std::ops::Deref for ConnectionSourceProfile {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<ConnectionSourceProfile> for ::std::string::String {
+    fn from(value: ConnectionSourceProfile) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for ConnectionSourceProfile {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() > 256usize {
+            return Err("longer than 256 characters".into());
+        }
+        if value.chars().count() < 1usize {
+            return Err("shorter than 1 characters".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnectionSourceProfile {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnectionSourceProfile {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for ConnectionSourceProfile {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
+}
+#[doc = "`ConnectionStatus`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ConnectionStatus {
+    #[serde(rename = "unverified")]
+    #[doc = "`Unverified` alternative; see the parent type's schema contract."]
+    Unverified,
+    #[serde(rename = "ready")]
+    #[doc = "`Ready` alternative; see the parent type's schema contract."]
+    Ready,
+    #[serde(rename = "authentication_required")]
+    #[doc = "`AuthenticationRequired` alternative; see the parent type's schema contract."]
+    AuthenticationRequired,
+    #[serde(rename = "invalid")]
+    #[doc = "`Invalid` alternative; see the parent type's schema contract."]
+    Invalid,
+    #[serde(rename = "deleted")]
+    #[doc = "`Deleted` alternative; see the parent type's schema contract."]
+    Deleted,
+}
+impl ::std::fmt::Display for ConnectionStatus {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Unverified => f.write_str("unverified"),
+            Self::Ready => f.write_str("ready"),
+            Self::AuthenticationRequired => f.write_str("authentication_required"),
+            Self::Invalid => f.write_str("invalid"),
+            Self::Deleted => f.write_str("deleted"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnectionStatus {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "unverified" => Ok(Self::Unverified),
+            "ready" => Ok(Self::Ready),
+            "authentication_required" => Ok(Self::AuthenticationRequired),
+            "invalid" => Ok(Self::Invalid),
+            "deleted" => Ok(Self::Deleted),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnectionStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnectionStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`ConnectionsRequest`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectionsRequest {
+    #[doc = "`kind` member; see its generated type and parent schema."]
+    pub kind: ConnectionsRequestKind,
+    #[serde(rename = "schemaVersion")]
+    #[doc = "`schema_version` member; see its generated type and parent schema."]
+    pub schema_version: ConnectionsRequestSchemaVersion,
+}
+#[doc = "`ConnectionsRequestKind`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ConnectionsRequestKind {
+    #[serde(rename = "connectionsRequest")]
+    #[doc = "`ConnectionsRequest` alternative; see the parent type's schema contract."]
+    ConnectionsRequest,
+}
+impl ::std::fmt::Display for ConnectionsRequestKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::ConnectionsRequest => f.write_str("connectionsRequest"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnectionsRequestKind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "connectionsRequest" => Ok(Self::ConnectionsRequest),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnectionsRequestKind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnectionsRequestKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`ConnectionsRequestSchemaVersion`"]
+#[derive(:: serde :: Serialize, Clone)]
+#[serde(transparent)]
+pub struct ConnectionsRequestSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
+impl ::std::ops::Deref for ConnectionsRequestSchemaVersion {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::std::convert::From<ConnectionsRequestSchemaVersion> for i64 {
+    fn from(value: ConnectionsRequestSchemaVersion) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::TryFrom<i64> for ConnectionsRequestSchemaVersion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if ![5_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for ConnectionsRequestSchemaVersion {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
+#[doc = "One provider context phase. Native generations may change only through verified recovery; binding is owned here."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ContextStage {
+    #[doc = "`binding` member; see its generated type and parent schema."]
+    pub binding: Binding,
+    #[doc = "`capabilities` member; see its generated type and parent schema."]
+    pub capabilities: Capabilities,
+    #[serde(rename = "configRevision")]
+    #[doc = "`config_revision` member; see its generated type and parent schema."]
+    pub config_revision: Counter,
+    #[serde(rename = "connectionId")]
+    #[doc = "`connection_id` member; see its generated type and parent schema."]
+    pub connection_id: Id,
+    #[serde(rename = "credentialRevision")]
+    #[doc = "`credential_revision` member; see its generated type and parent schema."]
+    pub credential_revision: Counter,
+    #[serde(rename = "stageId")]
+    #[doc = "`stage_id` member; see its generated type and parent schema."]
+    pub stage_id: Id,
 }
 #[doc = "Nonnegative integer in the shared JavaScript safe-integer range."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
@@ -2549,7 +3427,7 @@ pub struct Delivery {
     pub operation_id: Id,
     #[doc = "Explicit retry discipline; uncertainty never authorizes blind resubmission."]
     pub retry: DeliveryRetry,
-    #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+    #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
     #[serde(rename = "schemaVersion")]
     pub schema_version: DeliverySchemaVersion,
     #[doc = "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."]
@@ -2715,7 +3593,7 @@ impl ::std::convert::TryFrom<::std::string::String> for DeliveryRetry {
         value.parse()
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct DeliverySchemaVersion(
@@ -2735,7 +3613,7 @@ impl ::std::convert::From<DeliverySchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for DeliverySchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -2896,7 +3774,7 @@ impl ::std::convert::From<DetachRequestSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for DetachRequestSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -3070,6 +3948,18 @@ pub enum ErrorCode {
     #[serde(rename = "storage_corrupt")]
     #[doc = "`StorageCorrupt` alternative; see the parent type's schema contract."]
     StorageCorrupt,
+    #[serde(rename = "connection_switch_pending")]
+    #[doc = "`ConnectionSwitchPending` alternative; see the parent type's schema contract."]
+    ConnectionSwitchPending,
+    #[serde(rename = "connection_required")]
+    #[doc = "`ConnectionRequired` alternative; see the parent type's schema contract."]
+    ConnectionRequired,
+    #[serde(rename = "authentication_required")]
+    #[doc = "`AuthenticationRequired` alternative; see the parent type's schema contract."]
+    AuthenticationRequired,
+    #[serde(rename = "context_unavailable")]
+    #[doc = "`ContextUnavailable` alternative; see the parent type's schema contract."]
+    ContextUnavailable,
 }
 impl ::std::fmt::Display for ErrorCode {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -3089,6 +3979,10 @@ impl ::std::fmt::Display for ErrorCode {
             Self::SessionGone => f.write_str("session_gone"),
             Self::AlreadyAnswered => f.write_str("already_answered"),
             Self::StorageCorrupt => f.write_str("storage_corrupt"),
+            Self::ConnectionSwitchPending => f.write_str("connection_switch_pending"),
+            Self::ConnectionRequired => f.write_str("connection_required"),
+            Self::AuthenticationRequired => f.write_str("authentication_required"),
+            Self::ContextUnavailable => f.write_str("context_unavailable"),
         }
     }
 }
@@ -3111,6 +4005,10 @@ impl ::std::str::FromStr for ErrorCode {
             "session_gone" => Ok(Self::SessionGone),
             "already_answered" => Ok(Self::AlreadyAnswered),
             "storage_corrupt" => Ok(Self::StorageCorrupt),
+            "connection_switch_pending" => Ok(Self::ConnectionSwitchPending),
+            "connection_required" => Ok(Self::ConnectionRequired),
+            "authentication_required" => Ok(Self::AuthenticationRequired),
+            "context_unavailable" => Ok(Self::ContextUnavailable),
             _ => Err("invalid value".into()),
         }
     }
@@ -3152,7 +4050,7 @@ pub enum Event {
         kind: EventTextKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+        #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventTextSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -3174,7 +4072,7 @@ pub enum Event {
         kind: EventCommandAcceptedKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+        #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventCommandAcceptedSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -3199,7 +4097,7 @@ pub enum Event {
         kind: EventStatusDispatchingRunningReconciliationRequiredKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+        #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventStatusDispatchingRunningReconciliationRequiredSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -3224,7 +4122,7 @@ pub enum Event {
         kind: EventTerminalKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+        #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventTerminalSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -3249,7 +4147,7 @@ pub enum Event {
         kind: EventCancelDispatchedKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+        #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventCancelDispatchedSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -3274,7 +4172,7 @@ pub enum Event {
         kind: EventToolProposalKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+        #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventToolProposalSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -3299,7 +4197,7 @@ pub enum Event {
         kind: EventToolResultKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+        #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventToolResultSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -3324,7 +4222,7 @@ pub enum Event {
         kind: EventInteractionPendingKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+        #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventInteractionPendingSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -3349,7 +4247,7 @@ pub enum Event {
         kind: EventInteractionAnsweredKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+        #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventInteractionAnsweredSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -3374,7 +4272,7 @@ pub enum Event {
         kind: EventInteractionExpiredUnavailableKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+        #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventInteractionExpiredUnavailableSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -3396,7 +4294,7 @@ pub enum Event {
         kind: EventErrorKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+        #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventErrorSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -3418,7 +4316,7 @@ pub enum Event {
         kind: EventInvalidatedKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+        #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventInvalidatedSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -3443,7 +4341,7 @@ pub enum Event {
         kind: EventDispatchKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+        #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventDispatchSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -3468,7 +4366,7 @@ pub enum Event {
         kind: EventReconciledKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+        #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventReconciledSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -3493,7 +4391,7 @@ pub enum Event {
         kind: EventSurfaceKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+        #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventSurfaceSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -3512,7 +4410,7 @@ pub enum Event {
         kind: EventSessionReboundKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+        #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventSessionReboundSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -3531,7 +4429,7 @@ pub enum Event {
         kind: EventSessionRetiredKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+        #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventSessionRetiredSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -3556,7 +4454,7 @@ pub enum Event {
         kind: EventAcknowledgedKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+        #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventAcknowledgedSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -3578,7 +4476,7 @@ pub enum Event {
         kind: EventCancelledKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+        #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventCancelledSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -3597,7 +4495,7 @@ pub enum Event {
         kind: EventSessionRecoveryUnavailableKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+        #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventSessionRecoveryUnavailableSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -3619,7 +4517,7 @@ pub enum Event {
         kind: EventAcknowledgedQueuedCancelledKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+        #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventAcknowledgedQueuedCancelledSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -3641,7 +4539,7 @@ pub enum Event {
         kind: EventDeliveryRequestedKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+        #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventDeliveryRequestedSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -3663,7 +4561,7 @@ pub enum Event {
         kind: EventDeliveryRecordedKind,
         #[doc = "Trusted storage isolation scope; not copied from model or action content."]
         namespace: Namespace,
-        #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+        #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
         #[serde(rename = "schemaVersion")]
         schema_version: EventDeliveryRecordedSchemaVersion,
         #[doc = "Strictly increasing stable-event counter; attach cursors are exclusive."]
@@ -3938,7 +4836,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventAcknowledgedQueuedC
         value.parse()
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventAcknowledgedQueuedCancelledSchemaVersion(
@@ -3958,7 +4856,7 @@ impl ::std::convert::From<EventAcknowledgedQueuedCancelledSchemaVersion> for i64
 impl ::std::convert::TryFrom<i64> for EventAcknowledgedQueuedCancelledSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -3974,7 +4872,7 @@ impl<'de> ::serde::Deserialize<'de> for EventAcknowledgedQueuedCancelledSchemaVe
             .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventAcknowledgedSchemaVersion(
@@ -3994,7 +4892,7 @@ impl ::std::convert::From<EventAcknowledgedSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventAcknowledgedSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -4171,7 +5069,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventCancelDispatchedKin
         value.parse()
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventCancelDispatchedSchemaVersion(
@@ -4191,7 +5089,7 @@ impl ::std::convert::From<EventCancelDispatchedSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventCancelDispatchedSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -4312,7 +5210,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventCancelledKind {
         value.parse()
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventCancelledSchemaVersion(
@@ -4332,7 +5230,7 @@ impl ::std::convert::From<EventCancelledSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventCancelledSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -4452,7 +5350,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventCommandAcceptedKind
         value.parse()
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventCommandAcceptedSchemaVersion(
@@ -4472,7 +5370,7 @@ impl ::std::convert::From<EventCommandAcceptedSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventCommandAcceptedSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -4655,7 +5553,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventDeliveryRecordedKin
         value.parse()
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventDeliveryRecordedSchemaVersion(
@@ -4675,7 +5573,7 @@ impl ::std::convert::From<EventDeliveryRecordedSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventDeliveryRecordedSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -4809,7 +5707,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventDeliveryRequestedKi
         value.parse()
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventDeliveryRequestedSchemaVersion(
@@ -4829,7 +5727,7 @@ impl ::std::convert::From<EventDeliveryRequestedSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventDeliveryRequestedSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -4949,7 +5847,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventDispatchKind {
         value.parse()
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventDispatchSchemaVersion(
@@ -4969,7 +5867,7 @@ impl ::std::convert::From<EventDispatchSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventDispatchSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -5089,7 +5987,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventErrorKind {
         value.parse()
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventErrorSchemaVersion(
@@ -5109,7 +6007,7 @@ impl ::std::convert::From<EventErrorSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventErrorSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -5282,7 +6180,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventInteractionAnswered
         value.parse()
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventInteractionAnsweredSchemaVersion(
@@ -5302,7 +6200,7 @@ impl ::std::convert::From<EventInteractionAnsweredSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventInteractionAnsweredSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -5479,7 +6377,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventInteractionExpiredU
         value.parse()
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventInteractionExpiredUnavailableSchemaVersion(
@@ -5499,7 +6397,7 @@ impl ::std::convert::From<EventInteractionExpiredUnavailableSchemaVersion> for i
 impl ::std::convert::TryFrom<i64> for EventInteractionExpiredUnavailableSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -5677,7 +6575,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventInteractionPendingK
         value.parse()
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventInteractionPendingSchemaVersion(
@@ -5697,7 +6595,7 @@ impl ::std::convert::From<EventInteractionPendingSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventInteractionPendingSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -5817,7 +6715,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventInvalidatedKind {
         value.parse()
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventInvalidatedSchemaVersion(
@@ -5837,7 +6735,7 @@ impl ::std::convert::From<EventInvalidatedSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventInvalidatedSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -6031,7 +6929,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventReconciledKind {
         value.parse()
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventReconciledSchemaVersion(
@@ -6051,7 +6949,7 @@ impl ::std::convert::From<EventReconciledSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventReconciledSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -6172,7 +7070,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventSessionReboundKind 
         value.parse()
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventSessionReboundSchemaVersion(
@@ -6192,7 +7090,7 @@ impl ::std::convert::From<EventSessionReboundSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventSessionReboundSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -6310,7 +7208,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventSessionRecoveryUnav
         value.parse()
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventSessionRecoveryUnavailableSchemaVersion(
@@ -6330,7 +7228,7 @@ impl ::std::convert::From<EventSessionRecoveryUnavailableSchemaVersion> for i64 
 impl ::std::convert::TryFrom<i64> for EventSessionRecoveryUnavailableSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -6448,7 +7346,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventSessionRetiredKind 
         value.parse()
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventSessionRetiredSchemaVersion(
@@ -6468,7 +7366,7 @@ impl ::std::convert::From<EventSessionRetiredSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventSessionRetiredSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -6653,7 +7551,7 @@ impl ::std::convert::TryFrom<::std::string::String>
         value.parse()
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventStatusDispatchingRunningReconciliationRequiredSchemaVersion(
@@ -6677,7 +7575,7 @@ impl ::std::convert::TryFrom<i64>
 {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -6799,7 +7697,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventSurfaceKind {
         value.parse()
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventSurfaceSchemaVersion(
@@ -6819,7 +7717,7 @@ impl ::std::convert::From<EventSurfaceSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventSurfaceSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -6939,7 +7837,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventTerminalKind {
         value.parse()
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventTerminalSchemaVersion(
@@ -6959,7 +7857,7 @@ impl ::std::convert::From<EventTerminalSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventTerminalSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -7134,7 +8032,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventTextKind {
         value.parse()
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventTextSchemaVersion(
@@ -7154,7 +8052,7 @@ impl ::std::convert::From<EventTextSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventTextSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -7279,7 +8177,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventToolProposalKind {
         value.parse()
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventToolProposalSchemaVersion(
@@ -7299,7 +8197,7 @@ impl ::std::convert::From<EventToolProposalSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventToolProposalSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -7533,7 +8431,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EventToolResultKind {
         value.parse()
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct EventToolResultSchemaVersion(
@@ -7553,7 +8451,7 @@ impl ::std::convert::From<EventToolResultSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventToolResultSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -7577,6 +8475,279 @@ pub struct Failure {
     pub code: ErrorCode,
     #[doc = "Explicit retry discipline; uncertainty never authorizes blind resubmission."]
     pub retry: Retry,
+}
+#[doc = ""]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct HistoryPreview {
+    #[serde(rename = "commandIds")]
+    #[doc = "`command_ids` member; see its generated type and parent schema."]
+    pub command_ids: ::std::vec::Vec<Id>,
+    #[serde(rename = "configRevision")]
+    #[doc = "`config_revision` member; see its generated type and parent schema."]
+    pub config_revision: Counter,
+    #[serde(rename = "connectionId")]
+    #[doc = "`connection_id` member; see its generated type and parent schema."]
+    pub connection_id: Id,
+    #[serde(rename = "contentHash")]
+    #[doc = "`content_hash` member; see its generated type and parent schema."]
+    pub content_hash: Id,
+    #[serde(rename = "credentialRevision")]
+    #[doc = "`credential_revision` member; see its generated type and parent schema."]
+    pub credential_revision: Counter,
+    #[doc = "`kind` member; see its generated type and parent schema."]
+    pub kind: HistoryPreviewKind,
+    #[serde(rename = "messageIds")]
+    #[doc = "`message_ids` member; see its generated type and parent schema."]
+    pub message_ids: ::std::vec::Vec<Id>,
+    #[serde(rename = "schemaVersion")]
+    #[doc = "`schema_version` member; see its generated type and parent schema."]
+    pub schema_version: HistoryPreviewSchemaVersion,
+    #[serde(rename = "sessionId")]
+    #[doc = "`session_id` member; see its generated type and parent schema."]
+    pub session_id: Id,
+    #[doc = "`text` member; see its generated type and parent schema."]
+    pub text: HistoryPreviewText,
+    #[serde(rename = "throughSequence")]
+    #[doc = "`through_sequence` member; see its generated type and parent schema."]
+    pub through_sequence: Counter,
+}
+#[doc = "`HistoryPreviewKind`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum HistoryPreviewKind {
+    #[serde(rename = "historyPreview")]
+    #[doc = "`HistoryPreview` alternative; see the parent type's schema contract."]
+    HistoryPreview,
+}
+impl ::std::fmt::Display for HistoryPreviewKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::HistoryPreview => f.write_str("historyPreview"),
+        }
+    }
+}
+impl ::std::str::FromStr for HistoryPreviewKind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "historyPreview" => Ok(Self::HistoryPreview),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for HistoryPreviewKind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for HistoryPreviewKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`HistoryPreviewSchemaVersion`"]
+#[derive(:: serde :: Serialize, Clone)]
+#[serde(transparent)]
+pub struct HistoryPreviewSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
+impl ::std::ops::Deref for HistoryPreviewSchemaVersion {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::std::convert::From<HistoryPreviewSchemaVersion> for i64 {
+    fn from(value: HistoryPreviewSchemaVersion) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::TryFrom<i64> for HistoryPreviewSchemaVersion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if ![5_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for HistoryPreviewSchemaVersion {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
+#[doc = "`HistoryPreviewText`"]
+#[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct HistoryPreviewText(
+    #[doc = "`` member; see its generated type and parent schema."] ::std::string::String,
+);
+impl ::std::ops::Deref for HistoryPreviewText {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<HistoryPreviewText> for ::std::string::String {
+    fn from(value: HistoryPreviewText) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for HistoryPreviewText {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() > 131072usize {
+            return Err("longer than 131072 characters".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for HistoryPreviewText {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for HistoryPreviewText {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for HistoryPreviewText {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
+}
+#[doc = "`HistoryRequest`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct HistoryRequest {
+    #[serde(rename = "connectionId")]
+    #[doc = "`connection_id` member; see its generated type and parent schema."]
+    pub connection_id: Id,
+    #[doc = "`kind` member; see its generated type and parent schema."]
+    pub kind: HistoryRequestKind,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[doc = "`recent` member; see its generated type and parent schema."]
+    pub recent: ::std::option::Option<::std::num::NonZeroU64>,
+    #[serde(rename = "schemaVersion")]
+    #[doc = "`schema_version` member; see its generated type and parent schema."]
+    pub schema_version: HistoryRequestSchemaVersion,
+    #[serde(rename = "sessionId")]
+    #[doc = "`session_id` member; see its generated type and parent schema."]
+    pub session_id: Id,
+}
+#[doc = "`HistoryRequestKind`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum HistoryRequestKind {
+    #[serde(rename = "historyRequest")]
+    #[doc = "`HistoryRequest` alternative; see the parent type's schema contract."]
+    HistoryRequest,
+}
+impl ::std::fmt::Display for HistoryRequestKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::HistoryRequest => f.write_str("historyRequest"),
+        }
+    }
+}
+impl ::std::str::FromStr for HistoryRequestKind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "historyRequest" => Ok(Self::HistoryRequest),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for HistoryRequestKind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for HistoryRequestKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`HistoryRequestSchemaVersion`"]
+#[derive(:: serde :: Serialize, Clone)]
+#[serde(transparent)]
+pub struct HistoryRequestSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
+impl ::std::ops::Deref for HistoryRequestSchemaVersion {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::std::convert::From<HistoryRequestSchemaVersion> for i64 {
+    fn from(value: HistoryRequestSchemaVersion) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::TryFrom<i64> for HistoryRequestSchemaVersion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if ![5_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for HistoryRequestSchemaVersion {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
 }
 #[doc = "Opaque ASCII correlation identifier (1–128 characters); never an authentication credential."]
 #[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -7647,6 +8818,9 @@ pub enum Input {
     #[doc = "prompt variant; all fields are data, never authentication or execution authority."]
     #[serde(rename = "prompt")]
     Prompt {
+        #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+        #[doc = "`history` member; see its generated type and parent schema."]
+        history: ::std::option::Option<HistoryPreview>,
         #[doc = "queue_next serializes later work; steer must match the currently active native run."]
         policy: InputPolicy,
         #[doc = "Exact active native run required for steer; forbidden for queue_next."]
@@ -7839,7 +9013,7 @@ pub struct Interaction {
         skip_serializing_if = "::std::option::Option::is_none"
     )]
     pub response_command_id: ::std::option::Option<Id>,
-    #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+    #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
     #[serde(rename = "schemaVersion")]
     pub schema_version: InteractionSchemaVersion,
     #[doc = "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."]
@@ -7966,7 +9140,7 @@ impl ::std::convert::From<::serde_json::Map<::std::string::String, ::serde_json:
         Self(value)
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct InteractionSchemaVersion(
@@ -7986,7 +9160,7 @@ impl ::std::convert::From<InteractionSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for InteractionSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -8143,7 +9317,7 @@ impl ::std::convert::From<ListRequestSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for ListRequestSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -8249,7 +9423,7 @@ impl ::std::convert::From<NegotiationContractVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for NegotiationContractVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -8347,6 +9521,101 @@ pub struct PageQuery {
     #[doc = "Maximum records in this page, from 1 to 256."]
     pub limit: ::std::num::NonZeroU64,
 }
+#[doc = "`PreferencesRequest`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct PreferencesRequest {
+    #[doc = "`kind` member; see its generated type and parent schema."]
+    pub kind: PreferencesRequestKind,
+    #[doc = "`preferences` member; see its generated type and parent schema."]
+    pub preferences: UserPreferences,
+    #[serde(rename = "schemaVersion")]
+    #[doc = "`schema_version` member; see its generated type and parent schema."]
+    pub schema_version: PreferencesRequestSchemaVersion,
+}
+#[doc = "`PreferencesRequestKind`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum PreferencesRequestKind {
+    #[serde(rename = "preferencesRequest")]
+    #[doc = "`PreferencesRequest` alternative; see the parent type's schema contract."]
+    PreferencesRequest,
+}
+impl ::std::fmt::Display for PreferencesRequestKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::PreferencesRequest => f.write_str("preferencesRequest"),
+        }
+    }
+}
+impl ::std::str::FromStr for PreferencesRequestKind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "preferencesRequest" => Ok(Self::PreferencesRequest),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for PreferencesRequestKind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for PreferencesRequestKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`PreferencesRequestSchemaVersion`"]
+#[derive(:: serde :: Serialize, Clone)]
+#[serde(transparent)]
+pub struct PreferencesRequestSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
+impl ::std::ops::Deref for PreferencesRequestSchemaVersion {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::std::convert::From<PreferencesRequestSchemaVersion> for i64 {
+    fn from(value: PreferencesRequestSchemaVersion) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::TryFrom<i64> for PreferencesRequestSchemaVersion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if ![5_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for PreferencesRequestSchemaVersion {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
 #[doc = "Immutable acceptance fact. Only an actual committed store makes it durable; it is not a model terminal."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
@@ -8373,9 +9642,12 @@ pub struct Receipt {
     #[doc = "Inclusive same-command retry deadline, no later than command expiry."]
     #[serde(rename = "retryUntilMs")]
     pub retry_until_ms: Counter,
-    #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+    #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
     #[serde(rename = "schemaVersion")]
     pub schema_version: ReceiptSchemaVersion,
+    #[doc = "Immutable provider phase selected by the host at command acceptance."]
+    #[serde(rename = "stageId")]
+    pub stage_id: Id,
 }
 #[doc = "SHA-256 of JCS(command), including every command field; namespace is a separate storage key."]
 #[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -8478,7 +9750,7 @@ impl ::std::convert::TryFrom<::std::string::String> for ReceiptKind {
         value.parse()
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct ReceiptSchemaVersion(
@@ -8498,7 +9770,7 @@ impl ::std::convert::From<ReceiptSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for ReceiptSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -8594,7 +9866,7 @@ impl ::std::convert::From<ResumeRequestSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for ResumeRequestSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -8667,14 +9939,225 @@ impl ::std::convert::TryFrom<::std::string::String> for Retry {
         value.parse()
     }
 }
+#[doc = "`SaveConnectionRequest`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct SaveConnectionRequest {
+    #[doc = "`connection` member; see its generated type and parent schema."]
+    pub connection: Connection,
+    #[serde(
+        rename = "expectedRevision",
+        deserialize_with = "::std::option::Option::deserialize"
+    )]
+    #[doc = "`expected_revision` member; see its generated type and parent schema."]
+    pub expected_revision: ::std::option::Option<Counter>,
+    #[doc = "`kind` member; see its generated type and parent schema."]
+    pub kind: SaveConnectionRequestKind,
+    #[serde(rename = "schemaVersion")]
+    #[doc = "`schema_version` member; see its generated type and parent schema."]
+    pub schema_version: SaveConnectionRequestSchemaVersion,
+}
+#[doc = "`SaveConnectionRequestKind`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum SaveConnectionRequestKind {
+    #[serde(rename = "saveConnectionRequest")]
+    #[doc = "`SaveConnectionRequest` alternative; see the parent type's schema contract."]
+    SaveConnectionRequest,
+}
+impl ::std::fmt::Display for SaveConnectionRequestKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::SaveConnectionRequest => f.write_str("saveConnectionRequest"),
+        }
+    }
+}
+impl ::std::str::FromStr for SaveConnectionRequestKind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "saveConnectionRequest" => Ok(Self::SaveConnectionRequest),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for SaveConnectionRequestKind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for SaveConnectionRequestKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`SaveConnectionRequestSchemaVersion`"]
+#[derive(:: serde :: Serialize, Clone)]
+#[serde(transparent)]
+pub struct SaveConnectionRequestSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
+impl ::std::ops::Deref for SaveConnectionRequestSchemaVersion {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::std::convert::From<SaveConnectionRequestSchemaVersion> for i64 {
+    fn from(value: SaveConnectionRequestSchemaVersion) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::TryFrom<i64> for SaveConnectionRequestSchemaVersion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if ![5_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for SaveConnectionRequestSchemaVersion {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
+#[doc = "`SelectConnectionRequest`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct SelectConnectionRequest {
+    #[serde(rename = "connectionId")]
+    #[doc = "`connection_id` member; see its generated type and parent schema."]
+    pub connection_id: Id,
+    #[serde(rename = "freshContext")]
+    #[doc = "`fresh_context` member; see its generated type and parent schema."]
+    pub fresh_context: bool,
+    #[doc = "`kind` member; see its generated type and parent schema."]
+    pub kind: SelectConnectionRequestKind,
+    #[serde(rename = "schemaVersion")]
+    #[doc = "`schema_version` member; see its generated type and parent schema."]
+    pub schema_version: SelectConnectionRequestSchemaVersion,
+    #[serde(rename = "sessionId")]
+    #[doc = "`session_id` member; see its generated type and parent schema."]
+    pub session_id: Id,
+}
+#[doc = "`SelectConnectionRequestKind`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum SelectConnectionRequestKind {
+    #[serde(rename = "selectConnectionRequest")]
+    #[doc = "`SelectConnectionRequest` alternative; see the parent type's schema contract."]
+    SelectConnectionRequest,
+}
+impl ::std::fmt::Display for SelectConnectionRequestKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::SelectConnectionRequest => f.write_str("selectConnectionRequest"),
+        }
+    }
+}
+impl ::std::str::FromStr for SelectConnectionRequestKind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "selectConnectionRequest" => Ok(Self::SelectConnectionRequest),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for SelectConnectionRequestKind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for SelectConnectionRequestKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`SelectConnectionRequestSchemaVersion`"]
+#[derive(:: serde :: Serialize, Clone)]
+#[serde(transparent)]
+pub struct SelectConnectionRequestSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
+impl ::std::ops::Deref for SelectConnectionRequestSchemaVersion {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::std::convert::From<SelectConnectionRequestSchemaVersion> for i64 {
+    fn from(value: SelectConnectionRequestSchemaVersion) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::TryFrom<i64> for SelectConnectionRequestSchemaVersion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if ![5_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for SelectConnectionRequestSchemaVersion {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
 #[doc = "Logical session state and stable event watermark committed at one revision."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Session {
-    #[doc = "Exact provider incarnation and native context identity."]
-    pub binding: Binding,
-    #[doc = "Capabilities bound to this exact provider/configuration/account incarnation."]
-    pub capabilities: Capabilities,
+    #[serde(
+        rename = "currentStageId",
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    #[doc = "`current_stage_id` member; see its generated type and parent schema."]
+    pub current_stage_id: ::std::option::Option<Id>,
+    #[doc = "Explicit next-prompt intent. The current phase remains available for old receipts and device deliveries until the new phase is admitted."]
+    #[serde(
+        rename = "freshContext",
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    pub fresh_context: ::std::option::Option<bool>,
     #[doc = "Closed product record discriminator."]
     pub kind: SessionKind,
     #[doc = "Highest committed stable-event sequence at this session revision."]
@@ -8684,9 +10167,17 @@ pub struct Session {
     pub namespace: Namespace,
     #[doc = "Monotonic CAS revision of this product record."]
     pub revision: Counter,
-    #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+    #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
     #[serde(rename = "schemaVersion")]
     pub schema_version: SessionSchemaVersion,
+    #[serde(
+        rename = "selectedConnectionId",
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    #[doc = "`selected_connection_id` member; see its generated type and parent schema."]
+    pub selected_connection_id: ::std::option::Option<Id>,
+    #[doc = "`stages` member; see its generated type and parent schema."]
+    pub stages: ::std::vec::Vec<ContextStage>,
     #[doc = "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."]
     pub status: SessionStatus,
 }
@@ -8819,7 +10310,7 @@ impl ::std::convert::From<SessionPageSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for SessionPageSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -8835,7 +10326,7 @@ impl<'de> ::serde::Deserialize<'de> for SessionPageSchemaVersion {
             .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct SessionSchemaVersion(
@@ -8855,7 +10346,7 @@ impl ::std::convert::From<SessionSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for SessionSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -9026,7 +10517,7 @@ impl ::std::convert::From<SnapshotPageSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for SnapshotPageSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -9124,7 +10615,7 @@ impl ::std::convert::From<SnapshotRequestSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for SnapshotRequestSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -9185,7 +10676,7 @@ pub struct SurfaceAction {
     #[doc = "Provider-owned model-turn/run identifier, required when the provider exposes it."]
     #[serde(rename = "nativeRunId")]
     pub native_run_id: Id,
-    #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+    #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
     #[serde(rename = "schemaVersion")]
     pub schema_version: SurfaceActionSchemaVersion,
     #[doc = "Logical session identifier, never reusable after retirement."]
@@ -9245,7 +10736,7 @@ impl ::std::convert::TryFrom<::std::string::String> for SurfaceActionKind {
         value.parse()
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct SurfaceActionSchemaVersion(
@@ -9265,7 +10756,7 @@ impl ::std::convert::From<SurfaceActionSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for SurfaceActionSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -9323,7 +10814,7 @@ pub struct SurfaceState {
     pub native_run_id: Id,
     #[doc = "Monotonic CAS revision of this product record."]
     pub revision: Counter,
-    #[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+    #[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
     #[serde(rename = "schemaVersion")]
     pub schema_version: SurfaceStateSchemaVersion,
     #[doc = "Exact upstream source component allowed to emit this action."]
@@ -9432,7 +10923,7 @@ impl ::std::convert::TryFrom<::std::string::String> for SurfaceStateKind {
         value.parse()
     }
 }
-#[doc = "Exact product wire version; Versions 1–3 are rejected without migration or fallback."]
+#[doc = "Exact product wire version; Versions 1–4 are rejected without migration or fallback."]
 #[derive(:: serde :: Serialize, Clone)]
 #[serde(transparent)]
 pub struct SurfaceStateSchemaVersion(
@@ -9452,7 +10943,7 @@ impl ::std::convert::From<SurfaceStateSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for SurfaceStateSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![5_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -9525,6 +11016,518 @@ impl ::std::convert::TryFrom<::std::string::String> for SurfaceStateStatus {
         value.parse()
     }
 }
+#[doc = ""]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct TestUser {
+    #[serde(rename = "displayName")]
+    #[doc = "`display_name` member; see its generated type and parent schema."]
+    pub display_name: TestUserDisplayName,
+    #[doc = "`kind` member; see its generated type and parent schema."]
+    pub kind: TestUserKind,
+    #[serde(rename = "nameKey")]
+    #[doc = "`name_key` member; see its generated type and parent schema."]
+    pub name_key: TestUserNameKey,
+    #[serde(rename = "schemaVersion")]
+    #[doc = "`schema_version` member; see its generated type and parent schema."]
+    pub schema_version: TestUserSchemaVersion,
+    #[serde(rename = "userId")]
+    #[doc = "`user_id` member; see its generated type and parent schema."]
+    pub user_id: Id,
+}
+#[doc = "`TestUserDisplayName`"]
+#[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct TestUserDisplayName(
+    #[doc = "`` member; see its generated type and parent schema."] ::std::string::String,
+);
+impl ::std::ops::Deref for TestUserDisplayName {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<TestUserDisplayName> for ::std::string::String {
+    fn from(value: TestUserDisplayName) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for TestUserDisplayName {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() > 64usize {
+            return Err("longer than 64 characters".into());
+        }
+        if value.chars().count() < 1usize {
+            return Err("shorter than 1 characters".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for TestUserDisplayName {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for TestUserDisplayName {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for TestUserDisplayName {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
+}
+#[doc = "`TestUserKind`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum TestUserKind {
+    #[serde(rename = "testUser")]
+    #[doc = "`TestUser` alternative; see the parent type's schema contract."]
+    TestUser,
+}
+impl ::std::fmt::Display for TestUserKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::TestUser => f.write_str("testUser"),
+        }
+    }
+}
+impl ::std::str::FromStr for TestUserKind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "testUser" => Ok(Self::TestUser),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for TestUserKind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for TestUserKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`TestUserNameKey`"]
+#[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct TestUserNameKey(
+    #[doc = "`` member; see its generated type and parent schema."] ::std::string::String,
+);
+impl ::std::ops::Deref for TestUserNameKey {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<TestUserNameKey> for ::std::string::String {
+    fn from(value: TestUserNameKey) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for TestUserNameKey {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() > 128usize {
+            return Err("longer than 128 characters".into());
+        }
+        if value.chars().count() < 1usize {
+            return Err("shorter than 1 characters".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for TestUserNameKey {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for TestUserNameKey {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for TestUserNameKey {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
+}
+#[doc = "`TestUserPage`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct TestUserPage {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[doc = "`current` member; see its generated type and parent schema."]
+    pub current: ::std::option::Option<UserContext>,
+    #[doc = "`kind` member; see its generated type and parent schema."]
+    pub kind: TestUserPageKind,
+    #[serde(rename = "schemaVersion")]
+    #[doc = "`schema_version` member; see its generated type and parent schema."]
+    pub schema_version: TestUserPageSchemaVersion,
+    #[doc = "`users` member; see its generated type and parent schema."]
+    pub users: ::std::vec::Vec<TestUser>,
+}
+#[doc = "`TestUserPageKind`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum TestUserPageKind {
+    #[serde(rename = "testUserPage")]
+    #[doc = "`TestUserPage` alternative; see the parent type's schema contract."]
+    TestUserPage,
+}
+impl ::std::fmt::Display for TestUserPageKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::TestUserPage => f.write_str("testUserPage"),
+        }
+    }
+}
+impl ::std::str::FromStr for TestUserPageKind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "testUserPage" => Ok(Self::TestUserPage),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for TestUserPageKind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for TestUserPageKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`TestUserPageSchemaVersion`"]
+#[derive(:: serde :: Serialize, Clone)]
+#[serde(transparent)]
+pub struct TestUserPageSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
+impl ::std::ops::Deref for TestUserPageSchemaVersion {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::std::convert::From<TestUserPageSchemaVersion> for i64 {
+    fn from(value: TestUserPageSchemaVersion) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::TryFrom<i64> for TestUserPageSchemaVersion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if ![5_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for TestUserPageSchemaVersion {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
+#[doc = "`TestUserSchemaVersion`"]
+#[derive(:: serde :: Serialize, Clone)]
+#[serde(transparent)]
+pub struct TestUserSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
+impl ::std::ops::Deref for TestUserSchemaVersion {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::std::convert::From<TestUserSchemaVersion> for i64 {
+    fn from(value: TestUserSchemaVersion) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::TryFrom<i64> for TestUserSchemaVersion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if ![5_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for TestUserSchemaVersion {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
+#[doc = ""]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct UserContext {
+    #[doc = "`generation` member; see its generated type and parent schema."]
+    pub generation: Id,
+    #[doc = "`kind` member; see its generated type and parent schema."]
+    pub kind: UserContextKind,
+    #[serde(rename = "schemaVersion")]
+    #[doc = "`schema_version` member; see its generated type and parent schema."]
+    pub schema_version: UserContextSchemaVersion,
+    #[doc = "`user` member; see its generated type and parent schema."]
+    pub user: TestUser,
+}
+#[doc = "`UserContextKind`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum UserContextKind {
+    #[serde(rename = "userContext")]
+    #[doc = "`UserContext` alternative; see the parent type's schema contract."]
+    UserContext,
+}
+impl ::std::fmt::Display for UserContextKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::UserContext => f.write_str("userContext"),
+        }
+    }
+}
+impl ::std::str::FromStr for UserContextKind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "userContext" => Ok(Self::UserContext),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for UserContextKind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for UserContextKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`UserContextSchemaVersion`"]
+#[derive(:: serde :: Serialize, Clone)]
+#[serde(transparent)]
+pub struct UserContextSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
+impl ::std::ops::Deref for UserContextSchemaVersion {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::std::convert::From<UserContextSchemaVersion> for i64 {
+    fn from(value: UserContextSchemaVersion) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::TryFrom<i64> for UserContextSchemaVersion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if ![5_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for UserContextSchemaVersion {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
+#[doc = ""]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct UserPreferences {
+    #[serde(
+        rename = "defaultConnectionId",
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    #[doc = "`default_connection_id` member; see its generated type and parent schema."]
+    pub default_connection_id: ::std::option::Option<Id>,
+    #[doc = "`kind` member; see its generated type and parent schema."]
+    pub kind: UserPreferencesKind,
+    #[serde(rename = "schemaVersion")]
+    #[doc = "`schema_version` member; see its generated type and parent schema."]
+    pub schema_version: UserPreferencesSchemaVersion,
+    #[serde(
+        rename = "selectedSessionId",
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    #[doc = "`selected_session_id` member; see its generated type and parent schema."]
+    pub selected_session_id: ::std::option::Option<Id>,
+}
+#[doc = "`UserPreferencesKind`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum UserPreferencesKind {
+    #[serde(rename = "userPreferences")]
+    #[doc = "`UserPreferences` alternative; see the parent type's schema contract."]
+    UserPreferences,
+}
+impl ::std::fmt::Display for UserPreferencesKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::UserPreferences => f.write_str("userPreferences"),
+        }
+    }
+}
+impl ::std::str::FromStr for UserPreferencesKind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "userPreferences" => Ok(Self::UserPreferences),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for UserPreferencesKind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for UserPreferencesKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`UserPreferencesSchemaVersion`"]
+#[derive(:: serde :: Serialize, Clone)]
+#[serde(transparent)]
+pub struct UserPreferencesSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
+impl ::std::ops::Deref for UserPreferencesSchemaVersion {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::std::convert::From<UserPreferencesSchemaVersion> for i64 {
+    fn from(value: UserPreferencesSchemaVersion) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::TryFrom<i64> for UserPreferencesSchemaVersion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if ![5_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for UserPreferencesSchemaVersion {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
 #[doc = "Product reliability records only. No record authenticates a caller, grants approval or proves business execution. Standard ACP/A2UI schemas retain their upstream owners."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(untagged)]
@@ -9569,6 +11572,40 @@ pub enum WireRecord {
     AccessUpdate(#[doc = "`` member; see its generated type and parent schema."] AccessUpdate),
     #[doc = "`AttachReceipt` alternative; see the parent type's schema contract."]
     AttachReceipt(#[doc = "`` member; see its generated type and parent schema."] AttachReceipt),
+    #[doc = "`Connection` alternative; see the parent type's schema contract."]
+    Connection(#[doc = "`` member; see its generated type and parent schema."] Connection),
+    #[doc = "`UserPreferences` alternative; see the parent type's schema contract."]
+    UserPreferences(
+        #[doc = "`` member; see its generated type and parent schema."] UserPreferences,
+    ),
+    #[doc = "`TestUser` alternative; see the parent type's schema contract."]
+    TestUser(#[doc = "`` member; see its generated type and parent schema."] TestUser),
+    #[doc = "`UserContext` alternative; see the parent type's schema contract."]
+    UserContext(#[doc = "`` member; see its generated type and parent schema."] UserContext),
+    #[doc = "`HistoryPreview` alternative; see the parent type's schema contract."]
+    HistoryPreview(#[doc = "`` member; see its generated type and parent schema."] HistoryPreview),
+    #[doc = "`ConnectionPage` alternative; see the parent type's schema contract."]
+    ConnectionPage(#[doc = "`` member; see its generated type and parent schema."] ConnectionPage),
+    #[doc = "`ConnectionsRequest` alternative; see the parent type's schema contract."]
+    ConnectionsRequest(
+        #[doc = "`` member; see its generated type and parent schema."] ConnectionsRequest,
+    ),
+    #[doc = "`SaveConnectionRequest` alternative; see the parent type's schema contract."]
+    SaveConnectionRequest(
+        #[doc = "`` member; see its generated type and parent schema."] SaveConnectionRequest,
+    ),
+    #[doc = "`PreferencesRequest` alternative; see the parent type's schema contract."]
+    PreferencesRequest(
+        #[doc = "`` member; see its generated type and parent schema."] PreferencesRequest,
+    ),
+    #[doc = "`SelectConnectionRequest` alternative; see the parent type's schema contract."]
+    SelectConnectionRequest(
+        #[doc = "`` member; see its generated type and parent schema."] SelectConnectionRequest,
+    ),
+    #[doc = "`HistoryRequest` alternative; see the parent type's schema contract."]
+    HistoryRequest(#[doc = "`` member; see its generated type and parent schema."] HistoryRequest),
+    #[doc = "`TestUserPage` alternative; see the parent type's schema contract."]
+    TestUserPage(#[doc = "`` member; see its generated type and parent schema."] TestUserPage),
 }
 impl ::std::convert::From<Command> for WireRecord {
     fn from(value: Command) -> Self {
@@ -9663,6 +11700,66 @@ impl ::std::convert::From<AccessUpdate> for WireRecord {
 impl ::std::convert::From<AttachReceipt> for WireRecord {
     fn from(value: AttachReceipt) -> Self {
         Self::AttachReceipt(value)
+    }
+}
+impl ::std::convert::From<Connection> for WireRecord {
+    fn from(value: Connection) -> Self {
+        Self::Connection(value)
+    }
+}
+impl ::std::convert::From<UserPreferences> for WireRecord {
+    fn from(value: UserPreferences) -> Self {
+        Self::UserPreferences(value)
+    }
+}
+impl ::std::convert::From<TestUser> for WireRecord {
+    fn from(value: TestUser) -> Self {
+        Self::TestUser(value)
+    }
+}
+impl ::std::convert::From<UserContext> for WireRecord {
+    fn from(value: UserContext) -> Self {
+        Self::UserContext(value)
+    }
+}
+impl ::std::convert::From<HistoryPreview> for WireRecord {
+    fn from(value: HistoryPreview) -> Self {
+        Self::HistoryPreview(value)
+    }
+}
+impl ::std::convert::From<ConnectionPage> for WireRecord {
+    fn from(value: ConnectionPage) -> Self {
+        Self::ConnectionPage(value)
+    }
+}
+impl ::std::convert::From<ConnectionsRequest> for WireRecord {
+    fn from(value: ConnectionsRequest) -> Self {
+        Self::ConnectionsRequest(value)
+    }
+}
+impl ::std::convert::From<SaveConnectionRequest> for WireRecord {
+    fn from(value: SaveConnectionRequest) -> Self {
+        Self::SaveConnectionRequest(value)
+    }
+}
+impl ::std::convert::From<PreferencesRequest> for WireRecord {
+    fn from(value: PreferencesRequest) -> Self {
+        Self::PreferencesRequest(value)
+    }
+}
+impl ::std::convert::From<SelectConnectionRequest> for WireRecord {
+    fn from(value: SelectConnectionRequest) -> Self {
+        Self::SelectConnectionRequest(value)
+    }
+}
+impl ::std::convert::From<HistoryRequest> for WireRecord {
+    fn from(value: HistoryRequest) -> Self {
+        Self::HistoryRequest(value)
+    }
+}
+impl ::std::convert::From<TestUserPage> for WireRecord {
+    fn from(value: TestUserPage) -> Self {
+        Self::TestUserPage(value)
     }
 }
 #[doc = " Error types."]
@@ -10098,6 +12195,118 @@ impl std::fmt::Debug for CommandSchemaVersion {
 impl std::fmt::Debug for ConfigRef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(stringify!(ConfigRef), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for Connection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(Connection), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for ConnectionKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(ConnectionKind), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for ConnectionName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(ConnectionName), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for ConnectionPage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(ConnectionPage), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for ConnectionPageKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(ConnectionPageKind), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for ConnectionPageSchemaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(ConnectionPageSchemaVersion),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for ConnectionProfile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(ConnectionProfile), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for ConnectionProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(ConnectionProvider), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for ConnectionSchemaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(ConnectionSchemaVersion), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for ConnectionSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(ConnectionSource), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for ConnectionSourceApiUrl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(ConnectionSourceApiUrl), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for ConnectionSourceCredentialType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(ConnectionSourceCredentialType),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for ConnectionSourceDirectory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(ConnectionSourceDirectory),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for ConnectionSourceModel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(ConnectionSourceModel), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for ConnectionSourceProfile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(ConnectionSourceProfile), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for ConnectionStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(ConnectionStatus), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for ConnectionsRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(ConnectionsRequest), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for ConnectionsRequestKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(ConnectionsRequestKind), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for ConnectionsRequestSchemaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(ConnectionsRequestSchemaVersion),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for ContextStage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(ContextStage), "([redacted])"))
     }
 }
 impl std::fmt::Debug for Counter {
@@ -10907,6 +13116,47 @@ impl std::fmt::Debug for Failure {
         f.write_str(concat!(stringify!(Failure), "([redacted])"))
     }
 }
+impl std::fmt::Debug for HistoryPreview {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(HistoryPreview), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for HistoryPreviewKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(HistoryPreviewKind), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for HistoryPreviewSchemaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(HistoryPreviewSchemaVersion),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for HistoryPreviewText {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(HistoryPreviewText), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for HistoryRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(HistoryRequest), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for HistoryRequestKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(HistoryRequestKind), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for HistoryRequestSchemaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(HistoryRequestSchemaVersion),
+            "([redacted])"
+        ))
+    }
+}
 impl std::fmt::Debug for Id {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(stringify!(Id), "([redacted])"))
@@ -11011,6 +13261,24 @@ impl std::fmt::Debug for PageQuery {
         f.write_str(concat!(stringify!(PageQuery), "([redacted])"))
     }
 }
+impl std::fmt::Debug for PreferencesRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(PreferencesRequest), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for PreferencesRequestKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(PreferencesRequestKind), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for PreferencesRequestSchemaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(PreferencesRequestSchemaVersion),
+            "([redacted])"
+        ))
+    }
+}
 impl std::fmt::Debug for Receipt {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(stringify!(Receipt), "([redacted])"))
@@ -11052,6 +13320,48 @@ impl std::fmt::Debug for ResumeRequestSchemaVersion {
 impl std::fmt::Debug for Retry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(stringify!(Retry), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for SaveConnectionRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(SaveConnectionRequest), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for SaveConnectionRequestKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(SaveConnectionRequestKind),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for SaveConnectionRequestSchemaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(SaveConnectionRequestSchemaVersion),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for SelectConnectionRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(SelectConnectionRequest), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for SelectConnectionRequestKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(SelectConnectionRequestKind),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for SelectConnectionRequestSchemaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(SelectConnectionRequestSchemaVersion),
+            "([redacted])"
+        ))
     }
 }
 impl std::fmt::Debug for Session {
@@ -11182,6 +13492,85 @@ impl std::fmt::Debug for SurfaceStateSchemaVersion {
 impl std::fmt::Debug for SurfaceStateStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(stringify!(SurfaceStateStatus), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for TestUser {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(TestUser), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for TestUserDisplayName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(TestUserDisplayName), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for TestUserKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(TestUserKind), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for TestUserNameKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(TestUserNameKey), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for TestUserPage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(TestUserPage), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for TestUserPageKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(TestUserPageKind), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for TestUserPageSchemaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(TestUserPageSchemaVersion),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for TestUserSchemaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(TestUserSchemaVersion), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for UserContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(UserContext), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for UserContextKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(UserContextKind), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for UserContextSchemaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(UserContextSchemaVersion),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for UserPreferences {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(UserPreferences), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for UserPreferencesKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(UserPreferencesKind), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for UserPreferencesSchemaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(UserPreferencesSchemaVersion),
+            "([redacted])"
+        ))
     }
 }
 impl std::fmt::Debug for WireRecord {

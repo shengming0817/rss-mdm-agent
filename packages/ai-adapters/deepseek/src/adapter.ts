@@ -1,3 +1,4 @@
+import { promptText } from "@rss-mdm-agent/ai-contract";
 import { randomUUID } from "node:crypto";
 import {
   boundedJson,
@@ -431,7 +432,7 @@ export class DeepSeekAdapter implements ProviderAgentPort {
       decode(
         boundedJson(
           {
-            schemaVersion: 4,
+            schemaVersion: 5,
             kind: "event",
             namespace: this.configuration!.namespace,
             eventId: "validate",
@@ -502,7 +503,7 @@ export class DeepSeekAdapter implements ProviderAgentPort {
     try {
       const reply = await this.call(
         "prompt",
-        { requestId, text: c.input.text },
+        { requestId, text: promptText(c.input) },
         budget,
       );
       if (reply.requestId !== requestId || reply.status !== "accepted")

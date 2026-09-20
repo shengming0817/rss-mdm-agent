@@ -1,43 +1,73 @@
+import { createHash } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { HostOptions } from "@rss-mdm-agent/ai-host";
-import {
-  configurationFingerprint,
-  type LocalConfiguration,
-} from "./configuration.js";
-
-/** One trusted resolver for both the local app and Store-bound recovery tests. */
+import type { SessionStore } from "@rss-mdm-agent/ai-contract";
+import type { LocalConfiguration } from "./configuration.js";
+import { readPrivateFile } from "./private-file.js";
+/** Exact historical connection revision is frozen before starting a worker. */
 export function localResolver(
   local: LocalConfiguration,
-  path: string,
+  store: SessionStore,
 ): HostOptions["resolve"] {
-  const artifact = new URL("./provider.js", import.meta.url);
-  artifact.searchParams.set("configuration", path);
-  artifact.searchParams.set("fingerprint", configurationFingerprint(local));
-  return async (caller, options, namespace) => {
+  return async (caller, options, namespace, _budget, _previous, candidate) => {
     if (
-      caller.tenantId !== local.caller.tenantId ||
-      caller.principalId !== local.caller.principalId ||
-      caller.authorityId !== local.caller.authorityId ||
-      options.provider !== local.session.provider ||
-      options.config.id !== local.session.config.id ||
-      options.config.revision !== local.session.config.revision ||
-      options.accountRef !== local.session.accountRef ||
-      options.profile !== local.session.profile
+      caller.tenantId !== namespace.tenantId ||
+      caller.principalId !== namespace.principalId ||
+      caller.authorityId !== namespace.authorityId
     )
-      throw new Error("local scope mismatch");
+      throw new Error("scope mismatch");
+    const resolved = candidate
+      ? { ok: true as const, value: candidate }
+      : await store.connection(
+          caller,
+          options.config.id,
+          Number(options.config.revision),
+        );
+    if (!resolved.ok) throw new Error("connection_required");
+    const connection = resolved.value;
+    if (
+      options.config.revision !== String(connection.configRevision) ||
+      connection.provider !== options.provider ||
+      connection.accountRef !== options.accountRef ||
+      connection.profile !== options.profile ||
+      connection.status === "deleted"
+    )
+      throw new Error("configuration identity changed");
+    const content = JSON.stringify({
+        local,
+        connection,
+        namespace,
+        ...(candidate ? { verification: true } : {}),
+      }),
+      fingerprint = createHash("sha256").update(content).digest("hex");
+    const directory = join(local.nativeDirectory, "snapshots");
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    const path = join(directory, fingerprint + ".json");
+    try {
+      await writeFile(path, content, { flag: "wx", mode: 0o600 });
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    }
+    if ((await readPrivateFile(path, 65536)) !== content)
+      throw new Error("configuration identity changed");
+    const artifact = new URL("./provider.js", import.meta.url);
+    artifact.searchParams.set("snapshot", path);
+    artifact.searchParams.set("fingerprint", fingerprint);
     return {
       configuration: {
         namespace,
-        provider: options.provider,
+        provider: connection.provider,
         config: options.config,
-        accountRef: options.accountRef,
+        accountRef: connection.accountRef,
         workingDirectory: local.workingDirectory,
         permissions:
-          options.profile === "controlled_tools"
+          connection.profile === "controlled_tools"
             ? "host_mediated"
             : "tools_disabled",
       },
       artifact: artifact.href,
-      ...(options.profile === "controlled_tools"
+      ...(connection.profile === "controlled_tools"
         ? {
             admission: {
               verifier: {

@@ -1,3 +1,5 @@
+import { activeStage } from "../../packages/ai-contract/dist/index.js";
+import { openFixture, fixtureArtifact } from "./harness.mjs";
 import { createHost } from "../../packages/ai-host/dist/index.js";
 import { openSqliteStore } from "../../packages/ai-store-sqlite/dist/index.js";
 import { join } from "node:path";
@@ -45,17 +47,17 @@ const host = unwrap(
         workingDirectory: directory,
         permissions: "tools_disabled",
       },
-      artifact: new URL("./provider.mjs", import.meta.url).href,
+      artifact: await fixtureArtifact(store, namespace, options),
     }),
   }),
 );
 const budget = { timeoutMs: 5000, signal: new AbortController().signal };
-const session = unwrap(await host.createSession(caller, options, budget));
+const session = unwrap(await openFixture(host, store, caller, options, budget));
 unwrap(
   await host.submit(
     caller,
     {
-      schemaVersion: 4,
+      schemaVersion: 5,
       kind: "command",
       sessionId: session.namespace.sessionId,
       commandId: "uncertain",

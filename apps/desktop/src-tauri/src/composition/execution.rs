@@ -8,7 +8,7 @@ use std::{
     path::Path,
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc, Arc,
+        mpsc, Arc, Mutex,
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -54,9 +54,10 @@ type App = ExecutionApp<S1Host, S1Runner>;
 type Job = Box<dyn FnOnce(&mut Owner) + Send>;
 #[derive(Clone)]
 pub struct ExecutionHandle {
-    ai: super::origin::AiBinding,
+    ai: Option<super::origin::AiBinding>,
+    scopes: Option<Arc<Mutex<std::collections::BTreeMap<String, ExecutionHandle>>>>,
     origin: Option<Initiator>,
-    sender: mpsc::SyncSender<Job>,
+    sender: Option<mpsc::SyncSender<Job>>,
     stopped: Arc<AtomicBool>,
     finished: Arc<AtomicBool>,
 }
@@ -105,6 +106,17 @@ impl RunnerPort for S1Runner {
     }
 }
 impl ExecutionHandle {
+    pub fn router(scopes: Arc<Mutex<std::collections::BTreeMap<String, ExecutionHandle>>>) -> Self {
+        Self {
+            ai: None,
+            scopes: Some(scopes),
+            origin: None,
+            sender: None,
+            stopped: Arc::new(AtomicBool::new(false)),
+            finished: Arc::new(AtomicBool::new(true)),
+        }
+    }
+
     pub fn start(path: &Path, ai: super::origin::AiBinding) -> Result<Self, Error> {
         let host = S1Host::new(ai.clone());
         let runner = S1Runner {
@@ -168,9 +180,10 @@ impl ExecutionHandle {
             })
             .map_err(|_| Error::Unavailable)?;
         Ok(Self {
-            ai,
+            ai: Some(ai),
+            scopes: None,
             origin: None,
-            sender,
+            sender: Some(sender),
             stopped,
             finished,
         })
@@ -193,6 +206,8 @@ impl ExecutionHandle {
         }
         let (tx, rx) = oneshot::channel();
         self.sender
+            .as_ref()
+            .ok_or(Error::Unbound)?
             .try_send(Box::new(move |owner| {
                 let _ = tx.send(action(owner));
             }))
@@ -339,6 +354,8 @@ impl Owner {
             format!("plan-{}", fixtures::digest(request.as_str().as_bytes())),
             time,
             &origin,
+            &ActorId::new(self.host.ai.caller.principal_id.as_str().to_owned())
+                .map_err(|_| Error::Denied)?,
         )
         .map_err(|_| Error::InvalidInput)?;
         if previous
@@ -604,8 +621,22 @@ impl mcp::ExecutionServicePort for ExecutionHandle {
         self: &Arc<Self>,
         metadata: &serde_json::Map<String, serde_json::Value>,
     ) -> Result<Arc<Self>, mcp::ServiceError> {
-        let mut call = (**self).clone();
-        call.origin = Some(self.ai.bind(metadata)?);
+        let mut call = if let Some(scopes) = &self.scopes {
+            scopes
+                .lock()
+                .map_err(|_| mcp::ServiceError::Unavailable)?
+                .get(&super::origin::AiBinding::principal(metadata)?)
+                .cloned()
+                .ok_or(mcp::ServiceError::Denied)?
+        } else {
+            (**self).clone()
+        };
+        call.origin = Some(
+            call.ai
+                .as_ref()
+                .ok_or(mcp::ServiceError::Unbound)?
+                .bind(metadata)?,
+        );
         Ok(Arc::new(call))
     }
     fn check_binding(&self) -> Result<(), mcp::ServiceError> {
@@ -772,10 +803,7 @@ mod tests {
             std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
         }
         let root = root.canonicalize().unwrap();
-        let ai = super::super::origin::AiBinding::from_configuration(&serde_json::json!({
-            "caller": {"tenantId":"s1-test","principalId":"fixture-actor","authorityId":"desktop-fixture"},
-            "session": {"provider":"codex","accountRef":"test-account","config":{"id":"test-config","revision":"1"},"profile":"controlled_tools"}
-        })).unwrap();
+        let ai = super::super::origin::AiBinding::for_user("fixture-actor").unwrap();
         (
             ExecutionHandle::start(&root.join("execution.sqlite"), ai).unwrap(),
             root,
@@ -904,6 +932,70 @@ mod tests {
             .await
             .unwrap();
         handle.close().await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[tokio::test]
+    async fn user_handles_share_journal_without_rebinding_running_tasks() {
+        let (alice, root) = fixture().await;
+        alice
+            .call(|owner| {
+                let draft = ui::Draft {
+                    instance_id: BINDING.into(),
+                    request_id: RequestId::new("alice-running").unwrap(),
+                    revision: 1,
+                    catalog: owner.catalog.reference(),
+                    item_id: id("maintenance"),
+                    variant_id: id("test"),
+                    fields: Default::default(),
+                };
+                let selected =
+                    selection::select(&owner.catalog, &draft).map_err(|_| Error::InvalidInput)?;
+                owner.preview(&draft.request_id, selected, fixtures::human())?;
+                owner.submit(&draft.request_id)?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        let bob = ExecutionHandle::start(
+            &root.join("execution.sqlite"),
+            super::super::origin::AiBinding::for_user("bob").unwrap(),
+        )
+        .unwrap();
+        assert!(bob
+            .details(RequestId::new("alice-running").unwrap())
+            .await
+            .is_err());
+        bob.call(|owner| {
+            assert!(owner.app.tasks(None, 128)?.items.is_empty());
+            Ok(())
+        })
+        .await
+        .unwrap();
+        alice
+            .call(|owner| {
+                let request = RequestId::new("alice-running").unwrap();
+                let plan = owner.app.frozen_plan(&request)?;
+                assert_eq!(plan.spec().request.actor.as_str(), "fixture-actor");
+                assert_eq!(
+                    owner.app.reconcile(&request)?.phase,
+                    TaskPhase::OutcomeUnknown
+                );
+                assert_eq!(
+                    owner
+                        .app
+                        .frozen_plan(&request)?
+                        .spec()
+                        .request
+                        .actor
+                        .as_str(),
+                    "fixture-actor"
+                );
+                Ok(())
+            })
+            .await
+            .unwrap();
+        bob.close().await;
+        alice.close().await;
         std::fs::remove_dir_all(root).unwrap();
     }
 }

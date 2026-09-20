@@ -1,3 +1,9 @@
+import {
+  startStage,
+  providerStage,
+  replaceStage,
+} from "../../packages/ai-contract/dist/index.js";
+import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import { fork, spawn } from "node:child_process";
 import { once } from "node:events";
@@ -23,7 +29,7 @@ const budget = (timeoutMs = 10_000) => ({
 });
 const binding = {
   caller: {
-    tenantId: "s1-test",
+    tenantId: "test-users",
     principalId: "fixture-actor",
     authorityId: "desktop-fixture",
   },
@@ -131,27 +137,35 @@ test("lost submit receipt recovers the same Rust attempt and keeps process exit 
     await rm(root, { recursive: true, force: true });
   });
   try {
-    connection = await connectExecution(rust.stdout, rust.stdin, binding);
+    connection = await connectExecution(rust.stdout, rust.stdin, async () => ({
+      ...activeStage(fixtureSession()).binding,
+      ...binding.session,
+    }));
   } catch (error) {
     throw new Error(`${error.message}: ${rustError}`);
   }
 
   const original = fixtureSession();
-  const session = {
-    ...original,
-    namespace: { ...binding.caller, sessionId: "conversation-a" },
-    binding: {
-      ...original.binding,
-      provider: "codex",
-      accountRef: "test-account",
-      config: { id: "local", revision: "r1" },
-      generation: "generation-a",
+  const session = startStage(
+    {
+      ...original,
+      stages: [],
+      namespace: { ...binding.caller, sessionId: "conversation-a" },
     },
-    capabilities: {
-      ...original.capabilities,
-      continuation: "across_processes",
-    },
-  };
+    providerStage(
+      {
+        ...activeStage(original).binding,
+        provider: "codex",
+        accountRef: "test-account",
+        config: { id: "local", revision: "r1" },
+        generation: "generation-a",
+      },
+      {
+        ...activeStage(original).capabilities,
+        continuation: "across_processes",
+      },
+    ),
+  );
   const plan = JSON.parse(await readFile(audit, "utf8"));
 
   const submitCommand = {
@@ -181,12 +195,12 @@ test("lost submit receipt recovers the same Rust attempt and keeps process exit 
     await store.rebind({
       namespace: session.namespace,
       expectedRevision: crashed.revision,
-      expectedGeneration: crashed.binding.generation,
+      expectedGeneration: activeStage(crashed).binding.generation,
       restored: await restoredSession(crashed, "generation-b"),
       eventId: "execution-fault-takeover",
     }),
   );
-  assert.equal(successor.binding.generation, "generation-b");
+  assert.equal(activeStage(successor).binding.generation, "generation-b");
   let modelCommand = unwrap(
     await store.command(session.namespace, submitCommand.commandId),
   );
@@ -221,7 +235,7 @@ test("lost submit receipt recovers the same Rust attempt and keeps process exit 
   const duplicate = reply(
     await restarted.propose(
       session.namespace,
-      successor.binding.generation,
+      activeStage(successor).binding.generation,
       submitCommand.commandId,
       submit,
       budget(),

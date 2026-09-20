@@ -1,3 +1,4 @@
+import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { fork } from "node:child_process";
@@ -214,13 +215,13 @@ for (const provider of engines) {
         ),
       ).session;
       assert.equal(
-        current.binding.nativeSessionId,
-        previous.binding.nativeSessionId,
+        activeStage(current).binding.nativeSessionId,
+        activeStage(previous).binding.nativeSessionId,
       );
       if (provider === "codex")
         assert.equal(
-          current.binding.nativeThreadId,
-          previous.binding.nativeThreadId,
+          activeStage(current).binding.nativeThreadId,
+          activeStage(previous).binding.nativeThreadId,
         );
       evidence(
         t,

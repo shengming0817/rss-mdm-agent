@@ -1,3 +1,4 @@
+import type { HistoryPreview } from "@rss-mdm-agent/ai-contract";
 import { computed, markRaw, reactive, shallowRef } from "vue";
 import {
   ClientError,
@@ -94,6 +95,7 @@ export function createAssistant(
     sessions: new Map<string, SessionItem>(),
     views: new Map<string, SessionView>(),
     drafts: new Map<string, string>(),
+    history: new Map<string, HistoryPreview>(),
     pending: new Map<string, Pending>(),
     sending: new Set<string>(),
     errors: new Map<string, string>(),
@@ -141,6 +143,7 @@ export function createAssistant(
   const canSend = computed(
     () =>
       live(view.value) &&
+      !(busy.value && view.value?.connectionPending) &&
       !state.pending.has(state.selected) &&
       !state.sending.has(state.selected),
   );
@@ -324,6 +327,7 @@ export function createAssistant(
     state.views.clear();
     state.sessions.clear();
     state.drafts.clear();
+    state.history.clear();
     state.pending.clear();
     state.sending.clear();
     state.errors.clear();
@@ -382,6 +386,20 @@ export function createAssistant(
         }
       });
       await list(false);
+      const catalog = await connected.runtime.connections();
+      if (current !== epoch) return;
+      if (catalog.preferences.selectedSessionId) {
+        const id = catalog.preferences.selectedSessionId;
+        const next = await connected.runtime.restore(id);
+        if (current === epoch) {
+          state.selected = id;
+          state.views.set(id, next);
+          state.sessions.set(id, {
+            namespace: next.namespace,
+            status: next.sessionStatus,
+          });
+        }
+      }
     } catch (error) {
       owner.abort();
       if (current === epoch) {
@@ -420,9 +438,25 @@ export function createAssistant(
       if (current === epoch) state.listing = false;
     }
   }
+  async function remember(id: string) {
+    const client = runtime.value,
+      current = epoch;
+    if (!client) return;
+    try {
+      const catalog = await client.connections();
+      if (current === epoch)
+        await client.savePreferences({
+          ...catalog.preferences,
+          selectedSessionId: id,
+        });
+    } catch {
+      if (current === epoch) state.errors.set(id, "preference_not_saved");
+    }
+  }
   async function select(id: string) {
     if (!runtime.value || !state.sessions.has(id)) return;
     state.selected = id;
+    void remember(id);
     if (state.views.get(id)?.connection === "attached") return;
     const current = epoch;
     state.errors.delete(id);
@@ -446,6 +480,7 @@ export function createAssistant(
       if (current !== epoch) return;
       state.views.set(next.namespace.sessionId, next);
       state.selected = next.namespace.sessionId;
+      await remember(next.namespace.sessionId);
       await list(false);
     } catch (error) {
       if (current === epoch) state.createError = fail(error);
@@ -470,6 +505,7 @@ export function createAssistant(
       await client.submit(pending.command);
       if (current !== epoch) return;
       state.pending.delete(id);
+      state.history.delete(id);
       if (pending.draft !== undefined && state.drafts.get(id) === pending.draft)
         state.drafts.set(id, "");
     } catch (error) {
@@ -501,7 +537,7 @@ export function createAssistant(
       return;
     state.pending.set(id, {
       command: {
-        schemaVersion: 4,
+        schemaVersion: 5,
         kind: "command",
         sessionId: id,
         commandId: identity(),
@@ -523,6 +559,9 @@ export function createAssistant(
         type: "prompt",
         text: draft.value.trim(),
         policy,
+        ...(policy === "queue_next" && state.history.has(state.selected)
+          ? { history: state.history.get(state.selected)! }
+          : {}),
         ...(policy === "steer"
           ? { targetRunId: active.value!.dispatch!.nativeRunId! }
           : {}),

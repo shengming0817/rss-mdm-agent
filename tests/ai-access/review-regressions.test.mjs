@@ -1,3 +1,5 @@
+import { replaceStage } from "../../packages/ai-contract/dist/index.js";
+import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createRequire } from "node:module";
@@ -35,7 +37,7 @@ function setup(t, extra = {}) {
   const host = new FakeHost();
   const service = createAccessService({
     host,
-    sessionOptions: options,
+    sessionOptions: { connectionId: "cfg" },
     now: () => 0,
     timeoutMs: 1000,
     ...extra,
@@ -195,7 +197,7 @@ test("service close is terminal, aborts pumps immediately and awaits owned work 
   );
   assert.equal(
     (
-      await host.createSession(fixtureCaller, options, {
+      await host.openSessionForTest(fixtureCaller, options, {
         signal: new AbortController().signal,
         timeoutMs: 1000,
       })
@@ -261,7 +263,7 @@ test("Fake Host never advertises durable receipts from an in-memory implementati
     assert.equal(
       unwrap(
         host.negotiate({
-          contractVersion: 4,
+          contractVersion: 5,
           acp: 1,
           cursorAttach: true,
           durableReceipts,
@@ -301,13 +303,15 @@ test(
 
 test("resume detaches the old generation before Host changes it, then rebuilds from the new snapshot", async (t) => {
   const { host, service } = setup(t);
+  host.createSession = (caller, _options, budget) =>
+    host.openSessionForTest(caller, options, budget);
   let generation, oldSignal;
   const snapshot = host.snapshotPage.bind(host),
     subscribe = host.subscribe.bind(host);
   host.snapshotPage = async (...args) => {
     const result = await snapshot(...args);
     if (result.ok && generation)
-      result.value.session.binding.generation = generation;
+      activeStage(result.value.session).binding.generation = generation;
     return result;
   };
   host.subscribe = async function* (...args) {
@@ -342,7 +346,7 @@ test("resume detaches the old generation before Host changes it, then rebuilds f
   assert.equal("session" in resumed, false);
   assert.equal(states.includes("resync_required"), false);
   await r.submit({
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "command",
     sessionId: id,
     commandId: "after-resume",
@@ -358,7 +362,7 @@ test("RuntimeClient preserves tool state and content across live updates and sna
     r = await runtime(t, service);
   const id = (await r.createSession()).namespace.sessionId;
   await r.submit({
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "command",
     sessionId: id,
     commandId: "tools",
@@ -430,6 +434,8 @@ test("F1 access rejects capability escalation by Host selection", async (t) => {
 for (const extended of [false, true])
   test(`F3 direct ${extended ? "extension" : "standard"} resume replaces the active generation subscription`, async (t) => {
     const { host, service } = setup(t);
+    host.createSession = (caller, _options, budget) =>
+      host.openSessionForTest(caller, options, budget);
     const { extension } = await import(
       "../../packages/ai-contract/dist/index.js"
     );
@@ -454,17 +460,17 @@ for (const extended of [false, true])
       ).session;
       return {
         ok: true,
-        value: {
-          ...s,
-          lastSequence: 12,
-          binding: { ...s.binding, generation: "new-generation" },
-        },
+        value: replaceStage(
+          { ...s, lastSequence: 12 },
+          { ...activeStage(s).binding, generation: "new-generation" },
+          undefined,
+        ),
       };
     };
     await agent.request(
       extended ? extension.resume : "session/resume",
       extended
-        ? { schemaVersion: 4, kind: "resumeRequest", sessionId: id }
+        ? { schemaVersion: 5, kind: "resumeRequest", sessionId: id }
         : { sessionId: id, cwd: "/", mcpServers: [] },
     );
     await until(() => subscriptions.length === 2);
@@ -637,7 +643,7 @@ test("F9 snapshot and live interaction projections preserve authoritative expiry
   const r = await runtime(t, service);
   const id = (await r.createSession()).namespace.sessionId;
   await r.submit({
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "command",
     sessionId: id,
     commandId: "question",
@@ -672,7 +678,7 @@ test("F10 answered projection identifies the first response across live and rest
     await host.respond(
       fixtureCaller,
       {
-        schemaVersion: 4,
+        schemaVersion: 5,
         kind: "command",
         sessionId: id,
         commandId: "winning-response",
@@ -725,7 +731,7 @@ test("F3 detach while resume is pending cannot resurrect the old attachment", as
     };
   };
   const result = r.connection.agent.request(extension.resume, {
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "resumeRequest",
     sessionId: id,
   });
@@ -767,7 +773,7 @@ test("F1 selection may disable offered booleans, never enable unoffered ones", a
     "../../packages/ai-contract/dist/index.js"
   );
   const offer = {
-    contractVersion: 4,
+    contractVersion: 5,
     acp: 1,
     cursorAttach: false,
     durableReceipts: false,

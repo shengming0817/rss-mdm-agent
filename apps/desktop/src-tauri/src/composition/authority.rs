@@ -32,6 +32,9 @@ impl S1Host {
     }
     pub fn validate(&self, plan: &FrozenPlan) -> Result<(), execution_app::Error> {
         let p = plan.spec();
+        if p.request.actor.as_str() != self.ai.caller.principal_id.as_str() {
+            return Err(execution_app::Error::Denied);
+        }
         if p.request.initiator != fixtures::human() && !self.ai.validate(&p.request.initiator) {
             return Err(execution_app::Error::Denied);
         }
@@ -72,6 +75,7 @@ impl S1Host {
             p.plan_id.as_str().into(),
             p.validity.not_before_unix_ms,
             &p.request.initiator,
+            &p.request.actor,
         )
         .map_err(|_| execution_app::Error::Denied)?;
         if expected.digest() != plan.digest() {
@@ -150,7 +154,8 @@ impl AppHost for S1Host {
             authority: Authority::Test {
                 id: id("desktop-fixture"),
             },
-            actor: ActorId::new("fixture-actor").unwrap(),
+            actor: ActorId::new(self.ai.caller.principal_id.as_str().to_owned())
+                .map_err(|_| execution_app::Error::Denied)?,
             device: DeviceId::new("fixture-device").unwrap(),
         })
     }

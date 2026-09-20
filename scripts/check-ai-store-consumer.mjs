@@ -115,7 +115,8 @@ const budget=()=>({timeoutMs:1000,signal:new AbortController().signal});
 try {
  await runStoreConformance(()=>unwrap(openSqliteStore({path:join(dir,'fixture-'+(i++)+'.sqlite'),mode:'create'})));
  const path=join(dir,'owner.sqlite');let store:SessionStore=unwrap(openSqliteStore({path,mode:'create'}));
- const initial=fixtureSession();initial.capabilities.continuation='across_processes';unwrap(await store.create(initial));
+ const {activeStage}=await import('@rss-mdm-agent/ai-contract');
+ const initial=fixtureSession();activeStage(initial).capabilities.continuation='across_processes';unwrap(await store.create(initial));
  const receipt=unwrap(await store.accept(acceptance(initial)));
  const probe=fileURLToPath(new URL('./probe.js',import.meta.url));
  assert.equal(spawnSync(process.execPath,[probe,path,'blocked'],{stdio:'inherit'}).status,0);
@@ -124,8 +125,8 @@ try {
  store=unwrap(openSqliteStore({path,mode:'open'}));assert.deepEqual(unwrap(await store.accept(acceptance(initial))),receipt);
  const before=unwrap(await readSnapshot(store, initial.namespace));
  const restored=await restoredSession(before.session,'isolated-restored');
- const current=unwrap(await store.rebind({namespace:initial.namespace,expectedRevision:before.session.revision,expectedGeneration:initial.binding.generation,restored,eventId:'restore'}));
- assert.equal(current.binding.generation,'isolated-restored');unwrap(await store.close(budget()));
+ const current=unwrap(await store.rebind({namespace:initial.namespace,expectedRevision:before.session.revision,expectedGeneration:activeStage(initial).binding.generation,restored,eventId:'restore'}));
+ assert.equal(activeStage(current).binding.generation,'isolated-restored');unwrap(await store.close(budget()));
  console.log('Isolated SQLite tarballs: types, shared conformance, durable receipt, two-process ownership and verified restart passed');
 } finally {rmSync(dir,{recursive:true,force:true});}`,
   );

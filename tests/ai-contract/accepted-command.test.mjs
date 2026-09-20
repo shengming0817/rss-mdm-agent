@@ -10,7 +10,7 @@ import {
   unwrap,
 } from "../../packages/ai-contract/dist/testing/index.js";
 
-test("V4 acceptance is a self-contained stable fact shared by replay and live consumers", async () => {
+test("V5 acceptance is a self-contained stable fact shared by replay and live consumers", async () => {
   const store = new MemorySessionStore(),
     session = fixtureSession(),
     command = fixtureCommand();
@@ -23,7 +23,7 @@ test("V4 acceptance is a self-contained stable fact shared by replay and live co
   );
   assert.equal(snapshot.events.length, 1);
   const event = snapshot.events[0];
-  assert.equal(event.schemaVersion, 4);
+  assert.equal(event.schemaVersion, 5);
   assert.deepEqual(event.body, { type: "command_accepted", command });
   assert.equal("event" in input, false);
   assert.equal(input.eventId, event.eventId);

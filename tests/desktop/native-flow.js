@@ -21,12 +21,17 @@
       (b) => visible(b) && b.textContent.trim() === text,
     );
   const click = async (text) => (await wait(() => button(text))).click();
+  let generation;
   const snapshot = () =>
     window.__TAURI_INTERNALS__.invoke("self_service_snapshot", {
       input: { after: null, requestIds: [] },
+      generation,
     });
   const details = (requestId) =>
-    window.__TAURI_INTERNALS__.invoke("execution_task_details", { requestId });
+    window.__TAURI_INTERNALS__.invoke("execution_task_details", {
+      requestId,
+      generation,
+    });
   const verifyOrigin = async (plan) => {
     await wait(() => {
       const text =
@@ -56,7 +61,17 @@
     document.title = "RSS_ACCEPTANCE:" + JSON.stringify(value);
   };
   try {
+    if (window.__RSS_ACCEPTANCE_PHASE__ === 0) {
+      const input = await wait(() =>
+        document.querySelector('[aria-label="测试用户名"]'),
+      );
+      input.value = "Native acceptance";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      await click("进入");
+    }
     await wait(() => document.querySelector(".self-service .hero"));
+    generation = (await window.__TAURI_INTERNALS__.invoke("test_users")).current
+      .generation;
     if (window.__RSS_ACCEPTANCE_PHASE__ === 0) {
       setStage("human_preview");
       await click("软件中心");
@@ -90,6 +105,30 @@
       );
       setStage("ai_connect");
       await click("AI 助手");
+      const panel = await wait(() =>
+        document.querySelector(".connections details"),
+      );
+      panel.open = true;
+      const field = (name) =>
+        [...panel.querySelectorAll("label")]
+          .find((el) => el.textContent.startsWith(name))
+          ?.querySelector("input,select");
+      const set = (name, value) => {
+        const el = field(name);
+        el.value = value;
+        el.dispatchEvent(
+          new Event(el.tagName === "SELECT" ? "change" : "input", {
+            bubbles: true,
+          }),
+        );
+      };
+      set("名称", "Existing Codex");
+      set("配置目录", window.__RSS_CONNECTION_SOURCE__.directory);
+      set("模型", window.__RSS_CONNECTION_SOURCE__.model);
+      set("工具", "controlled_tools");
+      await click("验证并保存");
+      await wait(() => panel.querySelector("li")?.textContent.includes("可用"));
+      panel.open = false;
       await click("新建会话");
       const input = await wait(() => {
         const e = document.querySelector(".assistant textarea");

@@ -1,3 +1,4 @@
+import { userInfo } from "node:os";
 import { readFileSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
@@ -38,7 +39,15 @@ export interface ResolvedClaudeConfiguration {
   configuration: ClaudeConfiguration;
   configurationDirectory: string;
   apiUrl: string;
-  credential: { type: "api_key" | "auth_token" | "oauth_token"; value: string };
+  credential:
+    | { type: "api_key" | "auth_token" | "oauth_token"; value: string }
+    | { type: "existing_login"; secureStorageDirectory: string };
+  verifyAccount?: (account: {
+    email: string;
+    organization: string;
+    tokenSource: string;
+    apiKeySource: string;
+  }) => Promise<void>;
   model?: string;
 }
 export interface ClaudeAdapterOptions {
@@ -88,8 +97,9 @@ export function sdkOptions(resolved: ResolvedClaudeConfiguration): Options {
     url.password ||
     url.search ||
     url.hash ||
-    !credential.value ||
-    !["api_key", "auth_token", "oauth_token"].includes(credential.type) ||
+    (credential.type !== "existing_login" &&
+      (!credential.value ||
+        !["api_key", "auth_token", "oauth_token"].includes(credential.type))) ||
     !isAbsolute(config.workingDirectory) ||
     !isAbsolute(resolved.configurationDirectory)
   )
@@ -107,13 +117,26 @@ export function sdkOptions(resolved: ResolvedClaudeConfiguration): Options {
   env.NoDefaultCurrentDirectoryInExePath = "1";
   for (const key of ["SystemRoot", "WINDIR", "TEMP", "TMP", "TMPDIR"])
     if (process.env[key]) env[key] = process.env[key]!;
-  env[
-    credential.type === "api_key"
-      ? "ANTHROPIC_API_KEY"
-      : credential.type === "oauth_token"
-        ? "CLAUDE_CODE_OAUTH_TOKEN"
-        : "ANTHROPIC_AUTH_TOKEN"
-  ] = credential.value;
+  if (credential.type === "existing_login") {
+    if (
+      process.platform !== "darwin" ||
+      (credential.secureStorageDirectory !== "" &&
+        !isAbsolute(credential.secureStorageDirectory))
+    )
+      throw new Error("unsupported login source");
+    env.CLAUDE_SECURESTORAGE_CONFIG_DIR = credential.secureStorageDirectory;
+    if (process.env.HOME) env.HOME = process.env.HOME;
+    env.USER = userInfo().username;
+    env.LOGNAME = env.USER;
+  } else {
+    env[
+      credential.type === "api_key"
+        ? "ANTHROPIC_API_KEY"
+        : credential.type === "oauth_token"
+          ? "CLAUDE_CODE_OAUTH_TOKEN"
+          : "ANTHROPIC_AUTH_TOKEN"
+    ] = credential.value;
+  }
   return {
     cwd: config.workingDirectory,
     env,

@@ -12,7 +12,7 @@ const limits = {
   maxNodes: 4096,
 };
 const command = {
-  schemaVersion: 4,
+  schemaVersion: 5,
   kind: "command",
   sessionId: "s1",
   commandId: "c1",

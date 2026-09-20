@@ -104,10 +104,9 @@ function businessId(proposal: DeliveryRequest["body"]["proposal"]): unknown {
 export async function connectExecution(
   input: Readable,
   output: Writable,
-  binding: Pick<
-    import("./configuration.js").LocalConfiguration,
-    "caller" | "session"
-  >,
+  resolveBinding: (
+    request: DeliveryRequest,
+  ) => Promise<import("@rss-mdm-agent/ai-contract").Binding>,
 ) {
   const client = new Client({ name: "rss-ai-host", version: "0.1.0" });
   const transport = new ParentTransport(input, output);
@@ -130,6 +129,7 @@ export async function connectExecution(
     args: Record<string, unknown>,
     b: Budget,
   ): Promise<any> => {
+    const binding = await resolveBinding(request);
     const reply = await client.callTool(
       {
         name,
@@ -139,9 +139,9 @@ export async function connectExecution(
             version: 1,
             namespace: request.namespace,
             operationId: request.body.operationId,
-            provider: binding.session.provider,
-            accountRef: binding.session.accountRef,
-            config: binding.session.config,
+            provider: binding.provider,
+            accountRef: binding.accountRef,
+            config: binding.config,
           },
         },
       },

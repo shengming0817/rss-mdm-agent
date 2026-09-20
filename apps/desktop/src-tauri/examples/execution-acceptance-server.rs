@@ -16,19 +16,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "usage: execution-acceptance-server DATABASE AUDIT OPERATION_REQUEST_ID".into(),
         );
     }
-    let binding = AiBinding::from_configuration(&json!({
-        "caller": {
-            "tenantId": "s1-test",
-            "principalId": "fixture-actor",
-            "authorityId": "desktop-fixture"
-        },
-        "session": {
-            "provider": "codex",
-            "accountRef": "test-account",
-            "config": { "id": "local", "revision": "r1" },
-            "profile": "controlled_tools"
-        }
-    }))?;
+    let binding = AiBinding::for_user("fixture-actor")?;
     let execution = ExecutionHandle::start(&PathBuf::from(&args[0]), binding)?;
     let catalog = rss_mdm_desktop::composition::execution::catalog()?;
     let selected = catalog.select(
@@ -55,7 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "com.rss-mdm/ai-origin": {
             "version": 1,
             "namespace": {
-                "tenantId": "s1-test",
+                "tenantId": "test-users",
                 "principalId": "fixture-actor",
                 "authorityId": "desktop-fixture",
                 "sessionId": "conversation-a"

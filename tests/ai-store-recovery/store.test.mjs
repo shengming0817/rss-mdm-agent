@@ -1,3 +1,4 @@
+import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import { readSnapshot } from "../../packages/ai-contract/dist/testing/index.js";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -50,7 +51,7 @@ test("reopen preserves acceptance but requires a verified new generation before 
     path = join(h.directory, "restart.sqlite");
   let store = unwrap(h.open(path));
   const initial = fixtureSession();
-  initial.capabilities.continuation = "across_processes";
+  activeStage(initial).capabilities.continuation = "across_processes";
   unwrap(await store.create(initial));
   const input = acceptance(initial),
     receipt = unwrap(await store.accept(input));
@@ -72,7 +73,7 @@ test("reopen preserves acceptance but requires a verified new generation before 
     await store.rebind({
       namespace: initial.namespace,
       expectedRevision: before.session.revision,
-      expectedGeneration: initial.binding.generation,
+      expectedGeneration: activeStage(initial).binding.generation,
       restored,
       eventId: "restart",
     }),

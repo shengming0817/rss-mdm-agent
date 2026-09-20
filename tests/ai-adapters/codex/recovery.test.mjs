@@ -1,3 +1,8 @@
+import {
+  startStage,
+  providerStage,
+} from "../../../packages/ai-contract/dist/index.js";
+import { activeStage } from "../../../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { VerifiedProviderSession } from "../../../packages/ai-contract/dist/session.js";
@@ -61,16 +66,18 @@ test(
       ),
     );
 
-    const initial = {
-      schemaVersion: 4,
-      kind: "session",
-      namespace: first.configuration.namespace,
-      revision: 0,
-      lastSequence: 0,
-      status: "active",
-      binding: admitted.binding,
-      capabilities: admitted.capabilities,
-    };
+    const initial = startStage(
+      {
+        schemaVersion: 5,
+        kind: "session",
+        namespace: first.configuration.namespace,
+        revision: 0,
+        lastSequence: 0,
+        status: "active",
+        stages: [],
+      },
+      providerStage(admitted.binding, admitted.capabilities),
+    );
     const store = new MemorySessionStore();
     unwrap(await store.create(initial));
     const pending = prompt(admitted.binding, "killed-active-turn");
@@ -129,22 +136,22 @@ test(
     const restored = unwrap(restoreResult);
     assert.notEqual(
       restored.binding.generation,
-      durable.session.binding.generation,
+      activeStage(durable.session).binding.generation,
     );
     assert.equal(
       restored.binding.nativeSessionId,
-      durable.session.binding.nativeSessionId,
+      activeStage(durable.session).binding.nativeSessionId,
     );
     assert.equal(
       restored.binding.nativeThreadId,
-      durable.session.binding.nativeThreadId,
+      activeStage(durable.session).binding.nativeThreadId,
     );
 
     const rebound = unwrap(
       await store.rebind({
         namespace: durable.session.namespace,
         expectedRevision: durable.session.revision,
-        expectedGeneration: durable.session.binding.generation,
+        expectedGeneration: activeStage(durable.session).binding.generation,
         restored,
         eventId: "cold-recovery-rebind",
       }),

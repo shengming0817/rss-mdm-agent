@@ -20,7 +20,7 @@ fn window(app: &tauri::AppHandle) -> tauri::Result<()> {
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let app = ipc::register(tauri::Builder::default())
         .setup(|app| {
-            let root = app.path().app_data_dir()?.join("s1");
+            let root = app.path().app_data_dir()?.join("test-users");
             let artifact = std::env::var_os("RSS_AI_HOST_RUNTIME")
                 .map(std::path::PathBuf::from)
                 .unwrap_or(app.path().resource_dir()?.join("ai-host-runtime"));

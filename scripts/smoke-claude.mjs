@@ -1,3 +1,7 @@
+import {
+  startStage,
+  providerStage,
+} from "../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
@@ -37,16 +41,18 @@ export function smokeCommand(id, text, expiresAtMs) {
   };
 }
 export function smokeSession(namespace, binding, capabilities) {
-  return {
-    schemaVersion: schema.Session.properties.schemaVersion.const,
-    kind: "session",
-    namespace,
-    revision: 0,
-    lastSequence: 0,
-    status: "active",
-    binding,
-    capabilities,
-  };
+  return startStage(
+    {
+      schemaVersion: schema.Session.properties.schemaVersion.const,
+      kind: "session",
+      namespace,
+      revision: 0,
+      lastSequence: 0,
+      status: "active",
+      stages: [],
+    },
+    providerStage(binding, capabilities),
+  );
 }
 export function describeFailure(stage, detail = {}) {
   const stages = [

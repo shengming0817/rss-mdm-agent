@@ -20,4 +20,8 @@ export const errorCodes = Object.freeze([
   "session_gone",
   "already_answered",
   "storage_corrupt",
+  "connection_switch_pending",
+  "connection_required",
+  "authentication_required",
+  "context_unavailable",
 ] as const);

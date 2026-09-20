@@ -1,3 +1,4 @@
+import { userGeneration } from "../test-users";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import {
   channelStream,
@@ -8,9 +9,10 @@ import type { AssistantServices } from "./controller";
 /** IPC carries bounded ACP frames. Credentials, sockets and providers stay outside the WebView. */
 export function nativeAssistant(): AssistantServices | undefined {
   if (!isTauri()) return undefined;
+  const generation = userGeneration();
   return {
     async connect(options, signal) {
-      const connectionId = await invoke<string>("ai_connect");
+      const connectionId = await invoke<string>("ai_connect", { generation });
       let closed = false;
       let disconnected = () => {};
       const close = () => {
@@ -54,7 +56,12 @@ export function nativeAssistant(): AssistantServices | undefined {
     },
     async taskDetails(requestId, signal) {
       if (signal.aborted) throw new ClientError("request_failed");
-      return invoke("execution_task_details", { requestId });
+      const result = await invoke<
+        import("./execution-types").ExecutionTaskDetails
+      >("execution_task_details", { requestId, generation });
+      if (generation !== userGeneration())
+        throw new ClientError("request_failed");
+      return result;
     },
   };
 }

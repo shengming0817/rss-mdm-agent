@@ -1,3 +1,8 @@
+import {
+  startStage,
+  providerStage,
+  replaceStage,
+} from "../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -155,7 +160,7 @@ async function main() {
     return p;
   };
   const prompt = (id, text) => ({
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "command",
     sessionId: config.namespace.sessionId,
     commandId: id,
@@ -202,16 +207,18 @@ async function main() {
     stage = "close";
     assert.equal(unwrap(await first.close(budget(10000))).processStopped, true);
     stage = "restore";
-    const previous = {
-      schemaVersion: 4,
-      kind: "session",
-      namespace: config.namespace,
-      revision: 0,
-      lastSequence: 0,
-      status: "active",
-      binding: initial.sent.binding,
-      capabilities: admitted.capabilities,
-    };
+    const previous = startStage(
+      {
+        schemaVersion: 5,
+        kind: "session",
+        namespace: config.namespace,
+        revision: 0,
+        lastSequence: 0,
+        status: "active",
+        stages: [],
+      },
+      providerStage(initial.sent.binding, admitted.capabilities),
+    );
     const second = port(),
       restored = unwrap(
         await VerifiedProviderSession.restore(
@@ -222,11 +229,11 @@ async function main() {
         ),
       );
     const record = {
-      schemaVersion: 4,
+      schemaVersion: 5,
       kind: "commandRecord",
       command,
       receipt: {
-        schemaVersion: 4,
+        schemaVersion: 5,
         kind: "receipt",
         namespace: config.namespace,
         commandId: command.commandId,
@@ -247,7 +254,7 @@ async function main() {
     stage = "reconcile";
     const proof = unwrap(
       await restored.reconcile(
-        { ...previous, binding: restored.binding },
+        replaceStage({ ...previous }, restored.binding, undefined),
         record,
         budget(),
       ),

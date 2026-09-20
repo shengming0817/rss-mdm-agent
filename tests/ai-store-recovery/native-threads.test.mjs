@@ -1,3 +1,4 @@
+import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { join } from "node:path";
@@ -19,9 +20,9 @@ test("SQLite rebind retains native thread and all steer attempts; terminal closu
   const h = harness(t),
     path = join(h.directory, "threads.sqlite"),
     initial = fixtureSession();
-  initial.binding.nativeThreadId = "owned-thread";
-  initial.capabilities.steer = "supported";
-  initial.capabilities.continuation = "across_processes";
+  activeStage(initial).binding.nativeThreadId = "owned-thread";
+  activeStage(initial).capabilities.steer = "supported";
+  activeStage(initial).capabilities.continuation = "across_processes";
   let store = unwrap(h.open(path)),
     head = initial;
   unwrap(await store.create(initial));
@@ -60,7 +61,7 @@ test("SQLite rebind retains native thread and all steer attempts; terminal closu
     await store.rebind({
       namespace: head.namespace,
       expectedRevision: head.revision,
-      expectedGeneration: head.binding.generation,
+      expectedGeneration: activeStage(head).binding.generation,
       restored,
       eventId: "restore",
     }),
@@ -68,17 +69,23 @@ test("SQLite rebind retains native thread and all steer attempts; terminal closu
   for (const id of ["start", "steer-1", "steer-2"]) {
     const record = unwrap(await store.command(head.namespace, id));
     assert.equal(record.dispatch.nativeThreadId, "owned-thread");
-    assert.equal(record.dispatch.originGeneration, initial.binding.generation);
+    assert.equal(
+      record.dispatch.originGeneration,
+      activeStage(initial).binding.generation,
+    );
     assert.equal(record.dispatch.observerGeneration, "fresh-process");
     const clear = emptyCommit(head);
-    clear.session.binding = { ...head.binding };
-    delete clear.session.binding.nativeRunId;
-    delete clear.session.binding.nativeRequestId;
+    activeStage(clear.session).binding = { ...activeStage(head).binding };
+    delete activeStage(clear.session).binding.nativeRunId;
+    delete activeStage(clear.session).binding.nativeRequestId;
     assert.equal((await store.commit(clear)).ok, false);
     const port = {
       createSession: async () => ({
         ok: true,
-        value: { binding: head.binding, capabilities: head.capabilities },
+        value: {
+          binding: activeStage(head).binding,
+          capabilities: activeStage(head).capabilities,
+        },
       }),
       close: async () => ({ ok: true, value: { processStopped: true } }),
       reconcile: async () => ({
@@ -87,7 +94,7 @@ test("SQLite rebind retains native thread and all steer attempts; terminal closu
           commandId: id,
           attemptId: record.dispatch.attemptId,
           binding: {
-            ...head.binding,
+            ...activeStage(head).binding,
             nativeRequestId: record.dispatch.nativeRequestId,
           },
           ...(id === "start"
@@ -101,9 +108,9 @@ test("SQLite rebind retains native thread and all steer attempts; terminal closu
         port,
         {
           namespace: head.namespace,
-          provider: head.binding.provider,
-          config: head.binding.config,
-          accountRef: head.binding.accountRef,
+          provider: activeStage(head).binding.provider,
+          config: activeStage(head).binding.config,
+          accountRef: activeStage(head).binding.accountRef,
           workingDirectory: ".",
           permissions: "tools_disabled",
         },
@@ -137,9 +144,9 @@ test("SQLite rebind retains native thread and all steer attempts; terminal closu
     head = unwrap(await store.session(head.namespace));
   }
   const clear = emptyCommit(head);
-  clear.session.binding = { ...head.binding };
-  delete clear.session.binding.nativeRunId;
-  delete clear.session.binding.nativeRequestId;
+  activeStage(clear.session).binding = { ...activeStage(head).binding };
+  delete activeStage(clear.session).binding.nativeRunId;
+  delete activeStage(clear.session).binding.nativeRequestId;
   unwrap(await store.commit(clear));
   const snapshot = unwrap(
     await store.snapshotPage(initial.namespace, { limit: 128 }),

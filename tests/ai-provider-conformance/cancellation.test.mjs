@@ -46,7 +46,7 @@ for (const provider of engines) {
         ...command(id, "cancel"),
         input: {
           type: "cancel",
-          generation: view.generation,
+          generation: client.getSession(id).generation,
           targetCommandId: "long",
           ...(nativeRunId ? { nativeRunId } : {}),
         },
@@ -119,7 +119,7 @@ test(
       ...command(id, "cancel-held"),
       input: {
         type: "cancel",
-        generation: view.generation,
+        generation: client.getSession(id).generation,
         targetCommandId: "held",
       },
     });

@@ -1,3 +1,4 @@
+import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
@@ -13,14 +14,14 @@ const session = fixtureSession();
 const event = (sequence, body) => ({
   type: "event",
   event: {
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "event",
     namespace: session.namespace,
     eventId: `e-${sequence}`,
     sequence: sequence + 1,
     commandId: "c",
     attemptId: "attempt-c",
-    generation: session.binding.generation,
+    generation: activeStage(session).binding.generation,
     body,
   },
 });
@@ -45,7 +46,7 @@ test("projection refuses gaps and cross-caller events, ignores duplicates, and p
     type: "delta",
     commandId: "c",
     messageId: "m",
-    generation: session.binding.generation,
+    generation: activeStage(session).binding.generation,
     text: "late",
   });
   assert.equal(view.messages[JSON.stringify(["c", "m"])].text, "stable");
@@ -62,7 +63,7 @@ test("public view has one cursor and no stale copy of authoritative Session meta
   const view = emptyView(session, 0);
   assert.equal("session" in view, false);
   assert.deepEqual(view.namespace, session.namespace);
-  assert.equal(view.generation, session.binding.generation);
+  assert.equal(view.generation, activeStage(session).binding.generation);
   applyUpdate(view, event(1, { type: "status", state: "running" }));
   applyUpdate(view, event(2, { type: "terminal", outcome: "completed" }));
   assert.equal(view.cursor, 3);
@@ -75,7 +76,7 @@ test("recovery invalidation keeps durable text, clears transient text, and rejec
     type: "delta",
     commandId: "c",
     messageId: "transient",
-    generation: session.binding.generation,
+    generation: activeStage(session).binding.generation,
     text: "uncommitted",
   };
   applyUpdate(view, event(1, { type: "status", state: "running" }));
@@ -165,13 +166,13 @@ test("slash-bearing command/block identities cannot collide in messages, tools o
     applyUpdate(view, {
       type: "event",
       event: {
-        schemaVersion: 4,
+        schemaVersion: 5,
         kind: "event",
         namespace: session.namespace,
         eventId: `e-${++sequence}`,
         sequence,
         commandId,
-        generation: session.binding.generation,
+        generation: activeStage(session).binding.generation,
         body,
       },
     });

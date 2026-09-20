@@ -1,3 +1,7 @@
+import { emptyPreferences, connectionRevision } from "../connections.js";
+import { selectConnection, activateStage } from "../transitions.js";
+import type { StageActivation } from "../ports.js";
+import type { Connection, UserPreferences } from "../wire.js";
 import { ReadViews, readSnapshotPage, readSessionPage } from "../read-views.js";
 import type {
   AcceptCommand,
@@ -84,6 +88,110 @@ export class MemorySessionStore implements SessionStore {
     } catch {
       return fail("invalid_input");
     }
+  }
+  private catalog = new Map<string, Connection[]>();
+  private prefs = new Map<string, UserPreferences>();
+  private scope(caller: Caller): string {
+    return namespaceKey({ ...caller, sessionId: "catalog" });
+  }
+  async connections(caller: Caller): Promise<Result<readonly Connection[]>> {
+    const latest = new Map<string, Connection>();
+    for (const row of this.catalog.get(this.scope(caller)) ?? [])
+      latest.set(row.connectionId, row);
+    return ok(
+      clone([...latest.values()].filter((row) => row.status !== "deleted")),
+    );
+  }
+  async connection(
+    caller: Caller,
+    id: Id,
+    revision?: number,
+  ): Promise<Result<Connection>> {
+    const row = [...(this.catalog.get(this.scope(caller)) ?? [])]
+      .reverse()
+      .find(
+        (row) =>
+          row.connectionId === id &&
+          (revision === undefined || row.configRevision === revision),
+      );
+    return row ? ok(clone(row)) : fail("connection_required");
+  }
+  async preferences(caller: Caller): Promise<Result<UserPreferences>> {
+    return ok(clone(this.prefs.get(this.scope(caller)) ?? emptyPreferences()));
+  }
+  async savePreferences(
+    caller: Caller,
+    prefs: UserPreferences,
+  ): Promise<Result<UserPreferences>> {
+    if (prefs.defaultConnectionId) {
+      const connection = await this.connection(
+        caller,
+        prefs.defaultConnectionId,
+      );
+      if (!connection.ok || connection.value.status !== "ready")
+        return fail("connection_required");
+    }
+    if (prefs.selectedSessionId) {
+      const session = await this.session({
+        ...caller,
+        sessionId: prefs.selectedSessionId,
+      });
+      if (!session.ok) return session;
+    }
+    this.prefs.set(this.scope(caller), clone(prefs));
+    return ok(clone(prefs));
+  }
+  async saveConnection(
+    caller: Caller,
+    next: Connection,
+    expected: number | null,
+  ): Promise<Result<Connection>> {
+    const previous = await this.connection(caller, next.connectionId);
+    const checked = connectionRevision(
+      next,
+      previous.ok ? previous.value : undefined,
+      expected,
+    );
+    if (!checked.ok) return checked;
+    const scope = this.scope(caller),
+      rows = this.catalog.get(scope) ?? [],
+      prefs = this.prefs.get(scope) ?? emptyPreferences();
+    const latest = await this.connections(caller);
+    if (
+      next.status === "ready" &&
+      !prefs.defaultConnectionId &&
+      latest.ok &&
+      !latest.value.some((row) => row.status === "ready")
+    )
+      prefs.defaultConnectionId = next.connectionId;
+    if (
+      next.status === "deleted" &&
+      prefs.defaultConnectionId === next.connectionId
+    )
+      delete prefs.defaultConnectionId;
+    this.catalog.set(scope, [...rows, clone(next)]);
+    this.prefs.set(scope, prefs);
+    return checked;
+  }
+  async selectConnection(
+    namespace: Namespace,
+    connectionId: Id,
+    revision: number,
+    freshContext = false,
+  ): Promise<Result<Session>> {
+    const connection = await this.connection(namespace, connectionId);
+    if (!connection.ok || connection.value.status !== "ready")
+      return fail("connection_required");
+    const result = this.apply(namespace, (state) =>
+      selectConnection(state, connectionId, revision, freshContext),
+    );
+    return result.ok ? this.session(namespace) : result;
+  }
+  async activateStage(input: StageActivation): Promise<Result<Session>> {
+    const result = this.apply(input.namespace, (state) =>
+      activateStage(state, input),
+    );
+    return result.ok ? this.session(input.namespace) : result;
   }
   async create(session: Session): Promise<Result<void>> {
     if (this.closed) return fail("unavailable");

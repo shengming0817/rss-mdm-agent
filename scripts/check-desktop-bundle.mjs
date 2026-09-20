@@ -37,7 +37,7 @@ export async function checkDesktopBundle(root, runtimeTreeSha256) {
   const isolatedHome = realpathSync(mkdtempSync("/tmp/rss-b-"));
   const data = join(
     isolatedHome,
-    "Library/Application Support/com.rss.mdmagent/s1",
+    "Library/Application Support/com.rss.mdmagent/test-users",
   );
   const env = {
     ...process.env,
@@ -75,8 +75,13 @@ export async function checkDesktopBundle(root, runtimeTreeSha256) {
       "bundled Host must create its private socket",
     );
     assert.ok(
+      existsSync(join(data, "users.json")),
+      "native registry must be ready before user selection",
+    );
+    assert.equal(
       existsSync(join(data, "execution.sqlite")),
-      "production execution owner must start",
+      false,
+      "no device actor is created before user selection",
     );
     assert.ok(
       existsSync(join(data, "ai.sqlite")),

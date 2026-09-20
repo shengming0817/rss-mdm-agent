@@ -1,3 +1,4 @@
+import { activeStage } from "@rss-mdm-agent/ai-contract";
 import { describe, expect, it, vi } from "vitest";
 import {
   ClientError,
@@ -16,9 +17,9 @@ function setup(now = () => 100) {
   const session = fixtureSession(),
     view: SessionView = {
       namespace: session.namespace,
-      generation: session.binding.generation,
+      generation: activeStage(session).binding.generation,
       cursor: 0,
-      capabilities: session.capabilities,
+      capabilities: activeStage(session).capabilities,
       sessionStatus: session.status,
       timeline: [],
       connection: "attached",
@@ -31,7 +32,14 @@ function setup(now = () => 100) {
   view.connection = "attached";
   const submit = vi.fn().mockResolvedValue({ kind: "receipt" });
   const client = {
-    initialize: vi.fn().mockResolvedValue({ contractVersion: 4, acp: 1 }),
+    initialize: vi.fn().mockResolvedValue({ contractVersion: 5, acp: 1 }),
+    connections: vi.fn().mockResolvedValue({
+      preferences: { schemaVersion: 5, kind: "userPreferences" },
+      connections: [],
+    }),
+    savePreferences: vi
+      .fn()
+      .mockResolvedValue({ schemaVersion: 5, kind: "userPreferences" }),
     listSessions: vi.fn().mockResolvedValue({ items: [session] }),
     restore: vi.fn().mockResolvedValue(view),
     createSession: vi.fn().mockResolvedValue(view),
@@ -75,7 +83,7 @@ describe("assistant application ownership", () => {
     await t.c.select("session-1");
     t.view.commands.p = {
       command: {
-        schemaVersion: 4,
+        schemaVersion: 5,
         kind: "command",
         sessionId: "session-1",
         commandId: "p",

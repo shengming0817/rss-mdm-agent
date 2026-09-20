@@ -1,3 +1,4 @@
+import { activeStage } from "../../../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { spawnSync } from "node:child_process";
@@ -55,8 +56,8 @@ test("live smoke commands and resume sessions use the current public wire withou
   const command = smokeCommand("smoke-turn", "smoke text", 1000);
   const restored = smokeSession(
     session.namespace,
-    session.binding,
-    session.capabilities,
+    activeStage(session).binding,
+    activeStage(session).capabilities,
   );
   assert.equal(
     decode(JSON.stringify(command), accessLimits).schemaVersion,

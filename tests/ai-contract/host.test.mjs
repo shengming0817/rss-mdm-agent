@@ -1,3 +1,4 @@
+import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
@@ -21,7 +22,7 @@ test("controlled tools fail closed, unsupported steer and stale cancel do not di
   const host = new FakeHost();
   assert.equal(
     (
-      await host.createSession(
+      await host.openSessionForTest(
         fixtureCaller,
         { ...options, profile: "controlled_tools" },
         budget(),
@@ -30,7 +31,7 @@ test("controlled tools fail closed, unsupported steer and stale cancel do not di
     false,
   );
   const session = unwrap(
-    await host.createSession(fixtureCaller, options, budget()),
+    await host.openSessionForTest(fixtureCaller, options, budget()),
   );
   const command = {
     ...fixtureCommand(),
@@ -82,7 +83,7 @@ test("controlled tools fail closed, unsupported steer and stale cancel do not di
         input: {
           type: "cancel",
           targetCommandId: command.commandId,
-          generation: session.binding.generation,
+          generation: activeStage(session).binding.generation,
         },
       },
       budget(),
@@ -105,7 +106,7 @@ test("controlled tools fail closed, unsupported steer and stale cancel do not di
 test("interleaved delta messages retain identities through Host subscription", async () => {
   const host = new FakeHost();
   const session = unwrap(
-    await host.createSession(fixtureCaller, options, budget()),
+    await host.openSessionForTest(fixtureCaller, options, budget()),
   );
   const command = {
     ...fixtureCommand(),
@@ -115,7 +116,7 @@ test("interleaved delta messages retain identities through Host subscription", a
   const observation = {
     type: "delta",
     attemptId: "attempt-command-1",
-    binding: session.binding,
+    binding: activeStage(session).binding,
     commandId: command.commandId,
     messageId: "m",
     text: "x",
@@ -156,7 +157,7 @@ test("interleaved delta messages retain identities through Host subscription", a
         await host.publishDelta(fixtureCaller, command.sessionId, {
           type: "delta",
           attemptId: "attempt-command-1",
-          binding: session.binding,
+          binding: activeStage(session).binding,
           commandId: command.commandId,
           messageId,
           text,
@@ -207,10 +208,10 @@ test("separate Host sessions cannot exchange provider observations", async () =>
   const host = new FakeHost();
   try {
     const a = unwrap(
-      await host.createSession(fixtureCaller, options, budget()),
+      await host.openSessionForTest(fixtureCaller, options, budget()),
     );
     const b = unwrap(
-      await host.createSession(fixtureCaller, options, budget()),
+      await host.openSessionForTest(fixtureCaller, options, budget()),
     );
     const command = { ...fixtureCommand(), sessionId: b.namespace.sessionId };
     unwrap(await host.submit(fixtureCaller, command, budget()));
@@ -219,7 +220,7 @@ test("separate Host sessions cannot exchange provider observations", async () =>
         await host.publishDelta(fixtureCaller, b.namespace.sessionId, {
           type: "delta",
           attemptId: "attempt-command-1",
-          binding: a.binding,
+          binding: activeStage(a).binding,
           commandId: command.commandId,
           messageId: "m",
           text: "wrong session",

@@ -1,3 +1,5 @@
+import { startStage, providerStage, replaceStage } from "../contexts.js";
+import { activeStage } from "../contexts.js";
 import { readSnapshot } from "./snapshot.js";
 import { fingerprint } from "../codec.js";
 import { verifiedReconciliation } from "./recovery.js";
@@ -37,39 +39,44 @@ export const fixtureCaller: Caller = {
   authorityId: "authority-1",
 };
 export function fixtureSession(): Session {
-  return {
-    schemaVersion: 4,
-    kind: "session",
-    namespace: { ...fixtureCaller, sessionId: "session-1" },
-    revision: 0,
-    lastSequence: 0,
-    status: "active",
-    binding: {
-      workspaceId: workspaceIdentity("."),
-      provider: "fake",
-      providerVersion: "fixture-1",
-      adapterVersion: "fixture-1",
-      generation: "generation-1",
-      accountRef: "account-1",
-      nativeSessionId: "native-1",
-      config: { id: "config-1", revision: "1" },
+  return startStage(
+    {
+      schemaVersion: 5,
+      kind: "session",
+      namespace: { ...fixtureCaller, sessionId: "session-1" },
+      revision: 0,
+      lastSequence: 0,
+      status: "active",
+      stages: [],
     },
-    capabilities: {
-      continuation: "unsupported",
-      cancellation: "request_only",
-      tools: "disabled",
-      steer: "unsupported",
-      fork: "unsupported",
-      subagent: "unsupported",
-      terminal: "unsupported",
-      structuredQuestion: "unsupported",
-      multimodal: "unsupported",
-    },
-  };
+    providerStage(
+      {
+        workspaceId: workspaceIdentity("."),
+        provider: "fake",
+        providerVersion: "fixture-1",
+        adapterVersion: "fixture-1",
+        generation: "generation-1",
+        accountRef: "account-1",
+        nativeSessionId: "native-1",
+        config: { id: "config-1", revision: "1" },
+      },
+      {
+        continuation: "unsupported",
+        cancellation: "request_only",
+        tools: "disabled",
+        steer: "unsupported",
+        fork: "unsupported",
+        subagent: "unsupported",
+        terminal: "unsupported",
+        structuredQuestion: "unsupported",
+        multimodal: "unsupported",
+      },
+    ),
+  );
 }
 export function fixtureCommand(id = "command-1"): Command {
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "command",
     sessionId: "session-1",
     commandId: id,
@@ -85,7 +92,7 @@ export function acceptance(
     namespace: session.namespace,
     command,
     expectedRevision: session.revision,
-    expectedGeneration: session.binding.generation,
+    expectedGeneration: activeStage(session).binding.generation,
     nowMs: 0,
     retention: { retryWindowMs: 100, receiptWindowMs: 200 },
     eventId: `event-${command.commandId}`,
@@ -100,8 +107,8 @@ export function emptyCommit(session: Session): SessionCommit {
   return {
     namespace: session.namespace,
     expectedRevision: session.revision,
-    expectedGeneration: session.binding.generation,
-    session: { ...session, revision: session.revision + 1 },
+    expectedGeneration: activeStage(session).binding.generation,
+    session: { ...structuredClone(session), revision: session.revision + 1 },
     commands: [],
     events: [],
     interactions: [],
@@ -239,7 +246,11 @@ async function runStoreScenarios(
   unwrap(await store.commit(batch));
   const terminal = unwrap(await store.session(s.namespace));
   unwrap(
-    await store.retire(s.namespace, terminal.revision, s.binding.generation),
+    await store.retire(
+      s.namespace,
+      terminal.revision,
+      activeStage(s).binding.generation,
+    ),
   );
   assert.equal(unwrap(await store.pruneRetired(200)), 0);
   assert.equal(unwrap(await store.pruneRetired(201)), 1);
@@ -351,13 +362,13 @@ export async function seedInteraction(
     { nativeRunId: "run-1", nativeRequestId: "parent-request-1" },
   );
   const interaction: import("../wire.js").Interaction = {
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "interaction",
     category: "question",
     namespace: session.namespace,
     interactionId: "question-1",
     commandId: "command-1",
-    generation: session.binding.generation,
+    generation: activeStage(session).binding.generation,
     nativeCallbackId: "callback-1",
     request: { question: "Choose an option", options: ["a", "b"] },
     nativeRunId: "run-1",
@@ -416,19 +427,22 @@ async function runStoreBoundaries(
     s = fixtureSession();
   unwrap(await store.create(s));
   for (const binding of [
-    { ...s.binding, generation: "other" },
-    { ...s.binding, provider: "other" },
-    { ...s.binding, providerVersion: "other" },
-    { ...s.binding, adapterVersion: "other" },
-    { ...s.binding, accountRef: "other" },
-    { ...s.binding, nativeSessionId: "other" },
-    { ...s.binding, config: { ...s.binding.config, revision: "other" } },
+    { ...activeStage(s).binding, generation: "other" },
+    { ...activeStage(s).binding, provider: "other" },
+    { ...activeStage(s).binding, providerVersion: "other" },
+    { ...activeStage(s).binding, adapterVersion: "other" },
+    { ...activeStage(s).binding, accountRef: "other" },
+    { ...activeStage(s).binding, nativeSessionId: "other" },
+    {
+      ...activeStage(s).binding,
+      config: { ...activeStage(s).binding.config, revision: "other" },
+    },
   ])
     assert.equal(
       (
         await store.commit({
           ...emptyCommit(s),
-          session: { ...s, revision: 1, binding },
+          session: replaceStage({ ...s, revision: 1 }, binding, undefined),
         })
       ).ok,
       false,
@@ -437,14 +451,10 @@ async function runStoreBoundaries(
     (
       await store.commit({
         ...emptyCommit(s),
-        session: {
-          ...s,
-          revision: 1,
-          capabilities: {
-            ...s.capabilities,
-            tools: "host_mediated",
-          },
-        },
+        session: replaceStage({ ...s, revision: 1 }, undefined, {
+          ...activeStage(s).capabilities,
+          tools: "host_mediated",
+        }),
       })
     ).ok,
     false,
@@ -456,11 +466,11 @@ async function runStoreBoundaries(
     (
       await coordinatesStore.commit({
         ...emptyCommit(s),
-        session: {
-          ...s,
-          revision: 1,
-          binding: { ...s.binding, ...coordinates },
-        },
+        session: replaceStage(
+          { ...s, revision: 1 },
+          { ...activeStage(s).binding, ...coordinates },
+          undefined,
+        ),
       })
     ).ok,
     false,
@@ -486,11 +496,11 @@ async function runStoreBoundaries(
       (
         await coordinatesStore.commit({
           ...emptyCommit(bound),
-          session: {
-            ...bound,
-            revision: bound.revision + 1,
-            binding: { ...s.binding, ...next },
-          },
+          session: replaceStage(
+            { ...bound, revision: bound.revision + 1 },
+            { ...activeStage(s).binding, ...next },
+            undefined,
+          ),
         })
       ).ok,
       false,
@@ -499,7 +509,11 @@ async function runStoreBoundaries(
   unwrap(
     await coordinatesStore.commit({
       ...finished,
-      session: { ...finished.session, binding: s.binding },
+      session: replaceStage(
+        { ...finished.session },
+        activeStage(s).binding,
+        undefined,
+      ),
     }),
   );
   for (const status of ["pending", "unavailable"] as const) {
@@ -580,7 +594,7 @@ async function runStoreBoundaries(
       await readSnapshot(store, s.namespace),
     ).events.find((e) => e.eventId === input.eventId)!;
     const row: import("../wire.js").Delivery = {
-      schemaVersion: 4,
+      schemaVersion: 5,
       kind: "delivery",
       namespace: s.namespace,
       operationId: `delivery-${i}`,
@@ -679,7 +693,7 @@ export async function terminalCommit(
     certainty: "submitted",
   };
   const next: CommandRecord = {
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "commandRecord",
     command: record.command,
     receipt: record.receipt,
@@ -714,13 +728,13 @@ export function commandCommit(
   const events = bodies.map(
     (body, i) =>
       ({
-        schemaVersion: 4,
+        schemaVersion: 5,
         kind: "event",
         namespace: session.namespace,
         eventId: `change-${session.revision}-${record.command.commandId}-${i}`,
         sequence: session.lastSequence + i + 1,
         commandId: record.command.commandId,
-        generation: session.binding.generation,
+        generation: activeStage(session).binding.generation,
         ...(record.dispatch ? { attemptId: record.dispatch.attemptId } : {}),
         body,
       }) as Event,
@@ -742,18 +756,21 @@ export async function dispatchCommand(
   session: Session,
   id = "command-1",
   certainty: "submitted" | "unknown" = "submitted",
-  coordinates: Pick<Session["binding"], "nativeRunId" | "nativeRequestId"> = {},
+  coordinates: Pick<
+    Session["stages"][number]["binding"],
+    "nativeRunId" | "nativeRequestId"
+  > = {},
   nowMs?: number,
   workingDirectory = ".",
 ) {
   const record = unwrap(await store.command(session.namespace, id));
   const intent: DispatchAttempt = {
     attemptId: `attempt-${id}`,
-    originGeneration: session.binding.generation,
-    observerGeneration: session.binding.generation,
-    nativeSessionId: session.binding.nativeSessionId,
-    ...(session.binding.nativeThreadId
-      ? { nativeThreadId: session.binding.nativeThreadId }
+    originGeneration: activeStage(session).binding.generation,
+    observerGeneration: activeStage(session).binding.generation,
+    nativeSessionId: activeStage(session).binding.nativeSessionId,
+    ...(activeStage(session).binding.nativeThreadId
+      ? { nativeThreadId: activeStage(session).binding.nativeThreadId }
       : {}),
     ...(record.command.input.type === "prompt" &&
     record.command.input.policy === "steer"
@@ -762,7 +779,7 @@ export async function dispatchCommand(
     certainty: "intent",
   };
   const preparing: CommandRecord = {
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "commandRecord",
     command: record.command,
     receipt: record.receipt,
@@ -795,7 +812,11 @@ export async function dispatchCommand(
     dispatch,
   };
   const proof = await verifiedReconciliation(
-    { ...head, binding: { ...head.binding, ...coordinates } },
+    replaceStage(
+      { ...head },
+      { ...activeStage(head).binding, ...coordinates },
+      undefined,
+    ),
     preparing,
     certainty === "submitted" ? "running" : "unknown",
     "completed",
@@ -823,10 +844,11 @@ export async function dispatchCommand(
     await store.commit({
       ...batch,
       providerFacts: [proof],
-      session: {
-        ...batch.session,
-        binding: { ...head.binding, ...coordinates },
-      },
+      session: replaceStage(
+        { ...batch.session },
+        { ...activeStage(head).binding, ...coordinates },
+        undefined,
+      ),
     }),
   );
   return {
@@ -848,14 +870,14 @@ export function surfaceCommit(
       ],
     };
   const event: Event = {
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "event",
     namespace: session.namespace,
     eventId: `surface-${surface.surfaceInstanceId}-${surface.revision}`,
     sequence: session.lastSequence + 1,
     commandId: interaction.commandId,
     attemptId: `attempt-${interaction.commandId}`,
-    generation: session.binding.generation,
+    generation: activeStage(session).binding.generation,
     body: { type: "surface", surface },
   } as Event;
   const interactions =
@@ -1031,7 +1053,7 @@ export function interactionEvent(
   row: import("../wire.js").Interaction,
 ): import("../wire.js").Event {
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "event",
     namespace: session.namespace,
     eventId: `interaction-${row.interactionId}-${row.status}`,
@@ -1066,7 +1088,7 @@ async function runCallbackConformance(store: SessionStore): Promise<void> {
     type: "interaction",
     attemptId: "attempt-command-1",
     binding: {
-      ...seeded.session.binding,
+      ...activeStage(seeded.session).binding,
       nativeRunId: seeded.interaction.nativeRunId,
     },
     commandId: seeded.interaction.commandId,
@@ -1080,7 +1102,7 @@ async function runCallbackConformance(store: SessionStore): Promise<void> {
     },
   };
   const row: import("../wire.js").Interaction = {
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "interaction",
     namespace: seeded.session.namespace,
     commandId: observation.commandId,
@@ -1191,7 +1213,7 @@ async function runCallbackConformance(store: SessionStore): Promise<void> {
 
 /** Deterministic dispatch metadata for adapter fixtures, never real durability evidence. */
 export function fixtureAttempt(
-  binding: Session["binding"],
+  binding: Session["stages"][number]["binding"],
   command: Command,
 ): DispatchAttempt {
   return {
@@ -1203,17 +1225,18 @@ export function fixtureAttempt(
   };
 }
 export function fixtureDispatchedRecord(
-  binding: Session["binding"],
+  binding: Session["stages"][number]["binding"],
   command: Command,
   namespace = fixtureSession().namespace,
 ): CommandRecord {
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "commandRecord",
     command,
     receipt: {
-      schemaVersion: 4,
+      schemaVersion: 5,
       kind: "receipt",
+      stageId: binding.generation,
       namespace,
       commandId: command.commandId,
       contentHash: fingerprint(command, fixtureLimits),
@@ -1231,20 +1254,19 @@ export function fixtureDispatchedRecord(
   };
 }
 export function fixtureProviderSession(
-  binding: Session["binding"],
+  binding: Session["stages"][number]["binding"],
   configuration: import("../ports.js").ProviderConfiguration,
 ): Session {
-  return {
-    ...fixtureSession(),
-    namespace: configuration.namespace,
+  return replaceStage(
+    { ...fixtureSession(), namespace: configuration.namespace },
     binding,
-    capabilities: {
-      ...fixtureSession().capabilities,
+    {
+      ...activeStage(fixtureSession()).capabilities,
       tools:
         configuration.permissions === "host_mediated"
           ? "host_mediated"
           : "disabled",
       continuation: "across_processes",
     },
-  };
+  );
 }

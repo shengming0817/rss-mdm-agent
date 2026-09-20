@@ -1,6 +1,6 @@
 # AI Session Host 的状态与进程所有权
 
-对应 [A03 #2441](https://dev.azure.com/shengming0923/rss/_workitems/edit/2441)。本方案按依赖顺序统一修改 A01 schema/ports/transition、A02 SQLite、Host/worker、A04 与客户端投影、Claude adapter，最后装配本地入口及独立产物验收。所有实现文件由主任务串行维护；探索和交付审查可独立并行。C20 当前为 V4 wire 与 SQLite schema version 3，直接协同替换旧版本，没有数据升级、迁移或兼容读取分支。
+对应 [A03 #2441](https://dev.azure.com/shengming0923/rss/_workitems/edit/2441)。本方案按依赖顺序统一修改 A01 schema/ports/transition、A02 SQLite、Host/worker、A04 与客户端投影、Claude adapter，最后装配本地入口及独立产物验收。所有实现文件由主任务串行维护；探索和交付审查可独立并行。AGENT-AI-01 当前为 V5 wire 与 SQLite schema version 4，直接协同替换旧版本，没有数据升级、迁移或兼容读取分支。
 
 持久事实只有一份：Session 持有绑定及可用状态，CommandRecord 持有队列和 attempt，Event 持有稳定展示，Interaction / SurfaceState 持有回调展示关联。`ProviderAgentPort.dispatch` 覆盖 prompt / steer / cancel / respond；Host 北向仍保留各语义方法。`VerifiedProviderFact` 将 dispatch、observe、reconcile 的证据绑定到 namespace、完整 provider identity 与原 attempt，Store 在提交时另做 revision / generation CAS。新接纳命令改变 revision，不使已发起的异步结果失效。
 
@@ -15,3 +15,13 @@ Host 独立 `WorkerLaunchFenceStore` 持有进程 fence 类型与校验，SQLite
 验证沿实际边界分层：契约拒绝伪造证据和错误 attempt；真实 SQLite 验证原子性及第二 owner；真实子进程验证 launch 边界、阻塞与 SIGKILL；固定模型 HTTP transport 验证真实 Claude SDK 经 Host/A04 的完整链路；tarball 在临时独立项目消费。外部模型、跨平台安装器和桌面窗口生命周期分别保留独立证据边界。
 
 关闭所有异步等待共用绝对 deadline；超时同步断开 IPC/工具桥并升级当前持有 worker 的终止，失败保留可重试状态。恢复写库失败也必须立即隔离 runtime 并输出闭合 diagnostic。Claude transcript 目录与凭据同属本地私有文件系统边界。运行包 Node 版本从根 manifest 读取，archive checksum 与 SQLite 版本按 `(version, platform)` 映射，未知组合在下载前失败；app 组合根纳入依赖和 builtin/import 边界检查。
+
+## 个人连接与 provider 阶段
+
+AGENT-AI-01 将产品会话生命周期与 native context 分开。`Session.stages` 从同一 JSON Schema 生成，空会话无 binding；`currentStageId` 指向当前阶段，`selectedConnectionId` 是下一次普通输入所用连接。`freshContext` 仅表达下一条输入的新上下文意图。Receipt 固定接纳 stageId；每个阶段保留 connectionId、configRevision、credentialRevision、binding 与 capabilities。原阶段历史不被切换覆盖。
+
+Host 先检查原 commandId 回执，后核对已确认历史，再等待旧队列全部结算并打开新阶段。连接修订与偏好按 Caller 的 tenant/principal/authority 存储，revision 只追加。原生 caller 由本地 ingress 根据用户 registry 与 generation 注入。一个 Host 承接所有用户；用户切换取消模型工作及验证 worker，Rust 设备任务继续持有冻结原 actor，不重绑定执行 app。
+
+配置快照仅含非秘密连接声明，credentialRef 由 native broker 解析；临时验证 namespace 不生成产品会话。模型探针完成和 worker 停止后才保存新连接。登录观察身份按用户/连接修订固定，API secret 不参与身份哈希。恢复读取原阶段修订与 native context 索引；普通 token 刷新仅允许同来源、同账号。历史预览是普通新输入的一部分，不建立独立切换任务或隐式重发链。
+
+`test-users` 与旧 `s1` 数据根隔离，无默认 actor、自动数据归属或兼容配置分支。相关操作及来源证据见 [Host 应用](../../apps/ai-host/README.md)。
