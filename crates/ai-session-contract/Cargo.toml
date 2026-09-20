@@ -24,3 +24,7 @@ typify = "=0.8.0"
 schemars_codegen = { package = "schemars", version = "=0.8.22" }
 syn = { version = "=2.0.119", features = ["full"] }
 quote = "=1.0.47"
+
+[[example]]
+name = "generate-runtime"
+test = true

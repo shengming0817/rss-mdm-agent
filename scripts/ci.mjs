@@ -59,7 +59,7 @@ const steps = [
   ["docs and diff", "node", ["scripts/check-docs.mjs"]],
   ["rust fmt", "cargo", ["fmt", "--all", "--", "--check"]],
   ["rust build", "cargo", ["build", "--workspace", "--locked"]],
-  ["rust test", "cargo", ["test", "--workspace", "--all-targets", "--locked"]],
+  ["rust test", "cargo", ["test", "--workspace", "--locked"]],
   ["self-service fixtures", "node", ["scripts/check-self-service.mjs"]],
   ["rust consumers", "node", ["scripts/check-rust-consumers.mjs"]],
   [
