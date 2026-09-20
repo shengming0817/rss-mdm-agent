@@ -4,8 +4,10 @@
     "targets": [
       "app"
     ],
-    "resources": {
-      "resources/ai-host-runtime/": "ai-host-runtime/"
+    "macOS": {
+      "files": {
+        "Resources/ai-host-runtime": "resources/ai-host-runtime"
+      }
     }
   }
 }

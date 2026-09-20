@@ -13,7 +13,7 @@ pnpm desktop:build       # 干净、已提交源码；自动打包 Node/依赖�
 
 分步诊断可单独执行 `pnpm bundle:ai-host` 和 `pnpm stage:desktop-runtime`；开发启动用 `RSS_AI_HOST_RUNTIME=/absolute/verified/ai-host-runtime pnpm dev`，不自动扫描开发产物。
 
-普通 Cargo/schema 检查使用基础 Tauri 配置，不依赖运行包；发布构建显式合并 `tauri.bundle.conf.json`。打包脚本先校验固定 Node archive、源码与部署 lock、真实 SDK 生命周期，再将通过的当前候选复制到被忽略的 resources 目录。发布应用只从自身资源目录启动 AI Host。缺失或不可用的 AI 不影响 Rust 任务读取，也不会降级为虚构对话。
+普通 Cargo/schema 检查使用基础 Tauri 配置，不依赖运行包；发布构建显式合并 `tauri.bundle.conf.json`。打包脚本先校验固定 Node archive、源码与部署 lock、真实 SDK 生命周期，再将通过的当前候选复制到被忽略的 resources 目录。macOS bundle 通过 `bundle.macOS.files` 整目录复制 runtime，以保留 pnpm 依赖符号链接；普通 resources 文件枚举会漏掉这些链接，不能用于该 runtime。发布应用只从自身资源目录启动 AI Host。缺失或不可用的 AI 不影响 Rust 任务读取，也不会降级为虚构对话。
 
 第一次启动在应用数据目录 `s1/client.json` 创建私有配置。默认 Codex `controlled_tools` 使用已有用户配置（启动环境 `CODEX_HOME` 或用户默认目录），不修改原始登录和权限设置。支持的连接方式和三引擎配置见 [AI Host](../../apps/ai-host/README.md)。改变账号、模型或 endpoint 时必须更新配置 revision；原生历史在原账号/配置身份下读取，不能换身份继续旧线程。
 
