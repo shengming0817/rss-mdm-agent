@@ -115,13 +115,18 @@ for (const provider of engines) {
         const session = unwrap(
           await recovered.store.session(ready.session.namespace),
         );
-        evidence(t, "provider-received-host-fact-lost", session, {
-          result: "supported",
-          reconciliation: current.state,
-          outcome: current.outcome ?? "unknown",
-          attempts: 1,
-          modelRequests: f.model.requests.length,
-        });
+        evidence(
+          t,
+          "provider-received-host-fact-lost",
+          session,
+          f.model.requests,
+          {
+            result: "supported",
+            reconciliation: current.state,
+            outcome: current.outcome ?? "unknown",
+            attempts: 1,
+          },
+        );
       } finally {
         unwrap(await recovered.host.close(budget()));
       }
@@ -217,10 +222,15 @@ for (const provider of engines) {
           current.binding.nativeThreadId,
           previous.binding.nativeThreadId,
         );
-      evidence(t, "host-restart-display-native-context", current, {
-        result: "supported",
-        modelRequests: 2,
-      });
+      evidence(
+        t,
+        "host-restart-display-native-context",
+        current,
+        f.model.requests,
+        {
+          result: "supported",
+        },
+      );
     },
   );
 }

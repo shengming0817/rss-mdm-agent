@@ -48,6 +48,30 @@ export function profileDigest(provider) {
 }
 const id = (value) =>
   typeof value === "string" && value.length > 0 && value.length <= 512;
+/** Observed request definitions only; never derive this inventory from capability declarations. */
+export function nativeToolInventory(requests) {
+  if (!Array.isArray(requests) || requests.length === 0)
+    throw new Error("No native model request");
+  const names = requests.flatMap((request) => {
+    const tools = request.tools ?? [];
+    if (!Array.isArray(tools)) throw new Error("Invalid native tool inventory");
+    return tools.flatMap((tool) => {
+      if (tool?.type === "namespace") {
+        if (!id(tool.name) || !Array.isArray(tool.tools))
+          throw new Error("Invalid native tool inventory");
+        return tool.tools.map((child) => {
+          if (!id(child?.name))
+            throw new Error("Invalid native tool inventory");
+          return `${tool.name}__${child.name}`;
+        });
+      }
+      const name = tool?.name ?? tool?.function?.name;
+      if (!id(name)) throw new Error("Invalid native tool inventory");
+      return name;
+    });
+  });
+  return [...new Set(names)].sort();
+}
 function validRow(row, installations) {
   const controlled = row.scenario === "production-controlled-admission";
   const rejected = controlled && row.provider !== "codex";
@@ -76,7 +100,8 @@ function validRow(row, installations) {
     return (
       row.modelRequests === 0 &&
       binding === undefined &&
-      row.capabilities === undefined
+      row.capabilities === undefined &&
+      row.nativeTools === undefined
     );
   return (
     binding?.provider === row.provider &&
@@ -90,6 +115,21 @@ function validRow(row, installations) {
     (row.provider !== "codex" || id(binding.nativeThreadId)) &&
     ["nativeRunId", "nativeRequestId"].every(
       (key) => binding[key] === undefined || id(binding[key]),
+    ) &&
+    Number.isSafeInteger(row.modelRequests) &&
+    row.modelRequests > 0 &&
+    isDeepStrictEqual(
+      row.nativeTools,
+      row.provider === "codex"
+        ? controlled
+          ? [
+              "list_mcp_resource_templates",
+              "list_mcp_resources",
+              "mcp__rss_host__propose",
+              "read_mcp_resource",
+            ]
+          : []
+        : [row.provider === "claude" ? "AskUserQuestion" : "ask_user_question"],
     ) &&
     isDeepStrictEqual(
       row.capabilities,

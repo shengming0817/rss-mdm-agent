@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -9,6 +10,20 @@ import {
   deliverable,
   smokeConfiguration,
 } from "../../../scripts/smoke-deepseek.mjs";
+test("smoke endpoint identity distinguishes routes on the same origin", () => {
+  const configuration = (path) =>
+    smokeConfiguration({
+      DEEPSEEK_BASE_URL: `https://private.example/${path}`,
+    });
+  assert.notDeepEqual(
+    configuration("v1").endpoint,
+    configuration("v2").endpoint,
+  );
+  assert.deepEqual(
+    configuration("v1").endpoint,
+    configuration("discard/../v1/").endpoint,
+  );
+});
 test("smoke evidence describes the endpoint actually selected, without leaking it", () => {
   const official = smokeConfiguration({});
   assert.equal(official.apiUrl, "https://api.deepseek.com");
@@ -22,8 +37,16 @@ test("smoke evidence describes the endpoint actually selected, without leaking i
   assert.equal(custom.apiUrl, "https://private.example/v1");
   assert.equal(custom.model, "custom");
   assert.equal(custom.endpoint.kind, "configured");
+  assert.equal(
+    custom.endpoint.endpointSha256,
+    createHash("sha256").update(custom.apiUrl).digest("hex"),
+  );
+  assert.equal("originSha256" in custom.endpoint, false);
   assert.doesNotMatch(JSON.stringify(custom.endpoint), /private\.example/);
-  assert.notEqual(custom.endpoint.originSha256, official.endpoint.originSha256);
+  assert.notEqual(
+    custom.endpoint.endpointSha256,
+    official.endpoint.endpointSha256,
+  );
   assert.equal(
     smokeConfiguration({ DEEPSEEK_BASE_URL: "http://127.0.0.1:1234" }).endpoint
       .kind,

@@ -165,12 +165,18 @@ for (const provider of engines) {
         try {
           const session = unwrap(await store.session(view.namespace));
           assert.equal(session.binding.providerVersion, "0.155.0");
-          evidence(t, "production-controlled-admission", session, {
-            result: "supported",
-            proof: "real_process_local_model_rust_s1",
-            modelRequests: f.model.requests.length,
-            rustCatalog: true,
-          });
+          evidence(
+            t,
+            "production-controlled-admission",
+            session,
+            f.model.requests,
+            {
+              result: "supported",
+              proof: "real_process_local_model_rust_s1",
+
+              rustCatalog: true,
+            },
+          );
         } finally {
           unwrap(await store.close(budget()));
         }

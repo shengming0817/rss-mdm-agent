@@ -93,11 +93,10 @@ for (const provider of engines) {
         ).length,
         1,
       );
-      evidence(t, "native-cancel-request-terminal", session, {
+      evidence(t, "native-cancel-request-terminal", session, f.model.requests, {
         result: "supported",
         confirmation: "request_only",
         outcome: "cancelled",
-        modelRequests: 1,
       });
     },
   );
@@ -147,11 +146,10 @@ test(
         budget(),
       ),
     );
-    evidence(t, "cancel-without-terminal-recovery", session, {
+    evidence(t, "cancel-without-terminal-recovery", session, f.model.requests, {
       result: "supported",
       confirmation: "request_only",
       outcome: "unknown",
-      modelRequests: 1,
     });
   },
 );

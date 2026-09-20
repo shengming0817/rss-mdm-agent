@@ -4,9 +4,9 @@
 
 ## 运行与证据
 
-`pnpm test:ai-acceptance` 构建现有 Host 依赖，自动发现并串行运行 [共同套件](../../tests/ai-provider-conformance/) 和 [进程恢复套件](../../tests/ai-recovery-integration/)。必须有三个引擎及所有指定场景的实际断言与诊断；少测、跳过、失败、重复证据、源码未提交或运行中改变均不能得到通过结论。每行必须匹配固定版本、配置、能力和 adapter profile/plugin 源码摘要，缺失或错误绑定同样失败。本入口使用真实原生进程和本地模型协议服务，不需要外部账号。
+`pnpm test:ai-acceptance` 构建现有 Host 依赖，自动发现并串行运行 [共同套件](../../tests/ai-provider-conformance/) 和 [进程恢复套件](../../tests/ai-recovery-integration/)。必须有三个引擎及所有指定场景的实际断言与诊断；少测、跳过、失败、重复证据、源码未提交或运行中改变均不能得到通过结论。每行必须匹配固定版本、配置、能力、实际工具清单和 adapter profile/plugin 源码摘要，缺失或错误绑定同样失败。本入口使用真实原生进程和本地模型协议服务，不需要外部账号。
 
-回执位于被忽略的 `.local-ci-runs/ai-provider-matrix.json`，包含命令、UTC、前后源码 SHA/基线/clean 状态、两份 lock 摘要、Node/OS/架构、各测试结果、每个已准入会话的 provider/adapter 版本、配置 revision、generation、原生关联 ID、实际工具列表和恢复结果。临时路径与凭据不进入回执；工具/plugin 组合由该源码的固定 profile 与 lock 绑定。回执必须与当前 clean SHA 和 lock 一致，历史回执不能证明当前构建。
+回执位于被忽略的 `.local-ci-runs/ai-provider-matrix.json`，包含命令、UTC、前后源码 SHA/基线/clean 状态、两份 lock 摘要、Node/OS/架构、各测试结果、每个已准入会话的 provider/adapter 版本、配置 revision、generation、原生关联 ID、实际工具列表和恢复结果。已准入场景必须有非零模型请求，工具清单从该场景所有真实请求提取、排序去重；Codex 命名空间展开为 `namespace__tool`，Claude/DeepSeek 从各自原生字段读取。conversation 清单分别为 Codex 空集、Claude `AskUserQuestion`、DeepSeek `ask_user_question`；Codex controlled_tools 包含 `mcp__rss_host__propose` 和固定的三个空资源辅助工具。清单缺失、多余、缺项、重复或顺序不规范均不能通过；拒绝准入行要求零请求且不伪造工具观察。临时路径与凭据不进入回执；工具/plugin 组合另由该源码的固定 profile 与 lock 绑定。回执必须与当前 clean SHA 和 lock 一致，历史回执不能证明当前构建。
 
 完整验收运行 `make ci CI_BASE=origin/develop`，同时执行下表指向的原有权威测试；共同套件没有复制 Rust 批准或 SQLite 事务算法。最终回执和全量本地结果随 PR 留痕，本文记录方法和范围，不充当滚动通过看板。运行平台目前是产品 Host 支持的 macOS arm64；其他平台失败不能记作跳过后通过。
 
@@ -63,7 +63,7 @@
 
 仅使用明确提供的当前配置，分别运行 `pnpm smoke:codex`、`pnpm smoke:claude`、`pnpm smoke:deepseek`；配置方法见三个 adapter 的 README。缺少凭据或明确 endpoint 时标 unknown/not_run，不搜索个人目录、不用旧回执替代，也不自动改成 fixture。
 
-DeepSeek smoke 在开始时冻结 endpoint/model，实际连接与回执使用同一快照；回执按 endpoint 的真实 origin 区分 official/configured/local_fixture，并只保留 origin 摘要。official 表示配置指向官方域，`backendIdentityVerified: false` 不允许声称验证了上游模型身份；自定义网关不能写成“官方 DeepSeek 实测”。三个 smoke 均是独立证据，不能升级为生产受控准入或 OS T3。
+DeepSeek smoke 在开始时冻结 endpoint/model，实际连接与回执使用同一快照；回执按 endpoint 的真实 origin 区分 official/configured/local_fixture。三个 smoke 均以 `endpointSha256` 记录实际传给 adapter 的完整规范化 URL 摘要（含路径），不保留旧 origin 摘要或明文端点；userinfo/query/fragment 输入被拒绝。official 表示配置指向官方域，`backendIdentityVerified: false` 不允许声称验证了上游模型身份；自定义网关不能写成“官方 DeepSeek 实测”。三个 smoke 均是独立证据，不能升级为生产受控准入或 OS T3。
 
 ## 来源与改写
 
@@ -72,3 +72,5 @@ ref: OpenAI Codex `codex-rs/app-server-protocol/src/protocol/v2/mod.rs`、`core/
 恢复测试与生产应用使用同一个配置/主体/准入 resolver，只在现有 Store.commit 接缝暂停，不给生产 Store/Host 添加故障开关。Rust 编译 helper 被原有丢回执测试与共同受控测试共享，子进程构建设有硬超时。
 
 ref: oh-my-pi [crates/sandbox/src/runner.rs@2f92f3b5aa2035d21c9f016f9ff6350795e5685a](https://github.com/can1357/oh-my-pi/blob/2f92f3b5aa2035d21c9f016f9ff6350795e5685a/crates/sandbox/src/runner.rs#L69)：借鉴 requested/enforced/missing 的证据表达；这里只记录现有 verifier 的要求、断言与缺口，没有移植 sandbox 平台或扩大 A01。
+
+ref: Node.js [lib/internal/url.js@v24.14.1](https://github.com/nodejs/node/blob/v24.14.1/lib/internal/url.js#L879)：`href` 保留规范化路径，`origin` 仅含协议和主机。端点摘要直接复用传入 adapter 的同一 URL 值。参考 [SLSA provenance v1.1 的输入校验](https://slsa.dev/spec/v1.1/provenance#builddefinition)，工具面由实际请求产出并由验收器独立校验，不另建通用 provenance 协议。

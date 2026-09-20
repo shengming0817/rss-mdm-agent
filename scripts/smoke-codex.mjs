@@ -107,13 +107,14 @@ export function loadSmokeConfiguration(args, env) {
     (url.protocol !== "https:" && url.protocol !== "http:")
   )
     throw new Error("invalid smoke configuration");
+  const apiUrl = url.href.replace(/\/$/, "");
   return {
     mode: value.mode,
-    apiUrl: url.toString().replace(/\/$/, ""),
+    apiUrl,
     apiKey: value.apiKey,
     model: value.model,
     endpoint: {
-      originSha256: createHash("sha256").update(url.origin).digest("hex"),
+      endpointSha256: createHash("sha256").update(apiUrl).digest("hex"),
       mode: value.mode,
     },
   };

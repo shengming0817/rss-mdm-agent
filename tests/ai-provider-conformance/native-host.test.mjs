@@ -168,22 +168,15 @@ for (const provider of engines) {
         );
       }
       assert.equal(f.model.requests.length, 6);
-      const nativeTools = f.model.requests.flatMap((r) =>
-        (r.tools ?? []).map((tool) => tool.name ?? tool.function?.name),
+      evidence(
+        t,
+        "native-basic-ledger-queue-replay",
+        session,
+        f.model.requests,
+        {
+          result: "supported",
+        },
       );
-      assert.ok(
-        nativeTools.every((name) =>
-          provider === "codex"
-            ? false
-            : ["AskUserQuestion", "ask_user_question"].includes(name),
-        ),
-        JSON.stringify(nativeTools),
-      );
-      evidence(t, "native-basic-ledger-queue-replay", session, {
-        requests: f.model.requests.length,
-        result: "supported",
-        nativeTools: [...new Set(nativeTools)],
-      });
     },
   );
 }

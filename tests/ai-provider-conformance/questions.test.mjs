@@ -110,10 +110,15 @@ for (const provider of ["claude", "deepseek"]) {
           budget(),
         ),
       );
-      evidence(t, "question-answer-race-lost-callback", session, {
-        result: "supported",
-        modelRequests: 3,
-      });
+      evidence(
+        t,
+        "question-answer-race-lost-callback",
+        session,
+        f.model.requests,
+        {
+          result: "supported",
+        },
+      );
     },
   );
 }

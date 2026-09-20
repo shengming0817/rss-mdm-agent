@@ -30,8 +30,9 @@ export function smokeConfiguration(env) {
       !model.trim()
     )
       throw new Error();
+    const apiUrl = url.href.replace(/\/$/, "");
     return Object.freeze({
-      apiUrl: url.href.replace(/\/$/, ""),
+      apiUrl,
       model,
       endpoint: Object.freeze({
         kind: loopback
@@ -39,7 +40,7 @@ export function smokeConfiguration(env) {
           : url.origin === "https://api.deepseek.com"
             ? "official"
             : "configured",
-        originSha256: createHash("sha256").update(url.origin).digest("hex"),
+        endpointSha256: createHash("sha256").update(apiUrl).digest("hex"),
       }),
     });
   } catch {

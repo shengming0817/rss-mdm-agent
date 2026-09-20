@@ -1,6 +1,6 @@
 # DeepSeek Harness adapter
 
-单包 Node.js / TypeScript 适配器，公开 `createDeepSeekAdapter(options): ProviderAgentPort`。消费 A01 的 `DispatchAttempt` 和 `VerifiedProviderSession`；每个 port 只允许一次 open/restore，独占一个 Node 子进程与原生 Context。公共配置、namespace、账号引用和存储目录由可信组合根提供。API 固定为 `https://api.deepseek.com`，协议为 chat-completions。密钥由 resolver 返回，仅通过私有 IPC 进入进程内存。
+单包 Node.js / TypeScript 适配器，公开 `createDeepSeekAdapter(options): ProviderAgentPort`。消费 A01 的 `DispatchAttempt` 和 `VerifiedProviderSession`；每个 port 只允许一次 open/restore，独占一个 Node 子进程与原生 Context。公共配置、namespace、账号引用和存储目录由可信组合根提供。协议为 chat-completions；可信 resolver 必须显式提供 HTTPS API endpoint（loopback 测试可用 HTTP），smoke 默认使用官方 `https://api.deepseek.com`。密钥由 resolver 返回，仅通过私有 IPC 进入进程内存。
 
 ```ts
 import { createDeepSeekAdapter } from '@rss-mdm-agent/ai-adapter-deepseek';
@@ -43,7 +43,7 @@ const admitted = await VerifiedProviderSession.open(port, configuration, budget)
 
 静态服务声明在 `src/assembly.ts`，同时驱动启动和组合摘要；不加载通用 RPC 或 Loader。私有 IPC 固定为 initialize/prompt/inspect/cancel/answer/tool_result/close。原生 Connection 仅为服务注册依赖，不启动网络 listener。临时 Harness home 含其自身 browser-session secret，只有子进程退出且目录清理成功才报告停止。API key 不写入该目录。close 强制终止本 incarnation，未 flush 的原生事实可能丢失，因此未完成命令必须核实。
 
-验证入口：`pnpm test:ai-deepseek`（A01 fixture + 实际 Harness 子进程、本地模型协议、恢复/故障/权限）、`pnpm check:deepseek-consumer`（干净已提交源码的固定 tarball 消费）、`pnpm smoke:deepseek`（显式配置 `DEEPSEEK_API_KEY` 或 `RSS_DEEPSEEK_KEY_FILE`）。后者默认官方端点，也接受显式 DEEPSEEK_BASE_URL/DEEPSEEK_MODEL；冻结配置并按实际 origin 记录 official/configured/local_fixture，不声明已验证后端身份。缺密钥失败，不静默降级为 fixture。
+验证入口：`pnpm test:ai-deepseek`（A01 fixture + 实际 Harness 子进程、本地模型协议、恢复/故障/权限）、`pnpm check:deepseek-consumer`（干净已提交源码的固定 tarball 消费）、`pnpm smoke:deepseek`（显式配置 `DEEPSEEK_API_KEY` 或 `RSS_DEEPSEEK_KEY_FILE`）。后者默认官方端点，也接受显式 DEEPSEEK_BASE_URL/DEEPSEEK_MODEL；冻结配置并按实际 origin 记录 official/configured/local_fixture；`endpointSha256` 摘要实际使用的完整规范化 URL（含路径），不输出明文地址，也不声明已验证后端身份。缺密钥失败，不静默降级为 fixture。
 
 [来源与证据边界](https://dev.azure.com/shengming0923/rss/_git/rss-mdm-agent?path=/docs/reference/deepseek-harness.md&version=GC80f8efc2048de118ad055dc5f0d6006edf4c42ef)。已执行平台与源码/lock/artifact 身份以 PR 及 `.local-ci-runs` 实际结果为准；不声称已经发布 registry 包或完成 Windows/企业平台 T3。
 

@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
-import { assess, capabilities, required } from "./check-ai-acceptance.mjs";
+import {
+  assess,
+  capabilities,
+  required,
+  nativeToolInventory,
+} from "./check-ai-acceptance.mjs";
 
 function fixture() {
   const installations = Object.fromEntries(
@@ -54,6 +59,26 @@ function fixture() {
               controlled ? "host_mediated" : "disabled",
             ),
           }),
+      ...(!rejected
+        ? {
+            modelRequests: 1,
+            nativeTools:
+              provider === "codex"
+                ? controlled
+                  ? [
+                      "list_mcp_resource_templates",
+                      "list_mcp_resources",
+                      "mcp__rss_host__propose",
+                      "read_mcp_resource",
+                    ]
+                  : []
+                : [
+                    provider === "claude"
+                      ? "AskUserQuestion"
+                      : "ask_user_question",
+                  ],
+          }
+        : {}),
     };
   });
   return {
@@ -173,6 +198,7 @@ test("evidence cannot omit or misbind its native/profile/configuration identity"
     { modelRequests: 1 },
     { binding: rows[0].binding },
     { result: "supported" },
+    { nativeTools: [] },
   ]) {
     const changed = rows.map((r, i) =>
       i === rejected ? { ...r, ...patch } : r,
@@ -191,4 +217,76 @@ test("evidence cannot omit or misbind its native/profile/configuration identity"
     ).passed,
     false,
   );
+});
+
+test("every admitted scenario requires the actual native tool inventory", () => {
+  const { rows, tests, context } = fixture();
+  assert.equal(assess(rows, tests, context).passed, true);
+  for (let index = 0; index < rows.length; index++) {
+    if (!rows[index].binding) continue;
+    for (const nativeTools of [
+      undefined,
+      null,
+      "unknown",
+      ["shell"],
+      [...rows[index].nativeTools, "unexpected"],
+      ...(rows[index].nativeTools.length
+        ? [[], [...rows[index].nativeTools, rows[index].nativeTools[0]]]
+        : []),
+      ...(rows[index].nativeTools.length > 1
+        ? [[...rows[index].nativeTools].reverse()]
+        : []),
+    ]) {
+      const altered = rows.map((row, i) =>
+        i === index ? { ...row, nativeTools } : row,
+      );
+      assert.equal(
+        assess(altered, tests, context).passed,
+        false,
+        `${rows[index].provider}:${rows[index].scenario}`,
+      );
+    }
+    for (const modelRequests of [undefined, 0, -1, 1.5, "1"])
+      assert.equal(
+        assess(
+          rows.map((row, i) => (i === index ? { ...row, modelRequests } : row)),
+          tests,
+          context,
+        ).passed,
+        false,
+      );
+  }
+});
+
+test("native tool inventory is extracted from all observed protocol requests", () => {
+  assert.deepEqual(
+    nativeToolInventory([
+      {
+        tools: [
+          { name: "AskUserQuestion" },
+          { type: "function", function: { name: "ask_user_question" } },
+        ],
+      },
+      {
+        tools: [
+          {
+            type: "namespace",
+            name: "mcp__rss_host",
+            tools: [{ name: "propose" }],
+          },
+          { name: "AskUserQuestion" },
+        ],
+      },
+    ]),
+    ["AskUserQuestion", "ask_user_question", "mcp__rss_host__propose"],
+  );
+  assert.deepEqual(nativeToolInventory([{}, { tools: [] }]), []);
+  for (const requests of [
+    undefined,
+    [],
+    [{ tools: "unknown" }],
+    [{ tools: [{}] }],
+    [{ tools: [{ type: "namespace", name: "mcp", tools: [{}] }] }],
+  ])
+    assert.throws(() => nativeToolInventory(requests));
 });

@@ -14,7 +14,10 @@ import {
 import { createModelServer } from "../ai-adapters/claude/model-fixture.mjs";
 import { reply } from "../ai-adapters/codex/helpers.mjs";
 import { completion } from "../ai-adapters/deepseek/native-support.mjs";
-import { profileDigest } from "../../scripts/check-ai-acceptance.mjs";
+import {
+  profileDigest,
+  nativeToolInventory,
+} from "../../scripts/check-ai-acceptance.mjs";
 export { capabilities } from "../../scripts/check-ai-acceptance.mjs";
 
 export const engines = ["codex", "claude", "deepseek"];
@@ -251,7 +254,7 @@ export async function fixture(t, provider) {
   });
   return f;
 }
-export function evidence(t, scenario, session, extra = {}) {
+export function evidence(t, scenario, session, requests, extra = {}) {
   const { workspaceId: _workspace, ...binding } = session.binding;
   t.diagnostic(
     JSON.stringify({
@@ -267,6 +270,8 @@ export function evidence(t, scenario, session, extra = {}) {
       binding,
       capabilities: session.capabilities,
       ...extra,
+      modelRequests: requests.length,
+      nativeTools: nativeToolInventory(requests),
     }),
   );
 }
