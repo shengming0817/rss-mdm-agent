@@ -376,7 +376,6 @@ test("question response is timely during a long run and has its own acknowledgem
 });
 test("slow subscriber is asked to resync while another account remains usable", async (t) => {
   const f = await setup(t);
-  unwrap(await f.host.submit(caller, f.command("flood", "flood"), budget()));
   const abort = new AbortController(),
     iterator = f.host
       .subscribe(caller, f.session.namespace.sessionId, 0, {
@@ -384,8 +383,29 @@ test("slow subscriber is asked to resync while another account remains usable", 
         signal: abort.signal,
       })
       [Symbol.asyncIterator]();
-  await iterator.next();
-  await new Promise((resolve) => setTimeout(resolve, 700));
+  t.after(() => abort.abort());
+  const ready = iterator.next();
+  // A draining peer proves the Host has published enough bytes to overflow the paused peer.
+  // No assumption about how many provider callbacks fit in 700 ms under parallel CI load.
+  const fast = f.host
+    .subscribe(caller, f.session.namespace.sessionId, 0, {
+      timeoutMs: 5000,
+      signal: AbortSignal.any([abort.signal, AbortSignal.timeout(5000)]),
+    })
+    [Symbol.asyncIterator]();
+  const fastReady = fast.next();
+  unwrap(await f.host.submit(caller, f.command("flood", "flood"), budget()));
+  await Promise.all([ready, fastReady]);
+  let bytes = 0;
+  for await (const item of fast) {
+    assert.notEqual(item.type, "resync_required", "draining peer remains live");
+    if (item.type === "delta") bytes += Buffer.byteLength(item.text);
+    if (bytes >= 2 * 1024 * 1024) break;
+  }
+  assert.ok(
+    bytes >= 2 * 1024 * 1024,
+    "Host published more than the paused peer's byte budget",
+  );
   assert.equal((await iterator.next()).value.type, "resync_required");
   abort.abort();
   await iterator.return();

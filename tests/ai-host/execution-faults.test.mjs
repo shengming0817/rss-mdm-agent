@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { fork, spawn } from "node:child_process";
+import { execFileSync, fork, spawn } from "node:child_process";
 import { once } from "node:events";
 import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -105,28 +105,44 @@ async function crashAfterRustAcceptance(
 }
 
 test("lost submit receipt recovers the same Rust attempt and keeps process exit separate from cancellation", async (t) => {
+  // Compilation is not part of the production MCP handshake budget.
+  const messages = execFileSync(
+    "cargo",
+    [
+      "build",
+      "--locked",
+      "--message-format=json",
+      "-p",
+      "rss-mdm-desktop",
+      "--example",
+      "execution-acceptance-server",
+    ],
+    {
+      cwd: new URL("../..", import.meta.url),
+      encoding: "utf8",
+      maxBuffer: 10 * 1024 * 1024,
+    },
+  )
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  const executable = messages.find(
+    (message) =>
+      message.reason === "compiler-artifact" &&
+      message.target.name === "execution-acceptance-server" &&
+      message.executable,
+  )?.executable;
+  assert.ok(executable, "Cargo must produce the actual acceptance server");
   const root = await realpath(
     await mkdtemp(join(tmpdir(), "rss-execution-fault-")),
   );
   const rustDb = join(root, "execution.sqlite");
   const aiDb = join(root, "ai.sqlite");
   const audit = join(root, "execution-audit.json");
-  const rust = spawn(
-    "cargo",
-    [
-      "run",
-      "--quiet",
-      "-p",
-      "rss-mdm-desktop",
-      "--example",
-      "execution-acceptance-server",
-      "--",
-      rustDb,
-      audit,
-      "ai-unknown",
-    ],
-    { cwd: new URL("../..", import.meta.url), stdio: ["pipe", "pipe", "pipe"] },
-  );
+  const rust = spawn(executable, [rustDb, audit, "ai-unknown"], {
+    cwd: new URL("../..", import.meta.url),
+    stdio: ["pipe", "pipe", "pipe"],
+  });
   let rustError = "";
   rust.stderr.on("data", (chunk) => (rustError += chunk));
   let connection;
