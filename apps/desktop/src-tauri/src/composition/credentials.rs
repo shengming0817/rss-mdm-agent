@@ -17,6 +17,8 @@ use tokio_util::{
     codec::{Framed, LinesCodec},
     sync::CancellationToken,
 };
+mod vault;
+pub use vault::Vault;
 const SERVICE: &str = "RSS MDM Agent test-user connections";
 fn unavailable() -> crate::self_service::ServiceError {
     error(
@@ -28,6 +30,7 @@ fn unavailable() -> crate::self_service::ServiceError {
 pub async fn enter<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     users: Arc<Mutex<Users>>,
+    vault: Arc<Mutex<Vault>>,
     generation: String,
 ) -> Result<String> {
     users
@@ -63,17 +66,27 @@ pub async fn enter<R: tauri::Runtime>(
                 {
                     return Err(unavailable());
                 }
-                let context = users
+                let users = users.lock().map_err(|_| unavailable())?;
+                let context = users.require(&generation)?;
+                let reference = uuid::Uuid::new_v4().to_string();
+                vault
                     .lock()
                     .map_err(|_| unavailable())?
-                    .require(&generation)?;
-                let reference = uuid::Uuid::new_v4().to_string();
-                set_generic_password(
+                    .stage(context.user.user_id.as_str(), &generation, &reference)
+                    .map_err(|_| unavailable())?;
+                if set_generic_password(
                     SERVICE,
                     &format!("{}:{reference}", context.user.user_id.as_str()),
                     &secret,
                 )
-                .map_err(|_| unavailable())?;
+                .is_err()
+                {
+                    let _ = vault
+                        .lock()
+                        .map_err(|_| unavailable())?
+                        .discard(context.user.user_id.as_str(), &reference);
+                    return Err(unavailable());
+                }
                 Ok(reference)
             })();
             secret.fill(0);
@@ -87,15 +100,37 @@ pub async fn enter<R: tauri::Runtime>(
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 enum Request {
+    Activate {
+        #[serde(rename = "userId")]
+        user_id: String,
+        generation: String,
+        #[serde(rename = "credentialRef")]
+        credential_ref: String,
+    },
+    Discard {
+        #[serde(rename = "userId")]
+        user_id: String,
+        generation: String,
+        #[serde(rename = "credentialRef")]
+        credential_ref: String,
+    },
+    Collect {
+        #[serde(rename = "userId")]
+        user_id: String,
+        generation: String,
+        keep: Vec<String>,
+    },
     Credential {
         #[serde(rename = "userId")]
         user_id: String,
+        generation: String,
         #[serde(rename = "credentialRef")]
         credential_ref: String,
     },
     Codex {
         #[serde(rename = "userId")]
         user_id: String,
+        generation: String,
         directory: PathBuf,
         storage: Storage,
     },
@@ -137,13 +172,88 @@ fn read_auth(directory: &Path) -> std::result::Result<Vec<u8>, ()> {
     }
     Ok(data)
 }
-fn resolve(request: Request, users: &Mutex<Users>) -> std::result::Result<Value, ()> {
-    match request {
+fn resolve(
+    request: Request,
+    users: &Mutex<Users>,
+    vault: &Mutex<Vault>,
+) -> std::result::Result<Value, ()> {
+    let (user, generation) = match &request {
         Request::Credential {
             user_id,
+            generation,
+            ..
+        }
+        | Request::Codex {
+            user_id,
+            generation,
+            ..
+        }
+        | Request::Activate {
+            user_id,
+            generation,
+            ..
+        }
+        | Request::Discard {
+            user_id,
+            generation,
+            ..
+        }
+        | Request::Collect {
+            user_id,
+            generation,
+            ..
+        } => (user_id, generation),
+    };
+    let users = users.lock().map_err(|_| ())?;
+    if users
+        .require(generation)
+        .map_err(|_| ())?
+        .user
+        .user_id
+        .as_str()
+        != user
+    {
+        return Err(());
+    }
+    match request {
+        Request::Discard {
+            user_id,
+            credential_ref,
+            ..
+        } => {
+            vault
+                .lock()
+                .map_err(|_| ())?
+                .discard(&user_id, &credential_ref)?;
+            Ok(json!(null))
+        }
+        Request::Activate {
+            user_id,
+            generation,
             credential_ref,
         } => {
-            if !users.lock().map_err(|_| ())?.contains(&user_id)
+            vault
+                .lock()
+                .map_err(|_| ())?
+                .activate(&user_id, &generation, &credential_ref)?;
+            Ok(json!(null))
+        }
+        Request::Collect { user_id, keep, .. } => {
+            if keep.len() > 16384 {
+                return Err(());
+            }
+            vault.lock().map_err(|_| ())?.collect(&user_id, &keep)?;
+            Ok(json!(null))
+        }
+        Request::Credential {
+            user_id,
+            generation,
+            credential_ref,
+        } => {
+            if !vault
+                .lock()
+                .map_err(|_| ())?
+                .readable(&user_id, &generation, &credential_ref)
                 || uuid::Uuid::parse_str(&credential_ref).is_err()
             {
                 return Err(());
@@ -154,11 +264,12 @@ fn resolve(request: Request, users: &Mutex<Users>) -> std::result::Result<Value,
             Ok(json!({"value":value}))
         }
         Request::Codex {
-            user_id,
+            user_id: _,
+            generation: _,
             directory,
             storage,
         } => {
-            if !users.lock().map_err(|_| ())?.contains(&user_id) || !directory.is_absolute() {
+            if !directory.is_absolute() {
                 return Err(());
             }
             let canonical = directory.canonicalize().map_err(|_| ())?;
@@ -201,6 +312,7 @@ fn resolve(request: Request, users: &Mutex<Users>) -> std::result::Result<Value,
 pub async fn serve(
     path: PathBuf,
     users: Arc<Mutex<Users>>,
+    vault: Arc<Mutex<Vault>>,
     stop: CancellationToken,
 ) -> std::result::Result<(), Box<dyn std::error::Error>> {
     use std::os::unix::fs::PermissionsExt;
@@ -222,6 +334,7 @@ pub async fn serve(
         loop {
             let stream = tokio::select! { _ = stop.cancelled() => break, next = listener.accept() => match next { Ok((stream, _)) => stream, Err(_) => break } };
             let users = users.clone();
+            let vault = vault.clone();
             tokio::spawn(async move {
                 let mut io = Framed::new(stream, LinesCodec::new_with_max_length(262144));
                 if let Ok(Some(Ok(line))) =
@@ -229,7 +342,7 @@ pub async fn serve(
                 {
                     let result = serde_json::from_str::<Request>(&line)
                         .map_err(|_| ())
-                        .and_then(|request| resolve(request, &users));
+                        .and_then(|request| resolve(request, &users, &vault));
                     let response = match result {
                         Ok(value) => json!({"ok":true,"value":value}),
                         Err(_) => json!({"ok":false,"error":"authentication_required"}),
@@ -245,4 +358,46 @@ pub async fn serve(
         let _ = std::fs::remove_file(path);
     });
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn broker_rejects_old_generation_and_foreign_users_before_keychain_access() {
+        let root = std::env::temp_dir().join(format!("rss-broker-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let mut users = Users::open(&root).unwrap();
+        let alice = users.select("Alice").unwrap();
+        let bob = users.select("Bob").unwrap();
+        let users = Mutex::new(users);
+        let vault = Mutex::new(Vault::open(&root).unwrap());
+        for (user, generation) in [
+            (alice.user.user_id.to_string(), alice.generation.to_string()),
+            (alice.user.user_id.to_string(), bob.generation.to_string()),
+        ] {
+            assert!(resolve(
+                Request::Credential {
+                    user_id: user.clone(),
+                    generation: generation.clone(),
+                    credential_ref: uuid::Uuid::new_v4().to_string()
+                },
+                &users,
+                &vault
+            )
+            .is_err());
+            assert!(resolve(
+                Request::Codex {
+                    user_id: user,
+                    generation,
+                    directory: root.clone(),
+                    storage: Storage::Keyring
+                },
+                &users,
+                &vault
+            )
+            .is_err());
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

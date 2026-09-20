@@ -27,6 +27,7 @@ import type {
 } from "../ports.js";
 import type {
   Command,
+  Connection,
   CommandRecord,
   Session,
   Event,
@@ -136,6 +137,7 @@ export async function runStoreConformance(
 async function runStoreScenarios(
   create: () => Promise<SessionStore>,
 ): Promise<void> {
+  await runPreferencesConformance(await create());
   await runStoreBoundaries(create);
   await runRecoveryConformance(create);
   await runSurfaceConformance(await create());
@@ -1269,4 +1271,77 @@ export function fixtureProviderSession(
       continuation: "across_processes",
     },
   );
+}
+
+async function runPreferencesConformance(store: SessionStore): Promise<void> {
+  const session = fixtureSession();
+  unwrap(await store.create(session));
+  const connection: Connection = {
+    schemaVersion: 5,
+    kind: "connection",
+    connectionId: "personal",
+    name: "Personal",
+    provider: "codex",
+    configRevision: 1,
+    credentialRevision: 1,
+    accountRef: "account",
+    credentialRef: "reference",
+    status: "ready",
+    profile: "conversation",
+    source: { type: "existing_login", directory: "/fixture" },
+  };
+  unwrap(await store.saveConnection(fixtureCaller, connection, null));
+  await Promise.all([
+    store
+      .savePreferences(fixtureCaller, {
+        selectedSessionId: { set: session.namespace.sessionId },
+      })
+      .then(unwrap),
+    store
+      .savePreferences(fixtureCaller, {
+        defaultConnectionId: { set: connection.connectionId },
+      })
+      .then(unwrap),
+  ]);
+  const expected = {
+    schemaVersion: 5,
+    kind: "userPreferences",
+    selectedSessionId: session.namespace.sessionId,
+    defaultConnectionId: connection.connectionId,
+  };
+  assert.deepEqual(unwrap(await store.preferences(fixtureCaller)), expected);
+  assert.equal(
+    (
+      await store.savePreferences(fixtureCaller, {
+        selectedSessionId: { set: "missing" },
+        defaultConnectionId: { clear: true },
+      })
+    ).ok,
+    false,
+  );
+  assert.deepEqual(unwrap(await store.preferences(fixtureCaller)), expected);
+  unwrap(
+    await store.savePreferences(fixtureCaller, {
+      selectedSessionId: { clear: true },
+    }),
+  );
+  assert.equal(
+    unwrap(await store.preferences(fixtureCaller)).defaultConnectionId,
+    connection.connectionId,
+  );
+  assert.equal(
+    unwrap(await store.preferences(fixtureCaller)).selectedSessionId,
+    undefined,
+  );
+  unwrap(
+    await store.savePreferences(fixtureCaller, {
+      selectedSessionId: { set: session.namespace.sessionId },
+      defaultConnectionId: { clear: true },
+    }),
+  );
+  assert.deepEqual(unwrap(await store.preferences(fixtureCaller)), {
+    schemaVersion: 5,
+    kind: "userPreferences",
+    selectedSessionId: session.namespace.sessionId,
+  });
 }

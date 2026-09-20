@@ -17,7 +17,7 @@ pnpm desktop:build
 | 来源 | Codex | Claude | DeepSeek |
 |---|---|---|---|
 | 自定义 API | URL、API Key、模型 | URL、API Key/Auth Token/OAuth Token、模型 | URL、API Key、模型 |
-| 已有 CLI 登录 | `config.toml` 存储策略及 native broker 获取的 ChatGPT token | 固定 SDK 原生 Keychain source，核对 accountInfo 与 init source | 不提供 |
+| 已有 CLI 登录 | `config.toml` 存储策略及 native broker 获取的 ChatGPT token | 当前固定 SDK 缺少稳定账号身份接口，明确返回不支持 | 不提供 |
 | 已有 CLI API 配置 | profile/model provider 与显式 API 认证字段 | settings 中显式 API key/auth token | 不提供 |
 
 自定义凭据通过 AppKit 安全字段进入 Keychain，网页只得到按测试用户隔离的随机引用。URL 允许 HTTPS 或 loopback HTTP，拒绝 URL 凭据、query 和 fragment。用户配置目录不得由其他用户写入；含秘密的文件必须为当前用户的私有普通文件，拒绝符号链接和超限读取。不导入用户工具权限、插件、任意 MCP 或自动批准。
@@ -26,7 +26,9 @@ pnpm desktop:build
 
 Codex 0.155.0 遵循 file/keyring/auto/ephemeral 存储策略；auto 仅在 Keychain 条目不存在时尝试文件，权限错误不回退。登录通过 `chatgptAuthTokens` 接入隔离目录，不复制 refresh token、不修改原登录。刷新只重读同一来源、同一账号且发生变化的 access token。
 
-Claude SDK 0.3.277 / CLI 2.1.277 使用独立阶段配置目录，通过 `CLAUDE_SECURESTORAGE_CONFIG_DIR` 选择实际 Keychain source。默认源使用空值，显式目录按上游 NFC/hash 规则寻址；OS 用户名用于 Keychain account。`accountInfo()` 与 init 的认证来源共同核对，观察到的账号信息与配置修订绑定；email 是观察字段，不宣称为稳定 provider 主键。已有登录不使用环境 OAuth token 替代。所有阶段继续封闭设置、插件和工具旁路。
+Claude SDK 0.3.277 / CLI 2.1.277 的公开 `accountInfo()` 只提供可选展示元数据，不提供可验证的稳定账号 UUID。macOS 已有登录明确为外部依赖阻塞，返回 `unsupported_capability`；不使用 email、缓存账号、私有未验证 OAuth 协议或秘密哈希替代身份。已有 API 配置和自定义 API 可独立使用；它们不算已有登录验收。所有阶段继续封闭设置、插件和工具旁路。
+
+原生凭据引用记录 staged/active 生命周期并核对当前用户与 generation。未保存引用在取消编辑、验证失败、切用户或重启时回收；Host 在提交连接前激活引用，再依据当前连接和未决命令的原阶段回收旧引用。轮换/删除保留未决阶段需要的凭据，终态后再次收集。外部 CLI 的凭据和配置从不删除。
 
 ## 产品会话与交付
 

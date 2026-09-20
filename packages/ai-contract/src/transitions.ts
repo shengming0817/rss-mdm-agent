@@ -23,6 +23,7 @@ import type {
   SessionCommit,
   SessionRebind,
   RecoveryUnavailable,
+  SessionSuspension,
   Reconciliation,
   StageActivation,
 } from "./ports.js";
@@ -96,6 +97,7 @@ function reduceAcceptance(
   state: SessionState,
   input: AcceptCommand,
   limits: Limits = defaultLimits,
+  suspending = false,
 ): Result<{ state: SessionState; receipt: import("./wire.js").Receipt }> {
   try {
     valid(input.command, limits);
@@ -117,7 +119,15 @@ function reduceAcceptance(
       ? ok({ state, receipt: clone(prior.receipt) })
       : fail("expired");
   }
-  if (state.session.status !== "active") return fail("session_gone");
+  if (
+    state.session.status !== "active" &&
+    !(
+      suspending &&
+      state.session.status === "recovery_required" &&
+      input.command.input.type === "cancel"
+    )
+  )
+    return fail("session_gone");
   if (!state.session.currentStageId) return fail("connection_required");
   if (
     !Number.isSafeInteger(input.nowMs) ||
@@ -135,7 +145,9 @@ function reduceAcceptance(
   )
     return fail("invalid_input");
   const check = checkState(
-    state,
+    suspending
+      ? { ...state, session: { ...state.session, status: "active" } }
+      : state,
     input.expectedRevision,
     input.expectedGeneration,
   );
@@ -246,6 +258,7 @@ function reduceAcceptance(
     },
     limits,
     true,
+    suspending,
   );
   return result.ok
     ? ok({ state: result.value, receipt: clone(receipt) })
@@ -300,10 +313,11 @@ function reduceCommit(
   batch: SessionCommit,
   limits: Limits,
   accepting: boolean,
+  suspending = false,
 ): Result<SessionState> {
   const deliveryOnly = isDeliveryCommit(state, batch);
   const check = checkState(
-    deliveryOnly
+    deliveryOnly || suspending
       ? { ...state, session: { ...state.session, status: "active" } }
       : state,
     batch.expectedRevision,
@@ -330,7 +344,8 @@ function reduceCommit(
     batch.session.revision !== state.session.revision + 1 ||
     batch.session.lastSequence !==
       state.session.lastSequence + batch.events.length ||
-    (!deliveryOnly && batch.session.status !== "active")
+    (!deliveryOnly && !suspending && batch.session.status !== "active") ||
+    (suspending && batch.session.status !== state.session.status)
   )
     return fail("invalid_input");
   if (
@@ -1426,6 +1441,139 @@ export function recoverUnavailable(
   limits: Limits = defaultLimits,
 ): Result<SessionState> {
   return guarded(() => reduceHandoff(state, input, limits));
+}
+
+/** A caller fence cancels unsent work even without a provider; dispatched work remains uncertain.
+ * The Store persists this entire reducer once. The private suspension path admits only local cancels. */
+export function suspendSession(
+  state: SessionState,
+  input: SessionSuspension,
+  limits: Limits = defaultLimits,
+): Result<SessionState> {
+  return guarded(() => {
+    if (namespaceKey(state.session.namespace) !== namespaceKey(input.namespace))
+      return fail("permission_denied");
+    if (state.session.revision !== input.expectedRevision)
+      return fail("revision_conflict", "same_command");
+    if (state.session.status === "retired" || !state.session.currentStageId)
+      return ok(state);
+    const generation = activeStage(state.session).binding.generation;
+    if (generation !== input.expectedGeneration || !isId(input.eventId))
+      return fail("stale_binding");
+    let next = state;
+    for (const target of state.commands.values()) {
+      if (
+        target.state !== "accepted" ||
+        target.dispatch ||
+        target.command.input.type !== "prompt" ||
+        target.command.input.policy !== "queue_next"
+      )
+        continue;
+      const commandId = eventId(
+        input.eventId,
+        `cancel-${target.command.commandId}`,
+      );
+      const accepted = reduceAcceptance(
+        next,
+        {
+          namespace: input.namespace,
+          expectedRevision: next.session.revision,
+          expectedGeneration: generation,
+          nowMs: input.nowMs,
+          retention: input.retention,
+          eventId: eventId(commandId, "accepted"),
+          command: {
+            schemaVersion: 5,
+            kind: "command",
+            sessionId: input.namespace.sessionId,
+            commandId,
+            expiresAtMs: input.nowMs + input.retention.retryWindowMs,
+            input: {
+              type: "cancel",
+              targetCommandId: target.command.commandId,
+              generation,
+            },
+          },
+        },
+        limits,
+        true,
+      );
+      if (!accepted.ok) return accepted;
+      next = accepted.value.state;
+      const cancel = next.commands.get(commandId)!;
+      const acknowledgement = {
+        type: "queued_cancelled" as const,
+        targetCommandId: target.command.commandId,
+      };
+      const bodies: [string, Event["body"]][] = [
+        [commandId, { type: "acknowledged", acknowledgement }],
+        [
+          target.command.commandId,
+          { type: "cancelled", cancelledBy: commandId },
+        ],
+      ];
+      const committed = reduceCommit(
+        next,
+        {
+          namespace: input.namespace,
+          expectedRevision: next.session.revision,
+          expectedGeneration: generation,
+          nowMs: input.nowMs,
+          session: {
+            ...next.session,
+            revision: next.session.revision + 1,
+            lastSequence: next.session.lastSequence + 2,
+          },
+          commands: [
+            {
+              schemaVersion: 5,
+              kind: "commandRecord",
+              command: cancel.command,
+              receipt: cancel.receipt,
+              state: "acknowledged",
+              acknowledgement,
+            },
+            {
+              schemaVersion: 5,
+              kind: "commandRecord",
+              command: target.command,
+              receipt: target.receipt,
+              state: "cancelled",
+              cancelledBy: commandId,
+            },
+          ],
+          events: bodies.map(
+            ([id, body], index) =>
+              ({
+                schemaVersion: 5,
+                kind: "event",
+                namespace: input.namespace,
+                generation,
+                commandId: id,
+                eventId: eventId(commandId, String(index)),
+                sequence: next.session.lastSequence + index + 1,
+                body,
+              }) as Event,
+          ),
+          interactions: [],
+          surfaces: [],
+          deliveries: [],
+        },
+        limits,
+        false,
+        true,
+      );
+      if (!committed.ok) return committed;
+      next = committed.value;
+    }
+    return next.session.status === "active"
+      ? reduceHandoff(
+          next,
+          { ...input, expectedRevision: next.session.revision },
+          limits,
+        )
+      : ok(next);
+  });
 }
 
 /** Controls are scoped to their current native run, never the most recent unrelated turn. */

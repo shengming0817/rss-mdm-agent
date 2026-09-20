@@ -128,13 +128,7 @@ impl Users {
         }
         Ok(context)
     }
-    pub fn contains(&self, id: &str) -> bool {
-        self.page
-            .users
-            .iter()
-            .any(|user| user.user_id.as_str() == id)
-    }
-    pub fn select(&mut self, name: &str) -> Result<UserContext> {
+    pub fn prepare(&self, name: &str) -> Result<TestUserPage> {
         let (display, key) = normalize(name)?;
         let mut page = self.page.clone();
         let user = match page.users.iter().find(|user| *user.name_key == key) {
@@ -152,9 +146,17 @@ impl Users {
         };
         let context = Self::context(user)?;
         page.current = Some(context.clone());
+        Ok(page)
+    }
+    pub fn commit(&mut self, page: TestUserPage) -> Result<UserContext> {
+        let context = page.current.clone().ok_or_else(storage)?;
         self.persist(&page)?;
         self.page = page;
         Ok(context)
+    }
+    pub fn select(&mut self, name: &str) -> Result<UserContext> {
+        let page = self.prepare(name)?;
+        self.commit(page)
     }
     fn persist(&self, page: &TestUserPage) -> Result<()> {
         use std::os::unix::fs::OpenOptionsExt;

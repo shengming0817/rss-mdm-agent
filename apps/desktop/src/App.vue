@@ -45,6 +45,9 @@ onMounted(() => {
 <template>
   <section v-if="nativeTestMode" class="test-users" aria-label="测试用户">
     <strong>测试模式</strong>
+    <small
+      >切换用户会取消当前用户的模型请求并记录结果、清空未发送草稿；设备任务仍属于原用户并继续。</small
+    >
     <span>{{
       currentUser
         ? `当前用户：${currentUser.user.displayName}`

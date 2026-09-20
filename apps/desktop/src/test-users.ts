@@ -42,3 +42,10 @@ export async function enterCredential(): Promise<string> {
   if (generation !== userGeneration()) throw new Error("user_changed");
   return reference;
 }
+
+export async function discardCredential(
+  reference: string,
+  generation: string,
+): Promise<void> {
+  await invoke("discard_connection_credential", { reference, generation });
+}

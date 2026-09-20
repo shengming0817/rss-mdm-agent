@@ -19,7 +19,7 @@ import type {
   ToolEndpoint,
 } from "@rss-mdm-agent/ai-contract";
 import { fail, ok } from "@rss-mdm-agent/ai-contract/transitions";
-import { Channel } from "./channel.js";
+import { Channel, PeerFailure } from "./channel.js";
 import { Output } from "./queue.js";
 import { Deadline } from "./deadline.js";
 import type { WorkerLaunchFenceStore } from "./launch-fence.js";
@@ -209,8 +209,10 @@ export class WorkerPort implements ProviderAgentPort {
       );
       check();
       return ok(undefined);
-    } catch {
-      return fail("unavailable", "same_command");
+    } catch (error) {
+      return error instanceof PeerFailure
+        ? fail(error.code)
+        : fail("unavailable", "same_command");
     }
   }
   private failed() {

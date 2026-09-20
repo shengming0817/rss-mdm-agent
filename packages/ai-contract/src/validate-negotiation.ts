@@ -3927,9 +3927,9 @@ const schema31 = {
       properties: {
         schemaVersion: { type: "integer", const: 5 },
         kind: { type: "string", const: "preferencesRequest" },
-        preferences: { $ref: "#/$defs/UserPreferences" },
+        patch: { $ref: "#/$defs/PreferencesPatch" },
       },
-      required: ["schemaVersion", "kind", "preferences"],
+      required: ["schemaVersion", "kind", "patch"],
       additionalProperties: false,
     },
     SelectConnectionRequest: {
@@ -3975,6 +3975,32 @@ const schema31 = {
         current: { $ref: "#/$defs/UserContext" },
       },
       required: ["schemaVersion", "kind", "users"],
+      additionalProperties: false,
+    },
+    PreferenceChange: {
+      oneOf: [
+        {
+          type: "object",
+          properties: { set: { $ref: "#/$defs/Id" } },
+          required: ["set"],
+          additionalProperties: false,
+        },
+        {
+          type: "object",
+          properties: { clear: { const: true, type: "boolean" } },
+          required: ["clear"],
+          additionalProperties: false,
+        },
+      ],
+    },
+    PreferencesPatch: {
+      type: "object",
+      description:
+        "Missing fields remain unchanged; set replaces and clear removes one preference atomically.",
+      properties: {
+        defaultConnectionId: { $ref: "#/$defs/PreferenceChange" },
+        selectedSessionId: { $ref: "#/$defs/PreferenceChange" },
+      },
       additionalProperties: false,
     },
   },

@@ -22,20 +22,24 @@ fn native_thread_identity_roundtrips_and_rejects_invalid_ids() {
             .unwrap()
             .clone();
         let field = if kind == "session" {
-            "binding"
+            "/stages/0/binding"
         } else {
-            "dispatch"
+            "/dispatch"
         };
-        value[field]["nativeThreadId"] = Value::String("native-thread".into());
+        value.pointer_mut(field).unwrap()["nativeThreadId"] = Value::String("native-thread".into());
         let record = decode(&serde_json::to_vec(&value).unwrap(), &limits()).unwrap();
         let encoded: Value = serde_json::from_slice(&encode(&record, &limits()).unwrap()).unwrap();
-        assert_eq!(encoded[field]["nativeThreadId"], "native-thread");
-        value[field]["nativeThreadId"] = Value::String("invalid thread".into());
+        assert_eq!(
+            encoded.pointer(field).unwrap()["nativeThreadId"],
+            "native-thread"
+        );
+        value.pointer_mut(field).unwrap()["nativeThreadId"] =
+            Value::String("invalid thread".into());
         assert!(decode(&serde_json::to_vec(&value).unwrap(), &limits()).is_err());
     }
 }
 #[test]
-fn shared_v2_golden_and_safe_diagnostics() {
+fn shared_v5_golden_and_safe_diagnostics() {
     let f: Value = serde_json::from_str(FIXTURES).unwrap();
     for v in f["valid"].as_array().unwrap() {
         let record = decode(&serde_json::to_vec(v).unwrap(), &limits()).unwrap();
@@ -160,4 +164,29 @@ fn local_and_native_acknowledgements_have_distinct_schema_derived_variants() {
         serde_json::from_value::<ai_session_contract::Event>(event).unwrap(),
         ai_session_contract::Event::AcknowledgedQueuedCancelled { .. }
     ));
+}
+
+#[test]
+fn preference_patch_retains_set_clear_and_omission_through_rust_roundtrip() {
+    for patch in [
+        serde_json::json!({}),
+        serde_json::json!({"selectedSessionId":{"set":"session"}}),
+        serde_json::json!({"selectedSessionId":{"clear":true}}),
+    ] {
+        let value =
+            serde_json::json!({"schemaVersion":5,"kind":"preferencesRequest","patch":patch});
+        let record = decode(&serde_json::to_vec(&value).unwrap(), &limits()).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&encode(&record, &limits()).unwrap()).unwrap(),
+            value
+        );
+    }
+    for patch in [
+        serde_json::json!({"selectedSessionId":null}),
+        serde_json::json!({"selectedSessionId":{"set":"session","clear":true}}),
+    ] {
+        let value =
+            serde_json::json!({"schemaVersion":5,"kind":"preferencesRequest","patch":patch});
+        assert!(decode(&serde_json::to_vec(&value).unwrap(), &limits()).is_err());
+    }
 }

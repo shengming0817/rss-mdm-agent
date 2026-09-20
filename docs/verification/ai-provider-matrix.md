@@ -1,6 +1,6 @@
 # 三引擎公共能力与恢复验收
 
-[A06 #2444](https://dev.azure.com/shengming0923/rss/_workitems/edit/2444) 验收现有 A01、Host、SQLite、ACP/A2UI 和三个原生 adapter 的组合。公共契约保持 V4；无旧版解析、兼容分支、第二份能力注册表或新的执行权威。
+[A06 #2444](https://dev.azure.com/shengming0923/rss/_workitems/edit/2444) 验收现有 A01、Host、SQLite、ACP/A2UI 和三个原生 adapter 的组合。公共契约使用 V5；无旧版解析、兼容分支、第二份能力注册表或新的执行权威。
 
 ## 运行与证据
 

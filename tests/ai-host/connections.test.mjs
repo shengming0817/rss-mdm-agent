@@ -218,6 +218,64 @@ test("real Host lazily opens phases, drains accepted work before switching, and 
       (message) => message.commandId === "next" && message.stable,
     ),
   );
+  await until(
+    async () =>
+      unwrap(await store.command(empty.namespace, "with-history")).state ===
+      "terminal",
+  );
+  const beforeDelete = unwrap(
+    await host.snapshotPage(
+      caller,
+      empty.namespace.sessionId,
+      { limit: 256 },
+      budget(),
+    ),
+  );
+  unwrap(
+    await host.saveConnection(
+      caller,
+      { ...connection("two"), configRevision: 2, status: "deleted" },
+      1,
+      budget(),
+    ),
+  );
+  const afterDelete = unwrap(
+    await host.snapshotPage(
+      caller,
+      empty.namespace.sessionId,
+      { limit: 256 },
+      budget(),
+    ),
+  );
+  assert.deepEqual(
+    { ...afterDelete, snapshotId: beforeDelete.snapshotId },
+    beforeDelete,
+  );
+  assert.equal(
+    unwrap(await host.listSessions(caller, { limit: 256 }, budget())).items
+      .length,
+    1,
+  );
+  const activations = opened;
+  assert.equal(
+    (await host.submit(caller, command("deleted-connection"), budget())).ok,
+    false,
+  );
+  assert.equal(opened, activations);
+  assert.deepEqual(
+    {
+      ...unwrap(
+        await host.snapshotPage(
+          caller,
+          empty.namespace.sessionId,
+          { limit: 256 },
+          budget(),
+        ),
+      ),
+      snapshotId: beforeDelete.snapshotId,
+    },
+    beforeDelete,
+  );
 });
 
 test("switching test users cancels queued model work and keeps the old user's receipts scoped", async (t) => {
@@ -265,14 +323,48 @@ test("switching test users cancels queued model work and keeps the old user's re
       unwrap(await store.command(session.namespace, "running")).state ===
       "running",
   );
+  const before = unwrap(await store.command(session.namespace, "running"));
   unwrap(await host.submit(caller, queued, budget()));
   unwrap(await host.suspendCaller(caller, budget()));
+  const stopped = unwrap(await store.command(session.namespace, "running"));
+  assert.equal(stopped.state, "terminal");
+  assert.equal(stopped.outcome, "cancelled");
+  const snapshot = unwrap(
+    await store.snapshotPage(session.namespace, { limit: 256 }),
+  );
+  const cancellation = snapshot.commands.find(
+    (row) =>
+      row.command.input.type === "cancel" &&
+      row.command.input.targetCommandId === "running",
+  );
+  assert.ok(cancellation);
+  assert.equal(cancellation.state, "acknowledged");
+  assert.equal(
+    cancellation.command.input.generation,
+    before.dispatch.observerGeneration,
+  );
+  assert.equal(
+    cancellation.command.input.nativeRunId,
+    before.dispatch.nativeRunId,
+  );
+  assert.equal(cancellation.receipt.stageId, receipt.stageId);
   assert.equal(
     unwrap(await store.command(session.namespace, "queued")).state,
     "cancelled",
   );
   const bob = { ...caller, principalId: "bob" };
   assert.equal((await host.submit(bob, running, budget())).ok, false);
+  assert.equal(
+    (
+      await host.snapshotPage(
+        bob,
+        session.namespace.sessionId,
+        { limit: 256 },
+        budget(),
+      )
+    ).ok,
+    false,
+  );
   assert.deepEqual(
     unwrap(await host.connections(bob, budget())).connections,
     [],
@@ -281,7 +373,23 @@ test("switching test users cancels queued model work and keeps the old user's re
     (await host.submit(caller, command("late", "quick"), budget())).ok,
     false,
   );
+  assert.equal(
+    (
+      await host.previewHistory(
+        caller,
+        session.namespace.sessionId,
+        "one",
+        undefined,
+        budget(),
+      )
+    ).error.code,
+    "unavailable",
+  );
   host.activateCaller(caller);
+  assert.deepEqual(
+    unwrap(await store.command(session.namespace, "running")),
+    stopped,
+  );
   assert.deepEqual(
     unwrap(await host.submit(caller, running, budget())),
     receipt,
@@ -293,15 +401,29 @@ test("saving a connection requires a completed model probe and preserves the pre
   const store = unwrap(
     openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
   );
-  let reject = false;
+  let reject = false,
+    disposed = 0,
+    cleanupAttempts = 0;
   const host = unwrap(
     await createHost({
       store,
       launchFences: store,
       delivery: null,
+      credentials: {
+        activate: async () => {},
+        discard: async () => {},
+        collect: async () => {
+          cleanupAttempts++;
+          throw Error("fixture cleanup unavailable");
+        },
+      },
       resolve: async (_caller, options, namespace) => {
         if (reject) throw Error("fixture authentication rejected");
         return {
+          dispose: async () => {
+            assert.deepEqual(unwrap(await store.launches()), []);
+            disposed++;
+          },
           configuration: {
             namespace,
             provider: options.provider,
@@ -328,6 +450,16 @@ test("saving a connection requires a completed model probe and preserves the pre
     ),
   );
   assert.equal(first.status, "ready");
+  assert.equal(
+    cleanupAttempts,
+    1,
+    "cleanup failure cannot turn a committed save into failure",
+  );
+  assert.equal(
+    disposed,
+    1,
+    "probe artifacts are disposed only after the worker stopped",
+  );
   const { readFile } = await import("node:fs/promises");
   const trace = (await readFile(join(root, "trace.ndjson"), "utf8"))
     .trim()
@@ -339,22 +471,149 @@ test("saving a connection requires a completed model probe and preserves the pre
     unwrap(await host.listSessions(caller, { limit: 256 }, budget())).items,
     [],
   );
+  const deleted = unwrap(
+    await host.saveConnection(
+      caller,
+      { ...first, configRevision: 2, status: "deleted" },
+      1,
+      budget(),
+    ),
+  );
+  assert.equal(deleted.status, "deleted");
+  assert.equal(cleanupAttempts, 2);
+  // Use a separate ready connection to verify a failed probe retains the previous revision.
+  const second = unwrap(
+    await host.saveConnection(
+      caller,
+      { ...connection("two"), status: "unverified" },
+      null,
+      budget(),
+    ),
+  );
   reject = true;
   assert.equal(
     (
       await host.saveConnection(
         caller,
-        { ...first, name: "rejected", configRevision: 2 },
+        { ...second, name: "rejected", configRevision: 2 },
         1,
         budget(),
       )
     ).ok,
     false,
   );
-  assert.deepEqual(unwrap(await store.connection(caller, "one")), first);
+  assert.deepEqual(unwrap(await store.connection(caller, "two")), second);
   assert.equal(
     unwrap(await host.connections(caller, budget())).preferences
       .defaultConnectionId,
-    "one",
+    "two",
   );
+});
+
+test("user fence settles persistent offline queues across pages and propagates durable failure", async (t) => {
+  const { fixtureSession } = await import(
+    "../../packages/ai-contract/dist/testing/index.js"
+  );
+  const root = await mkdtemp(join(tmpdir(), "rss-offline-fence-"));
+  const path = join(root, "ai.sqlite");
+  let store = unwrap(openSqliteStore({ path, mode: "create" }));
+  const sessions = ["offline-one", "offline-two"].map((sessionId) => ({
+    ...fixtureSession(),
+    namespace: { ...caller, sessionId },
+  }));
+  for (const session of sessions) {
+    unwrap(await store.create(session));
+    const command = {
+      schemaVersion: 5,
+      kind: "command",
+      sessionId: session.namespace.sessionId,
+      commandId: "queued",
+      expiresAtMs: Date.now() + 60000,
+      input: {
+        type: "prompt",
+        policy: "queue_next",
+        text: "never dispatch after switch",
+      },
+    };
+    unwrap(
+      await store.accept({
+        namespace: session.namespace,
+        command,
+        expectedRevision: 0,
+        expectedGeneration: activeStage(session).binding.generation,
+        nowMs: Date.now(),
+        retention: { retryWindowMs: 60000, receiptWindowMs: 86400000 },
+        eventId: "accepted",
+      }),
+    );
+  }
+  unwrap(await store.close(budget()));
+  store = unwrap(openSqliteStore({ path, mode: "open" }));
+  let available = false,
+    opens = 0,
+    pages = 0;
+  const list = store.listSessions.bind(store);
+  store.listSessions = async (caller, query) => {
+    pages++;
+    return list(caller, { ...query, limit: 1 });
+  };
+  const host = unwrap(
+    await createHost({
+      store,
+      launchFences: store,
+      delivery: null,
+      callerAvailable: () => available,
+      resolve: async () => {
+        opens++;
+        throw Error("must not open");
+      },
+    }),
+  );
+  t.after(async () => {
+    unwrap(await host.close(budget()));
+    await rm(root, { recursive: true, force: true });
+  });
+  available = true;
+  const suspend = store.suspend.bind(store);
+  store.suspend = async () => ({
+    ok: false,
+    error: { code: "unavailable", retry: "same_command" },
+  });
+  assert.equal((await host.suspendCaller(caller, budget())).ok, false);
+  assert.equal(
+    (await host.connections(caller, budget())).ok,
+    true,
+    "failed fence releases caller gate",
+  );
+  store.suspend = suspend;
+  unwrap(await host.suspendCaller(caller, budget()));
+  assert.ok(pages >= 3);
+  assert.equal(opens, 0);
+  assert.equal((await host.createSession(caller, {}, budget())).ok, false);
+  for (const session of sessions) {
+    const page = unwrap(
+      await store.snapshotPage(session.namespace, { limit: 256 }),
+    );
+    const original = page.commands.find(
+      (row) => row.command.commandId === "queued",
+    );
+    assert.equal(original.state, "cancelled");
+    const cancel = page.commands.find(
+      (row) => row.command.commandId === original.cancelledBy,
+    );
+    assert.equal(cancel.state, "acknowledged");
+    assert.equal(cancel.acknowledgement.type, "queued_cancelled");
+    assert.equal(page.session.status, "recovery_required");
+    assert.equal(
+      page.events.filter((event) => event.body.type === "terminal").length,
+      0,
+    );
+    const revision = page.session.revision;
+    host.activateCaller(caller);
+    unwrap(await host.suspendCaller(caller, budget()));
+    assert.equal(
+      unwrap(await store.session(session.namespace)).revision,
+      revision,
+    );
+  }
 });

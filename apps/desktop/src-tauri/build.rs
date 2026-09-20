@@ -10,6 +10,7 @@ fn main() {
             "self_service_cancel",
             "execution_task_details",
             "enter_connection_credential",
+            "discard_connection_credential",
             "test_users",
             "select_test_user",
             "ai_connect",

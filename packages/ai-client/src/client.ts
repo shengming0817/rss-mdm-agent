@@ -1,3 +1,4 @@
+import type { PreferencesPatch } from "@rss-mdm-agent/ai-contract";
 import { ClientError, clientError } from "./errors.js";
 import {
   client,
@@ -178,7 +179,7 @@ export class RuntimeClient {
     });
   }
   async savePreferences(
-    preferences: UserPreferences,
+    preferences: PreferencesPatch,
   ): Promise<UserPreferences> {
     return this.boundary(async () => {
       this.ready();
@@ -186,7 +187,7 @@ export class RuntimeClient {
         await this.connection.agent.request(extension.preferences, {
           schemaVersion: 5,
           kind: "preferencesRequest",
-          preferences,
+          patch: preferences,
         }),
         "userPreferences",
       );

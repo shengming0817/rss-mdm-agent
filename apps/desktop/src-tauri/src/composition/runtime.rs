@@ -38,6 +38,7 @@ struct Connection {
 pub struct DesktopRuntime {
     pub execution: ExecutionHandle,
     pub users: Arc<std::sync::Mutex<super::users::Users>>,
+    pub vault: Arc<std::sync::Mutex<super::credentials::Vault>>,
     scopes: Arc<std::sync::Mutex<BTreeMap<String, ExecutionHandle>>>,
     root: PathBuf,
     switching: Mutex<()>,
@@ -87,6 +88,9 @@ impl DesktopRuntime {
         let users = Arc::new(std::sync::Mutex::new(
             super::users::Users::open(root).map_err(|_| "user registry unavailable")?,
         ));
+        let vault = Arc::new(std::sync::Mutex::new(
+            super::credentials::Vault::open(root).map_err(|_| "credential registry unavailable")?,
+        ));
         let scopes = Arc::new(std::sync::Mutex::new(BTreeMap::new()));
         for user in &users.lock().map_err(|_| "user registry lock")?.page().users {
             let binding = super::origin::AiBinding::for_user(user.user_id.as_str())?;
@@ -102,6 +106,7 @@ impl DesktopRuntime {
         super::credentials::serve(
             root.join("credentials.sock"),
             users.clone(),
+            vault.clone(),
             mcp_stop.child_token(),
         )
         .await?;
@@ -153,6 +158,7 @@ impl DesktopRuntime {
         Ok(Self {
             execution,
             users,
+            vault,
             scopes,
             root: root.to_path_buf(),
             switching: Mutex::new(()),
@@ -164,6 +170,7 @@ impl DesktopRuntime {
         })
     }
     pub fn current(&self, generation: &str) -> ui::Result<ai_session_contract::UserContext> {
+        let _switch = self.switching.try_lock().map_err(|_| unavailable())?;
         self.users
             .lock()
             .map_err(|_| unavailable())?
@@ -180,8 +187,12 @@ impl DesktopRuntime {
     }
     pub async fn select_user(&self, name: &str) -> ui::Result<ai_session_contract::UserContext> {
         let _switch = self.switching.lock().await;
+        let (page, previous) = {
+            let users = self.users.lock().map_err(|_| unavailable())?;
+            (users.prepare(name)?, users.page().current)
+        };
+        let context = page.current.clone().ok_or_else(unavailable)?;
         self.detach_views().await;
-        let context = self.users.lock().map_err(|_| unavailable())?.select(name)?;
         {
             let mut scopes = self.scopes.lock().map_err(|_| unavailable())?;
             if !scopes.contains_key(context.user.user_id.as_str()) {
@@ -192,20 +203,65 @@ impl DesktopRuntime {
                 scopes.insert(context.user.user_id.to_string(), handle);
             }
         }
-        // The same private Host remains alive. An attach also performs this fence if startup is still pending.
-        if let Ok(stream) = UnixStream::connect(&self.socket).await {
-            let (reader, writer) = stream.into_split();
-            let mut writer = FramedWrite::new(writer, LinesCodec::new_with_max_length(262144));
-            let mut reader = FramedRead::new(reader, LinesCodec::new_with_max_length(262144));
-            if writer
-                .send(json!({"type":"select_user","generation":context.generation}).to_string())
+        // Fence the old persistent caller before committing the new native generation.
+        // Without a deployed Host there can be no model work; self-service remains available.
+        if let Some(previous) = &previous {
+            if self.child.lock().await.is_some() {
+                tokio::time::timeout(Duration::from_secs(15), async {
+                    let stream = loop {
+                        if let Some(status) = self
+                            .child
+                            .lock()
+                            .await
+                            .as_mut()
+                            .ok_or_else(unavailable)?
+                            .try_wait()
+                            .map_err(|_| unavailable())?
+                        {
+                            let _ = status;
+                            return Err(unavailable());
+                        }
+                        if let Ok(stream) = UnixStream::connect(&self.socket).await {
+                            break stream;
+                        }
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                    };
+                    let (reader, writer) = stream.into_split();
+                    let mut writer =
+                        FramedWrite::new(writer, LinesCodec::new_with_max_length(262144));
+                    let mut reader =
+                        FramedRead::new(reader, LinesCodec::new_with_max_length(262144));
+                    writer
+                        .send(
+                            json!({"type":"suspend_user","generation":previous.generation})
+                                .to_string(),
+                        )
+                        .await
+                        .map_err(|_| unavailable())?;
+                    let line = reader
+                        .next()
+                        .await
+                        .ok_or_else(unavailable)?
+                        .map_err(|_| unavailable())?;
+                    let value: serde_json::Value =
+                        serde_json::from_str(&line).map_err(|_| unavailable())?;
+                    if value != json!({"ok":true}) {
+                        return Err(unavailable());
+                    }
+                    Ok(())
+                })
                 .await
-                .is_ok()
-            {
-                let _ = tokio::time::timeout(Duration::from_secs(15), reader.next()).await;
+                .map_err(|_| unavailable())??;
             }
         }
-        Ok(context)
+        if let Some(previous) = previous {
+            self.vault
+                .lock()
+                .map_err(|_| unavailable())?
+                .discard_generation(previous.user.user_id.as_str(), previous.generation.as_str())
+                .map_err(|_| unavailable())?;
+        }
+        self.users.lock().map_err(|_| unavailable())?.commit(page)
     }
     pub async fn connect(&self, generation: &str) -> ui::Result<String> {
         self.current(generation)?;

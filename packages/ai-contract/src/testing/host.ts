@@ -1,3 +1,4 @@
+import type { PreferencesPatch } from "../wire.js";
 import { historyPreview } from "../history.js";
 import type {
   Connection,
@@ -94,7 +95,7 @@ export class FakeHost implements HostPort {
   ) {
     return this.store.saveConnection(caller, connection, expected);
   }
-  savePreferences(caller: Caller, prefs: UserPreferences, _budget: Budget) {
+  savePreferences(caller: Caller, prefs: PreferencesPatch, _budget: Budget) {
     return this.store.savePreferences(caller, prefs);
   }
   async selectConnection(

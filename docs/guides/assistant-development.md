@@ -32,7 +32,7 @@ pnpm test
 
 ## 直接版本切换
 
-产品 wire 与协商为 V4 / contractVersion=5；标准 ACP1、A2UI v0.9.1 不变。删除旧 `status/accepted`，用携带完整不可变命令的 `command_accepted`；store accept 原子构造事件、命令与 receipt，禁止调用方提供另一份事件正文。C20 的 delivery 请求/回执事件进入同一持久日志，AI SQLite schema 为3；旧库只读拒绝，不原地迁移、清空或重建，也没有历史兼容 reader。
+产品 wire 与协商为 V5 / contractVersion=5；标准 ACP1、A2UI v0.9.1 不变。删除旧 `status/accepted`，用携带完整不可变命令的 `command_accepted`；store accept 原子构造事件、命令与 receipt，禁止调用方提供另一份事件正文。C20 的 delivery 请求/回执事件进入同一持久日志，AI SQLite schema 为4；旧库只读拒绝，不原地迁移、清空或重建，也没有历史兼容 reader。
 
 ## 固定来源与改写范围
 

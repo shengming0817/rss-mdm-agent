@@ -1,15 +1,36 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, ref, watch, onBeforeUnmount } from "vue";
 import type {
   Connection,
   ConnectionSource,
   HistoryPreview,
   UserPreferences,
 } from "@rss-mdm-agent/ai-contract";
-import type { AssistantController } from "./controller";
-import { enterCredential, nativeTestMode } from "../test-users";
+import { operationMessage, type AssistantController } from "./controller";
+import {
+  enterCredential,
+  discardCredential,
+  userGeneration,
+  nativeTestMode,
+} from "../test-users";
 const props = defineProps<{ controller: AssistantController }>();
 const c = props.controller;
+const generation = nativeTestMode ? userGeneration() : "";
+let stagedCredential = "";
+async function discardStaged() {
+  const reference = stagedCredential;
+  stagedCredential = "";
+  if (reference) {
+    try {
+      await discardCredential(reference, generation);
+    } catch {
+      error.value = "凭据清理未完成，切换用户或重新启动时会再次核对。";
+    }
+  }
+}
+onBeforeUnmount(() => {
+  void discardStaged();
+});
 const rows = ref<Connection[]>([]),
   prefs = ref<UserPreferences>({ schemaVersion: 5, kind: "userPreferences" });
 const busy = ref(false),
@@ -29,12 +50,15 @@ const credentialType = ref<"api_key" | "auth_token" | "oauth_token">("api_key"),
 const historyMode = ref("none"),
   recent = ref(5),
   preview = ref<HistoryPreview>();
-const selected = computed(() => c.view.value?.selectedConnectionId ?? "");
+const selected = computed(() =>
+  c.connectionReady.value ? (c.view.value?.selectedConnectionId ?? "") : "",
+);
 const labels = { codex: "Codex", claude: "Claude", deepseek: "DeepSeek" };
 async function load() {
   if (!c.runtime.value) return;
   const catalog = await c.runtime.value.connections();
   rows.value = catalog.connections;
+  c.state.connections = catalog.connections;
   prefs.value = catalog.preferences;
 }
 async function run(action: () => Promise<void>) {
@@ -46,7 +70,7 @@ async function run(action: () => Promise<void>) {
   } catch (e) {
     error.value =
       e && typeof e === "object" && "code" in e
-        ? String(e.code)
+        ? operationMessage(String(e.code))
         : "连接操作未确认，请重试";
   } finally {
     busy.value = false;
@@ -68,9 +92,20 @@ watch(
 );
 watch(provider, (value) => {
   if (value === "deepseek") sourceType.value = "custom_api";
+  if (value === "claude" && sourceType.value === "existing_login")
+    sourceType.value = "existing_api";
   if (value !== "codex") profile.value = "conversation";
 });
+watch(
+  [provider, sourceType, credentialType],
+  () => {
+    void discardStaged();
+    credentialRef.value = "";
+  },
+  { flush: "sync" },
+);
 function edit(row?: Connection) {
+  void discardStaged();
   draftId.value = row?.connectionId ?? crypto.randomUUID();
   editing.value = row;
   name.value = row?.name ?? "";
@@ -87,7 +122,15 @@ function edit(row?: Connection) {
     row?.source.type === "existing_api" ? (row.source.profile ?? "") : "";
   model.value = row?.source.model ?? "";
   profile.value = row?.profile ?? "conversation";
-  credentialRef.value = row?.credentialRef ?? "";
+  credentialRef.value =
+    row?.source.type === "custom_api" ? row.credentialRef : "";
+}
+async function secure() {
+  const previous = stagedCredential;
+  await discardStaged();
+  if (credentialRef.value === previous) credentialRef.value = "";
+  credentialRef.value = await enterCredential();
+  stagedCredential = credentialRef.value;
 }
 async function save() {
   await run(async () => {
@@ -122,25 +165,35 @@ async function save() {
         ? credentialRef.value
         : (old?.credentialRef ?? `external-${crypto.randomUUID()}`);
     if (!reference) throw new Error("credential_required");
-    await runtime.saveConnection(
-      {
-        schemaVersion: 5,
-        kind: "connection",
-        connectionId: draftId.value,
-        name: name.value.trim(),
-        provider: provider.value,
-        configRevision: (old?.configRevision ?? 0) + 1,
-        credentialRevision: old
-          ? old.credentialRevision + Number(reference !== old.credentialRef)
-          : 1,
-        accountRef: old?.accountRef ?? crypto.randomUUID(),
-        profile: profile.value,
-        status: "unverified",
-        source,
-        credentialRef: reference,
-      },
-      old?.configRevision ?? null,
-    );
+    try {
+      await runtime.saveConnection(
+        {
+          schemaVersion: 5,
+          kind: "connection",
+          connectionId: draftId.value,
+          name: name.value.trim(),
+          provider: provider.value,
+          configRevision: (old?.configRevision ?? 0) + 1,
+          credentialRevision: old
+            ? old.credentialRevision + Number(reference !== old.credentialRef)
+            : 1,
+          accountRef: old?.accountRef ?? crypto.randomUUID(),
+          profile: profile.value,
+          status: "unverified",
+          source,
+          credentialRef: reference,
+        },
+        old?.configRevision ?? null,
+      );
+    } catch (failure) {
+      if (stagedCredential) {
+        await discardStaged();
+        credentialRef.value = "";
+      }
+      await load().catch(() => {});
+      throw failure;
+    }
+    stagedCredential = "";
     edit();
     await load();
     c.state.history.clear();
@@ -159,10 +212,8 @@ async function choose(id: string, fresh = false) {
 async function defaultConnection(id: string) {
   await run(async () => {
     if (!c.runtime.value) return;
-    await load();
     prefs.value = await c.runtime.value.savePreferences({
-      ...prefs.value,
-      defaultConnectionId: id,
+      defaultConnectionId: { set: id },
     });
   });
 }
@@ -218,6 +269,10 @@ async function history() {
           ><button :disabled="busy" @click="remove(row)">删除</button>
         </li>
       </ul>
+      <p v-if="provider === 'claude' && sourceType === 'existing_login'">
+        当前无法可靠核验 Claude 已有登录的账号身份，请选择已有 API 配置或自定义
+        API。
+      </p>
       <form class="connection-form" @submit.prevent="save">
         <h3>{{ editing ? "编辑连接" : "添加连接" }}</h3>
         <label>名称<input v-model="name" required maxlength="64" /></label>
@@ -230,7 +285,7 @@ async function history() {
         >
         <label
           >认证来源<select v-model="sourceType">
-            <option v-if="provider !== 'deepseek'" value="existing_login">
+            <option v-if="provider === 'codex'" value="existing_login">
               已有 CLI 登录
             </option>
             <option v-if="provider !== 'deepseek'" value="existing_api">
@@ -264,11 +319,7 @@ async function history() {
             <button
               type="button"
               :disabled="busy || !nativeTestMode"
-              @click="
-                run(async () => {
-                  credentialRef = await enterCredential();
-                })
-              "
+              @click="run(secure)"
             >
               {{ credentialRef ? "更换安全凭据" : "填写安全凭据" }}</button
             ><span v-if="credentialRef"> 已选择凭据</span>
@@ -289,7 +340,14 @@ async function history() {
           </select></label
         >
         <div>
-          <button :disabled="busy || c.state.connection !== 'connected'">
+          <button
+            :disabled="
+              busy ||
+              c.state.connection !== 'connected' ||
+              (sourceType === 'custom_api' && !credentialRef) ||
+              (provider === 'claude' && sourceType === 'existing_login')
+            "
+          >
             验证并保存</button
           ><button type="button" :disabled="busy" @click="edit()">
             清空表单
@@ -298,6 +356,9 @@ async function history() {
       </form>
     </details>
     <template v-if="c.view.value">
+      <p v-if="!c.connectionReady.value" role="status">
+        当前会话需要选择可用连接。删除连接不会删除历史。
+      </p>
       <label
         >本会话连接
         <select

@@ -1,4 +1,4 @@
-import type { Connection, UserPreferences } from "./wire.js";
+import type { Connection, UserPreferences, PreferencesPatch } from "./wire.js";
 import type { Result } from "./ports.js";
 import { boundedJson, decode } from "./codec.js";
 import { defaultLimits, fail, ok } from "./results.js";
@@ -53,6 +53,32 @@ export function connectionRevision(
         return fail("invalid_input");
     } else if (next.provider === "deepseek") return fail("invalid_input");
     return ok(structuredClone(next));
+  } catch {
+    return fail("invalid_input");
+  }
+}
+
+/** Store-owned field updates avoid read-modify-write races between independent UI actions. */
+export function mergePreferences(
+  current: UserPreferences,
+  patch: PreferencesPatch,
+): Result<UserPreferences> {
+  try {
+    decode(
+      boundedJson(
+        { schemaVersion: 5, kind: "preferencesRequest", patch },
+        defaultLimits,
+      ),
+      defaultLimits,
+    );
+    const next = { ...current };
+    for (const key of ["defaultConnectionId", "selectedSessionId"] as const) {
+      const change = patch[key];
+      if (!change) continue;
+      if ("set" in change) next[key] = change.set;
+      else delete next[key];
+    }
+    return ok(next);
   } catch {
     return fail("invalid_input");
   }

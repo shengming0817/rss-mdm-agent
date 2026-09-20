@@ -1,7 +1,11 @@
-import { emptyPreferences, connectionRevision } from "../connections.js";
+import {
+  emptyPreferences,
+  connectionRevision,
+  mergePreferences,
+} from "../connections.js";
 import { selectConnection, activateStage } from "../transitions.js";
 import type { StageActivation } from "../ports.js";
-import type { Connection, UserPreferences } from "../wire.js";
+import type { Connection, UserPreferences, PreferencesPatch } from "../wire.js";
 import { ReadViews, readSnapshotPage, readSessionPage } from "../read-views.js";
 import type {
   AcceptCommand,
@@ -11,6 +15,7 @@ import type {
   SessionCommit,
   SessionRebind,
   RecoveryUnavailable,
+  SessionSuspension,
   SessionStore,
   Caller,
   Clock,
@@ -34,6 +39,7 @@ import {
   createState,
   rebindSession,
   recoverUnavailable,
+  suspendSession,
   retireSession,
   canPrune,
   defaultLimits,
@@ -121,24 +127,29 @@ export class MemorySessionStore implements SessionStore {
   }
   async savePreferences(
     caller: Caller,
-    prefs: UserPreferences,
+    patch: PreferencesPatch,
   ): Promise<Result<UserPreferences>> {
-    if (prefs.defaultConnectionId) {
-      const connection = await this.connection(
-        caller,
-        prefs.defaultConnectionId,
+    const scope = this.scope(caller),
+      merged = mergePreferences(
+        this.prefs.get(scope) ?? emptyPreferences(),
+        patch,
       );
-      if (!connection.ok || connection.value.status !== "ready")
-        return fail("connection_required");
+    if (!merged.ok) return merged;
+    const prefs = merged.value;
+    if (prefs.defaultConnectionId) {
+      const connection = [...(this.catalog.get(scope) ?? [])]
+        .reverse()
+        .find((row) => row.connectionId === prefs.defaultConnectionId);
+      if (connection?.status !== "ready") return fail("connection_required");
     }
-    if (prefs.selectedSessionId) {
-      const session = await this.session({
-        ...caller,
-        sessionId: prefs.selectedSessionId,
-      });
-      if (!session.ok) return session;
-    }
-    this.prefs.set(this.scope(caller), clone(prefs));
+    if (
+      prefs.selectedSessionId &&
+      !this.states.has(
+        namespaceKey({ ...caller, sessionId: prefs.selectedSessionId }),
+      )
+    )
+      return fail("session_gone");
+    this.prefs.set(scope, clone(prefs));
     return ok(clone(prefs));
   }
   async saveConnection(
@@ -264,6 +275,12 @@ export class MemorySessionStore implements SessionStore {
   }
   async rebind(input: SessionRebind): Promise<Result<Session>> {
     const result = this.apply(input.namespace, (s) => rebindSession(s, input));
+    return result.ok ? this.session(input.namespace) : result;
+  }
+  async suspend(input: SessionSuspension): Promise<Result<Session>> {
+    const result = this.apply(input.namespace, (state) =>
+      suspendSession(state, input),
+    );
     return result.ok ? this.session(input.namespace) : result;
   }
   async recoverUnavailable(

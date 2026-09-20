@@ -118,7 +118,6 @@ export const createProvider: WorkerFactory = async ({
             configurationDirectory: directory,
             apiUrl: connection.apiUrl,
             credential: connection.credential,
-            verifyAccount: connection.verifyAccount,
             model: connection.model,
           }),
         }),
@@ -128,8 +127,6 @@ export const createProvider: WorkerFactory = async ({
       const { createDeepSeekAdapter } = await import(
         "@rss-mdm-agent/ai-adapter-deepseek"
       );
-      if (connection.credential.type === "existing_login")
-        throw new Error("authentication_required");
       const apiKey = connection.credential.value;
       return own(
         createDeepSeekAdapter({

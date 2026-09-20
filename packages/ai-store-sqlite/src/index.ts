@@ -1,6 +1,8 @@
 import {
   activeStage,
   emptyPreferences,
+  mergePreferences,
+  type PreferencesPatch,
   connectionRevision,
   type Connection,
   type UserPreferences,
@@ -47,6 +49,7 @@ import {
   type SessionCommit,
   type SessionRebind,
   type RecoveryUnavailable,
+  type SessionSuspension,
   type SessionStore,
   type StoreCursor,
   type SnapshotPage,
@@ -65,6 +68,7 @@ import {
   createState,
   rebindSession,
   recoverUnavailable,
+  suspendSession,
   retireSession,
   defaultLimits,
   namespaceKey,
@@ -588,14 +592,12 @@ class SqliteSessionStore implements SessionStore, WorkerLaunchFenceStore {
   }
   async savePreferences(
     caller: Caller,
-    prefs: UserPreferences,
+    patch: PreferencesPatch,
   ): Promise<Result<UserPreferences>> {
     return this.#transaction(() => {
-      if (
-        decode(boundedJson(prefs, defaultLimits), defaultLimits).kind !==
-        "userPreferences"
-      )
-        return fail("invalid_input");
+      const merged = mergePreferences(this.#preferences(caller), patch);
+      if (!merged.ok) return merged;
+      const prefs = merged.value;
       if (
         prefs.defaultConnectionId &&
         this.#connection(caller, prefs.defaultConnectionId)?.status !== "ready"
@@ -807,6 +809,17 @@ class SqliteSessionStore implements SessionStore, WorkerLaunchFenceStore {
         namespaceKey(input.namespace),
         activeStage(result.value).binding.generation,
       );
+    return result;
+  }
+  async suspend(input: SessionSuspension): Promise<Result<Session>> {
+    const result = this.#transaction(() => {
+      const before = this.#state(input.namespace),
+        result = suspendSession(before, input);
+      if (!result.ok) return result;
+      this.#save(before, result.value);
+      return ok(result.value.session);
+    });
+    if (result.ok) this.#owned.delete(namespaceKey(input.namespace));
     return result;
   }
   async recoverUnavailable(

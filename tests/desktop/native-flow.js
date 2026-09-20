@@ -22,6 +22,61 @@
     );
   const click = async (text) => (await wait(() => button(text))).click();
   let generation;
+  const invoke = (command, args) =>
+    window.__TAURI_INTERNALS__.invoke(command, args);
+  const current = async () => (await invoke("test_users")).current;
+  const selectUser = async (name) => {
+    const previous = (await current())?.generation;
+    const input = await wait(() =>
+      document.querySelector('[aria-label="测试用户名"]'),
+    );
+    input.value = name;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    await click("进入");
+    await wait(async () => {
+      const value = await current();
+      if (
+        value?.generation !== previous &&
+        value?.user.displayName === name &&
+        document.querySelector(".self-service .hero")
+      )
+        return value;
+    });
+    generation = (await current()).generation;
+  };
+  const rejects = async (action) => {
+    try {
+      await action();
+    } catch {
+      return;
+    }
+    throw new Error("old scope remained accessible");
+  };
+  const saveExistingConnection = async () => {
+    const panel = await wait(() =>
+      document.querySelector(".connections details"),
+    );
+    panel.open = true;
+    for (const [name, value] of [
+      ["名称", "Existing Codex"],
+      ["配置目录", window.__RSS_CONNECTION_SOURCE__.directory],
+      ["模型", window.__RSS_CONNECTION_SOURCE__.model],
+      ["工具", "controlled_tools"],
+    ]) {
+      const el = [...panel.querySelectorAll("label")]
+        .find((el) => el.textContent.startsWith(name))
+        ?.querySelector("input,select");
+      el.value = value;
+      el.dispatchEvent(
+        new Event(el.tagName === "SELECT" ? "change" : "input", {
+          bubbles: true,
+        }),
+      );
+    }
+    await click("验证并保存");
+    await wait(() => panel.querySelector("li")?.textContent.includes("可用"));
+    panel.open = false;
+  };
   const snapshot = () =>
     window.__TAURI_INTERNALS__.invoke("self_service_snapshot", {
       input: { after: null, requestIds: [] },
@@ -105,30 +160,7 @@
       );
       setStage("ai_connect");
       await click("AI 助手");
-      const panel = await wait(() =>
-        document.querySelector(".connections details"),
-      );
-      panel.open = true;
-      const field = (name) =>
-        [...panel.querySelectorAll("label")]
-          .find((el) => el.textContent.startsWith(name))
-          ?.querySelector("input,select");
-      const set = (name, value) => {
-        const el = field(name);
-        el.value = value;
-        el.dispatchEvent(
-          new Event(el.tagName === "SELECT" ? "change" : "input", {
-            bubbles: true,
-          }),
-        );
-      };
-      set("名称", "Existing Codex");
-      set("配置目录", window.__RSS_CONNECTION_SOURCE__.directory);
-      set("模型", window.__RSS_CONNECTION_SOURCE__.model);
-      set("工具", "controlled_tools");
-      await click("验证并保存");
-      await wait(() => panel.querySelector("li")?.textContent.includes("可用"));
-      panel.open = false;
+      await saveExistingConnection();
       await click("新建会话");
       const input = await wait(() => {
         const e = document.querySelector(".assistant textarea");
@@ -181,15 +213,91 @@
         )
       ).click();
       await verifyOrigin(ai.plan);
+      const alice = await current();
+      const oldChannel = await invoke("ai_connect", { generation });
       await click("批准此测试计划一次");
-      await wait(
-        async () =>
-          (await details("ai-s1-smoke")).status.phase === "testCompleted",
+      // The durable runner is now in flight. Switching must not change its frozen origin.
+      const started = await details("ai-s1-smoke");
+      if (
+        started.status.attempts !== 1 ||
+        started.status.phase === "testCompleted"
+      )
+        throw new Error("task did not start before switch");
+      setStage("user_b_isolation");
+      await selectUser("Native acceptance B");
+      const bob = await current();
+      if (bob.user.userId === alice.user.userId)
+        throw new Error("user identity reused");
+      await rejects(() =>
+        invoke("self_service_snapshot", {
+          input: { after: null, requestIds: [] },
+          generation: alice.generation,
+        }),
       );
+      await rejects(() =>
+        invoke("ai_send", {
+          connectionId: oldChannel,
+          message: {
+            jsonrpc: "2.0",
+            id: "late",
+            method: "initialize",
+            params: {},
+          },
+        }),
+      );
+      await rejects(() => details("ai-s1-smoke"));
+      if ((await snapshot()).requests.length)
+        throw new Error("foreign tasks visible");
+      await click("AI 助手");
+      await wait(() => document.querySelector(".connections details"));
+      await wait(() => button("新建会话"));
+      if (
+        document.querySelector(".connections li") ||
+        document.querySelector(".assistant-sessions li") ||
+        document.querySelector(".assistant .message")
+      )
+        throw new Error("foreign AI state visible");
+      // Both users intentionally choose the same real CLI login, with independent catalogs/history.
+      await saveExistingConnection();
+      await click("新建会话");
+      const draft = await wait(() =>
+        document.querySelector(".assistant textarea"),
+      );
+      draft.value = "B_UNSENT_DRAFT_MUST_NOT_CROSS_USERS";
+      draft.dispatchEvent(new Event("input", { bubbles: true }));
+      setStage("user_a_restored");
+      await selectUser("Native acceptance");
+      if (
+        (await current()).user.userId !== alice.user.userId ||
+        generation === alice.generation
+      )
+        throw new Error("original user not restored with fresh generation");
+      const completed = await wait(async () => {
+        const value = await details("ai-s1-smoke");
+        return value.status.phase === "testCompleted" && value;
+      });
+      if (
+        JSON.stringify(completed.plan) !== JSON.stringify(ai.plan) ||
+        completed.status.attempts !== 1
+      )
+        throw new Error("original task identity changed");
       await wait(
         async () =>
           (await details("ai-s1-tool")).status.phase === "testCompleted",
       );
+      await click("AI 助手");
+      await wait(() =>
+        [...document.querySelectorAll(".assistant .message")].some((e) =>
+          e.textContent.includes("RSS_S1_DONE"),
+        ),
+      );
+      if (document.querySelector(".assistant textarea")?.value)
+        throw new Error("draft crossed generation");
+      if (
+        document.querySelectorAll(".connections li").length !== 1 ||
+        document.querySelectorAll(".assistant-sessions li").length !== 1
+      )
+        throw new Error("catalog or sessions not isolated");
       report({
         step: "passed",
         humanCompleted: true,
@@ -199,6 +307,12 @@
         detachedRunContinued: true,
         nativeHistoryVisible: true,
         testTasks: 2,
+        userIsolation: true,
+        oldGenerationRejected: true,
+        originalTaskContinued: true,
+        originalHistoryRestored: true,
+        alice: alice.user.userId,
+        bob: bob.user.userId,
       });
     }
   } catch {

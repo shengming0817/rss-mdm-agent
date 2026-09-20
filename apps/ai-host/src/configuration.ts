@@ -15,7 +15,8 @@ export class ConfigurationError extends Error {
     readonly code:
       | "configuration_file"
       | "configuration_invalid"
-      | "authentication_required",
+      | "authentication_required"
+      | "unsupported_capability",
   ) {
     super(code);
   }

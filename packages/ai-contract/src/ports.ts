@@ -1,3 +1,4 @@
+import type { PreferencesPatch } from "./wire.js";
 import type {
   Binding,
   Capabilities,
@@ -212,7 +213,7 @@ export interface HostPort extends Closeable {
   ): Promise<Result<Connection>>;
   savePreferences(
     caller: Caller,
-    preferences: UserPreferences,
+    preferences: PreferencesPatch,
     budget: Budget,
   ): Promise<Result<UserPreferences>>;
   selectConnection(
@@ -326,7 +327,7 @@ export interface SessionStore extends Closeable {
   preferences(caller: Caller): Promise<Result<UserPreferences>>;
   savePreferences(
     caller: Caller,
-    preferences: UserPreferences,
+    preferences: PreferencesPatch,
   ): Promise<Result<UserPreferences>>;
   selectConnection(
     namespace: Namespace,
@@ -353,6 +354,7 @@ export interface SessionStore extends Closeable {
   listSessions(caller: Caller, query: PageQuery): Promise<Result<SessionPage>>;
   rebind(input: SessionRebind): Promise<Result<Session>>;
   recoverUnavailable(input: RecoveryUnavailable): Promise<Result<Session>>;
+  suspend(input: SessionSuspension): Promise<Result<Session>>;
   events(
     namespace: Namespace,
     after: Counter,
@@ -423,6 +425,11 @@ export interface SessionRebind {
   readonly expectedGeneration: Id;
   readonly restored: import("./session.js").VerifiedProviderSession;
   readonly eventId: Id;
+}
+
+export interface SessionSuspension extends RecoveryUnavailable {
+  readonly nowMs: Counter;
+  readonly retention: Retention;
 }
 
 export interface RecoveryUnavailable {

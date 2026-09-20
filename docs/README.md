@@ -7,7 +7,7 @@
 - [UI与桌面壳提取记录](reference/ui-extraction.md)：固定来源、MIT授权和逐文件映射。
 - [目录与后端对齐](guides/202609130000-2396-service-catalog.md)：精确资源绑定、参数演进与执行 owner 边界。
 - [契约开发](guides/contracts-development.md)：执行/AI 契约、schema 与隔离消费验证。
-- [AI Runtime V4](../packages/ai-contract/README.md)：唯一 schema、三个 ports、可靠性和 ACP–A2UI 约定。
+- [AI Runtime V5](../packages/ai-contract/README.md)：唯一 schema、三个 ports、可靠性和 ACP–A2UI 约定。
 - [AI 助手页面](guides/assistant-development.md)：共享导航、固定 Host 浏览器验收、可信执行详情与版本切换。
 - [ACP–A2UI 开发](guides/ai-access-development.md)：标准协议、公共客户端、Vue/Lit 接缝与真实浏览器独立消费。
 

@@ -1,5 +1,7 @@
+import { principalPath, type ProviderSnapshot } from "./connection.js";
+import { nativeContext } from "./credentials.js";
 import { createHash } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { HostOptions } from "@rss-mdm-agent/ai-host";
 import type { SessionStore } from "@rss-mdm-agent/ai-contract";
@@ -38,6 +40,7 @@ export function localResolver(
         local,
         connection,
         namespace,
+        generation: (await nativeContext(local.usersPath, caller)).generation,
         ...(candidate ? { verification: true } : {}),
       }),
       fingerprint = createHash("sha256").update(content).digest("hex");
@@ -55,6 +58,30 @@ export function localResolver(
     artifact.searchParams.set("snapshot", path);
     artifact.searchParams.set("fingerprint", fingerprint);
     return {
+      ...(candidate
+        ? {
+            dispose: async () => {
+              const owner = createHash("sha256")
+                .update(JSON.stringify(namespace))
+                .digest("hex");
+              await rm(join(local.nativeDirectory, "contexts", owner), {
+                recursive: true,
+                force: true,
+              });
+              await rm(path, { force: true });
+              const saved = await store.connection(
+                caller,
+                candidate.connectionId,
+                candidate.configRevision,
+              );
+              if (!saved.ok && saved.error.code === "connection_required")
+                await rm(
+                  principalPath(JSON.parse(content) as ProviderSnapshot),
+                  { force: true },
+                );
+            },
+          }
+        : {}),
       configuration: {
         namespace,
         provider: connection.provider,

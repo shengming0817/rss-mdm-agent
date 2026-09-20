@@ -1,13 +1,30 @@
 import { spawn, execFileSync } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, realpath, readFile, stat, rm } from "node:fs/promises";
+import {
+  mkdtemp,
+  realpath,
+  readFile,
+  stat,
+  rm,
+  mkdir,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
+import { sourceState, sameCommittedSource } from "./source-state.mjs";
 import { createHost } from "../packages/ai-host/dist/index.js";
 import { openSqliteStore } from "../packages/ai-store-sqlite/dist/index.js";
 import { localResolver } from "../apps/ai-host/dist/resolver.js";
 /** Explicit manual acceptance: reads existing local sources and sends one probe per available source.
  * Emits only source type and closed outcome. Never emits account identities, paths or credentials. */
+const repository = fileURLToPath(new URL("../", import.meta.url));
+const start = sourceState(repository);
+if (!start.clean) throw Error("committed_source_required");
+const startedAt = new Date().toISOString();
+const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
+let brokerSha256;
 const budget = () => ({ timeoutMs: 60000, signal: AbortSignal.timeout(60000) });
 const root = await realpath(
   await mkdtemp(join(tmpdir(), "rss-source-acceptance-")),
@@ -37,6 +54,7 @@ try {
         row.target?.name === "connection-acceptance-broker" && row.executable,
     )?.executable;
   if (!executable) throw Error("native_broker_unavailable");
+  brokerSha256 = hash(await readFile(executable));
   broker = spawn(executable, [root], { stdio: ["pipe", "ignore", "ignore"] });
   for (let i = 0; ; i++) {
     if (
@@ -121,6 +139,40 @@ try {
     await exited;
   }
   await rm(root, { recursive: true, force: true });
+  const end = sourceState(repository);
+  const output = join(repository, ".local-ci-runs", "connection-sources.json");
+  await mkdir(join(repository, ".local-ci-runs"), { recursive: true });
+  await writeFile(
+    output,
+    JSON.stringify(
+      {
+        command: "node scripts/check-connection-sources.mjs",
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        source: { start, end, unchanged: sameCommittedSource(start, end) },
+        locks: {
+          pnpm: hash(await readFile(join(repository, "pnpm-lock.yaml"))),
+          cargo: hash(await readFile(join(repository, "Cargo.lock"))),
+        },
+        artifact: { nativeBrokerSha256: brokerSha256 },
+        runtime: {
+          node: process.versions.node,
+          platform: process.platform,
+          arch: process.arch,
+        },
+        mode: "production-native-broker/isolated-provider/minimal-real-model-probe",
+        results,
+        notCovered: [
+          "custom_api_requires_explicit_native_credential_entry",
+          "windows",
+          "enterprise_identity",
+        ],
+      },
+      null,
+      2,
+    ),
+  );
+  if (!sameCommittedSource(start, end)) process.exitCode = 1;
 }
 if (results.some((row) => row.result !== "model_probe_completed"))
   process.exitCode = 1;

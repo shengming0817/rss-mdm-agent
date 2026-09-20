@@ -1300,6 +1300,15 @@ export type ConnectionSource =
       apiUrl?: never;
       credentialType?: never;
     };
+export type PreferenceChange =
+  | {
+      set: Id;
+      clear?: never;
+    }
+  | {
+      clear: true;
+      set?: never;
+    };
 
 /**
  * Client command identity and complete canonical input; trusted namespace is supplied separately.
@@ -1947,7 +1956,14 @@ export interface SaveConnectionRequest {
 export interface PreferencesRequest {
   schemaVersion: 5;
   kind: "preferencesRequest";
-  preferences: UserPreferences;
+  patch: PreferencesPatch;
+}
+/**
+ * Missing fields remain unchanged; set replaces and clear removes one preference atomically.
+ */
+export interface PreferencesPatch {
+  defaultConnectionId?: PreferenceChange;
+  selectedSessionId?: PreferenceChange;
 }
 export interface SelectConnectionRequest {
   schemaVersion: 5;

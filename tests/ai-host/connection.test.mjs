@@ -28,6 +28,7 @@ async function setup(t, provider) {
     workingDirectory: root,
   };
   const snapshot = {
+    generation: "fixture-generation",
     local,
     namespace: {
       tenantId: "t",
@@ -93,6 +94,7 @@ test("custom endpoints resolve credentials only through the native user-scoped r
       assert.deepEqual(request, {
         type: "credential",
         userId: "alice",
+        generation: "fixture-generation",
         credentialRef: "native-ref",
       });
       return { value: "fixture-key" };
@@ -185,22 +187,9 @@ test("Claude API imports only explicit API fields; CLI OAuth environment is neve
     code: "authentication_required",
   });
   f.snapshot.connection.source.type = "existing_login";
-  const login = await resolveConnection(f.snapshot);
-  assert.deepEqual(login.credential, {
-    type: "existing_login",
-    secureStorageDirectory: f.user,
+  await assert.rejects(resolveConnection(f.snapshot), {
+    code: "unsupported_capability",
   });
-  const observation = {
-    email: "fixture@example.test",
-    organization: "fixture-org",
-    tokenSource: "oauth",
-  };
-  await login.verifyAccount(observation);
-  await login.verifyAccount(observation);
-  await assert.rejects(
-    login.verifyAccount({ ...observation, email: "changed@example.test" }),
-    { code: "authentication_required" },
-  );
 });
 test("missing model may use Codex defaults, while explicit invalid models are rejected", async (t) => {
   const f = await setup(t, "codex");
@@ -211,4 +200,136 @@ test("missing model may use Codex defaults, while explicit invalid models are re
     await f.write("config.toml", `model=${value}\n`);
     await assert.rejects(resolveConnection(f.snapshot));
   }
+});
+
+test("credential retirement retains unresolved receipt revisions and rejects an inactive native user", async (t) => {
+  const f = await setup(t, "codex");
+  const { credentialLifecycle } = await import(
+    "../../apps/ai-host/dist/credential-lifecycle.js"
+  );
+  const { openSqliteStore } = await import(
+    "../../packages/ai-store-sqlite/dist/index.js"
+  );
+  const { fixtureSession, unwrap } = await import(
+    "../../packages/ai-contract/dist/testing/index.js"
+  );
+  const { activeStage } = await import(
+    "../../packages/ai-contract/dist/index.js"
+  );
+  const store = unwrap(
+    openSqliteStore({ path: f.snapshot.local.databasePath, mode: "create" }),
+  );
+  t.after(() =>
+    store.close({ timeoutMs: 1000, signal: new AbortController().signal }),
+  );
+  const caller = {
+    tenantId: "test-users",
+    principalId: "alice",
+    authorityId: "desktop-fixture",
+  };
+  const user = {
+    schemaVersion: 5,
+    kind: "testUser",
+    userId: "alice",
+    displayName: "Alice",
+    nameKey: "alice",
+  };
+  const page = {
+    schemaVersion: 5,
+    kind: "testUserPage",
+    users: [user],
+    current: {
+      schemaVersion: 5,
+      kind: "userContext",
+      user,
+      generation: "current-generation",
+    },
+  };
+  await writeFile(f.snapshot.local.usersPath, JSON.stringify(page), {
+    mode: 0o600,
+  });
+  const session = fixtureSession();
+  session.namespace = { ...caller, sessionId: "historical" };
+  const phase = activeStage(session);
+  const old = {
+    ...f.snapshot.connection,
+    connectionId: phase.connectionId,
+    source: {
+      type: "custom_api",
+      apiUrl: "https://example.invalid",
+      model: "model",
+    },
+    credentialRef: "old-key",
+  };
+  unwrap(await store.saveConnection(caller, old, null));
+  unwrap(await store.create(session));
+  const retention = { retryWindowMs: 60000, receiptWindowMs: 86400000 };
+  unwrap(
+    await store.accept({
+      namespace: session.namespace,
+      command: {
+        schemaVersion: 5,
+        kind: "command",
+        commandId: "pending",
+        sessionId: "historical",
+        expiresAtMs: Date.now() + 60000,
+        input: { type: "prompt", policy: "queue_next", text: "pending" },
+      },
+      expectedRevision: 0,
+      expectedGeneration: phase.binding.generation,
+      nowMs: Date.now(),
+      retention,
+      eventId: "accept",
+    }),
+  );
+  const next = {
+    ...old,
+    configRevision: 2,
+    credentialRevision: 2,
+    credentialRef: "new-key",
+  };
+  unwrap(await store.saveConnection(caller, next, 1));
+  const requests = [];
+  f.broker(async (request) => {
+    requests.push(request);
+    return null;
+  });
+  const lifecycle = credentialLifecycle(f.snapshot.local, store);
+  await lifecycle.activate(caller, next);
+  assert.deepEqual(requests.at(-1), {
+    type: "activate",
+    credentialRef: "new-key",
+    userId: "alice",
+    generation: "current-generation",
+  });
+  await lifecycle.collect(caller);
+  assert.deepEqual(requests.at(-1).keep.sort(), ["new-key", "old-key"]);
+  const head = unwrap(await store.session(session.namespace));
+  unwrap(
+    await store.suspend({
+      namespace: head.namespace,
+      expectedRevision: head.revision,
+      expectedGeneration: phase.binding.generation,
+      nowMs: Date.now(),
+      retention,
+      eventId: "suspend",
+    }),
+  );
+  await lifecycle.collect(caller);
+  assert.deepEqual(requests.at(-1).keep, ["new-key"]);
+  unwrap(
+    await store.saveConnection(
+      caller,
+      { ...next, configRevision: 3, status: "deleted" },
+      2,
+    ),
+  );
+  await lifecycle.collect(caller);
+  assert.deepEqual(requests.at(-1).keep, []);
+  const count = requests.length;
+  await assert.rejects(
+    lifecycle.activate({ ...caller, principalId: "bob" }, next),
+    { code: "authentication_required" },
+  );
+  assert.equal(requests.length, count);
 });

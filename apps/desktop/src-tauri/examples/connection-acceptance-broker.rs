@@ -19,6 +19,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     credentials::serve(
         root.join("credentials.sock"),
         Arc::new(Mutex::new(users)),
+        Arc::new(Mutex::new(
+            credentials::Vault::open(&root).map_err(|_| "credential registry unavailable")?,
+        )),
         stop.clone(),
     )
     .await?;

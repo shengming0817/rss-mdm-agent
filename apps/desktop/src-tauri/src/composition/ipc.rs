@@ -104,12 +104,28 @@ pub async fn enter_connection_credential<R: tauri::Runtime>(
     state: State<'_, DesktopRuntime>,
     generation: String,
 ) -> Result<String> {
-    super::credentials::enter(app, state.users.clone(), generation).await
+    super::credentials::enter(app, state.users.clone(), state.vault.clone(), generation).await
+}
+
+#[tauri::command]
+pub fn discard_connection_credential(
+    state: State<'_, DesktopRuntime>,
+    generation: String,
+    reference: String,
+) -> Result<()> {
+    let context = state.current(&generation)?;
+    state
+        .vault
+        .lock()
+        .map_err(|_| error("credential_cleanup", "凭据清理未完成"))?
+        .discard(context.user.user_id.as_str(), &reference)
+        .map_err(|_| error("credential_cleanup", "凭据清理未完成"))
 }
 
 pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder.invoke_handler(tauri::generate_handler![
         enter_connection_credential,
+        discard_connection_credential,
         test_users,
         select_test_user,
         self_service_snapshot,

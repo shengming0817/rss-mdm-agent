@@ -1,4 +1,4 @@
-# AI Runtime V4 公共契约
+# AI Runtime V5 公共契约
 
 A01 / #2439，范围基线 `ai-runtime-20260918`。本包拥有产品可靠性 schema 和 TypeScript ports；Rust crate `ai-session-contract` 消费生成绑定。AI Host、AI SQLite 和 adapters 使用 Node/TS；Rust 执行授权、批准、intent、审计和结果权威独立。当前交付为契约、确定性测试替身和共用 conformance，不含真实 Host、数据库、模型或工具隔离证明。
 
@@ -6,7 +6,7 @@ A01 / #2439，范围基线 `ai-runtime-20260918`。本包拥有产品可靠性 s
 
 [schema/runtime.schema.json](schema/runtime.schema.json) 是唯一产品 wire 声明。`pnpm generate:ai-contract` 通过 typify 0.8.0 / json-schema-to-typescript 16.0.0 生成 Rust/TS；`pnpm check:ai-contract` 验证生成物和 Rust 内嵌 schema 投影零差异。只使用内部引用、闭合对象、常量标签 oneOf、enum 和边界约束；不使用复杂条件、anyOf 或任意外部 schema 解析。标准 ACP/A2UI 保持上游 owner。
 
-V4 直接替换 V3 及更早版本。C20 增加配对的 delivery_requested / delivery_recorded 事件与 receipt_recorded 交付状态；持久回执可在模型轮次结束或会话待恢复时独立收敛，只有窄化的 delivery commit 可跨原 generation 更新。`command_accepted` 稳定事件完整携带不可变 Command；旧 `status/accepted` 删除。`accept` 只接收 `eventId`，由同一事务构造事件并提交命令、receipt 与事件，客户端不再补读快照取得用户输入。没有旧 reader、alias、双写、fallback、转换器或历史导入；旧消费者必须整体更新，旧数据库只读拒绝。历史源码与交付证据由 Git/PR 保留。
+V5 直接替换 V4 及更早版本。测试用户、个人连接与配置/凭据修订、产品 Session/provider 阶段和显式历史预览由同一 schema 声明；创建 Session 不启动 provider，命令回执固定接纳阶段。C20 增加配对的 delivery_requested / delivery_recorded 事件与 receipt_recorded 交付状态；持久回执可在模型轮次结束或会话待恢复时独立收敛，只有窄化的 delivery commit 可跨原 generation 更新。`command_accepted` 稳定事件完整携带不可变 Command；旧 `status/accepted` 删除。`accept` 只接收 `eventId`，由同一事务构造事件并提交命令、receipt 与事件，客户端不再补读快照取得用户输入。没有旧 reader、alias、双写、fallback、转换器或历史导入；旧消费者必须整体更新，旧数据库只读拒绝。历史源码与交付证据由 Git/PR 保留。
 
 生成 DTO 只表达数据。外部字节必须经过 `decode(input, limits)`；不要把直接反序列化/类型断言当作验证。所有字符串（含 member name）累计 UTF-8 预算，容器深度最多64，全部 JSON 整数限定安全范围；拒绝重复键、非有限数、非法 Unicode、未知版本/字段。`ContractError.code` 不含正文或动态字段名。`fingerprint(command, limits)` 对已校验命令做 JCS/SHA-256，包含完整输入、expiresAtMs 和 commandId；可信 namespace 单独加入存储唯一键。键顺序不同不产生内容冲突。
 
@@ -14,7 +14,7 @@ V4 直接替换 V3 及更早版本。C20 增加配对的 delivery_requested / de
 
 `ProviderAgentPort.createSession(configuration, budget)` 原子返回同一 incarnation 的 binding 与 capabilities；其余操作为 submit/cancel/respond/observe/reconcile/close，`resume(binding, configuration, budget)` 是可选接缝，同样原子返回 binding+capabilities，直接替换旧的裸 Binding 返回形状。配置只传显式工作目录、config revision、账号引用、权限选择和宿主 ToolEndpoint，不将秘密写进 wire。ToolEndpoint 返回的是模型工具协议结果，不能签发批准或直连 runner。adapter 自己持有 SDK、进程、模型 transcript 和 native session/run/request ID。
 
-能力分基础会话和受控工具 profile。基础可建立会话、文本多轮、输出/状态/终态和取消；取消能力区分 unsupported/unknown/request_only/terminal_acknowledged。跨进程 resume、steer、fork、子 agent、终端、结构化追问及多模态显式声明；扩展操作由 A01 定义的受控 extension port 承接，公共 V4 input 只接纳文本、取消和回答，不伪造通用多模态载荷。缺少能力不能请求对应操作。
+能力分基础会话和受控工具 profile。基础可建立会话、文本多轮、输出/状态/终态和取消；取消能力区分 unsupported/unknown/request_only/terminal_acknowledged。跨进程 resume、steer、fork、子 agent、终端、结构化追问及多模态显式声明；扩展操作由 A01 定义的受控 extension port 承接，公共 V5 input 只接纳文本、取消和回答，不伪造通用多模态载荷。缺少能力不能请求对应操作。
 
 能力声明必须绑定 provider/adapter version、config、账号及 generation；Host 在使用观察事件前核对完整 binding 与命令账本的 native run/request 关联。resume 必须核对 provider/config/account，跨 generation 仅在 across_processes 能力与 provider 成功响应后成立。展示历史不恢复模型上下文。`ProviderConfiguration` 是纯数据，权限为 tools_disabled 或 host_mediated；ToolEndpoint 与可信平台 verifier 通过 parent-only ProviderAdmission 参数单独注入，verifier 不跨 worker IPC。Host 通过 `VerifiedProviderSession.open` 或 `VerifiedProviderSession.restore(port, previousSession, configuration, budget)` 消费原子结果并完成验证；恢复显式消费当前配置，核对原 session ID、新 generation 与 across_processes 能力，重新执行 verifier；已打开 runtime 的准入失败会以独立有界预算关闭，调用方仍须处理/重试未完成的关闭。私有构造和运行时 token 阻止同形对象/JSON 冒充 admission；证据固定完整 binding、capabilities 与 endpoint 对象身份，跨 incarnation 使用须重新验证。verifier 是受信代码边界，具体平台/版本的原生工具旁路证明由 adapter 持有；本包不从字符串或模型声明推导该证明。
 

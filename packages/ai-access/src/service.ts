@@ -757,11 +757,7 @@ export function createAccessService(options: AccessOptions) {
       async ({ params, signal }) => {
         ready(peer, true);
         return value(
-          await host.savePreferences(
-            peer.caller,
-            params.preferences,
-            budget(signal),
-          ),
+          await host.savePreferences(peer.caller, params.patch, budget(signal)),
         );
       },
     );

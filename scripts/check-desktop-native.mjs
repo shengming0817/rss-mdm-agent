@@ -90,8 +90,23 @@ try {
       .prepare("SELECT json FROM sessions")
       .all()
       .map((row) => JSON.parse(row.json));
-    assert.equal(sessions.length, 1);
-    const session = sessions[0];
+    assert.equal(sessions.length, 2);
+    for (const key of [
+      "userIsolation",
+      "oldGenerationRejected",
+      "originalTaskContinued",
+      "originalHistoryRestored",
+    ])
+      assert.equal(behavior[key], true);
+    const session = sessions.find(
+      (s) => s.namespace.principalId === behavior.alice,
+    );
+    const other = sessions.find(
+      (s) => s.namespace.principalId === behavior.bob,
+    );
+    assert.ok(session && other);
+    assert.equal(other.stages.length, 0);
+    assert.equal(session.stages.length, 1);
     assert.equal(activeStage(session).binding.provider, "codex");
     assert.equal(activeStage(session).binding.providerVersion, "0.155.0");
     assert.equal(activeStage(session).capabilities.tools, "host_mediated");

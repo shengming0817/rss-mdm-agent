@@ -14,6 +14,7 @@ import {
   type UserContext,
 } from "@rss-mdm-agent/ai-contract";
 import { defaultLimits } from "@rss-mdm-agent/ai-contract/transitions";
+import { credentialLifecycle } from "./credential-lifecycle.js";
 import { localResolver } from "./resolver.js";
 export type { LocalConfiguration } from "./configuration.js";
 /** A private local ACP endpoint. Disconnecting a socket only detaches that client. */
@@ -91,7 +92,9 @@ export async function startLocalApp(
     });
     throw error;
   });
+  const credentials = credentialLifecycle(local, store);
   const created = await createHost({
+    credentials,
     delivery: execution?.router ?? null,
     store,
     launchFences: store,
@@ -128,23 +131,29 @@ export async function startLocalApp(
           const next = await readUser();
           if (!next || request.generation !== next.generation)
             throw new Error("user_changed");
-          if (activeUser?.generation !== next.generation) {
-            if (activeUser) {
-              for (const previous of sockets)
-                if (previous !== socket) previous.destroy();
-              await host.suspendCaller(callerFor(activeUser), {
+          if (
+            request.type === "suspend_user" ||
+            activeUser?.generation !== next.generation
+          ) {
+            for (const previous of sockets)
+              if (previous !== socket) previous.destroy();
+            const previous =
+              request.type === "suspend_user" ? next : activeUser;
+            if (previous) {
+              const fenced = await host.suspendCaller(callerFor(previous), {
                 timeoutMs: 10000,
                 signal: AbortSignal.timeout(10000),
               });
+              if (!fenced.ok) throw new Error("user fence unavailable");
             }
-            activeUser = next;
-            host.activateCaller(callerFor(next));
+            activeUser = request.type === "suspend_user" ? undefined : next;
+            if (activeUser) host.activateCaller(callerFor(activeUser));
           }
           return callerFor(next);
         });
       switching = change;
       const caller = await change;
-      if (request.type === "select_user") {
+      if (request.type === "suspend_user") {
         socket.end(JSON.stringify({ ok: true }) + "\n");
         return;
       }
@@ -196,6 +205,7 @@ export async function startLocalApp(
     }
   };
   try {
+    if (activeUser) await credentials.collect(callerFor(activeUser));
     // A configured path never authorizes deleting an ordinary file or another listener.
     const prior = await lstat(local.socketPath).catch((error) => {
       if (error.code === "ENOENT") return undefined;
@@ -251,7 +261,7 @@ export async function startLocalApp(
 /** Consumed before ACP is connected; the WebView never supplies this native preface. */
 function nativeHandshake(
   socket: Socket,
-): Promise<{ type: "attach" | "select_user"; generation: string }> {
+): Promise<{ type: "attach" | "suspend_user"; generation: string }> {
   return new Promise((resolve, reject) => {
     let bytes = Buffer.alloc(0);
     const timer = setTimeout(
@@ -260,7 +270,7 @@ function nativeHandshake(
     );
     const finish = (
       error?: Error,
-      value?: { type: "attach" | "select_user"; generation: string },
+      value?: { type: "attach" | "suspend_user"; generation: string },
     ) => {
       clearTimeout(timer);
       socket.off("data", data).off("error", failure).off("end", failure);
@@ -278,7 +288,7 @@ function nativeHandshake(
         const value = JSON.parse(bytes.subarray(0, end).toString("utf8"));
         if (
           Object.keys(value).length !== 2 ||
-          !["attach", "select_user"].includes(value.type) ||
+          !["attach", "suspend_user"].includes(value.type) ||
           typeof value.generation !== "string"
         )
           throw new Error();

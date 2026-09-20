@@ -17,6 +17,7 @@ export interface ProviderSnapshot {
   local: LocalConfiguration;
   connection: Connection;
   namespace: Namespace;
+  generation: string;
   verification?: true;
 }
 export interface ResolvedConnection {
@@ -24,7 +25,6 @@ export interface ResolvedConnection {
   apiUrl: string;
   credential: ResolvedClaudeConfiguration["credential"];
   codex?: ResolvedCodexConfiguration["authentication"];
-  verifyAccount?: ResolvedClaudeConfiguration["verifyAccount"];
 }
 /** User-managed files may be readable by others, but never writable by other users.
  * Same descriptor, no symlink following, bounded reads; no file values in errors. */
@@ -93,11 +93,7 @@ async function optional(path: string): Promise<string | undefined> {
     throw e;
   }
 }
-/** Non-secret observed account lineage. No token/key hashes act as identities. */
-async function bindPrincipal(
-  snapshot: ProviderSnapshot,
-  principal: object,
-): Promise<void> {
+export function principalPath(snapshot: ProviderSnapshot): string {
   const key = createHash("sha256")
     .update(
       JSON.stringify([
@@ -109,10 +105,17 @@ async function bindPrincipal(
       ]),
     )
     .digest("hex");
-  const directory = join(snapshot.local.nativeDirectory, "principals");
+  return join(snapshot.local.nativeDirectory, "principals", key + ".json");
+}
+/** Non-secret observed account lineage. No token/key hashes act as identities. */
+async function bindPrincipal(
+  snapshot: ProviderSnapshot,
+  principal: object,
+): Promise<void> {
+  const path = principalPath(snapshot),
+    directory = dirname(path);
   await mkdir(directory, { recursive: true, mode: 0o700 });
-  const path = join(directory, key + ".json"),
-    content = JSON.stringify(principal);
+  const content = JSON.stringify(principal);
   try {
     await writeFile(path, content, {
       flag: snapshot.verification ? "w" : "wx",
@@ -135,6 +138,7 @@ export async function resolveConnection(
       {
         type: "credential",
         userId: namespace.principalId,
+        generation: snapshot.generation,
         credentialRef: connection.credentialRef,
       },
     );
@@ -182,6 +186,7 @@ export async function resolveConnection(
           {
             type: "codex",
             userId: namespace.principalId,
+            generation: snapshot.generation,
             directory: source.directory,
             storage,
           },
@@ -241,22 +246,9 @@ export async function resolveConnection(
   }
   if (connection.provider === "claude") {
     if (source.type === "existing_login") {
-      const directory = await realpath(source.directory);
-      const standard = process.env.HOME
-        ? await realpath(join(process.env.HOME, ".claude")).catch(
-            () => undefined,
-          )
-        : undefined;
-      return {
-        model: source.model,
-        apiUrl: "https://api.anthropic.com",
-        credential: {
-          type: "existing_login",
-          secureStorageDirectory: directory === standard ? "" : directory,
-        },
-        verifyAccount: async (account) =>
-          bindPrincipal(snapshot, { directory, ...account }),
-      };
+      // SDK 0.3.277 accountInfo exposes optional display metadata, no stable account UUID.
+      // Do not resume a different Keychain principal using cached email or token hashes.
+      throw new ConfigurationError("unsupported_capability");
     }
     const settings = JSON.parse(
         (await optional(join(source.directory, "settings.json"))) ?? "{}",

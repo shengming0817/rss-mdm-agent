@@ -3,7 +3,14 @@ import { executionServer } from "../tests/ai-host/rust-execution.mjs";
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, mkdir, writeFile, rm, lstat } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  writeFile,
+  rm,
+  lstat,
+  realpath,
+} from "node:fs/promises";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -34,7 +41,9 @@ const groupEmpty = (pgid) => {
   }
 };
 for (const signal of ["SIGTERM", "SIGINT"]) {
-  const directory = await mkdtemp(join(tmpdir(), "rss bundled host-"));
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), "rss bundled host-")),
+  );
   const requests = [],
     server = createModelServer(
       [[{ type: "text", text: "bundled runtime" }]],
@@ -60,7 +69,7 @@ for (const signal of ["SIGTERM", "SIGINT"]) {
         join(directory, "audit.json"),
         "ai-unknown",
       ],
-      { stdio: ["pipe", "pipe", "ignore"] },
+      { stdio: ["pipe", "pipe", "inherit"] },
     );
     rust.stdin.on("error", () => {});
     child = spawn(executable, [configurationPath], {

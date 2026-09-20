@@ -9521,14 +9521,51 @@ pub struct PageQuery {
     #[doc = "Maximum records in this page, from 1 to 256."]
     pub limit: ::std::num::NonZeroU64,
 }
+#[doc = "`PreferenceChange`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+pub enum PreferenceChange {
+    #[serde(rename = "set")]
+    #[doc = "`Set` alternative; see the parent type's schema contract."]
+    Set(#[doc = "`` member; see its generated type and parent schema."] Id),
+    #[serde(rename = "clear")]
+    #[doc = "`Clear` alternative; see the parent type's schema contract."]
+    Clear(#[doc = "`` member; see its generated type and parent schema."] bool),
+}
+impl ::std::convert::From<Id> for PreferenceChange {
+    fn from(value: Id) -> Self {
+        Self::Set(value)
+    }
+}
+impl ::std::convert::From<bool> for PreferenceChange {
+    fn from(value: bool) -> Self {
+        Self::Clear(value)
+    }
+}
+#[doc = "Missing fields remain unchanged; set replaces and clear removes one preference atomically."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Default)]
+#[serde(deny_unknown_fields)]
+pub struct PreferencesPatch {
+    #[serde(
+        rename = "defaultConnectionId",
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    #[doc = "`default_connection_id` member; see its generated type and parent schema."]
+    pub default_connection_id: ::std::option::Option<PreferenceChange>,
+    #[serde(
+        rename = "selectedSessionId",
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    #[doc = "`selected_session_id` member; see its generated type and parent schema."]
+    pub selected_session_id: ::std::option::Option<PreferenceChange>,
+}
 #[doc = "`PreferencesRequest`"]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct PreferencesRequest {
     #[doc = "`kind` member; see its generated type and parent schema."]
     pub kind: PreferencesRequestKind,
-    #[doc = "`preferences` member; see its generated type and parent schema."]
-    pub preferences: UserPreferences,
+    #[doc = "`patch` member; see its generated type and parent schema."]
+    pub patch: PreferencesPatch,
     #[serde(rename = "schemaVersion")]
     #[doc = "`schema_version` member; see its generated type and parent schema."]
     pub schema_version: PreferencesRequestSchemaVersion,
@@ -13259,6 +13296,16 @@ impl std::fmt::Debug for Outcome {
 impl std::fmt::Debug for PageQuery {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(stringify!(PageQuery), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for PreferenceChange {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(PreferenceChange), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for PreferencesPatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(PreferencesPatch), "([redacted])"))
     }
 }
 impl std::fmt::Debug for PreferencesRequest {
