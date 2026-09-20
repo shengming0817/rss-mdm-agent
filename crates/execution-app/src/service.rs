@@ -22,7 +22,7 @@ pub struct ExecutionApp<H, R> {
     pub(crate) store: Store,
     pub(crate) host: H,
     runner: R,
-    pub(crate) binding: Binding,
+    pub(crate) binding: ServiceBinding,
     pub(crate) config: Configuration,
 }
 impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
@@ -36,7 +36,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         config: AppConfig,
     ) -> Result<Self, Error> {
         let config = Configuration::new(config)?;
-        let binding = host.binding()?;
+        let binding = host.service_binding()?;
         if startup == Startup::Production {
             return Err(if matches!(binding.authority, Authority::Test { .. }) {
                 Error::Unbound
@@ -71,15 +71,23 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             config,
         })
     }
-    pub(crate) fn adapter<'a>(&'a self, plan: Option<&'a FrozenPlan>) -> Host<'a, H> {
-        Host::new(&self.host, &self.binding, &self.config).with_plan(plan)
+    pub(crate) fn adapter<'a>(
+        &'a self,
+        context: Option<&'a RequestContext>,
+        plan: Option<&'a FrozenPlan>,
+    ) -> Host<'a, H> {
+        Host::new(&self.host, &self.binding, &self.config, context).with_plan(plan)
     }
-    fn check_binding(&self, plan: &FrozenPlan) -> Result<(), Error> {
-        let actual = self.host.binding()?;
+    fn check_binding(
+        &self,
+        context: Option<&RequestContext>,
+        plan: &FrozenPlan,
+    ) -> Result<(), Error> {
+        let actual = self.host.service_binding()?;
         let p = &plan.spec().request;
         if actual != self.binding
             || p.authority != actual.authority
-            || p.actor != actual.actor
+            || context.is_some_and(|caller| p.actor != caller.actor)
             || p.target.device != actual.device
         {
             return Err(Error::Denied);
@@ -88,23 +96,26 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
     }
     pub(crate) fn load(
         &self,
+        context: Option<&RequestContext>,
         request: &RequestId,
         access: ExecutionAccess<'_>,
     ) -> Result<Execution, Error> {
         let execution = self
             .store
-            .execution_by_request(request, access, &self.adapter(None))?
+            .execution_by_request(request, access, &self.adapter(context, None))?
             .execution;
-        self.check_binding(execution.plan())?;
+        self.check_binding(context, execution.plan())?;
         Ok(execution)
     }
     /// Persist a preview without submitting it or obtaining dispatch authority.
     pub fn register_plan(
         &mut self,
+        caller: &RequestContext,
         request: &RequestId,
         plan: &FrozenPlan,
     ) -> Result<ExecutionStatus, Error> {
-        self.check_binding(plan)?;
+        let context = Some(caller);
+        self.check_binding(context, plan)?;
         if request != &plan.spec().request.request_id {
             return Err(Error::Conflict);
         }
@@ -112,48 +123,53 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         self.store.open_execution(
             &op,
             plan,
-            &Host::new(&self.host, &self.binding, &self.config).with_plan(Some(plan)),
+            &Host::new(&self.host, &self.binding, &self.config, context).with_plan(Some(plan)),
         )?;
-        self.status_for(request, ExecutionAccess::Submission)
+        self.status_for(context, request, ExecutionAccess::Submission)
     }
     /// Submit an immutable plan under its original business request ID. Replays return current
     /// durable state without consuming approval, checking new execution policy or dispatching.
     pub fn submit(
         &mut self,
+        caller: &RequestContext,
         request: &RequestId,
         plan: &FrozenPlan,
     ) -> Result<ExecutionStatus, Error> {
-        self.check_binding(plan)?;
+        let context = Some(caller);
+        self.check_binding(context, plan)?;
         if request != &plan.spec().request.request_id {
             return Err(Error::Conflict);
         }
         let operation = operation(plan, "register", "")?;
-        let host = Host::new(&self.host, &self.binding, &self.config).with_plan(Some(plan));
+        let host =
+            Host::new(&self.host, &self.binding, &self.config, context).with_plan(Some(plan));
         let result = self.store.open_execution(&operation, plan, &host)?;
         if matches!(result, CommitOutcome::AlreadyCommitted(_)) {
-            return self.status_for(request, ExecutionAccess::Submission);
+            return self.status_for(context, request, ExecutionAccess::Submission);
         }
-        self.advance(request, &CommandId::initial_attempt())
+        self.advance(caller, request, &CommandId::initial_attempt())
     }
     /// Explicit owner action, distinct from submit replay. Every new attempt rechecks capabilities,
     /// C07 and C08 against current trusted facts and atomically consumes all required approvals.
     pub fn advance(
         &mut self,
+        caller: &RequestContext,
         request: &RequestId,
         command: &CommandId,
     ) -> Result<ExecutionStatus, Error> {
+        let context = Some(caller);
         let config = self.config.active()?;
-        let mut execution = self.load(request, ExecutionAccess::Execute)?;
+        let mut execution = self.load(context, request, ExecutionAccess::Execute)?;
         let op = operation(execution.plan(), "begin", command.as_str())?;
         if let Some(receipt) = self.store.execution_receipt(
             &Scope::from_plan(execution.plan()),
             &op,
-            &self.adapter(None),
+            &self.adapter(context, None),
         )? {
             return if receipt.outcome == Outcome::Stale {
                 Err(Error::Conflict)
             } else {
-                self.status_for(request, ExecutionAccess::Execute)
+                self.status_for(context, request, ExecutionAccess::Execute)
             };
         }
         capabilities(&self.host, execution.plan(), config)?;
@@ -161,13 +177,14 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             && execution.snapshot().preparation != Preparation::Prepared
         {
             self.command(
+                context,
                 &execution,
                 "prepare",
                 command.as_str(),
                 Command::Prepare,
                 &[],
             )?;
-            execution = self.load(request, ExecutionAccess::Execute)?;
+            execution = self.load(context, request, ExecutionAccess::Execute)?;
         }
         if !matches!(
             execution
@@ -180,20 +197,21 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         let scope = Scope::from_plan(execution.plan());
         let revision = self
             .store
-            .trust_revision(&scope, &self.adapter(Some(execution.plan())))?;
+            .trust_revision(&scope, &self.adapter(context, Some(execution.plan())))?;
         let refresh = operation(
             execution.plan(),
             "trust",
             &format!("{}:{revision:?}", command.as_str()),
         )?;
-        let host =
-            Host::new(&self.host, &self.binding, &self.config).with_plan(Some(execution.plan()));
+        let host = Host::new(&self.host, &self.binding, &self.config, context)
+            .with_plan(Some(execution.plan()));
         self.store
             .refresh_trust(&refresh, &scope, revision, &host)?;
         let bindings = self.host.approval_bindings(execution.plan())?;
         let attempt = AttemptId::new(key(execution.plan(), "attempt", command.as_str())?)
             .map_err(|_| Error::InvalidInput)?;
         let result = self.command(
+            context,
             &execution,
             "begin",
             command.as_str(),
@@ -205,7 +223,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             &bindings,
         )?;
         if result.receipt().outcome == Outcome::Rejected {
-            return self.status_for(request, ExecutionAccess::Execute);
+            return self.status_for(context, request, ExecutionAccess::Execute);
         }
         if result.receipt().outcome == Outcome::Stale {
             return Err(Error::Conflict);
@@ -217,17 +235,18 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         {
             self.dispatch(request, action)?;
         }
-        self.status_for(request, ExecutionAccess::Execute)
+        self.status_for(context, request, ExecutionAccess::Execute)
     }
     fn dispatch(&mut self, request: &RequestId, action: DispatchAction) -> Result<(), Error> {
-        let execution = self.load(request, ExecutionAccess::RunnerFact)?;
+        let context = None;
+        let execution = self.load(context, request, ExecutionAccess::RunnerFact)?;
         // Capability verification can take time or overlap another service handle's cancellation.
         // Re-read the protected stop facts and clock after it, immediately before first delivery.
         let capability = self
             .config
             .active()
             .and_then(|config| capabilities(&self.host, execution.plan(), config));
-        let execution = self.load(request, ExecutionAccess::RunnerFact)?;
+        let execution = self.load(context, request, ExecutionAccess::RunnerFact)?;
         let attempt = action.attempt_id().clone();
         let current = execution.snapshot();
         let gate = if let Err(error) = capability {
@@ -293,6 +312,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             },
         };
         self.command(
+            context,
             &execution,
             "dispatch-result",
             attempt.as_str(),
@@ -303,6 +323,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
     }
     fn command(
         &mut self,
+        context: Option<&RequestContext>,
         execution: &Execution,
         stage: &str,
         identity: &str,
@@ -316,7 +337,8 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         } else {
             revision_operation(execution, stage, identity)?
         };
-        let host = Host::new(&self.host, &self.binding, &self.config).with_plan(Some(plan));
+        let host =
+            Host::new(&self.host, &self.binding, &self.config, context).with_plan(Some(plan));
         let event = CommandEvent {
             id: EventId::new(op.as_str()).map_err(|_| Error::InvalidInput)?,
             expected_revision: execution.snapshot().revision,
@@ -332,6 +354,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         attempt_id: &AttemptId,
         facts: &ObservationFacts,
     ) -> Result<CommitOutcome, Error> {
+        let context = None;
         let plan = execution.plan();
         let identity = serde_json::to_string(&facts.evidence).map_err(|_| Error::InvalidInput)?;
         let op = revision_operation(execution, "observe", &identity)?;
@@ -341,7 +364,8 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             attempt_id: attempt_id.clone(),
             evidence: facts.evidence.clone(),
         };
-        let host = Host::new(&self.host, &self.binding, &self.config).with_plan(Some(plan));
+        let host =
+            Host::new(&self.host, &self.binding, &self.config, context).with_plan(Some(plan));
         Ok(self.store.apply_observation(
             &op,
             &Scope::from_plan(plan),
@@ -353,9 +377,10 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
     /// Reconcile facts only, at most termination plus assessment. Missing runner memory stays
     /// uncertain and never produces a new attempt or a synthetic successful observation.
     pub fn reconcile(&mut self, request: &RequestId) -> Result<ExecutionStatus, Error> {
+        let context = None;
         let mut stop_error = None;
         for _ in 0..2 {
-            let mut execution = self.load(request, ExecutionAccess::RunnerFact)?;
+            let mut execution = self.load(context, request, ExecutionAccess::RunnerFact)?;
             if execution.snapshot().attempt.is_none() {
                 break;
             }
@@ -368,7 +393,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                 if let Err(error) = self.stop_and_record(&execution) {
                     stop_error = Some(error);
                 }
-                execution = self.load(request, ExecutionAccess::RunnerFact)?;
+                execution = self.load(context, request, ExecutionAccess::RunnerFact)?;
             }
             let Some(attempt) = execution.snapshot().attempt.as_ref() else {
                 break;
@@ -400,6 +425,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                     && !matches!(attempt.dispatch, DispatchState::Unknown { .. })
                 {
                     self.command(
+                        context,
                         &execution,
                         "recover",
                         attempt.id.as_str(),
@@ -414,7 +440,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                 return Err(Error::InvalidInput);
             }
         }
-        let status = self.status_for(request, ExecutionAccess::RunnerFact)?;
+        let status = self.status_for(context, request, ExecutionAccess::RunnerFact)?;
         match stop_error {
             Some(error) => Err(error),
             None => Ok(status),
@@ -422,22 +448,29 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
     }
     /// Persist a cancellation request under Execute only. The independently scheduled owner
     /// reconcile requests stop and records runner facts; this response is not termination evidence.
-    pub fn cancel(&mut self, request: &RequestId) -> Result<ExecutionStatus, Error> {
+    pub fn cancel(
+        &mut self,
+        caller: &RequestContext,
+        request: &RequestId,
+    ) -> Result<ExecutionStatus, Error> {
+        let context = Some(caller);
         for _ in 0..3 {
-            let execution = self.load(request, ExecutionAccess::Execute)?;
+            let execution = self.load(context, request, ExecutionAccess::Execute)?;
             if !execution.snapshot().cancel_requested {
-                let result = self.command(&execution, "cancel", "", Command::Cancel, &[])?;
+                let result =
+                    self.command(context, &execution, "cancel", "", Command::Cancel, &[])?;
                 if result.receipt().outcome == Outcome::Rejected {
                     return Err(Error::Conflict);
                 }
                 // Return only after a current read confirms durable cancellation.
                 continue;
             }
-            return self.status_for(request, ExecutionAccess::Execute);
+            return self.status_for(context, request, ExecutionAccess::Execute);
         }
         Err(Error::Conflict)
     }
     fn stop_and_record(&mut self, execution: &Execution) -> Result<(), Error> {
+        let context = None;
         self.authorize_runner(execution.plan(), Access::RunnerFact)?;
         let attempt = execution
             .snapshot()
@@ -453,6 +486,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             return Ok(());
         }
         let result = self.command(
+            context,
             execution,
             "stop-result",
             attempt.id.as_str(),
@@ -468,7 +502,8 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         Ok(())
     }
     fn authorize_runner(&self, plan: &FrozenPlan, access: Access) -> Result<(), Error> {
-        self.adapter(Some(plan)).authorize(AccessRequest {
+        let context = None;
+        self.adapter(context, Some(plan)).authorize(AccessRequest {
             access,
             scope: &Scope::from_plan(plan),
             consumer: None,
@@ -477,34 +512,80 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         Ok(())
     }
     /// Current authenticated read. Test provenance is never upgraded to real execution success.
-    pub fn status(&self, request: &RequestId) -> Result<ExecutionStatus, Error> {
-        self.status_for(request, ExecutionAccess::Result)
+    pub fn status(
+        &self,
+        caller: &RequestContext,
+        request: &RequestId,
+    ) -> Result<ExecutionStatus, Error> {
+        let context = Some(caller);
+        self.status_for(context, request, ExecutionAccess::Result)
     }
     /// Authorized coherent task details from one protected record; no privileged audit read.
-    pub fn task_details(&self, request: &RequestId) -> Result<crate::ExecutionTaskDetails, Error> {
-        self.details_for(request, ExecutionAccess::Result)
+    pub fn task_details(
+        &self,
+        caller: &RequestContext,
+        request: &RequestId,
+    ) -> Result<crate::ExecutionTaskDetails, Error> {
+        let context = Some(caller);
+        self.details_for(context, request, ExecutionAccess::Result)
     }
     /// Trusted Rust composition read of the original plan. Contains private launch inputs;
     /// UI/model transports must expose only task_details, never serialize this value.
-    pub fn frozen_plan(&self, request: &RequestId) -> Result<FrozenPlan, Error> {
-        Ok(self.load(request, ExecutionAccess::Result)?.plan().clone())
+    pub fn frozen_plan(
+        &self,
+        caller: &RequestContext,
+        request: &RequestId,
+    ) -> Result<FrozenPlan, Error> {
+        let context = Some(caller);
+        Ok(self
+            .load(context, request, ExecutionAccess::Result)?
+            .plan()
+            .clone())
     }
-    /// Authorized bounded task page for this exact actor and device.
-    pub fn tasks(&self, after: Option<&RequestId>, limit: usize) -> Result<crate::TaskPage, Error> {
-        if self.host.binding()? != self.binding {
-            return Err(Error::Denied);
-        }
-        let page = self.store.execution_requests(
-            &self.binding.actor,
+    /// Internal device-owner recovery page; never exposed as a UI/model operation.
+    pub fn service_tasks(
+        &self,
+        after: Option<&RequestId>,
+        limit: usize,
+    ) -> Result<crate::TaskPage, Error> {
+        let page = self.store.device_execution_requests(
             &self.binding.device,
             after,
             limit,
-            &self.adapter(None),
+            &self.adapter(None, None),
         )?;
         let items = page
             .requests
             .iter()
-            .map(|id| self.task_details(id))
+            .map(|id| self.details_for(None, id, ExecutionAccess::RunnerFact))
+            .collect::<Result<_, _>>()?;
+        Ok(crate::TaskPage {
+            items,
+            next: page.next,
+        })
+    }
+    /// Authorized bounded task page for this exact actor and device.
+    pub fn tasks(
+        &self,
+        caller: &RequestContext,
+        after: Option<&RequestId>,
+        limit: usize,
+    ) -> Result<crate::TaskPage, Error> {
+        let context = Some(caller);
+        if self.host.service_binding()? != self.binding {
+            return Err(Error::Denied);
+        }
+        let page = self.store.execution_requests(
+            &caller.actor,
+            &self.binding.device,
+            after,
+            limit,
+            &self.adapter(context, None),
+        )?;
+        let items = page
+            .requests
+            .iter()
+            .map(|id| self.task_details(caller, id))
             .collect::<Result<_, _>>()?;
         Ok(crate::TaskPage {
             items,
@@ -513,22 +594,24 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
     }
     fn status_for(
         &self,
+        context: Option<&RequestContext>,
         request: &RequestId,
         access: ExecutionAccess<'_>,
     ) -> Result<ExecutionStatus, Error> {
-        self.details_for(request, access)
+        self.details_for(context, request, access)
             .map(|details| details.status)
     }
     fn details_for(
         &self,
+        context: Option<&RequestContext>,
         request: &RequestId,
         access: ExecutionAccess<'_>,
     ) -> Result<crate::ExecutionTaskDetails, Error> {
-        let record = self
-            .store
-            .execution_by_request(request, access, &self.adapter(None))?;
+        let record =
+            self.store
+                .execution_by_request(request, access, &self.adapter(context, None))?;
         let execution = record.execution;
-        self.check_binding(execution.plan())?;
+        self.check_binding(context, execution.plan())?;
         let s = execution.snapshot();
         let assessment = s
             .attempt
@@ -572,7 +655,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                 &Scope::from_plan(execution.plan()),
                 &operation(execution.plan(), "register", "")?,
                 access,
-                &self.adapter(Some(execution.plan())),
+                &self.adapter(context, Some(execution.plan())),
             )?,
             operation_request_id: request.clone(),
             plan_id: s.plan_id.clone(),
@@ -607,12 +690,16 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         self.config.load_failed(mandatory_revision);
     }
     /// Audit an authenticated administrative change before atomic in-memory activation.
-    pub fn replace_configuration(&mut self, next: AppConfig) -> Result<(), Error> {
-        let actual = self.host.binding()?;
+    pub fn replace_configuration(
+        &mut self,
+        caller: &RequestContext,
+        next: AppConfig,
+    ) -> Result<(), Error> {
+        let actual = self.host.service_binding()?;
         if actual != self.binding {
             return Err(Error::Denied);
         }
-        self.config.replace(next, &actual.actor, |change| {
+        self.config.replace(next, &caller.actor, |change| {
             self.host.configuration_change(change)
         })
     }

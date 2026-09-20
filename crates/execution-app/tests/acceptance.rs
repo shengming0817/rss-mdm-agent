@@ -14,13 +14,13 @@ fn preview_registration_is_not_submission_and_submission_replay_never_dispatches
     let mut app = open(&db, host.clone(), runner.clone(), Startup::CreateTest);
     let p = plan();
     let r = &p.spec().request.request_id;
-    assert_eq!(app.register_plan(r, &p).unwrap().attempts, 0);
-    assert_eq!(app.register_plan(r, &p).unwrap().attempts, 0);
+    assert_eq!(app.register_plan(&caller(), r, &p).unwrap().attempts, 0);
+    assert_eq!(app.register_plan(&caller(), r, &p).unwrap().attempts, 0);
     assert_eq!(runner.dispatch_count(), 0);
-    assert_eq!(app.submit(r, &p).unwrap().attempts, 1);
+    assert_eq!(app.submit(&caller(), r, &p).unwrap().attempts, 1);
     app.configuration_load_failed(2);
     host.state.lock().unwrap().accesses = Some(vec![execution_sqlite::Access::ReadResult]);
-    assert_eq!(app.submit(r, &p).unwrap().attempts, 1);
+    assert_eq!(app.submit(&caller(), r, &p).unwrap().attempts, 1);
     assert_eq!(runner.dispatch_count(), 1);
 }
 
@@ -32,9 +32,9 @@ fn task_details_are_authorized_frozen_and_redacted() {
     let p = plan();
     let r = &p.spec().request.request_id;
     let mut app = open(&db, host.clone(), runner.clone(), Startup::CreateTest);
-    app.submit(r, &p).unwrap();
-    let details = app.task_details(r).unwrap();
-    assert_eq!(details.status, app.status(r).unwrap());
+    app.submit(&caller(), r, &p).unwrap();
+    let details = app.task_details(&caller(), r).unwrap();
+    assert_eq!(details.status, app.status(&caller(), r).unwrap());
     assert_eq!(&details.plan.plan_digest, p.digest());
     assert_eq!(details.plan.target, p.spec().request.target);
     assert_eq!(details.plan.run_as, p.spec().run_as);
@@ -56,12 +56,12 @@ fn task_details_are_authorized_frozen_and_redacted() {
     }
     drop(app);
     let app = open(&db, host.clone(), runner, Startup::OpenTest);
-    assert_eq!(app.task_details(r).unwrap().plan, details.plan);
+    assert_eq!(app.task_details(&caller(), r).unwrap().plan, details.plan);
     host.state.lock().unwrap().read = false;
-    assert_eq!(app.task_details(r).unwrap_err(), Error::Denied);
+    assert_eq!(app.task_details(&caller(), r).unwrap_err(), Error::Denied);
     host.state.lock().unwrap().read = true;
     host.state.lock().unwrap().accesses = Some(vec![execution_sqlite::Access::ReadAudit]);
-    assert_eq!(app.task_details(r).unwrap_err(), Error::Denied);
+    assert_eq!(app.task_details(&caller(), r).unwrap_err(), Error::Denied);
 }
 
 #[test]
@@ -72,12 +72,12 @@ fn task_details_recheck_current_binding_after_authorized_record_read() {
     let p = plan();
     let r = &p.spec().request.request_id;
     let mut app = open(&db, host.clone(), runner, Startup::CreateTest);
-    app.submit(r, &p).unwrap();
+    app.submit(&caller(), r, &p).unwrap();
     let changed = host.clone();
     host.state.lock().unwrap().read_hook = Some(std::sync::Arc::new(move || {
-        changed.state.lock().unwrap().actor = ActorId::new("different-actor").unwrap();
+        changed.state.lock().unwrap().bound = false;
     }));
-    assert_eq!(app.task_details(r).unwrap_err(), Error::Denied);
+    assert_eq!(app.task_details(&caller(), r).unwrap_err(), Error::Unbound);
 }
 
 #[test]
@@ -90,46 +90,50 @@ fn action_permissions_do_not_require_result_reading() {
     let p = plan();
     let r = &p.spec().request.request_id;
     let mut app = open(&db, host.clone(), runner, Startup::CreateTest);
-    app.submit(r, &p).unwrap();
-    app.submit(r, &p).unwrap();
+    app.submit(&caller(), r, &p).unwrap();
+    app.submit(&caller(), r, &p).unwrap();
     app.reconcile(r).unwrap();
-    app.cancel(r).unwrap();
-    assert_eq!(app.status(r).unwrap_err(), Error::Denied);
-    let results = app.pull_results(r, &id("consumer"), 64).unwrap();
-    app.confirm(r, &id("consumer"), &results[0].event_id)
+    app.cancel(&caller(), r).unwrap();
+    assert_eq!(app.status(&caller(), r).unwrap_err(), Error::Denied);
+    let results = app.pull_results(&caller(), r, &id("consumer"), 64).unwrap();
+    app.confirm(&caller(), r, &id("consumer"), &results[0].event_id)
         .unwrap();
-    app.audit(r, &results[0].operation_id).unwrap();
+    app.audit(&caller(), r, &results[0].operation_id).unwrap();
     use execution_sqlite::Access;
     host.state.lock().unwrap().accesses = Some(vec![Access::ReadAudit]);
-    app.audit(r, &results[0].operation_id).unwrap();
-    assert_eq!(app.cancel(r).unwrap_err(), Error::Denied);
+    app.audit(&caller(), r, &results[0].operation_id).unwrap();
+    assert_eq!(app.cancel(&caller(), r).unwrap_err(), Error::Denied);
     assert_eq!(app.reconcile(r).unwrap_err(), Error::Denied);
     assert_eq!(
-        app.pull_results(r, &id("consumer"), 64).unwrap_err(),
+        app.pull_results(&caller(), r, &id("consumer"), 64)
+            .unwrap_err(),
         Error::Denied
     );
     host.state.lock().unwrap().accesses = Some(vec![Access::Deliver]);
     host.state.lock().unwrap().consumer = Some(id("consumer"));
-    app.pull_results(r, &id("consumer"), 64).unwrap();
-    app.confirm(r, &id("consumer"), &results[0].event_id)
+    app.pull_results(&caller(), r, &id("consumer"), 64).unwrap();
+    app.confirm(&caller(), r, &id("consumer"), &results[0].event_id)
         .unwrap();
     assert_eq!(
-        app.pull_results(r, &id("other"), 64).unwrap_err(),
-        Error::Denied
-    );
-    assert_eq!(
-        app.confirm(r, &id("other"), &results[0].event_id)
+        app.pull_results(&caller(), r, &id("other"), 64)
             .unwrap_err(),
         Error::Denied
     );
     assert_eq!(
-        app.audit(r, &results[0].operation_id).unwrap_err(),
+        app.confirm(&caller(), r, &id("other"), &results[0].event_id)
+            .unwrap_err(),
+        Error::Denied
+    );
+    assert_eq!(
+        app.audit(&caller(), r, &results[0].operation_id)
+            .unwrap_err(),
         Error::Denied
     );
     host.state.lock().unwrap().accesses = Some(vec![Access::Interact]);
     use execution_interaction::{Command, ConfirmationPurpose, Kind, Reference, Response};
     let interaction = Reference::new("question").unwrap();
     app.open_interaction(
+        &caller(),
         r,
         interaction.clone(),
         Kind::UserConfirmation {
@@ -142,16 +146,20 @@ fn action_permissions_do_not_require_result_reading() {
         id: Reference::new("answer").unwrap(),
         response: Response::Confirmation { accepted: true },
     };
-    app.respond(r, &command("answer"), &interaction, &answer)
+    app.respond(&caller(), r, &command("answer"), &interaction, &answer)
         .unwrap();
-    app.respond(r, &command("answer"), &interaction, &answer)
+    app.respond(&caller(), r, &command("answer"), &interaction, &answer)
         .unwrap();
-    assert_eq!(app.interaction(r, &interaction).unwrap_err(), Error::Denied);
+    assert_eq!(
+        app.interaction(&caller(), r, &interaction).unwrap_err(),
+        Error::Denied
+    );
     host.state.lock().unwrap().read = true;
     host.state.lock().unwrap().accesses = Some(vec![Access::ReadResult]);
-    app.submit(r, &p).unwrap(); // read-only replay still cannot execute or consume approvals
+    app.submit(&caller(), r, &p).unwrap(); // read-only replay still cannot execute or consume approvals
     assert_eq!(
-        app.advance(r, &command("new-attempt")).unwrap_err(),
+        app.advance(&caller(), r, &command("new-attempt"))
+            .unwrap_err(),
         Error::Denied
     );
 }
@@ -165,9 +173,9 @@ fn execute_only_cancel_and_runner_fact_only_reconcile_are_separate() {
     let p = plan();
     let r = &p.spec().request.request_id;
     let mut app = open(&db, host.clone(), runner.clone(), Startup::CreateTest);
-    let accepted = app.submit(r, &p).unwrap();
+    let accepted = app.submit(&caller(), r, &p).unwrap();
     host.state.lock().unwrap().accesses = Some(vec![Access::Execute]);
-    let cancelled = app.cancel(r).unwrap();
+    let cancelled = app.cancel(&caller(), r).unwrap();
     assert!(cancelled.cancel_requested);
     assert_eq!(cancelled.stop_outcome, None);
     assert!(runner
@@ -188,7 +196,7 @@ fn execute_only_cancel_and_runner_fact_only_reconcile_are_separate() {
         Some(execution_lifecycle::StopOutcome::Acknowledged)
     );
     assert_eq!(result.evidence.len(), 2);
-    assert_eq!(app.cancel(r).unwrap_err(), Error::Denied);
+    assert_eq!(app.cancel(&caller(), r).unwrap_err(), Error::Denied);
 }
 
 #[test]
@@ -200,11 +208,11 @@ fn failed_stop_diagnostic_write_still_allows_terminal_fact_writes() {
     let p = plan();
     let r = &p.spec().request.request_id;
     let mut app = open(&db, host, runner, Startup::CreateTest);
-    app.submit(r, &p).unwrap();
-    app.cancel(r).unwrap();
+    app.submit(&caller(), r, &p).unwrap();
+    app.cancel(&caller(), r).unwrap();
     db.sql().execute_batch("CREATE TRIGGER fail_stop BEFORE UPDATE OF snapshot ON executions WHEN json_extract(CAST(NEW.snapshot AS TEXT), '$.lastEvent.event.command.kind')='stopReported' BEGIN SELECT RAISE(ABORT, 'fixture stop write failure'); END;").unwrap();
     assert_eq!(app.reconcile(r).unwrap_err(), Error::Conflict);
-    let status = app.status(r).unwrap();
+    let status = app.status(&caller(), r).unwrap();
     assert!(status.cancel_requested);
     assert_eq!(status.phase, TaskPhase::TestCompleted);
     assert_eq!(status.evidence.len(), 2);
@@ -240,7 +248,7 @@ fn dispatch_gate_detects_reconciliation_winning_the_revision() {
             );
         }),
     ));
-    let status = app.submit(&r, &p).unwrap();
+    let status = app.submit(&caller(), &r, &p).unwrap();
     assert_eq!(
         status.dispatch_cause,
         Some(execution_lifecycle::DispatchCause::StaleRevision)
@@ -261,7 +269,7 @@ fn admission_rejection_is_consistent_on_replay_and_restart() {
         let p = plan();
         let r = &p.spec().request.request_id;
         let mut app = open(&db, host.clone(), runner.clone(), Startup::CreateTest);
-        let initial = app.submit(r, &p);
+        let initial = app.submit(&caller(), r, &p);
         let expected = if approval {
             TaskPhase::ApprovalRequired
         } else {
@@ -269,12 +277,12 @@ fn admission_rejection_is_consistent_on_replay_and_restart() {
         };
         assert_eq!(initial.as_ref().unwrap().phase, expected);
         host.state.lock().unwrap().audit = false;
-        assert_eq!(app.status(r), initial);
-        assert_eq!(app.submit(r, &p), initial);
-        assert_eq!(app.status(r), initial);
+        assert_eq!(app.status(&caller(), r), initial);
+        assert_eq!(app.submit(&caller(), r, &p), initial);
+        assert_eq!(app.status(&caller(), r), initial);
         drop(app);
         let mut app = open(&db, host, runner.clone(), Startup::OpenTest);
-        assert_eq!(app.submit(r, &p), initial);
+        assert_eq!(app.submit(&caller(), r, &p), initial);
         assert_eq!(runner.dispatch_count(), 0);
     }
 }
@@ -346,7 +354,7 @@ fn stop_failure_does_not_prevent_termination_and_effect_observation() {
         AppConfig::test_defaults(1),
     )
     .unwrap();
-    app.submit(r, &p).unwrap();
+    app.submit(&caller(), r, &p).unwrap();
     host.state.lock().unwrap().now = 2000;
     let status = app.reconcile(r).unwrap();
     assert_eq!(status.phase, TaskPhase::TestCompleted);
@@ -356,11 +364,11 @@ fn stop_failure_does_not_prevent_termination_and_effect_observation() {
         Some(execution_lifecycle::StopOutcome::Failed)
     );
     let diagnostics: Vec<_> = app
-        .pull_results(r, &id("diagnostic"), 64)
+        .pull_results(&caller(), r, &id("diagnostic"), 64)
         .unwrap()
         .into_iter()
         .map(|r| {
-            app.audit(&p.spec().request.request_id, &r.operation_id)
+            app.audit(&caller(), &p.spec().request.request_id, &r.operation_id)
                 .unwrap()
         })
         .filter(|a| a.stop_outcome.is_some())
@@ -372,7 +380,7 @@ fn stop_failure_does_not_prevent_termination_and_effect_observation() {
     let fresh =
         DeterministicTestRunner::new(id("test-runner"), TestScenario::Complete, 16).unwrap();
     let app = open(&db, host, fresh, Startup::OpenTest);
-    assert_eq!(app.status(r).unwrap(), status);
+    assert_eq!(app.status(&caller(), r).unwrap(), status);
 }
 
 fn open(
@@ -426,12 +434,12 @@ fn lost_response_replay_and_reopen_preserve_one_attempt_and_dispatch() {
     let p = plan();
     let request = &p.spec().request.request_id;
     let mut app = open(&db, host.clone(), runner.clone(), Startup::CreateTest);
-    let accepted = app.submit(request, &p).unwrap();
+    let accepted = app.submit(&caller(), request, &p).unwrap();
     assert_eq!(accepted.attempts, 1);
     drop(app);
     let mut app = open(&db, host.clone(), runner.clone(), Startup::OpenTest);
     assert_eq!(
-        app.submit(request, &p).unwrap().attempt_id,
+        app.submit(&caller(), request, &p).unwrap().attempt_id,
         accepted.attempt_id
     );
     assert_eq!(runner.dispatch_count(), 1);
@@ -447,7 +455,10 @@ fn lost_response_replay_and_reopen_preserve_one_attempt_and_dispatch() {
     let mut changed = p.spec().clone();
     changed.budget.max_attempts = 2;
     let changed = FrozenPlan::freeze(changed, &test_store_limits().plan).unwrap();
-    assert_eq!(app.submit(request, &changed).unwrap_err(), Error::Conflict);
+    assert_eq!(
+        app.submit(&caller(), request, &changed).unwrap_err(),
+        Error::Conflict
+    );
 }
 
 #[test]
@@ -465,14 +476,14 @@ fn admission_failure_and_dispatch_gate_never_call_runner() {
         let mut app = open(&db, host, runner.clone(), Startup::CreateTest);
         let p = plan();
         let request = &p.spec().request.request_id;
-        let result = app.submit(request, &p);
+        let result = app.submit(&caller(), request, &p);
         if denial {
             assert_eq!(result.unwrap().phase, TaskPhase::AdmissionDenied);
         }
         assert_eq!(runner.dispatch_count(), 0);
         assert_eq!(db.count("attempts"), if denial { 0 } else { 1 });
         assert_eq!(
-            app.submit(request, &p).unwrap().attempts,
+            app.submit(&caller(), request, &p).unwrap().attempts,
             if denial { 0 } else { 1 }
         );
         assert_eq!(runner.dispatch_count(), 0);
@@ -488,14 +499,17 @@ fn unknown_dispatch_and_lost_runner_memory_never_synthesize_success() {
     let runner =
         DeterministicTestRunner::new(id("test-runner"), TestScenario::Unknown, 16).unwrap();
     let mut app = open(&db, host.clone(), runner.clone(), Startup::CreateTest);
-    assert_eq!(app.submit(r, &p).unwrap().phase, TaskPhase::OutcomeUnknown);
+    assert_eq!(
+        app.submit(&caller(), r, &p).unwrap().phase,
+        TaskPhase::OutcomeUnknown
+    );
     assert_eq!(app.reconcile(r).unwrap().phase, TaskPhase::OutcomeUnknown);
     drop(app);
     let fresh =
         DeterministicTestRunner::new(id("test-runner"), TestScenario::Complete, 16).unwrap();
     let mut app = open(&db, host, fresh.clone(), Startup::OpenTest);
     assert_eq!(app.reconcile(r).unwrap().phase, TaskPhase::OutcomeUnknown);
-    app.submit(r, &p).unwrap();
+    app.submit(&caller(), r, &p).unwrap();
     assert_eq!(fresh.dispatch_count(), 0);
     assert_eq!(runner.dispatch_count(), 1);
 }
@@ -508,16 +522,16 @@ fn cancellation_degraded_and_new_attempt_authorization_are_separate() {
     let r = &p.spec().request.request_id;
     let runner = DeterministicTestRunner::new(id("test-runner"), TestScenario::Wait, 16).unwrap();
     let mut app = open(&db, host, runner, Startup::CreateTest);
-    app.submit(r, &p).unwrap();
+    app.submit(&caller(), r, &p).unwrap();
     app.configuration_load_failed(2);
     assert_eq!(app.configuration_state(), ConfigState::Degraded);
     assert_eq!(
-        app.advance(r, &command("retry")).unwrap_err(),
+        app.advance(&caller(), r, &command("retry")).unwrap_err(),
         Error::Degraded
     );
-    assert!(app.cancel(r).unwrap().cancel_requested);
+    assert!(app.cancel(&caller(), r).unwrap().cancel_requested);
     assert_eq!(app.reconcile(r).unwrap().phase, TaskPhase::Cancelled);
-    assert_eq!(app.status(r).unwrap().attempts, 1);
+    assert_eq!(app.status(&caller(), r).unwrap().attempts, 1);
 }
 
 #[test]
@@ -532,16 +546,16 @@ fn transaction_failure_rolls_back_intent_and_approval_before_dispatch() {
     db.sql().execute_batch("CREATE TRIGGER fail_attempt AFTER INSERT ON attempts BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;").unwrap();
     let p = plan();
     let r = &p.spec().request.request_id;
-    assert!(app.submit(r, &p).is_err());
+    assert!(app.submit(&caller(), r, &p).is_err());
     assert_eq!(runner.dispatch_count(), 0);
     assert_eq!(db.count("attempts"), 0);
     assert_eq!(db.count("approval_consumptions"), 0);
     db.sql()
         .execute_batch("DROP TRIGGER fail_attempt;")
         .unwrap();
-    assert_eq!(app.submit(r, &p).unwrap().attempts, 0);
+    assert_eq!(app.submit(&caller(), r, &p).unwrap().attempts, 0);
     assert_eq!(
-        app.advance(r, &CommandId::initial_attempt())
+        app.advance(&caller(), r, &CommandId::initial_attempt())
             .unwrap()
             .attempts,
         1
@@ -568,7 +582,8 @@ fn concurrent_instances_and_result_redelivery_do_not_duplicate_effects() {
                 let mut app = open(db, host, runner, Startup::OpenTest);
                 let p = plan();
                 barrier.wait();
-                app.submit(&p.spec().request.request_id, &p).unwrap()
+                app.submit(&caller(), &p.spec().request.request_id, &p)
+                    .unwrap()
             }));
         }
         for join in joins {
@@ -580,21 +595,27 @@ fn concurrent_instances_and_result_redelivery_do_not_duplicate_effects() {
     let mut app = open(&db, host.clone(), runner.clone(), Startup::OpenTest);
     let p = plan();
     let r = &p.spec().request.request_id;
-    let events = app.pull_results(r, &id("ui"), 64).unwrap();
-    assert_eq!(events, app.pull_results(r, &id("ui"), 64).unwrap());
-    app.confirm(r, &id("ui"), &events.last().unwrap().event_id)
+    let events = app.pull_results(&caller(), r, &id("ui"), 64).unwrap();
+    assert_eq!(
+        events,
+        app.pull_results(&caller(), r, &id("ui"), 64).unwrap()
+    );
+    app.confirm(&caller(), r, &id("ui"), &events.last().unwrap().event_id)
         .unwrap();
     assert_eq!(
-        app.pull_results(r, &id("ui"), 64).unwrap().first(),
+        app.pull_results(&caller(), r, &id("ui"), 64)
+            .unwrap()
+            .first(),
         events.first()
     );
     host.state.lock().unwrap().audit = false;
     assert_eq!(
-        app.audit(r, &events[0].operation_id).unwrap_err(),
+        app.audit(&caller(), r, &events[0].operation_id)
+            .unwrap_err(),
         Error::Denied
     );
     host.state.lock().unwrap().read = false;
-    assert_eq!(app.status(r).unwrap_err(), Error::Denied);
+    assert_eq!(app.status(&caller(), r).unwrap_err(), Error::Denied);
     assert_eq!(runner.dispatch_count(), 1);
 }
 
@@ -611,7 +632,7 @@ fn ordinary_answers_and_model_approval_references_never_grant_authority() {
     let r = &p.spec().request.request_id;
     let reference = |s: &str| Reference::new(s).unwrap();
     assert_eq!(
-        app.submit(r, &p).unwrap().phase,
+        app.submit(&caller(), r, &p).unwrap().phase,
         TaskPhase::ApprovalRequired
     );
     for (name, kind, response) in [
@@ -633,10 +654,11 @@ fn ordinary_answers_and_model_approval_references_never_grant_authority() {
         ),
     ] {
         let interaction = reference(name);
-        app.open_interaction(r, interaction.clone(), kind, 1900)
+        app.open_interaction(&caller(), r, interaction.clone(), kind, 1900)
             .unwrap();
         let receipt = app
             .respond(
+                &caller(),
                 r,
                 &command(name),
                 &interaction,
@@ -648,7 +670,7 @@ fn ordinary_answers_and_model_approval_references_never_grant_authority() {
             .unwrap();
         assert_eq!(receipt.outcome, execution_sqlite::Outcome::Answered);
         assert_eq!(
-            app.advance(r, &command(name)).unwrap().admission,
+            app.advance(&caller(), r, &command(name)).unwrap().admission,
             Some(execution_sqlite::AdmissionStatus::ApprovalRequired)
         );
     }
@@ -656,7 +678,9 @@ fn ordinary_answers_and_model_approval_references_never_grant_authority() {
     assert_eq!(db.count("approval_consumptions"), 0);
     host.grant(1);
     assert_eq!(
-        app.advance(r, &command("trusted-grant")).unwrap().attempts,
+        app.advance(&caller(), r, &command("trusted-grant"))
+            .unwrap()
+            .attempts,
         1
     );
     assert_eq!(db.count("approval_consumptions"), 1);
@@ -674,27 +698,33 @@ fn retry_uses_fresh_policy_and_never_refunds_previous_attempt() {
     let runner =
         DeterministicTestRunner::new(id("test-runner"), TestScenario::NoEffect, 16).unwrap();
     let mut app = open(&db, host.clone(), runner.clone(), Startup::CreateTest);
-    app.submit(r, &p).unwrap();
+    app.submit(&caller(), r, &p).unwrap();
     app.reconcile(r).unwrap();
     host.state.lock().unwrap().allow = false;
     assert_eq!(
-        app.advance(r, &command("retry-denied")).unwrap().admission,
+        app.advance(&caller(), r, &command("retry-denied"))
+            .unwrap()
+            .admission,
         Some(execution_sqlite::AdmissionStatus::Denied)
     );
-    assert_eq!(app.status(r).unwrap().attempts, 1);
+    assert_eq!(app.status(&caller(), r).unwrap().attempts, 1);
     host.state.lock().unwrap().allow = true;
     assert_eq!(
-        app.advance(r, &command("retry-denied")).unwrap().admission,
+        app.advance(&caller(), r, &command("retry-denied"))
+            .unwrap()
+            .admission,
         Some(execution_sqlite::AdmissionStatus::Denied)
     );
     assert_eq!(
-        app.advance(r, &command("retry-allowed")).unwrap().attempts,
+        app.advance(&caller(), r, &command("retry-allowed"))
+            .unwrap()
+            .attempts,
         2
     );
     assert_eq!(runner.dispatch_count(), 2);
     app.reconcile(r).unwrap();
     assert_eq!(
-        app.advance(r, &command("third")).unwrap_err(),
+        app.advance(&caller(), r, &command("third")).unwrap_err(),
         Error::Conflict
     );
 }
@@ -736,7 +766,8 @@ fn committed_intent_process_exit_is_not_reissued_after_restart() {
         )
         .unwrap();
         let p = plan();
-        app.submit(&p.spec().request.request_id, &p).unwrap();
+        app.submit(&caller(), &p.spec().request.request_id, &p)
+            .unwrap();
         unreachable!();
     }
     let db = Database::new();
@@ -756,7 +787,7 @@ fn committed_intent_process_exit_is_not_reissued_after_restart() {
     let mut app = open(&db, host, runner.clone(), Startup::OpenTest);
     let p = plan();
     let r = &p.spec().request.request_id;
-    assert_eq!(app.submit(r, &p).unwrap().attempts, 1);
+    assert_eq!(app.submit(&caller(), r, &p).unwrap().attempts, 1);
     assert_eq!(app.reconcile(r).unwrap().phase, TaskPhase::OutcomeUnknown);
     assert_eq!(runner.dispatch_count(), 0);
 }
@@ -796,13 +827,16 @@ fn human_ai_and_policy_use_the_same_actor_authorization_and_test_provenance() {
             let r = &p.spec().request.request_id;
             let mut app = open(&db, host, runner.clone(), Startup::CreateTest);
             if allow {
-                app.submit(r, &p).unwrap();
+                app.submit(&caller(), r, &p).unwrap();
                 assert_eq!(
                     app.reconcile(r).unwrap().mode,
                     execution_lifecycle::ExecutionMode::Test
                 );
             } else {
-                assert_eq!(app.submit(r, &p).unwrap().phase, TaskPhase::AdmissionDenied);
+                assert_eq!(
+                    app.submit(&caller(), r, &p).unwrap().phase,
+                    TaskPhase::AdmissionDenied
+                );
             }
             assert_eq!(runner.dispatch_count(), usize::from(allow));
         }
@@ -818,10 +852,11 @@ fn scope_conflicts_capability_failure_and_expiry_are_fail_closed() {
     let runner = DeterministicTestRunner::new(id("test-runner"), TestScenario::Wait, 16).unwrap();
     let mut app = open(&db, host.clone(), runner.clone(), Startup::CreateTest);
     host.state.lock().unwrap().capability = false;
-    assert_eq!(app.submit(r, &p).unwrap_err(), Error::Capability);
-    assert_eq!(app.status(r).unwrap().attempts, 0);
+    assert_eq!(app.submit(&caller(), r, &p).unwrap_err(), Error::Capability);
+    assert_eq!(app.status(&caller(), r).unwrap().attempts, 0);
     host.state.lock().unwrap().capability = true;
-    app.advance(r, &CommandId::initial_attempt()).unwrap();
+    app.advance(&caller(), r, &CommandId::initial_attempt())
+        .unwrap();
     host.state.lock().unwrap().now = 2000;
     let stopped = app.reconcile(r).unwrap();
     assert_eq!(
@@ -829,12 +864,14 @@ fn scope_conflicts_capability_failure_and_expiry_are_fail_closed() {
         Some(execution_lifecycle::EffectAssessment::NoEffect)
     );
     assert_eq!(
-        app.advance(r, &command("expired")).unwrap_err(),
+        app.advance(&caller(), r, &command("expired")).unwrap_err(),
         Error::Capability
     );
-    host.state.lock().unwrap().actor = ActorId::new("other-actor").unwrap();
-    assert_eq!(app.status(r).unwrap_err(), Error::Denied);
-    assert_eq!(app.submit(r, &p).unwrap_err(), Error::Denied);
+    let other = RequestContext {
+        actor: ActorId::new("other-actor").unwrap(),
+    };
+    assert_eq!(app.status(&other, r).unwrap_err(), Error::Denied);
+    assert_eq!(app.submit(&other, r, &p).unwrap_err(), Error::Denied);
     assert_eq!(runner.dispatch_count(), 1);
 }
 
@@ -867,19 +904,28 @@ fn dispatch_gate_rechecks_cancel_and_deadline_after_capability_verification() {
                         AppConfig::test_defaults(1),
                     )
                     .unwrap();
-                    assert!(other.cancel(&other_request).unwrap().cancel_requested);
+                    assert!(
+                        other
+                            .cancel(&caller(), &other_request)
+                            .unwrap()
+                            .cancel_requested
+                    );
                 } else {
                     other_host.state.lock().unwrap().now = 1010;
                 }
             }),
         ));
-        app.submit(&r, &p).unwrap();
+        app.submit(&caller(), &r, &p).unwrap();
         assert_eq!(runner.dispatch_count(), 0, "cancellation={cancellation}");
         let causes: Vec<_> = app
-            .pull_results(&r, &id("diagnostic"), 64)
+            .pull_results(&caller(), &r, &id("diagnostic"), 64)
             .unwrap()
             .into_iter()
-            .filter_map(|receipt| app.audit(&r, &receipt.operation_id).unwrap().dispatch_cause)
+            .filter_map(|receipt| {
+                app.audit(&caller(), &r, &receipt.operation_id)
+                    .unwrap()
+                    .dispatch_cause
+            })
             .collect();
         assert_eq!(causes.len(), 1);
         assert_eq!(
@@ -901,7 +947,7 @@ fn stale_cancel_is_rebased_and_not_permanently_replayed_as_success() {
     let r = p.spec().request.request_id.clone();
     let runner = DeterministicTestRunner::new(id("test-runner"), TestScenario::Wait, 16).unwrap();
     let mut app = open(&db, host.clone(), runner.clone(), Startup::CreateTest);
-    app.submit(&r, &p).unwrap();
+    app.submit(&caller(), &r, &p).unwrap();
     let path = db.path.clone();
     let other_host = host.clone();
     let other_runner = runner.clone();
@@ -917,8 +963,8 @@ fn stale_cancel_is_rebased_and_not_permanently_replayed_as_success() {
         .unwrap();
         other.reconcile(&other_request).unwrap(); // durable Recover advances the revision of the running wait
     }));
-    assert!(app.cancel(&r).unwrap().cancel_requested);
-    assert!(app.cancel(&r).unwrap().cancel_requested);
+    assert!(app.cancel(&caller(), &r).unwrap().cancel_requested);
+    assert!(app.cancel(&caller(), &r).unwrap().cancel_requested);
     assert_eq!(runner.dispatch_count(), 1);
 }
 
@@ -930,7 +976,7 @@ fn read_permission_cannot_invoke_runner_recovery() {
     let r = &p.spec().request.request_id;
     let runner = DeterministicTestRunner::new(id("test-runner"), TestScenario::Wait, 16).unwrap();
     let mut app = open(&db, host.clone(), runner.clone(), Startup::CreateTest);
-    let accepted = app.submit(r, &p).unwrap();
+    let accepted = app.submit(&caller(), r, &p).unwrap();
     host.state.lock().unwrap().now = 2000; // recovery would request stop if authorized
     host.state.lock().unwrap().runner_facts = false;
     assert_eq!(app.reconcile(r).unwrap_err(), Error::Denied);
@@ -965,7 +1011,7 @@ fn same_observation_can_commit_after_a_concurrent_cancel_advances_revision() {
     let r = p.spec().request.request_id.clone();
     let runner = DeterministicTestRunner::new(id("test-runner"), TestScenario::Wait, 16).unwrap();
     let mut app = open(&db, host.clone(), runner.clone(), Startup::CreateTest);
-    app.submit(&r, &p).unwrap();
+    app.submit(&caller(), &r, &p).unwrap();
     let path = db.path.clone();
     let other_host = host.clone();
     let other_runner = runner.clone();
@@ -979,7 +1025,7 @@ fn same_observation_can_commit_after_a_concurrent_cancel_advances_revision() {
             AppConfig::test_defaults(1),
         )
         .unwrap();
-        other.cancel(&other_request).unwrap();
+        other.cancel(&caller(), &other_request).unwrap();
     }));
     app.reconcile(&r).unwrap();
     let completed = app.reconcile(&r).unwrap();
@@ -1014,14 +1060,16 @@ fn unconfirmed_dispatch_audit_preserves_attempt_and_closed_cause_after_restart()
         }
         let runner = DeterministicTestRunner::new(id("test-runner"), scenario, 16).unwrap();
         let mut app = open(&db, host.clone(), runner.clone(), Startup::CreateTest);
-        let accepted = app.submit(r, &p).unwrap();
+        let accepted = app.submit(&caller(), r, &p).unwrap();
         assert_eq!(accepted.phase, TaskPhase::OutcomeUnknown);
         drop(app);
         let app = open(&db, host, runner, Startup::OpenTest);
-        let records = app.pull_results(r, &id("audit-consumer"), 64).unwrap();
+        let records = app
+            .pull_results(&caller(), r, &id("audit-consumer"), 64)
+            .unwrap();
         let mut causes = vec![];
         for receipt in records {
-            let audit = app.audit(r, &receipt.operation_id).unwrap();
+            let audit = app.audit(&caller(), r, &receipt.operation_id).unwrap();
             if let Some(cause) = audit.dispatch_cause {
                 assert_eq!(audit.attempt_id, accepted.attempt_id);
                 assert_eq!(receipt.attempt_id, accepted.attempt_id);
@@ -1029,7 +1077,10 @@ fn unconfirmed_dispatch_audit_preserves_attempt_and_closed_cause_after_restart()
             }
         }
         assert_eq!(causes, vec![expected]);
-        assert_eq!(app.status(r).unwrap().dispatch_cause, Some(expected));
+        assert_eq!(
+            app.status(&caller(), r).unwrap().dispatch_cause,
+            Some(expected)
+        );
     }
 }
 
@@ -1055,13 +1106,48 @@ fn dispatch_gate_clock_and_authority_failures_remain_distinct_after_restart() {
         let p = plan();
         let r = &p.spec().request.request_id;
         let mut app = open(&db, host.clone(), runner.clone(), Startup::CreateTest);
-        let status = app.submit(r, &p).unwrap();
+        let status = app.submit(&caller(), r, &p).unwrap();
         assert_eq!(status.dispatch_cause, Some(expected));
         assert_eq!(status.phase, TaskPhase::OutcomeUnknown);
         assert_eq!(status.assessment, None);
         assert_eq!(runner.dispatch_count(), 0);
         drop(app);
         let app = open(&db, host, runner, Startup::OpenTest);
-        assert_eq!(app.status(r).unwrap(), status);
+        assert_eq!(app.status(&caller(), r).unwrap(), status);
     }
+}
+
+#[test]
+fn one_device_service_accepts_distinct_callers_without_reopening_storage() {
+    let db = Database::new();
+    let host = TestHost::new();
+    let runner = DeterministicTestRunner::new(id("shared-runner"), TestScenario::Wait, 16).unwrap();
+    let mut app = open(&db, host.clone(), runner, Startup::CreateTest);
+    let first = plan();
+    app.register_plan(&caller(), &first.spec().request.request_id, &first)
+        .unwrap();
+    let mut second = first.spec().clone();
+    second.plan_id = PlanId::new("second-plan").unwrap();
+    second.request.request_id = request("second-request");
+    second.request.actor = ActorId::new("second-user").unwrap();
+    host.state.lock().unwrap().actor = second.request.actor.clone();
+    let second = FrozenPlan::freeze(second, &execution_app::test_store_limits().plan).unwrap();
+    app.register_plan(
+        &RequestContext {
+            actor: second.spec().request.actor.clone(),
+        },
+        &second.spec().request.request_id,
+        &second,
+    )
+    .unwrap();
+    assert_eq!(db.count("executions"), 2);
+    assert!(app
+        .task_details(&caller(), &first.spec().request.request_id)
+        .is_ok());
+    assert_eq!(
+        app.task_details(&caller(), &second.spec().request.request_id)
+            .unwrap_err(),
+        Error::Denied
+    );
+    assert_eq!(app.tasks(&caller(), None, 128).unwrap().items.len(), 1);
 }

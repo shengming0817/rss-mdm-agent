@@ -39,8 +39,6 @@ pub struct DesktopRuntime {
     pub execution: ExecutionHandle,
     pub users: Arc<std::sync::Mutex<super::users::Users>>,
     pub vault: Arc<std::sync::Mutex<super::credentials::Vault>>,
-    scopes: Arc<std::sync::Mutex<BTreeMap<String, ExecutionHandle>>>,
-    root: PathBuf,
     switching: Mutex<()>,
     socket: PathBuf,
     child: Mutex<Option<Child>>,
@@ -91,17 +89,8 @@ impl DesktopRuntime {
         let vault = Arc::new(std::sync::Mutex::new(
             super::credentials::Vault::open(root).map_err(|_| "credential registry unavailable")?,
         ));
-        let scopes = Arc::new(std::sync::Mutex::new(BTreeMap::new()));
-        for user in &users.lock().map_err(|_| "user registry lock")?.page().users {
-            let binding = super::origin::AiBinding::for_user(user.user_id.as_str())?;
-            let handle = ExecutionHandle::start(&root.join("execution.sqlite"), binding)?;
-            scopes
-                .lock()
-                .map_err(|_| "execution registry lock")?
-                .insert(user.user_id.to_string(), handle);
-        }
+        let execution = ExecutionHandle::start(&root.join("execution.sqlite"))?;
         let (configuration, socket) = configuration(root)?;
-        let execution = ExecutionHandle::router(scopes.clone());
         let mcp_stop = CancellationToken::new();
         super::credentials::serve(
             root.join("credentials.sock"),
@@ -159,8 +148,6 @@ impl DesktopRuntime {
             execution,
             users,
             vault,
-            scopes,
-            root: root.to_path_buf(),
             switching: Mutex::new(()),
             socket,
             child: Mutex::new(child),
@@ -178,12 +165,9 @@ impl DesktopRuntime {
     }
     pub fn execution_for(&self, generation: &str) -> ui::Result<ExecutionHandle> {
         let context = self.current(generation)?;
-        self.scopes
-            .lock()
-            .map_err(|_| unavailable())?
-            .get(context.user.user_id.as_str())
-            .cloned()
-            .ok_or_else(unavailable)
+        self.execution
+            .for_caller(context.user.user_id.as_str())
+            .map_err(|_| unavailable())
     }
     pub async fn select_user(&self, name: &str) -> ui::Result<ai_session_contract::UserContext> {
         let _switch = self.switching.lock().await;
@@ -191,18 +175,8 @@ impl DesktopRuntime {
             let users = self.users.lock().map_err(|_| unavailable())?;
             (users.prepare(name)?, users.page().current)
         };
-        let context = page.current.clone().ok_or_else(unavailable)?;
+        page.current.as_ref().ok_or_else(unavailable)?;
         self.detach_views().await;
-        {
-            let mut scopes = self.scopes.lock().map_err(|_| unavailable())?;
-            if !scopes.contains_key(context.user.user_id.as_str()) {
-                let binding = super::origin::AiBinding::for_user(context.user.user_id.as_str())
-                    .map_err(|_| unavailable())?;
-                let handle = ExecutionHandle::start(&self.root.join("execution.sqlite"), binding)
-                    .map_err(|_| unavailable())?;
-                scopes.insert(context.user.user_id.to_string(), handle);
-            }
-        }
         // Fence the old persistent caller before committing the new native generation.
         // Without a deployed Host there can be no model work; self-service remains available.
         if let Some(previous) = &previous {
@@ -377,14 +351,6 @@ impl DesktopRuntime {
             }
         }
         self.mcp_stop.cancel();
-        let handles = self
-            .scopes
-            .lock()
-            .map(|rows| rows.values().cloned().collect::<Vec<_>>())
-            .unwrap_or_default();
-        for handle in handles {
-            handle.close().await;
-        }
         self.execution.close().await;
     }
 }

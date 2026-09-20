@@ -185,22 +185,30 @@ impl AuthorityVerifier for TestHost {
     }
 }
 impl AppHost for TestHost {
-    fn binding(&self) -> Result<Binding, execution_app::Error> {
+    fn service_binding(&self) -> Result<ServiceBinding, execution_app::Error> {
         let s = self.state.lock().unwrap();
         if !s.bound {
             return Err(execution_app::Error::Unbound);
         }
-        Ok(Binding {
+        Ok(ServiceBinding {
             authority: self.template.spec().request.authority.clone(),
-            actor: s.actor.clone(),
             device: self.template.spec().request.target.device.clone(),
         })
     }
-    fn authorize(&self, r: AccessRequest<'_>) -> Result<(), execution_sqlite::Error> {
+    fn authorize(
+        &self,
+        caller: &RequestContext,
+        r: AccessRequest<'_>,
+    ) -> Result<(), execution_sqlite::Error> {
+        if caller.actor != r.scope.actor {
+            return Err(execution_sqlite::Error::Denied);
+        }
+        self.authorize_service(r)
+    }
+    fn authorize_service(&self, r: AccessRequest<'_>) -> Result<(), execution_sqlite::Error> {
         let mut s = self.state.lock().unwrap();
         if !s.bound
             || r.scope.authority != self.template.spec().request.authority
-            || r.scope.actor != s.actor
             || (r.access == Access::ReadResult && !s.read)
             || (r.access == Access::ReadAudit && !s.audit)
             || (r.access == Access::RunnerFact && !s.runner_facts)
@@ -335,5 +343,11 @@ impl AppHost for TestHost {
             .config_audits
             .push(change.clone());
         Ok(())
+    }
+}
+
+pub fn caller() -> RequestContext {
+    RequestContext {
+        actor: plan().spec().request.actor.clone(),
     }
 }

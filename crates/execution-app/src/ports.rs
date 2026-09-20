@@ -8,13 +8,17 @@ use execution_sqlite::{AccessRequest, TrustSnapshot};
 
 /// Trusted host output; no Deserialize and no wire binding constructor is provided.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Binding {
+pub struct ServiceBinding {
     /// Verified product authority, distinct from OS/provider logins.
     pub authority: Authority,
-    /// Permission-bearing actor.
-    pub actor: ActorId,
     /// Independently bound target device.
     pub device: DeviceId,
+}
+/// Caller verified by trusted ingress for one operation; never a transport/model DTO.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequestContext {
+    /// Permission-bearing product actor, independent of service and provider identities.
+    pub actor: ActorId,
 }
 /// Verified current capability inventory, with independently checked source freshness.
 pub struct CapabilitySnapshot {
@@ -29,10 +33,17 @@ pub struct CapabilitySnapshot {
 /// transactions must be bounded, non-reentrant and use independently verified local snapshots.
 /// C07's verifier must authenticate origin/delegation and never echo submitted plans as allow rules.
 pub trait AppHost: AuthorityVerifier {
-    /// Establish/recheck the actual caller binding; production failure cannot select Test identity.
-    fn binding(&self) -> Result<Binding, Error>;
-    /// Current read/write/answer/admin access. RunnerFact and ManageTrust are internal service actions.
-    fn authorize(&self, request: AccessRequest<'_>) -> Result<(), execution_sqlite::Error>;
+    /// Establish/recheck the device authority; production failure cannot select Test identity.
+    fn service_binding(&self) -> Result<ServiceBinding, Error>;
+    /// Current read/write/answer/admin access for an independently verified caller.
+    fn authorize(
+        &self,
+        caller: &RequestContext,
+        request: AccessRequest<'_>,
+    ) -> Result<(), execution_sqlite::Error>;
+    /// Internal task observation/trust/dispatch operations, independent of UI selection.
+    /// The application supplies a scope loaded from its journal, never an untrusted caller claim.
+    fn authorize_service(&self, request: AccessRequest<'_>) -> Result<(), execution_sqlite::Error>;
     /// Independently reliable UTC; uncertainty/rollback is an error.
     fn reliable_now(&self) -> Result<u64, execution_sqlite::Error>;
     /// Verified capability inventory for the bound plan, never a preview cache.

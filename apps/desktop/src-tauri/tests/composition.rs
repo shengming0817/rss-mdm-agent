@@ -61,7 +61,10 @@ fn submission(plan: &ui::PlanView) -> ui::Submission {
 #[tokio::test]
 async fn ai_cannot_preview_submit_read_or_cancel_a_human_request() {
     let root = directory();
-    let handle = ExecutionHandle::start(&root.join("execution.sqlite"), binding()).unwrap();
+    let handle = ExecutionHandle::start(&root.join("execution.sqlite"))
+        .unwrap()
+        .for_caller(binding().caller.principal_id.as_str())
+        .unwrap();
     let plan = draft(&handle, "human-private", "office").await;
     let details = handle.details(plan.request_id.clone()).await.unwrap();
     let ai = bound(&handle, "conversation-a", "foreign-access");
@@ -101,7 +104,10 @@ async fn ai_cannot_preview_submit_read_or_cancel_a_human_request() {
 async fn shared_durable_service_distinguishes_preview_submission_approval_and_replay() {
     let root = directory();
     let path = root.join("execution.sqlite");
-    let handle = ExecutionHandle::start(&path, binding()).unwrap();
+    let handle = ExecutionHandle::start(&path)
+        .unwrap()
+        .for_caller(binding().caller.principal_id.as_str())
+        .unwrap();
     let plan = draft(&handle, "human-office", "office").await;
     let before = handle.details(plan.request_id.clone()).await.unwrap();
     assert!(!before.status.submitted);
@@ -150,7 +156,10 @@ async fn shared_durable_service_distinguishes_preview_submission_approval_and_re
         execution_app::TaskPhase::TestCompleted
     );
     handle.close().await;
-    let restored = ExecutionHandle::start(&path, binding()).unwrap();
+    let restored = ExecutionHandle::start(&path)
+        .unwrap()
+        .for_caller(binding().caller.principal_id.as_str())
+        .unwrap();
     restored.submit_ui(submission(&plan)).await.unwrap();
     assert_eq!(
         restored
@@ -168,7 +177,10 @@ async fn shared_durable_service_distinguishes_preview_submission_approval_and_re
 async fn ai_origin_is_host_bound_and_recovery_never_redispatches_unknown_attempts() {
     let root = directory();
     let path = root.join("execution.sqlite");
-    let handle = ExecutionHandle::start(&path, binding()).unwrap();
+    let handle = ExecutionHandle::start(&path)
+        .unwrap()
+        .for_caller(binding().caller.principal_id.as_str())
+        .unwrap();
     assert!(Arc::new(handle.clone())
         .bind_call(
             json!({"actor":"admin","approved":true})
@@ -261,7 +273,10 @@ async fn ai_origin_is_host_bound_and_recovery_never_redispatches_unknown_attempt
         .await
         .is_err());
     handle.close().await;
-    let restored = ExecutionHandle::start(&path, binding()).unwrap();
+    let restored = ExecutionHandle::start(&path)
+        .unwrap()
+        .for_caller(binding().caller.principal_id.as_str())
+        .unwrap();
     let ai = bound(&restored, "conversation-a", "submit-delivery");
     let status = ai
         .submit(

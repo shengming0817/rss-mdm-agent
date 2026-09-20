@@ -8,12 +8,14 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
     /// wait reason only, not authorization or an automatic continuation. Host owns responder rights.
     pub fn open_interaction(
         &mut self,
+        caller: &RequestContext,
         request: &RequestId,
         id: Reference,
         kind: Kind,
         expires_at_unix_ms: u64,
     ) -> Result<Receipt, Error> {
-        let execution = self.load(request, ExecutionAccess::Interact)?;
+        let context = Some(caller);
+        let execution = self.load(context, request, ExecutionAccess::Interact)?;
         let plan = execution.plan();
         let scope = Scope::from_plan(plan);
         let op = operation(plan, "interaction-open", id.as_str())?;
@@ -23,7 +25,8 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             kind,
             expires_at_unix_ms,
         };
-        let host = Host::new(&self.host, &self.binding, &self.config).with_plan(Some(plan));
+        let host =
+            Host::new(&self.host, &self.binding, &self.config, context).with_plan(Some(plan));
         Ok(self
             .store
             .open_interaction(&op, &scope, &spec, &host)?
@@ -31,25 +34,36 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             .clone())
     }
     /// Read a pending or resolved interaction; no acknowledgement or execution is implied.
-    pub fn interaction(&self, request: &RequestId, id: &Reference) -> Result<Interaction, Error> {
-        let execution = self.load(request, ExecutionAccess::Result)?;
-        Ok(self
-            .store
-            .interaction(&Scope::from_plan(execution.plan()), id, &self.adapter(None))?)
+    pub fn interaction(
+        &self,
+        caller: &RequestContext,
+        request: &RequestId,
+        id: &Reference,
+    ) -> Result<Interaction, Error> {
+        let context = Some(caller);
+        let execution = self.load(context, request, ExecutionAccess::Result)?;
+        Ok(self.store.interaction(
+            &Scope::from_plan(execution.plan()),
+            id,
+            &self.adapter(context, None),
+        )?)
     }
     /// Answer/cancel/expire through C04/C18. Administrator answers carry references only and
     /// cannot grant approval; a future explicit attempt still needs independently verified C08 facts.
     pub fn respond(
         &mut self,
+        caller: &RequestContext,
         request: &RequestId,
         operation_id: &CommandId,
         id: &Reference,
         command: &Command,
     ) -> Result<Receipt, Error> {
-        let execution = self.load(request, ExecutionAccess::Interact)?;
+        let context = Some(caller);
+        let execution = self.load(context, request, ExecutionAccess::Interact)?;
         let plan = execution.plan();
         let op = operation(plan, "interaction-response", operation_id.as_str())?;
-        let host = Host::new(&self.host, &self.binding, &self.config).with_plan(Some(plan));
+        let host =
+            Host::new(&self.host, &self.binding, &self.config, context).with_plan(Some(plan));
         Ok(self
             .store
             .apply_interaction(&op, &Scope::from_plan(plan), id, command, &host)?
@@ -59,28 +73,32 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
     /// Pull at-least-once results. Processing/transport delivery is not durable acknowledgement.
     pub fn pull_results(
         &self,
+        caller: &RequestContext,
         request: &RequestId,
         consumer: &Id,
         limit: usize,
     ) -> Result<Vec<Receipt>, Error> {
-        let execution = self.load(request, ExecutionAccess::Delivery(consumer))?;
+        let context = Some(caller);
+        let execution = self.load(context, request, ExecutionAccess::Delivery(consumer))?;
         Ok(self.store.pull_results(
             &Scope::from_plan(execution.plan()),
             consumer,
             limit,
-            &self.adapter(None),
+            &self.adapter(context, None),
         )?)
     }
     /// Confirm one exact delivered event after the consumer has durably handled it. Out-of-order
     /// confirmations cannot skip other events and never replay runner effects.
     pub fn confirm(
         &mut self,
+        caller: &RequestContext,
         request: &RequestId,
         consumer: &Id,
         event: &EventId,
     ) -> Result<(), Error> {
-        let execution = self.load(request, ExecutionAccess::Delivery(consumer))?;
-        let host = Host::new(&self.host, &self.binding, &self.config);
+        let context = Some(caller);
+        let execution = self.load(context, request, ExecutionAccess::Delivery(consumer))?;
+        let host = Host::new(&self.host, &self.binding, &self.config, context);
         Ok(self
             .store
             .confirm(&Scope::from_plan(execution.plan()), consumer, event, &host)?)
@@ -89,14 +107,16 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
     /// result delivery rights do not authorize reading policy, approval or actor audit details.
     pub fn audit(
         &self,
+        caller: &RequestContext,
         request: &RequestId,
         operation: &OperationRequestId,
     ) -> Result<AuditRecord, Error> {
-        let execution = self.load(request, ExecutionAccess::Audit)?;
+        let context = Some(caller);
+        let execution = self.load(context, request, ExecutionAccess::Audit)?;
         Ok(self.store.audit(
             &Scope::from_plan(execution.plan()),
             operation,
-            &self.adapter(None),
+            &self.adapter(context, None),
         )?)
     }
 }

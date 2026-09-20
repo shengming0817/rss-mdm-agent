@@ -20,22 +20,19 @@ pub fn reference(s: &str) -> VersionedRef {
 }
 #[derive(Clone)]
 pub struct S1Host {
-    pub ai: super::origin::AiBinding,
     grants: Arc<Mutex<BTreeMap<RequestId, TrustedApproval>>>,
 }
 impl S1Host {
-    pub fn new(ai: super::origin::AiBinding) -> Self {
+    pub fn new() -> Self {
         Self {
-            ai,
             grants: Default::default(),
         }
     }
     pub fn validate(&self, plan: &FrozenPlan) -> Result<(), execution_app::Error> {
         let p = plan.spec();
-        if p.request.actor.as_str() != self.ai.caller.principal_id.as_str() {
-            return Err(execution_app::Error::Denied);
-        }
-        if p.request.initiator != fixtures::human() && !self.ai.validate(&p.request.initiator) {
+        if p.request.initiator != fixtures::human()
+            && !super::origin::AiBinding::validate(&p.request.initiator)
+        {
             return Err(execution_app::Error::Denied);
         }
         let catalog = catalog().map_err(|_| execution_app::Error::Configuration)?;
@@ -84,9 +81,16 @@ impl S1Host {
         Ok(())
     }
     /// Only the trusted desktop approval command calls this; never exposed by MCP.
-    pub fn approve(&self, plan: &FrozenPlan) -> Result<(), execution_app::Error> {
+    pub fn approve(
+        &self,
+        caller: &RequestContext,
+        plan: &FrozenPlan,
+    ) -> Result<(), execution_app::Error> {
         self.validate(plan)?;
         let p = plan.spec();
+        if caller.actor != p.request.actor {
+            return Err(execution_app::Error::Denied);
+        }
         if p.request.operation.resource.id.as_str() != "fixture-office"
             || now()? >= p.validity.expires_at_unix_ms
         {
@@ -149,21 +153,29 @@ impl AuthorityVerifier for S1Host {
     }
 }
 impl AppHost for S1Host {
-    fn binding(&self) -> Result<Binding, execution_app::Error> {
-        Ok(Binding {
+    fn service_binding(&self) -> Result<ServiceBinding, execution_app::Error> {
+        Ok(ServiceBinding {
             authority: Authority::Test {
                 id: id("desktop-fixture"),
             },
-            actor: ActorId::new(self.ai.caller.principal_id.as_str().to_owned())
-                .map_err(|_| execution_app::Error::Denied)?,
             device: DeviceId::new("fixture-device").unwrap(),
         })
     }
-    fn authorize(&self, r: AccessRequest<'_>) -> Result<(), execution_sqlite::Error> {
+    fn authorize(
+        &self,
+        caller: &RequestContext,
+        r: AccessRequest<'_>,
+    ) -> Result<(), execution_sqlite::Error> {
+        if caller.actor != r.scope.actor {
+            return Err(execution_sqlite::Error::Denied);
+        }
+        self.authorize_service(r)
+    }
+    fn authorize_service(&self, r: AccessRequest<'_>) -> Result<(), execution_sqlite::Error> {
         let binding = self
-            .binding()
+            .service_binding()
             .map_err(|_| execution_sqlite::Error::Denied)?;
-        if r.scope.authority != binding.authority || r.scope.actor != binding.actor {
+        if r.scope.authority != binding.authority {
             return Err(execution_sqlite::Error::Denied);
         }
         Ok(())

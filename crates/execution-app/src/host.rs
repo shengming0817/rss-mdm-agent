@@ -5,15 +5,22 @@ use execution_sqlite::{self as db, AccessRequest, AdmissionGate, Scope, TrustSna
 
 pub(crate) struct Host<'a, H> {
     inner: &'a H,
-    binding: &'a Binding,
+    binding: &'a ServiceBinding,
+    caller: Option<&'a RequestContext>,
     config: Option<AppConfig>,
     plan: Option<&'a FrozenPlan>,
 }
 impl<'a, H> Host<'a, H> {
-    pub(crate) fn new(inner: &'a H, binding: &'a Binding, config: &Configuration) -> Self {
+    pub(crate) fn new(
+        inner: &'a H,
+        binding: &'a ServiceBinding,
+        config: &Configuration,
+        caller: Option<&'a RequestContext>,
+    ) -> Self {
         Self {
             inner,
             binding,
+            caller,
             config: config.active().ok(),
             plan: None,
         }
@@ -74,14 +81,22 @@ impl ObservationVerifier for ObservationEvidence<'_> {
 }
 impl<H: AppHost> db::Host for Host<'_, H> {
     fn authorize(&self, request: AccessRequest<'_>) -> Result<(), db::Error> {
-        let actual = self.inner.binding().map_err(|_| db::Error::Denied)?;
+        let actual = self
+            .inner
+            .service_binding()
+            .map_err(|_| db::Error::Denied)?;
         if &actual != self.binding
             || request.scope.authority != actual.authority
-            || request.scope.actor != actual.actor
+            || self
+                .caller
+                .is_some_and(|caller| request.scope.actor != caller.actor)
         {
             return Err(db::Error::Denied);
         }
-        self.inner.authorize(request)
+        match self.caller {
+            Some(caller) => self.inner.authorize(caller, request),
+            None => self.inner.authorize_service(request),
+        }
     }
     fn reliable_now(&self) -> Result<u64, db::Error> {
         self.inner.reliable_now()

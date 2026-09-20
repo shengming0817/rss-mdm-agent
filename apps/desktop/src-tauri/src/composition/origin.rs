@@ -84,7 +84,7 @@ impl AiBinding {
             tool_call: origin.operation_id,
         })
     }
-    pub fn validate(&self, origin: &Initiator) -> bool {
+    pub fn validate(origin: &Initiator) -> bool {
         matches!(origin, Initiator::Ai { provider, os_session: os, .. } if ["codex", "claude", "deepseek"].contains(&provider.as_str()) && os == &os_session())
     }
 }
