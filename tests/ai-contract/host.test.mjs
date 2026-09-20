@@ -1,4 +1,7 @@
-import { activeStage } from "../../packages/ai-contract/dist/index.js";
+import {
+  activeStage,
+  historyPreview,
+} from "../../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
@@ -18,6 +21,11 @@ const options = {
 const budget = () => ({ timeoutMs: 1000, signal: AbortSignal.timeout(1000) });
 test("shared Host conformance runs against fake acceptance and attach", () =>
   runHostConformance(() => new FakeHost()));
+test("history preview validation remains inside the closed Result contract", () => {
+  const result = historyPreview({}, [], [], {}, 0);
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, "invalid_input");
+});
 test("controlled tools fail closed, unsupported steer and stale cancel do not dispatch", async () => {
   const host = new FakeHost();
   assert.equal(

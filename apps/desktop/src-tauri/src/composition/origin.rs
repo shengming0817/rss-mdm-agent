@@ -1,11 +1,9 @@
 //! Non-secret provenance is accepted only on the desktop-owned MCP pipe.
 use execution_contract::*;
 use execution_mcp::ServiceError;
-use serde::Deserialize;
 use serde_json::{Map, Value};
 
-#[derive(Clone, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Clone)]
 pub struct Caller {
     pub tenant_id: Id,
     pub principal_id: Id,
@@ -14,23 +12,6 @@ pub struct Caller {
 #[derive(Clone)]
 pub struct AiBinding {
     pub caller: Caller,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Namespace {
-    tenant_id: Id,
-    principal_id: Id,
-    authority_id: Id,
-    session_id: Id,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Origin {
-    version: u8,
-    namespace: Namespace,
-    operation_id: Id,
-    provider: Id,
-    config: VersionedRef,
 }
 use crate::self_service::fixtures::os_session;
 impl AiBinding {
@@ -44,40 +25,40 @@ impl AiBinding {
         })
     }
     pub fn principal(metadata: &Map<String, Value>) -> Result<String, ServiceError> {
-        let origin: Origin = serde_json::from_value(
+        let origin: ai_session_contract::ExecutionOrigin = serde_json::from_value(
             metadata
                 .get("com.rss-mdm/ai-origin")
                 .ok_or(ServiceError::Denied)?
                 .clone(),
         )
         .map_err(|_| ServiceError::Denied)?;
-        if origin.version != 1 {
-            return Err(ServiceError::Denied);
-        }
         Ok(origin.namespace.principal_id.as_str().to_owned())
     }
     pub fn bind(&self, metadata: &Map<String, Value>) -> Result<Initiator, ServiceError> {
-        let origin: Origin = serde_json::from_value(
+        let origin: ai_session_contract::ExecutionOrigin = serde_json::from_value(
             metadata
                 .get("com.rss-mdm/ai-origin")
                 .ok_or(ServiceError::Denied)?
                 .clone(),
         )
         .map_err(|_| ServiceError::Denied)?;
-        if origin.version != 1
-            || origin.namespace.tenant_id != self.caller.tenant_id
-            || origin.namespace.principal_id != self.caller.principal_id
-            || origin.namespace.authority_id != self.caller.authority_id
-            || !["codex", "claude", "deepseek"].contains(&origin.provider.as_str())
+        if origin.namespace.tenant_id.as_str() != self.caller.tenant_id.as_str()
+            || origin.namespace.principal_id.as_str() != self.caller.principal_id.as_str()
+            || origin.namespace.authority_id.as_str() != self.caller.authority_id.as_str()
         {
             return Err(ServiceError::Denied);
         }
         Ok(Initiator::Ai {
-            provider: origin.provider,
+            provider: Id::new(origin.provider.to_string()).map_err(|_| ServiceError::Denied)?,
             os_session: os_session(),
-            config: origin.config,
-            conversation: origin.namespace.session_id,
-            tool_call: origin.operation_id,
+            config: VersionedRef {
+                id: Id::new(origin.config.id.as_str()).map_err(|_| ServiceError::Denied)?,
+                revision: Id::new(origin.config.revision.as_str())
+                    .map_err(|_| ServiceError::Denied)?,
+            },
+            conversation: Id::new(origin.namespace.session_id.as_str())
+                .map_err(|_| ServiceError::Denied)?,
+            tool_call: Id::new(origin.operation_id.as_str()).map_err(|_| ServiceError::Denied)?,
         })
     }
     pub fn validate(origin: &Initiator) -> bool {

@@ -125,17 +125,17 @@ export class FakeHost implements HostPort {
   ): Promise<Result<HistoryPreview>> {
     const snapshot = await readSnapshot(this.store, { ...caller, sessionId }),
       connection = await this.store.connection(caller, connectionId);
-    return snapshot.ok && connection.ok
-      ? ok(
-          historyPreview(
-            snapshot.value.session,
-            snapshot.value.commands,
-            snapshot.value.events,
-            connection.value,
-            recent,
-          ),
-        )
-      : fail("unavailable");
+    if (!snapshot.ok) return fail(snapshot.error.code, snapshot.error.retry);
+    if (!connection.ok)
+      return fail(connection.error.code, connection.error.retry);
+    if (connection.value.status !== "ready") return fail("connection_required");
+    return historyPreview(
+      snapshot.value.session,
+      snapshot.value.commands,
+      snapshot.value.events,
+      connection.value,
+      recent,
+    );
   }
   async createSession(
     caller: Caller,

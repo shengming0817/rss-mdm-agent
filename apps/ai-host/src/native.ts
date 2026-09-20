@@ -1,13 +1,28 @@
 import { Socket } from "node:net";
 import type { Duplex } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
+import {
+  decode,
+  type NativeCall,
+  type NativeControlFrame,
+  type NativeEvent,
+} from "@rss-mdm-agent/ai-contract";
+import { defaultLimits } from "@rss-mdm-agent/ai-contract/transitions";
+type Method = NativeCall["method"];
+type Call<M extends Method> = Extract<NativeCall, { method: M }>;
+const nativeLimits = {
+  ...defaultLimits,
+  maxBytes: 524288,
+  maxTextBytes: 524288,
+  maxDepth: 64,
+};
 /** Private inherited parent descriptor. Request IDs correlate replies; they grant no authority. */
 export class NativeControl {
   private sequence = 0;
   private pending = new Map<
     number,
     {
-      resolve(value: any): void;
+      resolve(value: unknown): void;
       reject(error: Error): void;
       timer: NodeJS.Timeout;
     }
@@ -17,8 +32,8 @@ export class NativeControl {
   readonly stopped: Promise<void>;
   private finish!: () => void;
   constructor(
-    private readonly request: (method: string, data: any) => Promise<unknown>,
-    private readonly event: (channel: string, message: any) => void,
+    private readonly request: (call: NativeCall) => Promise<unknown>,
+    private readonly event: (event: NativeEvent) => void,
     private readonly socket: Duplex = new Socket({
       fd: 3,
       readable: true,
@@ -38,7 +53,14 @@ export class NativeControl {
           const line = buffer.slice(0, end);
           buffer = buffer.slice(end + 1);
           if (Buffer.byteLength(line) > 524288) throw new Error();
-          this.receive(JSON.parse(line));
+          const frame = decode(line, nativeLimits);
+          if (
+            frame.kind !== "nativeCall" &&
+            frame.kind !== "nativeReply" &&
+            frame.kind !== "nativeEvent"
+          )
+            throw new Error();
+          this.receive(frame);
         }
         if (Buffer.byteLength(buffer) > 524288) throw new Error();
       } catch {
@@ -50,8 +72,8 @@ export class NativeControl {
       .on("end", () => this.close())
       .on("close", () => this.close());
   }
-  private receive(frame: any) {
-    if (frame.type === "reply") {
+  private receive(frame: NativeControlFrame) {
+    if (frame.kind === "nativeReply") {
       const pending = this.pending.get(frame.id);
       if (!pending) return;
       this.pending.delete(frame.id);
@@ -59,20 +81,27 @@ export class NativeControl {
       frame.ok === true
         ? pending.resolve(frame.value)
         : pending.reject(new Error("native unavailable"));
-    } else if (frame.type === "event" && typeof frame.channel === "string") {
-      this.event(frame.channel, frame.message);
-    } else if (
-      frame.type === "call" &&
-      Number.isSafeInteger(frame.id) &&
-      typeof frame.method === "string" &&
-      this.inFlight < 16
-    ) {
+    } else if (frame.kind === "nativeEvent") {
+      this.event(frame);
+    } else if (frame.kind === "nativeCall" && this.inFlight < 16) {
       this.inFlight++;
-      void this.request(frame.method, frame.data)
+      void this.request(frame)
         .then(
           (value) =>
-            this.send({ type: "reply", id: frame.id, ok: true, value }),
-          () => this.send({ type: "reply", id: frame.id, ok: false }),
+            this.send({
+              schemaVersion: 5,
+              kind: "nativeReply",
+              id: frame.id,
+              ok: true,
+              value,
+            }),
+          () =>
+            this.send({
+              schemaVersion: 5,
+              kind: "nativeReply",
+              id: frame.id,
+              ok: false,
+            }),
         )
         .catch(() => this.close())
         .finally(() => {
@@ -80,7 +109,7 @@ export class NativeControl {
         });
     } else throw new Error("invalid native frame");
   }
-  private send(frame: unknown) {
+  private send(frame: NativeControlFrame) {
     const line = JSON.stringify(frame) + "\n";
     if (
       this.ended ||
@@ -91,9 +120,9 @@ export class NativeControl {
     this.socket.write(line);
   }
   emit(channel: string, message: unknown) {
-    this.send({ type: "event", channel, message });
+    this.send({ schemaVersion: 5, kind: "nativeEvent", channel, message });
   }
-  call(method: string, data: unknown): Promise<any> {
+  call<M extends Method>(method: M, data: Call<M>["data"]): Promise<unknown> {
     if (this.ended || this.pending.size >= 16)
       return Promise.reject(new Error("native unavailable"));
     return new Promise((resolve, reject) => {
@@ -104,7 +133,13 @@ export class NativeControl {
       }, 10000);
       this.pending.set(id, { resolve, reject, timer });
       try {
-        this.send({ type: "call", id, method, data });
+        this.send({
+          schemaVersion: 5,
+          kind: "nativeCall",
+          id,
+          method,
+          data,
+        } as Call<M>);
       } catch (error) {
         this.pending.delete(id);
         clearTimeout(timer);

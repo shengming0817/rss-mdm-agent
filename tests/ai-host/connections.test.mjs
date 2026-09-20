@@ -6,10 +6,15 @@ import { join } from "node:path";
 import { createHost } from "../../packages/ai-host/dist/index.js";
 import { openSqliteStore } from "../../packages/ai-store-sqlite/dist/index.js";
 import { activeStage } from "../../packages/ai-contract/dist/index.js";
+import {
+  connectionPersistence,
+  ConnectionSecrets,
+} from "../../apps/ai-host/dist/secrets.js";
+import { suspendNativeCaller } from "../../apps/ai-host/dist/index.js";
 const caller = {
-  tenantId: "test",
+  tenantId: "test-users",
   principalId: "alice",
-  authorityId: "desktop",
+  authorityId: "desktop-fixture",
 };
 const budget = () => ({
   timeoutMs: 5000,
@@ -279,6 +284,25 @@ test("real Host lazily opens phases, drains accepted work before switching, and 
     },
     beforeDelete,
   );
+  await suspendNativeCaller(host, {
+    schemaVersion: 5,
+    kind: "userContext",
+    user: {
+      schemaVersion: 5,
+      kind: "testUser",
+      userId: "alice",
+      displayName: "Alice",
+      nameKey: "alice",
+    },
+    generation: "restored-generation",
+  });
+  host.activateCaller(caller);
+  const beforeDeletedResume = opened;
+  assert.equal(
+    (await host.resume(caller, empty.namespace.sessionId, budget())).error.code,
+    "connection_required",
+  );
+  assert.equal(opened, beforeDeletedResume);
   unwrap(await host.close(budget()));
   assert.equal(disposed, opened, "shutdown releases the active-stage snapshot");
 });
@@ -561,6 +585,91 @@ test("saving a connection requires a completed model probe and preserves the pre
   );
 });
 
+test("application persistence reencrypts retained secrets and lets only one competing revision commit", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "rss-connection-persistence-"));
+  const store = unwrap(
+    openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
+  );
+  const secrets = new ConnectionSecrets(store, async () => Buffer.alloc(32, 9));
+  let available = true;
+  const host = unwrap(
+    await createHost({
+      store,
+      launchFences: store,
+      delivery: null,
+      callerAvailable: () => available,
+      persistConnection: connectionPersistence(store, secrets, () => available),
+      resolve: async (_caller, options, namespace) => ({
+        configuration: {
+          namespace,
+          provider: options.provider,
+          config: options.config,
+          workingDirectory: root,
+          permissions: "tools_disabled",
+        },
+        artifact: new URL("./provider.mjs", import.meta.url).href,
+      }),
+    }),
+  );
+  t.after(async () => {
+    await host.close(budget());
+    await rm(root, { recursive: true, force: true });
+  });
+  const first = unwrap(
+    await host.saveConnection(
+      caller,
+      { ...connection("one"), status: "unverified" },
+      null,
+      budget(),
+      "retained-secret",
+    ),
+  );
+  const second = unwrap(
+    await host.saveConnection(
+      caller,
+      { ...first, name: "edited", configRevision: 2, status: "unverified" },
+      1,
+      budget(),
+    ),
+  );
+  assert.equal(await secrets.read(caller, second), "retained-secret");
+  const candidates = await Promise.all([
+    host.saveConnection(
+      caller,
+      { ...second, name: "winner-a", configRevision: 3, status: "unverified" },
+      2,
+      budget(),
+    ),
+    host.saveConnection(
+      caller,
+      { ...second, name: "winner-b", configRevision: 3, status: "unverified" },
+      2,
+      budget(),
+    ),
+  ]);
+  assert.equal(candidates.filter((result) => result.ok).length, 1);
+  assert.equal(
+    candidates.find((result) => !result.ok).error.code,
+    "revision_conflict",
+  );
+  const current = unwrap(await store.connection(caller, "one"));
+  assert.equal(current.configRevision, 3);
+  assert.equal(await secrets.read(caller, current), "retained-secret");
+  available = false;
+  assert.equal(
+    (
+      await host.saveConnection(
+        caller,
+        { ...current, configRevision: 4, status: "unverified" },
+        3,
+        budget(),
+      )
+    ).error.code,
+    "unavailable",
+  );
+  assert.equal(unwrap(await store.connection(caller, "one")).configRevision, 3);
+});
+
 test("user fence settles persistent offline queues across pages and propagates durable failure", async (t) => {
   const { fixtureSession } = await import(
     "../../packages/ai-contract/dist/testing/index.js"
@@ -637,7 +746,18 @@ test("user fence settles persistent offline queues across pages and propagates d
     "failed fence releases caller gate",
   );
   store.suspend = suspend;
-  unwrap(await host.suspendCaller(caller, budget()));
+  await suspendNativeCaller(host, {
+    schemaVersion: 5,
+    kind: "userContext",
+    user: {
+      schemaVersion: 5,
+      kind: "testUser",
+      userId: "alice",
+      displayName: "Alice",
+      nameKey: "alice",
+    },
+    generation: "restored-generation",
+  });
   assert.ok(pages >= 3);
   assert.equal(opens, 0);
   assert.equal((await host.createSession(caller, {}, budget())).ok, false);

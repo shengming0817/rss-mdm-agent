@@ -13,7 +13,7 @@ use std::{
 };
 use tokio::{
     net::{unix::OwnedWriteHalf, UnixStream},
-    sync::{mpsc, oneshot},
+    sync::{mpsc, oneshot, Semaphore},
 };
 use tokio_util::{
     codec::{FramedRead, FramedWrite, LinesCodec},
@@ -45,54 +45,84 @@ impl Control {
         });
         let task = control.clone();
         let master = Arc::new(MasterKey::new(backend));
+        let credential = Arc::new(Semaphore::new(1));
         tokio::spawn(async move {
             let mut reader = FramedRead::new(reader, LinesCodec::new_with_max_length(524288));
             loop {
                 let line = tokio::select! { _ = task.stop.cancelled() => break, line = reader.next() => match line { Some(Ok(line)) => line, _ => break } };
-                let Ok(frame) = serde_json::from_str::<Value>(&line) else {
+                let Ok(frame) =
+                    serde_json::from_str::<ai_session_contract::NativeControlFrame>(&line)
+                else {
                     break;
                 };
-                match frame["type"].as_str() {
-                    Some("reply") => {
-                        let Some(id) = frame["id"].as_u64() else {
-                            break;
-                        };
+                match frame {
+                    ai_session_contract::NativeControlFrame::Reply(
+                        ai_session_contract::NativeReply::Success { id, value, .. },
+                    ) => {
+                        let Ok(id) = u64::try_from(id.0) else { break };
                         if let Some(pending) = task.pending.lock().unwrap().remove(&id) {
-                            let _ = pending.send(if frame["ok"] == true {
-                                Ok(frame["value"].clone())
-                            } else {
-                                Err(unavailable())
-                            });
+                            let _ = pending.send(Ok(value));
                         }
                     }
-                    Some("event") => {
-                        let Some(id) = frame["channel"].as_str() else {
-                            break;
-                        };
+                    ai_session_contract::NativeControlFrame::Reply(
+                        ai_session_contract::NativeReply::Failure { id, .. },
+                    ) => {
+                        let Ok(id) = u64::try_from(id.0) else { break };
+                        if let Some(pending) = task.pending.lock().unwrap().remove(&id) {
+                            let _ = pending.send(Err(unavailable()));
+                        }
+                    }
+                    ai_session_contract::NativeControlFrame::Event(event) => {
+                        let id = String::from(event.channel);
                         let mut views = task.views.lock().unwrap();
-                        if let Some(view) = views.get(id) {
-                            if view.try_send(frame["message"].clone()).is_err() {
-                                views.remove(id);
+                        if let Some(view) = views.get(id.as_str()) {
+                            if view.try_send(event.message).is_err() {
+                                views.remove(id.as_str());
                             }
                         }
                     }
-                    Some("call") if frame["method"] == "master_key" => {
-                        let (Some(id), Some(create)) =
-                            (frame["id"].as_u64(), frame["data"]["create"].as_bool())
-                        else {
-                            break;
-                        };
+                    ai_session_contract::NativeControlFrame::Call(
+                        ai_session_contract::NativeCall::MasterKey { id, data, .. },
+                    ) => {
+                        let Ok(id) = u64::try_from(id.0) else { break };
+                        let create = data.create;
+                        let response = task.clone();
                         let master = master.clone();
-                        let value = tokio::task::spawn_blocking(move || master.get(create)).await;
-                        let reply = match value {
-                            Ok(Ok(value)) => {
-                                json!({"type":"reply","id":id,"ok":true,"value":value})
+                        let credential = credential.clone();
+                        tokio::spawn(async move {
+                            let permit = tokio::select! {
+                                _ = response.stop.cancelled() => return,
+                                permit = tokio::time::timeout(Duration::from_secs(5), credential.acquire_owned()) => match permit {
+                                    Ok(Ok(permit)) => permit,
+                                    _ => {
+                                        let _ = response.write(json!({"schemaVersion":5,"kind":"nativeReply","id":id,"ok":false})).await;
+                                        return;
+                                    }
+                                }
+                            };
+                            let (sender, receiver) = oneshot::channel();
+                            // Keychain APIs are synchronous and not cancellable. One detached OS thread
+                            // owns the sole permit until it really returns; the control reader stays live.
+                            std::thread::spawn(move || {
+                                let _permit = permit;
+                                let _ = sender.send(master.get(create));
+                            });
+                            let value = tokio::select! {
+                                _ = response.stop.cancelled() => return,
+                                value = tokio::time::timeout(Duration::from_secs(10), receiver) => value,
+                            };
+                            let reply = match value {
+                                Ok(Ok(Ok(value))) => {
+                                    json!({"schemaVersion":5,"kind":"nativeReply","id":id,"ok":true,"value":value})
+                                }
+                                _ => {
+                                    json!({"schemaVersion":5,"kind":"nativeReply","id":id,"ok":false})
+                                }
+                            };
+                            if response.write(reply).await.is_err() {
+                                response.close();
                             }
-                            _ => json!({"type":"reply","id":id,"ok":false}),
-                        };
-                        if task.write(reply).await.is_err() {
-                            break;
-                        }
+                        });
                     }
                     _ => break,
                 }
@@ -102,6 +132,8 @@ impl Control {
         control
     }
     async fn write(&self, frame: Value) -> Result<()> {
+        serde_json::from_value::<ai_session_contract::NativeControlFrame>(frame.clone())
+            .map_err(|_| unavailable())?;
         let bytes = serde_json::to_string(&frame).map_err(|_| unavailable())?;
         if bytes.len() > 524288 || self.stop.is_cancelled() {
             return Err(unavailable());
@@ -117,7 +149,7 @@ impl Control {
         .await
         .map_err(|_| unavailable())?
     }
-    pub async fn call(&self, method: &str, data: Value, timeout: Duration) -> Result<Value> {
+    async fn call(&self, method: &str, data: Value, timeout: Duration) -> Result<Value> {
         let id = self.sequence.fetch_add(1, Ordering::Relaxed);
         let (sender, receiver) = oneshot::channel();
         {
@@ -128,8 +160,10 @@ impl Control {
             pending.insert(id, sender);
         }
         let result = async {
-            self.write(json!({"type":"call","id":id,"method":method,"data":data}))
-                .await?;
+            self.write(
+                json!({"schemaVersion":5,"kind":"nativeCall","id":id,"method":method,"data":data}),
+            )
+            .await?;
             tokio::time::timeout(timeout, receiver)
                 .await
                 .map_err(|_| unavailable())?
@@ -138,6 +172,46 @@ impl Control {
         .await;
         self.pending.lock().unwrap().remove(&id);
         result
+    }
+    pub async fn attach(
+        &self,
+        channel: &str,
+        context: &ai_session_contract::UserContext,
+        timeout: Duration,
+    ) -> Result<Value> {
+        self.call(
+            "attach",
+            json!({"channel":channel,"context":context}),
+            timeout,
+        )
+        .await
+    }
+    pub async fn suspend(
+        &self,
+        context: &ai_session_contract::UserContext,
+        timeout: Duration,
+    ) -> Result<Value> {
+        self.call("suspend", json!({"context":context}), timeout)
+            .await
+    }
+    pub async fn detach_remote(&self, channel: &str, timeout: Duration) -> Result<Value> {
+        self.call("detach", json!({"channel":channel}), timeout)
+            .await
+    }
+    pub async fn save_connection(
+        &self,
+        generation: &str,
+        connection: ai_session_contract::Connection,
+        expected: Option<u64>,
+        secret: Option<String>,
+        timeout: Duration,
+    ) -> Result<Value> {
+        self.call(
+            "saveConnection",
+            json!({"generation":generation,"connection":connection,"expected":expected,"secret":secret}),
+            timeout,
+        )
+        .await
     }
     pub fn view(&self, id: String) -> Result<mpsc::Receiver<Value>> {
         let (sender, receiver) = mpsc::channel(64);
@@ -149,7 +223,7 @@ impl Control {
         Ok(receiver)
     }
     pub async fn send(&self, id: &str, message: Value) -> Result<()> {
-        self.write(json!({"type":"event","channel":id,"message":message}))
+        self.write(json!({"schemaVersion":5,"kind":"nativeEvent","channel":id,"message":message}))
             .await
     }
     pub fn detach(&self, id: &str) {
@@ -161,5 +235,47 @@ impl Control {
         for (_, pending) in std::mem::take(&mut *self.pending.lock().unwrap()) {
             let _ = pending.send(Err(unavailable()));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    struct SlowKey;
+    impl KeyBackend for SlowKey {
+        fn read(
+            &self,
+        ) -> std::result::Result<Option<Vec<u8>>, super::super::credentials::KeyUnavailable>
+        {
+            std::thread::sleep(Duration::from_millis(300));
+            Ok(None)
+        }
+        fn create(
+            &self,
+            _key: &[u8],
+        ) -> std::result::Result<(), super::super::credentials::KeyUnavailable> {
+            Ok(())
+        }
+    }
+    #[tokio::test]
+    async fn blocking_keychain_does_not_block_events_or_control_shutdown() {
+        let (native, peer) = UnixStream::pair().unwrap();
+        let control = Control::start(native, SlowKey);
+        let mut view = control.view("view".into()).unwrap();
+        let mut writer = FramedWrite::new(peer, LinesCodec::new_with_max_length(524288));
+        writer
+            .send(json!({"schemaVersion":5,"kind":"nativeCall","id":1,"method":"masterKey","data":{"create":false}}).to_string())
+            .await
+            .unwrap();
+        writer
+            .send(json!({"schemaVersion":5,"kind":"nativeEvent","channel":"view","message":{"ready":true}}).to_string())
+            .await
+            .unwrap();
+        let event = tokio::time::timeout(Duration::from_millis(100), view.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(event["ready"], true);
+        control.close();
     }
 }

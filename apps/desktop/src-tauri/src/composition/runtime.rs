@@ -10,13 +10,13 @@ use std::{
     os::fd::AsRawFd,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
     },
     time::Duration,
 };
 use tokio::{
-    process::{Child, Command},
+    process::Command,
     sync::{mpsc, Mutex},
 };
 use tokio_util::{
@@ -35,7 +35,9 @@ pub struct DesktopRuntime {
     pub users: Arc<std::sync::Mutex<super::users::Users>>,
     switching: Mutex<()>,
     control: Arc<Control>,
-    child: Mutex<Option<Child>>,
+    child_alive: Arc<AtomicBool>,
+    child_stop: CancellationToken,
+    child_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
     mcp_stop: CancellationToken,
     connections: Mutex<BTreeMap<String, Arc<Connection>>>,
     next: AtomicU64,
@@ -115,7 +117,9 @@ impl DesktopRuntime {
         }
         let launched = command.spawn();
         drop(child_pipe);
-        let mut child = None;
+        let child_alive = Arc::new(AtomicBool::new(false));
+        let child_stop = CancellationToken::new();
+        let mut child_task = None;
         if let Err(error) = &launched {
             eprintln!("AI Host spawn failed: {:?}", error.kind());
         }
@@ -150,14 +154,45 @@ impl DesktopRuntime {
             tokio::spawn(async move {
                 let _ = server.serve(reader, writer, stop).await;
             });
-            child = Some(process);
+            child_alive.store(true, Ordering::Release);
+            let alive = child_alive.clone();
+            let stop = child_stop.clone();
+            let stopped_control = control.clone();
+            child_task = Some(tokio::spawn(async move {
+                let status = tokio::select! {
+                    status = process.wait() => status,
+                    _ = stop.cancelled() => {
+                        if let Some(pid) = process.id() {
+                            let _ = Command::new("/bin/kill").args(["-TERM", &pid.to_string()]).status().await;
+                        }
+                        match tokio::time::timeout(Duration::from_secs(8), process.wait()).await {
+                            Ok(status) => status,
+                            Err(_) => {
+                                let _ = process.kill().await;
+                                process.wait().await
+                            }
+                        }
+                    }
+                };
+                alive.store(false, Ordering::Release);
+                stopped_control.close();
+                if !stop.is_cancelled() {
+                    let code = status.ok().and_then(|status| status.code());
+                    eprintln!(
+                        "AI Host exited: {}",
+                        code.map_or("signal".into(), |value| value.to_string())
+                    );
+                }
+            }));
         }
         Ok(Self {
             execution,
             users,
             switching: Mutex::new(()),
             control,
-            child: Mutex::new(child),
+            child_alive,
+            child_stop,
+            child_task: Mutex::new(child_task),
             mcp_stop,
             connections: Mutex::new(BTreeMap::new()),
             next: AtomicU64::new(1),
@@ -184,13 +219,9 @@ impl DesktopRuntime {
         };
         self.detach_views().await;
         if let Some(previous) = previous {
-            if self.child.lock().await.is_some() {
+            if self.child_alive.load(Ordering::Acquire) {
                 self.control
-                    .call(
-                        "suspend",
-                        json!({"generation":previous.generation}),
-                        Duration::from_secs(15),
-                    )
+                    .suspend(&previous, Duration::from_secs(15))
                     .await?;
             }
         }
@@ -206,7 +237,7 @@ impl DesktopRuntime {
         let mut connections = self.connections.lock().await;
         if connections.len() >= 4
             || self.mcp_stop.is_cancelled()
-            || self.child.lock().await.is_none()
+            || !self.child_alive.load(Ordering::Acquire)
         {
             return Err(unavailable());
         }
@@ -214,11 +245,7 @@ impl DesktopRuntime {
         let reader = self.control.view(id.clone())?;
         if let Err(error) = self
             .control
-            .call(
-                "attach",
-                json!({"channel":id,"context":context}),
-                Duration::from_secs(15),
-            )
+            .attach(&id, &context, Duration::from_secs(15))
             .await
         {
             self.control.detach(&id);
@@ -272,7 +299,16 @@ impl DesktopRuntime {
         secret: Option<String>,
     ) -> ui::Result<Value> {
         self.current(generation)?;
-        let result = self.control.call("save_connection", json!({"generation":generation,"connection":connection,"expected":expected,"secret":secret}), Duration::from_secs(100)).await?;
+        let result = self
+            .control
+            .save_connection(
+                generation,
+                connection,
+                expected,
+                secret,
+                Duration::from_secs(100),
+            )
+            .await?;
         self.current(generation)?;
         Ok(result)
     }
@@ -281,10 +317,7 @@ impl DesktopRuntime {
             connection.stop.cancel();
         }
         self.control.detach(id);
-        let _ = self
-            .control
-            .call("detach", json!({"channel":id}), Duration::from_secs(2))
-            .await;
+        let _ = self.control.detach_remote(id, Duration::from_secs(2)).await;
     }
     pub async fn detach_views(&self) {
         for (id, connection) in std::mem::take(&mut *self.connections.lock().await) {
@@ -294,19 +327,9 @@ impl DesktopRuntime {
     }
     pub async fn shutdown(&self) {
         self.detach_views().await;
-        if let Some(mut child) = self.child.lock().await.take() {
-            if let Some(pid) = child.id() {
-                let _ = Command::new("/bin/kill")
-                    .args(["-TERM", &pid.to_string()])
-                    .status()
-                    .await;
-            }
-            if tokio::time::timeout(Duration::from_secs(8), child.wait())
-                .await
-                .is_err()
-            {
-                let _ = child.kill().await;
-            }
+        self.child_stop.cancel();
+        if let Some(task) = self.child_task.lock().await.take() {
+            let _ = task.await;
         }
         self.control.close();
         self.mcp_stop.cancel();
@@ -360,6 +383,7 @@ fn diagnostic(line: &str) -> Option<String> {
 }
 #[cfg(test)]
 mod tests {
+    use super::*;
     #[test]
     fn diagnostics_accept_only_closed_product_codes() {
         assert_eq!(
@@ -377,5 +401,58 @@ mod tests {
         ] {
             assert!(super::diagnostic(line).is_none());
         }
+    }
+
+    struct NoKey;
+    impl super::super::credentials::KeyBackend for NoKey {
+        fn read(
+            &self,
+        ) -> std::result::Result<Option<Vec<u8>>, super::super::credentials::KeyUnavailable>
+        {
+            Ok(None)
+        }
+        fn create(
+            &self,
+            _key: &[u8],
+        ) -> std::result::Result<(), super::super::credentials::KeyUnavailable> {
+            Ok(())
+        }
+    }
+    #[tokio::test]
+    async fn exited_host_is_reaped_and_rejected_as_not_alive() {
+        use std::io::Write;
+        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+        let root = std::env::temp_dir().join(format!("rss-host-exit-{}", uuid::Uuid::new_v4()));
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(root.join("artifact/bin"))
+            .unwrap();
+        let root = root.canonicalize().unwrap();
+        let artifact = root.join("artifact");
+        let executable = artifact.join("bin/rss-ai-host");
+        let mut file = std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o700)
+            .open(&executable)
+            .unwrap();
+        file.write_all(b"#!/bin/sh\nexit 7\n").unwrap();
+        drop(file);
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let runtime = DesktopRuntime::start_with_key_backend(&root.join("state"), &artifact, NoKey)
+            .await
+            .unwrap();
+        for _ in 0..50 {
+            if !runtime.child_alive.load(Ordering::Acquire) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(!runtime.child_alive.load(Ordering::Acquire));
+        let context = runtime.select_user("Alice").await.unwrap();
+        assert!(runtime.connect(context.generation.as_str()).await.is_err());
+        runtime.shutdown().await;
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

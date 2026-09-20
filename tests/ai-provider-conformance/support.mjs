@@ -229,11 +229,11 @@ export async function writeConfiguration(path, config) {
 export function nativePeer(socket) {
   const inputs = new Map();
   const control = new NativeControl(
-    async (method) => {
-      if (method !== "master_key") throw Error("unexpected parent request");
+    async (call) => {
+      if (call.method !== "masterKey") throw Error("unexpected parent request");
       return [...Buffer.alloc(32, 7)];
     },
-    (id, message) => inputs.get(id)?.enqueue(message),
+    ({ channel, message }) => inputs.get(channel)?.enqueue(message),
     socket,
   );
   return { control, inputs, next: 0 };

@@ -8,7 +8,7 @@ pnpm bundle:ai-host
 pnpm desktop:build
 ```
 
-`host.json` 只包含 `version: 1`、`databasePath`、`nativeDirectory`、`workingDirectory`。Native 与 Host 通过匿名 socketpair 的继承 fd 3 通信，stdio 单独承载 Rust 执行 MCP。每条 UI 逻辑连接固定可信 Caller 和 generation；用户切换先完成旧用户模型工作的隔离，再提交新选择。没有可发现的 AI/凭据 socket、入站监听或按用户启动的服务池。设备执行服务只绑定 authority/device，每次用户请求显式传入主体，后台核对使用任务冻结主体。
+`host.json` 只包含 `version: 1`、`databasePath`、`nativeDirectory`、`workingDirectory`。Native 与 Host 通过匿名 socketpair 的继承 fd 3 通信，stdio 单独承载 Rust 执行 MCP；control frame 与 execution-origin 由 AI Runtime V5 schema 生成 Rust/TS 绑定。每条 UI 逻辑连接固定可信 Caller 和 generation；即使 Host 刚重启且尚未 attach，用户切换也先以 Native 恢复的完整旧上下文完成持久 fence，再提交新选择。没有可发现的 AI/凭据 socket、入站监听或按用户启动的服务池。设备执行服务只绑定 authority/device，每次用户请求显式传入主体，后台核对使用任务冻结主体。
 
 ## 连接来源
 

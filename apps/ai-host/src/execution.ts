@@ -7,7 +7,12 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import type { Readable, Writable } from "node:stream";
 import { createHash, randomUUID } from "node:crypto";
-import { boundedJson, isId, type Budget } from "@rss-mdm-agent/ai-contract";
+import {
+  boundedJson,
+  isId,
+  type Budget,
+  type ExecutionOrigin,
+} from "@rss-mdm-agent/ai-contract";
 import {
   defaultLimits,
   fail,
@@ -130,19 +135,26 @@ export async function connectExecution(
     b: Budget,
   ): Promise<any> => {
     const binding = await resolveBinding(request);
+    if (
+      !(["codex", "claude", "deepseek"] as const).includes(
+        binding.provider as ExecutionOrigin["provider"],
+      )
+    )
+      throw new Error("execution origin unavailable");
+    const origin: ExecutionOrigin = {
+      schemaVersion: 5,
+      kind: "executionOrigin",
+      namespace: request.namespace,
+      operationId: request.body.operationId,
+      provider: binding.provider as ExecutionOrigin["provider"],
+      config: binding.config,
+    };
     const reply = await client.callTool(
       {
         name,
         arguments: args,
         _meta: {
-          "com.rss-mdm/ai-origin": {
-            version: 1,
-            namespace: request.namespace,
-            operationId: request.body.operationId,
-            provider: binding.provider,
-
-            config: binding.config,
-          },
+          "com.rss-mdm/ai-origin": origin,
         },
       },
       undefined,

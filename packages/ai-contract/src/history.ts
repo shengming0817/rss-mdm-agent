@@ -9,7 +9,8 @@ import type {
   Session,
 } from "./wire.js";
 import { boundedJson } from "./codec.js";
-import { defaultLimits } from "./results.js";
+import type { Result } from "./ports.js";
+import { defaultLimits, fail, ok } from "./results.js";
 
 /** Deliberately plain text: only completed user prompts and stable assistant messages. */
 export function historyPreview(
@@ -18,12 +19,12 @@ export function historyPreview(
   events: readonly Event[],
   connection: Connection,
   recent?: number,
-): HistoryPreview {
+): Result<HistoryPreview> {
   if (
     recent !== undefined &&
     (!Number.isInteger(recent) || recent < 1 || recent > 10000)
   )
-    throw new Error("invalid_input");
+    return fail("invalid_input");
   const completed = commands
     .filter(
       (row) =>
@@ -60,13 +61,17 @@ export function historyPreview(
     messageIds,
     text,
   };
-  boundedJson(value, { ...defaultLimits, maxTextBytes: 65536 });
-  return {
-    ...value,
-    contentHash: bytesToHex(
-      sha256(new TextEncoder().encode(canonicalize(value)!)),
-    ),
-  };
+  try {
+    boundedJson(value, { ...defaultLimits, maxTextBytes: 65536 });
+    return ok({
+      ...value,
+      contentHash: bytesToHex(
+        sha256(new TextEncoder().encode(canonicalize(value)!)),
+      ),
+    });
+  } catch {
+    return fail("limit_exceeded");
+  }
 }
 
 /** The confirmed preview is part of the immutable command hash, not an implicit resume. */

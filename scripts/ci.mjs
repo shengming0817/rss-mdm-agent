@@ -30,6 +30,16 @@ const steps = [
     ],
   ],
   ["frozen dependencies", "pnpm", ["install", "--frozen-lockfile"]],
+  [
+    "desktop native acceptance syntax",
+    "node",
+    ["--check", "tests/desktop/native-flow.js"],
+  ],
+  [
+    "desktop credential acceptance syntax",
+    "node",
+    ["--check", "tests/desktop/custom-connection-flow.js"],
+  ],
   ["AI generated contracts", "pnpm", ["check:ai-contract"]],
   ["AI contract conformance", "pnpm", ["test:ai-contract"]],
   ["AI access conformance", "pnpm", ["test:ai-access"]],

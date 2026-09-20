@@ -76,6 +76,8 @@ export function operationMessage(code: string): string {
     reconciliation_required:
       "上次请求结果尚未确认。请重新读取历史并核对原命令，勿重复发送。",
     connection_switch_pending: "正在等待已接收的输入结束，随后使用所选连接。",
+    revision_conflict:
+      "连接已在其他操作中更新。目录已刷新，请重新打开连接并核对后再操作。",
     invalid_input: "连接配置或输入无效，请检查后重试。",
     unsupported_capability:
       "当前认证来源或能力不可用，请选择已有 API 配置或自定义 API。",

@@ -813,14 +813,12 @@ export class SessionHost implements HostPort {
         );
         after = rows.at(-1)!.sequence;
       }
-      return ok(
-        historyPreview(
-          snapshot.session,
-          snapshot.commands,
-          events,
-          connection,
-          recent,
-        ),
+      return historyPreview(
+        snapshot.session,
+        snapshot.commands,
+        events,
+        connection,
+        recent,
       );
     });
   }
@@ -877,7 +875,8 @@ export class SessionHost implements HostPort {
       events,
       connection,
     );
-    return isDeepStrictEqual(expected, preview)
+    if (!expected.ok) return fail(expected.error.code, expected.error.retry);
+    return isDeepStrictEqual(expected.value, preview)
       ? ok(undefined)
       : fail("content_conflict");
   }
@@ -1031,6 +1030,11 @@ export class SessionHost implements HostPort {
           try {
             if (!previous.currentStageId) return ok(previous);
             const stage = activeStage(previous);
+            const currentConnection = requireValue(
+              await this.store.connection(namespace, stage.connectionId),
+            );
+            if (currentConnection.status !== "ready")
+              return fail("connection_required");
             const connection = requireValue(
               await this.store.connection(
                 namespace,

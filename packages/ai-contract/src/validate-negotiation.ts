@@ -3953,6 +3953,191 @@ const schema31 = {
       required: ["schemaVersion", "kind", "users"],
       additionalProperties: false,
     },
+    NativeControlFrame: {
+      description:
+        "Private inherited Native-to-Host control frame. The descriptor is the trust boundary; this record only closes framing and payload shape.",
+      oneOf: [
+        { $ref: "#/$defs/NativeCall" },
+        { $ref: "#/$defs/NativeReply" },
+        { $ref: "#/$defs/NativeEvent" },
+      ],
+    },
+    NativeCall: {
+      oneOf: [
+        {
+          title: "NativeCallAttach",
+          type: "object",
+          properties: {
+            schemaVersion: { type: "integer", const: 5 },
+            kind: { type: "string", const: "nativeCall" },
+            id: { $ref: "#/$defs/Counter" },
+            method: { type: "string", const: "attach" },
+            data: {
+              title: "NativeAttachData",
+              type: "object",
+              properties: {
+                channel: { $ref: "#/$defs/Id" },
+                context: { $ref: "#/$defs/UserContext" },
+              },
+              required: ["channel", "context"],
+              additionalProperties: false,
+            },
+          },
+          required: ["schemaVersion", "kind", "id", "method", "data"],
+          additionalProperties: false,
+        },
+        {
+          title: "NativeCallSuspend",
+          type: "object",
+          properties: {
+            schemaVersion: { type: "integer", const: 5 },
+            kind: { type: "string", const: "nativeCall" },
+            id: { $ref: "#/$defs/Counter" },
+            method: { type: "string", const: "suspend" },
+            data: {
+              title: "NativeSuspendData",
+              type: "object",
+              properties: { context: { $ref: "#/$defs/UserContext" } },
+              required: ["context"],
+              additionalProperties: false,
+            },
+          },
+          required: ["schemaVersion", "kind", "id", "method", "data"],
+          additionalProperties: false,
+        },
+        {
+          title: "NativeCallDetach",
+          type: "object",
+          properties: {
+            schemaVersion: { type: "integer", const: 5 },
+            kind: { type: "string", const: "nativeCall" },
+            id: { $ref: "#/$defs/Counter" },
+            method: { type: "string", const: "detach" },
+            data: {
+              title: "NativeDetachData",
+              type: "object",
+              properties: { channel: { $ref: "#/$defs/Id" } },
+              required: ["channel"],
+              additionalProperties: false,
+            },
+          },
+          required: ["schemaVersion", "kind", "id", "method", "data"],
+          additionalProperties: false,
+        },
+        {
+          title: "NativeCallSaveConnection",
+          type: "object",
+          properties: {
+            schemaVersion: { type: "integer", const: 5 },
+            kind: { type: "string", const: "nativeCall" },
+            id: { $ref: "#/$defs/Counter" },
+            method: { type: "string", const: "saveConnection" },
+            data: {
+              title: "NativeSaveConnectionData",
+              type: "object",
+              properties: {
+                generation: { $ref: "#/$defs/Id" },
+                connection: { $ref: "#/$defs/Connection" },
+                expected: {
+                  oneOf: [{ $ref: "#/$defs/Counter" }, { type: "null" }],
+                },
+                secret: {
+                  oneOf: [
+                    { type: "string", minLength: 1, maxLength: 16384 },
+                    { type: "null" },
+                  ],
+                },
+              },
+              required: ["generation", "connection", "expected", "secret"],
+              additionalProperties: false,
+            },
+          },
+          required: ["schemaVersion", "kind", "id", "method", "data"],
+          additionalProperties: false,
+        },
+        {
+          title: "NativeCallMasterKey",
+          type: "object",
+          properties: {
+            schemaVersion: { type: "integer", const: 5 },
+            kind: { type: "string", const: "nativeCall" },
+            id: { $ref: "#/$defs/Counter" },
+            method: { type: "string", const: "masterKey" },
+            data: {
+              title: "NativeMasterKeyData",
+              type: "object",
+              properties: { create: { type: "boolean" } },
+              required: ["create"],
+              additionalProperties: false,
+            },
+          },
+          required: ["schemaVersion", "kind", "id", "method", "data"],
+          additionalProperties: false,
+        },
+      ],
+    },
+    NativeReply: {
+      oneOf: [
+        {
+          title: "NativeReplySuccess",
+          type: "object",
+          properties: {
+            schemaVersion: { type: "integer", const: 5 },
+            kind: { type: "string", const: "nativeReply" },
+            id: { $ref: "#/$defs/Counter" },
+            ok: { const: true, type: "boolean" },
+            value: {},
+          },
+          required: ["schemaVersion", "kind", "id", "ok", "value"],
+          additionalProperties: false,
+        },
+        {
+          title: "NativeReplyFailure",
+          type: "object",
+          properties: {
+            schemaVersion: { type: "integer", const: 5 },
+            kind: { type: "string", const: "nativeReply" },
+            id: { $ref: "#/$defs/Counter" },
+            ok: { const: false, type: "boolean" },
+          },
+          required: ["schemaVersion", "kind", "id", "ok"],
+          additionalProperties: false,
+        },
+      ],
+    },
+    NativeEvent: {
+      type: "object",
+      properties: {
+        schemaVersion: { type: "integer", const: 5 },
+        kind: { type: "string", const: "nativeEvent" },
+        channel: { $ref: "#/$defs/Id" },
+        message: {},
+      },
+      required: ["schemaVersion", "kind", "channel", "message"],
+      additionalProperties: false,
+    },
+    ExecutionOrigin: {
+      type: "object",
+      description:
+        "Non-secret AI operation provenance carried only on the desktop-owned execution pipe.",
+      properties: {
+        schemaVersion: { type: "integer", const: 5 },
+        kind: { type: "string", const: "executionOrigin" },
+        namespace: { $ref: "#/$defs/Namespace" },
+        operationId: { $ref: "#/$defs/Id" },
+        provider: { type: "string", enum: ["codex", "claude", "deepseek"] },
+        config: { $ref: "#/$defs/ConfigRef" },
+      },
+      required: [
+        "schemaVersion",
+        "kind",
+        "namespace",
+        "operationId",
+        "provider",
+        "config",
+      ],
+      additionalProperties: false,
+    },
     PreferenceChange: {
       oneOf: [
         {

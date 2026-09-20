@@ -4,7 +4,7 @@ A01 / #2439，范围基线 `ai-runtime-20260918`。本包拥有产品可靠性 s
 
 ## 真源与版本
 
-[schema/runtime.schema.json](schema/runtime.schema.json) 是唯一产品 wire 声明。`pnpm generate:ai-contract` 通过 typify 0.8.0 / json-schema-to-typescript 16.0.0 生成 Rust/TS；`pnpm check:ai-contract` 验证生成物和 Rust 内嵌 schema 投影零差异。只使用内部引用、闭合对象、常量标签 oneOf、enum 和边界约束；不使用复杂条件、anyOf 或任意外部 schema 解析。标准 ACP/A2UI 保持上游 owner。
+[schema/runtime.schema.json](schema/runtime.schema.json) 是唯一产品 wire 声明，也拥有私有 Native↔Host control frame 与 execution-origin 元数据的闭合形状；匿名 fd / 父进程 pipe 才建立信任，记录本身不授予权限。`pnpm generate:ai-contract` 通过 typify 0.8.0 / json-schema-to-typescript 16.0.0 生成 Rust/TS；`pnpm check:ai-contract` 验证生成物和 Rust 内嵌 schema 投影零差异。只使用内部引用、闭合对象、常量标签 oneOf、enum 和边界约束；不使用复杂条件、anyOf 或任意外部 schema 解析。标准 ACP/A2UI 保持上游 owner。
 
 V5 直接替换 V4 及更早版本。测试用户、个人连接与配置修订、产品 Session/provider 阶段和显式历史预览由同一 schema 声明；创建 Session 不启动 provider，命令回执固定接纳阶段。C20 增加配对的 delivery_requested / delivery_recorded 事件与 receipt_recorded 交付状态；持久回执可在模型轮次结束或会话待恢复时独立收敛，只有窄化的 delivery commit 可跨原 generation 更新。`command_accepted` 稳定事件完整携带不可变 Command；旧 `status/accepted` 删除。`accept` 只接收 `eventId`，由同一事务构造事件并提交命令、receipt 与事件，客户端不再补读快照取得用户输入。没有旧 reader、alias、双写、fallback、转换器或历史导入；旧消费者必须整体更新，旧数据库只读拒绝。历史源码与交付证据由 Git/PR 保留。
 

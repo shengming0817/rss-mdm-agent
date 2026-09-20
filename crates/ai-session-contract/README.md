@@ -1,6 +1,6 @@
 # ai-session-contract
 
-[AI Runtime V5](../../packages/ai-contract/README.md) 的 Rust wire consumer。唯一 schema owner 为 `packages/ai-contract/schema/runtime.schema.json`；本 crate 的 generated.rs 和 schema.json 均由固定生成链投影，禁止手写修改。生成 Rust 随源码交付，独立消费不需要 Node、相邻 package、build.rs 或联网生成。
+[AI Runtime V5](../../packages/ai-contract/README.md) 的 Rust wire consumer。唯一 schema owner 为 `packages/ai-contract/schema/runtime.schema.json`；公共可靠性记录、私有 Native control frame 与 execution-origin 均从该 owner 生成，本 crate 的 generated.rs 和 schema.json 禁止手写修改。生成 Rust 随源码交付，独立消费不需要 Node、相邻 package、build.rs 或联网生成。
 
 公共 `decode`/`encode` 使用必填 Limits，拒绝重复键、未知版本/字段、非法 UTF-8、预算越界、安全整数越界及关联冲突；fingerprint 使用 JCS/SHA-256 并先执行同一校验。生成类型的 Debug 由生成器统一脱敏，ContractError 只返回闭合 Diagnostic。直接 serde 反序列化 DTO 不代替完整契约校验。
 

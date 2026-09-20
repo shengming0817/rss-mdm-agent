@@ -572,27 +572,37 @@ it("deleting the selected connection preserves history and immediately disables 
   const before = t.c.view.value;
   const saveConnection = vi.fn().mockResolvedValue({});
   Object.assign(t.client, { saveConnection });
-  const wrapper = mount(Connections, { props: { controller: t.c } });
+  const wrapper = mount(Connections, {
+    props: { controller: t.c },
+    attachTo: document.body,
+  });
   try {
     await flushPromises();
     expect(t.c.canSend.value).toBe(true);
+    const deleteButton = wrapper.get('button[aria-label="删除连接 Fixture"]');
+    expect(wrapper.get('button[aria-label="编辑连接 Fixture"]')).toBeTruthy();
+    expect(
+      wrapper.get('button[aria-label="将连接 Fixture 设为默认"]'),
+    ).toBeTruthy();
     vi.mocked(t.client.connections).mockResolvedValue({
       schemaVersion: 5,
       kind: "connectionPage",
       preferences: { schemaVersion: 5, kind: "userPreferences" },
       connections: [],
     });
-    await wrapper
-      .findAll("button")
-      .find((b) => b.text() === "删除")!
-      .trigger("click");
+    await deleteButton.trigger("click");
     await flushPromises();
     expect(saveConnection).not.toHaveBeenCalled();
-    expect(wrapper.get('[role="alertdialog"]').text()).toContain("Fixture");
+    const dialog = wrapper.get('[role="alertdialog"]');
+    expect(dialog.attributes("aria-modal")).toBe("true");
+    expect(dialog.text()).toContain("Fixture");
+    expect(document.activeElement?.textContent).toContain("取消删除");
     await wrapper
       .findAll("button")
       .find((b) => b.text() === "取消删除")!
       .trigger("click");
+    await flushPromises();
+    expect(document.activeElement).toBe(deleteButton.element);
     expect(saveConnection).not.toHaveBeenCalled();
     await wrapper
       .findAll("button")
@@ -609,6 +619,35 @@ it("deleting the selected connection preserves history and immediately disables 
     expect(wrapper.text()).toContain("当前会话需要选择可用连接");
     await t.c.prompt();
     expect(t.submit).not.toHaveBeenCalled();
+  } finally {
+    wrapper.unmount();
+    t.c.dispose();
+  }
+});
+
+it("connection revision conflicts invalidate stale edit and delete actions", async () => {
+  const t = setup();
+  await t.c.connect();
+  const saveConnection = vi
+    .fn()
+    .mockRejectedValue(new ClientError("revision_conflict"));
+  Object.assign(t.client, { saveConnection });
+  const wrapper = mount(Connections, { props: { controller: t.c } });
+  try {
+    await flushPromises();
+    await wrapper.get('button[aria-label="编辑连接 Fixture"]').trigger("click");
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+    expect(wrapper.get("form h3").text()).toBe("添加连接");
+    expect(wrapper.text()).toContain("目录已刷新，请重新打开连接");
+    await wrapper.get('button[aria-label="删除连接 Fixture"]').trigger("click");
+    await wrapper
+      .findAll("button")
+      .find((button) => button.text() === "确认删除")!
+      .trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[role="alertdialog"]').exists()).toBe(false);
+    expect(saveConnection).toHaveBeenCalledTimes(2);
   } finally {
     wrapper.unmount();
     t.c.dispose();

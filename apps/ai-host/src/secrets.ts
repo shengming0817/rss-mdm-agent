@@ -1,5 +1,11 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import type { Caller, Connection, Result } from "@rss-mdm-agent/ai-contract";
+import type {
+  Budget,
+  Caller,
+  Connection,
+  Result,
+} from "@rss-mdm-agent/ai-contract";
+import { fail } from "@rss-mdm-agent/ai-contract/transitions";
 import type { ConnectionSecretStore } from "@rss-mdm-agent/ai-store-sqlite";
 import { ConfigurationError } from "./configuration.js";
 const value = <T>(result: Result<T>): T => {
@@ -95,4 +101,31 @@ export class ConnectionSecrets {
     ]);
     return Buffer.concat([iv, cipher.getAuthTag(), encrypted]);
   }
+}
+
+/** The application-owned atomic persistence seam: validate/reencrypt first, then
+ * recheck the native caller fence immediately before the SQLite CAS. */
+export function connectionPersistence(
+  store: ConnectionSecretStore,
+  secrets: ConnectionSecrets,
+  available: (caller: Caller) => boolean,
+) {
+  return async (
+    caller: Caller,
+    connection: Connection,
+    expected: number | null,
+    secret: string | undefined,
+    budget: Budget,
+  ): Promise<Result<Connection>> => {
+    const encrypted =
+      connection.status !== "deleted" && connection.source.type === "custom_api"
+        ? await secrets.seal(
+            caller,
+            connection,
+            await secrets.read(caller, connection, secret, expected ?? 0),
+          )
+        : undefined;
+    if (!available(caller) || budget.signal.aborted) return fail("unavailable");
+    return store.saveConnection(caller, connection, expected, encrypted);
+  };
 }

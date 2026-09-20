@@ -34,7 +34,9 @@ export type WireRecord =
   | PreferencesRequest
   | SelectConnectionRequest
   | HistoryRequest
-  | TestUserPage;
+  | TestUserPage
+  | NativeControlFrame
+  | ExecutionOrigin;
 /**
  * Opaque ASCII correlation identifier (1–128 characters); never an authentication credential.
  */
@@ -1299,6 +1301,17 @@ export type PreferenceChange =
       clear: true;
       set?: never;
     };
+/**
+ * Private inherited Native-to-Host control frame. The descriptor is the trust boundary; this record only closes framing and payload shape.
+ */
+export type NativeControlFrame = NativeCall | NativeReply | NativeEvent;
+export type NativeCall =
+  | NativeCallAttach
+  | NativeCallSuspend
+  | NativeCallDetach
+  | NativeCallSaveConnection
+  | NativeCallMasterKey;
+export type NativeReply = NativeReplySuccess | NativeReplyFailure;
 
 /**
  * Client command identity and complete canonical input; trusted namespace is supplied separately.
@@ -1985,6 +1998,90 @@ export interface TestUserPage {
    */
   users: TestUser[];
   current?: UserContext;
+}
+export interface NativeCallAttach {
+  schemaVersion: 5;
+  kind: "nativeCall";
+  id: Counter;
+  method: "attach";
+  data: NativeAttachData;
+}
+export interface NativeAttachData {
+  channel: Id;
+  context: UserContext;
+}
+export interface NativeCallSuspend {
+  schemaVersion: 5;
+  kind: "nativeCall";
+  id: Counter;
+  method: "suspend";
+  data: NativeSuspendData;
+}
+export interface NativeSuspendData {
+  context: UserContext;
+}
+export interface NativeCallDetach {
+  schemaVersion: 5;
+  kind: "nativeCall";
+  id: Counter;
+  method: "detach";
+  data: NativeDetachData;
+}
+export interface NativeDetachData {
+  channel: Id;
+}
+export interface NativeCallSaveConnection {
+  schemaVersion: 5;
+  kind: "nativeCall";
+  id: Counter;
+  method: "saveConnection";
+  data: NativeSaveConnectionData;
+}
+export interface NativeSaveConnectionData {
+  generation: Id;
+  connection: Connection;
+  expected: Counter | null;
+  secret: string | null;
+}
+export interface NativeCallMasterKey {
+  schemaVersion: 5;
+  kind: "nativeCall";
+  id: Counter;
+  method: "masterKey";
+  data: NativeMasterKeyData;
+}
+export interface NativeMasterKeyData {
+  create: boolean;
+}
+export interface NativeReplySuccess {
+  schemaVersion: 5;
+  kind: "nativeReply";
+  id: Counter;
+  ok: true;
+  value: unknown;
+}
+export interface NativeReplyFailure {
+  schemaVersion: 5;
+  kind: "nativeReply";
+  id: Counter;
+  ok: false;
+}
+export interface NativeEvent {
+  schemaVersion: 5;
+  kind: "nativeEvent";
+  channel: Id;
+  message: unknown;
+}
+/**
+ * Non-secret AI operation provenance carried only on the desktop-owned execution pipe.
+ */
+export interface ExecutionOrigin {
+  schemaVersion: 5;
+  kind: "executionOrigin";
+  namespace: Namespace;
+  operationId: Id;
+  provider: "codex" | "claude" | "deepseek";
+  config: ConfigRef;
 }
 
 /**

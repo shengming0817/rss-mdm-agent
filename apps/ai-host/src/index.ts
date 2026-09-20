@@ -11,14 +11,37 @@ import {
   boundedJson,
   decode,
   type Caller,
+  type Budget,
+  type Result,
   type UserContext,
   type Connection,
 } from "@rss-mdm-agent/ai-contract";
 import { defaultLimits, fail } from "@rss-mdm-agent/ai-contract/transitions";
 import { localResolver } from "./resolver.js";
-import { ConnectionSecrets } from "./secrets.js";
+import { connectionPersistence, ConnectionSecrets } from "./secrets.js";
 import { NativeControl } from "./native.js";
 export type { LocalConfiguration } from "./configuration.js";
+const callerFor = (context: UserContext): Caller => ({
+  tenantId: "test-users",
+  principalId: context.user.userId,
+  authorityId: "desktop-fixture",
+});
+/** Restart-safe user fence used by the private Native control handler. */
+export async function suspendNativeCaller(
+  host: {
+    suspendCaller(caller: Caller, budget: Budget): Promise<Result<void>>;
+  },
+  previous: UserContext,
+  active?: UserContext,
+): Promise<void> {
+  if (active && previous.generation !== active.generation)
+    throw new Error("user changed");
+  const fenced = await host.suspendCaller(callerFor(active ?? previous), {
+    timeoutMs: 10000,
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!fenced.ok) throw new Error("user fence unavailable");
+}
 /** One native-owned process, private control descriptor and fixed-context logical UI channels. */
 export async function startLocalApp(
   configurationPath: string,
@@ -55,11 +78,6 @@ export async function startLocalApp(
   if (!opened.ok) throw new Error(opened.error.code);
   const store = opened.value;
   let activeUser: UserContext | undefined;
-  const callerFor = (context: UserContext): Caller => ({
-    tenantId: "test-users",
-    principalId: context.user.userId,
-    authorityId: "desktop-fixture",
-  });
   const available = (caller: Caller) =>
     !!activeUser &&
     caller.principalId === activeUser.user.userId &&
@@ -88,7 +106,7 @@ export async function startLocalApp(
   });
   let control: NativeControl;
   const secrets = new ConnectionSecrets(store, async (create) => {
-    const bytes = await control.call("master_key", { create });
+    const bytes = await control.call("masterKey", { create });
     if (
       !Array.isArray(bytes) ||
       bytes.length !== 32 ||
@@ -105,20 +123,7 @@ export async function startLocalApp(
       process.stderr.write(`AI Host ${diagnostic.stage}: ${diagnostic.code}\n`),
     resolve: localResolver(local, store, secrets),
     callerAvailable: available,
-    persistConnection: async (caller, connection, expected, secret, budget) => {
-      const encrypted =
-        connection.status !== "deleted" &&
-        connection.source.type === "custom_api"
-          ? await secrets.seal(
-              caller,
-              connection,
-              await secrets.read(caller, connection, secret, expected ?? 0),
-            )
-          : undefined;
-      if (!available(caller) || budget.signal.aborted)
-        return fail("unavailable");
-      return store.saveConnection(caller, connection, expected, encrypted);
-    },
+    persistConnection: connectionPersistence(store, secrets, available),
   });
   if (!created.ok) {
     await execution?.close();
@@ -155,7 +160,7 @@ export async function startLocalApp(
     return record;
   };
   control = new NativeControl(
-    async (method, data) => {
+    async ({ method, data }) => {
       if (method === "attach")
         return switchUser(async () => {
           const next = context(data.context),
@@ -206,16 +211,9 @@ export async function startLocalApp(
         });
       if (method === "suspend")
         return switchUser(async () => {
-          if (activeUser && data.generation !== activeUser.generation)
-            throw new Error("user changed");
+          const previous = context(data.context);
           for (const id of views.keys()) detach(id);
-          if (activeUser) {
-            const fenced = await host.suspendCaller(callerFor(activeUser), {
-              timeoutMs: 10000,
-              signal: AbortSignal.timeout(10000),
-            });
-            if (!fenced.ok) throw new Error("user fence unavailable");
-          }
+          await suspendNativeCaller(host, previous, activeUser);
           activeUser = undefined;
           return true;
         });
@@ -223,7 +221,7 @@ export async function startLocalApp(
         detach(data.channel);
         return true;
       }
-      if (method === "save_connection") {
+      if (method === "saveConnection") {
         const current = activeUser;
         if (!current || current.generation !== data.generation)
           return fail("unavailable");
@@ -247,15 +245,15 @@ export async function startLocalApp(
       }
       throw new Error("unknown native method");
     },
-    (id, message) => {
-      const view = views.get(id);
+    ({ channel, message }) => {
+      const view = views.get(channel);
       if (!view) return;
       if (
         view.generation !== activeUser?.generation ||
         (view.input.desiredSize ?? 0) <= 0 ||
         Buffer.byteLength(JSON.stringify(message)) > 262144
       ) {
-        detach(id);
+        detach(channel);
         return;
       }
       view.input.enqueue(message);

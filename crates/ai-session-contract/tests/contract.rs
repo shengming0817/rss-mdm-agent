@@ -190,3 +190,19 @@ fn preference_patch_retains_set_clear_and_omission_through_rust_roundtrip() {
         assert!(decode(&serde_json::to_vec(&value).unwrap(), &limits()).is_err());
     }
 }
+
+#[test]
+fn native_control_and_execution_origin_are_generated_closed_rust_types() {
+    for value in [
+        serde_json::json!({"schemaVersion":5,"kind":"nativeCall","id":1,"method":"masterKey","data":{"create":false}}),
+        serde_json::json!({"schemaVersion":5,"kind":"executionOrigin","namespace":{"tenantId":"test-users","principalId":"alice","authorityId":"desktop-fixture","sessionId":"session-1"},"operationId":"operation-1","provider":"codex","config":{"id":"connection-1","revision":"1"}}),
+    ] {
+        let record = decode(&serde_json::to_vec(&value).unwrap(), &limits()).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&encode(&record, &limits()).unwrap()).unwrap(),
+            value
+        );
+    }
+    let invalid = serde_json::json!({"schemaVersion":5,"kind":"nativeCall","id":1,"method":"masterKey","data":{"create":false,"secret":"forged"}});
+    assert!(decode(&serde_json::to_vec(&invalid).unwrap(), &limits()).is_err());
+}

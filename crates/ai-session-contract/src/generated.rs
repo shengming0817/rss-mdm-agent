@@ -8381,6 +8381,165 @@ impl<'de> ::serde::Deserialize<'de> for EventToolResultSchemaVersion {
             .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
     }
 }
+#[doc = "Non-secret AI operation provenance carried only on the desktop-owned execution pipe."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutionOrigin {
+    #[doc = "`config` member; see its generated type and parent schema."]
+    pub config: ConfigRef,
+    #[doc = "`kind` member; see its generated type and parent schema."]
+    pub kind: ExecutionOriginKind,
+    #[doc = "`namespace` member; see its generated type and parent schema."]
+    pub namespace: Namespace,
+    #[serde(rename = "operationId")]
+    #[doc = "`operation_id` member; see its generated type and parent schema."]
+    pub operation_id: Id,
+    #[doc = "`provider` member; see its generated type and parent schema."]
+    pub provider: ExecutionOriginProvider,
+    #[serde(rename = "schemaVersion")]
+    #[doc = "`schema_version` member; see its generated type and parent schema."]
+    pub schema_version: ExecutionOriginSchemaVersion,
+}
+#[doc = "`ExecutionOriginKind`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ExecutionOriginKind {
+    #[serde(rename = "executionOrigin")]
+    #[doc = "`ExecutionOrigin` alternative; see the parent type's schema contract."]
+    ExecutionOrigin,
+}
+impl ::std::fmt::Display for ExecutionOriginKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::ExecutionOrigin => f.write_str("executionOrigin"),
+        }
+    }
+}
+impl ::std::str::FromStr for ExecutionOriginKind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "executionOrigin" => Ok(Self::ExecutionOrigin),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ExecutionOriginKind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ExecutionOriginKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`ExecutionOriginProvider`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ExecutionOriginProvider {
+    #[serde(rename = "codex")]
+    #[doc = "`Codex` alternative; see the parent type's schema contract."]
+    Codex,
+    #[serde(rename = "claude")]
+    #[doc = "`Claude` alternative; see the parent type's schema contract."]
+    Claude,
+    #[serde(rename = "deepseek")]
+    #[doc = "`Deepseek` alternative; see the parent type's schema contract."]
+    Deepseek,
+}
+impl ::std::fmt::Display for ExecutionOriginProvider {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Codex => f.write_str("codex"),
+            Self::Claude => f.write_str("claude"),
+            Self::Deepseek => f.write_str("deepseek"),
+        }
+    }
+}
+impl ::std::str::FromStr for ExecutionOriginProvider {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "codex" => Ok(Self::Codex),
+            "claude" => Ok(Self::Claude),
+            "deepseek" => Ok(Self::Deepseek),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ExecutionOriginProvider {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ExecutionOriginProvider {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`ExecutionOriginSchemaVersion`"]
+#[derive(:: serde :: Serialize, Clone)]
+#[serde(transparent)]
+pub struct ExecutionOriginSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
+impl ::std::ops::Deref for ExecutionOriginSchemaVersion {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::std::convert::From<ExecutionOriginSchemaVersion> for i64 {
+    fn from(value: ExecutionOriginSchemaVersion) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::TryFrom<i64> for ExecutionOriginSchemaVersion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if ![5_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for ExecutionOriginSchemaVersion {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
 #[doc = "Value-free failure and explicit retry discipline."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
@@ -9260,6 +9419,579 @@ pub struct Namespace {
     #[doc = "Authenticated tenant scope."]
     #[serde(rename = "tenantId")]
     pub tenant_id: Id,
+}
+#[doc = "`NativeAttachData`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct NativeAttachData {
+    #[doc = "`channel` member; see its generated type and parent schema."]
+    pub channel: Id,
+    #[doc = "`context` member; see its generated type and parent schema."]
+    pub context: UserContext,
+}
+#[doc = "`NativeCall`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(tag = "method", deny_unknown_fields)]
+pub enum NativeCall {
+    #[doc = "NativeCallAttach"]
+    #[serde(rename = "attach")]
+    Attach {
+        #[doc = "`data` member; see its generated type and parent schema."]
+        data: NativeAttachData,
+        #[doc = "`id` member; see its generated type and parent schema."]
+        id: Counter,
+        #[doc = "`kind` member; see its generated type and parent schema."]
+        kind: NativeCallKind,
+        #[serde(rename = "schemaVersion")]
+        #[doc = "`schema_version` member; see its generated type and parent schema."]
+        schema_version: NativeCallSchemaVersion,
+    },
+    #[doc = "NativeCallSuspend"]
+    #[serde(rename = "suspend")]
+    Suspend {
+        #[doc = "`data` member; see its generated type and parent schema."]
+        data: NativeSuspendData,
+        #[doc = "`id` member; see its generated type and parent schema."]
+        id: Counter,
+        #[doc = "`kind` member; see its generated type and parent schema."]
+        kind: NativeCallKind,
+        #[serde(rename = "schemaVersion")]
+        #[doc = "`schema_version` member; see its generated type and parent schema."]
+        schema_version: NativeCallSchemaVersion,
+    },
+    #[doc = "NativeCallDetach"]
+    #[serde(rename = "detach")]
+    Detach {
+        #[doc = "`data` member; see its generated type and parent schema."]
+        data: NativeDetachData,
+        #[doc = "`id` member; see its generated type and parent schema."]
+        id: Counter,
+        #[doc = "`kind` member; see its generated type and parent schema."]
+        kind: NativeCallKind,
+        #[serde(rename = "schemaVersion")]
+        #[doc = "`schema_version` member; see its generated type and parent schema."]
+        schema_version: NativeCallSchemaVersion,
+    },
+    #[doc = "NativeCallSaveConnection"]
+    #[serde(rename = "saveConnection")]
+    SaveConnection {
+        #[doc = "`data` member; see its generated type and parent schema."]
+        data: NativeSaveConnectionData,
+        #[doc = "`id` member; see its generated type and parent schema."]
+        id: Counter,
+        #[doc = "`kind` member; see its generated type and parent schema."]
+        kind: NativeCallKind,
+        #[serde(rename = "schemaVersion")]
+        #[doc = "`schema_version` member; see its generated type and parent schema."]
+        schema_version: NativeCallSchemaVersion,
+    },
+    #[doc = "NativeCallMasterKey"]
+    #[serde(rename = "masterKey")]
+    MasterKey {
+        #[doc = "`data` member; see its generated type and parent schema."]
+        data: NativeMasterKeyData,
+        #[doc = "`id` member; see its generated type and parent schema."]
+        id: Counter,
+        #[doc = "`kind` member; see its generated type and parent schema."]
+        kind: NativeCallKind,
+        #[serde(rename = "schemaVersion")]
+        #[doc = "`schema_version` member; see its generated type and parent schema."]
+        schema_version: NativeCallSchemaVersion,
+    },
+}
+#[doc = "`NativeCallKind`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum NativeCallKind {
+    #[serde(rename = "nativeCall")]
+    #[doc = "`NativeCall` alternative; see the parent type's schema contract."]
+    NativeCall,
+}
+impl ::std::fmt::Display for NativeCallKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::NativeCall => f.write_str("nativeCall"),
+        }
+    }
+}
+impl ::std::str::FromStr for NativeCallKind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "nativeCall" => Ok(Self::NativeCall),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for NativeCallKind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for NativeCallKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`NativeCallSchemaVersion`"]
+#[derive(:: serde :: Serialize, Clone)]
+#[serde(transparent)]
+pub struct NativeCallSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
+impl ::std::ops::Deref for NativeCallSchemaVersion {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::std::convert::From<NativeCallSchemaVersion> for i64 {
+    fn from(value: NativeCallSchemaVersion) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::TryFrom<i64> for NativeCallSchemaVersion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if ![5_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for NativeCallSchemaVersion {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
+#[doc = "Private inherited Native-to-Host control frame. The descriptor is the trust boundary; this record only closes framing and payload shape."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(untagged)]
+pub enum NativeControlFrame {
+    #[doc = "`Call` alternative; see the parent type's schema contract."]
+    Call(#[doc = "`` member; see its generated type and parent schema."] NativeCall),
+    #[doc = "`Reply` alternative; see the parent type's schema contract."]
+    Reply(#[doc = "`` member; see its generated type and parent schema."] NativeReply),
+    #[doc = "`Event` alternative; see the parent type's schema contract."]
+    Event(#[doc = "`` member; see its generated type and parent schema."] NativeEvent),
+}
+impl ::std::convert::From<NativeCall> for NativeControlFrame {
+    fn from(value: NativeCall) -> Self {
+        Self::Call(value)
+    }
+}
+impl ::std::convert::From<NativeReply> for NativeControlFrame {
+    fn from(value: NativeReply) -> Self {
+        Self::Reply(value)
+    }
+}
+impl ::std::convert::From<NativeEvent> for NativeControlFrame {
+    fn from(value: NativeEvent) -> Self {
+        Self::Event(value)
+    }
+}
+#[doc = "`NativeDetachData`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct NativeDetachData {
+    #[doc = "`channel` member; see its generated type and parent schema."]
+    pub channel: Id,
+}
+#[doc = "`NativeEvent`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct NativeEvent {
+    #[doc = "`channel` member; see its generated type and parent schema."]
+    pub channel: Id,
+    #[doc = "`kind` member; see its generated type and parent schema."]
+    pub kind: NativeEventKind,
+    #[doc = "`message` member; see its generated type and parent schema."]
+    pub message: ::serde_json::Value,
+    #[serde(rename = "schemaVersion")]
+    #[doc = "`schema_version` member; see its generated type and parent schema."]
+    pub schema_version: NativeEventSchemaVersion,
+}
+#[doc = "`NativeEventKind`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum NativeEventKind {
+    #[serde(rename = "nativeEvent")]
+    #[doc = "`NativeEvent` alternative; see the parent type's schema contract."]
+    NativeEvent,
+}
+impl ::std::fmt::Display for NativeEventKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::NativeEvent => f.write_str("nativeEvent"),
+        }
+    }
+}
+impl ::std::str::FromStr for NativeEventKind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "nativeEvent" => Ok(Self::NativeEvent),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for NativeEventKind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for NativeEventKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`NativeEventSchemaVersion`"]
+#[derive(:: serde :: Serialize, Clone)]
+#[serde(transparent)]
+pub struct NativeEventSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
+impl ::std::ops::Deref for NativeEventSchemaVersion {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::std::convert::From<NativeEventSchemaVersion> for i64 {
+    fn from(value: NativeEventSchemaVersion) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::TryFrom<i64> for NativeEventSchemaVersion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if ![5_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for NativeEventSchemaVersion {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
+#[doc = "`NativeMasterKeyData`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct NativeMasterKeyData {
+    #[doc = "`create` member; see its generated type and parent schema."]
+    pub create: bool,
+}
+#[doc = "`NativeReply`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(untagged, deny_unknown_fields)]
+pub enum NativeReply {
+    #[doc = "`Success` alternative; see the parent type's schema contract."]
+    Success {
+        #[doc = "`id` member; see its generated type and parent schema."]
+        id: Counter,
+        #[doc = "`kind` member; see its generated type and parent schema."]
+        kind: NativeReplySuccessKind,
+        #[doc = "`ok` member; see its generated type and parent schema."]
+        ok: bool,
+        #[serde(rename = "schemaVersion")]
+        #[doc = "`schema_version` member; see its generated type and parent schema."]
+        schema_version: NativeReplySuccessSchemaVersion,
+        #[doc = "`value` member; see its generated type and parent schema."]
+        value: ::serde_json::Value,
+    },
+    #[doc = "`Failure` alternative; see the parent type's schema contract."]
+    Failure {
+        #[doc = "`id` member; see its generated type and parent schema."]
+        id: Counter,
+        #[doc = "`kind` member; see its generated type and parent schema."]
+        kind: NativeReplyFailureKind,
+        #[doc = "`ok` member; see its generated type and parent schema."]
+        ok: bool,
+        #[serde(rename = "schemaVersion")]
+        #[doc = "`schema_version` member; see its generated type and parent schema."]
+        schema_version: NativeReplyFailureSchemaVersion,
+    },
+}
+#[doc = "`NativeReplyFailureKind`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum NativeReplyFailureKind {
+    #[serde(rename = "nativeReply")]
+    #[doc = "`NativeReply` alternative; see the parent type's schema contract."]
+    NativeReply,
+}
+impl ::std::fmt::Display for NativeReplyFailureKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::NativeReply => f.write_str("nativeReply"),
+        }
+    }
+}
+impl ::std::str::FromStr for NativeReplyFailureKind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "nativeReply" => Ok(Self::NativeReply),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for NativeReplyFailureKind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for NativeReplyFailureKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`NativeReplyFailureSchemaVersion`"]
+#[derive(:: serde :: Serialize, Clone)]
+#[serde(transparent)]
+pub struct NativeReplyFailureSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
+impl ::std::ops::Deref for NativeReplyFailureSchemaVersion {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::std::convert::From<NativeReplyFailureSchemaVersion> for i64 {
+    fn from(value: NativeReplyFailureSchemaVersion) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::TryFrom<i64> for NativeReplyFailureSchemaVersion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if ![5_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for NativeReplyFailureSchemaVersion {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
+#[doc = "`NativeReplySuccessKind`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum NativeReplySuccessKind {
+    #[serde(rename = "nativeReply")]
+    #[doc = "`NativeReply` alternative; see the parent type's schema contract."]
+    NativeReply,
+}
+impl ::std::fmt::Display for NativeReplySuccessKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::NativeReply => f.write_str("nativeReply"),
+        }
+    }
+}
+impl ::std::str::FromStr for NativeReplySuccessKind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "nativeReply" => Ok(Self::NativeReply),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for NativeReplySuccessKind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for NativeReplySuccessKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`NativeReplySuccessSchemaVersion`"]
+#[derive(:: serde :: Serialize, Clone)]
+#[serde(transparent)]
+pub struct NativeReplySuccessSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
+impl ::std::ops::Deref for NativeReplySuccessSchemaVersion {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::std::convert::From<NativeReplySuccessSchemaVersion> for i64 {
+    fn from(value: NativeReplySuccessSchemaVersion) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::TryFrom<i64> for NativeReplySuccessSchemaVersion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if ![5_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for NativeReplySuccessSchemaVersion {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
+#[doc = "`NativeSaveConnectionData`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct NativeSaveConnectionData {
+    #[doc = "`connection` member; see its generated type and parent schema."]
+    pub connection: Connection,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    #[doc = "`expected` member; see its generated type and parent schema."]
+    pub expected: ::std::option::Option<Counter>,
+    #[doc = "`generation` member; see its generated type and parent schema."]
+    pub generation: Id,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    #[doc = "`secret` member; see its generated type and parent schema."]
+    pub secret: ::std::option::Option<NativeSaveConnectionDataSecret>,
+}
+#[doc = "`NativeSaveConnectionDataSecret`"]
+#[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct NativeSaveConnectionDataSecret(
+    #[doc = "`` member; see its generated type and parent schema."] ::std::string::String,
+);
+impl ::std::ops::Deref for NativeSaveConnectionDataSecret {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<NativeSaveConnectionDataSecret> for ::std::string::String {
+    fn from(value: NativeSaveConnectionDataSecret) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for NativeSaveConnectionDataSecret {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() > 16384usize {
+            return Err("longer than 16384 characters".into());
+        }
+        if value.chars().count() < 1usize {
+            return Err("shorter than 1 characters".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for NativeSaveConnectionDataSecret {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for NativeSaveConnectionDataSecret {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for NativeSaveConnectionDataSecret {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
+}
+#[doc = "`NativeSuspendData`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct NativeSuspendData {
+    #[doc = "`context` member; see its generated type and parent schema."]
+    pub context: UserContext,
 }
 #[doc = "Selected product ACP extensions; capability metadata is never execution authority."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
@@ -11557,6 +12289,14 @@ pub enum WireRecord {
     HistoryRequest(#[doc = "`` member; see its generated type and parent schema."] HistoryRequest),
     #[doc = "`TestUserPage` alternative; see the parent type's schema contract."]
     TestUserPage(#[doc = "`` member; see its generated type and parent schema."] TestUserPage),
+    #[doc = "`NativeControlFrame` alternative; see the parent type's schema contract."]
+    NativeControlFrame(
+        #[doc = "`` member; see its generated type and parent schema."] NativeControlFrame,
+    ),
+    #[doc = "`ExecutionOrigin` alternative; see the parent type's schema contract."]
+    ExecutionOrigin(
+        #[doc = "`` member; see its generated type and parent schema."] ExecutionOrigin,
+    ),
 }
 impl ::std::convert::From<Command> for WireRecord {
     fn from(value: Command) -> Self {
@@ -11711,6 +12451,16 @@ impl ::std::convert::From<HistoryRequest> for WireRecord {
 impl ::std::convert::From<TestUserPage> for WireRecord {
     fn from(value: TestUserPage) -> Self {
         Self::TestUserPage(value)
+    }
+}
+impl ::std::convert::From<NativeControlFrame> for WireRecord {
+    fn from(value: NativeControlFrame) -> Self {
+        Self::NativeControlFrame(value)
+    }
+}
+impl ::std::convert::From<ExecutionOrigin> for WireRecord {
+    fn from(value: ExecutionOrigin) -> Self {
+        Self::ExecutionOrigin(value)
     }
 }
 #[doc = " Error types."]
@@ -13057,6 +13807,29 @@ impl std::fmt::Debug for EventToolResultSchemaVersion {
         ))
     }
 }
+impl std::fmt::Debug for ExecutionOrigin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(ExecutionOrigin), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for ExecutionOriginKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(ExecutionOriginKind), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for ExecutionOriginProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(ExecutionOriginProvider), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for ExecutionOriginSchemaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(ExecutionOriginSchemaVersion),
+            "([redacted])"
+        ))
+    }
+}
 impl std::fmt::Debug for Failure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(stringify!(Failure), "([redacted])"))
@@ -13177,6 +13950,111 @@ impl std::fmt::Debug for ListRequestSchemaVersion {
 impl std::fmt::Debug for Namespace {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(stringify!(Namespace), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for NativeAttachData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(NativeAttachData), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for NativeCall {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(NativeCall), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for NativeCallKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(NativeCallKind), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for NativeCallSchemaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(NativeCallSchemaVersion), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for NativeControlFrame {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(NativeControlFrame), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for NativeDetachData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(NativeDetachData), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for NativeEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(NativeEvent), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for NativeEventKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(NativeEventKind), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for NativeEventSchemaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(NativeEventSchemaVersion),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for NativeMasterKeyData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(NativeMasterKeyData), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for NativeReply {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(NativeReply), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for NativeReplyFailureKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(NativeReplyFailureKind), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for NativeReplyFailureSchemaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(NativeReplyFailureSchemaVersion),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for NativeReplySuccessKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(NativeReplySuccessKind), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for NativeReplySuccessSchemaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(NativeReplySuccessSchemaVersion),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for NativeSaveConnectionData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(NativeSaveConnectionData),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for NativeSaveConnectionDataSecret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(NativeSaveConnectionDataSecret),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for NativeSuspendData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(NativeSuspendData), "([redacted])"))
     }
 }
 impl std::fmt::Debug for Negotiation {

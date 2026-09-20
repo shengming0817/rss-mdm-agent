@@ -41,7 +41,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let metadata = json!({
         "com.rss-mdm/ai-origin": {
-            "version": 1,
+            "schemaVersion": 5,
+            "kind": "executionOrigin",
             "namespace": {
                 "tenantId": "test-users",
                 "principalId": "fixture-actor",

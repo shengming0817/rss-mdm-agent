@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import type {
   Connection,
   ConnectionSource,
@@ -16,6 +16,8 @@ const busy = ref(false),
   error = ref(""),
   editing = ref<Connection>();
 const pendingRemoval = ref<Connection>();
+const removalDialog = ref<HTMLElement>();
+let removalTrigger: HTMLElement | undefined;
 const draftId = ref<string>(crypto.randomUUID());
 const name = ref(""),
   provider = ref<Connection["provider"]>("codex"),
@@ -137,6 +139,13 @@ async function save() {
       else await runtime.saveConnection(candidate, expected);
     } catch (failure) {
       await load().catch(() => {});
+      if (
+        failure &&
+        typeof failure === "object" &&
+        "code" in failure &&
+        failure.code === "revision_conflict"
+      )
+        edit();
       throw failure;
     }
     edit();
@@ -165,13 +174,58 @@ async function defaultConnection(id: string) {
 async function remove(row: Connection) {
   await run(async () => {
     if (!c.runtime.value) return;
-    await c.runtime.value.saveConnection(
-      { ...row, configRevision: row.configRevision + 1, status: "deleted" },
-      row.configRevision,
-    );
-    pendingRemoval.value = undefined;
-    await load();
+    try {
+      await c.runtime.value.saveConnection(
+        { ...row, configRevision: row.configRevision + 1, status: "deleted" },
+        row.configRevision,
+      );
+      closeRemoval();
+      await load();
+    } catch (failure) {
+      await load().catch(() => {});
+      if (
+        failure &&
+        typeof failure === "object" &&
+        "code" in failure &&
+        failure.code === "revision_conflict"
+      )
+        closeRemoval();
+      throw failure;
+    }
   });
+}
+async function requestRemoval(row: Connection, event: Event) {
+  removalTrigger = event.currentTarget as HTMLElement;
+  pendingRemoval.value = row;
+  await nextTick();
+  removalDialog.value?.querySelector<HTMLElement>("button")?.focus();
+}
+function closeRemoval() {
+  pendingRemoval.value = undefined;
+  const trigger = removalTrigger;
+  removalTrigger = undefined;
+  void nextTick(() => trigger?.focus());
+}
+function containRemovalFocus(event: KeyboardEvent) {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeRemoval();
+    return;
+  }
+  if (event.key !== "Tab" || !removalDialog.value) return;
+  const buttons = [
+    ...removalDialog.value.querySelectorAll<HTMLElement>("button"),
+  ];
+  if (!buttons.length) return;
+  const first = buttons[0],
+    last = buttons.at(-1)!;
+  if (event.shiftKey && event.target === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && event.target === last) {
+    event.preventDefault();
+    first.focus();
+  }
 }
 async function history() {
   c.state.history.delete(c.state.selected);
@@ -195,110 +249,129 @@ async function history() {
         连接与默认选择仅属于当前测试用户。API
         密钥在原生安全输入框中填写。验证会发送一条简短测试请求，可能产生服务费用。
       </p>
-      <ul>
-        <li v-for="row in rows" :key="row.connectionId">
-          <strong>{{ row.name }}</strong> · {{ labels.get(row.provider) }} ·
-          {{ row.status === "ready" ? "可用" : "需要更新认证" }}
-          <span v-if="prefs.defaultConnectionId === row.connectionId">
-            · 默认</span
+      <div :inert="pendingRemoval ? true : undefined">
+        <ul>
+          <li v-for="row in rows" :key="row.connectionId">
+            <strong>{{ row.name }}</strong> · {{ labels.get(row.provider) }} ·
+            {{ row.status === "ready" ? "可用" : "需要更新认证" }}
+            <span v-if="prefs.defaultConnectionId === row.connectionId">
+              · 默认</span
+            >
+            <button
+              :aria-label="`编辑连接 ${row.name}`"
+              :disabled="busy"
+              @click="edit(row)"
+            >
+              编辑</button
+            ><button
+              :disabled="
+                busy ||
+                row.status !== 'ready' ||
+                prefs.defaultConnectionId === row.connectionId
+              "
+              :aria-label="`将连接 ${row.name} 设为默认`"
+              @click="defaultConnection(row.connectionId)"
+            >
+              设为默认</button
+            ><button
+              :aria-label="`删除连接 ${row.name}`"
+              :disabled="busy"
+              @click="requestRemoval(row, $event)"
+            >
+              删除
+            </button>
+          </li>
+        </ul>
+        <form class="connection-form" @submit.prevent="save">
+          <h3>{{ editing ? "编辑连接" : "添加连接" }}</h3>
+          <label>名称<input v-model="name" required maxlength="64" /></label>
+          <label
+            >服务<select v-model="provider">
+              <option value="codex">Codex</option>
+              <option value="claude">Claude</option>
+              <option value="deepseek">DeepSeek</option>
+            </select></label
           >
-          <button :disabled="busy" @click="edit(row)">编辑</button
-          ><button
-            :disabled="
-              busy ||
-              row.status !== 'ready' ||
-              prefs.defaultConnectionId === row.connectionId
-            "
-            @click="defaultConnection(row.connectionId)"
+          <label
+            >认证来源<select v-model="sourceType">
+              <option v-if="provider !== 'deepseek'" value="existing_config">
+                本机已有配置
+              </option>
+              <option value="custom_api">自定义 API</option>
+            </select></label
           >
-            设为默认</button
-          ><button :disabled="busy" @click="pendingRemoval = row">删除</button>
-        </li>
-      </ul>
-      <div v-if="pendingRemoval" role="alertdialog" aria-label="删除连接确认">
+          <label v-if="sourceType !== 'custom_api'"
+            >配置目录<input
+              v-model="directory"
+              placeholder="留空使用 ~/.codex 或 ~/.claude"
+          /></label>
+          <template v-if="sourceType === 'custom_api'"
+            ><label v-if="provider === 'claude'"
+              >凭据类型<select v-model="credentialType">
+                <option value="api_key">API Key</option>
+                <option value="auth_token">Auth Token</option>
+              </select></label
+            ><label
+              >API 地址<input v-model="apiUrl" required placeholder="https://…"
+            /></label>
+            <label v-if="editing?.source.type === 'custom_api'">
+              <input v-model="replaceKey" type="checkbox" />更换 API 密钥
+            </label>
+            <p>
+              {{
+                editing?.source.type === "custom_api" && !replaceKey
+                  ? "保存时保留原密钥。"
+                  : "点击验证并保存后，在原生输入框填写 API 密钥。"
+              }}
+            </p>
+          </template>
+          <label
+            >模型<input
+              v-model="model"
+              :required="sourceType === 'custom_api'"
+              placeholder="留空使用官方配置的默认模型"
+          /></label>
+          <label
+            >工具<select v-model="profile">
+              <option value="conversation">仅对话</option>
+              <option v-if="provider === 'codex'" value="controlled_tools">
+                受控测试工具
+              </option>
+            </select></label
+          >
+          <div>
+            <button
+              :disabled="
+                busy ||
+                c.state.connection !== 'connected' ||
+                (sourceType === 'custom_api' && !nativeTestMode)
+              "
+            >
+              验证并保存</button
+            ><button type="button" :disabled="busy" @click="edit()">
+              清空表单
+            </button>
+          </div>
+        </form>
+      </div>
+      <div
+        v-if="pendingRemoval"
+        ref="removalDialog"
+        role="alertdialog"
+        aria-modal="true"
+        aria-label="删除连接确认"
+        @keydown="containRemovalFocus"
+      >
         <p>
           确认删除 {{ pendingRemoval.name }}（{{
             labels.get(pendingRemoval.provider)
           }}）？连接将不可再使用，保存的 API 密钥会删除；所有会话历史保留。
         </p>
-        <button :disabled="busy" @click="pendingRemoval = undefined">
-          取消删除
-        </button>
+        <button :disabled="busy" @click="closeRemoval">取消删除</button>
         <button :disabled="busy" @click="remove(pendingRemoval)">
           确认删除
         </button>
       </div>
-      <form class="connection-form" @submit.prevent="save">
-        <h3>{{ editing ? "编辑连接" : "添加连接" }}</h3>
-        <label>名称<input v-model="name" required maxlength="64" /></label>
-        <label
-          >服务<select v-model="provider">
-            <option value="codex">Codex</option>
-            <option value="claude">Claude</option>
-            <option value="deepseek">DeepSeek</option>
-          </select></label
-        >
-        <label
-          >认证来源<select v-model="sourceType">
-            <option v-if="provider !== 'deepseek'" value="existing_config">
-              本机已有配置
-            </option>
-            <option value="custom_api">自定义 API</option>
-          </select></label
-        >
-        <label v-if="sourceType !== 'custom_api'"
-          >配置目录<input
-            v-model="directory"
-            placeholder="留空使用 ~/.codex 或 ~/.claude"
-        /></label>
-        <template v-if="sourceType === 'custom_api'"
-          ><label v-if="provider === 'claude'"
-            >凭据类型<select v-model="credentialType">
-              <option value="api_key">API Key</option>
-              <option value="auth_token">Auth Token</option>
-            </select></label
-          ><label
-            >API 地址<input v-model="apiUrl" required placeholder="https://…"
-          /></label>
-          <label v-if="editing?.source.type === 'custom_api'">
-            <input v-model="replaceKey" type="checkbox" />更换 API 密钥
-          </label>
-          <p>
-            {{
-              editing?.source.type === "custom_api" && !replaceKey
-                ? "保存时保留原密钥。"
-                : "点击验证并保存后，在原生输入框填写 API 密钥。"
-            }}
-          </p>
-        </template>
-        <label
-          >模型<input
-            v-model="model"
-            :required="sourceType === 'custom_api'"
-            placeholder="留空使用官方配置的默认模型"
-        /></label>
-        <label
-          >工具<select v-model="profile">
-            <option value="conversation">仅对话</option>
-            <option v-if="provider === 'codex'" value="controlled_tools">
-              受控测试工具
-            </option>
-          </select></label
-        >
-        <div>
-          <button
-            :disabled="
-              busy ||
-              c.state.connection !== 'connected' ||
-              (sourceType === 'custom_api' && !nativeTestMode)
-            "
-          >
-            验证并保存</button
-          ><button type="button" :disabled="busy" @click="edit()">
-            清空表单
-          </button>
-        </div>
-      </form>
     </details>
     <template v-if="c.view.value">
       <p v-if="!c.connectionReady.value" role="status">
