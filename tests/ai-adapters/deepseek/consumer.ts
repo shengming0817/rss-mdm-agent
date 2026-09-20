@@ -1,7 +1,8 @@
 import {
+  activeStage,
   startStage,
   providerStage,
-} from "../../../packages/ai-contract/dist/index.js";
+} from "@rss-mdm-agent/ai-contract";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -68,11 +69,11 @@ try {
   assert.ok(restored.value.restores(previous));
   assert.notEqual(
     restored.value.binding.generation,
-    previous.binding.generation,
+    activeStage(previous).binding.generation,
   );
   assert.equal(
     restored.value.binding.nativeSessionId,
-    previous.binding.nativeSessionId,
+    activeStage(previous).binding.nativeSessionId,
   );
   console.log(
     "PASS packed public API and real child cold session, no model request",
