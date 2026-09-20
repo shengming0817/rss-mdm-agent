@@ -43,6 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "com.rss-mdm/ai-origin": {
             "schemaVersion": 5,
             "kind": "executionOrigin",
+            "userGeneration": "acceptance-generation",
             "namespace": {
                 "tenantId": "test-users",
                 "principalId": "fixture-actor",

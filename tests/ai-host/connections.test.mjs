@@ -3,14 +3,17 @@ import test from "node:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createHost } from "../../packages/ai-host/dist/index.js";
+import { createHost, HostFailure } from "../../packages/ai-host/dist/index.js";
 import { openSqliteStore } from "../../packages/ai-store-sqlite/dist/index.js";
 import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import {
   connectionPersistence,
   ConnectionSecrets,
 } from "../../apps/ai-host/dist/secrets.js";
-import { suspendNativeCaller } from "../../apps/ai-host/dist/index.js";
+import {
+  closeOwners,
+  suspendNativeCaller,
+} from "../../apps/ai-host/dist/index.js";
 const caller = {
   tenantId: "test-users",
   principalId: "alice",
@@ -499,7 +502,8 @@ test("saving a connection requires a completed model probe and preserves the pre
       delivery: null,
       onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
       resolve: async (_caller, options, namespace) => {
-        if (reject) throw Error("fixture authentication rejected");
+        const artifact = new URL("./provider.mjs", import.meta.url);
+        if (reject) artifact.searchParams.set("scenario", "probe_reject");
         return {
           dispose: async () => {
             assert.deepEqual(unwrap(await store.launches()), []);
@@ -513,7 +517,7 @@ test("saving a connection requires a completed model probe and preserves the pre
             workingDirectory: root,
             permissions: "tools_disabled",
           },
-          artifact: new URL("./provider.mjs", import.meta.url).href,
+          artifact: artifact.href,
         };
       },
     }),
@@ -583,6 +587,123 @@ test("saving a connection requires a completed model probe and preserves the pre
       .defaultConnectionId,
     "two",
   );
+});
+
+test("failed probe disposal leaves worker capacity available and retries cleanup on close", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "rss-probe-disposal-"));
+  const store = unwrap(
+    openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
+  );
+  let disposals = 0;
+  const host = unwrap(
+    await createHost({
+      store,
+      launchFences: store,
+      delivery: null,
+      workerLimit: 1,
+      resolve: async (_caller, options, namespace) => ({
+        dispose: async () => {
+          if (++disposals === 1) throw new Error("cleanup unavailable");
+        },
+        configuration: {
+          namespace,
+          provider: options.provider,
+          config: options.config,
+          workingDirectory: root,
+          permissions: "tools_disabled",
+        },
+        artifact: new URL("./provider.mjs", import.meta.url).href,
+      }),
+    }),
+  );
+  const first = await host.saveConnection(
+    caller,
+    { ...connection("first"), status: "unverified" },
+    null,
+    budget(),
+  );
+  assert.equal(first.ok, true);
+  const second = await host.saveConnection(
+    caller,
+    { ...connection("second"), status: "unverified" },
+    null,
+    budget(),
+  );
+  assert.equal(second.ok, true, JSON.stringify(second));
+  unwrap(await host.close(budget()));
+  assert.ok(disposals >= 3);
+  await rm(root, { recursive: true, force: true });
+});
+
+test("typed resolver and persistence failures keep closed codes and credential diagnostics", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "rss-closed-errors-"));
+  const store = unwrap(
+    openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
+  );
+  const diagnostics = [];
+  let resolverFailure = true;
+  const host = unwrap(
+    await createHost({
+      store,
+      launchFences: store,
+      delivery: null,
+      onDiagnostic: (value) => diagnostics.push(value),
+      persistConnection: async () => {
+        throw new HostFailure({
+          code: "authentication_required",
+          retry: "never",
+        });
+      },
+      resolve: async (_caller, options, namespace) => {
+        if (resolverFailure)
+          throw new HostFailure({ code: "invalid_input", retry: "never" });
+        return {
+          configuration: {
+            namespace,
+            provider: options.provider,
+            config: options.config,
+            workingDirectory: root,
+            permissions: "tools_disabled",
+          },
+          artifact: new URL("./provider.mjs", import.meta.url).href,
+        };
+      },
+    }),
+  );
+  const candidate = { ...connection("typed"), status: "unverified" };
+  assert.equal(
+    (await host.saveConnection(caller, candidate, null, budget())).error.code,
+    "invalid_input",
+  );
+  resolverFailure = false;
+  assert.equal(
+    (await host.saveConnection(caller, candidate, null, budget())).error.code,
+    "authentication_required",
+  );
+  assert.deepEqual(diagnostics.at(-1), {
+    stage: "credential",
+    code: "authentication_required",
+  });
+  assert.doesNotMatch(JSON.stringify(diagnostics), /secret|path|model/i);
+  unwrap(await host.close(budget()));
+  await rm(root, { recursive: true, force: true });
+});
+
+test("top-level close attempts every independent owner and is retryable by its caller", async () => {
+  const calls = [];
+  await assert.rejects(
+    closeOwners([
+      async () => {
+        calls.push("service");
+        throw new Error("service failed");
+      },
+      async () => calls.push("execution"),
+      async () => calls.push("host"),
+      async () => calls.push("control"),
+    ]),
+    AggregateError,
+  );
+  assert.deepEqual(calls, ["service", "execution", "host", "control"]);
 });
 
 test("application persistence reencrypts retained secrets and lets only one competing revision commit", async (t) => {

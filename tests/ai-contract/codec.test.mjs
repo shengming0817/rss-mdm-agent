@@ -54,6 +54,7 @@ test("private control and execution provenance use the same closed generated sch
   const origin = {
     schemaVersion: 5,
     kind: "executionOrigin",
+    userGeneration: "generation-a",
     namespace: {
       tenantId: "test-users",
       principalId: "alice",

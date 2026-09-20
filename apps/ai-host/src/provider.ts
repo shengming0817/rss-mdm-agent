@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { WorkerFactory } from "@rss-mdm-agent/ai-host/worker";
 import { readPrivateFile } from "./private-file.js";
 import { resolveConnection, type ProviderActivation } from "./connection.js";
+import { validateEndpointNetwork } from "./configuration.js";
 /** Activated worker composition; this is the sole credential/SDK loading entry. */
 export const createProvider: WorkerFactory = async ({
   configuration,
@@ -26,6 +27,8 @@ export const createProvider: WorkerFactory = async ({
     local.workingDirectory !== configuration.workingDirectory
   )
     throw new Error("configuration identity changed");
+  if (snapshot.connection.source.type === "custom_api")
+    await validateEndpointNetwork(snapshot.connection.source.apiUrl);
   const connection = await resolveConnection(snapshot);
   const owner = createHash("sha256")
     .update(JSON.stringify(configuration.namespace))

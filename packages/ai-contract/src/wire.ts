@@ -2079,6 +2079,8 @@ export interface ExecutionOrigin {
   schemaVersion: 5;
   kind: "executionOrigin";
   namespace: Namespace;
+  /** Native-selected user generation; checked against the current trusted registry before every tool call. */
+  userGeneration: Id;
   operationId: Id;
   provider: "codex" | "claude" | "deepseek";
   config: ConfigRef;

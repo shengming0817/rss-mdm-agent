@@ -31,6 +31,7 @@ const credentialType = ref<"api_key" | "auth_token">("api_key");
 const historyMode = ref("none"),
   recent = ref(5),
   preview = ref<HistoryPreview>();
+let historyRequest = 0;
 const selected = computed(() =>
   c.connectionReady.value ? (c.view.value?.selectedConnectionId ?? "") : "",
 );
@@ -71,6 +72,7 @@ watch(
 watch(
   () => c.state.selected,
   () => {
+    historyRequest++;
     preview.value = undefined;
     historyMode.value = "none";
   },
@@ -130,11 +132,20 @@ async function save() {
         source,
       };
       const expected = old?.configRevision ?? null;
+      const targetChanged =
+        old?.source.type === "custom_api" &&
+        source.type === "custom_api" &&
+        (old.provider !== candidate.provider ||
+          new URL(old.source.apiUrl).href !== new URL(source.apiUrl).href ||
+          (old.source.credentialType ?? "api_key") !==
+            (source.credentialType ?? "api_key"));
       if (nativeTestMode)
         await saveNativeConnection(
           candidate,
           expected,
-          replaceKey.value || old?.source.type !== "custom_api",
+          replaceKey.value ||
+            targetChanged ||
+            old?.source.type !== "custom_api",
         );
       else await runtime.saveConnection(candidate, expected);
     } catch (failure) {
@@ -228,16 +239,27 @@ function containRemovalFocus(event: KeyboardEvent) {
   }
 }
 async function history() {
+  const request = ++historyRequest;
   c.state.history.delete(c.state.selected);
   preview.value = undefined;
   if (historyMode.value === "none") return;
   await run(async () => {
-    if (!c.runtime.value || !selected.value) return;
-    preview.value = await c.runtime.value.previewHistory(
-      c.state.selected,
-      selected.value,
+    const runtime = c.runtime.value,
+      sessionId = c.state.selected,
+      connectionId = selected.value;
+    if (!runtime || !connectionId) return;
+    const result = await runtime.previewHistory(
+      sessionId,
+      connectionId,
       historyMode.value === "recent" ? recent.value : undefined,
     );
+    if (
+      request === historyRequest &&
+      runtime === c.runtime.value &&
+      sessionId === c.state.selected &&
+      connectionId === selected.value
+    )
+      preview.value = result;
   });
 }
 </script>
@@ -412,7 +434,7 @@ async function history() {
         >
           <option value="none">不带入（默认）</option>
           <option value="recent">最近 N 轮已完成对话</option>
-          <option value="all">全部已完成对话</option>
+          <option value="all">全部已完成对话（最多 64 KiB）</option>
         </select></label
       >
       <template v-if="historyMode === 'recent'"

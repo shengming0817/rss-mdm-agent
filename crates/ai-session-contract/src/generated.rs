@@ -8399,6 +8399,9 @@ pub struct ExecutionOrigin {
     #[serde(rename = "schemaVersion")]
     #[doc = "`schema_version` member; see its generated type and parent schema."]
     pub schema_version: ExecutionOriginSchemaVersion,
+    #[doc = "Native-selected user generation; checked against the current trusted registry before every tool call."]
+    #[serde(rename = "userGeneration")]
+    pub user_generation: Id,
 }
 #[doc = "`ExecutionOriginKind`"]
 #[derive(

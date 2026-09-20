@@ -42,6 +42,16 @@ export async function suspendNativeCaller(
   });
   if (!fenced.ok) throw new Error("user fence unavailable");
 }
+/** Stop every independent owner even when an earlier owner fails. */
+export async function closeOwners(
+  owners: readonly (() => Promise<unknown>)[],
+): Promise<void> {
+  const settled = await Promise.allSettled(owners.map((stop) => stop()));
+  const failures = settled.flatMap((result) =>
+    result.status === "rejected" ? [result.reason] : [],
+  );
+  if (failures.length) throw new AggregateError(failures, "close failed");
+}
 /** One native-owned process, private control descriptor and fixed-context logical UI channels. */
 export async function startLocalApp(
   configurationPath: string,
@@ -87,6 +97,9 @@ export async function startLocalApp(
     parent.input,
     parent.output,
     async (request) => {
+      const current = activeUser;
+      if (!current || current.user.userId !== request.namespace.principalId)
+        throw new Error("unbound origin");
       if (!request.commandId) throw new Error("unbound origin");
       const command = await store.command(request.namespace, request.commandId),
         session = await store.session(request.namespace);
@@ -95,7 +108,7 @@ export async function startLocalApp(
         (stage) => stage.stageId === command.value.receipt.stageId,
       );
       if (!phase) throw new Error("unbound origin");
-      return phase.binding;
+      return { binding: phase.binding, userGeneration: current.generation };
     },
   ).catch(async (error) => {
     await store.close({
@@ -261,18 +274,29 @@ export async function startLocalApp(
     controlSocket,
   );
   let closing: Promise<void> | undefined;
-  const close = () =>
-    (closing ??= (async () => {
+  const close = () => {
+    if (closing) return closing;
+    const task = (async () => {
       for (const id of views.keys()) detach(id);
-      await service.close();
-      await execution?.close();
-      const result = await host.close({
-        timeoutMs: 30000,
-        signal: new AbortController().signal,
-      });
-      control.close();
-      if (!result.ok) throw new Error(result.error.code);
-    })());
+      await closeOwners([
+        () => service.close(),
+        () => execution?.close() ?? Promise.resolve(),
+        async () => {
+          const result = await host.close({
+            timeoutMs: 30000,
+            signal: new AbortController().signal,
+          });
+          if (!result.ok) throw new Error(result.error.code);
+        },
+        async () => control.close(),
+      ]);
+    })();
+    closing = task;
+    void task.catch(() => {
+      if (closing === task) closing = undefined;
+    });
+    return task;
+  };
   void control.stopped.then(close).catch(() => {
     process.exitCode = 1;
   });

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { openSqliteStore } from "../../packages/ai-store-sqlite/dist/index.js";
 import { ConnectionSecrets } from "../../apps/ai-host/dist/secrets.js";
+import { connectionPersistence } from "../../apps/ai-host/dist/secrets.js";
 import { unwrap } from "../../packages/ai-contract/dist/testing/index.js";
 const alice = { tenantId: "t", principalId: "alice", authorityId: "a" },
   bob = { ...alice, principalId: "bob" };
@@ -71,6 +72,22 @@ test("ciphertext is scoped by user/connection/revision and config/default/cipher
   assert.deepEqual(unwrap(await store.connection(alice, "one")), first);
   unwrap(await store.saveConnection(alice, second, 1, sealed));
   assert.equal(await secrets.read(alice, second), plain);
+  const redirected = {
+    ...row(3),
+    source: { ...row(3).source, apiUrl: "https://other.example" },
+  };
+  assert.equal(
+    (
+      await connectionPersistence(store, secrets, () => true)(
+        alice,
+        redirected,
+        2,
+        undefined,
+        budget,
+      )
+    ).error.code,
+    "authentication_required",
+  );
   const tampered = row(3);
   unwrap(await store.saveConnection(alice, tampered, 2, encrypted));
   await assert.rejects(secrets.read(alice, tampered));

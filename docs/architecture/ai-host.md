@@ -20,10 +20,10 @@ Host 独立 `WorkerLaunchFenceStore` 持有进程 fence 类型与校验，SQLite
 
 AGENT-AI-01 将产品会话生命周期与 native context 分开。`Session.stages` 从同一 JSON Schema 生成，空会话无 binding；`currentStageId` 指向当前阶段，`selectedConnectionId` 是下一次普通输入所用连接。`freshContext` 仅表达下一条输入的新上下文意图。Receipt 固定接纳 stageId；每个阶段保留 connectionId、configRevision、binding 与 capabilities。原阶段历史不被切换覆盖。
 
-Host 先检查原 commandId 回执，后核对已确认历史，再等待旧队列全部结算并打开新阶段。连接修订与偏好按 Caller 的 tenant/principal/authority 存储，revision 只追加。原生 caller 由本地 ingress 根据用户 registry 与 generation 注入。一个 Host 承接所有用户；用户切换取消模型工作及验证 worker，Rust 设备任务继续持有冻结原 actor，不重绑定执行 app。
+Host 先检查原 commandId 回执，后核对已确认历史，再等待旧队列全部结算并打开新阶段。连接修订与偏好按 Caller 的 tenant/principal/authority 存储，revision 只追加。自定义 API 密钥的加密 AAD 绑定 provider、规范化 endpoint 与 credential type；任一目标变化都要求重新输入。HTTPS 字面私网地址在解析前拒绝，worker 激活还要求 DNS 的全部地址均为公网。原生 caller 由本地 ingress 根据用户 registry 与 generation 注入。一个 Host 承接所有用户；用户切换取消模型工作及验证 worker，Rust 设备任务继续持有冻结原 actor，不重绑定执行 app。
 
 provider activation 通过既有 worker 私有管道传递，不写快照或来源账号文件。配置声明与内部密文由同一 SQLite 事务持有；Host 组合根解密，只把当次所需秘密交给 worker。主密钥由 Native 延迟提供，worker 不持有主密钥。已有配置直接交由官方 CLI/SDK 解析及认证，RSS 不处理外部 token、账户身份或刷新。临时验证 namespace 不生成产品 Session，探针完成且进程停止后才保存；编辑保留或替换密钥，删除清除全部密文并阻止新 worker。恢复只读取 RSS 自有 native context 索引。历史预览仍是普通新输入的一部分。
 
-Native–Host 使用匿名 socketpair；Native 用户注册表产生可信 Caller/generation，UI 只能在绑定逻辑通道内通信。设备执行服务按 authority/device 绑定，用户操作显式携带 RequestContext，内部核对以任务冻结 actor 授权。仅一个队列、SQLite owner 和执行线程，无按用户服务池；无任务时阻塞等待。
+Native–Host 使用匿名 socketpair；Native 用户注册表产生可信 Caller/generation，UI 只能在绑定逻辑通道内通信。Host 只从当前 Native 上下文生成 execution-origin，Rust MCP 逐调用核对 principal 与 generation，协议 metadata 不能自证身份。设备执行服务按 authority/device 绑定，用户操作显式携带 RequestContext，内部核对以任务冻结 actor 授权。仅一个队列、SQLite owner 和执行线程，无按用户服务池；无任务时阻塞等待。
 
 当前没有历史数据兼容或迁移。本 PR 不新增 HMAC、防重放 nonce、凭据票据或 worker grant；S2 必要补充见 [#2462](https://dev.azure.com/shengming0923/rss/_workitems/edit/2462)。AES-GCM 随机 IV 保留。运行和验证边界见 [Host 应用](../../apps/ai-host/README.md)。

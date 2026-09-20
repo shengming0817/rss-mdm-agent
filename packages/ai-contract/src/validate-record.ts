@@ -4178,6 +4178,11 @@ const schema31 = {
         schemaVersion: { type: "integer", const: 5 },
         kind: { type: "string", const: "executionOrigin" },
         namespace: { $ref: "#/$defs/Namespace" },
+        userGeneration: {
+          $ref: "#/$defs/Id",
+          description:
+            "Native-selected user generation; checked against the current trusted registry before every tool call.",
+        },
         operationId: { $ref: "#/$defs/Id" },
         provider: { type: "string", enum: ["codex", "claude", "deepseek"] },
         config: { $ref: "#/$defs/ConfigRef" },
@@ -4186,6 +4191,7 @@ const schema31 = {
         "schemaVersion",
         "kind",
         "namespace",
+        "userGeneration",
         "operationId",
         "provider",
         "config",
@@ -58011,6 +58017,11 @@ const schema349 = {
     schemaVersion: { type: "integer", const: 5 },
     kind: { type: "string", const: "executionOrigin" },
     namespace: { $ref: "#/$defs/Namespace" },
+    userGeneration: {
+      $ref: "#/$defs/Id",
+      description:
+        "Native-selected user generation; checked against the current trusted registry before every tool call.",
+    },
     operationId: { $ref: "#/$defs/Id" },
     provider: { type: "string", enum: ["codex", "claude", "deepseek"] },
     config: { $ref: "#/$defs/ConfigRef" },
@@ -58019,6 +58030,7 @@ const schema349 = {
     "schemaVersion",
     "kind",
     "namespace",
+    "userGeneration",
     "operationId",
     "provider",
     "config",
@@ -58051,6 +58063,7 @@ function validate190(
         (data.schemaVersion === undefined && (missing0 = "schemaVersion")) ||
         (data.kind === undefined && (missing0 = "kind")) ||
         (data.namespace === undefined && (missing0 = "namespace")) ||
+        (data.userGeneration === undefined && (missing0 = "userGeneration")) ||
         (data.operationId === undefined && (missing0 = "operationId")) ||
         (data.provider === undefined && (missing0 = "provider")) ||
         (data.config === undefined && (missing0 = "config"))
@@ -58073,6 +58086,7 @@ function validate190(
               key0 === "schemaVersion" ||
               key0 === "kind" ||
               key0 === "namespace" ||
+              key0 === "userGeneration" ||
               key0 === "operationId" ||
               key0 === "provider" ||
               key0 === "config"
@@ -58185,8 +58199,8 @@ function validate190(
                 var valid0 = true;
               }
               if (valid0) {
-                if (data.operationId !== undefined) {
-                  let data3 = data.operationId;
+                if (data.userGeneration !== undefined) {
+                  let data3 = data.userGeneration;
                   const _errs7 = errors;
                   const _errs8 = errors;
                   if (errors === _errs8) {
@@ -58194,7 +58208,7 @@ function validate190(
                       if (func1(data3) > 128) {
                         validate190.errors = [
                           {
-                            instancePath: instancePath + "/operationId",
+                            instancePath: instancePath + "/userGeneration",
                             schemaPath: "#/$defs/Id/maxLength",
                             keyword: "maxLength",
                             params: { limit: 128 },
@@ -58206,7 +58220,7 @@ function validate190(
                         if (func1(data3) < 1) {
                           validate190.errors = [
                             {
-                              instancePath: instancePath + "/operationId",
+                              instancePath: instancePath + "/userGeneration",
                               schemaPath: "#/$defs/Id/minLength",
                               keyword: "minLength",
                               params: { limit: 1 },
@@ -58218,7 +58232,7 @@ function validate190(
                           if (!pattern4.test(data3)) {
                             validate190.errors = [
                               {
-                                instancePath: instancePath + "/operationId",
+                                instancePath: instancePath + "/userGeneration",
                                 schemaPath: "#/$defs/Id/pattern",
                                 keyword: "pattern",
                                 params: {
@@ -58237,7 +58251,7 @@ function validate190(
                     } else {
                       validate190.errors = [
                         {
-                          instancePath: instancePath + "/operationId",
+                          instancePath: instancePath + "/userGeneration",
                           schemaPath: "#/$defs/Id/type",
                           keyword: "type",
                           params: { type: "string" },
@@ -58252,66 +58266,136 @@ function validate190(
                   var valid0 = true;
                 }
                 if (valid0) {
-                  if (data.provider !== undefined) {
-                    let data4 = data.provider;
+                  if (data.operationId !== undefined) {
+                    let data4 = data.operationId;
                     const _errs10 = errors;
-                    if (typeof data4 !== "string") {
-                      validate190.errors = [
-                        {
-                          instancePath: instancePath + "/provider",
-                          schemaPath: "#/properties/provider/type",
-                          keyword: "type",
-                          params: { type: "string" },
-                          message: "must be string",
-                        },
-                      ];
-                      return false;
-                    }
-                    if (
-                      !(
-                        data4 === "codex" ||
-                        data4 === "claude" ||
-                        data4 === "deepseek"
-                      )
-                    ) {
-                      validate190.errors = [
-                        {
-                          instancePath: instancePath + "/provider",
-                          schemaPath: "#/properties/provider/enum",
-                          keyword: "enum",
-                          params: {
-                            allowedValues: schema349.properties.provider.enum,
+                    const _errs11 = errors;
+                    if (errors === _errs11) {
+                      if (typeof data4 === "string") {
+                        if (func1(data4) > 128) {
+                          validate190.errors = [
+                            {
+                              instancePath: instancePath + "/operationId",
+                              schemaPath: "#/$defs/Id/maxLength",
+                              keyword: "maxLength",
+                              params: { limit: 128 },
+                              message: "must NOT have more than 128 characters",
+                            },
+                          ];
+                          return false;
+                        } else {
+                          if (func1(data4) < 1) {
+                            validate190.errors = [
+                              {
+                                instancePath: instancePath + "/operationId",
+                                schemaPath: "#/$defs/Id/minLength",
+                                keyword: "minLength",
+                                params: { limit: 1 },
+                                message:
+                                  "must NOT have fewer than 1 characters",
+                              },
+                            ];
+                            return false;
+                          } else {
+                            if (!pattern4.test(data4)) {
+                              validate190.errors = [
+                                {
+                                  instancePath: instancePath + "/operationId",
+                                  schemaPath: "#/$defs/Id/pattern",
+                                  keyword: "pattern",
+                                  params: {
+                                    pattern: "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
+                                  },
+                                  message:
+                                    'must match pattern "' +
+                                    "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$" +
+                                    '"',
+                                },
+                              ];
+                              return false;
+                            }
+                          }
+                        }
+                      } else {
+                        validate190.errors = [
+                          {
+                            instancePath: instancePath + "/operationId",
+                            schemaPath: "#/$defs/Id/type",
+                            keyword: "type",
+                            params: { type: "string" },
+                            message: "must be string",
                           },
-                          message: "must be equal to one of the allowed values",
-                        },
-                      ];
-                      return false;
+                        ];
+                        return false;
+                      }
                     }
                     var valid0 = _errs10 === errors;
                   } else {
                     var valid0 = true;
                   }
                   if (valid0) {
-                    if (data.config !== undefined) {
-                      const _errs12 = errors;
-                      if (
-                        !validate98(data.config, {
-                          instancePath: instancePath + "/config",
-                          parentData: data,
-                          parentDataProperty: "config",
-                          rootData,
-                          dynamicAnchors,
-                        })
-                      ) {
-                        vErrors =
-                          vErrors === null
-                            ? validate98.errors
-                            : vErrors.concat(validate98.errors);
-                        errors = vErrors.length;
+                    if (data.provider !== undefined) {
+                      let data5 = data.provider;
+                      const _errs13 = errors;
+                      if (typeof data5 !== "string") {
+                        validate190.errors = [
+                          {
+                            instancePath: instancePath + "/provider",
+                            schemaPath: "#/properties/provider/type",
+                            keyword: "type",
+                            params: { type: "string" },
+                            message: "must be string",
+                          },
+                        ];
+                        return false;
                       }
-                      var valid0 = _errs12 === errors;
+                      if (
+                        !(
+                          data5 === "codex" ||
+                          data5 === "claude" ||
+                          data5 === "deepseek"
+                        )
+                      ) {
+                        validate190.errors = [
+                          {
+                            instancePath: instancePath + "/provider",
+                            schemaPath: "#/properties/provider/enum",
+                            keyword: "enum",
+                            params: {
+                              allowedValues: schema349.properties.provider.enum,
+                            },
+                            message:
+                              "must be equal to one of the allowed values",
+                          },
+                        ];
+                        return false;
+                      }
+                      var valid0 = _errs13 === errors;
                     } else {
                       var valid0 = true;
+                    }
+                    if (valid0) {
+                      if (data.config !== undefined) {
+                        const _errs15 = errors;
+                        if (
+                          !validate98(data.config, {
+                            instancePath: instancePath + "/config",
+                            parentData: data,
+                            parentDataProperty: "config",
+                            rootData,
+                            dynamicAnchors,
+                          })
+                        ) {
+                          vErrors =
+                            vErrors === null
+                              ? validate98.errors
+                              : vErrors.concat(validate98.errors);
+                          errors = vErrors.length;
+                        }
+                        var valid0 = _errs15 === errors;
+                      } else {
+                        var valid0 = true;
+                      }
                     }
                   }
                 }

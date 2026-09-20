@@ -81,6 +81,8 @@ export function operationMessage(code: string): string {
     invalid_input: "连接配置或输入无效，请检查后重试。",
     unsupported_capability:
       "当前认证来源或能力不可用，请选择已有 API 配置或自定义 API。",
+    limit_exceeded: "历史内容超过 64 KiB。请改用最近 N 轮，并缩小带入范围。",
+    cancelled: "",
   };
   return (
     Object.entries(messages).find(([key]) => key === code)?.[1] ??

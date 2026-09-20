@@ -83,11 +83,13 @@ onMounted(() => {
     <span v-if="loading" role="status">正在切换并清理旧视图…</span
     ><span v-if="message" role="alert">{{ message }}</span>
   </section>
-  <Workspace
-    v-if="!nativeTestMode || (currentUser && !loading)"
-    :key="currentUser?.generation ?? 'browser-preview'"
-    :assistant-services="assistantServices"
-  />
+  <div :inert="loading ? true : undefined">
+    <Workspace
+      v-if="!nativeTestMode || currentUser"
+      :key="currentUser?.generation ?? 'browser-preview'"
+      :assistant-services="assistantServices"
+    />
+  </div>
 </template>
 <style scoped>
 .test-users {

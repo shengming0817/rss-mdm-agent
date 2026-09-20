@@ -4124,6 +4124,11 @@ const schema31 = {
         schemaVersion: { type: "integer", const: 5 },
         kind: { type: "string", const: "executionOrigin" },
         namespace: { $ref: "#/$defs/Namespace" },
+        userGeneration: {
+          $ref: "#/$defs/Id",
+          description:
+            "Native-selected user generation; checked against the current trusted registry before every tool call.",
+        },
         operationId: { $ref: "#/$defs/Id" },
         provider: { type: "string", enum: ["codex", "claude", "deepseek"] },
         config: { $ref: "#/$defs/ConfigRef" },
@@ -4132,6 +4137,7 @@ const schema31 = {
         "schemaVersion",
         "kind",
         "namespace",
+        "userGeneration",
         "operationId",
         "provider",
         "config",

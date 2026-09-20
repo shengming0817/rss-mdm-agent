@@ -8,7 +8,7 @@ import {
   type RuntimeClient,
   type SessionView,
 } from "@rss-mdm-agent/ai-client";
-import { createAssistant } from "./controller";
+import { createAssistant, operationMessage } from "./controller";
 import { fixtureSession } from "@rss-mdm-agent/ai-contract/testing";
 import fixtures from "../../../../tests/assistant/execution-fixtures.json";
 import type { ExecutionTaskDetails } from "./execution-types";
@@ -562,6 +562,50 @@ it("connection panel sends exactly the confirmed preview once and never includes
     wrapper.unmount();
     await t.c.dispose();
   }
+});
+
+it("drops a history preview that completes after the selected session changed", async () => {
+  const t = setup();
+  let finish!: (value: unknown) => void;
+  const previewHistory = vi.fn(
+    () => new Promise((resolve) => (finish = resolve)),
+  );
+  Object.assign(t.client, { previewHistory });
+  await t.c.connect();
+  await t.c.select("session-1");
+  t.view.selectedConnectionId = "config-1";
+  t.emit();
+  const wrapper = mount(Connections, { props: { controller: t.c } });
+  await flushPromises();
+  const history = wrapper
+    .findAll("label")
+    .find((label) => label.text().startsWith("带入历史"))!
+    .get("select");
+  await history.setValue("all");
+  await flushPromises();
+  t.c.state.selected = "session-2";
+  await wrapper.vm.$nextTick();
+  finish({
+    schemaVersion: 5,
+    kind: "historyPreview",
+    sessionId: "session-1",
+    connectionId: "config-1",
+    configRevision: 1,
+    throughSequence: 1,
+    commandIds: [],
+    messageIds: [],
+    text: "stale preview",
+    contentHash: "a".repeat(64),
+  });
+  await flushPromises();
+  expect(wrapper.text()).not.toContain("stale preview");
+  wrapper.unmount();
+  t.c.dispose();
+});
+
+it("maps history capacity and user cancellation without a generic retry error", () => {
+  expect(operationMessage("limit_exceeded")).toContain("64 KiB");
+  expect(operationMessage("cancelled")).toBe("");
 });
 
 it("deleting the selected connection preserves history and immediately disables ordinary input", async () => {

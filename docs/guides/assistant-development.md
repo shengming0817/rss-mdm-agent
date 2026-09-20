@@ -52,4 +52,4 @@ pnpm test
 
 AI 命令队列由 Host 持有，普通 prompt 在当前轮运行时仍可排队，不读取 provider queue capability。客户端分别呈现 acknowledged 控制确认、cancelled 未派发排队取消与普通 prompt 的模型终态；已结算控制命令不占用 busy 状态。
 
-连接面板通过 V5 个人连接 API 管理命名配置、默认选择和历史预览，API 凭据仅通过原生安全输入按钮填写。验证会发起一条简短模型请求；保存失败不覆盖旧连接。产品会话没有 provider 阶段时能力显示未知，第一条已确认输入才创建阶段；连接切换等待旧队列完成。用户切换通过 generation-keyed 工作区卸载销毁整个用户视图，不复用旧 controller。
+连接面板通过 V5 个人连接 API 管理命名配置、默认选择和历史预览，API 凭据仅通过原生安全输入按钮填写；provider、规范化 endpoint 或 credential type 改变时必须重新输入。验证会发起一条简短模型请求；保存失败不覆盖旧连接。历史预览绑定发起时的 session/connection，请求完成前切换会话即丢弃旧结果；全部历史受 64 KiB 契约预算约束。产品会话没有 provider 阶段时能力显示未知，第一条已确认输入才创建阶段；连接切换等待旧队列完成。用户切换期间保留并 inert 原 generation 工作区，只有 Native 成功提交新 generation 后才卸载旧 controller；失败时恢复原编辑态。

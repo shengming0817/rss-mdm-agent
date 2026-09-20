@@ -15,6 +15,28 @@ pub struct AiBinding {
 }
 use crate::self_service::fixtures::os_session;
 impl AiBinding {
+    pub(super) fn origin(
+        metadata: &Map<String, Value>,
+    ) -> Result<ai_session_contract::ExecutionOrigin, ServiceError> {
+        let value = metadata
+            .get("com.rss-mdm/ai-origin")
+            .ok_or(ServiceError::Denied)?;
+        let bytes = serde_json::to_vec(value).map_err(|_| ServiceError::Denied)?;
+        let record = ai_session_contract::decode(
+            &bytes,
+            &ai_session_contract::Limits {
+                max_bytes: 16384,
+                max_text_bytes: 8192,
+                max_depth: 16,
+                max_nodes: 1024,
+            },
+        )
+        .map_err(|_| ServiceError::Denied)?;
+        match record {
+            ai_session_contract::WireRecord::ExecutionOrigin(origin) => Ok(origin),
+            _ => Err(ServiceError::Denied),
+        }
+    }
     pub fn for_user(user_id: &str) -> Result<Self, ServiceError> {
         Ok(Self {
             caller: Caller {
@@ -25,23 +47,17 @@ impl AiBinding {
         })
     }
     pub fn principal(metadata: &Map<String, Value>) -> Result<String, ServiceError> {
-        let origin: ai_session_contract::ExecutionOrigin = serde_json::from_value(
-            metadata
-                .get("com.rss-mdm/ai-origin")
-                .ok_or(ServiceError::Denied)?
-                .clone(),
-        )
-        .map_err(|_| ServiceError::Denied)?;
+        let origin = Self::origin(metadata)?;
         Ok(origin.namespace.principal_id.as_str().to_owned())
     }
     pub fn bind(&self, metadata: &Map<String, Value>) -> Result<Initiator, ServiceError> {
-        let origin: ai_session_contract::ExecutionOrigin = serde_json::from_value(
-            metadata
-                .get("com.rss-mdm/ai-origin")
-                .ok_or(ServiceError::Denied)?
-                .clone(),
-        )
-        .map_err(|_| ServiceError::Denied)?;
+        let origin = Self::origin(metadata)?;
+        self.bind_origin(origin)
+    }
+    pub fn bind_origin(
+        &self,
+        origin: ai_session_contract::ExecutionOrigin,
+    ) -> Result<Initiator, ServiceError> {
         if origin.namespace.tenant_id.as_str() != self.caller.tenant_id.as_str()
             || origin.namespace.principal_id.as_str() != self.caller.principal_id.as_str()
             || origin.namespace.authority_id.as_str() != self.caller.authority_id.as_str()

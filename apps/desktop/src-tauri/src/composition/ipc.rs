@@ -12,6 +12,23 @@ fn decode<T: serde::de::DeserializeOwned>(input: serde_json::Value) -> Result<T>
     }
     serde_json::from_value(input).map_err(|_| error("input", "请求结构无效"))
 }
+fn decode_connection(input: serde_json::Value) -> Result<ai_session_contract::Connection> {
+    let bytes = serde_json::to_vec(&input).map_err(|_| error("input", "无效连接"))?;
+    let record = ai_session_contract::decode(
+        &bytes,
+        &ai_session_contract::Limits {
+            max_bytes: 16384,
+            max_text_bytes: 8192,
+            max_depth: 16,
+            max_nodes: 4096,
+        },
+    )
+    .map_err(|_| error("input", "连接结构无效"))?;
+    match record {
+        ai_session_contract::WireRecord::Connection(connection) => Ok(connection),
+        _ => Err(error("input", "连接结构无效")),
+    }
+}
 // Production commands and generated UI contract share these signatures.
 macro_rules! commands {
     ($($name:ident($input:ty) -> $output:ty = $method:ident),+ $(,)?) => {
@@ -108,7 +125,7 @@ pub async fn save_connection<R: tauri::Runtime>(
     replace_key: bool,
 ) -> Result<serde_json::Value> {
     state.current(&generation)?;
-    let connection = decode::<ai_session_contract::Connection>(input)?;
+    let connection = decode_connection(input)?;
     let data = serde_json::to_value(&connection).map_err(|_| error("input", "无效连接"))?;
     let secret = if data["source"]["type"] == "custom_api"
         && data["status"] != "deleted"

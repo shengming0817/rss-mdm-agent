@@ -50,8 +50,16 @@ impl Control {
             let mut reader = FramedRead::new(reader, LinesCodec::new_with_max_length(524288));
             loop {
                 let line = tokio::select! { _ = task.stop.cancelled() => break, line = reader.next() => match line { Some(Ok(line)) => line, _ => break } };
-                let Ok(frame) =
-                    serde_json::from_str::<ai_session_contract::NativeControlFrame>(&line)
+                let Ok(ai_session_contract::WireRecord::NativeControlFrame(frame)) =
+                    ai_session_contract::decode(
+                        line.as_bytes(),
+                        &ai_session_contract::Limits {
+                            max_bytes: 524288,
+                            max_text_bytes: 262144,
+                            max_depth: 32,
+                            max_nodes: 16384,
+                        },
+                    )
                 else {
                     break;
                 };
@@ -132,9 +140,29 @@ impl Control {
         control
     }
     async fn write(&self, frame: Value) -> Result<()> {
-        serde_json::from_value::<ai_session_contract::NativeControlFrame>(frame.clone())
-            .map_err(|_| unavailable())?;
-        let bytes = serde_json::to_string(&frame).map_err(|_| unavailable())?;
+        let record = ai_session_contract::decode(
+            &serde_json::to_vec(&frame).map_err(|_| unavailable())?,
+            &ai_session_contract::Limits {
+                max_bytes: 524288,
+                max_text_bytes: 262144,
+                max_depth: 32,
+                max_nodes: 16384,
+            },
+        )
+        .map_err(|_| unavailable())?;
+        let bytes = String::from_utf8(
+            ai_session_contract::encode(
+                &record,
+                &ai_session_contract::Limits {
+                    max_bytes: 524288,
+                    max_text_bytes: 262144,
+                    max_depth: 32,
+                    max_nodes: 16384,
+                },
+            )
+            .map_err(|_| unavailable())?,
+        )
+        .map_err(|_| unavailable())?;
         if bytes.len() > 524288 || self.stop.is_cancelled() {
             return Err(unavailable());
         }
@@ -241,6 +269,7 @@ impl Control {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures_util::StreamExt;
     struct SlowKey;
     impl KeyBackend for SlowKey {
         fn read(
@@ -277,5 +306,67 @@ mod tests {
             .unwrap();
         assert_eq!(event["ready"], true);
         control.close();
+    }
+
+    struct FailedKey;
+    impl KeyBackend for FailedKey {
+        fn read(
+            &self,
+        ) -> std::result::Result<Option<Vec<u8>>, super::super::credentials::KeyUnavailable>
+        {
+            Err(super::super::credentials::KeyUnavailable)
+        }
+        fn create(
+            &self,
+            _key: &[u8],
+        ) -> std::result::Result<(), super::super::credentials::KeyUnavailable> {
+            Err(super::super::credentials::KeyUnavailable)
+        }
+    }
+
+    #[tokio::test]
+    async fn master_key_failure_replies_without_leaking_and_keeps_control_live() {
+        let (native, peer) = UnixStream::pair().unwrap();
+        let control = Control::start(native, FailedKey);
+        let mut view = control.view("view".into()).unwrap();
+        let (reader, writer) = peer.into_split();
+        let mut reader = FramedRead::new(reader, LinesCodec::new_with_max_length(524288));
+        let mut writer = FramedWrite::new(writer, LinesCodec::new_with_max_length(524288));
+        writer
+            .send(json!({"schemaVersion":5,"kind":"nativeCall","id":1,"method":"masterKey","data":{"create":true}}).to_string())
+            .await
+            .unwrap();
+        let reply = tokio::time::timeout(Duration::from_secs(2), reader.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&reply).unwrap(),
+            json!({"schemaVersion":5,"kind":"nativeReply","id":1,"ok":false})
+        );
+        assert!(!reply.contains("key"));
+        writer
+            .send(json!({"schemaVersion":5,"kind":"nativeEvent","channel":"view","message":{"ready":true}}).to_string())
+            .await
+            .unwrap();
+        assert_eq!(view.recv().await.unwrap()["ready"], true);
+        control.close();
+    }
+
+    #[tokio::test]
+    async fn duplicate_native_fields_close_the_strict_control_ingress() {
+        let (native, peer) = UnixStream::pair().unwrap();
+        let control = Control::start(native, FailedKey);
+        let mut writer = FramedWrite::new(peer, LinesCodec::new_with_max_length(524288));
+        writer
+            .send(String::from(
+                r#"{"schemaVersion":5,"schemaVersion":5,"kind":"nativeEvent","channel":"view","message":{}}"#,
+            ))
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(1), control.stop.cancelled())
+            .await
+            .unwrap();
     }
 }

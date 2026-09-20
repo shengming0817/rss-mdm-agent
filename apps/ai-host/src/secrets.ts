@@ -4,6 +4,7 @@ import type {
   Caller,
   Connection,
   Result,
+  SessionStore,
 } from "@rss-mdm-agent/ai-contract";
 import { fail } from "@rss-mdm-agent/ai-contract/transitions";
 import type { ConnectionSecretStore } from "@rss-mdm-agent/ai-store-sqlite";
@@ -25,8 +26,24 @@ const aad = (
       caller.authorityId,
       connection.connectionId,
       revision,
+      connection.provider,
+      connection.source.type,
+      connection.source.type === "custom_api"
+        ? new URL(connection.source.apiUrl).href
+        : (connection.source.directory ?? ""),
+      connection.source.type === "custom_api"
+        ? (connection.source.credentialType ?? "api_key")
+        : "",
     ]),
   );
+const credentialTarget = (connection: Connection) =>
+  connection.source.type === "custom_api"
+    ? JSON.stringify([
+        connection.provider,
+        new URL(connection.source.apiUrl).href,
+        connection.source.credentialType ?? "api_key",
+      ])
+    : undefined;
 const checked = (secret: string): string => {
   if (!secret.trim() || Buffer.byteLength(secret) > 16384)
     throw new ConfigurationError("authentication_required");
@@ -106,7 +123,7 @@ export class ConnectionSecrets {
 /** The application-owned atomic persistence seam: validate/reencrypt first, then
  * recheck the native caller fence immediately before the SQLite CAS. */
 export function connectionPersistence(
-  store: ConnectionSecretStore,
+  store: ConnectionSecretStore & Pick<SessionStore, "connection">,
   secrets: ConnectionSecrets,
   available: (caller: Caller) => boolean,
 ) {
@@ -117,14 +134,41 @@ export function connectionPersistence(
     secret: string | undefined,
     budget: Budget,
   ): Promise<Result<Connection>> => {
-    const encrypted =
-      connection.status !== "deleted" && connection.source.type === "custom_api"
-        ? await secrets.seal(
-            caller,
-            connection,
-            await secrets.read(caller, connection, secret, expected ?? 0),
-          )
-        : undefined;
+    const previous =
+      expected === null
+        ? undefined
+        : await store.connection(caller, connection.connectionId, expected);
+    if (previous && !previous.ok) return previous;
+    let encrypted: Uint8Array | undefined;
+    try {
+      encrypted =
+        connection.status !== "deleted" &&
+        connection.source.type === "custom_api"
+          ? await secrets.seal(
+              caller,
+              connection,
+              await secrets.read(
+                caller,
+                secret === undefined &&
+                  previous?.ok &&
+                  credentialTarget(previous.value) ===
+                    credentialTarget(connection)
+                  ? previous.value
+                  : connection,
+                secret,
+                expected ?? 0,
+              ),
+            )
+          : undefined;
+    } catch (error) {
+      if (error instanceof ConfigurationError)
+        return fail(
+          error.code === "authentication_required"
+            ? "authentication_required"
+            : "invalid_input",
+        );
+      throw error;
+    }
     if (!available(caller) || budget.signal.aborted) return fail("unavailable");
     return store.saveConnection(caller, connection, expected, encrypted);
   };

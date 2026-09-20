@@ -60,3 +60,32 @@ it.each([
     }
   },
 );
+
+it("keeps the current workspace mounted and inert while a switch is pending", async () => {
+  let finish!: (value: unknown) => void;
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "test_users")
+      return {
+        schemaVersion: 5,
+        kind: "testUserPage",
+        users: [current.user],
+        current,
+      };
+    return new Promise((resolve) => (finish = resolve));
+  });
+  const wrapper = mount(App, { global: { stubs: { Workspace: true } } });
+  await flushPromises();
+  const workspace = wrapper.findComponent({ name: "Workspace" }).element;
+  await wrapper.get('[aria-label="测试用户名"]').setValue("Bob");
+  await wrapper.get("form").trigger("submit");
+  await flushPromises();
+  expect(wrapper.findComponent({ name: "Workspace" }).element).toBe(workspace);
+  expect(
+    wrapper
+      .findComponent({ name: "Workspace" })
+      .element.parentElement?.hasAttribute("inert"),
+  ).toBe(true);
+  finish(current);
+  await flushPromises();
+  wrapper.unmount();
+});

@@ -140,7 +140,8 @@ const requireValue = <T>(result: Result<T>): T => {
   if (!result.ok) throw new HostFailure(result.error);
   return result.value;
 };
-class HostFailure extends Error {
+/** Closed expected host failure for trusted composition adapters. */
+export class HostFailure extends Error {
   constructor(readonly failure: import("@rss-mdm-agent/ai-contract").Failure) {
     super(failure.code);
   }
@@ -158,7 +159,7 @@ export class SessionHost implements HostPort {
   private readonly blocked = new Set<string>();
   private readonly suspended = new Set<string>();
   private readonly disposals = new Set<() => Promise<void>>();
-  private saveValidatedConnection(
+  private async saveValidatedConnection(
     caller: Caller,
     connection: Connection,
     expected: number | null,
@@ -167,9 +168,23 @@ export class SessionHost implements HostPort {
   ): Promise<Result<Connection>> {
     if (!this.callerAvailable(caller) || b.signal.aborted)
       return Promise.resolve(fail("unavailable"));
-    return this.options.persistConnection
-      ? this.options.persistConnection(caller, connection, expected, secret, b)
-      : this.store.saveConnection(caller, connection, expected);
+    try {
+      const result = this.options.persistConnection
+        ? await this.options.persistConnection(
+            caller,
+            connection,
+            expected,
+            secret,
+            b,
+          )
+        : await this.store.saveConnection(caller, connection, expected);
+      if (!result.ok)
+        this.diagnose("credential", new HostFailure(result.error));
+      return result;
+    } catch (error) {
+      this.diagnose("credential", error);
+      throw error;
+    }
   }
   private callerKey(caller: Caller) {
     return JSON.stringify([
@@ -260,9 +275,8 @@ export class SessionHost implements HostPort {
     key: string,
     runtime: Runtime,
   ): Promise<boolean> {
-    if (!(await this.releaseDispose(runtime.dispose))) return false;
     if (this.runtimes.get(key) === runtime) this.runtimes.delete(key);
-    return true;
+    return this.releaseDispose(runtime.dispose);
   }
   private mailbox<T>(
     namespace: Namespace,

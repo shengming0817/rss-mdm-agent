@@ -89,7 +89,8 @@ impl DesktopRuntime {
         let users = Arc::new(std::sync::Mutex::new(
             super::users::Users::open(root).map_err(|_| "user registry unavailable")?,
         ));
-        let execution = ExecutionHandle::start(&root.join("execution.sqlite"))?;
+        let execution = ExecutionHandle::start(&root.join("execution.sqlite"))?
+            .with_trusted_users(users.clone());
         let configuration = configuration(root)?;
         let mcp_stop = CancellationToken::new();
         let (parent_pipe, child_pipe) = std::os::unix::net::UnixStream::pair()?;

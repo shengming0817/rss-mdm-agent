@@ -56,6 +56,7 @@ type Job = Box<dyn FnOnce(&mut Owner) + Send>;
 pub struct ExecutionHandle {
     caller: Option<RequestContext>,
     origin: Option<Initiator>,
+    trusted_users: Option<Arc<std::sync::Mutex<super::users::Users>>>,
     sender: mpsc::SyncSender<Job>,
     stopped: Arc<AtomicBool>,
     finished: Arc<AtomicBool>,
@@ -105,6 +106,10 @@ impl RunnerPort for S1Runner {
     }
 }
 impl ExecutionHandle {
+    pub fn with_trusted_users(mut self, users: Arc<std::sync::Mutex<super::users::Users>>) -> Self {
+        self.trusted_users = Some(users);
+        self
+    }
     /// A request view only: clones the shared sender and never creates execution resources.
     pub fn for_caller(&self, actor: &str) -> Result<Self, Error> {
         let mut call = self.clone();
@@ -189,6 +194,7 @@ impl ExecutionHandle {
         Ok(Self {
             caller: None,
             origin: None,
+            trusted_users: None,
             sender,
             stopped,
             finished,
@@ -660,19 +666,33 @@ impl mcp::ExecutionServicePort for ExecutionHandle {
         metadata: &serde_json::Map<String, serde_json::Value>,
     ) -> Result<Arc<Self>, mcp::ServiceError> {
         let actor = super::origin::AiBinding::principal(metadata)?;
-        if self
-            .caller
+        let trusted = self
+            .trusted_users
             .as_ref()
-            .is_some_and(|caller| caller.actor.as_str() != actor)
+            .ok_or(mcp::ServiceError::Unbound)?
+            .lock()
+            .map_err(|_| mcp::ServiceError::Unavailable)?
+            .current()
+            .map_err(|_| mcp::ServiceError::Unbound)?;
+        let origin = super::origin::AiBinding::origin(metadata)?;
+        if trusted.user.user_id.as_str() != actor
+            || trusted.generation.as_str() != origin.user_generation.as_str()
+            || self
+                .caller
+                .as_ref()
+                .is_some_and(|caller| caller.actor.as_str() != actor)
         {
             return Err(mcp::ServiceError::Denied);
         }
         let mut call = self.for_caller(&actor).map_err(mcp_error)?;
-        call.origin = Some(super::origin::AiBinding::for_user(&actor)?.bind(metadata)?);
+        call.origin = Some(super::origin::AiBinding::for_user(&actor)?.bind_origin(origin)?);
         Ok(Arc::new(call))
     }
     fn check_binding(&self) -> Result<(), mcp::ServiceError> {
-        Ok(())
+        self.trusted_users
+            .as_ref()
+            .map(|_| ())
+            .ok_or(mcp::ServiceError::Unbound)
     }
     async fn catalog(
         &self,

@@ -190,7 +190,17 @@ export async function createProvider({ configuration, tools }) {
             type: "event",
             body: { type: "text", messageId: "message", text: "completed" },
           });
-          terminal(run);
+          if (
+            scenario === "probe_reject" &&
+            command.input.text === "Reply with OK only. Do not use any tools."
+          ) {
+            emit(run, {
+              type: "event",
+              body: { type: "terminal", outcome: "failed" },
+            });
+            run.done = true;
+            run.wake?.();
+          } else terminal(run);
         }, 30);
       return { certainty: "submitted", binding: current };
     },

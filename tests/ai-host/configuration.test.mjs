@@ -13,7 +13,10 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { readPrivateFile } from "../../apps/ai-host/dist/private-file.js";
-import { readConfiguration } from "../../apps/ai-host/dist/configuration.js";
+import {
+  endpoint,
+  readConfiguration,
+} from "../../apps/ai-host/dist/configuration.js";
 import { startLocalApp } from "../../apps/ai-host/dist/index.js";
 test("private configuration and credentials require bounded owned files in private directories", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "rss-private-file-"));
@@ -52,6 +55,20 @@ test("private configuration and credentials require bounded owned files in priva
   await chmod(file, 0o600);
   await chmod(directory, 0o755);
   await assert.rejects(readPrivateFile(file, 64));
+});
+test("custom HTTPS endpoints reject literal private and link-local destinations", () => {
+  for (const value of [
+    "https://127.0.0.1/v1",
+    "https://10.0.0.1/v1",
+    "https://169.254.169.254/latest/meta-data",
+    "https://[::1]/v1",
+    "https://[fe80::1]/v1",
+  ])
+    assert.throws(() => endpoint(value), { code: "configuration_invalid" });
+  assert.equal(
+    endpoint("https://api.example.test/v1/"),
+    "https://api.example.test/v1",
+  );
 });
 test("invalid local configuration fails before listening and emits only a closed diagnostic", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "rss-invalid-config-"));
