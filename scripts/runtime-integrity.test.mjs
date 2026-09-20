@@ -117,7 +117,7 @@ test("AI host build removes orphaned compiler output before packing", (t) => {
   writeFileSync(orphans[0], "throw new Error('orphaned output');\n");
   writeFileSync(orphans[1], "export declare const orphaned: true;\n");
 
-  run("pnpm", ["--dir", join(root, "apps/ai-host"), "build"], root);
+  run("pnpm", ["build:ai-host"], root);
   const artifacts = packHost(root, destination, true);
   const archive = artifacts.find(({ name }) =>
     name.startsWith("rss-mdm-agent-ai-host-app-"),
