@@ -472,3 +472,73 @@ it("keeps the current page after a failed next-page read and retries the same cu
   expect(port.snapshot.mock.calls.at(-1)?.[0].after).toBe("next-page");
   expect(c.state.after).toBe("next-page");
 });
+
+it.each(["outcomeUnknown", "confirmationUnknown"])(
+  "keeps the frozen submit identity after IPC %s and reconciles the original request",
+  async (code) => {
+    const { c, port, snapshot, task } = fixture();
+    await c.refresh();
+    c.select(snapshot.catalog.find((i) => i.itemId === "diagnostics")!);
+    await c.prepare();
+    const plan = JSON.parse(JSON.stringify(c.state.plan)) as Plan;
+    port.submit.mockRejectedValueOnce({ code, message: "结果未知" });
+    await c.submit();
+    expect(c.state.uncertain).toBe(true);
+    expect(c.state.plan).toEqual(plan);
+    await c.refresh();
+    expect(port.snapshot.mock.calls.at(-1)![0].requestIds).toContain(
+      plan.requestId,
+    );
+    expect(c.state.uncertain).toBe(true);
+    snapshot.referencedRequests = [{ ...task, plan }];
+    await c.refresh();
+    expect(c.state.accepted).toBe(true);
+    expect(c.state.uncertain).toBe(false);
+    expect(c.state.error).toBe("");
+    expect(port.submit).toHaveBeenCalledTimes(1);
+  },
+);
+it.each(["cancel", "approve"] as const)(
+  "clears the unconfirmed %s only after the original plan reaches authoritative state",
+  async (action) => {
+    const { c, port, snapshot, task } = fixture();
+    task.status = action === "approve" ? "approval" : "waiting";
+    snapshot.requests = [task];
+    await c.refresh();
+    port[action].mockRejectedValueOnce({
+      code: "outcomeUnknown",
+      message: "结果未知",
+    });
+    await c[action](task);
+    const pending = c.state.error;
+    expect(pending).not.toBe("");
+    await c.refresh();
+    expect(port.snapshot.mock.calls.at(-1)![0].requestIds).toContain(
+      task.plan.requestId,
+    );
+    expect(c.state.error).toBe(pending);
+    task.status = action === "approve" ? "waiting" : "stopped";
+    const digest = task.plan.digest;
+    task.plan.digest = "another-plan";
+    await c.refresh();
+    expect(c.state.error).toBe(pending);
+    task.plan.digest = digest;
+    await c.refresh();
+    expect(c.state.error).toBe("");
+  },
+);
+it("retains an ambiguous interaction reply across a structured confirmation error", async () => {
+  const { c, port, task } = fixture();
+  await c.refresh();
+  port.respond.mockRejectedValueOnce({
+    code: "confirmationUnknown",
+    message: "结果未知",
+  });
+  await c.respond(task, task.interactions[0].id, {
+    kind: "confirmation",
+    accepted: true,
+  });
+  expect(c.state.replyUnknown).toBe(true);
+  await c.retryReply();
+  expect(port.respond.mock.calls[1]).toEqual(port.respond.mock.calls[0]);
+});

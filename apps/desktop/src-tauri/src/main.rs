@@ -2,11 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod navigation;
 mod startup;
-use rss_mdm_desktop::composition::{ipc, runtime::DesktopRuntime};
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
+use rss_mdm_desktop::composition::{ipc, lifecycle::Lifecycle, runtime::DesktopRuntime};
 use tauri::Manager;
 
 fn window(app: &tauri::AppHandle) -> tauri::Result<()> {
@@ -48,40 +44,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             _ => (),
         })
         .build(tauri::generate_context!())?;
-    let quitting = Arc::new(AtomicBool::new(false));
-    let closing_view = AtomicBool::new(false);
-    app.run(move |app, event| match event {
-        tauri::RunEvent::WindowEvent {
-            label,
-            event: tauri::WindowEvent::Destroyed,
-            ..
-        } if label == "main" => {
-            closing_view.store(true, Ordering::Release);
-            let app = app.clone();
-            tauri::async_runtime::spawn(async move {
-                app.state::<DesktopRuntime>().detach_views().await;
-            });
-        }
-        tauri::RunEvent::ExitRequested { api, code, .. } => {
-            if quitting.load(Ordering::Acquire) {
-                return;
-            }
-            api.prevent_exit();
-            if code.is_some() || !closing_view.swap(false, Ordering::AcqRel) {
-                quitting.store(true, Ordering::Release);
-                let app = app.clone();
-                tauri::async_runtime::spawn(async move {
-                    app.state::<DesktopRuntime>().shutdown().await;
-                    app.exit(0);
-                });
-            }
-        }
-        #[cfg(target_os = "macos")]
-        tauri::RunEvent::Reopen { .. } => {
-            let _ = window(app);
-        }
-        _ => (),
-    });
+    let mut lifecycle = Lifecycle::default();
+    app.run(move |app, event| lifecycle.handle(app, event, window));
     Ok(())
 }
 fn main() -> std::process::ExitCode {

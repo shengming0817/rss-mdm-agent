@@ -1,5 +1,4 @@
 //! Non-secret provenance is accepted only on the desktop-owned MCP pipe.
-use super::authority::id;
 use execution_contract::*;
 use execution_mcp::ServiceError;
 use serde::Deserialize;
@@ -43,21 +42,7 @@ struct Origin {
     account_ref: Id,
     config: VersionedRef,
 }
-pub fn os_session() -> OsSessionRef {
-    OsSessionRef {
-        device: DeviceId::new("fixture-device").unwrap(),
-        account: OsAccountRef {
-            platform: Platform::Macos,
-            subject: id("fixture-user"),
-        },
-        session: id("fixture-session"),
-    }
-}
-pub fn human() -> Initiator {
-    Initiator::Human {
-        os_session: os_session(),
-    }
-}
+use crate::self_service::fixtures::os_session;
 impl AiBinding {
     pub fn from_configuration(value: &Value) -> Result<Self, ServiceError> {
         let caller: Caller =
@@ -110,7 +95,12 @@ impl AiBinding {
 }
 pub fn same_conversation(expected: &Initiator, actual: &Initiator) -> bool {
     match (expected, actual) {
-        (_, Initiator::Human { os_session: os }) => os == &os_session(),
+        (
+            Initiator::Human {
+                os_session: expected,
+            },
+            Initiator::Human { os_session: actual },
+        ) => expected == actual,
         (
             Initiator::Ai {
                 provider: p,

@@ -27,7 +27,7 @@ pnpm bundle:ai-host
 
 `provider` 为 `claude`、`codex` 或 `deepseek`。已有用户配置可显式覆盖 `connection.model` 和 `connection.profile`。只提取模型、endpoint 与认证；不导入用户 MCP、插件、shell、工具或自动批准设置。已有用户目录可为 0755，但不得被其他用户写入；秘密文件须为当前用户的普通 0600 文件。配置与自有 native/数据库/socket 目录要求私有所有权，拒绝符号链接与超限读取。
 
-Codex 从 `config.toml` 选择 profile、model_provider 和 `auth.json`。已有配置及显式覆盖均未指定 model 时，Host 和 adapter 保留省略值，由固定版本 Codex 选择原生默认模型；显式空白或非字符串模型仍拒绝。ChatGPT 登录通过原生 `chatgptAuthTokens` 外部认证接入隔离的 CODEX_HOME，只重读同账号 access token，不复制 refresh token或修改用户登录。API key 模式支持自定义 provider URL。Claude 提取允许的 `settings.json` 连接字段；macOS 用户登录复用选定配置目录对应的 Keychain，隔离工具配置。DSH 提取 `.credentials.yaml` 的 DEEPSEEK_API_KEY、`settings.yaml` 的模型及选定 profile 的 provider/model 配置，不执行 Cordis 插件。
+Codex 从 `config.toml` 选择 profile、model_provider 和 `auth.json`。已有配置及显式覆盖均未指定 model 时，Host 和 adapter 保留省略值，由固定版本 Codex 选择原生默认模型；显式空白或非字符串模型仍拒绝。ChatGPT 登录通过原生 `chatgptAuthTokens` 外部认证接入隔离的 CODEX_HOME，只重读同账号 access token，不复制 refresh token或修改用户登录。API key 模式支持自定义 provider URL。Claude 提取允许的 `settings.json` 连接字段与显式 API key/auth token/OAuth token，隔离工具配置。macOS 不接受仅凭配置目录选择可变 Keychain 的隐式登录；没有显式凭据时返回 `authentication_required`。固定 SDK 未提供稳定账号 ID，因此目录不能作为账号身份或用于恢复旧历史。DSH 提取 `.credentials.yaml` 的 DEEPSEEK_API_KEY、`settings.yaml` 的模型及选定 profile 的 provider/model 配置，不执行 Cordis 插件。
 
 自定义端点将 `connection` 替换为：
 
@@ -52,3 +52,5 @@ Host-owned namespace 与 stage operationId 在工具请求前原子写入 AI 库
 AI wire **4**、SQLite schema **3** 直接替换旧版，拒绝旧库，不迁移、不双读、不做旧字段 fallback。桌面接线和验证边界见[桌面指南](../../docs/guides/desktop-development.md)。
 
 Host 激活时固定连接声明指纹；同一配置 revision 的 endpoint、model、账号或凭据身份变化会被私有 lineage 记录拒绝，必须更新 revision 后重新启动。ChatGPT 同账号令牌刷新不改变身份。配置可以保留普通读取权限，但其中若包含内联 API/OAuth 凭据，该文件必须仅当前用户可读写；显式凭据文件同样要求 0600。原生配置的工具、权限和插件设置不会被继承。
+
+Host 应用的 build 前置运行 Rust owner 的 execution bindings 校验；直接构建、打包 runtime 和独立 consumer 均拒绝 `execution-tools.json` 漂移。

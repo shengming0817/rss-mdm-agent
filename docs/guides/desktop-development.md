@@ -19,11 +19,13 @@ pnpm desktop:build       # 干净、已提交源码；自动打包 Node/依赖�
 
 ## 执行、批准和恢复
 
-Rust 持有唯一业务状态。`preview` 登记精确冻结计划但不提交；`submit` 单独写接纳回执；同请求同内容重放只读取原状态。编辑表单后生成新请求 ID，响应丢失时保留原 ID。任务状态包含 `submitted`，避免把预览误作提交。请求列表使用原请求 ID 游标，每次扫描最多 128 条，保留上一页/下一页；即使当前扫描页只有预览也继续提供下一页。所选任务及待核实提交/回答按原 ID 独立读取（每次最多 3 个），翻页和轮询不切换选择，也不因任务不在当前页而丢失详情。独立详情始终按原业务 ID 授权读取。
+Rust 持有唯一业务状态。`preview` 登记精确冻结计划但不提交；`submit` 单独写接纳回执；同请求同内容重放只读取原状态。编辑表单后生成新请求 ID，响应丢失时保留原 ID。任务状态包含 `submitted`，避免把预览误作提交。请求列表使用原请求 ID 游标，每次扫描最多 128 条，保留上一页/下一页；即使当前扫描页只有预览也继续提供下一页。所选任务及待核实提交/回答/批准/取消按原 ID 独立读取（每次最多 3 个），翻页和轮询不切换选择，也不因任务不在当前页而丢失详情。独立详情始终按原业务 ID 授权读取。
 
 办公套件要求 S1 测试管理员批准。预览摘要、任务批准页和 AI 可信详情均展示 Rust 冻结的请求主体、授权域与人/AI 来源；AI 来源另展示账号/配置版本、会话和工具调用引用，与运行身份分别标明。任务详情的独立批准命令核对 actor、device、完整计划摘要及有效期，Rust 原子消费一次批准并释放一次派发。普通确认、AI 问答和 A2UI action 均不能批准。取消交互与“请求取消原任务”分开；取消回执不证明终止或回滚。维护样本保持等待；未知效果样本只核实原尝试，不自动重跑。
 
-AI initiator 来自 Host 写入的 MCP metadata，经 Rust 与启动时绑定核对；模型参数不能覆盖 caller、provider/account/config、会话或 tool-call 来源。UI 能读取同一业务任务和原始来源，工具返回文本仅为对话资料。
+Rust IPC 保留 `outcomeUnknown` / `confirmationUnknown` 分类。UI 保留提交的 requestId/planId/digest 和交互 commandId，轮询原任务或重试原命令；明确拒绝才解除不确定状态。批准/取消保留原动作与精确计划，轮询同计划的权威状态后清除未确认提示，其他任务或旧计划的回执不能清除。
+
+AI initiator 来自 Host 写入的 MCP metadata，经 Rust 与启动时绑定核对；模型参数不能覆盖 caller、provider/account/config、会话或 tool-call 来源。Human 仅与同 OS session 的 Human 任务匹配；AI 仅与同 provider、OS session、provider account/config 和 conversation 的 AI 任务匹配，不能读取、预览、提交或取消 Human 任务。UI 能读取同一业务任务和原始来源，工具返回文本仅为对话资料。
 
 关闭窗口销毁视图并分离 ACP 连接，Rust owner 和模型工作继续。显示窗口/应用 Reopen 创建新视图并读取持久状态。明确“退出”先有界关闭 Node/worker/MCP，再停止 Rust owner，不隐式取消业务。异常退出后重新打开数据库只核实已有尝试；runner 历史丢失保留 Unknown。
 
@@ -31,7 +33,7 @@ Host 在发送工具操作前原子保存 delivery intent；回复丢失后按�
 
 ## 边界和验证
 
-只有 `self-service/native.ts` 和 `assistant/native.ts` 可调用各自固定字面量 IPC。WebView 无网络、文件、进程、凭据或 SDK 入口；capability 只授权本地 main 窗口。原生进程、socket 和 SQLite 只在 Rust composition 层。CSP、导航拒绝、IPC ACL、源码 AST 守卫分别验证，源码守卫不是 OS 沙箱证明。
+只有 `self-service/native.ts` 和 `assistant/native.ts` 可调用各自固定字面量 IPC。WebView 无网络、文件、进程、凭据或 SDK 入口；capability 只授权本地 main 窗口。原生进程、socket 和 SQLite 只在 Rust composition 层。CSP、导航拒绝、IPC ACL、源码 AST 守卫分别验证，源码守卫不是 OS 沙箱证明。fixture 自己持有测试 Human/OS session 构造，源码守卫拒绝 fixture 反向依赖 composition。
 
 Rust 命令、task details 和 MCP schema 生成前端/模型声明，无手写第二份 wire：
 
@@ -49,6 +51,6 @@ make ci CI_BASE=origin/develop
 
 来源：Tauri `crates/tauri/src/app.rs` / `webview/webview_window.rs` @ 2.11.2；runtime-wry `src/lib.rs` @ 2.11.4（最后窗口销毁与 ExitRequested）；rmcp `src/model/meta.rs` @ 3.4.0（request metadata）；MCP TypeScript SDK `client/index.ts` / `shared/stdio.ts` @ 1.30.0。
 
-真实 macOS arm64 桌面验收使用 `pnpm bundle:ai-host && pnpm check:desktop-native`，要求源码已提交且工作树干净。入口构建实际 WebView 并消费固定 runtime，使用现有 Codex 用户登录；结果写入 `.local-ci-runs/desktop-native.json`，绑定源码、lock 和 runtime manifest。每次使用全新私有目录，窗口销毁后重新连接同一后端，再从可信任务详情批准测试计划。该验收不属于无凭证 CI，也不证明真实 OS 效果。
+真实 macOS arm64 桌面验收使用 `pnpm bundle:ai-host && pnpm check:desktop-native`，要求源码已提交且工作树干净。入口构建实际 WebView 并消费固定 runtime，使用现有 Codex 用户登录；生产 `main` 与验收 carrier 共用 `composition::lifecycle` 的销毁、退出与 Reopen 处理，确定性测试覆盖关闭后重开、关闭后明确退出及非零退出码。另构建实际 `.app` 并在隔离 HOME 下启动生产入口，禁用 runtime 环境覆盖，校验 bundle 内的完整 runtime 树及 Host socket/两个 SQLite owner 就绪；此 smoke 只证明启动与资源定位，清理使用隔离进程组终止，不能作为优雅退出证据。结果写入 `.local-ci-runs/desktop-native.json`，绑定源码、lock 和 runtime manifest。每次使用全新私有目录，窗口销毁后重新连接同一后端，再从可信任务详情批准测试计划。该验收不属于无凭证 CI，也不证明真实 OS 效果。
 
 真实验收默认明确选择 `gpt-5.5`，可通过 `CODEX_SMOKE_MODEL` 指定其他已支持直接工具调用的模型；复用已有用户登录，不修改用户配置。需要 code-mode host 的模型不能据此宣称支持当前受控工具模式。

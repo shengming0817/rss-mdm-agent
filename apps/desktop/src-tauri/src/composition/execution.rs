@@ -27,8 +27,16 @@ pub fn now() -> Result<u64, Error> {
 pub fn catalog() -> ui::Result<FrozenCatalog> {
     fixtures::catalog(0)
 }
-fn bad(_: impl std::fmt::Display) -> ui::ServiceError {
-    ui::error("execution", "受控执行服务未接纳请求；请查询原任务")
+fn bad(error: Error) -> ui::ServiceError {
+    let code = match error {
+        Error::OutcomeUnknown => "outcomeUnknown",
+        Error::ConfirmationUnknown => "confirmationUnknown",
+        Error::Denied | Error::Unbound => "denied",
+        Error::Conflict => "conflict",
+        Error::InvalidInput => "invalidInput",
+        _ => "execution",
+    };
+    ui::error(code, "受控执行操作未确认；请查询原任务")
 }
 fn mcp_error(e: Error) -> mcp::ServiceError {
     match e {
@@ -192,7 +200,7 @@ impl ExecutionHandle {
         tokio::time::timeout(Duration::from_secs(10), rx)
             .await
             .map_err(|_| Error::OutcomeUnknown)?
-            .map_err(|_| Error::Unavailable)?
+            .map_err(|_| Error::OutcomeUnknown)?
     }
     pub async fn snapshot(&self, query: ui::SnapshotQuery) -> ui::Result<ui::Snapshot> {
         self.call(move |o| o.snapshot(query)).await.map_err(bad)
@@ -204,7 +212,7 @@ impl ExecutionHandle {
             }
             let selected =
                 selection::select(&o.catalog, &draft).map_err(|_| Error::InvalidInput)?;
-            let p = o.preview(&draft.request_id, selected, super::origin::human())?;
+            let p = o.preview(&draft.request_id, selected, fixtures::human())?;
             o.plan_view(&p, draft.revision)
         })
         .await
@@ -733,9 +741,24 @@ impl mcp::ExecutionServicePort for ExecutionHandle {
 mod tests {
     use super::*;
 
+    #[test]
+    fn ipc_preserves_unknown_outcomes_and_deterministic_rejections() {
+        for (error, code) in [
+            (Error::OutcomeUnknown, "outcomeUnknown"),
+            (Error::ConfirmationUnknown, "confirmationUnknown"),
+            (Error::Denied, "denied"),
+            (Error::Conflict, "conflict"),
+            (Error::InvalidInput, "invalidInput"),
+        ] {
+            assert_eq!(serde_json::to_value(bad(error)).unwrap()["code"], code);
+        }
+    }
+
     async fn fixture() -> (ExecutionHandle, std::path::PathBuf) {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         let root = std::env::temp_dir().join(format!(
-            "rss-task-pages-{}-{}",
+            "rss-task-pages-{}-{}-{}",
+            NEXT.fetch_add(1, Ordering::Relaxed),
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -783,7 +806,7 @@ mod tests {
         handle
             .call(|o| {
                 for i in 0..130 {
-                    add(o, i, i >= 128, super::super::origin::human())?;
+                    add(o, i, i >= 128, fixtures::human())?;
                 }
                 let first =
                     serde_json::to_value(o.snapshot(ui::SnapshotQuery::default())?).unwrap();
@@ -809,10 +832,10 @@ mod tests {
         let (handle, root) = fixture().await;
         handle
             .call(|o| {
-                let human = super::super::origin::human();
+                let human = fixtures::human();
                 let ai = Initiator::Ai {
                     provider: id("codex"),
-                    os_session: super::super::origin::os_session(),
+                    os_session: fixtures::os_session(),
                     provider_account: ProviderAccountRef {
                         account: id("test-account"),
                         config: VersionedRef {
@@ -856,7 +879,7 @@ mod tests {
         handle
             .call(|o| {
                 for i in 0..130 {
-                    add(o, i, true, super::super::origin::human())?;
+                    add(o, i, true, fixtures::human())?;
                 }
                 let first = o.snapshot(ui::SnapshotQuery::default())?;
                 assert_eq!(first.requests.len(), 128);

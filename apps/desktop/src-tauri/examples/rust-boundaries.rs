@@ -36,6 +36,7 @@ impl Guard {
                 _ => false,
             };
         }
+        self.forbidden |= self.fixture && parts.iter().any(|part| part == "composition");
         self.forbidden |= !self.ipc && parts == ["tauri", "command"];
     }
     fn imports(&mut self, prefix: &mut Vec<String>, tree: &syn::UseTree) {

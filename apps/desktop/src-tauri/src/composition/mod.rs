@@ -2,5 +2,6 @@
 mod authority;
 pub mod execution;
 pub mod ipc;
+pub mod lifecycle;
 pub mod origin;
 pub mod runtime;

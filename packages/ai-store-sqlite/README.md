@@ -87,4 +87,4 @@ SQLite 扩展结果码按低8位取得稳定 primary code，再投影到产品 F
 损坏或未知 I/O 不触发盲目重放、自动删除或重建。双进程测试在 contender 内计量实际 open 耗时，对 busyTimeoutMs=50ms 要求 <1000ms 宽松上界，并验证明确的 unavailable/same_command；进程启动耗时不混入锁等待测量。重启后的 reconciliation 使用 A01 的 VerifiedProviderSession 实际调用凭证，不能再手写 not_submitted 结构授权重新派发。Id 验证直接使用 A01 从唯一 schema 编译的 isId，无复制正则。
 
 
-A03 的 `WorkerLaunchFenceStore` 独立于 `SessionStore`，SQLite 对象同时实现两者。`worker_launches` 启动 fence（namespace / launchId / artifact，registered 时附带 rootPid / pgid）。reserve 发生在原生 Session 创建前，故不持有 sessions 外键；登记和清除均按原 launchId CAS。它不赋予重启 Host 向旧 PID 发信号的权限。`recoverUnavailable` 在无法准入原生会话时原子保留旧身份与普通队列、冻结未决派发及旧回调。列表包括 active / recovery_required，recovery 排除 acknowledged / cancelled。保持 schema version 1，直接协同替换，无迁移或旧格式兼容分支。
+A03 的 `WorkerLaunchFenceStore` 独立于 `SessionStore`，SQLite 对象同时实现两者。`worker_launches` 启动 fence（namespace / launchId / artifact，registered 时附带 rootPid / pgid）。reserve 发生在原生 Session 创建前，故不持有 sessions 外键；登记和清除均按原 launchId CAS。它不赋予重启 Host 向旧 PID 发信号的权限。`recoverUnavailable` 在无法准入原生会话时原子保留旧身份与普通队列、冻结未决派发及旧回调。列表包括 active / recovery_required，recovery 排除 acknowledged / cancelled。schema 版本由上文的数据库身份规则统一声明，直接协同替换，无迁移或旧格式兼容分支。

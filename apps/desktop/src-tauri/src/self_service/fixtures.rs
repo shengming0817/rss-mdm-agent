@@ -1,8 +1,26 @@
 use super::model::*;
-use execution_contract::{FrozenPlan, PlanLimits};
+use execution_contract::{
+    DeviceId, FrozenPlan, Id, Initiator, OsAccountRef, OsSessionRef, PlanLimits, Platform,
+};
 use serde_json::json;
 use service_catalog::{CatalogLimits, FrozenCatalog, ParameterLimits, SelectedOperation};
 use sha2::{Digest as _, Sha256};
+
+pub fn os_session() -> OsSessionRef {
+    OsSessionRef {
+        device: DeviceId::new("fixture-device").unwrap(),
+        account: OsAccountRef {
+            platform: Platform::Macos,
+            subject: Id::new("fixture-user").unwrap(),
+        },
+        session: Id::new("fixture-session").unwrap(),
+    }
+}
+pub fn human() -> Initiator {
+    Initiator::Human {
+        os_session: os_session(),
+    }
+}
 
 pub const TARGET: &str = "macOS arm64 · 测试设备 fixture-device · 测试用户 fixture-user";
 pub const ARTIFACT: &[u8] = b"RSS desktop fixed test artifact. Not executable.\n";

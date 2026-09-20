@@ -461,3 +461,16 @@ test("trusted execution details share only the frozen-origin view across feature
   ])
     assert.ok(checkSource(file, source(name)).length);
 });
+
+test("fixture presentation cannot import the desktop composition owner", () => {
+  for (const source of [
+    "fn preview() { crate::composition::origin::human(); }",
+    "use crate::{composition::origin as trusted}; fn preview() { trusted::human(); }",
+    "use super::super::composition;",
+  ])
+    assert.ok(
+      checkRustSources({
+        "apps/desktop/src-tauri/src/self_service/example.rs": source,
+      }).length,
+    );
+});

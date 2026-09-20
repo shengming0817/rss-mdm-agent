@@ -211,3 +211,24 @@ test("existing Codex configuration may omit model but rejects an invalid explici
     await assert.rejects(resolveConnection(local));
   }
 });
+
+test(
+  "Claude never binds an implicit mutable Keychain login as an account",
+  { skip: process.platform !== "darwin" },
+  async (t) => {
+    const { local, write } = await setup(t, "claude");
+    await write(
+      "settings.json",
+      JSON.stringify({
+        env: {
+          ANTHROPIC_API_KEY: "",
+          ANTHROPIC_AUTH_TOKEN: "",
+          CLAUDE_CODE_OAUTH_TOKEN: "",
+        },
+      }),
+    );
+    await assert.rejects(resolveConnection(local), {
+      code: "authentication_required",
+    });
+  },
+);

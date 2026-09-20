@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { sourceState, sameCommittedSource } from "./source-state.mjs";
 import { run, verifyRuntimeIntegrity } from "./ai-host-artifacts.mjs";
+import { checkDesktopBundle } from "./check-desktop-bundle.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url)),
   start = sourceState(root);
 if (process.platform !== "darwin" || process.arch !== "arm64")
@@ -57,7 +58,7 @@ writeFileSync(
   }),
   { mode: 0o600 },
 );
-let behavior, failure, facts, exit;
+let behavior, failure, facts, exit, bundle;
 try {
   run("pnpm", ["build"], root);
   run(
@@ -171,6 +172,7 @@ try {
     ai.close();
     execution.close();
   }
+  bundle = await checkDesktopBundle(root, manifest.runtimeTreeSha256);
 } catch (error) {
   failure = String(error);
   process.exitCode = 1;
@@ -179,6 +181,7 @@ try {
     passed =
       !failure &&
       Boolean(facts) &&
+      Boolean(bundle?.bundledHostReady) &&
       behavior?.step === "passed" &&
       sameCommittedSource(start, end);
   mkdirSync(join(root, ".local-ci-runs"), { recursive: true });
@@ -203,6 +206,7 @@ try {
         behavior,
         facts,
         exit,
+        bundle,
         failure,
       },
       null,

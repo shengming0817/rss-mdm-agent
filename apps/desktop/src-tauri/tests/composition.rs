@@ -59,6 +59,45 @@ fn submission(plan: &ui::PlanView) -> ui::Submission {
     }
 }
 #[tokio::test]
+async fn ai_cannot_preview_submit_read_or_cancel_a_human_request() {
+    let root = directory();
+    let handle = ExecutionHandle::start(&root.join("execution.sqlite"), binding()).unwrap();
+    let plan = draft(&handle, "human-private", "office").await;
+    let details = handle.details(plan.request_id.clone()).await.unwrap();
+    let ai = bound(&handle, "conversation-a", "foreign-access");
+    let request = || OperationRequest {
+        operation_request_id: plan.request_id.clone(),
+    };
+    let denied = vec![
+        ai.preview(
+            PreviewRequest::Candidate {
+                operation_request_id: plan.request_id.clone(),
+                candidate: details.plan.artifact,
+            },
+            CancellationToken::new(),
+        )
+        .await
+        .err(),
+        ai.submit(
+            SubmitRequest {
+                operation_request_id: plan.request_id.clone(),
+                plan: execution_mcp::PlanRef {
+                    plan_id: plan.plan_id.clone(),
+                    digest: plan.digest.clone(),
+                },
+            },
+            CancellationToken::new(),
+        )
+        .await
+        .err(),
+        ai.status(request(), CancellationToken::new()).await.err(),
+        ai.cancel(request(), CancellationToken::new()).await.err(),
+    ];
+    handle.close().await;
+    std::fs::remove_dir_all(root).unwrap();
+    assert_eq!(denied, vec![Some(execution_mcp::ServiceError::Denied); 4]);
+}
+#[tokio::test]
 async fn shared_durable_service_distinguishes_preview_submission_approval_and_replay() {
     let root = directory();
     let path = root.join("execution.sqlite");

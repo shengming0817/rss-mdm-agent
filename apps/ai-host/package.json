@@ -19,7 +19,7 @@
     "rss-ai-host": "dist/cli.js"
   },
   "scripts": {
-    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json"
+    "build": "node ../../scripts/check-execution-bindings.mjs && node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json"
   },
   "dependencies": {
     "@iarna/toml": "2.2.5",

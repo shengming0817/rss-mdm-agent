@@ -1,6 +1,6 @@
 //! Real WebView + production IPC + fixed Node artifact + existing Codex login acceptance.
 //! No model fixtures, IPC replacement, or OS executor. Inputs are private run/artifact paths.
-use rss_mdm_desktop::composition::{ipc, runtime::DesktopRuntime};
+use rss_mdm_desktop::composition::{ipc, lifecycle::Lifecycle, runtime::DesktopRuntime};
 use std::{
     path::PathBuf,
     sync::{
@@ -51,7 +51,6 @@ fn window(app: &tauri::AppHandle, evidence: Arc<Evidence>) -> tauri::Result<()> 
                 let next = events.clone();
                 let _ = window.destroy();
                 tauri::async_runtime::spawn(async move {
-                    app.state::<DesktopRuntime>().detach_views().await;
                     tokio::time::sleep(Duration::from_secs(3)).await;
                     let ui = app.clone();
                     let _ = app.run_on_main_thread(move || {
@@ -63,13 +62,10 @@ fn window(app: &tauri::AppHandle, evidence: Arc<Evidence>) -> tauri::Result<()> 
                     std::fs::write(&events.path, serde_json::to_vec_pretty(&value).unwrap())
                         .is_ok();
                 let app = window.app_handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    app.state::<DesktopRuntime>().shutdown().await;
-                    app.exit(if recorded && value["step"] == "passed" {
-                        0
-                    } else {
-                        1
-                    });
+                app.exit(if recorded && value["step"] == "passed" {
+                    0
+                } else {
+                    1
                 });
             }
         })
@@ -123,19 +119,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         &setup.path,
                         b"{\"step\":\"failed\",\"stage\":\"native_timeout\"}",
                     );
-                    handle.state::<DesktopRuntime>().shutdown().await;
                     handle.exit(1);
                 }
             });
             Ok(())
         })
         .build(tauri::generate_context!())?;
-    app.run(move |_, event| {
-        if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
-            if code.is_none() {
-                api.prevent_exit();
-            }
-        }
-    });
+    let mut lifecycle = Lifecycle::default();
+    app.run(move |app, event| lifecycle.handle(app, event, |app| window(app, evidence.clone())));
     Ok(())
 }

@@ -202,12 +202,9 @@ export async function resolveConnection(
         return { model, apiUrl, credential: { type, value: text(value) } };
       }
     }
+    // A directory identifies mutable storage, never a provider account.
     if (process.platform === "darwin")
-      return {
-        model,
-        apiUrl,
-        credential: { type: "user_login", sourceDirectory: source.directory },
-      };
+      throw new ConfigurationError("authentication_required");
     const credentials = JSON.parse(
       await readUserFile(join(source.directory, ".credentials.json")),
     );

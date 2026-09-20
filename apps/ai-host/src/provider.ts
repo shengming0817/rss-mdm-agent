@@ -97,10 +97,7 @@ export const createProvider: WorkerFactory = async ({
           configuration: { ...configuration, provider: "deepseek" },
           persistenceDirectory: directory,
           apiUrl: connection.apiUrl,
-          apiKey:
-            connection.credential.type === "user_login"
-              ? ""
-              : connection.credential.value,
+          apiKey: connection.credential.value,
           model: connection.model!,
         }),
       });

@@ -127,7 +127,7 @@ impl FixtureService {
                     &draft.request_id,
                     format!("plan-{}-{}", self.instance_id, self.next_plan),
                     now,
-                    &crate::composition::origin::human(),
+                    &fixtures::human(),
                 )?;
                 let display = self.display(&draft.item_id, now);
                 selected.display_status(

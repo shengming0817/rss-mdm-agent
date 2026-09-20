@@ -32,8 +32,7 @@ impl S1Host {
     }
     pub fn validate(&self, plan: &FrozenPlan) -> Result<(), execution_app::Error> {
         let p = plan.spec();
-        if p.request.initiator != super::origin::human() && !self.ai.validate(&p.request.initiator)
-        {
+        if p.request.initiator != fixtures::human() && !self.ai.validate(&p.request.initiator) {
             return Err(execution_app::Error::Denied);
         }
         let catalog = catalog().map_err(|_| execution_app::Error::Configuration)?;
