@@ -278,7 +278,8 @@ test("existing ChatGPT tokens authenticate in the private home and refresh only 
   assert.ok(f.rejected.includes(81));
 });
 
-async function fillObservationQueue(s, count = 511) {
+// Each completed dispatch retains submitted + running + terminal observations.
+async function fillObservationQueue(s, count = 341) {
   let index = 0;
   s.fault((method, params) => {
     if (method !== "turn/start" || index >= count) return;
@@ -656,7 +657,7 @@ test("ACK replay overflow fails the incarnation without fabricating a terminal",
 
 test("steer ACK overflow preserves submission fact and fails the incarnation", async (t) => {
   const s = await setup(t, { nativeDiagnostics: false });
-  await fillObservationQueue(s);
+  await fillObservationQueue(s, 340);
   s.fault(undefined);
   const started = await s.adapter.dispatch(
     s.admitted.binding,
@@ -664,12 +665,14 @@ test("steer ACK overflow preserves submission fact and fails the incarnation", a
     s.attempt("active"),
     budget(),
   );
-  s.emit("item/agentMessage/delta", {
-    threadId: "thread-1",
-    turnId: started.binding.nativeRunId,
-    itemId: "fills-last-slot",
-    delta: "full",
-  });
+  // 1020 completed observations + submitted/running + two deltas fill 1024 slots.
+  for (const itemId of ["fills-slot-1023", "fills-slot-1024"])
+    s.emit("item/agentMessage/delta", {
+      threadId: "thread-1",
+      turnId: started.binding.nativeRunId,
+      itemId,
+      delta: "full",
+    });
   const command = {
     ...fixtureCommand("overflow-steer"),
     input: {

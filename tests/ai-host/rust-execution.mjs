@@ -18,6 +18,8 @@ export function executionServer() {
       cwd: new URL("../..", import.meta.url),
       encoding: "utf8",
       maxBuffer: 10 * 1024 * 1024,
+      timeout: 120000,
+      killSignal: "SIGKILL",
     },
   )
     .trim()

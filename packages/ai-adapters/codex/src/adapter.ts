@@ -794,6 +794,17 @@ export class CodexAdapter implements ProviderAgentPort {
           commandId: entry.command.commandId,
           attemptId: entry.dispatch.attemptId,
         });
+      if (
+        announce &&
+        entry.command.input.type === "prompt" &&
+        entry.command.input.policy === "queue_next"
+      )
+        this.observations.push({
+          type: "running",
+          binding: copy(entry.binding),
+          commandId: entry.command.commandId,
+          attemptId: entry.dispatch.attemptId,
+        });
     }
     const terminal = this.completedTurns.get(turnId);
     if (announce && terminal && !entry.outcome) {

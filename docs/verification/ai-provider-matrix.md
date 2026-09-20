@@ -4,7 +4,7 @@
 
 ## 运行与证据
 
-`pnpm test:ai-acceptance` 构建现有 Host 依赖，串行运行 [共同套件](../../tests/ai-provider-conformance/) 和 [进程恢复套件](../../tests/ai-recovery-integration/)。必须有三个引擎及所有指定场景的实际断言与诊断；少测、跳过、失败、重复证据、源码未提交或运行中改变均不能得到通过结论。本入口使用真实原生进程和本地模型协议服务，不需要外部账号。
+`pnpm test:ai-acceptance` 构建现有 Host 依赖，自动发现并串行运行 [共同套件](../../tests/ai-provider-conformance/) 和 [进程恢复套件](../../tests/ai-recovery-integration/)。必须有三个引擎及所有指定场景的实际断言与诊断；少测、跳过、失败、重复证据、源码未提交或运行中改变均不能得到通过结论。每行必须匹配固定版本、配置、能力和 adapter profile/plugin 源码摘要，缺失或错误绑定同样失败。本入口使用真实原生进程和本地模型协议服务，不需要外部账号。
 
 回执位于被忽略的 `.local-ci-runs/ai-provider-matrix.json`，包含命令、UTC、前后源码 SHA/基线/clean 状态、两份 lock 摘要、Node/OS/架构、各测试结果、每个已准入会话的 provider/adapter 版本、配置 revision、generation、原生关联 ID、实际工具列表和恢复结果。临时路径与凭据不进入回执；工具/plugin 组合由该源码的固定 profile 与 lock 绑定。回执必须与当前 clean SHA 和 lock 一致，历史回执不能证明当前构建。
 
@@ -19,7 +19,8 @@
 | 原生版本来源 | `@openai/codex@0.155.0` | Agent SDK `0.3.277` / 原生 CLI 启动实测 | Harness `0.1.6-alpha.2` / 固定组合摘要 |
 | conversation | supported；原生业务工具为空 | supported；只保留结构化问题 | supported；只保留结构化问题 |
 | Host FIFO、多入口同 commandId | supported | supported | supported |
-| 原生 steer / fork | supported / supported | unsupported / unsupported | unsupported / unsupported |
+| Host steer 入口 | supported | unsupported | unsupported |
+| 原生 adapter fork 扩展 | supported；独立原生测试 | unsupported；无该扩展 | unsupported；无该扩展 |
 | 结构化问题 | unsupported | supported | supported |
 | 取消契约 | request_only | request_only | request_only |
 | 原生跨进程上下文续接 | across_processes | across_processes | across_processes |
@@ -34,6 +35,7 @@
 | 场景 | 入口与断言 |
 | --- | --- |
 | 六个连续轮次、流式稳定消息、FIFO、双客户端同 ID 重试与内容冲突、断线分页重放 | [native-host.test.mjs](../../tests/ai-provider-conformance/native-host.test.mjs)：真实 Host/SQLite/worker/native；不同主体不能读/submit/cancel/respond；不匹配的 provider/account/config/profile 不能新建 |
+| steer 与 queue_next 差异 | [steering.test.mjs](../../tests/ai-provider-conformance/steering.test.mjs)：另一客户端对正在运行的 Codex turn 输入 steer，独立请求收到 ACK、原 turn 只结束一次；Claude/DeepSeek 在 Host 入口明确拒绝且不派发 |
 | 取消请求、单独 ACK、实际原生终态 | [cancellation.test.mjs](../../tests/ai-provider-conformance/cancellation.test.mjs)：各引擎实际取消；DeepSeek 活动问题收到原生取消终态，模型传输未返回即关闭 Host 的情况则恢复为 unknown，原请求重试不重发 |
 | 两个入口抢答、相同回答重试、迟到回答、旧 generation | [questions.test.mjs](../../tests/ai-provider-conformance/questions.test.mjs)：真实 Claude/DeepSeek 回调只消费一次；重启保留展示内容但旧回调 unavailable |
 | 产品受控工具与固定准入 | [controlled.test.mjs](../../tests/ai-provider-conformance/controlled.test.mjs)：生产装配、实际 Rust MCP、模型强制 proposal；不同引擎按真实准入结论判断 |
@@ -65,8 +67,8 @@ DeepSeek smoke 在开始时冻结 endpoint/model，实际连接与回执使用�
 
 ## 来源与改写
 
-ref: OpenAI Codex `codex-rs/app-server-protocol/src/protocol/v2/mod.rs`、`core/src/session/session.rs`，固定 revision 见 [Codex 来源](../reference/codex-adapter.md)。沿用原生 request/turn terminal，不改原生协议：Codex adapter 按 Host 单次 dispatch 的匹配终态结束观察迭代器，释放单读队列；无 request 坐标的会话观察仍由调用预算结束。六轮真实 Host 用例防止旧观察占用下一轮和 worker 的有界 stream slots。
+ref: OpenAI Codex `codex-rs/app-server-protocol/src/protocol/v2/mod.rs`、`core/src/session/session.rs`，固定 revision 见 [Codex 来源](../reference/codex-adapter.md)。沿用原生 request/turn terminal，不改原生协议：Codex adapter 按 Host 单次 dispatch 的匹配终态结束观察迭代器，释放单读队列；无 request 坐标的会话观察仍由调用预算结束。六轮真实 Host 用例防止旧观察占用下一轮和 worker 的有界 stream slots。原生接受 turn 后报告 running，Host 的 steer 仅继承目标 run、独立绑定新请求，避免合法 steer 被状态或旧请求坐标拒绝；取消和回答仍保留原请求坐标。
 
-恢复测试只在现有 Store.commit 接缝暂停，不给生产 Store/Host 添加故障开关。Rust 编译 helper 被原有丢回执测试与共同受控测试共享。
+恢复测试与生产应用使用同一个配置/主体/准入 resolver，只在现有 Store.commit 接缝暂停，不给生产 Store/Host 添加故障开关。Rust 编译 helper 被原有丢回执测试与共同受控测试共享，子进程构建设有硬超时。
 
 ref: oh-my-pi [crates/sandbox/src/runner.rs@2f92f3b5aa2035d21c9f016f9ff6350795e5685a](https://github.com/can1357/oh-my-pi/blob/2f92f3b5aa2035d21c9f016f9ff6350795e5685a/crates/sandbox/src/runner.rs#L69)：借鉴 requested/enforced/missing 的证据表达；这里只记录现有 verifier 的要求、断言与缺口，没有移植 sandbox 平台或扩大 A01。

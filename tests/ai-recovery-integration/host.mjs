@@ -1,9 +1,7 @@
 import { createHost } from "../../packages/ai-host/dist/index.js";
 import { openSqliteStore } from "../../packages/ai-store-sqlite/dist/index.js";
-import {
-  readConfiguration,
-  configurationFingerprint,
-} from "../../apps/ai-host/dist/configuration.js";
+import { readConfiguration } from "../../apps/ai-host/dist/configuration.js";
+import { localResolver } from "../../apps/ai-host/dist/resolver.js";
 import { unwrap } from "../ai-provider-conformance/support.mjs";
 
 /** Test composition uses the production worker factory; only the Store commit boundary is instrumented. */
@@ -17,12 +15,6 @@ export async function openHost(path, mode, beforeCommit) {
       return commit(batch);
     };
   }
-  const artifact = new URL(
-    "../../apps/ai-host/dist/provider.js",
-    import.meta.url,
-  );
-  artifact.searchParams.set("configuration", path);
-  artifact.searchParams.set("fingerprint", configurationFingerprint(local));
   const diagnostics = [];
   const host = unwrap(
     await createHost({
@@ -30,17 +22,7 @@ export async function openHost(path, mode, beforeCommit) {
       launchFences: store,
       delivery: null,
       onDiagnostic: (row) => diagnostics.push(row),
-      resolve: async (caller, options, namespace) => ({
-        configuration: {
-          namespace,
-          provider: options.provider,
-          config: options.config,
-          accountRef: options.accountRef,
-          workingDirectory: local.workingDirectory,
-          permissions: "tools_disabled",
-        },
-        artifact: artifact.href,
-      }),
+      resolve: localResolver(local, path),
     }),
   );
   return { host, store, local, diagnostics };

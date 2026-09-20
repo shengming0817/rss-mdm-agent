@@ -6,6 +6,7 @@ import { writeFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { openSqliteStore } from "../../packages/ai-store-sqlite/dist/index.js";
 import { executionServer } from "../ai-host/rust-execution.mjs";
+import { profileDigest } from "../../scripts/check-ai-acceptance.mjs";
 import {
   engines,
   fixture,
@@ -84,6 +85,7 @@ for (const provider of engines) {
           t.diagnostic(
             JSON.stringify({
               a06: 1,
+              profileSourceSha256: profileDigest(provider),
               scenario: "production-controlled-admission",
               provider,
               profile: "controlled_tools",

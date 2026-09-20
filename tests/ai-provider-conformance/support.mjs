@@ -14,6 +14,8 @@ import {
 import { createModelServer } from "../ai-adapters/claude/model-fixture.mjs";
 import { reply } from "../ai-adapters/codex/helpers.mjs";
 import { completion } from "../ai-adapters/deepseek/native-support.mjs";
+import { profileDigest } from "../../scripts/check-ai-acceptance.mjs";
+export { capabilities } from "../../scripts/check-ai-acceptance.mjs";
 
 export const engines = ["codex", "claude", "deepseek"];
 export const budget = (timeoutMs = 15000) => ({
@@ -41,19 +43,6 @@ export function command(sessionId, commandId, text = "hello") {
     commandId,
     expiresAtMs: Date.now() + 120000,
     input: { type: "prompt", policy: "queue_next", text },
-  };
-}
-export function capabilities(provider, tools = "disabled") {
-  return {
-    continuation: "across_processes",
-    cancellation: "request_only",
-    tools,
-    steer: provider === "codex" ? "supported" : "unsupported",
-    fork: provider === "codex" ? "supported" : "unsupported",
-    subagent: "unsupported",
-    terminal: "unsupported",
-    structuredQuestion: provider === "codex" ? "unsupported" : "supported",
-    multimodal: "unsupported",
   };
 }
 /** A real native process consumes this local protocol server. No real model evidence. */
@@ -267,6 +256,7 @@ export function evidence(t, scenario, session, extra = {}) {
   t.diagnostic(
     JSON.stringify({
       a06: 1,
+      profileSourceSha256: profileDigest(binding.provider),
       scenario,
       proof: "real_process_local_model",
       provider: binding.provider,
