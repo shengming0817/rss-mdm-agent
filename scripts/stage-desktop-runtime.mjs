@@ -11,7 +11,7 @@ const manifest = JSON.parse(
 const state = sourceState(root);
 if (
   manifest.status !== "passed" ||
-  manifest.kind === "development" ||
+  manifest.kind !== "release" ||
   !state.clean ||
   manifest.source.end.head !== state.head ||
   process.platform !== "darwin" ||

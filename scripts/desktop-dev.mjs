@@ -1,5 +1,5 @@
 // ref: Node.js lib/child_process.js@v24.14.1 (spawn and signal lifecycle)
-import { spawn } from "node:child_process";
+import { runDesktop } from "./desktop-dev-process.mjs";
 import { mkdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -39,24 +39,7 @@ try {
   rmSync(lock, { recursive: true });
   locked = false;
   stage = "Tauri startup";
-  const child = spawn(
-    "pnpm",
-    ["exec", "tauri", "dev", ...process.argv.slice(2)],
-    {
-      cwd: join(root, "apps/desktop"),
-      stdio: "inherit",
-      env: { ...process.env, RSS_AI_HOST_RUNTIME: directory },
-    },
-  );
-  for (const signal of ["SIGINT", "SIGTERM"])
-    process.on(signal, () => child.kill(signal));
-  child.on("error", (error) => {
-    console.error(`[desktop dev] ${stage}: ${error.message}`);
-    process.exitCode = 1;
-  });
-  child.on("exit", (code, signal) => {
-    process.exitCode = code ?? (signal === "SIGINT" ? 130 : 1);
-  });
+  process.exitCode = await runDesktop(root, directory, process.argv.slice(2));
 } catch (error) {
   console.error(
     `[desktop dev] ${stage} failed: ${error.message}. Check dependencies with pnpm install --frozen-lockfile, then rerun pnpm dev.`,

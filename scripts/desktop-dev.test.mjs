@@ -1,10 +1,20 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  writeFileSync,
+  rmSync,
+  readFileSync,
+  symlinkSync,
+  chmodSync,
+  existsSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { test } from "node:test";
+import { once } from "node:events";
 import {
   developmentFingerprint,
   ensureDevelopmentRuntime,
@@ -21,6 +31,13 @@ function fixture(t) {
     "package.json",
     "pnpm-lock.yaml",
     "pnpm-workspace.yaml",
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain.toml",
+    "crates/execution-app/src/lib.rs",
+    "scripts/check-execution-bindings.mjs",
+    "apps/desktop/src/assistant/execution-types.ts",
+    "tests/assistant/execution-fixtures.json",
     "scripts/bundle-ai-host.mjs",
     "scripts/ai-host-artifacts.mjs",
     "scripts/desktop-dev-runtime.mjs",
@@ -53,6 +70,8 @@ test("fingerprint includes dirty Host, adapter, contract, lock, Node and added/d
     "packages/ai-contract/schema/runtime.schema.json",
     "pnpm-lock.yaml",
     "package.json",
+    "crates/execution-app/src/lib.rs",
+    "scripts/check-execution-bindings.mjs",
   ]) {
     const before = developmentFingerprint(root);
     write(path, "changed");
@@ -164,4 +183,106 @@ test("invalid override fails before Tauri starts with actionable stage diagnosti
   assert.equal(result.status, 1);
   assert.match(result.stderr, /AI Host override validation failed/);
   assert.match(result.stderr, /non-empty runtime directory/);
+});
+
+test("release stage rejects development, absent and unknown manifest kinds", (t) => {
+  const { root, write } = fixture(t);
+  for (const name of [
+    "stage-desktop-runtime.mjs",
+    "ai-host-artifacts.mjs",
+    "source-state.mjs",
+  ]) {
+    write(`scripts/${name}`, readFileSync(new URL(name, import.meta.url)));
+  }
+  symlinkSync(
+    fileURLToPath(new URL("../node_modules", import.meta.url)),
+    join(root, "node_modules"),
+  );
+  execFileSync("/usr/bin/git", ["init", "-b", "develop"], {
+    cwd: root,
+    stdio: "ignore",
+  });
+  write(".gitignore", "node_modules/\n.local-ci-runs/\n");
+  execFileSync("/usr/bin/git", ["add", "."], { cwd: root });
+  execFileSync(
+    "/usr/bin/git",
+    [
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.invalid",
+      "commit",
+      "--allow-empty",
+      "-m",
+      "fixture",
+    ],
+    { cwd: root, stdio: "ignore" },
+  );
+  const head = execFileSync("/usr/bin/git", ["rev-parse", "HEAD"], {
+    cwd: root,
+    encoding: "utf8",
+  }).trim();
+  for (const kind of ["development", undefined, "unknown"]) {
+    write(
+      ".local-ci-runs/ai-host-runtime/manifest.json",
+      JSON.stringify({ status: "passed", kind, source: { end: { head } } }),
+    );
+    const result = spawnSync(
+      process.execPath,
+      [join(root, "scripts/stage-desktop-runtime.mjs")],
+      {
+        cwd: root,
+        encoding: "utf8",
+        env: { ...process.env, CI_BASE: "develop" },
+      },
+    );
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /verified artifact/);
+    assert.doesNotMatch(result.stderr, /TypeError/);
+  }
+});
+
+test("SIGTERM to the wrapper cleans pnpm and its grandchild process group", async (t) => {
+  const { root, write } = fixture(t);
+  mkdirSync(join(root, "apps/desktop"), { recursive: true });
+  write(
+    "bin/pnpm",
+    `#!${process.execPath}\nimport {spawn} from 'node:child_process';\nimport {writeFileSync} from 'node:fs';\nconst child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});\nwriteFileSync(${JSON.stringify(join(root, "pids.json"))},JSON.stringify([process.pid,child.pid]));\nsetInterval(()=>{},1000);\n`,
+  );
+  chmodSync(join(root, "bin/pnpm"), 0o755);
+  const module = fileURLToPath(
+    new URL("desktop-dev-process.mjs", import.meta.url),
+  );
+  const wrapper = spawn(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `import {runDesktop} from ${JSON.stringify(module)}; process.exitCode=await runDesktop(${JSON.stringify(root)},'/runtime');`,
+    ],
+    {
+      env: { ...process.env, PATH: `${join(root, "bin")}:${process.env.PATH}` },
+      stdio: "pipe",
+    },
+  );
+  t.after(() => wrapper.kill("SIGKILL"));
+  const exit = once(wrapper, "exit");
+  const deadline = Date.now() + 5000;
+  while (!existsSync(join(root, "pids.json"))) {
+    assert.ok(Date.now() < deadline, "child startup");
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  const pids = JSON.parse(readFileSync(join(root, "pids.json")));
+  t.after(() => {
+    for (const pid of pids) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {}
+    }
+  });
+  wrapper.kill("SIGTERM");
+  const [code] = await exit;
+  assert.equal(code, 143);
+  for (const pid of pids)
+    assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
 });
