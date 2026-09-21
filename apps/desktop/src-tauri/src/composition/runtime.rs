@@ -462,6 +462,7 @@ if {mode:?}.startswith('diagnostic_'):
     sys.stderr.write(json.dumps({{'schemaVersion':5,'kind':'hostProcessDiagnostic','code':{mode:?}[11:]}})+'\n')
     sys.exit(1)
 if {mode:?} == 'ignore_term': signal.signal(signal.SIGTERM, signal.SIG_IGN)
+if {mode:?} == 'nonzero_term': signal.signal(signal.SIGTERM, lambda *_: sys.exit(7))
 if {mode:?} == 'exit': sys.exit(7)
 stream=socket.socket(fileno=3).makefile('rwb',buffering=0)
 for line in stream:
@@ -657,6 +658,28 @@ for line in stream:
         runtime.shutdown().await;
         std::fs::remove_dir_all(root).unwrap();
     }
+    #[tokio::test]
+    async fn ready_host_nonzero_shutdown_remains_cleanup_incomplete() {
+        let root = std::env::temp_dir().join(format!("rss-nonzero-stop-{}", uuid::Uuid::new_v4()));
+        private_directory(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        let artifact = fixture(&root, "nonzero_term");
+        let runtime = DesktopRuntime::start_with_key_backend(
+            &root,
+            &artifact,
+            ai_session_contract::HostStatusSource::DevelopmentOverride,
+            NoKey,
+        )
+        .await
+        .unwrap();
+        let process = runtime.process().unwrap();
+        assert_eq!(process.phase(), Phase::Ready);
+        assert!(process.close().await);
+        assert_eq!(process.phase(), Phase::Failed(Fault::Cleanup));
+        runtime.shutdown().await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[tokio::test]
     async fn absent_health_is_bounded_and_never_ready() {
         let root = std::env::temp_dir().join(format!("rss-timeout-{}", uuid::Uuid::new_v4()));

@@ -20,20 +20,28 @@ import {
   runtimeTreeSha256 as hashRuntimeTree,
 } from "./ai-host-artifacts.mjs";
 import { sourceState, sameCommittedSource } from "./source-state.mjs";
+import { developmentFingerprint } from "./desktop-dev-runtime.mjs";
+const development = process.argv.includes("--development");
 const root = fileURLToPath(new URL("../", import.meta.url)),
-  start = sourceState(root);
+  start = development ? developmentFingerprint(root) : sourceState(root);
 const { version, target, sha256, sqlite } = runtimeArtifact(
   root,
   `${process.platform}-${process.arch}`,
 );
 if (process.platform !== "darwin" || process.arch !== "arm64")
   throw new Error("This runtime artifact is verified only on macOS arm64");
-const directory = join(root, ".local-ci-runs/ai-host-runtime"),
+const directory = join(
+    root,
+    development
+      ? ".local-ci-runs/ai-host-dev-runtime"
+      : ".local-ci-runs/ai-host-runtime",
+  ),
   cache = join(root, ".cache/ai-host"),
   archive = join(cache, `node-v${version}-${target}.tar.gz`),
   scratch = mkdtempSync(join(tmpdir(), "rss-host-node-"));
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
-let behaviorPassed = false,
+let stage = "Node archive verification",
+  behaviorPassed = false,
   failure,
   deploymentLockSha256,
   artifacts = [];
@@ -50,11 +58,14 @@ try {
       throw new Error("Node runtime checksum mismatch");
     writeFileSync(archive, bytes);
   }
+  stage = "AI Host build";
   run("pnpm", ["build:ai-host"], root);
   rmSync(directory, { recursive: true, force: true });
   mkdirSync(directory, { recursive: true });
+  stage = "AI Host dependency packaging";
   artifacts = packHost(root, directory, true);
   deploymentLockSha256 = installArtifacts(root, directory, true);
+  stage = "Node runtime extraction";
   run("/usr/bin/tar", ["-xzf", archive, "-C", scratch], root);
   mkdirSync(join(directory, "bin"));
   copyFileSync(
@@ -71,6 +82,7 @@ try {
     '#!/bin/sh\nbase=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)\nexec "$base/bin/node" "$base/node_modules/@rss-mdm-agent/ai-host-app/dist/cli.js" "$@"\n',
   );
   chmodSync(join(directory, "bin/rss-ai-host"), 0o755);
+  stage = "runtime validation";
   run(
     join(directory, "bin/node"),
     [
@@ -90,12 +102,14 @@ try {
   );
   behaviorPassed = true;
 } catch (error) {
-  failure = String(error);
+  failure = `${stage}: ${error}`;
   process.exitCode = 1;
 } finally {
   rmSync(scratch, { recursive: true, force: true });
-  const end = sourceState(root),
-    sourceUnchanged = sameCommittedSource(start, end);
+  const end = development ? developmentFingerprint(root) : sourceState(root),
+    sourceUnchanged = development
+      ? start === end
+      : sameCommittedSource(start, end);
   let deliverable = behaviorPassed && sourceUnchanged,
     runtimeTreeSha256;
   if (deliverable) {
@@ -121,7 +135,9 @@ try {
         ).$defs.HostHealth.properties.protocol.const,
         contractVersion: 5,
         behaviorPassed,
-        source: { start, end },
+        ...(development
+          ? { kind: "development", developmentFingerprint: end }
+          : { kind: "release", source: { start, end } }),
         node: { version, target, archiveSha256: sha256 },
         artifacts,
         lockSha256: hash(readFileSync(join(root, "pnpm-lock.yaml"))),
@@ -142,5 +158,9 @@ try {
   );
   if (failure) console.error(failure);
   if (!sourceUnchanged)
-    console.error("Runtime artifact requires clean committed source");
+    console.error(
+      development
+        ? "AI Host source changed during build; rerun pnpm dev"
+        : "Runtime artifact requires clean committed source",
+    );
 }

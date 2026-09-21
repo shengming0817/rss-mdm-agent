@@ -280,6 +280,8 @@ pub async fn launch(
     let writer = child.stdin.take().expect("piped stdin");
     let diagnostics = child.stderr.take().expect("piped stderr");
     let phase = Arc::new(Mutex::new(Phase::Starting));
+    let was_ready = Arc::new(AtomicBool::new(false));
+    let waiter_was_ready = was_ready.clone();
     let diagnostic_phase = phase.clone();
     let cleanup = Arc::new(AtomicBool::new(false));
     let reported_cleanup = cleanup.clone();
@@ -363,6 +365,9 @@ pub async fn launch(
             diagnostic_task.abort();
             let _ = diagnostic_task.await;
         }
+        let failed_exit = result
+            .as_ref()
+            .is_ok_and(|status| status.code().is_some_and(|code| code != 0));
         let mut phase = waiter_phase.lock().unwrap();
         if !matches!(
             *phase,
@@ -377,12 +382,12 @@ pub async fn launch(
             *phase = if result.is_err()
                 || forced
                 || cleanup.load(Ordering::Acquire)
-                || (requested
-                    && result
-                        .as_ref()
-                        .is_ok_and(|status| status.code().is_some_and(|code| code != 0)))
+                || (requested && waiter_was_ready.load(Ordering::Acquire) && failed_exit)
             {
                 Phase::Failed(Fault::Cleanup)
+            } else if failed_exit {
+                // Startup EOF can request cleanup before the exit waiter runs.
+                Phase::Failed(Fault::Exited)
             } else if requested {
                 Phase::Stopped
             } else {
@@ -402,6 +407,7 @@ pub async fn launch(
     if health.is_ok() {
         let mut phase = process.phase.lock().unwrap();
         if *phase == Phase::Starting {
+            was_ready.store(true, Ordering::Release);
             *phase = Phase::Ready;
         }
     }
@@ -409,12 +415,14 @@ pub async fn launch(
         let fault = match process.phase() {
             Phase::Failed(fault) => fault,
             _ if health.is_err_and(|e| e.code == "unsupported_version") => Fault::Version,
+            _ if process.control.closed() => Fault::Exited,
             _ => Fault::Timeout,
         };
         // Revoke capabilities before waiting for exit. An uncertain reap retains
         // this failed owner so restart cannot admit a competing incarnation.
         if process.close().await {
             let fault = match process.phase() {
+                Phase::Failed(Fault::Exited) if fault == Fault::Timeout => Fault::Exited,
                 Phase::Failed(fault) if fault != Fault::Exited => fault,
                 _ => fault,
             };
