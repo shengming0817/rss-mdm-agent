@@ -117,6 +117,24 @@ it("first use may defer or validate then create exactly one pending conversation
     t.close();
   }
 });
+it("keeps the connection draft editable while the AI Host is disconnected", async () => {
+  const t = await setup();
+  try {
+    t.c.state.connection = "disconnected";
+    await flushPromises();
+
+    const form = t.wrapper.get("form.connection-form");
+    const name = form.get("input");
+    expect(form.element.closest("fieldset")?.hasAttribute("disabled")).toBe(
+      false,
+    );
+    await name.setValue("Offline draft");
+    expect((name.element as HTMLInputElement).value).toBe("Offline draft");
+    expect(t.button("验证并保存").attributes("disabled")).toBeDefined();
+  } finally {
+    t.close();
+  }
+});
 it("restart and connection deletion dialogs trap both tab directions, escape and restore focus", async () => {
   const t = await setup();
   try {
