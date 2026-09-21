@@ -47,6 +47,8 @@ export interface ResolvedDeepSeekConfiguration {
   configuration: DeepSeekConfiguration;
   /** Trusted, private durable storage root; never the model's working directory. */
   persistenceDirectory: string;
+  /** Stable normalized credential target; distinct from a per-process transport route. */
+  endpointIdentity: string;
   apiUrl: string;
   apiKey: string;
   model: string;
@@ -86,19 +88,21 @@ export function validateConfiguration(
   c: ProviderConfiguration,
   resolved: ResolvedDeepSeekConfiguration,
 ): asserts c is DeepSeekConfiguration {
-  const url = new URL(resolved.apiUrl);
-  if (
-    (url.protocol !== "https:" &&
-      !(
-        url.protocol === "http:" &&
-        ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)
-      )) ||
-    url.username ||
-    url.password ||
-    url.search ||
-    url.hash
-  )
-    throw Error("invalid configuration");
+  for (const value of [resolved.endpointIdentity, resolved.apiUrl]) {
+    const url = new URL(value);
+    if (
+      (url.protocol !== "https:" &&
+        !(
+          url.protocol === "http:" &&
+          ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)
+        )) ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash
+    )
+      throw Error("invalid configuration");
+  }
   if (
     c.provider !== "deepseek" ||
     !c.namespace ||
@@ -122,5 +126,5 @@ export function sessionPrefix(
   r: ResolvedDeepSeekConfiguration,
   composition: string,
 ): string {
-  return `rss_${digest([identity(c), resolve(r.persistenceDirectory), r.model, new URL(r.apiUrl).href, composition])}_`;
+  return `rss_${digest([identity(c), resolve(r.persistenceDirectory), r.model, new URL(r.endpointIdentity).href, composition])}_`;
 }

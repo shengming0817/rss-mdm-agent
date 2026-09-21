@@ -32,6 +32,7 @@ const options: DeepSeekAdapterOptions = {
   resolveConfiguration: async () => ({
     configuration: config,
     persistenceDirectory: directory,
+    endpointIdentity: "https://custom.example.test/v1",
     apiUrl: "https://custom.example.test/v1",
     apiKey: "not-used-no-model-request",
     model: "deepseek-chat",

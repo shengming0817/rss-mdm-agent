@@ -65,11 +65,13 @@ for (const [file, imports] of Object.entries({
   "resolver.ts": ["node:crypto", "node:fs/promises", "node:path"],
   "connection.ts": ["node:os", "node:path"],
   "execution.ts": ["node:stream", "node:crypto"],
-  "provider.ts": [
+  "provider.ts": ["node:crypto", "node:fs/promises", "node:path"],
+  "egress.ts": [
     "node:crypto",
     "node:dns/promises",
-    "node:fs/promises",
-    "node:path",
+    "node:http",
+    "node:https",
+    "node:net",
   ],
   "private-file.ts": ["node:fs", "node:fs/promises", "node:path"],
 }))

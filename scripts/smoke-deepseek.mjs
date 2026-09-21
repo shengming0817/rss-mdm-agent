@@ -148,6 +148,7 @@ async function main() {
     resolveConfiguration: async () => ({
       configuration: config,
       persistenceDirectory: directory,
+      endpointIdentity: selected.apiUrl,
       apiUrl: selected.apiUrl,
       apiKey,
       model: selected.model,
@@ -322,6 +323,7 @@ async function main() {
       resolveConfiguration: async () => ({
         configuration: controlled,
         persistenceDirectory: directory,
+        endpointIdentity: selected.apiUrl,
         apiUrl: selected.apiUrl,
         apiKey,
         model: selected.model,

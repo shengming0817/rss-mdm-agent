@@ -61,6 +61,7 @@ export function scriptedAdapter(scenario = "submitted", overrides = {}) {
       resolveConfiguration: async () => ({
         configuration: config,
         persistenceDirectory: "/tmp/rss-deepseek-fixture",
+        endpointIdentity: "https://custom.example.test/v1",
         apiUrl: "https://custom.example.test/v1",
         apiKey: "fixture",
         model: "deepseek-chat",

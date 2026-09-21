@@ -186,6 +186,7 @@ test("late resolver cannot spawn after close; incomplete child cleanup is preser
     resolved = {
       configuration: c,
       persistenceDirectory: "/tmp/dsh",
+      endpointIdentity: "https://custom.example.test/v1",
       apiUrl: "https://custom.example.test/v1",
       apiKey: "fixture",
       model: "deepseek-chat",
@@ -233,15 +234,41 @@ test("late resolver cannot spawn after close; incomplete child cleanup is preser
 
 // Persisted identities must be independent of JSON object member order.
 test("native scope and attempt hashes are canonical", async () => {
-  const { digest } = await import(
+  const { digest, sessionPrefix } = await import(
     "../../../packages/ai-adapters/deepseek/dist/configuration.js"
   );
   assert.equal(
     digest({ a: 1, nested: { b: 2, c: 3 } }),
     digest({ nested: { c: 3, b: 2 }, a: 1 }),
   );
+  const c = configuration(),
+    resolved = {
+      configuration: c,
+      persistenceDirectory: "/tmp/dsh",
+      endpointIdentity: "https://custom.example.test/v1",
+      apiUrl: "http://127.0.0.1:41001/private-route",
+      apiKey: "fixture",
+      model: "deepseek-chat",
+    };
+  assert.equal(
+    sessionPrefix(c, resolved, "composition"),
+    sessionPrefix(
+      c,
+      { ...resolved, apiUrl: "http://127.0.0.1:41002/other-route" },
+      "composition",
+    ),
+    "ephemeral transport routes must not change durable native identity",
+  );
+  assert.notEqual(
+    sessionPrefix(c, resolved, "composition"),
+    sessionPrefix(
+      c,
+      { ...resolved, endpointIdentity: "https://other.example/v1" },
+      "composition",
+    ),
+    "changing the credential target must change durable native identity",
+  );
   const p = scriptedAdapter(),
-    c = configuration(),
     admitted = unwrap(await VerifiedProviderSession.open(p, c, budget()));
   await p.close(budget());
   const reordered = {
@@ -288,6 +315,7 @@ test("raw port admission also requires a complete trusted namespace before spawn
         resolveConfiguration: async () => ({
           configuration: c,
           persistenceDirectory: "/tmp/dsh",
+          endpointIdentity: "https://custom.example.test/v1",
           apiUrl: "https://custom.example.test/v1",
           apiKey: "fixture",
           model: "deepseek-chat",
@@ -316,6 +344,7 @@ test("initialize NativeFault produces one sanitized operation diagnostic", async
       resolveConfiguration: async () => ({
         configuration: c,
         persistenceDirectory: "/tmp/dsh",
+        endpointIdentity: "https://custom.example.test/v1",
         apiUrl: "https://custom.example.test/v1",
         apiKey: "fixture",
         model: "deepseek-chat",

@@ -23,6 +23,8 @@ pnpm desktop:build
 
 自定义 API 的密钥在 AppKit 安全输入框填写，直接进入同一次验证保存操作，WebView 不持有秘密或凭据引用。Keychain 只保存一个应用级 256 位主密钥；Node 使用 AES-256-GCM（随机 96 位 IV、128 位 tag），AAD 绑定 tenant/principal/authority、connectionId 和 configRevision。密文存入现有 SQLite 连接修订行，与配置和默认偏好在同一事务提交。只使用已有配置时不访问应用 Keychain；已有密文而主密钥缺失时拒绝使用，不重建密钥或删除数据。
 
+自定义 API worker 只连接 Host 为该配置建立的随机 loopback 路由，不直接连接用户填写的地址。Host 在每次上游请求中解析并校验全部 A/AAAA 结果，将批准地址固定到实际 socket，拒绝私网、链路本地、混合结果和所有 redirect；HTTP 只允许固定 loopback 目标。路由不注入密钥，只把 worker 已携带的请求转发到该唯一目标，并随 worker 关闭。
+
 保存必须收到一条简短模型探针的完成结果，并确认 worker 已停止。Codex 验证采用 ephemeral 线程，Claude 使用 persistSession:false。取消、验证失败、修订冲突或用户切换不提交连接；编辑默认保留原密钥，显式选择更换才重新输入。删除在同一事务中清除该连接全部修订的密文和默认选择，保留元数据及会话历史。已经运行的 worker 可处理已接纳工作，删除后不能启动新的 worker。第一条可用连接成为默认，后续新增不替换默认，删除默认后无自动替补。
 
 ## 产品会话与交付
@@ -43,4 +45,4 @@ worker 的 activation 数据通过既有私有管道传入，包含该次启动�
 
 `node scripts/check-connection-sources.mjs` 把当前用户已有配置目录交给官方 Codex/Claude，发送最小真实模型请求。两个来源均须完成探针；目录缺失记 partial，认证或能力失败仍判失败。报告不包含账号、目录或秘密，该入口不纳入无凭据 CI。平台窗口验收见[桌面指南](../../docs/guides/desktop-development.md)。
 
-来源：Rust `std::os::unix::net::UnixStream::pair`；[Codex 0.155.0 config merge](https://github.com/openai/codex/blob/rust-v0.155.0/codex-rs/config/src/merge.rs) 与 [CLI profile 入口](https://github.com/openai/codex/blob/rust-v0.155.0/codex-rs/cli/src/main.rs)；Claude Agent SDK 0.3.277 `sdk.d.ts`；[Node crypto](https://nodejs.org/api/crypto.html)；security-framework 3.5.1 `src/passwords.rs`、`src/random.rs`；objc2-app-kit 0.3.2 `NSAlert` / `NSSecureTextField`。没有复制上游认证实现。
+来源：Rust `std::os::unix::net::UnixStream::pair`；[Codex 0.155.0 config merge](https://github.com/openai/codex/blob/rust-v0.155.0/codex-rs/config/src/merge.rs) 与 [CLI profile 入口](https://github.com/openai/codex/blob/rust-v0.155.0/codex-rs/cli/src/main.rs)；Claude Agent SDK 0.3.277 `sdk.d.ts`；[Node `http.request` 自定义 `lookup`](https://nodejs.org/api/http.html#httprequestoptions-callback)；[OWASP SSRF DNS/redirect 防护](https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html)；[Node crypto](https://nodejs.org/api/crypto.html)；security-framework 3.5.1 `src/passwords.rs`、`src/random.rs`；objc2-app-kit 0.3.2 `NSAlert` / `NSSecureTextField`。没有复制上游认证实现。
