@@ -168,6 +168,9 @@ function keys(event: KeyboardEvent) {
           重新连接
         </button>
         <p v-if="host.state.busy" role="status">正在处理，请稍候…</p>
+        <p v-if="host.state.readError" role="alert">
+          {{ host.state.readError }}
+        </p>
         <p v-if="host.state.message" role="status">{{ host.state.message }}</p>
         <p>
           导出只包含版本、状态、错误码和时间，不包含密钥、对话、端点或个人路径。

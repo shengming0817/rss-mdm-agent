@@ -1,6 +1,15 @@
 #!/usr/bin/env node
 import { startLocalApp } from "./index.js";
 import { ConfigurationError } from "./configuration.js";
+import type { HostProcessDiagnostic } from "@rss-mdm-agent/ai-contract";
+const diagnostic = (code: HostProcessDiagnostic["code"]) => {
+  const frame: HostProcessDiagnostic = {
+    schemaVersion: 5,
+    kind: "hostProcessDiagnostic",
+    code,
+  };
+  process.stderr.write(JSON.stringify(frame) + "\n");
+};
 if (process.argv.length !== 3 || process.argv[2] === "--help") {
   process.stdout.write(
     "Usage: rss-ai-host /absolute/path/to/private-configuration.json\n",
@@ -16,7 +25,7 @@ if (process.argv.length !== 3 || process.argv[2] === "--help") {
       try {
         await app.close();
       } catch {
-        process.stderr.write("AI Host cleanup incomplete\n");
+        diagnostic("cleanup_incomplete");
         process.exitCode = 1;
         stopping = false;
       }
@@ -28,8 +37,14 @@ if (process.argv.length !== 3 || process.argv[2] === "--help") {
       void stop();
     });
   } catch (error) {
-    process.stderr.write(
-      `AI Host could not start: ${error instanceof ConfigurationError ? error.code : "startup_failed"}\n`,
+    const code =
+      error instanceof ConfigurationError ? error.code : "startup_failed";
+    diagnostic(
+      code === "configuration_file" || code === "unsupported_capability"
+        ? "configuration_invalid"
+        : code === "startup_failed"
+          ? "host_start_failed"
+          : code,
     );
     process.exitCode = 1;
   }

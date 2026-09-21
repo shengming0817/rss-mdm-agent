@@ -15,6 +15,7 @@ import {
   type Result,
   type UserContext,
   type Connection,
+  type HostHealth,
 } from "@rss-mdm-agent/ai-contract";
 import { defaultLimits, fail } from "@rss-mdm-agent/ai-contract/transitions";
 import { localResolver } from "./resolver.js";
@@ -188,8 +189,8 @@ export async function startLocalApp(
           schemaVersion: 5,
           kind: "hostHealth",
           ready: true,
-          protocol: 1,
-        };
+          protocol: 2,
+        } satisfies HostHealth;
       if (method === "attach")
         return switchUser(async () => {
           const next = context(data.context),

@@ -10,6 +10,22 @@ const status = (generation: number): HostStatus => ({
   version: "test",
   recent: [],
 });
+it("clears recovered read errors while retaining the result of an export", async () => {
+  const c = createHostSettings({
+    read: vi
+      .fn()
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValue(status(1)),
+    restart: vi.fn(),
+    export: vi.fn().mockResolvedValue(true),
+  });
+  await c.refresh();
+  expect(c.state.readError).toContain("无法读取");
+  await c.exportDiagnostics();
+  await c.refresh();
+  expect(c.state.readError).toBe("");
+  expect(c.state.message).toBe("脱敏诊断已保存。");
+});
 it("late status reads cannot overwrite a completed restart and repeated clicks share the pending operation", async () => {
   let resolveRead!: (v: HostStatus) => void,
     resolveRestart!: (v: HostStatus) => void;

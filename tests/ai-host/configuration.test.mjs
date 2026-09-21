@@ -168,7 +168,18 @@ test("a corrupt existing store retains its closed startup category without expos
       { encoding: "utf8", timeout: 10000 },
     );
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /AI Host could not start: storage_corrupt/);
+    assert.ok(
+      result.stderr.split("\n").some((line) => {
+        try {
+          return (
+            JSON.parse(line).kind === "hostProcessDiagnostic" &&
+            JSON.parse(line).code === "storage_corrupt"
+          );
+        } catch {
+          return false;
+        }
+      }),
+    );
     assert.equal(result.stderr.includes("CANARY_SECRET_DB"), false);
     assert.equal(result.stderr.includes(root), false);
   } finally {

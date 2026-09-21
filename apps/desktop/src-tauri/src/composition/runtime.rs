@@ -45,6 +45,7 @@ pub struct DesktopRuntime {
     root: PathBuf,
     artifact: PathBuf,
     source: ai_session_contract::HostStatusSource,
+    version: ai_session_contract::HostStatusVersion,
     master: Arc<MasterKey>,
     recent: std::sync::Mutex<Vec<(u64, Fault, ai_session_contract::HostDiagnostic)>>,
     connections: Mutex<BTreeMap<String, Arc<Connection>>>,
@@ -114,6 +115,9 @@ impl DesktopRuntime {
             root: root.into(),
             artifact: artifact.into(),
             source,
+            version: env!("CARGO_PKG_VERSION")
+                .try_into()
+                .map_err(|_| "invalid application version")?,
             master: Arc::new(MasterKey::new(backend)),
             recent: std::sync::Mutex::new(Vec::new()),
             connections: Mutex::new(BTreeMap::new()),
@@ -143,11 +147,11 @@ impl DesktopRuntime {
             (state.generation, phase)
         };
         let (phase, fault) = match phase {
-            Phase::Starting => ("starting", None),
-            Phase::Ready => ("ready", None),
-            Phase::Stopping => ("stopping", None),
-            Phase::Stopped => ("stopped", None),
-            Phase::Failed(fault) => ("failed", Some(fault)),
+            Phase::Starting => (ai_session_contract::HostStatusPhase::Starting, None),
+            Phase::Ready => (ai_session_contract::HostStatusPhase::Ready, None),
+            Phase::Stopping => (ai_session_contract::HostStatusPhase::Stopping, None),
+            Phase::Stopped => (ai_session_contract::HostStatusPhase::Stopped, None),
+            Phase::Failed(fault) => (ai_session_contract::HostStatusPhase::Failed, Some(fault)),
         };
         let mut recent = self.recent.lock().unwrap();
         if let Some(fault) = fault {
@@ -155,21 +159,22 @@ impl DesktopRuntime {
                 .last()
                 .is_none_or(|(g, f, _)| *g != generation || *f != fault)
             {
-                recent.push((
-                    generation,
-                    fault,
-                    fault.diagnostic(&self.source.to_string()),
-                ));
+                recent.push((generation, fault, fault.diagnostic(self.source)));
                 if recent.len() > 64 {
                     recent.remove(0);
                 }
             }
         }
-        let mut value = json!({"schemaVersion":5,"kind":"hostStatus","generation":generation,"phase":phase,"source":self.source,"version":env!("CARGO_PKG_VERSION"),"recent":recent.iter().map(|(_,_,d)|d).collect::<Vec<_>>()});
-        if fault.is_some() {
-            value["diagnostic"] = serde_json::to_value(&recent.last().unwrap().2).unwrap();
+        ai_session_contract::HostStatus {
+            schema_version: ai_session_contract::HostStatusSchemaVersion::VALUE,
+            kind: ai_session_contract::HostStatusKind::HostStatus,
+            generation: ai_session_contract::Counter(generation as i64),
+            phase,
+            source: self.source,
+            version: self.version.clone(),
+            recent: recent.iter().map(|(_, _, d)| d.clone()).collect(),
+            diagnostic: fault.and_then(|_| recent.last().map(|(_, _, d)| d.clone())),
         }
-        serde_json::from_value(value).expect("schema-owned status")
     }
     /// expected is the UI's observed incarnation. Concurrent clicks cannot start another owner.
     pub async fn restart(&self, expected: u64) -> ai_session_contract::HostStatus {
@@ -190,12 +195,25 @@ impl DesktopRuntime {
             state.generation += 1;
             state.owner = Host::Starting;
         }
+        let trusted_digest = match self.source {
+            ai_session_contract::HostStatusSource::DevelopmentOverride => None,
+            ai_session_contract::HostStatusSource::BundledResource => {
+                match option_env!("RSS_BUNDLED_RUNTIME_SHA256") {
+                    Some(digest) => Some(digest),
+                    None => {
+                        self.host.lock().unwrap().owner = Host::Failed(Fault::Invalid);
+                        return self.status();
+                    }
+                }
+            }
+        };
         let next = match configuration(&self.root).map_err(|_| Fault::Configuration) {
             Ok(configuration) => match host::launch(
                 &self.artifact,
                 &configuration,
                 &self.execution,
                 self.master.clone(),
+                trusted_digest,
             )
             .await
             {
@@ -417,11 +435,12 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let artifact = root.join("artifact");
         private_directory(&artifact.join("bin")).unwrap();
-        std::fs::write(artifact.join("manifest.json"),r#"{"status":"passed","desktopProtocol":1,"contractVersion":5,"verification":{"platform":"darwin","arch":"arm64"},"runtimeTreeSha256":"0000000000000000000000000000000000000000000000000000000000000000"}"#).unwrap();
+        std::fs::write(artifact.join("manifest.json"),r#"{"status":"passed","desktopProtocol":2,"contractVersion":5,"verification":{"platform":"darwin","arch":"arm64"},"runtimeTreeSha256":"0000000000000000000000000000000000000000000000000000000000000000"}"#).unwrap();
         for name in [
             "bin/node",
             "package.json",
             "pnpm-lock.yaml",
+            "NODE-LICENSE",
             "node_modules/@rss-mdm-agent/ai-host-app/dist/cli.js",
             "node_modules/@rss-mdm-agent/ai-host/dist/index.js",
             "node_modules/@rss-mdm-agent/ai-contract/dist/index.js",
@@ -438,6 +457,10 @@ mod tests {
         let script = format!(
             r#"#!/usr/bin/python3
 import socket,json,os,sys,time,signal
+open(os.path.join(os.path.dirname(sys.argv[1]), 'fixture.pid'),'w').write(str(os.getpid()))
+if {mode:?}.startswith('diagnostic_'):
+    sys.stderr.write(json.dumps({{'schemaVersion':5,'kind':'hostProcessDiagnostic','code':{mode:?}[11:]}})+'\n')
+    sys.exit(1)
 if {mode:?} == 'ignore_term': signal.signal(signal.SIGTERM, signal.SIG_IGN)
 if {mode:?} == 'exit': sys.exit(7)
 stream=socket.socket(fileno=3).makefile('rwb',buffering=0)
@@ -446,13 +469,24 @@ for line in stream:
     if frame['kind'] != 'nativeCall': continue
     if frame['method']=='health' and {mode:?} == 'delayed': time.sleep(0.4)
     if frame['method']=='health' and {mode:?} == 'no_health': time.sleep(60)
-    value={{'schemaVersion':5,'kind':'hostHealth','ready':True,'protocol':1}} if frame['method']=='health' else True
+    value={{'schemaVersion':5,'kind':'hostHealth','ready':True,'protocol':2}} if frame['method']=='health' else True
+    if frame['method']=='health' and {mode:?} == 'bad_health': value['protocol']=0
     stream.write((json.dumps({{'schemaVersion':5,'kind':'nativeReply','id':frame['id'],'ok':True,'value':value}})+'\n').encode())
 "#
         );
         let executable = artifact.join("bin/rss-ai-host");
         std::fs::write(&executable, script).unwrap();
         std::fs::set_permissions(executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut manifest: Value =
+            serde_json::from_slice(&std::fs::read(artifact.join("manifest.json")).unwrap())
+                .unwrap();
+        manifest["runtimeTreeSha256"] =
+            json!(super::super::runtime_package::digest(&artifact).unwrap());
+        std::fs::write(
+            artifact.join("manifest.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
         artifact
     }
     #[tokio::test]
@@ -645,8 +679,87 @@ for line in stream:
             serde_json::to_value(runtime.status()).unwrap()["diagnostic"]["code"],
             "readiness_timeout"
         );
+        let capabilities_retained = runtime.process().is_some_and(|p| !p.control.closed());
+        let pid: i32 = std::fs::read_to_string(root.join("fixture.pid"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        // SAFETY: signal zero only tests process existence; it sends no signal.
+        let alive = unsafe { libc::kill(pid, 0) == 0 };
         runtime.shutdown().await;
         std::fs::remove_dir_all(root).unwrap();
+        assert!(
+            !capabilities_retained,
+            "failed health must revoke the private control owner before returning"
+        );
+        assert!(
+            !alive,
+            "failed health must reap the spawned process before returning"
+        );
+    }
+    #[tokio::test]
+    async fn changed_runtime_bytes_are_rejected_before_process_creation() {
+        let root =
+            std::env::temp_dir().join(format!("rss-runtime-integrity-{}", uuid::Uuid::new_v4()));
+        private_directory(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        let artifact = fixture(&root, "ready");
+        std::fs::write(artifact.join("bin/node"), b"modified executable bytes").unwrap();
+        let runtime = DesktopRuntime::start_with_key_backend(
+            &root,
+            &artifact,
+            ai_session_contract::HostStatusSource::DevelopmentOverride,
+            NoKey,
+        )
+        .await
+        .unwrap();
+        let status = serde_json::to_value(runtime.status()).unwrap();
+        runtime.shutdown().await;
+        std::fs::remove_dir_all(root).unwrap();
+        assert_eq!(status["diagnostic"]["code"], "runtime_invalid");
+    }
+    #[tokio::test]
+    async fn bad_health_and_closed_bootstrap_frames_reap_the_process_and_reach_status_history() {
+        for (mode, expected) in [
+            ("bad_health", "unsupported_version"),
+            ("diagnostic_configuration_invalid", "configuration_invalid"),
+            (
+                "diagnostic_authentication_required",
+                "authentication_required",
+            ),
+            ("diagnostic_storage_corrupt", "storage_corrupt"),
+            ("diagnostic_unsupported_version", "unsupported_version"),
+            ("diagnostic_host_start_failed", "host_start_failed"),
+            ("diagnostic_cleanup_incomplete", "cleanup_incomplete"),
+        ] {
+            let root = std::env::temp_dir().join(format!("rss-bootstrap-{}", uuid::Uuid::new_v4()));
+            private_directory(&root).unwrap();
+            let root = root.canonicalize().unwrap();
+            let artifact = fixture(&root, mode);
+            let runtime = DesktopRuntime::start_with_key_backend(
+                &root,
+                &artifact,
+                ai_session_contract::HostStatusSource::DevelopmentOverride,
+                NoKey,
+            )
+            .await
+            .unwrap();
+            let status = serde_json::to_value(runtime.status()).unwrap();
+            let pid: i32 = std::fs::read_to_string(root.join("fixture.pid"))
+                .unwrap()
+                .parse()
+                .unwrap();
+            // SAFETY: signal zero only checks this fixture's process existence.
+            let alive = unsafe { libc::kill(pid, 0) == 0 };
+            runtime.shutdown().await;
+            std::fs::remove_dir_all(root).unwrap();
+            assert!(!alive, "{mode} must be reaped");
+            assert_eq!(status["diagnostic"]["code"], expected, "{mode}");
+            assert_eq!(
+                status["recent"].as_array().unwrap().last().unwrap()["code"],
+                expected
+            );
+        }
     }
     #[tokio::test]
     async fn preflight_rejects_missing_node_cli_and_dependencies_without_launching() {

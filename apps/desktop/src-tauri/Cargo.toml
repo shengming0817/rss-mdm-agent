@@ -8,6 +8,7 @@ publish = false
 
 [build-dependencies]
 tauri-build.workspace = true
+serde_json.workspace = true
 
 [dependencies]
 ai-session-contract = { path = "../../../crates/ai-session-contract" }
@@ -19,6 +20,7 @@ tauri.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 sha2.workspace = true
+constant_time_eq = "=0.4.2"
 service-catalog = { path = "../../../crates/service-catalog" }
 execution-contract = { path = "../../../crates/execution-contract" }
 execution-interaction = { path = "../../../crates/execution-interaction" }

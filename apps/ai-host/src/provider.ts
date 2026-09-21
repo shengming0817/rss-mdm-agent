@@ -75,25 +75,58 @@ export const createProvider: WorkerFactory = async ({
       return result;
     },
     ...(port.resume ? { resume: port.resume.bind(port) } : {}),
-    dispatch: port.dispatch.bind(port),
+    async dispatch(binding, command, attempt, budget) {
+      const owned =
+        command.input.type === "prompt" &&
+        command.input.policy === "queue_next";
+      if (owned) proxy?.beginAttempt(attempt.attemptId);
+      try {
+        const result = await port.dispatch(binding, command, attempt, budget);
+        if (owned && result.certainty !== "submitted")
+          proxy?.endAttempt(attempt.attemptId);
+        return result;
+      } catch (error) {
+        if (owned) proxy?.endAttempt(attempt.attemptId);
+        throw error;
+      }
+    },
     async *observe(...args) {
-      for await (const item of port.observe(...args)) {
-        if (
-          proxy?.failure &&
-          item.type === "event" &&
-          (item.body.type === "error" ||
-            (item.body.type === "terminal" && item.body.outcome === "failed"))
-        ) {
-          yield {
-            ...item,
-            body: {
-              type: "error" as const,
-              failure: { code: proxy.failure, retry: "never" as const },
-            },
-          };
-          if (item.body.type === "error") continue;
+      const observed = new Set<string>(),
+        errors = new Set<string>();
+      try {
+        for await (const item of port.observe(...args)) {
+          observed.add(item.attemptId);
+          if (item.type === "event") {
+            if (item.body.type === "error") {
+              errors.add(item.attemptId);
+              const code = proxy?.takeFailure(item.attemptId);
+              if (code) {
+                yield {
+                  ...item,
+                  body: { type: "error", failure: { code, retry: "never" } },
+                };
+                continue;
+              }
+            }
+            if (item.body.type === "terminal") {
+              const code =
+                !errors.has(item.attemptId) && item.body.outcome === "failed"
+                  ? proxy?.takeFailure(item.attemptId)
+                  : undefined;
+              if (code)
+                yield {
+                  ...item,
+                  body: { type: "error", failure: { code, retry: "never" } },
+                };
+              proxy?.endAttempt(item.attemptId);
+              observed.delete(item.attemptId);
+              errors.delete(item.attemptId);
+            }
+          }
+          yield item;
         }
-        yield item;
+      } finally {
+        for (const id of observed) proxy?.endAttempt(id);
       }
     },
     reconcile: port.reconcile.bind(port),

@@ -381,6 +381,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "constant_time_eq"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
+
+[[package]]
 name = "cookie"
 version = "0.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2948,6 +2954,7 @@ name = "rss-mdm-desktop"
 version = "0.1.0"
 dependencies = [
  "ai-session-contract",
+ "constant_time_eq",
  "execution-admission",
  "execution-app",
  "execution-approval",

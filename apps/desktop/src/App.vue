@@ -50,9 +50,9 @@ async function select(name: string) {
   }
 }
 async function navigate(id: string) {
-  page.value = id;
+  page.value = nativeTestMode && !currentUser.value ? "settings" : id;
   await nextTick();
-  if (id === "settings")
+  if (page.value === "settings")
     content.value?.querySelector<HTMLElement>(".settings h1")?.focus();
 }
 onMounted(() => {

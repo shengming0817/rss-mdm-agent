@@ -61,6 +61,7 @@ const schema31 = {
     { $ref: "#/$defs/ExecutionOrigin" },
     { $ref: "#/$defs/HostStatus" },
     { $ref: "#/$defs/HostHealth" },
+    { $ref: "#/$defs/HostProcessDiagnostic" },
   ],
   $defs: {
     Id: {
@@ -4331,9 +4332,31 @@ const schema31 = {
         schemaVersion: { type: "integer", const: 5 },
         kind: { type: "string", const: "hostHealth" },
         ready: { type: "boolean", const: true },
-        protocol: { type: "integer", const: 1 },
+        protocol: { type: "integer", const: 2 },
       },
       required: ["schemaVersion", "kind", "ready", "protocol"],
+      additionalProperties: false,
+    },
+    HostProcessDiagnostic: {
+      description:
+        "Closed diagnostic frame on the inherited Host diagnostic pipe. Raw stderr and unknown frames never become product diagnostics.",
+      type: "object",
+      properties: {
+        schemaVersion: { type: "integer", const: 5 },
+        kind: { type: "string", const: "hostProcessDiagnostic" },
+        code: {
+          type: "string",
+          enum: [
+            "configuration_invalid",
+            "authentication_required",
+            "storage_corrupt",
+            "unsupported_version",
+            "host_start_failed",
+            "cleanup_incomplete",
+          ],
+        },
+      },
+      required: ["schemaVersion", "kind", "code"],
       additionalProperties: false,
     },
   },
@@ -4353,9 +4376,31 @@ const schema357 = {
     schemaVersion: { type: "integer", const: 5 },
     kind: { type: "string", const: "hostHealth" },
     ready: { type: "boolean", const: true },
-    protocol: { type: "integer", const: 1 },
+    protocol: { type: "integer", const: 2 },
   },
   required: ["schemaVersion", "kind", "ready", "protocol"],
+  additionalProperties: false,
+};
+const schema358 = {
+  description:
+    "Closed diagnostic frame on the inherited Host diagnostic pipe. Raw stderr and unknown frames never become product diagnostics.",
+  type: "object",
+  properties: {
+    schemaVersion: { type: "integer", const: 5 },
+    kind: { type: "string", const: "hostProcessDiagnostic" },
+    code: {
+      type: "string",
+      enum: [
+        "configuration_invalid",
+        "authentication_required",
+        "storage_corrupt",
+        "unsupported_version",
+        "host_start_failed",
+        "cleanup_incomplete",
+      ],
+    },
+  },
+  required: ["schemaVersion", "kind", "code"],
   additionalProperties: false,
 };
 const schema32 = {
@@ -61489,7 +61534,7 @@ function validate20(
                                                                                       errors++;
                                                                                     }
                                                                                     if (
-                                                                                      1 !==
+                                                                                      2 !==
                                                                                       data5
                                                                                     ) {
                                                                                       const err16 =
@@ -61503,7 +61548,7 @@ function validate20(
                                                                                             "const",
                                                                                           params:
                                                                                             {
-                                                                                              allowedValue: 1,
+                                                                                              allowedValue: 2,
                                                                                             },
                                                                                           message:
                                                                                             "must be equal to constant",
@@ -61591,6 +61636,467 @@ function validate20(
                                                                           props0 = true;
                                                                         }
                                                                       }
+                                                                      const _errs54 =
+                                                                        errors;
+                                                                      const _errs55 =
+                                                                        errors;
+                                                                      if (
+                                                                        errors ===
+                                                                        _errs55
+                                                                      ) {
+                                                                        if (
+                                                                          data &&
+                                                                          typeof data ==
+                                                                            "object" &&
+                                                                          !Array.isArray(
+                                                                            data,
+                                                                          )
+                                                                        ) {
+                                                                          let missing2;
+                                                                          if (
+                                                                            (data.schemaVersion ===
+                                                                              undefined &&
+                                                                              (missing2 =
+                                                                                "schemaVersion")) ||
+                                                                            (data.kind ===
+                                                                              undefined &&
+                                                                              (missing2 =
+                                                                                "kind")) ||
+                                                                            (data.code ===
+                                                                              undefined &&
+                                                                              (missing2 =
+                                                                                "code"))
+                                                                          ) {
+                                                                            const err18 =
+                                                                              {
+                                                                                instancePath,
+                                                                                schemaPath:
+                                                                                  "#/$defs/HostProcessDiagnostic/required",
+                                                                                keyword:
+                                                                                  "required",
+                                                                                params:
+                                                                                  {
+                                                                                    missingProperty:
+                                                                                      missing2,
+                                                                                  },
+                                                                                message:
+                                                                                  "must have required property '" +
+                                                                                  missing2 +
+                                                                                  "'",
+                                                                              };
+                                                                            if (
+                                                                              vErrors ===
+                                                                              null
+                                                                            ) {
+                                                                              vErrors =
+                                                                                [
+                                                                                  err18,
+                                                                                ];
+                                                                            } else {
+                                                                              vErrors.push(
+                                                                                err18,
+                                                                              );
+                                                                            }
+                                                                            errors++;
+                                                                          } else {
+                                                                            const _errs57 =
+                                                                              errors;
+                                                                            for (const key2 in data) {
+                                                                              if (
+                                                                                !(
+                                                                                  key2 ===
+                                                                                    "schemaVersion" ||
+                                                                                  key2 ===
+                                                                                    "kind" ||
+                                                                                  key2 ===
+                                                                                    "code"
+                                                                                )
+                                                                              ) {
+                                                                                const err19 =
+                                                                                  {
+                                                                                    instancePath,
+                                                                                    schemaPath:
+                                                                                      "#/$defs/HostProcessDiagnostic/additionalProperties",
+                                                                                    keyword:
+                                                                                      "additionalProperties",
+                                                                                    params:
+                                                                                      {
+                                                                                        additionalProperty:
+                                                                                          key2,
+                                                                                      },
+                                                                                    message:
+                                                                                      "must NOT have additional properties",
+                                                                                  };
+                                                                                if (
+                                                                                  vErrors ===
+                                                                                  null
+                                                                                ) {
+                                                                                  vErrors =
+                                                                                    [
+                                                                                      err19,
+                                                                                    ];
+                                                                                } else {
+                                                                                  vErrors.push(
+                                                                                    err19,
+                                                                                  );
+                                                                                }
+                                                                                errors++;
+                                                                                break;
+                                                                              }
+                                                                            }
+                                                                            if (
+                                                                              _errs57 ===
+                                                                              errors
+                                                                            ) {
+                                                                              if (
+                                                                                data.schemaVersion !==
+                                                                                undefined
+                                                                              ) {
+                                                                                let data6 =
+                                                                                  data.schemaVersion;
+                                                                                const _errs58 =
+                                                                                  errors;
+                                                                                if (
+                                                                                  !(
+                                                                                    typeof data6 ==
+                                                                                      "number" &&
+                                                                                    !(
+                                                                                      data6 %
+                                                                                      1
+                                                                                    ) &&
+                                                                                    !isNaN(
+                                                                                      data6,
+                                                                                    ) &&
+                                                                                    isFinite(
+                                                                                      data6,
+                                                                                    )
+                                                                                  )
+                                                                                ) {
+                                                                                  const err20 =
+                                                                                    {
+                                                                                      instancePath:
+                                                                                        instancePath +
+                                                                                        "/schemaVersion",
+                                                                                      schemaPath:
+                                                                                        "#/$defs/HostProcessDiagnostic/properties/schemaVersion/type",
+                                                                                      keyword:
+                                                                                        "type",
+                                                                                      params:
+                                                                                        {
+                                                                                          type: "integer",
+                                                                                        },
+                                                                                      message:
+                                                                                        "must be integer",
+                                                                                    };
+                                                                                  if (
+                                                                                    vErrors ===
+                                                                                    null
+                                                                                  ) {
+                                                                                    vErrors =
+                                                                                      [
+                                                                                        err20,
+                                                                                      ];
+                                                                                  } else {
+                                                                                    vErrors.push(
+                                                                                      err20,
+                                                                                    );
+                                                                                  }
+                                                                                  errors++;
+                                                                                }
+                                                                                if (
+                                                                                  5 !==
+                                                                                  data6
+                                                                                ) {
+                                                                                  const err21 =
+                                                                                    {
+                                                                                      instancePath:
+                                                                                        instancePath +
+                                                                                        "/schemaVersion",
+                                                                                      schemaPath:
+                                                                                        "#/$defs/HostProcessDiagnostic/properties/schemaVersion/const",
+                                                                                      keyword:
+                                                                                        "const",
+                                                                                      params:
+                                                                                        {
+                                                                                          allowedValue: 5,
+                                                                                        },
+                                                                                      message:
+                                                                                        "must be equal to constant",
+                                                                                    };
+                                                                                  if (
+                                                                                    vErrors ===
+                                                                                    null
+                                                                                  ) {
+                                                                                    vErrors =
+                                                                                      [
+                                                                                        err21,
+                                                                                      ];
+                                                                                  } else {
+                                                                                    vErrors.push(
+                                                                                      err21,
+                                                                                    );
+                                                                                  }
+                                                                                  errors++;
+                                                                                }
+                                                                                var valid6 =
+                                                                                  _errs58 ===
+                                                                                  errors;
+                                                                              } else {
+                                                                                var valid6 = true;
+                                                                              }
+                                                                              if (
+                                                                                valid6
+                                                                              ) {
+                                                                                if (
+                                                                                  data.kind !==
+                                                                                  undefined
+                                                                                ) {
+                                                                                  let data7 =
+                                                                                    data.kind;
+                                                                                  const _errs60 =
+                                                                                    errors;
+                                                                                  if (
+                                                                                    typeof data7 !==
+                                                                                    "string"
+                                                                                  ) {
+                                                                                    const err22 =
+                                                                                      {
+                                                                                        instancePath:
+                                                                                          instancePath +
+                                                                                          "/kind",
+                                                                                        schemaPath:
+                                                                                          "#/$defs/HostProcessDiagnostic/properties/kind/type",
+                                                                                        keyword:
+                                                                                          "type",
+                                                                                        params:
+                                                                                          {
+                                                                                            type: "string",
+                                                                                          },
+                                                                                        message:
+                                                                                          "must be string",
+                                                                                      };
+                                                                                    if (
+                                                                                      vErrors ===
+                                                                                      null
+                                                                                    ) {
+                                                                                      vErrors =
+                                                                                        [
+                                                                                          err22,
+                                                                                        ];
+                                                                                    } else {
+                                                                                      vErrors.push(
+                                                                                        err22,
+                                                                                      );
+                                                                                    }
+                                                                                    errors++;
+                                                                                  }
+                                                                                  if (
+                                                                                    "hostProcessDiagnostic" !==
+                                                                                    data7
+                                                                                  ) {
+                                                                                    const err23 =
+                                                                                      {
+                                                                                        instancePath:
+                                                                                          instancePath +
+                                                                                          "/kind",
+                                                                                        schemaPath:
+                                                                                          "#/$defs/HostProcessDiagnostic/properties/kind/const",
+                                                                                        keyword:
+                                                                                          "const",
+                                                                                        params:
+                                                                                          {
+                                                                                            allowedValue:
+                                                                                              "hostProcessDiagnostic",
+                                                                                          },
+                                                                                        message:
+                                                                                          "must be equal to constant",
+                                                                                      };
+                                                                                    if (
+                                                                                      vErrors ===
+                                                                                      null
+                                                                                    ) {
+                                                                                      vErrors =
+                                                                                        [
+                                                                                          err23,
+                                                                                        ];
+                                                                                    } else {
+                                                                                      vErrors.push(
+                                                                                        err23,
+                                                                                      );
+                                                                                    }
+                                                                                    errors++;
+                                                                                  }
+                                                                                  var valid6 =
+                                                                                    _errs60 ===
+                                                                                    errors;
+                                                                                } else {
+                                                                                  var valid6 = true;
+                                                                                }
+                                                                                if (
+                                                                                  valid6
+                                                                                ) {
+                                                                                  if (
+                                                                                    data.code !==
+                                                                                    undefined
+                                                                                  ) {
+                                                                                    let data8 =
+                                                                                      data.code;
+                                                                                    const _errs62 =
+                                                                                      errors;
+                                                                                    if (
+                                                                                      typeof data8 !==
+                                                                                      "string"
+                                                                                    ) {
+                                                                                      const err24 =
+                                                                                        {
+                                                                                          instancePath:
+                                                                                            instancePath +
+                                                                                            "/code",
+                                                                                          schemaPath:
+                                                                                            "#/$defs/HostProcessDiagnostic/properties/code/type",
+                                                                                          keyword:
+                                                                                            "type",
+                                                                                          params:
+                                                                                            {
+                                                                                              type: "string",
+                                                                                            },
+                                                                                          message:
+                                                                                            "must be string",
+                                                                                        };
+                                                                                      if (
+                                                                                        vErrors ===
+                                                                                        null
+                                                                                      ) {
+                                                                                        vErrors =
+                                                                                          [
+                                                                                            err24,
+                                                                                          ];
+                                                                                      } else {
+                                                                                        vErrors.push(
+                                                                                          err24,
+                                                                                        );
+                                                                                      }
+                                                                                      errors++;
+                                                                                    }
+                                                                                    if (
+                                                                                      !(
+                                                                                        data8 ===
+                                                                                          "configuration_invalid" ||
+                                                                                        data8 ===
+                                                                                          "authentication_required" ||
+                                                                                        data8 ===
+                                                                                          "storage_corrupt" ||
+                                                                                        data8 ===
+                                                                                          "unsupported_version" ||
+                                                                                        data8 ===
+                                                                                          "host_start_failed" ||
+                                                                                        data8 ===
+                                                                                          "cleanup_incomplete"
+                                                                                      )
+                                                                                    ) {
+                                                                                      const err25 =
+                                                                                        {
+                                                                                          instancePath:
+                                                                                            instancePath +
+                                                                                            "/code",
+                                                                                          schemaPath:
+                                                                                            "#/$defs/HostProcessDiagnostic/properties/code/enum",
+                                                                                          keyword:
+                                                                                            "enum",
+                                                                                          params:
+                                                                                            {
+                                                                                              allowedValues:
+                                                                                                schema358
+                                                                                                  .properties
+                                                                                                  .code
+                                                                                                  .enum,
+                                                                                            },
+                                                                                          message:
+                                                                                            "must be equal to one of the allowed values",
+                                                                                        };
+                                                                                      if (
+                                                                                        vErrors ===
+                                                                                        null
+                                                                                      ) {
+                                                                                        vErrors =
+                                                                                          [
+                                                                                            err25,
+                                                                                          ];
+                                                                                      } else {
+                                                                                        vErrors.push(
+                                                                                          err25,
+                                                                                        );
+                                                                                      }
+                                                                                      errors++;
+                                                                                    }
+                                                                                    var valid6 =
+                                                                                      _errs62 ===
+                                                                                      errors;
+                                                                                  } else {
+                                                                                    var valid6 = true;
+                                                                                  }
+                                                                                }
+                                                                              }
+                                                                            }
+                                                                          }
+                                                                        } else {
+                                                                          const err26 =
+                                                                            {
+                                                                              instancePath,
+                                                                              schemaPath:
+                                                                                "#/$defs/HostProcessDiagnostic/type",
+                                                                              keyword:
+                                                                                "type",
+                                                                              params:
+                                                                                {
+                                                                                  type: "object",
+                                                                                },
+                                                                              message:
+                                                                                "must be object",
+                                                                            };
+                                                                          if (
+                                                                            vErrors ===
+                                                                            null
+                                                                          ) {
+                                                                            vErrors =
+                                                                              [
+                                                                                err26,
+                                                                              ];
+                                                                          } else {
+                                                                            vErrors.push(
+                                                                              err26,
+                                                                            );
+                                                                          }
+                                                                          errors++;
+                                                                        }
+                                                                      }
+                                                                      var _valid0 =
+                                                                        _errs54 ===
+                                                                        errors;
+                                                                      if (
+                                                                        _valid0 &&
+                                                                        valid0
+                                                                      ) {
+                                                                        valid0 = false;
+                                                                        passing0 =
+                                                                          [
+                                                                            passing0,
+                                                                            35,
+                                                                          ];
+                                                                      } else {
+                                                                        if (
+                                                                          _valid0
+                                                                        ) {
+                                                                          valid0 = true;
+                                                                          passing0 = 35;
+                                                                          if (
+                                                                            props0 !==
+                                                                            true
+                                                                          ) {
+                                                                            props0 = true;
+                                                                          }
+                                                                        }
+                                                                      }
                                                                     }
                                                                   }
                                                                 }
@@ -61626,7 +62132,7 @@ function validate20(
     }
   }
   if (!valid0) {
-    const err18 = {
+    const err27 = {
       instancePath,
       schemaPath: "#/oneOf",
       keyword: "oneOf",
@@ -61634,9 +62140,9 @@ function validate20(
       message: "must match exactly one schema in oneOf",
     };
     if (vErrors === null) {
-      vErrors = [err18];
+      vErrors = [err27];
     } else {
-      vErrors.push(err18);
+      vErrors.push(err27);
     }
     errors++;
     validate20.errors = vErrors;

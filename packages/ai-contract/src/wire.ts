@@ -38,7 +38,8 @@ export type WireRecord =
   | NativeControlFrame
   | ExecutionOrigin
   | HostStatus
-  | HostHealth;
+  | HostHealth
+  | HostProcessDiagnostic;
 /**
  * Opaque ASCII correlation identifier (1–128 characters); never an authentication credential.
  */
@@ -2143,7 +2144,21 @@ export interface HostHealth {
   schemaVersion: 5;
   kind: "hostHealth";
   ready: true;
-  protocol: 1;
+  protocol: 2;
+}
+/**
+ * Closed diagnostic frame on the inherited Host diagnostic pipe. Raw stderr and unknown frames never become product diagnostics.
+ */
+export interface HostProcessDiagnostic {
+  schemaVersion: 5;
+  kind: "hostProcessDiagnostic";
+  code:
+    | "configuration_invalid"
+    | "authentication_required"
+    | "storage_corrupt"
+    | "unsupported_version"
+    | "host_start_failed"
+    | "cleanup_incomplete";
 }
 
 /**

@@ -1,8 +1,16 @@
 //! Anonymous native↔Host control transport. No local listener or discoverable socket path.
 use super::credentials::MasterKey;
 use crate::self_service::{error, Result};
+use ai_session_contract::{
+    Counter, NativeAttachData, NativeCall, NativeCallData, NativeCallKind, NativeCallSchemaVersion,
+    NativeControlFrame, NativeDetachData, NativeEvent, NativeEventKind, NativeEventSchemaVersion,
+    NativeReply, NativeReplyFailureKind, NativeReplyFailureSchemaVersion, NativeReplySuccessKind,
+    NativeReplySuccessSchemaVersion, NativeSaveConnectionData, NativeSuspendData,
+};
 use futures_util::{SinkExt, StreamExt};
-use serde_json::{json, Value};
+#[cfg(test)]
+use serde_json::json;
+use serde_json::Value;
 use std::{
     collections::BTreeMap,
     sync::{
@@ -104,7 +112,7 @@ impl Control {
                                 permit = tokio::time::timeout(Duration::from_secs(5), credential.acquire_owned()) => match permit {
                                     Ok(Ok(permit)) => permit,
                                     _ => {
-                                        let _ = response.write(json!({"schemaVersion":5,"kind":"nativeReply","id":id,"ok":false})).await;
+                                        let _ = response.write(NativeControlFrame::Reply(NativeReply::Failure { id: Counter(id as i64), kind: NativeReplyFailureKind::NativeReply, schema_version: NativeReplyFailureSchemaVersion::VALUE, ok: false })).await;
                                         return;
                                     }
                                 }
@@ -121,14 +129,27 @@ impl Control {
                                 value = tokio::time::timeout(Duration::from_secs(10), receiver) => value,
                             };
                             let reply = match value {
-                                Ok(Ok(Ok(value))) => {
-                                    json!({"schemaVersion":5,"kind":"nativeReply","id":id,"ok":true,"value":value})
-                                }
-                                _ => {
-                                    json!({"schemaVersion":5,"kind":"nativeReply","id":id,"ok":false})
-                                }
+                                Ok(Ok(Ok(value))) => NativeReply::Success {
+                                    id: Counter(id as i64),
+                                    kind: NativeReplySuccessKind::NativeReply,
+                                    schema_version: NativeReplySuccessSchemaVersion::VALUE,
+                                    ok: true,
+                                    value: Value::Array(
+                                        value.into_iter().map(Value::from).collect(),
+                                    ),
+                                },
+                                _ => NativeReply::Failure {
+                                    id: Counter(id as i64),
+                                    kind: NativeReplyFailureKind::NativeReply,
+                                    schema_version: NativeReplyFailureSchemaVersion::VALUE,
+                                    ok: false,
+                                },
                             };
-                            if response.write(reply).await.is_err() {
+                            if response
+                                .write(NativeControlFrame::Reply(reply))
+                                .await
+                                .is_err()
+                            {
                                 response.close();
                             }
                         });
@@ -141,17 +162,8 @@ impl Control {
         *control.reader_task.lock().unwrap() = Some(reader_task);
         control
     }
-    async fn write(&self, frame: Value) -> Result<()> {
-        let record = ai_session_contract::decode(
-            &serde_json::to_vec(&frame).map_err(|_| unavailable())?,
-            &ai_session_contract::Limits {
-                max_bytes: 524288,
-                max_text_bytes: 262144,
-                max_depth: 32,
-                max_nodes: 16384,
-            },
-        )
-        .map_err(|_| unavailable())?;
+    async fn write(&self, frame: NativeControlFrame) -> Result<()> {
+        let record = ai_session_contract::WireRecord::NativeControlFrame(frame);
         let bytes = String::from_utf8(
             ai_session_contract::encode(
                 &record,
@@ -179,7 +191,11 @@ impl Control {
         .await
         .map_err(|_| unavailable())?
     }
-    async fn call(&self, method: &str, data: Value, timeout: Duration) -> Result<Value> {
+    async fn call(
+        &self,
+        make: impl FnOnce(Counter) -> NativeCall,
+        timeout: Duration,
+    ) -> Result<Value> {
         let id = self.sequence.fetch_add(1, Ordering::Relaxed);
         let (sender, receiver) = oneshot::channel();
         {
@@ -190,9 +206,9 @@ impl Control {
             pending.insert(id, sender);
         }
         let result = async {
-            self.write(
-                json!({"schemaVersion":5,"kind":"nativeCall","id":id,"method":method,"data":data}),
-            )
+            self.write(NativeControlFrame::Call(make(Counter(
+                i64::try_from(id).map_err(|_| unavailable())?,
+            ))))
             .await?;
             tokio::time::timeout(timeout, receiver)
                 .await
@@ -205,7 +221,15 @@ impl Control {
     }
     pub async fn health(&self) -> Result<()> {
         let reply = self
-            .call("health", json!({}), Duration::from_secs(15))
+            .call(
+                |id| NativeCall::Health {
+                    id,
+                    kind: NativeCallKind::NativeCall,
+                    schema_version: NativeCallSchemaVersion::VALUE,
+                    data: NativeCallData {},
+                },
+                Duration::from_secs(15),
+            )
             .await?;
         match ai_session_contract::decode(
             &serde_json::to_vec(&reply).map_err(|_| unavailable())?,
@@ -229,9 +253,17 @@ impl Control {
         context: &ai_session_contract::UserContext,
         timeout: Duration,
     ) -> Result<Value> {
+        let data = NativeAttachData {
+            channel: channel.try_into().map_err(|_| unavailable())?,
+            context: context.clone(),
+        };
         self.call(
-            "attach",
-            json!({"channel":channel,"context":context}),
+            |id| NativeCall::Attach {
+                id,
+                data,
+                kind: NativeCallKind::NativeCall,
+                schema_version: NativeCallSchemaVersion::VALUE,
+            },
             timeout,
         )
         .await
@@ -241,12 +273,33 @@ impl Control {
         context: &ai_session_contract::UserContext,
         timeout: Duration,
     ) -> Result<Value> {
-        self.call("suspend", json!({"context":context}), timeout)
-            .await
+        self.call(
+            |id| NativeCall::Suspend {
+                id,
+                data: NativeSuspendData {
+                    context: context.clone(),
+                },
+                kind: NativeCallKind::NativeCall,
+                schema_version: NativeCallSchemaVersion::VALUE,
+            },
+            timeout,
+        )
+        .await
     }
     pub async fn detach_remote(&self, channel: &str, timeout: Duration) -> Result<Value> {
-        self.call("detach", json!({"channel":channel}), timeout)
-            .await
+        let data = NativeDetachData {
+            channel: channel.try_into().map_err(|_| unavailable())?,
+        };
+        self.call(
+            |id| NativeCall::Detach {
+                id,
+                data,
+                kind: NativeCallKind::NativeCall,
+                schema_version: NativeCallSchemaVersion::VALUE,
+            },
+            timeout,
+        )
+        .await
     }
     pub async fn save_connection(
         &self,
@@ -256,9 +309,25 @@ impl Control {
         secret: Option<String>,
         timeout: Duration,
     ) -> Result<Value> {
+        let data = NativeSaveConnectionData {
+            generation: generation.try_into().map_err(|_| unavailable())?,
+            connection,
+            expected: expected
+                .map(|value| i64::try_from(value).map(Counter))
+                .transpose()
+                .map_err(|_| unavailable())?,
+            secret: secret
+                .map(TryInto::try_into)
+                .transpose()
+                .map_err(|_| unavailable())?,
+        };
         self.call(
-            "saveConnection",
-            json!({"generation":generation,"connection":connection,"expected":expected,"secret":secret}),
+            |id| NativeCall::SaveConnection {
+                id,
+                data,
+                kind: NativeCallKind::NativeCall,
+                schema_version: NativeCallSchemaVersion::VALUE,
+            },
             timeout,
         )
         .await
@@ -273,8 +342,13 @@ impl Control {
         Ok(receiver)
     }
     pub async fn send(&self, id: &str, message: Value) -> Result<()> {
-        self.write(json!({"schemaVersion":5,"kind":"nativeEvent","channel":id,"message":message}))
-            .await
+        self.write(NativeControlFrame::Event(NativeEvent {
+            schema_version: NativeEventSchemaVersion::VALUE,
+            kind: NativeEventKind::NativeEvent,
+            channel: id.try_into().map_err(|_| unavailable())?,
+            message,
+        }))
+        .await
     }
     pub fn detach(&self, id: &str) {
         self.views.lock().unwrap().remove(id);

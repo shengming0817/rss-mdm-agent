@@ -65,10 +65,14 @@ make ci CI_BASE=origin/develop
 
 Native 长期持有用户、一个设备执行服务和应用主密钥访问 owner；Host 进程可以单独替换。启动前核验关键文件、平台和契约版本，配置、存储和恢复完成后的私有 health 应答才表示 ready。运行包不匹配直接拒绝；release 构建忽略开发 override。关闭/回收旧 Host 后才启动新代，worker fence 未解决时禁止重复 worker。
 
+Native 在每次启动前按打包端同一规则重算文件字节、权限和符号链接图摘要；`.app` 候选的预期摘要由 stage 后的 Native 构建绑定，改写资源目录中的 manifest 不能替换它。显式开发 override 校验其 manifest 与实际树一致，信任由开发者选择该路径建立。health 超时或不合法时先撤销 control/MCP，再有界停止并回收进程；回收未知保留原 owner 阻断新代。
+
 “重新连接”只建立视图通道并核对历史，不重启 Host，不重发请求。“重启 AI Host”有明确提示，模型请求可能中断，设备任务继续；它不调用设备服务关闭，也不记录虚假的任务完成或取消。Host 不可用时仅显示当前用户已加载的只读历史；未加载历史在恢复后按原接口分页读取，切用户清空全部旧视图。不存在 Native SQLite 历史旁路。
 
 连接操作区分配置、认证、能力、限额、拒绝、取消和未确认结果。仅明确认证错误提示更新凭据；普通失败不伪装为认证失效。普通对话运行真实文本探针，受控用途还要求所选模型调用验证专用无副作用工具；探针不接设备执行服务。只有验证及进程退出确认后才事务保存。Codex 禁止模型 fallback，并核对返回模型；已有配置的默认模型由官方工具解析。
 
 诊断只包含闭集阶段/错误码、时间、运行版本和资源来源类别，最多保留 64 条故障记录。通过原生保存对话框导出，不包含凭据、原始错误、端点、个人路径、对话或数据库内容。缺包按开发/发布来源分别提示构建或重装，旧进程回收未确认则保留阻断。
+
+Native/Host 私有协议直接切换为 2，旧候选不能通过就绪校验。Host 启动/清理诊断使用 runtime schema 生成的 `hostProcessDiagnostic` 有界帧，旧 stderr 文本不再识别；Native 控制出站及状态均直接构造生成类型。HTTP 错误证据按 dispatch 归属且只消费一次，重叠 dispatch 或多个 HTTP 请求的归属不明确时保留 adapter 自身的闭集结果，不猜测认证原因。
 
 设计参考：Microsoft [设置指南](https://learn.microsoft.com/en-us/windows/apps/design/app-settings/guidelines-for-app-settings) 与 [WinUI Gallery SettingsPage.xaml](https://github.com/microsoft/WinUI-Gallery/blob/main/WinUIGallery/Pages/SettingsPage.xaml)。Vue/Tauri 保持现有技术栈。

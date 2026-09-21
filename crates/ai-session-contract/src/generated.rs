@@ -9166,7 +9166,7 @@ impl ::std::convert::From<HostHealthProtocol> for i64 {
 impl ::std::convert::TryFrom<i64> for HostHealthProtocol {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![1_i64].contains(&value) {
+        if ![2_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -9210,6 +9210,173 @@ impl ::std::convert::TryFrom<i64> for HostHealthSchemaVersion {
     }
 }
 impl<'de> ::serde::Deserialize<'de> for HostHealthSchemaVersion {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
+#[doc = "Closed diagnostic frame on the inherited Host diagnostic pipe. Raw stderr and unknown frames never become product diagnostics."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct HostProcessDiagnostic {
+    #[doc = "`code` member; see its generated type and parent schema."]
+    pub code: HostProcessDiagnosticCode,
+    #[doc = "`kind` member; see its generated type and parent schema."]
+    pub kind: HostProcessDiagnosticKind,
+    #[serde(rename = "schemaVersion")]
+    #[doc = "`schema_version` member; see its generated type and parent schema."]
+    pub schema_version: HostProcessDiagnosticSchemaVersion,
+}
+#[doc = "`HostProcessDiagnosticCode`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum HostProcessDiagnosticCode {
+    #[serde(rename = "configuration_invalid")]
+    #[doc = "`ConfigurationInvalid` alternative; see the parent type's schema contract."]
+    ConfigurationInvalid,
+    #[serde(rename = "authentication_required")]
+    #[doc = "`AuthenticationRequired` alternative; see the parent type's schema contract."]
+    AuthenticationRequired,
+    #[serde(rename = "storage_corrupt")]
+    #[doc = "`StorageCorrupt` alternative; see the parent type's schema contract."]
+    StorageCorrupt,
+    #[serde(rename = "unsupported_version")]
+    #[doc = "`UnsupportedVersion` alternative; see the parent type's schema contract."]
+    UnsupportedVersion,
+    #[serde(rename = "host_start_failed")]
+    #[doc = "`HostStartFailed` alternative; see the parent type's schema contract."]
+    HostStartFailed,
+    #[serde(rename = "cleanup_incomplete")]
+    #[doc = "`CleanupIncomplete` alternative; see the parent type's schema contract."]
+    CleanupIncomplete,
+}
+impl ::std::fmt::Display for HostProcessDiagnosticCode {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::ConfigurationInvalid => f.write_str("configuration_invalid"),
+            Self::AuthenticationRequired => f.write_str("authentication_required"),
+            Self::StorageCorrupt => f.write_str("storage_corrupt"),
+            Self::UnsupportedVersion => f.write_str("unsupported_version"),
+            Self::HostStartFailed => f.write_str("host_start_failed"),
+            Self::CleanupIncomplete => f.write_str("cleanup_incomplete"),
+        }
+    }
+}
+impl ::std::str::FromStr for HostProcessDiagnosticCode {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "configuration_invalid" => Ok(Self::ConfigurationInvalid),
+            "authentication_required" => Ok(Self::AuthenticationRequired),
+            "storage_corrupt" => Ok(Self::StorageCorrupt),
+            "unsupported_version" => Ok(Self::UnsupportedVersion),
+            "host_start_failed" => Ok(Self::HostStartFailed),
+            "cleanup_incomplete" => Ok(Self::CleanupIncomplete),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for HostProcessDiagnosticCode {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for HostProcessDiagnosticCode {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`HostProcessDiagnosticKind`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum HostProcessDiagnosticKind {
+    #[serde(rename = "hostProcessDiagnostic")]
+    #[doc = "`HostProcessDiagnostic` alternative; see the parent type's schema contract."]
+    HostProcessDiagnostic,
+}
+impl ::std::fmt::Display for HostProcessDiagnosticKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::HostProcessDiagnostic => f.write_str("hostProcessDiagnostic"),
+        }
+    }
+}
+impl ::std::str::FromStr for HostProcessDiagnosticKind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "hostProcessDiagnostic" => Ok(Self::HostProcessDiagnostic),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for HostProcessDiagnosticKind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for HostProcessDiagnosticKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`HostProcessDiagnosticSchemaVersion`"]
+#[derive(:: serde :: Serialize, Clone)]
+#[serde(transparent)]
+pub struct HostProcessDiagnosticSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
+impl ::std::ops::Deref for HostProcessDiagnosticSchemaVersion {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::std::convert::From<HostProcessDiagnosticSchemaVersion> for i64 {
+    fn from(value: HostProcessDiagnosticSchemaVersion) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::TryFrom<i64> for HostProcessDiagnosticSchemaVersion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if ![5_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for HostProcessDiagnosticSchemaVersion {
     fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
     where
         D: ::serde::Deserializer<'de>,
@@ -12994,6 +13161,10 @@ pub enum WireRecord {
     HostStatus(#[doc = "`` member; see its generated type and parent schema."] HostStatus),
     #[doc = "`HostHealth` alternative; see the parent type's schema contract."]
     HostHealth(#[doc = "`` member; see its generated type and parent schema."] HostHealth),
+    #[doc = "`HostProcessDiagnostic` alternative; see the parent type's schema contract."]
+    HostProcessDiagnostic(
+        #[doc = "`` member; see its generated type and parent schema."] HostProcessDiagnostic,
+    ),
 }
 impl ::std::convert::From<Command> for WireRecord {
     fn from(value: Command) -> Self {
@@ -13168,6 +13339,11 @@ impl ::std::convert::From<HostStatus> for WireRecord {
 impl ::std::convert::From<HostHealth> for WireRecord {
     fn from(value: HostHealth) -> Self {
         Self::HostHealth(value)
+    }
+}
+impl ::std::convert::From<HostProcessDiagnostic> for WireRecord {
+    fn from(value: HostProcessDiagnostic) -> Self {
+        Self::HostProcessDiagnostic(value)
     }
 }
 #[doc = " Error types."]
@@ -14623,6 +14799,35 @@ impl std::fmt::Debug for HostHealthSchemaVersion {
         f.write_str(concat!(stringify!(HostHealthSchemaVersion), "([redacted])"))
     }
 }
+impl std::fmt::Debug for HostProcessDiagnostic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(HostProcessDiagnostic), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for HostProcessDiagnosticCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(HostProcessDiagnosticCode),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for HostProcessDiagnosticKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(HostProcessDiagnosticKind),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for HostProcessDiagnosticSchemaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(HostProcessDiagnosticSchemaVersion),
+            "([redacted])"
+        ))
+    }
+}
 impl std::fmt::Debug for HostStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(stringify!(HostStatus), "([redacted])"))
@@ -15193,4 +15398,292 @@ impl std::fmt::Debug for WireRecord {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(stringify!(WireRecord), "([redacted])"))
     }
+}
+impl AccessUpdateSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl ActionRequestSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl AttachReceiptSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl AttachRequestSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl CommandRecordVariant0SchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl CommandRecordVariant1SchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl CommandRecordVariant2SchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl CommandRecordVariant3SchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl CommandRecordVariant4SchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl CommandRecordVariant5SchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl CommandRecordVariant6SchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl CommandRecordVariant7SchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl CommandRecordVariant8SchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl CommandSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl ConnectionPageSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl ConnectionSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl ConnectionsRequestSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl DeliverySchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl DetachRequestSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventAcknowledgedQueuedCancelledSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventAcknowledgedSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventCancelDispatchedSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventCancelledSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventCommandAcceptedSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventDeliveryRecordedSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventDeliveryRequestedSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventDispatchSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventErrorSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventInteractionAnsweredSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventInteractionExpiredUnavailableSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventInteractionPendingSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventInvalidatedSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventReconciledSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventSessionReboundSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventSessionRecoveryUnavailableSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventSessionRetiredSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventStatusDispatchingRunningReconciliationRequiredSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventSurfaceSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventTerminalSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventTextSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventToolProposalSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventToolResultSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl ExecutionOriginSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl HistoryPreviewSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl HistoryRequestSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl HostHealthProtocol {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(2_i64);
+}
+impl HostHealthSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl HostProcessDiagnosticSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl HostStatusSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl InteractionSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl ListRequestSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl NativeCallSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl NativeEventSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl NativeReplyFailureSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl NativeReplySuccessSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl NegotiationAcp {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(1_i64);
+}
+impl NegotiationContractVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl PreferencesRequestSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl ReceiptSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl ResumeRequestSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl SaveConnectionRequestSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl SelectConnectionRequestSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl SessionPageSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl SessionSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl SnapshotPageSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl SnapshotRequestSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl SurfaceActionSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl SurfaceStateSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl TestUserPageSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl TestUserSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl UserContextSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl UserPreferencesSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
 }

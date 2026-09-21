@@ -7,6 +7,7 @@ export function createHostSettings(port: ReturnType<typeof nativeHost>) {
     busy: false,
     loading: false,
     message: "",
+    readError: "",
   });
   let epoch = 0,
     disposed = false;
@@ -16,10 +17,13 @@ export function createHostSettings(port: ReturnType<typeof nativeHost>) {
     state.loading = true;
     try {
       const next = await port.read();
-      if (!disposed && current === epoch) state.status = next;
+      if (!disposed && current === epoch) {
+        state.status = next;
+        state.readError = "";
+      }
     } catch {
       if (!disposed && current === epoch)
-        state.message = "无法读取 AI Host 状态，请重试。";
+        state.readError = "无法读取 AI Host 状态，请重试。";
     } finally {
       if (current === epoch) state.loading = false;
     }
@@ -34,6 +38,7 @@ export function createHostSettings(port: ReturnType<typeof nativeHost>) {
       const next = await port.restart(state.status.generation);
       if (disposed) return false;
       state.status = next;
+      state.readError = "";
       return next.phase === "ready";
     } catch {
       if (!disposed) state.message = "重启结果未确认，请刷新状态后再操作。";

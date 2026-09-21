@@ -4275,9 +4275,31 @@ const schema31 = {
         schemaVersion: { type: "integer", const: 5 },
         kind: { type: "string", const: "hostHealth" },
         ready: { type: "boolean", const: true },
-        protocol: { type: "integer", const: 1 },
+        protocol: { type: "integer", const: 2 },
       },
       required: ["schemaVersion", "kind", "ready", "protocol"],
+      additionalProperties: false,
+    },
+    HostProcessDiagnostic: {
+      description:
+        "Closed diagnostic frame on the inherited Host diagnostic pipe. Raw stderr and unknown frames never become product diagnostics.",
+      type: "object",
+      properties: {
+        schemaVersion: { type: "integer", const: 5 },
+        kind: { type: "string", const: "hostProcessDiagnostic" },
+        code: {
+          type: "string",
+          enum: [
+            "configuration_invalid",
+            "authentication_required",
+            "storage_corrupt",
+            "unsupported_version",
+            "host_start_failed",
+            "cleanup_incomplete",
+          ],
+        },
+      },
+      required: ["schemaVersion", "kind", "code"],
       additionalProperties: false,
     },
   },

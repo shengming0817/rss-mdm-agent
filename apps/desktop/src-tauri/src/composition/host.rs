@@ -4,7 +4,9 @@ use super::{control::Control, credentials::MasterKey, execution::ExecutionHandle
 use crate::self_service::fixtures;
 use execution_mcp::{ExecutionMcp, McpLimits};
 use futures_util::StreamExt;
-use serde_json::{json, Value};
+#[cfg(test)]
+use serde_json::json;
+use serde_json::Value;
 use std::{
     os::fd::AsRawFd,
     path::Path,
@@ -35,53 +37,52 @@ pub enum Fault {
     Control,
 }
 impl Fault {
-    pub fn diagnostic(self, source: &str) -> ai_session_contract::HostDiagnostic {
+    pub fn diagnostic(
+        self,
+        source: ai_session_contract::HostStatusSource,
+    ) -> ai_session_contract::HostDiagnostic {
+        use ai_session_contract::{
+            HostDiagnosticAction as A, HostDiagnosticCode as C, HostDiagnosticStage as S,
+        };
+        let package_action = if source == ai_session_contract::HostStatusSource::DevelopmentOverride
+        {
+            A::PrepareRuntime
+        } else {
+            A::ReinstallRuntime
+        };
         let (stage, code, action) = match self {
-            Self::Missing => (
-                "runtime_package",
-                "runtime_missing",
-                if source == "development_override" {
-                    "prepare_runtime"
-                } else {
-                    "reinstall_runtime"
-                },
-            ),
-            Self::Invalid => (
-                "runtime_package",
-                "runtime_invalid",
-                if source == "development_override" {
-                    "prepare_runtime"
-                } else {
-                    "reinstall_runtime"
-                },
-            ),
-            Self::Version => (
-                "runtime_package",
-                "unsupported_version",
-                if source == "development_override" {
-                    "prepare_runtime"
-                } else {
-                    "reinstall_runtime"
-                },
-            ),
-            Self::Start => ("host_process", "host_start_failed", "restart_host"),
-            Self::Exited => ("host_process", "host_exited", "restart_host"),
-            Self::Timeout => ("host_process", "readiness_timeout", "restart_host"),
+            Self::Missing => (S::RuntimePackage, C::RuntimeMissing, package_action),
+            Self::Invalid => (S::RuntimePackage, C::RuntimeInvalid, package_action),
+            Self::Version => (S::RuntimePackage, C::UnsupportedVersion, package_action),
+            Self::Start => (S::HostProcess, C::HostStartFailed, A::RestartHost),
+            Self::Exited => (S::HostProcess, C::HostExited, A::RestartHost),
+            Self::Timeout => (S::HostProcess, C::ReadinessTimeout, A::RestartHost),
             Self::Configuration => (
-                "configuration",
-                "configuration_invalid",
-                "check_configuration",
+                S::Configuration,
+                C::ConfigurationInvalid,
+                A::CheckConfiguration,
             ),
             Self::Authentication => (
-                "authentication",
-                "authentication_required",
-                "check_credentials",
+                S::Authentication,
+                C::AuthenticationRequired,
+                A::CheckCredentials,
             ),
-            Self::Storage => ("storage", "storage_corrupt", "check_storage"),
-            Self::Control => ("host_process", "control_closed", "restart_host"),
-            Self::Cleanup => ("shutdown", "cleanup_incomplete", "restart_host"),
+            Self::Storage => (S::Storage, C::StorageCorrupt, A::CheckStorage),
+            Self::Control => (S::HostProcess, C::ControlClosed, A::RestartHost),
+            Self::Cleanup => (S::Shutdown, C::CleanupIncomplete, A::RestartHost),
         };
-        serde_json::from_value(json!({"stage":stage,"code":code,"action":action,"atMs":std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64})).expect("schema-owned diagnostic")
+        ai_session_contract::HostDiagnostic {
+            stage,
+            code,
+            action,
+            at_ms: ai_session_contract::Counter(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis()
+                    .min(i64::MAX as u128) as i64,
+            ),
+        }
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -99,6 +100,7 @@ enum Waiter {
 pub struct Process {
     pub control: Arc<Control>,
     pub stop: CancellationToken,
+    mcp_stop: CancellationToken,
     phase: Arc<Mutex<Phase>>,
     task: tokio::sync::Mutex<Waiter>,
 }
@@ -122,7 +124,16 @@ impl Process {
         let Waiter::Pending(task) = std::mem::replace(&mut *waiter, Waiter::Reaped(false)) else {
             unreachable!()
         };
-        *self.phase.lock().unwrap() = Phase::Stopping;
+        {
+            let mut phase = self.phase.lock().unwrap();
+            // A startup diagnostic may arrive before health notices EOF. Do not
+            // erase it while the waiter drains the remaining diagnostic pipe.
+            if !matches!(*phase, Phase::Failed(_)) {
+                *phase = Phase::Stopping;
+            }
+        }
+        self.control.close();
+        self.mcp_stop.cancel();
         self.stop.cancel();
         let reaped = task.await.unwrap_or(false);
         if !reaped {
@@ -132,7 +143,7 @@ impl Process {
         reaped
     }
 }
-fn preflight(artifact: &Path) -> Result<(), Fault> {
+fn preflight(artifact: &Path, trusted_digest: Option<&str>) -> Result<(), Fault> {
     use std::os::unix::fs::PermissionsExt;
     let executable = artifact.join("bin/rss-ai-host");
     let meta = std::fs::symlink_metadata(executable).map_err(|e| {
@@ -172,7 +183,7 @@ fn preflight(artifact: &Path) -> Result<(), Fault> {
     }
     let manifest: Value = serde_json::from_slice(&bytes).map_err(|_| Fault::Invalid)?;
     if manifest["status"] != "passed"
-        || manifest["desktopProtocol"] != 1
+        || manifest["desktopProtocol"] != i64::from(ai_session_contract::HostHealthProtocol::VALUE)
         || manifest["contractVersion"] != 5
     {
         return Err(Fault::Version);
@@ -183,22 +194,36 @@ fn preflight(artifact: &Path) -> Result<(), Fault> {
     {
         return Err(Fault::Version);
     }
-    if !manifest["runtimeTreeSha256"]
-        .as_str()
-        .is_some_and(|value| value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit()))
-    {
-        return Err(Fault::Invalid);
-    }
+    super::runtime_package::verify(
+        artifact,
+        manifest["runtimeTreeSha256"]
+            .as_str()
+            .ok_or(Fault::Invalid)?,
+        trusted_digest,
+    )
+    .map_err(|_| Fault::Invalid)?;
     Ok(())
 }
 fn startup_fault(line: &str) -> Option<Fault> {
-    Some(match line.strip_prefix("AI Host could not start: ")? {
-        "configuration_file" | "configuration_invalid" => Fault::Configuration,
-        "authentication_required" => Fault::Authentication,
-        "storage_corrupt" => Fault::Storage,
-        "unsupported_version" => Fault::Version,
-        "startup_failed" => Fault::Start,
-        _ => return None,
+    use ai_session_contract::{HostProcessDiagnosticCode as C, WireRecord};
+    let Ok(WireRecord::HostProcessDiagnostic(frame)) = ai_session_contract::decode(
+        line.as_bytes(),
+        &ai_session_contract::Limits {
+            max_bytes: 256,
+            max_text_bytes: 128,
+            max_depth: 4,
+            max_nodes: 16,
+        },
+    ) else {
+        return None;
+    };
+    Some(match frame.code {
+        C::ConfigurationInvalid => Fault::Configuration,
+        C::AuthenticationRequired => Fault::Authentication,
+        C::StorageCorrupt => Fault::Storage,
+        C::UnsupportedVersion => Fault::Version,
+        C::HostStartFailed => Fault::Start,
+        C::CleanupIncomplete => Fault::Cleanup,
     })
 }
 pub async fn launch(
@@ -206,8 +231,13 @@ pub async fn launch(
     configuration: &Path,
     execution: &ExecutionHandle,
     master: Arc<MasterKey>,
+    trusted_digest: Option<&str>,
 ) -> Result<Arc<Process>, Fault> {
-    preflight(artifact)?;
+    let checked = artifact.to_path_buf();
+    let trusted = trusted_digest.map(str::to_owned);
+    tokio::task::spawn_blocking(move || preflight(&checked, trusted.as_deref()))
+        .await
+        .map_err(|_| Fault::Invalid)??;
     let (parent_pipe, child_pipe) =
         std::os::unix::net::UnixStream::pair().map_err(|_| Fault::Start)?;
     parent_pipe
@@ -257,14 +287,17 @@ pub async fn launch(
         let mut lines = FramedRead::new(diagnostics, LinesCodec::new_with_max_length(256));
         while let Some(line) = lines.next().await {
             if let Ok(line) = line {
-                if line == "AI Host cleanup incomplete" {
-                    reported_cleanup.store(true, Ordering::Release);
-                }
                 if let Some(fault) = startup_fault(&line) {
+                    if fault == Fault::Cleanup {
+                        reported_cleanup.store(true, Ordering::Release);
+                        continue;
+                    }
                     let mut phase = diagnostic_phase.lock().unwrap();
                     if matches!(
                         *phase,
-                        Phase::Starting | Phase::Failed(Fault::Timeout | Fault::Exited)
+                        Phase::Starting
+                            | Phase::Stopping
+                            | Phase::Failed(Fault::Timeout | Fault::Exited)
                     ) {
                         *phase = Phase::Failed(fault);
                     }
@@ -292,6 +325,7 @@ pub async fn launch(
     });
     let stop = CancellationToken::new();
     let waiter_stop = stop.clone();
+    let process_mcp_stop = mcp_stop.clone();
     let waiter_phase = phase.clone();
     let waiter_control = control.clone();
     let task = tokio::spawn(async move {
@@ -360,6 +394,7 @@ pub async fn launch(
     let process = Arc::new(Process {
         control,
         stop,
+        mcp_stop: process_mcp_stop,
         phase,
         task: tokio::sync::Mutex::new(Waiter::Pending(task)),
     });
@@ -369,14 +404,21 @@ pub async fn launch(
         if *phase == Phase::Starting {
             *phase = Phase::Ready;
         }
-    } else {
-        let mut phase = process.phase.lock().unwrap();
-        if *phase == Phase::Starting {
-            *phase = Phase::Failed(if health.is_err_and(|e| e.code == "unsupported_version") {
-                Fault::Version
-            } else {
-                Fault::Timeout
-            });
+    }
+    if !process.ready() {
+        let fault = match process.phase() {
+            Phase::Failed(fault) => fault,
+            _ if health.is_err_and(|e| e.code == "unsupported_version") => Fault::Version,
+            _ => Fault::Timeout,
+        };
+        // Revoke capabilities before waiting for exit. An uncertain reap retains
+        // this failed owner so restart cannot admit a competing incarnation.
+        if process.close().await {
+            let fault = match process.phase() {
+                Phase::Failed(fault) if fault != Fault::Exited => fault,
+                _ => fault,
+            };
+            return Err(fault);
         }
     }
     Ok(process)
@@ -385,6 +427,27 @@ pub async fn launch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn process_diagnostics_accept_only_the_generated_closed_frame() {
+        for (code, fault) in [
+            ("configuration_invalid", Fault::Configuration),
+            ("authentication_required", Fault::Authentication),
+            ("storage_corrupt", Fault::Storage),
+            ("unsupported_version", Fault::Version),
+            ("host_start_failed", Fault::Start),
+            ("cleanup_incomplete", Fault::Cleanup),
+        ] {
+            let frame =
+                json!({"schemaVersion":5,"kind":"hostProcessDiagnostic","code":code}).to_string();
+            assert_eq!(startup_fault(&frame), Some(fault));
+        }
+        for raw in [
+            "AI Host could not start: storage_corrupt".to_owned(),
+            json!({"schemaVersion":5,"kind":"hostProcessDiagnostic","code":"CANARY"}).to_string(),
+            json!({"schemaVersion":5,"kind":"hostProcessDiagnostic","code":"storage_corrupt","detail":"CANARY"}).to_string(),
+            "x".repeat(1024),
+        ] { assert_eq!(startup_fault(&raw), None); }
+    }
     #[tokio::test]
     async fn unconfirmed_reaping_cannot_be_reclassified_as_stopped_on_a_later_close() {
         let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
@@ -394,6 +457,7 @@ mod tests {
         let process = Process {
             control,
             stop: CancellationToken::new(),
+            mcp_stop: CancellationToken::new(),
             phase: Arc::new(Mutex::new(Phase::Ready)),
             task: tokio::sync::Mutex::new(Waiter::Pending(task)),
         };
