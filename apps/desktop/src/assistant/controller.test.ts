@@ -785,3 +785,22 @@ it("a single failed history restore leaves the healthy connection usable without
   expect(t.client.createSession).toHaveBeenCalledTimes(1);
   t.c.dispose();
 });
+
+it("a transport lost during the selected history restore is not promoted back to connected", async () => {
+  const t = setup();
+  let disconnect!: () => void;
+  Object.assign(t.client.connection, {
+    closed: new Promise<void>((resolve) => (disconnect = resolve)),
+  });
+  await t.c.connect();
+  await t.c.select("session-1");
+  vi.mocked(t.client.restore).mockImplementationOnce(async () => {
+    disconnect();
+    throw new ClientError("transport_closed");
+  });
+  await t.c.connect();
+  expect(t.c.state.connection).toBe("disconnected");
+  expect(t.c.canSend.value).toBe(false);
+  expect(t.submit).not.toHaveBeenCalled();
+  t.c.dispose();
+});

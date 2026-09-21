@@ -412,7 +412,9 @@ export function createAssistant(
           });
         }
       });
+      let transportClosed = false;
       void connected.runtime.connection.closed.then(() => {
+        transportClosed = true;
         if (current === epoch) {
           state.connection = "disconnected";
           clearPermissions();
@@ -440,7 +442,7 @@ export function createAssistant(
           if (current === epoch) state.errors.set(id, fail(error));
         }
       }
-      if (current === epoch && !owner.signal.aborted)
+      if (current === epoch && !owner.signal.aborted && !transportClosed)
         state.connection = "connected";
     } catch (error) {
       owner.abort();
@@ -711,6 +713,7 @@ export function createAssistant(
     state.taskLoading = false;
     state.task = undefined;
     state.connections = [];
+    state.preferences = { schemaVersion: 5, kind: "userPreferences" };
     state.sessions.clear();
     state.views.clear();
     state.drafts.clear();
