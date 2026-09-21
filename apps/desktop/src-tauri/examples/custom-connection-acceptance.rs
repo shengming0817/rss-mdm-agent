@@ -107,6 +107,47 @@ fn automate_secure_entry(secret: String, evidence: Arc<Evidence>) {
     });
 }
 
+fn finish(
+    window: &tauri::WebviewWindow,
+    evidence: &Evidence,
+    mut value: serde_json::Value,
+    outputs: Option<&str>,
+) {
+    let outputs_clean = outputs.is_some_and(|raw| {
+        !raw.contains(&evidence.secret)
+            && serde_json::from_str::<serde_json::Value>(raw).is_ok_and(|v| {
+                v["dom"].is_string() && v["ipc"].is_array() && v["status"].is_object()
+            })
+    });
+    let runtime = window.state::<DesktopRuntime>();
+    let diagnostics =
+        rss_mdm_desktop::composition::diagnostics::snapshot(&runtime.status()).unwrap();
+    let diagnostics_clean = !String::from_utf8_lossy(&diagnostics).contains(&evidence.secret);
+    let exported = rss_mdm_desktop::composition::diagnostics::save(
+        &evidence.path.with_file_name("diagnostics.json"),
+        &diagnostics,
+    )
+    .is_ok();
+    value["secretOutputsClean"] = serde_json::json!(outputs_clean && diagnostics_clean && exported);
+    // A failed flow has no snapshot; retain its original failure stage.
+    if value["step"] == "passed" && (!outputs_clean || !diagnostics_clean || !exported) {
+        value["step"] = serde_json::json!("failed");
+        value["stage"] = serde_json::json!("secret_outputs");
+    }
+    let recorded = std::fs::write(
+        &evidence.path,
+        serde_json::to_vec_pretty(&value).unwrap_or_default(),
+    )
+    .is_ok();
+    window
+        .app_handle()
+        .exit(if recorded && value["step"] == "passed" {
+            0
+        } else {
+            1
+        });
+}
+
 fn window(app: &tauri::AppHandle, evidence: Arc<Evidence>) -> tauri::Result<()> {
     let events = evidence.clone();
     tauri::WebviewWindowBuilder::from_config(app, &app.config().app.windows[0])?
@@ -126,43 +167,32 @@ fn window(app: &tauri::AppHandle, evidence: Arc<Evidence>) -> tauri::Result<()> 
             let Some(raw) = title.strip_prefix("RSS_CUSTOM_CONNECTION:") else {
                 return;
             };
-            let Ok(mut value) = serde_json::from_str::<serde_json::Value>(raw) else {
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) else {
                 return;
             };
-            if value["step"] == "progress" || events.finished.swap(true, Ordering::AcqRel) {
+            if value["step"] == "progress" {
+                eprintln!("Credential acceptance stage: {}", value["stage"]);
                 return;
             }
-            let outputs = value.as_object_mut().unwrap().remove("observedOutputs");
-            let outputs_clean = outputs
-                .as_ref()
-                .is_some_and(|v| !v.to_string().contains(&events.secret));
-            let runtime = window.state::<DesktopRuntime>();
-            let diagnostics =
-                rss_mdm_desktop::composition::diagnostics::snapshot(&runtime.status()).unwrap();
-            let diagnostics_clean = !String::from_utf8_lossy(&diagnostics).contains(&events.secret);
-            let exported = rss_mdm_desktop::composition::diagnostics::save(
-                &events.path.with_file_name("diagnostics.json"),
-                &diagnostics,
-            )
-            .is_ok();
-            value["secretOutputsClean"] =
-                serde_json::json!(outputs_clean && diagnostics_clean && exported);
-            if !outputs_clean || !diagnostics_clean || !exported {
-                value["step"] = serde_json::json!("failed");
-                value["stage"] = serde_json::json!("secret_outputs");
+            if events.finished.swap(true, Ordering::AcqRel) {
+                return;
             }
-            let recorded = std::fs::write(
-                &events.path,
-                serde_json::to_vec_pretty(&value).unwrap_or_default(),
-            )
-            .is_ok();
-            window
-                .app_handle()
-                .exit(if recorded && value["step"] == "passed" {
-                    0
-                } else {
-                    1
-                });
+            if value["step"] != "passed" {
+                finish(&window, &events, value, None);
+                return;
+            }
+            // Keep large/sensitive snapshots out of the window title and logs.
+            let completed = window.clone();
+            let evidence = events.clone();
+            let result = value.clone();
+            if window
+                .eval_with_callback("window.__RSS_OBSERVED_OUTPUTS__", move |raw| {
+                    finish(&completed, &evidence, result.clone(), Some(&raw));
+                })
+                .is_err()
+            {
+                finish(&window, &events, value, None);
+            }
         })
         .build()?;
     Ok(())

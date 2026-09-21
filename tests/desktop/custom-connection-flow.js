@@ -3,16 +3,17 @@
   let stage = "load";
   const ipcOutputs = [];
   const originalInvoke = window.__TAURI_INTERNALS__.invoke;
-  window.__TAURI_INTERNALS__.invoke = async (...args) => {
-    try {
-      const value = await originalInvoke(...args);
-      if (args[0] === "save_connection") ipcOutputs.push(value);
-      return value;
-    } catch (error) {
-      if (args[0] === "save_connection") ipcOutputs.push(error);
-      throw error;
-    }
-  };
+  // Tauri's invoke is immutable. Observe the real callbacks without replacing
+  // transport or replies; this hook exists only in the acceptance WebView.
+  const callbacks = window.__TAURI_INTERNALS__.callbacks;
+  const register = callbacks.set.bind(callbacks);
+  let overflow = false;
+  callbacks.set = (id, callback) =>
+    register(id, (value) => {
+      if (ipcOutputs.length < 512) ipcOutputs.push(value);
+      else overflow = true;
+      return callback(value);
+    });
   const report = (value) => {
     document.title = "RSS_CUSTOM_CONNECTION:" + JSON.stringify(value);
   };
@@ -97,16 +98,27 @@
           element.textContent.includes("Local DeepSeek protocol fixture"),
         ),
     );
+    window.__RSS_OBSERVED_OUTPUTS__ = {
+      dom: document.documentElement.outerHTML,
+      ipc: ipcOutputs,
+      status: await originalInvoke("ai_host_status"),
+    };
+    if (
+      overflow ||
+      !ipcOutputs.some(
+        (value) =>
+          value?.ok === true &&
+          value.value?.kind === "connection" &&
+          value.value.status === "ready" &&
+          value.value.name === "Local DeepSeek protocol fixture",
+      )
+    )
+      throw new Error("save IPC output not observed");
     report({
       step: "passed",
       secureEntry: true,
       modelProbe: "local_openai_compatible_protocol",
       deleted: true,
-      observedOutputs: {
-        dom: document.documentElement.outerHTML,
-        ipc: ipcOutputs,
-        status: await originalInvoke("ai_host_status"),
-      },
     });
   } catch (error) {
     report({ step: "failed", stage, reason: "acceptance_flow_failed" });
