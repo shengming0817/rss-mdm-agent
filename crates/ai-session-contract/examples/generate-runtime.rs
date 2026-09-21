@@ -41,6 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     types.add_root_schema(schema)?;
     let mut file: syn::File = syn::parse2(types.to_stream())?;
     box_command_record(&mut file)?;
+    let constants = singleton_constants(&file);
     let mut debug = Vec::new();
     for item in &mut file.items {
         // typify does not emit documentation for enum variants. Their parent schema
@@ -96,9 +97,70 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     println!(
         "// @generated from packages/ai-contract/schema/runtime.schema.json. Do not edit.\n{}",
-        quote! { #file #(#debug)* }
+        quote! { #file #(#debug)* #(#constants)* }
     );
     Ok(())
+}
+
+// ref: typify-impl 0.8 type_entry.rs: numeric singleton schemas are validated
+// newtypes. Expose their sole valid value without weakening deserialization.
+fn singleton_constants(file: &syn::File) -> Vec<syn::ItemImpl> {
+    let mut result = Vec::new();
+    for item in &file.items {
+        let syn::Item::Impl(implementation) = item else {
+            continue;
+        };
+        let Some((_, trait_path, _)) = &implementation.trait_ else {
+            continue;
+        };
+        if trait_path
+            .segments
+            .last()
+            .is_none_or(|s| s.ident != "TryFrom")
+        {
+            continue;
+        }
+        for member in &implementation.items {
+            let syn::ImplItem::Fn(function) = member else {
+                continue;
+            };
+            if function.sig.ident != "try_from" {
+                continue;
+            }
+            let Some(syn::Stmt::Expr(syn::Expr::If(check), _)) = function.block.stmts.first()
+            else {
+                continue;
+            };
+            let syn::Expr::Unary(negated) = &*check.cond else {
+                continue;
+            };
+            let syn::Expr::MethodCall(contains) = &*negated.expr else {
+                continue;
+            };
+            let syn::Expr::Array(values) = &*contains.receiver else {
+                continue;
+            };
+            if contains.method != "contains" || values.elems.len() != 1 {
+                continue;
+            }
+            let value = &values.elems[0];
+            if !matches!(
+                value,
+                syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Int(_) | syn::Lit::Bool(_),
+                    ..
+                })
+            ) {
+                continue;
+            }
+            let name = &implementation.self_ty;
+            result.push(syn::parse_quote! { impl #name {
+                #[doc = "The sole value permitted by the canonical schema."]
+                pub const VALUE: Self = Self(#value);
+            }});
+        }
+    }
+    result
 }
 
 // typify 0.8 deliberately discards const_value (convert.rs). A singleton enum

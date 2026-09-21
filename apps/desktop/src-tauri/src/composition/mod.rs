@@ -11,3 +11,7 @@ pub mod users;
 pub mod credentials;
 
 mod control;
+
+pub mod diagnostics;
+mod host;
+mod runtime_package;

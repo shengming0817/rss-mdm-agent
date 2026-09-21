@@ -1,7 +1,7 @@
 import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fixtureSession } from "../../packages/ai-contract/dist/testing/index.js";
 import { workspaceIdentity } from "../../packages/ai-contract/dist/session.js";
@@ -129,6 +129,17 @@ export async function createProvider({ configuration, tools }) {
           binding,
           acknowledgement: { type: "steer" },
         };
+      if (["verification_auth", "verification_model"].includes(scenario))
+        return {
+          certainty: "not_sent",
+          error: {
+            code:
+              scenario === "verification_auth"
+                ? "authentication_required"
+                : "unsupported_capability",
+            retry: "never",
+          },
+        };
       if (scenario === "block") while (true) {}
       current = {
         ...binding,
@@ -160,36 +171,57 @@ export async function createProvider({ configuration, tools }) {
             request: { question: "Continue?", options: ["yes", "no"] },
           },
         });
-      if (tools)
+      if (tools && scenario !== "no_tool_probe")
         void tools
           .propose(
-            { name: "fixture", arguments: {} },
+            {
+              name:
+                scenario === "tool_probe" || scenario === "empty_tool_probe"
+                  ? "connection_probe"
+                  : "fixture",
+              arguments: {},
+            },
             { timeoutMs: 1000, signal: new AbortController().signal },
           )
           .then((result) => trace("tool-result", { ok: result.ok }));
       if (command.input.text === "flood") {
         let count = 0;
         const timer = setInterval(() => {
-          if (closed || run.done || count++ >= 500) {
+          if (closed || run.done) {
             clearInterval(timer);
             return;
           }
+          // One chunk per consuming peer acknowledgement: fill the paused
+          // subscriber without overflowing the independent worker IPC queue.
+          const credit = Number(
+            readFileSync(
+              join(configuration.workingDirectory, "flood-credit"),
+              "utf8",
+            ),
+          );
+          if (credit <= count || !Number.isSafeInteger(credit)) return;
+          count += 1;
           emit(run, {
             type: "delta",
             messageId: "flood",
             text: "x".repeat(8192),
           });
-        }, 1);
+        }, 5);
       }
       if (
         command.input.text === "quick" ||
+        scenario === "tool_probe" ||
+        scenario === "no_tool_probe" ||
+        scenario === "empty_tool_probe" ||
+        scenario === "empty_probe" ||
         command.input.text === "Reply with OK only. Do not use any tools."
       )
         setTimeout(() => {
-          emit(run, {
-            type: "event",
-            body: { type: "text", messageId: "message", text: "completed" },
-          });
+          if (!["empty_probe", "empty_tool_probe"].includes(scenario))
+            emit(run, {
+              type: "event",
+              body: { type: "text", messageId: "message", text: "completed" },
+            });
           if (
             scenario === "probe_reject" &&
             command.input.text === "Reply with OK only. Do not use any tools."

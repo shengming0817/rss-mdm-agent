@@ -113,6 +113,13 @@ try {
     JSON.stringify(
       {
         status: deliverable ? "passed" : "failed",
+        desktopProtocol: JSON.parse(
+          readFileSync(
+            join(root, "packages/ai-contract/schema/runtime.schema.json"),
+            "utf8",
+          ),
+        ).$defs.HostHealth.properties.protocol.const,
+        contractVersion: 5,
         behaviorPassed,
         source: { start, end },
         node: { version, target, archiveSha256: sha256 },

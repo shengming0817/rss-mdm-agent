@@ -944,3 +944,69 @@ test("duplicate option labels are denied before a provider callback is admitted"
     await h.adapter.close(budget());
   }
 });
+
+for (const [error, expected] of [
+  ["authentication_failed", "authentication_required"],
+  ["cloud_credential_error", "authentication_required"],
+  ["model_not_found", "unsupported_capability"],
+  ["invalid_request", "invalid_input"],
+  ["rate_limit", "limit_exceeded"],
+  ["max_output_tokens", "limit_exceeded"],
+  ["billing_error", "limit_exceeded"],
+  ["oauth_org_not_allowed", "permission_denied"],
+  ["account_on_hold", "permission_denied"],
+  ["verification_required", "permission_denied"],
+  ["overloaded", "unavailable"],
+  ["server_error", "unavailable"],
+  ["unknown", "unavailable"],
+]) {
+  test(`Claude ${error} is one closed failure and cannot be followed by successful content`, async () => {
+    const h = harness(),
+      b = await create(h),
+      c = fixtureCommand();
+    const sent = await h.adapter.dispatch(b, c, fixtureAttempt(b, c), budget());
+    try {
+      const failed = {
+        type: "assistant",
+        session_id: b.nativeSessionId,
+        uuid: "message-error",
+        parent_tool_use_id: null,
+        error,
+        message: {
+          id: "error-message",
+          content: [{ type: "text", text: "CANARY_RAW_ERROR" }],
+        },
+      };
+      h.output.push(failed);
+      h.output.push(failed);
+      h.output.push({
+        ...failed,
+        error: undefined,
+        message: {
+          id: "late-content",
+          content: [{ type: "text", text: "CANARY_LATE_CONTENT" }],
+        },
+      });
+      h.output.push({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        session_id: b.nativeSessionId,
+        user_message_uuid: sent.binding.nativeRequestId,
+      });
+      const events = await Array.fromAsync(
+        h.adapter.observe(sent.binding, budget()),
+      );
+      assert.deepEqual(
+        events
+          .filter((e) => e.body?.type === "error")
+          .map((e) => e.body.failure),
+        [{ code: expected, retry: "never" }],
+      );
+      assert.equal(events.at(-1).body.outcome, "failed");
+      assert.equal(JSON.stringify(events).includes("CANARY"), false);
+    } finally {
+      await h.adapter.close(budget());
+    }
+  });
+}

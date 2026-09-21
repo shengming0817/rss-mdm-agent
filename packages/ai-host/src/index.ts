@@ -686,8 +686,26 @@ export class SessionHost implements HostPort {
           secret,
         );
         const dispose = this.ownDispose(resolved.dispose);
+        let probing = false,
+          toolObserved = false,
+          toolViolation = false;
         const tools: ToolEndpoint = {
-          propose: async () => fail("permission_denied"),
+          propose: async (proposal) => {
+            if (
+              !probing ||
+              toolObserved ||
+              proposal.name !== "connection_probe" ||
+              Object.keys(proposal.arguments).length !== 0
+            ) {
+              toolViolation = true;
+              return fail("permission_denied");
+            }
+            toolObserved = true;
+            return ok({
+              disposition: "returned",
+              text: "Connection probe passed. No device operation was performed.",
+            });
+          },
         };
         const worker = new WorkerPort(
           this.options.launchFences,
@@ -730,10 +748,16 @@ export class SessionHost implements HostPort {
             input: {
               type: "prompt",
               policy: "queue_next",
-              text: "Reply with OK only. Do not use any tools.",
+              text:
+                connection.profile === "controlled_tools"
+                  ? 'Call rss_host.propose once with name "connection_probe" and arguments {}. Then reply OK. This verifies the connection only; do not request any device operation.'
+                  : "Reply with OK only. Do not use any tools.",
             },
           };
           const binding = verified.binding;
+          // This verification bridge exposes only the harmless probe, never device execution.
+          worker.admitTools();
+          probing = true;
           const sent = await worker.dispatch(
             binding,
             command,
@@ -749,16 +773,42 @@ export class SessionHost implements HostPort {
             },
             b,
           );
-          if (sent.certainty !== "submitted")
-            return fail("authentication_required");
-          let completed = false;
+          if (sent.certainty === "not_sent")
+            return { ok: false, error: sent.error };
+          if (sent.certainty !== "submitted") return fail("unavailable");
+          let completed = false,
+            responseObserved = false;
+          let failure: import("@rss-mdm-agent/ai-contract").Failure = {
+            code: "unavailable",
+            retry: "never",
+          };
           for await (const item of worker.observe(sent.binding, b)) {
-            if (item.type === "event" && item.body.type === "terminal") {
+            if (item.type !== "event" || item.commandId !== command.commandId)
+              continue;
+            if (item.body.type === "text" && item.body.text.trim())
+              responseObserved = true;
+            if (item.body.type === "error") failure = item.body.failure;
+            if (item.body.type === "terminal") {
               completed = item.body.outcome === "completed";
+              if (item.body.outcome === "cancelled")
+                failure = { code: "verification_cancelled", retry: "never" };
+              if (item.body.outcome === "refused")
+                failure = { code: "verification_refused", retry: "never" };
+              if (
+                ["max_tokens", "max_turn_requests"].includes(item.body.outcome)
+              )
+                failure = { code: "limit_exceeded", retry: "never" };
               break;
             }
           }
-          if (!completed) return fail("authentication_required");
+          probing = false;
+          if (!completed || !responseObserved)
+            return { ok: false, error: failure };
+          if (
+            connection.profile === "controlled_tools" &&
+            (!toolObserved || toolViolation)
+          )
+            return fail("unsupported_capability");
           const stopped = requireValue(await worker.close(b));
           if (
             !stopped.processStopped ||

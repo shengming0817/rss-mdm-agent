@@ -17,7 +17,6 @@ import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { sourceState, sameCommittedSource } from "./source-state.mjs";
 import { run, verifyRuntimeIntegrity } from "./ai-host-artifacts.mjs";
-import { checkDesktopBundle } from "./check-desktop-bundle.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url)),
   start = sourceState(root);
 if (process.platform !== "darwin" || process.arch !== "arm64")
@@ -32,16 +31,14 @@ if (
 verifyRuntimeIntegrity(artifact, manifest.runtimeTreeSha256);
 const directory = realpathSync(mkdtempSync(join(tmpdir(), "rss-desktop-"))),
   report = join(directory, "result.json");
-const model = process.env.CODEX_SMOKE_MODEL ?? "gpt-5.5";
 writeFileSync(
   join(directory, "acceptance.json"),
   JSON.stringify({
     directory: process.env.CODEX_HOME ?? join(homedir(), ".codex"),
-    model,
   }),
   { mode: 0o600 },
 );
-let behavior, failure, facts, exit, bundle;
+let behavior, failure, facts, exit;
 try {
   run("pnpm", ["build"], root);
   run(
@@ -90,16 +87,22 @@ try {
       .prepare("SELECT json FROM sessions")
       .all()
       .map((row) => JSON.parse(row.json));
-    assert.equal(sessions.length, 2);
+    assert.equal(sessions.length, 3);
     for (const key of [
       "userIsolation",
       "oldGenerationRejected",
       "originalTaskContinued",
       "originalHistoryRestored",
+      "sameUserReconnected",
+      "hostRestarted",
+      "restartPreservedTask",
+      "newModelSessionAfterRestart",
     ])
       assert.equal(behavior[key], true);
     const session = sessions.find(
-      (s) => s.namespace.principalId === behavior.alice,
+      (s) =>
+        s.namespace.principalId === behavior.alice &&
+        s.namespace.sessionId !== behavior.restartSession,
     );
     const other = sessions.find(
       (s) => s.namespace.principalId === behavior.bob,
@@ -118,9 +121,13 @@ try {
       .prepare("SELECT json FROM commands")
       .all()
       .map((row) => JSON.parse(row.json));
-    assert.equal(commands.length, 1);
-    assert.equal(commands[0].state, "terminal");
-    assert.equal(commands[0].outcome, "completed");
+    assert.equal(commands.length, 2);
+    assert.ok(
+      commands.every(
+        (command) =>
+          command.state === "terminal" && command.outcome === "completed",
+      ),
+    );
     const deliveries = ai
       .prepare("SELECT status,count(*) n FROM deliveries GROUP BY status")
       .all();
@@ -170,7 +177,6 @@ try {
     ai.close();
     execution.close();
   }
-  bundle = await checkDesktopBundle(root, manifest.runtimeTreeSha256);
 } catch (error) {
   failure = String(error);
   process.exitCode = 1;
@@ -179,7 +185,6 @@ try {
     passed =
       !failure &&
       Boolean(facts) &&
-      Boolean(bundle?.bundledHostReady) &&
       behavior?.step === "passed" &&
       sameCommittedSource(start, end);
   mkdirSync(join(root, ".local-ci-runs"), { recursive: true });
@@ -198,13 +203,12 @@ try {
           .update(readFileSync(join(artifact, "manifest.json")))
           .digest("hex"),
         authentication: "existing_user_config",
-        model,
+        modelSelection: "official_configuration_default",
         modelFixture: false,
         executor: "S1 deterministic test runner",
         behavior,
         facts,
         exit,
-        bundle,
         failure,
       },
       null,

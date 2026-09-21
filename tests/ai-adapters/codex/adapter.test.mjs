@@ -135,6 +135,7 @@ async function setup(t, overrides = {}, admit = true) {
                     forkedFromId: thread.id,
                   }
                 : thread,
+            model: resolved.model ?? "fixture",
             approvalPolicy: "on-request",
             sandbox: { type: "readOnly", networkAccess: false },
             environments: [],
@@ -967,3 +968,109 @@ test("Host owns fork admission, child cleanup and the three explicit ports", asy
     assert.equal(retry.certainty, "not_created");
   }
 });
+
+test("explicit models cannot silently fall back and actual returned identity is required", async (t) => {
+  const f = await setup(t, {}, false);
+  f.fault((method) =>
+    method === "thread/start"
+      ? { thread: f.thread, model: "another-model" }
+      : undefined,
+  );
+  const result = await VerifiedProviderSession.open(
+    f.adapter,
+    f.configuration,
+    budget(),
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, "unsupported_capability");
+  assert.equal(
+    f.calls.find((c) => c.method === "thread/start").params
+      .allowProviderModelFallback,
+    false,
+  );
+});
+
+const failures = [
+  ["unauthorized", "authentication_required"],
+  ["badRequest", "invalid_input"],
+  ["usageLimitExceeded", "limit_exceeded"],
+  ["rateLimitExceeded", "limit_exceeded"],
+  ["sessionBudgetExceeded", "limit_exceeded"],
+  ["other", "unavailable"],
+  ["internalServerError", "unavailable"],
+  ...[
+    "httpConnectionFailed",
+    "responseStreamConnectionFailed",
+    "responseStreamDisconnected",
+    "responseTooManyFailedAttempts",
+  ].flatMap((tag) =>
+    [
+      [401, "authentication_required"],
+      [400, "invalid_input"],
+      [403, "permission_denied"],
+      [429, "limit_exceeded"],
+      [500, "unavailable"],
+      [null, "unavailable"],
+    ].map(([httpStatusCode, code]) => [{ [tag]: { httpStatusCode } }, code]),
+  ),
+];
+for (const path of ["live", "before_ack"]) {
+  for (const [info, expected] of failures) {
+    test(`closed Codex failure ${path} ${JSON.stringify(info)}`, async (t) => {
+      const s = await setup(t),
+        command = fixtureCommand("failure"),
+        attempt = s.attempt("failure");
+      const error = {
+        message: "CANARY_RAW_AUTH",
+        codexErrorInfo: info,
+        additionalDetails: null,
+      };
+      if (path === "before_ack")
+        s.fault(async (method, params) => {
+          if (method !== "turn/start") return;
+          const failed = {
+            ...turn("failed-turn", params.clientUserMessageId, "failed"),
+            error,
+          };
+          s.thread.turns.push(failed);
+          s.emit("turn/completed", { threadId: s.thread.id, turn: failed });
+          await new Promise(setImmediate);
+          return { turn: failed };
+        });
+      const submitted = await s.adapter.dispatch(
+        s.admitted.binding,
+        command,
+        attempt,
+        budget(),
+      );
+      if (path === "live") {
+        assert.equal(submitted.certainty, "submitted");
+        Object.assign(s.thread.turns[0], { status: "failed", error });
+        s.emit("turn/completed", {
+          threadId: s.thread.id,
+          turn: s.thread.turns[0],
+        });
+        s.emit("turn/completed", {
+          threadId: s.thread.id,
+          turn: s.thread.turns[0],
+        });
+      } else assert.equal(submitted.certainty, "submitted");
+      const events = [];
+      for await (const event of s.adapter.observe(
+        s.admitted.binding,
+        budget(),
+      )) {
+        events.push(event);
+        if (event.body?.type === "terminal") break;
+      }
+      assert.deepEqual(
+        events
+          .filter((e) => e.body?.type === "error")
+          .map((e) => e.body.failure),
+        [{ code: expected, retry: "never" }],
+      );
+      assert.equal(events.at(-1).body.outcome, "failed");
+      assert.equal(JSON.stringify(events).includes("CANARY"), false);
+    });
+  }
+}

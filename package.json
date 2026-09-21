@@ -50,6 +50,7 @@
     "check:ai-host-consumer": "node scripts/check-ai-host-consumer.mjs",
     "bundle:ai-host": "node scripts/bundle-ai-host.mjs",
     "stage:desktop-runtime": "node scripts/stage-desktop-runtime.mjs",
+    "check:desktop-bundle": "node scripts/check-desktop-bundle.mjs",
     "check:desktop-native": "node scripts/check-desktop-native.mjs",
     "test:ai-acceptance": "pnpm build:ai-host && node scripts/check-ai-acceptance.mjs"
   },

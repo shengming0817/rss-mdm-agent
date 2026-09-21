@@ -909,3 +909,113 @@ test("user fence settles persistent offline queues across pages and propagates d
     );
   }
 });
+
+test("verification preserves definite failures and never calls unknown acceptance an authentication failure", async (t) => {
+  for (const [scenario, expected] of [
+    ["unknown", "unavailable"],
+    ["empty_probe", "unavailable"],
+    ["verification_auth", "authentication_required"],
+    ["verification_model", "unsupported_capability"],
+  ]) {
+    const root = await mkdtemp(join(tmpdir(), "rss-verification-"));
+    const store = unwrap(
+      openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
+    );
+    const host = unwrap(
+      await createHost({
+        store,
+        launchFences: store,
+        delivery: null,
+        resolve: async (_caller, options, namespace) => ({
+          configuration: {
+            namespace,
+            provider: options.provider,
+            config: options.config,
+            workingDirectory: root,
+            permissions: "tools_disabled",
+          },
+          artifact: new URL(
+            `./provider.mjs?scenario=${scenario}`,
+            import.meta.url,
+          ).href,
+        }),
+      }),
+    );
+    try {
+      const result = await host.saveConnection(
+        caller,
+        connection("test"),
+        null,
+        budget(),
+      );
+      assert.equal(result.ok, false);
+      assert.equal(result.error.code, expected);
+      assert.equal((await store.connection(caller, "test")).ok, false);
+    } finally {
+      await host.close(budget());
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test("controlled connection verification requires the dedicated harmless tool call", async () => {
+  for (const [toolWorks, empty] of [
+    [false, false],
+    [true, false],
+    [true, true],
+  ]) {
+    const root = await mkdtemp(join(tmpdir(), "rss-tool-probe-"));
+    const store = unwrap(
+      openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
+    );
+    const host = unwrap(
+      await createHost({
+        store,
+        launchFences: store,
+        delivery: null,
+        resolve: async (_caller, options, namespace) => ({
+          configuration: {
+            namespace,
+            provider: options.provider,
+            config: options.config,
+            workingDirectory: root,
+            permissions: "host_mediated",
+          },
+          artifact: new URL(
+            `./provider.mjs?scenario=${empty ? "empty_tool_probe" : toolWorks ? "tool_probe" : "no_tool_probe"}`,
+            import.meta.url,
+          ).href,
+          admission: {
+            verifier: {
+              verify: async () => ({
+                ok: true,
+                value: { platform: "fixture", verificationRef: "fixture-only" },
+              }),
+            },
+          },
+        }),
+      }),
+    );
+    try {
+      const result = await host.saveConnection(
+        caller,
+        { ...connection("probe"), profile: "controlled_tools" },
+        null,
+        budget(),
+      );
+      assert.equal(result.ok, toolWorks && !empty);
+      if (!result.ok)
+        assert.equal(
+          result.error.code,
+          empty ? "unavailable" : "unsupported_capability",
+        );
+      assert.equal(
+        (await store.connection(caller, "probe")).ok,
+        toolWorks && !empty,
+      );
+    } finally {
+      await host.close(budget());
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+});

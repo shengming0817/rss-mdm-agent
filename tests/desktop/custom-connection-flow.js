@@ -1,6 +1,19 @@
 // Injected only by custom-connection-acceptance into the real bundled WebView.
 (async () => {
   let stage = "load";
+  const ipcOutputs = [];
+  const originalInvoke = window.__TAURI_INTERNALS__.invoke;
+  // Tauri's invoke is immutable. Observe the real callbacks without replacing
+  // transport or replies; this hook exists only in the acceptance WebView.
+  const callbacks = window.__TAURI_INTERNALS__.callbacks;
+  const register = callbacks.set.bind(callbacks);
+  let overflow = false;
+  callbacks.set = (id, callback) =>
+    register(id, (value) => {
+      if (ipcOutputs.length < 512) ipcOutputs.push(value);
+      else overflow = true;
+      return callback(value);
+    });
   const report = (value) => {
     document.title = "RSS_CUSTOM_CONNECTION:" + JSON.stringify(value);
   };
@@ -48,11 +61,12 @@
     await wait(() => document.querySelector(".self-service .hero"));
 
     progress("open_connections");
-    await click("AI 助手");
+    await click("设置");
     const panel = await wait(() =>
-      document.querySelector(".connections details"),
+      document.querySelector(".settings .connections"),
     );
-    panel.open = true;
+    for (const details of panel.querySelectorAll("details"))
+      details.open = true;
     set(panel, "名称", "Local DeepSeek protocol fixture");
     set(panel, "服务", "deepseek");
     await wait(() =>
@@ -84,6 +98,22 @@
           element.textContent.includes("Local DeepSeek protocol fixture"),
         ),
     );
+    window.__RSS_OBSERVED_OUTPUTS__ = {
+      dom: document.documentElement.outerHTML,
+      ipc: ipcOutputs,
+      status: await originalInvoke("ai_host_status"),
+    };
+    if (
+      overflow ||
+      !ipcOutputs.some(
+        (value) =>
+          value?.ok === true &&
+          value.value?.kind === "connection" &&
+          value.value.status === "ready" &&
+          value.value.name === "Local DeepSeek protocol fixture",
+      )
+    )
+      throw new Error("save IPC output not observed");
     report({
       step: "passed",
       secureEntry: true,

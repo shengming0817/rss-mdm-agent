@@ -1,8 +1,8 @@
 # AI 助手页面
 
-`apps/desktop/src/assistant` 消费 A04 公共客户端与 renderer，和自助服务共享 AppShell / NavigationList。首页仍是默认入口；切导航仅改变可见区域，会话控制器、草稿、原回调和附着订阅存活到应用卸载。真实服务由 `AssistantServices` 注入；默认 Tauri 入口注入真实本地组合，连接失败明确显示未连接；浏览器没有原生注入。C20 的持久执行与窗口生命周期见[桌面指南](desktop-development.md)。`App.vue` 持有测试用户选择，`Workspace.vue` 组合根注入随机 ID；assistant 与 self-service 的相对导入各自封闭在所属目录，不能经兄弟页面或组合根反向取得能力。
+`apps/desktop/src/assistant` 消费 A04 公共客户端与 renderer，和自助服务共享 AppShell / NavigationList。首页仍是默认入口；切导航仅改变可见区域，会话控制器、草稿、原回调和附着订阅存活到应用卸载。真实服务由 `AssistantServices` 注入；默认 Tauri 入口注入真实本地组合，连接失败明确显示未连接；浏览器没有原生注入。C20 的持久执行与窗口生命周期见[桌面指南](desktop-development.md)。`App.vue` 持有稳定应用壳、测试用户选择和 Host 状态；`Workspace.vue` 按用户 generation 持有会话控制器。设置页复用该控制器的连接目录与偏好，AI 页只保留当前会话连接选择；两者不重建配置权威。
 
-`AssistantServices.connect(options, signal)` 与 `taskDetails(id, signal)` 必须把 owner signal 传给实际 I/O。控制器在重连、新详情查询和卸载时取消旧请求，并对连接/初始化与详情查询分别设置 15 秒等待上限；即使服务忽略 signal，页面也会结束等待并关闭迟到的客户端。页面超时不证明远端操作或进程已终止。
+`AssistantServices.connect(options, signal)` 与 `taskDetails(id, signal)` 必须把 owner signal 传给实际 I/O。控制器在同用户重连、新详情查询和卸载时取消旧视图请求，并对连接/初始化与详情查询分别设置 15 秒等待上限；即使服务忽略 signal，页面也会结束等待并关闭迟到的客户端。页面超时不证明远端操作或进程已终止。
 
 ## 开发与验收
 
@@ -53,3 +53,11 @@ pnpm test
 AI 命令队列由 Host 持有，普通 prompt 在当前轮运行时仍可排队，不读取 provider queue capability。客户端分别呈现 acknowledged 控制确认、cancelled 未派发排队取消与普通 prompt 的模型终态；已结算控制命令不占用 busy 状态。
 
 连接面板通过 V5 个人连接 API 管理命名配置、默认选择和历史预览，API 凭据仅通过原生安全输入按钮填写；provider、规范化 endpoint 或 credential type 改变时必须重新输入。验证会发起一条简短模型请求；保存失败不覆盖旧连接。历史预览绑定发起时的 session/connection，请求完成前切换会话即丢弃旧结果；全部历史受 64 KiB 契约预算约束。产品会话没有 provider 阶段时能力显示未知，第一条已确认输入才创建阶段；连接切换等待旧队列完成。用户切换期间保留并 inert 原 generation 工作区，只有 Native 成功提交新 generation 后才卸载旧 controller；失败时恢复原编辑态。
+
+## 设置与重连
+
+个人连接管理和原生密钥输入从“设置 → AI 连接”进入，验证并保存是唯一写入路径。AI 页面保留新建会话、当前连接、新上下文及明确的历史带入预览。设置页和首次引导使用同一表单。
+
+原生环境未选择用户时，导航与正文保持在设置页。Host 状态读取错误与重启、导出反馈分开保存；下一次成功读取只清除读取错误，不抹去已完成操作的反馈。
+
+同用户重连保留已加载历史、草稿和未知命令身份，清理旧权限回调、历史带入确认和订阅。旧视图标记为 detached，权威恢复完成前只读；重连从不自动提交请求。当前会话先恢复，其余会话选中时恢复，列表继续分页。用户工作区销毁则显式清空全部缓存和回调。

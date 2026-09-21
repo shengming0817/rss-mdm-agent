@@ -1,8 +1,16 @@
 //! Anonymous native↔Host control transport. No local listener or discoverable socket path.
-use super::credentials::{KeyBackend, MasterKey};
+use super::credentials::MasterKey;
 use crate::self_service::{error, Result};
+use ai_session_contract::{
+    Counter, NativeAttachData, NativeCall, NativeCallData, NativeCallKind, NativeCallSchemaVersion,
+    NativeControlFrame, NativeDetachData, NativeEvent, NativeEventKind, NativeEventSchemaVersion,
+    NativeReply, NativeReplyFailureKind, NativeReplyFailureSchemaVersion, NativeReplySuccessKind,
+    NativeReplySuccessSchemaVersion, NativeSaveConnectionData, NativeSuspendData,
+};
 use futures_util::{SinkExt, StreamExt};
-use serde_json::{json, Value};
+#[cfg(test)]
+use serde_json::json;
+use serde_json::Value;
 use std::{
     collections::BTreeMap,
     sync::{
@@ -13,7 +21,7 @@ use std::{
 };
 use tokio::{
     net::{unix::OwnedWriteHalf, UnixStream},
-    sync::{mpsc, oneshot, Semaphore},
+    sync::{mpsc, oneshot},
 };
 use tokio_util::{
     codec::{FramedRead, FramedWrite, LinesCodec},
@@ -29,9 +37,10 @@ pub struct Control {
     views: Mutex<BTreeMap<String, mpsc::Sender<Value>>>,
     sequence: AtomicU64,
     stop: CancellationToken,
+    reader_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 impl Control {
-    pub fn start<B: KeyBackend + 'static>(stream: UnixStream, backend: B) -> Arc<Self> {
+    pub fn start(stream: UnixStream, master: Arc<MasterKey>) -> Arc<Self> {
         let (reader, writer) = stream.into_split();
         let control = Arc::new(Self {
             writer: tokio::sync::Mutex::new(FramedWrite::new(
@@ -42,11 +51,11 @@ impl Control {
             views: Mutex::new(BTreeMap::new()),
             sequence: AtomicU64::new(1),
             stop: CancellationToken::new(),
+            reader_task: Mutex::new(None),
         });
         let task = control.clone();
-        let master = Arc::new(MasterKey::new(backend));
-        let credential = Arc::new(Semaphore::new(1));
-        tokio::spawn(async move {
+        let credential = master.permit.clone();
+        let reader_task = tokio::spawn(async move {
             let mut reader = FramedRead::new(reader, LinesCodec::new_with_max_length(524288));
             loop {
                 let line = tokio::select! { _ = task.stop.cancelled() => break, line = reader.next() => match line { Some(Ok(line)) => line, _ => break } };
@@ -103,7 +112,7 @@ impl Control {
                                 permit = tokio::time::timeout(Duration::from_secs(5), credential.acquire_owned()) => match permit {
                                     Ok(Ok(permit)) => permit,
                                     _ => {
-                                        let _ = response.write(json!({"schemaVersion":5,"kind":"nativeReply","id":id,"ok":false})).await;
+                                        let _ = response.write(NativeControlFrame::Reply(NativeReply::Failure { id: Counter(id as i64), kind: NativeReplyFailureKind::NativeReply, schema_version: NativeReplyFailureSchemaVersion::VALUE, ok: false })).await;
                                         return;
                                     }
                                 }
@@ -120,14 +129,27 @@ impl Control {
                                 value = tokio::time::timeout(Duration::from_secs(10), receiver) => value,
                             };
                             let reply = match value {
-                                Ok(Ok(Ok(value))) => {
-                                    json!({"schemaVersion":5,"kind":"nativeReply","id":id,"ok":true,"value":value})
-                                }
-                                _ => {
-                                    json!({"schemaVersion":5,"kind":"nativeReply","id":id,"ok":false})
-                                }
+                                Ok(Ok(Ok(value))) => NativeReply::Success {
+                                    id: Counter(id as i64),
+                                    kind: NativeReplySuccessKind::NativeReply,
+                                    schema_version: NativeReplySuccessSchemaVersion::VALUE,
+                                    ok: true,
+                                    value: Value::Array(
+                                        value.into_iter().map(Value::from).collect(),
+                                    ),
+                                },
+                                _ => NativeReply::Failure {
+                                    id: Counter(id as i64),
+                                    kind: NativeReplyFailureKind::NativeReply,
+                                    schema_version: NativeReplyFailureSchemaVersion::VALUE,
+                                    ok: false,
+                                },
                             };
-                            if response.write(reply).await.is_err() {
+                            if response
+                                .write(NativeControlFrame::Reply(reply))
+                                .await
+                                .is_err()
+                            {
                                 response.close();
                             }
                         });
@@ -137,19 +159,11 @@ impl Control {
             }
             task.close();
         });
+        *control.reader_task.lock().unwrap() = Some(reader_task);
         control
     }
-    async fn write(&self, frame: Value) -> Result<()> {
-        let record = ai_session_contract::decode(
-            &serde_json::to_vec(&frame).map_err(|_| unavailable())?,
-            &ai_session_contract::Limits {
-                max_bytes: 524288,
-                max_text_bytes: 262144,
-                max_depth: 32,
-                max_nodes: 16384,
-            },
-        )
-        .map_err(|_| unavailable())?;
+    async fn write(&self, frame: NativeControlFrame) -> Result<()> {
+        let record = ai_session_contract::WireRecord::NativeControlFrame(frame);
         let bytes = String::from_utf8(
             ai_session_contract::encode(
                 &record,
@@ -177,7 +191,11 @@ impl Control {
         .await
         .map_err(|_| unavailable())?
     }
-    async fn call(&self, method: &str, data: Value, timeout: Duration) -> Result<Value> {
+    async fn call(
+        &self,
+        make: impl FnOnce(Counter) -> NativeCall,
+        timeout: Duration,
+    ) -> Result<Value> {
         let id = self.sequence.fetch_add(1, Ordering::Relaxed);
         let (sender, receiver) = oneshot::channel();
         {
@@ -188,9 +206,9 @@ impl Control {
             pending.insert(id, sender);
         }
         let result = async {
-            self.write(
-                json!({"schemaVersion":5,"kind":"nativeCall","id":id,"method":method,"data":data}),
-            )
+            self.write(NativeControlFrame::Call(make(Counter(
+                i64::try_from(id).map_err(|_| unavailable())?,
+            ))))
             .await?;
             tokio::time::timeout(timeout, receiver)
                 .await
@@ -201,15 +219,51 @@ impl Control {
         self.pending.lock().unwrap().remove(&id);
         result
     }
+    pub async fn health(&self) -> Result<()> {
+        let reply = self
+            .call(
+                |id| NativeCall::Health {
+                    id,
+                    kind: NativeCallKind::NativeCall,
+                    schema_version: NativeCallSchemaVersion::VALUE,
+                    data: NativeCallData {},
+                },
+                Duration::from_secs(15),
+            )
+            .await?;
+        match ai_session_contract::decode(
+            &serde_json::to_vec(&reply).map_err(|_| unavailable())?,
+            &ai_session_contract::Limits {
+                max_bytes: 4096,
+                max_text_bytes: 2048,
+                max_depth: 8,
+                max_nodes: 64,
+            },
+        ) {
+            Ok(ai_session_contract::WireRecord::HostHealth(_)) => Ok(()),
+            _ => Err(crate::self_service::error(
+                "unsupported_version",
+                "AI Host 协议版本不兼容",
+            )),
+        }
+    }
     pub async fn attach(
         &self,
         channel: &str,
         context: &ai_session_contract::UserContext,
         timeout: Duration,
     ) -> Result<Value> {
+        let data = NativeAttachData {
+            channel: channel.try_into().map_err(|_| unavailable())?,
+            context: context.clone(),
+        };
         self.call(
-            "attach",
-            json!({"channel":channel,"context":context}),
+            |id| NativeCall::Attach {
+                id,
+                data,
+                kind: NativeCallKind::NativeCall,
+                schema_version: NativeCallSchemaVersion::VALUE,
+            },
             timeout,
         )
         .await
@@ -219,12 +273,33 @@ impl Control {
         context: &ai_session_contract::UserContext,
         timeout: Duration,
     ) -> Result<Value> {
-        self.call("suspend", json!({"context":context}), timeout)
-            .await
+        self.call(
+            |id| NativeCall::Suspend {
+                id,
+                data: NativeSuspendData {
+                    context: context.clone(),
+                },
+                kind: NativeCallKind::NativeCall,
+                schema_version: NativeCallSchemaVersion::VALUE,
+            },
+            timeout,
+        )
+        .await
     }
     pub async fn detach_remote(&self, channel: &str, timeout: Duration) -> Result<Value> {
-        self.call("detach", json!({"channel":channel}), timeout)
-            .await
+        let data = NativeDetachData {
+            channel: channel.try_into().map_err(|_| unavailable())?,
+        };
+        self.call(
+            |id| NativeCall::Detach {
+                id,
+                data,
+                kind: NativeCallKind::NativeCall,
+                schema_version: NativeCallSchemaVersion::VALUE,
+            },
+            timeout,
+        )
+        .await
     }
     pub async fn save_connection(
         &self,
@@ -234,9 +309,25 @@ impl Control {
         secret: Option<String>,
         timeout: Duration,
     ) -> Result<Value> {
+        let data = NativeSaveConnectionData {
+            generation: generation.try_into().map_err(|_| unavailable())?,
+            connection,
+            expected: expected
+                .map(|value| i64::try_from(value).map(Counter))
+                .transpose()
+                .map_err(|_| unavailable())?,
+            secret: secret
+                .map(TryInto::try_into)
+                .transpose()
+                .map_err(|_| unavailable())?,
+        };
         self.call(
-            "saveConnection",
-            json!({"generation":generation,"connection":connection,"expected":expected,"secret":secret}),
+            |id| NativeCall::SaveConnection {
+                id,
+                data,
+                kind: NativeCallKind::NativeCall,
+                schema_version: NativeCallSchemaVersion::VALUE,
+            },
             timeout,
         )
         .await
@@ -251,11 +342,32 @@ impl Control {
         Ok(receiver)
     }
     pub async fn send(&self, id: &str, message: Value) -> Result<()> {
-        self.write(json!({"schemaVersion":5,"kind":"nativeEvent","channel":id,"message":message}))
-            .await
+        self.write(NativeControlFrame::Event(NativeEvent {
+            schema_version: NativeEventSchemaVersion::VALUE,
+            kind: NativeEventKind::NativeEvent,
+            channel: id.try_into().map_err(|_| unavailable())?,
+            message,
+        }))
+        .await
     }
     pub fn detach(&self, id: &str) {
         self.views.lock().unwrap().remove(id);
+    }
+    pub fn closed(&self) -> bool {
+        self.stop.is_cancelled()
+    }
+    pub async fn shutdown(&self) {
+        self.close();
+        let task = self.reader_task.lock().unwrap().take();
+        if let Some(mut task) = task {
+            if tokio::time::timeout(Duration::from_secs(5), &mut task)
+                .await
+                .is_err()
+            {
+                task.abort();
+                let _ = task.await;
+            }
+        }
     }
     pub fn close(&self) {
         self.stop.cancel();
@@ -268,6 +380,7 @@ impl Control {
 
 #[cfg(test)]
 mod tests {
+    use super::super::credentials::KeyBackend;
     use super::*;
     use futures_util::StreamExt;
     struct SlowKey;
@@ -289,7 +402,7 @@ mod tests {
     #[tokio::test]
     async fn blocking_keychain_does_not_block_events_or_control_shutdown() {
         let (native, peer) = UnixStream::pair().unwrap();
-        let control = Control::start(native, SlowKey);
+        let control = Control::start(native, Arc::new(MasterKey::new(SlowKey)));
         let mut view = control.view("view".into()).unwrap();
         let mut writer = FramedWrite::new(peer, LinesCodec::new_with_max_length(524288));
         writer
@@ -327,7 +440,7 @@ mod tests {
     #[tokio::test]
     async fn master_key_failure_replies_without_leaking_and_keeps_control_live() {
         let (native, peer) = UnixStream::pair().unwrap();
-        let control = Control::start(native, FailedKey);
+        let control = Control::start(native, Arc::new(MasterKey::new(FailedKey)));
         let mut view = control.view("view".into()).unwrap();
         let (reader, writer) = peer.into_split();
         let mut reader = FramedRead::new(reader, LinesCodec::new_with_max_length(524288));
@@ -357,7 +470,7 @@ mod tests {
     #[tokio::test]
     async fn duplicate_native_fields_close_the_strict_control_ingress() {
         let (native, peer) = UnixStream::pair().unwrap();
-        let control = Control::start(native, FailedKey);
+        let control = Control::start(native, Arc::new(MasterKey::new(FailedKey)));
         let mut writer = FramedWrite::new(peer, LinesCodec::new_with_max_length(524288));
         writer
             .send(String::from(
@@ -368,5 +481,52 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(1), control.stop.cancelled())
             .await
             .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod incarnation_tests {
+    use super::super::credentials::{KeyBackend, KeyUnavailable};
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+    struct Slow {
+        calls: Arc<AtomicUsize>,
+    }
+    impl KeyBackend for Slow {
+        fn read(&self) -> std::result::Result<Option<Vec<u8>>, KeyUnavailable> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            std::thread::sleep(Duration::from_millis(300));
+            Ok(None)
+        }
+        fn create(&self, _: &[u8]) -> std::result::Result<(), KeyUnavailable> {
+            Err(KeyUnavailable)
+        }
+    }
+    #[tokio::test]
+    async fn a_cancelled_incarnation_retains_the_shared_key_permit_until_the_native_call_returns() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let master = Arc::new(MasterKey::new(Slow {
+            calls: calls.clone(),
+        }));
+        let (a, pa) = UnixStream::pair().unwrap();
+        let first = Control::start(a, master.clone());
+        let mut wa = FramedWrite::new(pa, LinesCodec::new());
+        wa.send(json!({"schemaVersion":5,"kind":"nativeCall","id":1,"method":"masterKey","data":{"create":false}}).to_string()).await.unwrap();
+        for _ in 0..100 {
+            if calls.load(Ordering::SeqCst) == 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+        first.close();
+        let (b, pb) = UnixStream::pair().unwrap();
+        let second = Control::start(b, master.clone());
+        let mut wb = FramedWrite::new(pb, LinesCodec::new());
+        wb.send(json!({"schemaVersion":5,"kind":"nativeCall","id":2,"method":"masterKey","data":{"create":false}}).to_string()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(master.permit.available_permits(), 0);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        first.shutdown().await;
+        second.shutdown().await;
     }
 }

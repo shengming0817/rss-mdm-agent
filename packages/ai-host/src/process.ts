@@ -84,7 +84,7 @@ export class WorkerPort implements ProviderAgentPort {
       });
     return result;
   }
-  /** Called by the Host only after nominal admission and durable session publication. */
+  /** Called after nominal admission. Execution bridges additionally require durable session publication; verification bridges expose only their harmless probe. */
   admitTools(): void {
     if (!this.closing) this.toolsAdmitted = true;
   }

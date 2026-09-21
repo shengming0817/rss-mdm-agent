@@ -62,6 +62,33 @@ import {
   same,
 } from "./support.js";
 
+function turnFailure(turn: Turn): Failure | undefined {
+  if (!turn.error) return undefined;
+  const info = turn.error.codexErrorInfo;
+  const status =
+    info && typeof info === "object"
+      ? Object.values(info).find(
+          (v) => v && typeof v === "object" && "httpStatusCode" in v,
+        )?.httpStatusCode
+      : undefined;
+  const code =
+    info === "unauthorized" || status === 401
+      ? "authentication_required"
+      : info === "badRequest" || status === 400
+        ? "invalid_input"
+        : status === 403
+          ? "permission_denied"
+          : status === 429 ||
+              [
+                "usageLimitExceeded",
+                "rateLimitExceeded",
+                "sessionBudgetExceeded",
+              ].includes(typeof info === "string" ? info : "")
+            ? "limit_exceeded"
+            : "unavailable";
+  return { code, retry: "never" };
+}
+
 interface Attempt {
   command: Command;
   dispatch: DispatchAttempt;
@@ -123,7 +150,10 @@ export class CodexAdapter implements ProviderAgentPort {
   private uncorrelated: NativeMessage[] = [];
   private uncorrelatedBytes = 0;
   private retainedAttemptBytes = 0;
-  private completedTurns = new Map<string, Outcome>();
+  private completedTurns = new Map<
+    string,
+    { outcome: Outcome; failure?: Failure }
+  >();
   private creationAttempted = false;
   private forkSource?: ProviderForkRequest;
   constructor(
@@ -327,6 +357,7 @@ export class CodexAdapter implements ProviderAgentPort {
           "thread/start",
           {
             ...params,
+            allowProviderModelFallback: false,
             dynamicTools: [],
             environments: [],
             ephemeral: resolved.verification ?? false,
@@ -334,6 +365,12 @@ export class CodexAdapter implements ProviderAgentPort {
           nextBudget(),
         );
       }
+      if (
+        typeof response.model !== "string" ||
+        !response.model ||
+        (resolved.model !== undefined && response.model !== resolved.model)
+      )
+        return fail("unsupported_capability");
       const thread = response.thread;
       this.checkThread(thread, source !== undefined);
       if (
@@ -801,9 +838,12 @@ export class CodexAdapter implements ProviderAgentPort {
       if (
         entry.command.input.type === "prompt" &&
         entry.command.input.policy === "queue_next"
-      )
-        this.emit(entry, { type: "terminal", outcome: terminal });
-      entry.outcome = terminal;
+      ) {
+        if (terminal.failure)
+          this.emit(entry, { type: "error", failure: terminal.failure });
+        this.emit(entry, { type: "terminal", outcome: terminal.outcome });
+      }
+      entry.outcome = terminal.outcome;
       entry.completedItems.clear();
     }
   }
@@ -822,7 +862,9 @@ export class CodexAdapter implements ProviderAgentPort {
           sequence: 1,
           generation: entry.binding.generation,
           commandId: entry.command.commandId,
-          attemptId: entry.dispatch.attemptId,
+          ...(body.type === "error"
+            ? {}
+            : { attemptId: entry.dispatch.attemptId }),
           body,
         },
         limits,
@@ -971,7 +1013,10 @@ export class CodexAdapter implements ProviderAgentPort {
   private finishTurn(turn: Turn): void {
     const terminal = outcome(turn);
     if (!terminal) return;
-    this.completedTurns.set(turn.id, terminal);
+    this.completedTurns.set(turn.id, {
+      outcome: terminal,
+      failure: turnFailure(turn),
+    });
     for (const entry of this.attempts.values()) {
       if (
         entry.binding.nativeRunId !== turn.id ||
@@ -988,8 +1033,11 @@ export class CodexAdapter implements ProviderAgentPort {
       if (
         entry.command.input.type === "prompt" &&
         entry.command.input.policy === "queue_next"
-      )
+      ) {
+        const failure = turnFailure(turn);
+        if (failure) this.emit(entry, { type: "error", failure });
         this.emit(entry, { type: "terminal", outcome: terminal });
+      }
       entry.outcome = terminal;
       entry.completedItems.clear();
     }

@@ -108,6 +108,11 @@ const upstreamHeaders = (headers: IncomingHttpHeaders) => {
 
 export interface EgressProxy {
   readonly endpoint: string;
+  beginAttempt(id: string): void;
+  takeFailure(
+    id: string,
+  ): import("@rss-mdm-agent/ai-contract").Failure["code"] | undefined;
+  endAttempt(id: string): void;
   close(): Promise<void>;
 }
 
@@ -127,13 +132,38 @@ export async function startEgressProxy(
     throw new Error("egress_rejected");
   const route = `/${randomUUID()}`;
   const upstream = new Set<ClientRequest>();
+  type Attempt = {
+    requests: number;
+    pending: boolean;
+    ambiguous: boolean;
+    consumed: boolean;
+    failure?: import("@rss-mdm-agent/ai-contract").Failure["code"];
+  };
+  const attempts = new Map<string, Attempt>();
   const server = createServer(async (incoming, outgoing) => {
+    // Capture the owner when this HTTP request arrives. SDK background/retried
+    // requests or overlapping dispatches provide insufficient causal evidence.
+    const owner =
+      attempts.size === 1 ? attempts.values().next().value : undefined;
+    if (owner) {
+      owner.requests++;
+      owner.pending = true;
+    }
+    const outcome = (
+      failure?: import("@rss-mdm-agent/ai-contract").Failure["code"],
+    ) => {
+      if (owner) {
+        owner.pending = false;
+        owner.failure = failure;
+      }
+    };
     try {
       const requestUrl = new URL(incoming.url ?? "/", "http://localhost");
       if (
         requestUrl.pathname !== route &&
         !requestUrl.pathname.startsWith(`${route}/`)
       ) {
+        outcome("invalid_input");
         outgoing.writeHead(404).end();
         return;
       }
@@ -154,11 +184,29 @@ export async function startEgressProxy(
           agent: false,
         },
         (response) => {
+          outcome(
+            response.statusCode === 401
+              ? "authentication_required"
+              : response.statusCode === 403
+                ? "permission_denied"
+                : response.statusCode === 429
+                  ? "limit_exceeded"
+                  : response.statusCode === 400 || response.statusCode === 404
+                    ? "invalid_input"
+                    : response.statusCode && response.statusCode >= 500
+                      ? "unavailable"
+                      : undefined,
+          );
+          response.once("error", () => {
+            outcome("unavailable");
+            outgoing.destroy();
+          });
           if (
             response.statusCode !== undefined &&
             response.statusCode >= 300 &&
             response.statusCode < 400
           ) {
+            outcome("unavailable");
             response.resume();
             outgoing.writeHead(502).end();
             return;
@@ -175,11 +223,13 @@ export async function startEgressProxy(
       forwarded.once("close", () => upstream.delete(forwarded));
       incoming.once("aborted", () => forwarded.destroy());
       forwarded.once("error", () => {
+        outcome("unavailable");
         if (!outgoing.headersSent) outgoing.writeHead(502);
         outgoing.end();
       });
       incoming.pipe(forwarded);
     } catch {
+      outcome("unavailable");
       if (!outgoing.headersSent) outgoing.writeHead(502);
       outgoing.end();
     }
@@ -196,9 +246,31 @@ export async function startEgressProxy(
     throw new Error("egress_rejected");
   let closed: Promise<void> | undefined;
   return {
+    beginAttempt(id) {
+      if (attempts.has(id)) return;
+      if (attempts.size >= 16) throw new Error("egress_attempt_unavailable");
+      for (const active of attempts.values()) active.ambiguous = true;
+      attempts.set(id, {
+        requests: 0,
+        pending: false,
+        ambiguous: attempts.size > 0,
+        consumed: false,
+      });
+    },
+    takeFailure(id) {
+      const owner = attempts.get(id);
+      if (!owner || owner.consumed) return;
+      owner.consumed = true;
+      if (!owner.ambiguous && owner.requests === 1 && !owner.pending)
+        return owner.failure;
+    },
+    endAttempt(id) {
+      attempts.delete(id);
+    },
     endpoint: `http://127.0.0.1:${address.port}${route}`,
     close: () =>
       (closed ??= new Promise<void>((resolveClose, reject) => {
+        attempts.clear();
         server.closeAllConnections();
         for (const request of upstream) request.destroy();
         server.close((error) => (error ? reject(error) : resolveClose()));

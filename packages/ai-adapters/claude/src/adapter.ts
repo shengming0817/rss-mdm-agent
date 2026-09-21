@@ -23,6 +23,7 @@ import {
   type Command,
   type CommandRecord,
   type Outcome,
+  type Failure,
   type ProviderAgentPort,
   type ProviderConfiguration,
   type ProviderObservation,
@@ -64,6 +65,7 @@ interface Turn {
   accepted: boolean;
   running?: boolean;
   outcome?: Outcome;
+  failure?: Failure;
   uncertain: boolean;
   observing: boolean;
   streamMessageId?: string;
@@ -712,8 +714,34 @@ export class ClaudeAdapter implements ProviderAgentPort {
         attemptId: turn.attempt.attemptId,
       });
     }
+    if (turn.failure && m.type !== "result") return;
     if (m.type === "assistant") {
       if (!turn.accepted) return;
+      if (m.error) {
+        const code = [
+          "authentication_failed",
+          "cloud_credential_error",
+        ].includes(m.error)
+          ? "authentication_required"
+          : m.error === "model_not_found"
+            ? "unsupported_capability"
+            : m.error === "invalid_request"
+              ? "invalid_input"
+              : ["rate_limit", "max_output_tokens", "billing_error"].includes(
+                    m.error,
+                  )
+                ? "limit_exceeded"
+                : [
+                      "oauth_org_not_allowed",
+                      "account_on_hold",
+                      "verification_required",
+                    ].includes(m.error)
+                  ? "permission_denied"
+                  : "unavailable";
+        turn.failure = { code, retry: "never" };
+        this.emit(turn, { type: "error", failure: turn.failure });
+        return;
+      }
       if (!isId(m.message.id)) throw new Error("invalid message id");
       for (const part of m.message.content)
         if (part.type === "text")
@@ -751,9 +779,10 @@ export class ClaudeAdapter implements ProviderAgentPort {
         return;
       }
       this.accept(s, turn);
-      const outcome: Outcome =
-        m.terminal_reason === "aborted_streaming" ||
-        m.terminal_reason === "aborted_tools"
+      const outcome: Outcome = turn.failure
+        ? "failed"
+        : m.terminal_reason === "aborted_streaming" ||
+            m.terminal_reason === "aborted_tools"
           ? "cancelled"
           : m.stop_reason === "refusal"
             ? "refused"

@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from "vue";
-import { AppShell, NavigationList } from "@rss-mdm-agent/ui";
+import { onBeforeUnmount, onMounted, watch } from "vue";
 import { nativeAssistant } from "./assistant/native";
 import Assistant from "./assistant/Assistant.vue";
 import {
@@ -11,70 +10,73 @@ import SelfService from "./self-service/SelfService.vue";
 import { createController } from "./self-service/controller";
 import { nativePort } from "./self-service/native";
 import preview from "./self-service/preview";
+import Settings from "./settings/Settings.vue";
+import type { HostSettings } from "./settings/controller";
 import "./self-service/style.css";
 import "./assistant/style.css";
-const props = defineProps<{ assistantServices?: AssistantServices }>();
+const props = defineProps<{
+  assistantServices?: AssistantServices;
+  page: string;
+  host: HostSettings;
+}>();
+const emit = defineEmits<{
+  navigate: [id: string];
+  attention: [count: number];
+  mode: [label: string];
+}>();
 const newIdentity = () => crypto.randomUUID();
 const controller = createController(nativePort(), newIdentity, preview);
 const assistant = createAssistant(
   props.assistantServices ?? nativeAssistant(),
   newIdentity,
 );
-const page = ref("self-service");
-const attention = assistant.attention;
-function navigate(id: string) {
-  page.value = id === "assistant" ? "assistant" : "self-service";
-  if (page.value === "self-service") controller.navigate(id);
-}
+watch(
+  () => props.page,
+  (id) => {
+    if (id !== "assistant" && id !== "settings") controller.navigate(id);
+  },
+  { immediate: true },
+);
+watch(assistant.attention, (count) => emit("attention", count), {
+  immediate: true,
+});
+watch(
+  () => [props.page, assistant.state.connection, assistant.state.mode],
+  () =>
+    emit(
+      "mode",
+      props.page === "assistant"
+        ? assistant.state.connection !== "connected"
+          ? "AI 服务未连接"
+          : assistant.state.mode === "s1"
+            ? "S1 AI 测试装配 · 无真实执行"
+            : "AI 会话"
+        : controller.interactive
+          ? "S1 受控测试 · 无真实执行"
+          : "浏览器只读预览",
+    ),
+  { immediate: true },
+);
 onMounted(() => {
   void assistant.connect();
 });
 onBeforeUnmount(assistant.dispose);
 </script>
 <template>
-  <AppShell>
-    <template #header
-      ><div class="brand">
-        <div>
-          <span class="eyebrow">RSS / WORKSPACE</span
-          ><strong>自助服务中心</strong>
-        </div>
-        <span class="mode-label">{{
-          page === "assistant"
-            ? assistant.state.mode === "s1"
-              ? "S1 AI 测试装配 · 无真实执行"
-              : assistant.state.connection === "connected"
-                ? "AI 会话"
-                : "AI 服务未连接"
-            : controller.interactive
-              ? "S1 受控测试 · 无真实执行"
-              : "浏览器只读预览"
-        }}</span>
-      </div></template
-    >
-    <template #navigation
-      ><NavigationList
-        :items="[
-          { id: 'home', label: '首页' },
-          { id: 'software', label: '软件中心' },
-          { id: 'tools', label: '工具中心' },
-          { id: 'tasks', label: '请求与任务' },
-          {
-            id: 'assistant',
-            label: attention ? `AI 助手（待回应 ${attention}）` : 'AI 助手',
-          },
-          { id: 'help', label: '设备与帮助' },
-        ]"
-        :active-id="page === 'assistant' ? 'assistant' : controller.state.page"
-        @select="navigate"
-    /></template>
-    <SelfService v-show="page === 'self-service'" :controller="controller" />
-    <Assistant v-show="page === 'assistant'" :controller="assistant" />
-    <template #status
-      ><div class="footer-note">
-        <span>S1 测试服务 · 无系统副作用 · 独立测试批准</span
-        ><span>AI 对话与设备执行分别核对</span>
-      </div></template
-    >
-  </AppShell>
+  <SelfService
+    v-show="page !== 'assistant' && page !== 'settings'"
+    :controller="controller"
+  />
+  <Assistant
+    v-show="page === 'assistant'"
+    :controller="assistant"
+    @settings="emit('navigate', 'settings')"
+  />
+  <Settings
+    v-show="page === 'settings'"
+    :host="host"
+    :assistant="assistant"
+    @assistant="emit('navigate', 'assistant')"
+    ><template #user><slot name="user" /></template
+  ></Settings>
 </template>

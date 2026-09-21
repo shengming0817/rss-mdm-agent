@@ -138,3 +138,51 @@ test("invalid local configuration fails before listening and emits only a closed
     code: "configuration_invalid",
   });
 });
+
+test("a corrupt existing store retains its closed startup category without exposing database content", async () => {
+  const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { spawnSync } = await import("node:child_process");
+  const root = await mkdtemp(join(tmpdir(), "rss-corrupt-start-"));
+  try {
+    const db = join(root, "ai.sqlite"),
+      config = join(root, "host.json");
+    await writeFile(db, "CANARY_SECRET_DB", { mode: 0o600 });
+    await writeFile(
+      config,
+      JSON.stringify({
+        version: 1,
+        databasePath: db,
+        nativeDirectory: join(root, "native"),
+        workingDirectory: root,
+      }),
+      { mode: 0o600 },
+    );
+    const result = spawnSync(
+      process.execPath,
+      [
+        new URL("../../apps/ai-host/dist/cli.js", import.meta.url).pathname,
+        config,
+      ],
+      { encoding: "utf8", timeout: 10000 },
+    );
+    assert.equal(result.status, 1);
+    assert.ok(
+      result.stderr.split("\n").some((line) => {
+        try {
+          return (
+            JSON.parse(line).kind === "hostProcessDiagnostic" &&
+            JSON.parse(line).code === "storage_corrupt"
+          );
+        } catch {
+          return false;
+        }
+      }),
+    );
+    assert.equal(result.stderr.includes("CANARY_SECRET_DB"), false);
+    assert.equal(result.stderr.includes(root), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

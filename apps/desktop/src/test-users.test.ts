@@ -24,6 +24,25 @@ beforeEach(() => {
   currentUser.value = undefined;
   vi.mocked(invoke).mockReset();
 });
+it("keeps settings selected when navigation needs an unselected user", async () => {
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "test_users")
+      return { schemaVersion: 5, kind: "testUserPage", users: [] };
+    throw { code: "ai_unavailable" };
+  });
+  const wrapper = mount(App);
+  try {
+    await flushPromises();
+    await wrapper
+      .findAll("button")
+      .find((b) => b.text() === "AI 助手")!
+      .trigger("click");
+    expect(wrapper.get('[aria-current="page"]').text()).toBe("设置");
+    expect(wrapper.get("h1").text()).toBe("设置");
+  } finally {
+    wrapper.unmount();
+  }
+});
 it.each([
   ["invalid_name", "1–64"],
   ["limit", "选择已有用户"],
@@ -43,7 +62,16 @@ it.each([
         };
       throw { code, message: "SECRET_CANARY" };
     });
-    const wrapper = mount(App, { global: { stubs: { Workspace: true } } });
+    const wrapper = mount(App, {
+      global: {
+        stubs: {
+          Workspace: {
+            name: "Workspace",
+            template: '<div><slot name="user" /></div>',
+          },
+        },
+      },
+    });
     try {
       await flushPromises();
       await wrapper.get('[aria-label="测试用户名"]').setValue("Bob");
@@ -73,7 +101,16 @@ it("keeps the current workspace mounted and inert while a switch is pending", as
       };
     return new Promise((resolve) => (finish = resolve));
   });
-  const wrapper = mount(App, { global: { stubs: { Workspace: true } } });
+  const wrapper = mount(App, {
+    global: {
+      stubs: {
+        Workspace: {
+          name: "Workspace",
+          template: '<div><slot name="user" /></div>',
+        },
+      },
+    },
+  });
   await flushPromises();
   const workspace = wrapper.findComponent({ name: "Workspace" }).element;
   await wrapper.get('[aria-label="测试用户名"]').setValue("Bob");

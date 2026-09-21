@@ -1,13 +1,7 @@
 use std::error::Error;
 
-pub(super) fn diagnostic(error: &dyn Error) -> String {
-    let mut message = format!("RSS MDM Agent 启动失败：{error}");
-    let mut cause = error.source();
-    while let Some(error) = cause {
-        message.push_str(&format!("\n原因：{error}"));
-        cause = error.source();
-    }
-    message
+pub(super) fn diagnostic(_error: &dyn Error) -> String {
+    "RSS MDM Agent 启动失败：桌面组件不可用。请检查安装与本地数据目录权限后重试。".into()
 }
 
 pub fn report(error: &dyn Error) {
@@ -60,9 +54,13 @@ mod tests {
     }
 
     #[test]
-    fn diagnostic_preserves_the_underlying_startup_error() {
-        let message = diagnostic(&StartupError(std::io::Error::other("WebView unavailable")));
-        assert!(message.contains("window initialization"));
-        assert!(message.contains("WebView unavailable"));
+    fn diagnostic_never_exports_raw_error_or_cause() {
+        let message = diagnostic(&StartupError(std::io::Error::other(
+            "CANARY_SECRET /Users/private/account/token",
+        )));
+        assert!(!message.contains("window initialization"));
+        assert!(!message.contains("CANARY_SECRET"));
+        assert!(!message.contains("/Users/private"));
+        assert!(message.contains("启动失败"));
     }
 }

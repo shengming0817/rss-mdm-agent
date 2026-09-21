@@ -3874,6 +3874,12 @@ pub enum ErrorCode {
     #[serde(rename = "context_unavailable")]
     #[doc = "`ContextUnavailable` alternative; see the parent type's schema contract."]
     ContextUnavailable,
+    #[serde(rename = "verification_cancelled")]
+    #[doc = "`VerificationCancelled` alternative; see the parent type's schema contract."]
+    VerificationCancelled,
+    #[serde(rename = "verification_refused")]
+    #[doc = "`VerificationRefused` alternative; see the parent type's schema contract."]
+    VerificationRefused,
 }
 impl ::std::fmt::Display for ErrorCode {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -3897,6 +3903,8 @@ impl ::std::fmt::Display for ErrorCode {
             Self::ConnectionRequired => f.write_str("connection_required"),
             Self::AuthenticationRequired => f.write_str("authentication_required"),
             Self::ContextUnavailable => f.write_str("context_unavailable"),
+            Self::VerificationCancelled => f.write_str("verification_cancelled"),
+            Self::VerificationRefused => f.write_str("verification_refused"),
         }
     }
 }
@@ -3923,6 +3931,8 @@ impl ::std::str::FromStr for ErrorCode {
             "connection_required" => Ok(Self::ConnectionRequired),
             "authentication_required" => Ok(Self::AuthenticationRequired),
             "context_unavailable" => Ok(Self::ContextUnavailable),
+            "verification_cancelled" => Ok(Self::VerificationCancelled),
+            "verification_refused" => Ok(Self::VerificationRefused),
             _ => Err("invalid value".into()),
         }
     }
@@ -8822,6 +8832,836 @@ impl<'de> ::serde::Deserialize<'de> for HistoryRequestSchemaVersion {
             .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
     }
 }
+#[doc = "`HostDiagnostic`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct HostDiagnostic {
+    #[doc = "`action` member; see its generated type and parent schema."]
+    pub action: HostDiagnosticAction,
+    #[serde(rename = "atMs")]
+    #[doc = "`at_ms` member; see its generated type and parent schema."]
+    pub at_ms: Counter,
+    #[doc = "`code` member; see its generated type and parent schema."]
+    pub code: HostDiagnosticCode,
+    #[doc = "`stage` member; see its generated type and parent schema."]
+    pub stage: HostDiagnosticStage,
+}
+#[doc = "`HostDiagnosticAction`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum HostDiagnosticAction {
+    #[serde(rename = "prepare_runtime")]
+    #[doc = "`PrepareRuntime` alternative; see the parent type's schema contract."]
+    PrepareRuntime,
+    #[serde(rename = "reinstall_runtime")]
+    #[doc = "`ReinstallRuntime` alternative; see the parent type's schema contract."]
+    ReinstallRuntime,
+    #[serde(rename = "restart_host")]
+    #[doc = "`RestartHost` alternative; see the parent type's schema contract."]
+    RestartHost,
+    #[serde(rename = "check_configuration")]
+    #[doc = "`CheckConfiguration` alternative; see the parent type's schema contract."]
+    CheckConfiguration,
+    #[serde(rename = "check_credentials")]
+    #[doc = "`CheckCredentials` alternative; see the parent type's schema contract."]
+    CheckCredentials,
+    #[serde(rename = "check_storage")]
+    #[doc = "`CheckStorage` alternative; see the parent type's schema contract."]
+    CheckStorage,
+}
+impl ::std::fmt::Display for HostDiagnosticAction {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::PrepareRuntime => f.write_str("prepare_runtime"),
+            Self::ReinstallRuntime => f.write_str("reinstall_runtime"),
+            Self::RestartHost => f.write_str("restart_host"),
+            Self::CheckConfiguration => f.write_str("check_configuration"),
+            Self::CheckCredentials => f.write_str("check_credentials"),
+            Self::CheckStorage => f.write_str("check_storage"),
+        }
+    }
+}
+impl ::std::str::FromStr for HostDiagnosticAction {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "prepare_runtime" => Ok(Self::PrepareRuntime),
+            "reinstall_runtime" => Ok(Self::ReinstallRuntime),
+            "restart_host" => Ok(Self::RestartHost),
+            "check_configuration" => Ok(Self::CheckConfiguration),
+            "check_credentials" => Ok(Self::CheckCredentials),
+            "check_storage" => Ok(Self::CheckStorage),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for HostDiagnosticAction {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for HostDiagnosticAction {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`HostDiagnosticCode`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum HostDiagnosticCode {
+    #[serde(rename = "runtime_missing")]
+    #[doc = "`RuntimeMissing` alternative; see the parent type's schema contract."]
+    RuntimeMissing,
+    #[serde(rename = "runtime_invalid")]
+    #[doc = "`RuntimeInvalid` alternative; see the parent type's schema contract."]
+    RuntimeInvalid,
+    #[serde(rename = "unsupported_version")]
+    #[doc = "`UnsupportedVersion` alternative; see the parent type's schema contract."]
+    UnsupportedVersion,
+    #[serde(rename = "host_start_failed")]
+    #[doc = "`HostStartFailed` alternative; see the parent type's schema contract."]
+    HostStartFailed,
+    #[serde(rename = "host_exited")]
+    #[doc = "`HostExited` alternative; see the parent type's schema contract."]
+    HostExited,
+    #[serde(rename = "readiness_timeout")]
+    #[doc = "`ReadinessTimeout` alternative; see the parent type's schema contract."]
+    ReadinessTimeout,
+    #[serde(rename = "configuration_invalid")]
+    #[doc = "`ConfigurationInvalid` alternative; see the parent type's schema contract."]
+    ConfigurationInvalid,
+    #[serde(rename = "authentication_required")]
+    #[doc = "`AuthenticationRequired` alternative; see the parent type's schema contract."]
+    AuthenticationRequired,
+    #[serde(rename = "storage_corrupt")]
+    #[doc = "`StorageCorrupt` alternative; see the parent type's schema contract."]
+    StorageCorrupt,
+    #[serde(rename = "cleanup_incomplete")]
+    #[doc = "`CleanupIncomplete` alternative; see the parent type's schema contract."]
+    CleanupIncomplete,
+    #[serde(rename = "control_closed")]
+    #[doc = "`ControlClosed` alternative; see the parent type's schema contract."]
+    ControlClosed,
+}
+impl ::std::fmt::Display for HostDiagnosticCode {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::RuntimeMissing => f.write_str("runtime_missing"),
+            Self::RuntimeInvalid => f.write_str("runtime_invalid"),
+            Self::UnsupportedVersion => f.write_str("unsupported_version"),
+            Self::HostStartFailed => f.write_str("host_start_failed"),
+            Self::HostExited => f.write_str("host_exited"),
+            Self::ReadinessTimeout => f.write_str("readiness_timeout"),
+            Self::ConfigurationInvalid => f.write_str("configuration_invalid"),
+            Self::AuthenticationRequired => f.write_str("authentication_required"),
+            Self::StorageCorrupt => f.write_str("storage_corrupt"),
+            Self::CleanupIncomplete => f.write_str("cleanup_incomplete"),
+            Self::ControlClosed => f.write_str("control_closed"),
+        }
+    }
+}
+impl ::std::str::FromStr for HostDiagnosticCode {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "runtime_missing" => Ok(Self::RuntimeMissing),
+            "runtime_invalid" => Ok(Self::RuntimeInvalid),
+            "unsupported_version" => Ok(Self::UnsupportedVersion),
+            "host_start_failed" => Ok(Self::HostStartFailed),
+            "host_exited" => Ok(Self::HostExited),
+            "readiness_timeout" => Ok(Self::ReadinessTimeout),
+            "configuration_invalid" => Ok(Self::ConfigurationInvalid),
+            "authentication_required" => Ok(Self::AuthenticationRequired),
+            "storage_corrupt" => Ok(Self::StorageCorrupt),
+            "cleanup_incomplete" => Ok(Self::CleanupIncomplete),
+            "control_closed" => Ok(Self::ControlClosed),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for HostDiagnosticCode {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for HostDiagnosticCode {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`HostDiagnosticStage`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum HostDiagnosticStage {
+    #[serde(rename = "runtime_package")]
+    #[doc = "`RuntimePackage` alternative; see the parent type's schema contract."]
+    RuntimePackage,
+    #[serde(rename = "host_process")]
+    #[doc = "`HostProcess` alternative; see the parent type's schema contract."]
+    HostProcess,
+    #[serde(rename = "configuration")]
+    #[doc = "`Configuration` alternative; see the parent type's schema contract."]
+    Configuration,
+    #[serde(rename = "authentication")]
+    #[doc = "`Authentication` alternative; see the parent type's schema contract."]
+    Authentication,
+    #[serde(rename = "storage")]
+    #[doc = "`Storage` alternative; see the parent type's schema contract."]
+    Storage,
+    #[serde(rename = "shutdown")]
+    #[doc = "`Shutdown` alternative; see the parent type's schema contract."]
+    Shutdown,
+}
+impl ::std::fmt::Display for HostDiagnosticStage {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::RuntimePackage => f.write_str("runtime_package"),
+            Self::HostProcess => f.write_str("host_process"),
+            Self::Configuration => f.write_str("configuration"),
+            Self::Authentication => f.write_str("authentication"),
+            Self::Storage => f.write_str("storage"),
+            Self::Shutdown => f.write_str("shutdown"),
+        }
+    }
+}
+impl ::std::str::FromStr for HostDiagnosticStage {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "runtime_package" => Ok(Self::RuntimePackage),
+            "host_process" => Ok(Self::HostProcess),
+            "configuration" => Ok(Self::Configuration),
+            "authentication" => Ok(Self::Authentication),
+            "storage" => Ok(Self::Storage),
+            "shutdown" => Ok(Self::Shutdown),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for HostDiagnosticStage {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for HostDiagnosticStage {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`HostHealth`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct HostHealth {
+    #[doc = "`kind` member; see its generated type and parent schema."]
+    pub kind: HostHealthKind,
+    #[doc = "`protocol` member; see its generated type and parent schema."]
+    pub protocol: HostHealthProtocol,
+    #[doc = "`ready` member; see its generated type and parent schema."]
+    pub ready: bool,
+    #[serde(rename = "schemaVersion")]
+    #[doc = "`schema_version` member; see its generated type and parent schema."]
+    pub schema_version: HostHealthSchemaVersion,
+}
+#[doc = "`HostHealthKind`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum HostHealthKind {
+    #[serde(rename = "hostHealth")]
+    #[doc = "`HostHealth` alternative; see the parent type's schema contract."]
+    HostHealth,
+}
+impl ::std::fmt::Display for HostHealthKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::HostHealth => f.write_str("hostHealth"),
+        }
+    }
+}
+impl ::std::str::FromStr for HostHealthKind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "hostHealth" => Ok(Self::HostHealth),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for HostHealthKind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for HostHealthKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`HostHealthProtocol`"]
+#[derive(:: serde :: Serialize, Clone)]
+#[serde(transparent)]
+pub struct HostHealthProtocol(#[doc = "`` member; see its generated type and parent schema."] i64);
+impl ::std::ops::Deref for HostHealthProtocol {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::std::convert::From<HostHealthProtocol> for i64 {
+    fn from(value: HostHealthProtocol) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::TryFrom<i64> for HostHealthProtocol {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if ![2_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for HostHealthProtocol {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
+#[doc = "`HostHealthSchemaVersion`"]
+#[derive(:: serde :: Serialize, Clone)]
+#[serde(transparent)]
+pub struct HostHealthSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
+impl ::std::ops::Deref for HostHealthSchemaVersion {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::std::convert::From<HostHealthSchemaVersion> for i64 {
+    fn from(value: HostHealthSchemaVersion) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::TryFrom<i64> for HostHealthSchemaVersion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if ![5_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for HostHealthSchemaVersion {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
+#[doc = "Closed diagnostic frame on the inherited Host diagnostic pipe. Raw stderr and unknown frames never become product diagnostics."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct HostProcessDiagnostic {
+    #[doc = "`code` member; see its generated type and parent schema."]
+    pub code: HostProcessDiagnosticCode,
+    #[doc = "`kind` member; see its generated type and parent schema."]
+    pub kind: HostProcessDiagnosticKind,
+    #[serde(rename = "schemaVersion")]
+    #[doc = "`schema_version` member; see its generated type and parent schema."]
+    pub schema_version: HostProcessDiagnosticSchemaVersion,
+}
+#[doc = "`HostProcessDiagnosticCode`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum HostProcessDiagnosticCode {
+    #[serde(rename = "configuration_invalid")]
+    #[doc = "`ConfigurationInvalid` alternative; see the parent type's schema contract."]
+    ConfigurationInvalid,
+    #[serde(rename = "authentication_required")]
+    #[doc = "`AuthenticationRequired` alternative; see the parent type's schema contract."]
+    AuthenticationRequired,
+    #[serde(rename = "storage_corrupt")]
+    #[doc = "`StorageCorrupt` alternative; see the parent type's schema contract."]
+    StorageCorrupt,
+    #[serde(rename = "unsupported_version")]
+    #[doc = "`UnsupportedVersion` alternative; see the parent type's schema contract."]
+    UnsupportedVersion,
+    #[serde(rename = "host_start_failed")]
+    #[doc = "`HostStartFailed` alternative; see the parent type's schema contract."]
+    HostStartFailed,
+    #[serde(rename = "cleanup_incomplete")]
+    #[doc = "`CleanupIncomplete` alternative; see the parent type's schema contract."]
+    CleanupIncomplete,
+}
+impl ::std::fmt::Display for HostProcessDiagnosticCode {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::ConfigurationInvalid => f.write_str("configuration_invalid"),
+            Self::AuthenticationRequired => f.write_str("authentication_required"),
+            Self::StorageCorrupt => f.write_str("storage_corrupt"),
+            Self::UnsupportedVersion => f.write_str("unsupported_version"),
+            Self::HostStartFailed => f.write_str("host_start_failed"),
+            Self::CleanupIncomplete => f.write_str("cleanup_incomplete"),
+        }
+    }
+}
+impl ::std::str::FromStr for HostProcessDiagnosticCode {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "configuration_invalid" => Ok(Self::ConfigurationInvalid),
+            "authentication_required" => Ok(Self::AuthenticationRequired),
+            "storage_corrupt" => Ok(Self::StorageCorrupt),
+            "unsupported_version" => Ok(Self::UnsupportedVersion),
+            "host_start_failed" => Ok(Self::HostStartFailed),
+            "cleanup_incomplete" => Ok(Self::CleanupIncomplete),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for HostProcessDiagnosticCode {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for HostProcessDiagnosticCode {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`HostProcessDiagnosticKind`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum HostProcessDiagnosticKind {
+    #[serde(rename = "hostProcessDiagnostic")]
+    #[doc = "`HostProcessDiagnostic` alternative; see the parent type's schema contract."]
+    HostProcessDiagnostic,
+}
+impl ::std::fmt::Display for HostProcessDiagnosticKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::HostProcessDiagnostic => f.write_str("hostProcessDiagnostic"),
+        }
+    }
+}
+impl ::std::str::FromStr for HostProcessDiagnosticKind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "hostProcessDiagnostic" => Ok(Self::HostProcessDiagnostic),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for HostProcessDiagnosticKind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for HostProcessDiagnosticKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`HostProcessDiagnosticSchemaVersion`"]
+#[derive(:: serde :: Serialize, Clone)]
+#[serde(transparent)]
+pub struct HostProcessDiagnosticSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
+impl ::std::ops::Deref for HostProcessDiagnosticSchemaVersion {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::std::convert::From<HostProcessDiagnosticSchemaVersion> for i64 {
+    fn from(value: HostProcessDiagnosticSchemaVersion) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::TryFrom<i64> for HostProcessDiagnosticSchemaVersion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if ![5_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for HostProcessDiagnosticSchemaVersion {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
+#[doc = "`HostStatus`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct HostStatus {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[doc = "`diagnostic` member; see its generated type and parent schema."]
+    pub diagnostic: ::std::option::Option<HostDiagnostic>,
+    #[doc = "`generation` member; see its generated type and parent schema."]
+    pub generation: Counter,
+    #[doc = "`kind` member; see its generated type and parent schema."]
+    pub kind: HostStatusKind,
+    #[doc = "`phase` member; see its generated type and parent schema."]
+    pub phase: HostStatusPhase,
+    #[doc = "`recent` member; see its generated type and parent schema."]
+    pub recent: ::std::vec::Vec<HostDiagnostic>,
+    #[serde(rename = "schemaVersion")]
+    #[doc = "`schema_version` member; see its generated type and parent schema."]
+    pub schema_version: HostStatusSchemaVersion,
+    #[doc = "`source` member; see its generated type and parent schema."]
+    pub source: HostStatusSource,
+    #[doc = "`version` member; see its generated type and parent schema."]
+    pub version: HostStatusVersion,
+}
+#[doc = "`HostStatusKind`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum HostStatusKind {
+    #[serde(rename = "hostStatus")]
+    #[doc = "`HostStatus` alternative; see the parent type's schema contract."]
+    HostStatus,
+}
+impl ::std::fmt::Display for HostStatusKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::HostStatus => f.write_str("hostStatus"),
+        }
+    }
+}
+impl ::std::str::FromStr for HostStatusKind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "hostStatus" => Ok(Self::HostStatus),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for HostStatusKind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for HostStatusKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`HostStatusPhase`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum HostStatusPhase {
+    #[serde(rename = "stopped")]
+    #[doc = "`Stopped` alternative; see the parent type's schema contract."]
+    Stopped,
+    #[serde(rename = "starting")]
+    #[doc = "`Starting` alternative; see the parent type's schema contract."]
+    Starting,
+    #[serde(rename = "ready")]
+    #[doc = "`Ready` alternative; see the parent type's schema contract."]
+    Ready,
+    #[serde(rename = "stopping")]
+    #[doc = "`Stopping` alternative; see the parent type's schema contract."]
+    Stopping,
+    #[serde(rename = "failed")]
+    #[doc = "`Failed` alternative; see the parent type's schema contract."]
+    Failed,
+}
+impl ::std::fmt::Display for HostStatusPhase {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Stopped => f.write_str("stopped"),
+            Self::Starting => f.write_str("starting"),
+            Self::Ready => f.write_str("ready"),
+            Self::Stopping => f.write_str("stopping"),
+            Self::Failed => f.write_str("failed"),
+        }
+    }
+}
+impl ::std::str::FromStr for HostStatusPhase {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "stopped" => Ok(Self::Stopped),
+            "starting" => Ok(Self::Starting),
+            "ready" => Ok(Self::Ready),
+            "stopping" => Ok(Self::Stopping),
+            "failed" => Ok(Self::Failed),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for HostStatusPhase {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for HostStatusPhase {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`HostStatusSchemaVersion`"]
+#[derive(:: serde :: Serialize, Clone)]
+#[serde(transparent)]
+pub struct HostStatusSchemaVersion(
+    #[doc = "`` member; see its generated type and parent schema."] i64,
+);
+impl ::std::ops::Deref for HostStatusSchemaVersion {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::std::convert::From<HostStatusSchemaVersion> for i64 {
+    fn from(value: HostStatusSchemaVersion) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::TryFrom<i64> for HostStatusSchemaVersion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if ![5_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for HostStatusSchemaVersion {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
+#[doc = "`HostStatusSource`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum HostStatusSource {
+    #[serde(rename = "development_override")]
+    #[doc = "`DevelopmentOverride` alternative; see the parent type's schema contract."]
+    DevelopmentOverride,
+    #[serde(rename = "bundled_resource")]
+    #[doc = "`BundledResource` alternative; see the parent type's schema contract."]
+    BundledResource,
+}
+impl ::std::fmt::Display for HostStatusSource {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::DevelopmentOverride => f.write_str("development_override"),
+            Self::BundledResource => f.write_str("bundled_resource"),
+        }
+    }
+}
+impl ::std::str::FromStr for HostStatusSource {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "development_override" => Ok(Self::DevelopmentOverride),
+            "bundled_resource" => Ok(Self::BundledResource),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for HostStatusSource {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for HostStatusSource {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`HostStatusVersion`"]
+#[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct HostStatusVersion(
+    #[doc = "`` member; see its generated type and parent schema."] ::std::string::String,
+);
+impl ::std::ops::Deref for HostStatusVersion {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<HostStatusVersion> for ::std::string::String {
+    fn from(value: HostStatusVersion) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for HostStatusVersion {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() > 128usize {
+            return Err("longer than 128 characters".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for HostStatusVersion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for HostStatusVersion {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for HostStatusVersion {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
+}
 #[doc = "Opaque ASCII correlation identifier (1–128 characters); never an authentication credential."]
 #[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[serde(transparent)]
@@ -9501,7 +10341,24 @@ pub enum NativeCall {
         #[doc = "`schema_version` member; see its generated type and parent schema."]
         schema_version: NativeCallSchemaVersion,
     },
+    #[doc = "NativeCallHealth"]
+    #[serde(rename = "health")]
+    Health {
+        #[doc = "`data` member; see its generated type and parent schema."]
+        data: NativeCallData,
+        #[doc = "`id` member; see its generated type and parent schema."]
+        id: Counter,
+        #[doc = "`kind` member; see its generated type and parent schema."]
+        kind: NativeCallKind,
+        #[serde(rename = "schemaVersion")]
+        #[doc = "`schema_version` member; see its generated type and parent schema."]
+        schema_version: NativeCallSchemaVersion,
+    },
 }
+#[doc = "`NativeCallData`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Default)]
+#[serde(deny_unknown_fields)]
+pub struct NativeCallData {}
 #[doc = "`NativeCallKind`"]
 #[derive(
     :: serde :: Deserialize,
@@ -12300,6 +13157,14 @@ pub enum WireRecord {
     ExecutionOrigin(
         #[doc = "`` member; see its generated type and parent schema."] ExecutionOrigin,
     ),
+    #[doc = "`HostStatus` alternative; see the parent type's schema contract."]
+    HostStatus(#[doc = "`` member; see its generated type and parent schema."] HostStatus),
+    #[doc = "`HostHealth` alternative; see the parent type's schema contract."]
+    HostHealth(#[doc = "`` member; see its generated type and parent schema."] HostHealth),
+    #[doc = "`HostProcessDiagnostic` alternative; see the parent type's schema contract."]
+    HostProcessDiagnostic(
+        #[doc = "`` member; see its generated type and parent schema."] HostProcessDiagnostic,
+    ),
 }
 impl ::std::convert::From<Command> for WireRecord {
     fn from(value: Command) -> Self {
@@ -12464,6 +13329,21 @@ impl ::std::convert::From<NativeControlFrame> for WireRecord {
 impl ::std::convert::From<ExecutionOrigin> for WireRecord {
     fn from(value: ExecutionOrigin) -> Self {
         Self::ExecutionOrigin(value)
+    }
+}
+impl ::std::convert::From<HostStatus> for WireRecord {
+    fn from(value: HostStatus) -> Self {
+        Self::HostStatus(value)
+    }
+}
+impl ::std::convert::From<HostHealth> for WireRecord {
+    fn from(value: HostHealth) -> Self {
+        Self::HostHealth(value)
+    }
+}
+impl ::std::convert::From<HostProcessDiagnostic> for WireRecord {
+    fn from(value: HostProcessDiagnostic) -> Self {
+        Self::HostProcessDiagnostic(value)
     }
 }
 #[doc = " Error types."]
@@ -13879,6 +14759,105 @@ impl std::fmt::Debug for HistoryRequestSchemaVersion {
         ))
     }
 }
+impl std::fmt::Debug for HostDiagnostic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(HostDiagnostic), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for HostDiagnosticAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(HostDiagnosticAction), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for HostDiagnosticCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(HostDiagnosticCode), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for HostDiagnosticStage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(HostDiagnosticStage), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for HostHealth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(HostHealth), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for HostHealthKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(HostHealthKind), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for HostHealthProtocol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(HostHealthProtocol), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for HostHealthSchemaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(HostHealthSchemaVersion), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for HostProcessDiagnostic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(HostProcessDiagnostic), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for HostProcessDiagnosticCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(HostProcessDiagnosticCode),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for HostProcessDiagnosticKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(HostProcessDiagnosticKind),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for HostProcessDiagnosticSchemaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(HostProcessDiagnosticSchemaVersion),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for HostStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(HostStatus), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for HostStatusKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(HostStatusKind), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for HostStatusPhase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(HostStatusPhase), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for HostStatusSchemaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(HostStatusSchemaVersion), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for HostStatusSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(HostStatusSource), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for HostStatusVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(HostStatusVersion), "([redacted])"))
+    }
+}
 impl std::fmt::Debug for Id {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(stringify!(Id), "([redacted])"))
@@ -13963,6 +14942,11 @@ impl std::fmt::Debug for NativeAttachData {
 impl std::fmt::Debug for NativeCall {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(stringify!(NativeCall), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for NativeCallData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(NativeCallData), "([redacted])"))
     }
 }
 impl std::fmt::Debug for NativeCallKind {
@@ -14414,4 +15398,292 @@ impl std::fmt::Debug for WireRecord {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(stringify!(WireRecord), "([redacted])"))
     }
+}
+impl AccessUpdateSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl ActionRequestSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl AttachReceiptSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl AttachRequestSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl CommandRecordVariant0SchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl CommandRecordVariant1SchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl CommandRecordVariant2SchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl CommandRecordVariant3SchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl CommandRecordVariant4SchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl CommandRecordVariant5SchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl CommandRecordVariant6SchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl CommandRecordVariant7SchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl CommandRecordVariant8SchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl CommandSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl ConnectionPageSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl ConnectionSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl ConnectionsRequestSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl DeliverySchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl DetachRequestSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventAcknowledgedQueuedCancelledSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventAcknowledgedSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventCancelDispatchedSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventCancelledSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventCommandAcceptedSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventDeliveryRecordedSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventDeliveryRequestedSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventDispatchSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventErrorSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventInteractionAnsweredSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventInteractionExpiredUnavailableSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventInteractionPendingSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventInvalidatedSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventReconciledSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventSessionReboundSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventSessionRecoveryUnavailableSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventSessionRetiredSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventStatusDispatchingRunningReconciliationRequiredSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventSurfaceSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventTerminalSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventTextSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventToolProposalSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl EventToolResultSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl ExecutionOriginSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl HistoryPreviewSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl HistoryRequestSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl HostHealthProtocol {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(2_i64);
+}
+impl HostHealthSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl HostProcessDiagnosticSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl HostStatusSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl InteractionSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl ListRequestSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl NativeCallSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl NativeEventSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl NativeReplyFailureSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl NativeReplySuccessSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl NegotiationAcp {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(1_i64);
+}
+impl NegotiationContractVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl PreferencesRequestSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl ReceiptSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl ResumeRequestSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl SaveConnectionRequestSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl SelectConnectionRequestSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl SessionPageSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl SessionSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl SnapshotPageSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl SnapshotRequestSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl SurfaceActionSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl SurfaceStateSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl TestUserPageSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl TestUserSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl UserContextSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
+}
+impl UserPreferencesSchemaVersion {
+    #[doc = "The sole value permitted by the canonical schema."]
+    pub const VALUE: Self = Self(5_i64);
 }

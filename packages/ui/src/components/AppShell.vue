@@ -2,7 +2,10 @@
   <div class="rss-ui shell">
     <header><slot name="header" /></header>
     <div class="body">
-      <aside><slot name="navigation" /></aside>
+      <aside>
+        <div class="navigation-scroll"><slot name="navigation" /></div>
+        <div class="navigation-footer"><slot name="navigation-footer" /></div>
+      </aside>
       <main><slot /></main>
     </div>
     <footer><slot name="status" /></footer>
@@ -35,9 +38,20 @@ footer {
 }
 aside {
   flex: 0 0 200px;
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   padding: 16px;
   border-right: 1px solid var(--color-border);
+}
+.navigation-scroll {
+  overflow: auto;
+  min-height: 0;
+  flex: 1;
+}
+.navigation-footer {
+  flex: none;
+  padding-top: 12px;
 }
 main {
   flex: 1;
@@ -55,6 +69,15 @@ main {
     max-height: 140px;
     border-right: 0;
     border-bottom: 1px solid var(--color-border);
+  }
+  .navigation-scroll {
+    overflow: auto;
+    min-height: 0;
+    flex: 1;
+  }
+  .navigation-footer {
+    flex: none;
+    padding-top: 12px;
   }
   main {
     padding: 16px;

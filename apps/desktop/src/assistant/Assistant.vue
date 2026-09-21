@@ -8,7 +8,8 @@ import {
   permissionPresentation,
   type AssistantController,
 } from "./controller";
-import Connections from "./Connections.vue";
+import SessionConnection from "./SessionConnection.vue";
+defineEmits<{ settings: [] }>();
 import QuestionCard from "./QuestionCard.vue";
 import ExecutionDetails from "./ExecutionDetails.vue";
 const props = defineProps<{ controller: AssistantController }>();
@@ -124,7 +125,7 @@ const cancellations = computed(() =>
         >S1 测试装配 · 无真实执行</span
       >
     </div>
-    <Connections :controller="c" />
+    <SessionConnection :controller="c" />
     <div class="assistant-facts" role="status">
       <span>连接：{{ connectionLabel.get(c.sessionConnection.value) }}</span>
       <span>AI：{{ c.busy.value ? "本轮处理中" : "空闲 / 历史可读" }}</span>
@@ -186,6 +187,10 @@ const cancellations = computed(() =>
         <small>提供方说明：{{ option.name }}</small></button
       ><button @click="c.permission(permission.id)">拒绝并关闭</button>
     </section>
+    <p v-if="s.connection !== 'connected' && s.views.size" role="status">
+      离线只读：仅显示当前用户已加载的历史，重新连接后核对。
+    </p>
+    <button @click="$emit('settings')">管理 AI 连接</button>
     <div class="assistant-workspace">
       <aside class="assistant-sessions">
         <h2>会话</h2>

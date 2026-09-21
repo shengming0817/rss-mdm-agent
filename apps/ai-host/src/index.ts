@@ -6,7 +6,7 @@ import { createHost } from "@rss-mdm-agent/ai-host";
 import { openSqliteStore } from "@rss-mdm-agent/ai-store-sqlite";
 import { createAccessService, type Stream } from "@rss-mdm-agent/ai-access";
 import { connectExecution } from "./execution.js";
-import { readConfiguration } from "./configuration.js";
+import { readConfiguration, ConfigurationError } from "./configuration.js";
 import {
   boundedJson,
   decode,
@@ -15,6 +15,7 @@ import {
   type Result,
   type UserContext,
   type Connection,
+  type HostHealth,
 } from "@rss-mdm-agent/ai-contract";
 import { defaultLimits, fail } from "@rss-mdm-agent/ai-contract/transitions";
 import { localResolver } from "./resolver.js";
@@ -85,7 +86,12 @@ export async function startLocalApp(
     path: local.databasePath,
     mode: exists ? "open" : "create",
   });
-  if (!opened.ok) throw new Error(opened.error.code);
+  if (!opened.ok)
+    throw new ConfigurationError(
+      opened.error.code === "storage_corrupt"
+        ? "storage_corrupt"
+        : "startup_failed",
+    );
   const store = opened.value;
   let activeUser: UserContext | undefined;
   const available = (caller: Caller) =>
@@ -144,7 +150,11 @@ export async function startLocalApp(
       timeoutMs: 1000,
       signal: new AbortController().signal,
     });
-    throw new Error(created.error.code);
+    throw new ConfigurationError(
+      created.error.code === "storage_corrupt"
+        ? "storage_corrupt"
+        : "startup_failed",
+    );
   }
   const host = created.value,
     service = createAccessService({ host, sessionOptions: {} });
@@ -174,6 +184,13 @@ export async function startLocalApp(
   };
   control = new NativeControl(
     async ({ method, data }) => {
+      if (method === "health")
+        return {
+          schemaVersion: 5,
+          kind: "hostHealth",
+          ready: true,
+          protocol: 2,
+        } satisfies HostHealth;
       if (method === "attach")
         return switchUser(async () => {
           const next = context(data.context),

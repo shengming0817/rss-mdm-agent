@@ -68,6 +68,8 @@ async function bounded<T>(
 }
 export function operationMessage(code: string): string {
   const messages: Record<string, string> = {
+    verification_cancelled: "连接验证已取消，未保存配置。",
+    verification_refused: "模型拒绝了验证请求，未保存配置。",
     authentication_required:
       "认证不可用。请在管理 AI 连接中更新认证来源并重新验证；历史仍可查看。",
     connection_required: "请为本会话选择一条可用连接；历史仍可查看。",
@@ -116,6 +118,10 @@ export function createAssistant(
     listing: false,
     opening: false,
     connections: [] as Connection[],
+    preferences: {
+      schemaVersion: 5,
+      kind: "userPreferences",
+    } as import("@rss-mdm-agent/ai-contract").UserPreferences,
     sessions: new Map<string, SessionItem>(),
     views: new Map<string, SessionView>(),
     drafts: new Map<string, string>(),
@@ -356,15 +362,10 @@ export function createAssistant(
     state.task = undefined;
     state.taskLoading = false;
     state.taskError = "";
-    state.connections = [];
-    state.views.clear();
-    state.sessions.clear();
-    state.drafts.clear();
+    for (const cached of state.views.values()) cached.connection = "detached";
     state.history.clear();
-    state.pending.clear();
     state.sending.clear();
     state.errors.clear();
-    state.selected = "";
     state.next = undefined;
     state.error = "";
     state.listError = "";
@@ -411,8 +412,9 @@ export function createAssistant(
           });
         }
       });
-      state.connection = "connected";
+      let transportClosed = false;
       void connected.runtime.connection.closed.then(() => {
+        transportClosed = true;
         if (current === epoch) {
           state.connection = "disconnected";
           clearPermissions();
@@ -422,18 +424,26 @@ export function createAssistant(
       const catalog = await connected.runtime.connections();
       if (current !== epoch) return;
       state.connections = catalog.connections;
-      if (catalog.preferences.selectedSessionId) {
-        const id = catalog.preferences.selectedSessionId;
-        const next = await connected.runtime.restore(id);
-        if (current === epoch) {
-          state.selected = id;
-          state.views.set(id, next);
-          state.sessions.set(id, {
-            namespace: next.namespace,
-            status: next.sessionStatus,
-          });
+      state.preferences = catalog.preferences;
+      const selected = state.selected || catalog.preferences.selectedSessionId;
+      if (selected) {
+        const id = selected;
+        try {
+          const next = await connected.runtime.restore(id);
+          if (current === epoch) {
+            state.selected = id;
+            state.views.set(id, next);
+            state.sessions.set(id, {
+              namespace: next.namespace,
+              status: next.sessionStatus,
+            });
+          }
+        } catch (error) {
+          if (current === epoch) state.errors.set(id, fail(error));
         }
       }
+      if (current === epoch && !owner.signal.aborted && !transportClosed)
+        state.connection = "connected";
     } catch (error) {
       owner.abort();
       if (current === epoch) {
@@ -484,8 +494,9 @@ export function createAssistant(
     }
   }
   async function select(id: string) {
-    if (!runtime.value || !state.sessions.has(id)) return;
+    if (!state.sessions.has(id)) return;
     state.selected = id;
+    if (!runtime.value || state.connection !== "connected") return;
     void remember(id);
     if (state.views.get(id)?.connection === "attached") return;
     const current = epoch;
@@ -501,7 +512,8 @@ export function createAssistant(
     }
   }
   async function create() {
-    if (!runtime.value || state.opening) return;
+    if (!runtime.value || state.connection !== "connected" || state.opening)
+      return;
     const current = epoch;
     state.opening = true;
     state.createError = "";
@@ -699,10 +711,31 @@ export function createAssistant(
     state.opening = false;
     state.listing = false;
     state.taskLoading = false;
+    state.task = undefined;
+    state.connections = [];
+    state.preferences = { schemaVersion: 5, kind: "userPreferences" };
+    state.sessions.clear();
+    state.views.clear();
+    state.drafts.clear();
+    state.pending.clear();
+    state.history.clear();
+    state.sending.clear();
+    state.errors.clear();
+    state.selected = "";
+  }
+  async function refreshConnections() {
+    const client = runtime.value,
+      current = epoch;
+    if (!client || state.connection !== "connected") return;
+    const catalog = await client.connections();
+    if (current !== epoch || runtime.value !== client) return;
+    state.connections = catalog.connections;
+    state.preferences = catalog.preferences;
   }
   return {
     state,
     runtime,
+    refreshConnections,
     view,
     draft,
     busy,
