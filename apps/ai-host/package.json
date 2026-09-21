@@ -22,7 +22,6 @@
     "build": "node ../../scripts/check-execution-bindings.mjs && node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@iarna/toml": "2.2.5",
     "@modelcontextprotocol/sdk": "1.30.0",
     "@rss-mdm-agent/ai-access": "workspace:*",
     "@rss-mdm-agent/ai-adapter-claude": "workspace:*",

@@ -1,3 +1,8 @@
+import {
+  activeStage,
+  startStage,
+  providerStage,
+} from "@rss-mdm-agent/ai-contract";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -19,7 +24,7 @@ const config: DeepSeekConfiguration = {
   },
   provider: "deepseek",
   config: { id: "official", revision: "1" },
-  accountRef: "account",
+
   workingDirectory: directory,
   permissions: "tools_disabled",
 };
@@ -27,6 +32,7 @@ const options: DeepSeekAdapterOptions = {
   resolveConfiguration: async () => ({
     configuration: config,
     persistenceDirectory: directory,
+    endpointIdentity: "https://custom.example.test/v1",
     apiUrl: "https://custom.example.test/v1",
     apiKey: "not-used-no-model-request",
     model: "deepseek-chat",
@@ -42,16 +48,18 @@ try {
   const admitted = await VerifiedProviderSession.open(first, config, budget());
   assert.ok(admitted.ok);
   assert.equal((await first.close(budget())).ok, true);
-  const previous: Session = {
-    schemaVersion: 4,
-    kind: "session",
-    namespace: config.namespace,
-    revision: 0,
-    lastSequence: 0,
-    status: "active",
-    binding: admitted.value.binding,
-    capabilities: admitted.value.capabilities,
-  };
+  const previous: Session = startStage(
+    {
+      schemaVersion: 5,
+      kind: "session",
+      namespace: config.namespace,
+      revision: 0,
+      lastSequence: 0,
+      status: "active",
+      stages: [],
+    },
+    providerStage(admitted.value.binding, admitted.value.capabilities),
+  );
   const restored = await VerifiedProviderSession.restore(
     second,
     previous,
@@ -62,11 +70,11 @@ try {
   assert.ok(restored.value.restores(previous));
   assert.notEqual(
     restored.value.binding.generation,
-    previous.binding.generation,
+    activeStage(previous).binding.generation,
   );
   assert.equal(
     restored.value.binding.nativeSessionId,
-    previous.binding.nativeSessionId,
+    activeStage(previous).binding.nativeSessionId,
   );
   console.log(
     "PASS packed public API and real child cold session, no model request",

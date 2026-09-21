@@ -1,3 +1,4 @@
+import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import { openSqliteStore } from "../../packages/ai-store-sqlite/dist/index.js";
 import { Deliveries } from "../../packages/ai-host/dist/delivery.js";
 import {
@@ -50,7 +51,7 @@ const deliveries = new Deliveries(
 unwrap(
   await deliveries.propose(
     session.namespace,
-    current.binding.generation,
+    activeStage(current).binding.generation,
     command.commandId,
     proposal,
     { timeoutMs: 60_000, signal: new AbortController().signal },

@@ -271,8 +271,12 @@
           },
           {
             "additionalProperties": false,
-            "description": "AI origin with separate OS and provider/CLI account references.",
+            "description": "AI origin with OS provenance and the exact product connection configuration.",
             "properties": {
+              "config": {
+                "$ref": "#/$defs/VersionedRef",
+                "description": "Exact connection configuration used at initiation; no external account identity."
+              },
               "conversation": {
                 "$ref": "#/$defs/Id",
                 "description": "Originating AI conversation reference in the provider namespace."
@@ -287,11 +291,7 @@
               },
               "provider": {
                 "$ref": "#/$defs/Id",
-                "description": "Provider/CLI namespace of the recorded AI account; not product authentication."
-              },
-              "providerAccount": {
-                "$ref": "#/$defs/ProviderAccountRef",
-                "description": "Explicit provider account and configuration references at initiation."
+                "description": "Provider namespace, independent of product authentication."
               },
               "toolCall": {
                 "$ref": "#/$defs/Id",
@@ -302,7 +302,7 @@
               "kind",
               "provider",
               "osSession",
-              "providerAccount",
+              "config",
               "conversation",
               "toolCall"
             ],
@@ -421,25 +421,6 @@
             "type": "string"
           }
         ]
-      },
-      "ProviderAccountRef": {
-        "additionalProperties": false,
-        "description": "Non-secret provider/CLI account provenance. Neither field proves product authentication.",
-        "properties": {
-          "account": {
-            "$ref": "#/$defs/Id",
-            "description": "Opaque account reference scoped by Initiator's provider, not a token or email credential."
-          },
-          "config": {
-            "$ref": "#/$defs/VersionedRef",
-            "description": "Exact configuration revision used by the originating AI session."
-          }
-        },
-        "required": [
-          "account",
-          "config"
-        ],
-        "type": "object"
       },
       "RequestId": {
         "description": "Local execution request identity.",
@@ -938,8 +919,12 @@
           },
           {
             "additionalProperties": false,
-            "description": "AI origin with separate OS and provider/CLI account references.",
+            "description": "AI origin with OS provenance and the exact product connection configuration.",
             "properties": {
+              "config": {
+                "$ref": "#/$defs/VersionedRef",
+                "description": "Exact connection configuration used at initiation; no external account identity."
+              },
               "conversation": {
                 "$ref": "#/$defs/Id",
                 "description": "Originating AI conversation reference in the provider namespace."
@@ -954,11 +939,7 @@
               },
               "provider": {
                 "$ref": "#/$defs/Id",
-                "description": "Provider/CLI namespace of the recorded AI account; not product authentication."
-              },
-              "providerAccount": {
-                "$ref": "#/$defs/ProviderAccountRef",
-                "description": "Explicit provider account and configuration references at initiation."
+                "description": "Provider namespace, independent of product authentication."
               },
               "toolCall": {
                 "$ref": "#/$defs/Id",
@@ -969,7 +950,7 @@
               "kind",
               "provider",
               "osSession",
-              "providerAccount",
+              "config",
               "conversation",
               "toolCall"
             ],
@@ -1363,25 +1344,6 @@
             "type": "string"
           }
         ]
-      },
-      "ProviderAccountRef": {
-        "additionalProperties": false,
-        "description": "Non-secret provider/CLI account provenance. Neither field proves product authentication.",
-        "properties": {
-          "account": {
-            "$ref": "#/$defs/Id",
-            "description": "Opaque account reference scoped by Initiator's provider, not a token or email credential."
-          },
-          "config": {
-            "$ref": "#/$defs/VersionedRef",
-            "description": "Exact configuration revision used by the originating AI session."
-          }
-        },
-        "required": [
-          "account",
-          "config"
-        ],
-        "type": "object"
       },
       "RequestId": {
         "description": "Local execution request identity.",

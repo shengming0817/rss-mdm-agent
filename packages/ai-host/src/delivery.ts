@@ -1,3 +1,4 @@
+import { activeStage } from "@rss-mdm-agent/ai-contract";
 import { Deadline } from "./deadline.js";
 import { randomUUID } from "node:crypto";
 import {
@@ -94,7 +95,7 @@ export class Deliveries {
       const stored = await this.mailbox(namespace, async () => {
         const session = value(await this.store.session(namespace));
         if (
-          session.binding.generation !== generation ||
+          activeStage(session).binding.generation !== generation ||
           session.status !== "active"
         )
           throw new Error("stale_binding");
@@ -112,7 +113,7 @@ export class Deliveries {
           return existing;
         }
         const event: DeliveryRequest = {
-          schemaVersion: 4,
+          schemaVersion: 5,
           kind: "event",
           namespace,
           eventId: randomUUID(),
@@ -127,7 +128,7 @@ export class Deliveries {
           },
         };
         const delivery: Delivery = {
-          schemaVersion: 4,
+          schemaVersion: 5,
           kind: "delivery",
           namespace,
           operationId,
@@ -257,11 +258,11 @@ export class Deliveries {
         return;
       const session = value(await this.store.session(namespace));
       const event: Event = {
-        schemaVersion: 4,
+        schemaVersion: 5,
         kind: "event",
         namespace,
         eventId: randomUUID(),
-        generation: session.binding.generation,
+        generation: activeStage(session).binding.generation,
         commandId: request.commandId,
         sequence: session.lastSequence + 1,
         body: {
@@ -300,7 +301,7 @@ export class Deliveries {
       await this.store.commit({
         namespace: session.namespace,
         expectedRevision: session.revision,
-        expectedGeneration: session.binding.generation,
+        expectedGeneration: activeStage(session).binding.generation,
         session: {
           ...session,
           revision: session.revision + 1,

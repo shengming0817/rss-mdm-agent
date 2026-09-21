@@ -26,16 +26,16 @@ fn main() {
         .unwrap();
         let p = plan();
         let request = &p.spec().request.request_id;
-        app.submit(request, &p).unwrap();
+        app.submit(&caller(), request, &p).unwrap();
         if cancel {
-            app.cancel(request).unwrap();
+            app.cancel(&caller(), request).unwrap();
         }
         if reconcile {
             app.reconcile(request).unwrap();
         }
         fixtures.insert(
             name.into(),
-            serde_json::to_value(app.task_details(request).unwrap()).unwrap(),
+            serde_json::to_value(app.task_details(&caller(), request).unwrap()).unwrap(),
         );
     }
     println!("{}", serde_json::to_string_pretty(&fixtures).unwrap());

@@ -1,3 +1,4 @@
+import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -24,7 +25,7 @@ for (const provider of engines) {
         second = await f.connect();
       const view = await first.client.createSession(),
         id = view.namespace.sessionId;
-      const { session } = unwrap(
+      let { session } = unwrap(
         await f.app.host.snapshotPage(
           f.config.caller,
           id,
@@ -32,10 +33,8 @@ for (const provider of engines) {
           budget(),
         ),
       );
-      assert.deepEqual(session.capabilities, capabilities(provider));
-      assert.equal(session.binding.provider, provider);
-      assert.deepEqual(session.binding.config, f.config.session.config);
-      assert.equal(session.binding.accountRef, f.config.session.accountRef);
+      assert.equal(session.currentStageId, undefined);
+      assert.deepEqual(session.stages, []);
       for (const field of ["tenantId", "principalId", "authorityId"]) {
         const caller = { ...f.config.caller, [field]: "foreign" };
         const probe = command(id, "foreign-" + field);
@@ -43,7 +42,7 @@ for (const provider of engines) {
           ...probe,
           input: {
             type: "cancel",
-            generation: session.binding.generation,
+            generation: "foreign-generation",
             targetCommandId: "first",
           },
         };
@@ -51,7 +50,7 @@ for (const provider of engines) {
           ...probe,
           input: {
             type: "respond",
-            generation: session.binding.generation,
+            generation: "foreign-generation",
             interactionId: "question",
             answer: {},
           },
@@ -69,7 +68,7 @@ for (const provider of engines) {
           );
       }
       for (const patch of [
-        { accountRef: "foreign" },
+        { config: { id: "foreign-config", revision: "99" } },
         { config: { id: "local", revision: "r2" } },
         { profile: "controlled_tools" },
         { provider: "foreign" },
@@ -91,6 +90,28 @@ for (const provider of engines) {
         second.client.submit(input),
       ]);
       assert.deepEqual(receipts[0], receipts[1]);
+      session = unwrap(
+        await f.app.host.snapshotPage(
+          f.config.caller,
+          id,
+          { limit: 256 },
+          budget(),
+        ),
+      ).session;
+      assert.deepEqual(
+        activeStage(session).capabilities,
+        capabilities(provider),
+      );
+      assert.equal(activeStage(session).binding.provider, provider);
+      assert.deepEqual(
+        activeStage(session).binding.config,
+        f.config.session.config,
+      );
+      assert.equal(
+        activeStage(session).binding.config.id,
+        f.config.session.config.id,
+      );
+
       await assert.rejects(
         second.client.submit({
           ...input,

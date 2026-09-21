@@ -13,7 +13,10 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { readPrivateFile } from "../../apps/ai-host/dist/private-file.js";
-import { readConfiguration } from "../../apps/ai-host/dist/configuration.js";
+import {
+  endpoint,
+  readConfiguration,
+} from "../../apps/ai-host/dist/configuration.js";
 import { startLocalApp } from "../../apps/ai-host/dist/index.js";
 test("private configuration and credentials require bounded owned files in private directories", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "rss-private-file-"));
@@ -53,6 +56,20 @@ test("private configuration and credentials require bounded owned files in priva
   await chmod(directory, 0o755);
   await assert.rejects(readPrivateFile(file, 64));
 });
+test("custom HTTPS endpoints reject literal private and link-local destinations", () => {
+  for (const value of [
+    "https://127.0.0.1/v1",
+    "https://10.0.0.1/v1",
+    "https://169.254.169.254/latest/meta-data",
+    "https://[::1]/v1",
+    "https://[fe80::1]/v1",
+  ])
+    assert.throws(() => endpoint(value), { code: "configuration_invalid" });
+  assert.equal(
+    endpoint("https://api.example.test/v1/"),
+    "https://api.example.test/v1",
+  );
+});
 test("invalid local configuration fails before listening and emits only a closed diagnostic", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "rss-invalid-config-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -64,7 +81,7 @@ test("invalid local configuration fails before listening and emits only a closed
       session: {
         provider: "claude",
         config: { id: "c", revision: "1" },
-        accountRef: "a",
+
         profile: "conversation",
       },
       workingDirectory: directory,
@@ -106,12 +123,18 @@ test("invalid local configuration fails before listening and emits only a closed
   assert.equal(cli.status, 1);
   assert.match(cli.stderr, /configuration_invalid/);
   assert.doesNotMatch(cli.stderr, /remote\.example\.test|secret-value/);
-  await writeFile(path, JSON.stringify(base), { mode: 0o600 });
-  assert.equal(
-    (await readConfiguration(path)).connection.apiUrl,
-    base.connection.apiUrl,
-  );
-  await writeFile(base.socketPath, "preserve this file");
-  await assert.rejects(startLocalApp(path), /socket path is not a socket/);
-  assert.equal(await readFile(base.socketPath, "utf8"), "preserve this file");
+  const current = {
+    version: 1,
+    databasePath: base.databasePath,
+    nativeDirectory: directory,
+    workingDirectory: directory,
+  };
+  await writeFile(path, JSON.stringify(current), { mode: 0o600 });
+  assert.deepEqual(await readConfiguration(path), current);
+  await writeFile(path, JSON.stringify({ ...current, caller: base.caller }), {
+    mode: 0o600,
+  });
+  await assert.rejects(readConfiguration(path), {
+    code: "configuration_invalid",
+  });
 });

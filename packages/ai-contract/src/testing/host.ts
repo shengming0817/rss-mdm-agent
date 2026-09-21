@@ -1,3 +1,13 @@
+import type { PreferencesPatch } from "../wire.js";
+import { historyPreview } from "../history.js";
+import type {
+  Connection,
+  ConnectionPage,
+  UserPreferences,
+  HistoryPreview,
+} from "../wire.js";
+import { productSession } from "../contexts.js";
+import { activeStage } from "../contexts.js";
 import { verifiedReconciliation } from "./recovery.js";
 import { readSnapshot } from "./snapshot.js";
 import { interactionCatalog } from "../identity.js";
@@ -9,6 +19,7 @@ import type {
   Negotiation,
   Result,
   SessionOptions,
+  ConnectionOptions,
   SessionStore,
   Subscription,
   ProviderObservation,
@@ -50,7 +61,7 @@ export class FakeHost implements HostPort {
   ) {}
   negotiate(offered: Negotiation): Result<Negotiation> {
     if (this.closed) return fail("unavailable");
-    if (offered.contractVersion !== 4 || offered.acp !== 1)
+    if (offered.contractVersion !== 5 || offered.acp !== 1)
       return fail("unsupported_version");
     if (
       offered.a2ui &&
@@ -61,51 +72,139 @@ export class FakeHost implements HostPort {
       return fail("unsupported_capability");
     return ok({ ...structuredClone(offered), durableReceipts: false });
   }
+  async connections(
+    caller: Caller,
+    _budget: Budget,
+  ): Promise<Result<ConnectionPage>> {
+    const rows = await this.store.connections(caller),
+      prefs = await this.store.preferences(caller);
+    return rows.ok && prefs.ok
+      ? ok({
+          schemaVersion: 5,
+          kind: "connectionPage",
+          connections: [...rows.value],
+          preferences: prefs.value,
+        })
+      : fail("unavailable");
+  }
+  saveConnection(
+    caller: Caller,
+    connection: Connection,
+    expected: number | null,
+    _budget: Budget,
+  ) {
+    return this.store.saveConnection(caller, connection, expected);
+  }
+  savePreferences(caller: Caller, prefs: PreferencesPatch, _budget: Budget) {
+    return this.store.savePreferences(caller, prefs);
+  }
+  async selectConnection(
+    caller: Caller,
+    sessionId: string,
+    connectionId: string,
+    _budget: Budget,
+    fresh = false,
+  ) {
+    const namespace = { ...caller, sessionId },
+      session = await this.store.session(namespace);
+    return session.ok
+      ? this.store.selectConnection(
+          namespace,
+          connectionId,
+          session.value.revision,
+          fresh,
+        )
+      : session;
+  }
+  async previewHistory(
+    caller: Caller,
+    sessionId: string,
+    connectionId: string,
+    recent: number | undefined,
+    _budget: Budget,
+  ): Promise<Result<HistoryPreview>> {
+    const snapshot = await readSnapshot(this.store, { ...caller, sessionId }),
+      connection = await this.store.connection(caller, connectionId);
+    if (!snapshot.ok) return fail(snapshot.error.code, snapshot.error.retry);
+    if (!connection.ok)
+      return fail(connection.error.code, connection.error.retry);
+    if (connection.value.status !== "ready") return fail("connection_required");
+    return historyPreview(
+      snapshot.value.session,
+      snapshot.value.commands,
+      snapshot.value.events,
+      connection.value,
+      recent,
+    );
+  }
   async createSession(
     caller: Caller,
     options: SessionOptions,
     budget: Budget,
   ): Promise<Result<Session>> {
     if (this.closed || budget.signal.aborted) return fail("unavailable");
+    if (Object.keys(options).some((key) => key !== "connectionId"))
+      return fail("invalid_input");
+    if (options.connectionId === "missing-connection")
+      return fail("connection_required");
+    const namespace = { ...caller, sessionId: `fake-session-${++this.next}` };
+    const session = productSession(namespace, options.connectionId ?? "cfg");
+    const created = await this.store.create(session);
+    return created.ok ? ok(session) : created;
+  }
+  /** Explicit provider fixture setup for tests that exercise an already admitted context. */
+  async openSessionForTest(
+    caller: Caller,
+    options: ConnectionOptions,
+    budget: Budget,
+  ): Promise<Result<Session>> {
     if (options.profile === "controlled_tools")
       return fail("permission_denied");
-    const namespace = { ...caller, sessionId: `fake-session-${++this.next}` };
-    const provider = new ScriptedProvider();
+    const created = await FakeHost.prototype.createSession.call(
+      this,
+      caller,
+      { connectionId: options.config.id },
+      budget,
+    );
+    return created.ok ? this.open(created.value, budget, options) : created;
+  }
+  private async open(
+    session: Session,
+    budget: Budget,
+    options?: ConnectionOptions,
+  ): Promise<Result<Session>> {
+    const provider = new ScriptedProvider(this.scriptedCapabilities);
     this.providers.push(provider);
     const admitted = await VerifiedProviderSession.open(
       provider,
       {
-        provider: options.provider,
-        config: options.config,
-        accountRef: options.accountRef,
+        provider: options?.provider ?? "fake",
+        config: options?.config ?? {
+          id: session.selectedConnectionId!,
+          revision: "1",
+        },
+
         workingDirectory: ".",
-        namespace,
+        namespace: session.namespace,
         permissions: "tools_disabled",
       },
       budget,
     );
     if (!admitted.ok) return admitted;
-    if (this.closed) {
-      await provider.close(budget);
-      return fail("unavailable");
-    }
-    const session: Session = {
-      schemaVersion: 4,
-      kind: "session",
-      namespace,
-      revision: 0,
-      lastSequence: 0,
-      status: "active",
-      binding: admitted.value.binding,
-      capabilities: {
-        ...admitted.value.capabilities,
+    const activated = await this.store.activateStage({
+      namespace: session.namespace,
+      expectedRevision: session.revision,
+      configRevision: 1,
 
-        ...this.scriptedCapabilities,
-        tools: "disabled",
-      },
-    };
-    const result = await this.store.create(session);
-    return result.ok ? ok(session) : result;
+      opened: admitted.value,
+    });
+    if (activated.ok)
+      for (const wake of this.listeners.get(namespaceKey(session.namespace)) ??
+        []) {
+        this.deltaQueues.get(wake)?.push({ type: "resync_required" });
+        wake();
+      }
+    return activated;
   }
   submit(
     caller: Caller,
@@ -148,25 +247,35 @@ export class FakeHost implements HostPort {
     const namespace = { ...caller, sessionId: command.sessionId };
     const found = await this.store.session(namespace);
     if (!found.ok) return found;
-    const s = found.value;
+    let s = found.value;
     const prior = await this.store.command(namespace, command.commandId);
     if (!prior.ok) {
+      if (!s.currentStageId) {
+        if (command.input.type !== "prompt") return fail("connection_required");
+        const opened = await this.open(s, budget);
+        if (!opened.ok) return opened;
+        s = opened.value;
+      }
       if (
         command.input.type === "prompt" &&
         command.input.policy === "steer" &&
-        (s.capabilities.steer !== "supported" ||
-          command.input.targetRunId !== s.binding.nativeRunId)
+        (activeStage(s).capabilities.steer !== "supported" ||
+          command.input.targetRunId !== activeStage(s).binding.nativeRunId)
       )
         return fail("unsupported_capability");
       if (
         command.input.type !== "prompt" &&
-        (command.input.generation !== s.binding.generation ||
+        (command.input.generation !== activeStage(s).binding.generation ||
           (command.input.type === "cancel" &&
-            command.input.nativeRunId !== s.binding.nativeRunId))
+            command.input.nativeRunId !== activeStage(s).binding.nativeRunId))
       )
         return fail("stale_binding");
       if (command.input.type === "cancel") {
-        if (["unsupported", "unknown"].includes(s.capabilities.cancellation))
+        if (
+          ["unsupported", "unknown"].includes(
+            activeStage(s).capabilities.cancellation,
+          )
+        )
           return fail("unsupported_capability");
         const target = await this.store.command(
           namespace,
@@ -179,7 +288,7 @@ export class FakeHost implements HostPort {
       namespace,
       command,
       expectedRevision: s.revision,
-      expectedGeneration: s.binding.generation,
+      expectedGeneration: activeStage(s).binding.generation,
       nowMs: this.clock.now(),
       retention: { retryWindowMs: 1000, receiptWindowMs: 2000 },
       eventId: `accepted-${command.commandId}`,
@@ -224,7 +333,7 @@ export class FakeHost implements HostPort {
     if (this.closed || budget.signal.aborted) return fail("unavailable");
     const found = await this.store.session({ ...caller, sessionId });
     if (!found.ok) return found;
-    return found.value.capabilities.continuation === "same_process"
+    return activeStage(found.value).capabilities.continuation === "same_process"
       ? found
       : fail("unsupported_capability");
   }
@@ -310,14 +419,14 @@ export class FakeHost implements HostPort {
     const events: Event[] = bodies.map(
       (body, index) =>
         ({
-          schemaVersion: 4,
+          schemaVersion: 5,
           kind: "event",
           namespace,
           eventId: `script-${s.lastSequence + index + 1}`,
           sequence: s.lastSequence + index + 1,
           commandId,
           attemptId: record.dispatch!.attemptId,
-          generation: s.binding.generation,
+          generation: activeStage(s).binding.generation,
           body,
         }) as Event,
     );
@@ -330,14 +439,14 @@ export class FakeHost implements HostPort {
         if (row.commandId === commandId && row.status === "pending") {
           interactions.push({ ...row, status: "unavailable" });
           events.push({
-            schemaVersion: 4,
+            schemaVersion: 5,
             kind: "event",
             namespace,
             eventId: `script-${s.lastSequence + events.length + 1}`,
             sequence: s.lastSequence + events.length + 1,
             commandId,
             attemptId: record.dispatch.attemptId,
-            generation: s.binding.generation,
+            generation: activeStage(s).binding.generation,
             body: {
               type: "interaction",
               interactionId: row.interactionId,
@@ -361,14 +470,14 @@ export class FakeHost implements HostPort {
           };
           surfaces.push(surface);
           events.push({
-            schemaVersion: 4,
+            schemaVersion: 5,
             kind: "event",
             namespace,
             eventId: `script-${s.lastSequence + events.length + 1}`,
             sequence: s.lastSequence + events.length + 1,
             commandId,
             attemptId: record.dispatch.attemptId,
-            generation: s.binding.generation,
+            generation: activeStage(s).binding.generation,
             body: { type: "surface", surface },
           });
         }
@@ -378,14 +487,14 @@ export class FakeHost implements HostPort {
       : [];
     if (terminal)
       events.push({
-        schemaVersion: 4,
+        schemaVersion: 5,
         kind: "event",
         namespace,
         eventId: `script-proof-${s.revision}`,
         sequence: s.lastSequence + events.length + 1,
         commandId,
         attemptId: record.dispatch!.attemptId,
-        generation: s.binding.generation,
+        generation: activeStage(s).binding.generation,
         body: {
           type: "reconciled",
           attempt: record.dispatch!,
@@ -403,7 +512,7 @@ export class FakeHost implements HostPort {
       commands: terminal
         ? [
             {
-              schemaVersion: 4,
+              schemaVersion: 5,
               kind: "commandRecord",
               command: record.command,
               receipt: record.receipt,
@@ -432,15 +541,15 @@ export class FakeHost implements HostPort {
     const namespace = { ...caller, sessionId },
       found = await this.store.session(namespace);
     if (!found.ok) return found;
-    const s = found.value;
+    let s = found.value;
     const interaction: Interaction = {
-      schemaVersion: 4,
+      schemaVersion: 5,
       kind: "interaction",
       category: "question",
       namespace,
       commandId,
-      generation: s.binding.generation,
-      nativeRunId: s.binding.nativeRunId,
+      generation: activeStage(s).binding.generation,
+      nativeRunId: activeStage(s).binding.nativeRunId,
       interactionId,
       nativeCallbackId: `callback-${interactionId}`,
       status: "pending",
@@ -458,14 +567,14 @@ export class FakeHost implements HostPort {
       interactions: [interaction],
       events: [
         {
-          schemaVersion: 4,
+          schemaVersion: 5,
           kind: "event",
           namespace,
           eventId: `question-${interactionId}`,
           attemptId: `attempt-${commandId}`,
           sequence: s.lastSequence + 1,
           commandId,
-          generation: s.binding.generation,
+          generation: activeStage(s).binding.generation,
           body: {
             type: "interaction",
             interactionId,
@@ -492,7 +601,7 @@ export class FakeHost implements HostPort {
     const session = await this.store.session(namespace);
     if (!session.ok) return session;
     if (
-      canonicalize(providerIdentity(session.value.binding)) !==
+      canonicalize(providerIdentity(activeStage(session.value).binding)) !==
       canonicalize(providerIdentity(observation.binding))
     )
       return fail("stale_binding");

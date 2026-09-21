@@ -140,13 +140,14 @@ pub fn freeze(
     plan_id: String,
     now: u64,
     initiator: &execution_contract::Initiator,
+    actor: &execution_contract::ActorId,
 ) -> Result<FrozenPlan> {
     let operation = selected.operation();
     let account = json!({"platform":"macos","subject":"fixture-user"});
     let artifact = json!({"resource":operation.resource.reference,"sha256":digest(ARTIFACT)});
     let spec = json!({
         "schemaVersion":1,"planId":plan_id,
-        "request":{"schemaVersion":1,"requestId":request_id,"authority":{"kind":"test","id":"desktop-fixture"},"actor":"fixture-actor","initiator":initiator,"delegation":null,
+        "request":{"schemaVersion":1,"requestId":request_id,"authority":{"kind":"test","id":"desktop-fixture"},"actor":actor,"initiator":initiator,"delegation":null,
         "target":{"device":"fixture-device","platform":"macos","scope":{"kind":"user","account":account}},"operation":{"action":operation.action,"resource":operation.resource.reference},"parameters":selected.parameters()},
         "launch":{"artifact":artifact,"interpreter":{"artifact":{"resource":{"id":"fixture-interpreter","revision":"r1"},"sha256":digest(b"fixed interpreter marker; no interpreter exists")},"profile":{"id":"fixture-only","revision":"r1"}},"argv":[{"kind":"artifactPath"}],"artifactEncoding":"utf8","stdin":{"kind":"closed"},"output":{"stdout":"utf8","stderr":"utf8"},"cwd":"/s1-fixture","env":{}},
         "runAs":{"kind":"user","account":account},"constraints":{"network":{"kind":"denied"},"readPaths":[],"writePaths":[],"allowChildProcesses":false,"requireSandbox":true},"budget":{"totalTimeoutMs":60_000,"totalOutputBytes":4096,"maxAttempts":1},"validity":{"notBeforeUnixMs":now,"expiresAtUnixMs":now+300_000},"policy":{"id":"fixture-policy","revision":"r1"},"sessionRequirement":{"kind":"notRequired"}

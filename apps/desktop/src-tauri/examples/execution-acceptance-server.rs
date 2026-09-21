@@ -3,9 +3,15 @@ use execution_contract::RequestId;
 use execution_mcp::{
     CatalogCandidate, ExecutionMcp, ExecutionServicePort, McpLimits, PreviewRequest,
 };
-use rss_mdm_desktop::composition::{execution::ExecutionHandle, origin::AiBinding};
+use rss_mdm_desktop::composition::execution::ExecutionHandle;
 use serde_json::json;
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    io::Write,
+    os::unix::fs::OpenOptionsExt,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
@@ -16,20 +22,58 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "usage: execution-acceptance-server DATABASE AUDIT OPERATION_REQUEST_ID".into(),
         );
     }
-    let binding = AiBinding::from_configuration(&json!({
-        "caller": {
-            "tenantId": "s1-test",
-            "principalId": "fixture-actor",
-            "authorityId": "desktop-fixture"
-        },
-        "session": {
-            "provider": "codex",
-            "accountRef": "test-account",
-            "config": { "id": "local", "revision": "r1" },
-            "profile": "controlled_tools"
-        }
-    }))?;
-    let execution = ExecutionHandle::start(&PathBuf::from(&args[0]), binding)?;
+    let database = PathBuf::from(&args[0]);
+    let user_root = database
+        .parent()
+        .ok_or("execution database must have a parent")?
+        .join("execution-users");
+    std::fs::create_dir_all(&user_root)?;
+    let users_path = user_root.join("users.json");
+    if !users_path.try_exists()? {
+        std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .open(&users_path)?
+            .write_all(
+                serde_json::to_vec(&json!({
+                "schemaVersion": 5,
+                "kind": "testUserPage",
+                "users": [{
+                    "schemaVersion": 5,
+                    "kind": "testUser",
+                    "userId": "fixture-actor",
+                    "displayName": "Fixture",
+                    "nameKey": "fixture"
+                }],
+                "current": {
+                    "schemaVersion": 5,
+                    "kind": "userContext",
+                    "user": {
+                        "schemaVersion": 5,
+                        "kind": "testUser",
+                        "userId": "fixture-actor",
+                        "displayName": "Fixture",
+                        "nameKey": "fixture"
+                    },
+                    "generation": "fixture-generation"
+                }
+                }))?
+                .as_slice(),
+            )?;
+    }
+    let users = rss_mdm_desktop::composition::users::Users::open(&user_root)?;
+    let generation = users.current()?.generation.to_string();
+    std::fs::write(
+        database
+            .parent()
+            .ok_or("execution database must have a parent")?
+            .join("execution-user.json"),
+        serde_json::to_vec(&json!({ "generation": generation }))?,
+    )?;
+    let execution = ExecutionHandle::start(&database)?
+        .with_trusted_users(Arc::new(Mutex::new(users)))
+        .for_caller("fixture-actor")?;
     let catalog = rss_mdm_desktop::composition::execution::catalog()?;
     let selected = catalog.select(
         &serde_json::to_vec(&json!({
@@ -53,17 +97,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let metadata = json!({
         "com.rss-mdm/ai-origin": {
-            "version": 1,
+            "schemaVersion": 5,
+            "kind": "executionOrigin",
+            "userGeneration": generation,
             "namespace": {
-                "tenantId": "s1-test",
+                "tenantId": "test-users",
                 "principalId": "fixture-actor",
                 "authorityId": "desktop-fixture",
                 "sessionId": "conversation-a"
             },
             "operationId": "preflight-preview",
             "provider": "codex",
-            "accountRef": "test-account",
-            "config": { "id": "local", "revision": "r1" }
+                        "config": { "id": "local", "revision": "r1" }
         }
     });
     let preview = Arc::new(execution.clone())

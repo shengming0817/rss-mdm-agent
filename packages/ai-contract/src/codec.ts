@@ -129,7 +129,7 @@ export function decode(input: string | Uint8Array, limits: Limits): WireRecord {
     value &&
     typeof value === "object" &&
     "schemaVersion" in value &&
-    value.schemaVersion !== 4
+    value.schemaVersion !== 5
   )
     throw new ContractError("version");
   if (!valid(value)) throw new ContractError("schema");
@@ -137,6 +137,22 @@ export function decode(input: string | Uint8Array, limits: Limits): WireRecord {
   return value as WireRecord;
 }
 function checkContext(value: WireRecord): void {
+  if (value.kind === "session") {
+    const last = value.stages.at(-1);
+    if (
+      value.currentStageId !== last?.stageId ||
+      new Set(value.stages.map((stage) => stage.stageId)).size !==
+        value.stages.length ||
+      value.stages.some(
+        (stage) =>
+          stage.connectionId !== stage.binding.config.id ||
+          stage.configRevision < 1,
+      )
+    )
+      throw new ContractError("context");
+  }
+  if (value.kind === "sessionPage")
+    for (const session of value.items) checkContext(session);
   if (value.kind === "event" && value.body.type === "command_accepted") {
     checkContext(value.body.command);
     if (
@@ -146,6 +162,7 @@ function checkContext(value: WireRecord): void {
       throw new ContractError("context");
   }
   if (value.kind === "snapshotPage") {
+    checkContext(value.session);
     if (value.cursor !== value.session.lastSequence)
       throw new ContractError("context");
     const namespace = canonicalize(value.session.namespace);

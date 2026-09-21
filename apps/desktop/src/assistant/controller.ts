@@ -1,3 +1,4 @@
+import type { Connection, HistoryPreview } from "@rss-mdm-agent/ai-contract";
 import { computed, markRaw, reactive, shallowRef } from "vue";
 import {
   ClientError,
@@ -65,6 +66,29 @@ async function bounded<T>(
     owner.signal.removeEventListener("abort", abort);
   }
 }
+export function operationMessage(code: string): string {
+  const messages: Record<string, string> = {
+    authentication_required:
+      "认证不可用。请在管理 AI 连接中更新认证来源并重新验证；历史仍可查看。",
+    connection_required: "请为本会话选择一条可用连接；历史仍可查看。",
+    context_unavailable:
+      "原模型上下文不可恢复。请选择可用连接并开始新上下文；如需带入历史，请先预览并确认。",
+    reconciliation_required:
+      "上次请求结果尚未确认。请重新读取历史并核对原命令，勿重复发送。",
+    connection_switch_pending: "正在等待已接收的输入结束，随后使用所选连接。",
+    revision_conflict:
+      "连接已在其他操作中更新。目录已刷新，请重新打开连接并核对后再操作。",
+    invalid_input: "连接配置或输入无效，请检查后重试。",
+    unsupported_capability:
+      "当前认证来源或能力不可用，请选择已有 API 配置或自定义 API。",
+    limit_exceeded: "历史内容超过 64 KiB。请改用最近 N 轮，并缩小带入范围。",
+    cancelled: "",
+  };
+  return (
+    Object.entries(messages).find(([key]) => key === code)?.[1] ??
+    "操作未确认，请重新读取后重试。"
+  );
+}
 type SessionItem = Pick<SessionPage["items"][number], "namespace" | "status">;
 type Pending = { command: Command; draft?: string };
 export function createAssistant(
@@ -91,9 +115,11 @@ export function createAssistant(
     next: undefined as string | undefined,
     listing: false,
     opening: false,
+    connections: [] as Connection[],
     sessions: new Map<string, SessionItem>(),
     views: new Map<string, SessionView>(),
     drafts: new Map<string, string>(),
+    history: new Map<string, HistoryPreview>(),
     pending: new Map<string, Pending>(),
     sending: new Set<string>(),
     errors: new Map<string, string>(),
@@ -138,9 +164,18 @@ export function createAssistant(
         ),
     ),
   );
+  const connectionReady = computed(() =>
+    state.connections.some(
+      (row) =>
+        row.connectionId === view.value?.selectedConnectionId &&
+        row.status === "ready",
+    ),
+  );
   const canSend = computed(
     () =>
       live(view.value) &&
+      connectionReady.value &&
+      !(busy.value && view.value?.connectionPending) &&
       !state.pending.has(state.selected) &&
       !state.sending.has(state.selected),
   );
@@ -321,9 +356,11 @@ export function createAssistant(
     state.task = undefined;
     state.taskLoading = false;
     state.taskError = "";
+    state.connections = [];
     state.views.clear();
     state.sessions.clear();
     state.drafts.clear();
+    state.history.clear();
     state.pending.clear();
     state.sending.clear();
     state.errors.clear();
@@ -382,6 +419,21 @@ export function createAssistant(
         }
       });
       await list(false);
+      const catalog = await connected.runtime.connections();
+      if (current !== epoch) return;
+      state.connections = catalog.connections;
+      if (catalog.preferences.selectedSessionId) {
+        const id = catalog.preferences.selectedSessionId;
+        const next = await connected.runtime.restore(id);
+        if (current === epoch) {
+          state.selected = id;
+          state.views.set(id, next);
+          state.sessions.set(id, {
+            namespace: next.namespace,
+            status: next.sessionStatus,
+          });
+        }
+      }
     } catch (error) {
       owner.abort();
       if (current === epoch) {
@@ -420,9 +472,21 @@ export function createAssistant(
       if (current === epoch) state.listing = false;
     }
   }
+  async function remember(id: string) {
+    const client = runtime.value,
+      current = epoch;
+    if (!client) return;
+    try {
+      if (current === epoch)
+        await client.savePreferences({ selectedSessionId: { set: id } });
+    } catch {
+      if (current === epoch) state.errors.set(id, "preference_not_saved");
+    }
+  }
   async function select(id: string) {
     if (!runtime.value || !state.sessions.has(id)) return;
     state.selected = id;
+    void remember(id);
     if (state.views.get(id)?.connection === "attached") return;
     const current = epoch;
     state.errors.delete(id);
@@ -446,6 +510,7 @@ export function createAssistant(
       if (current !== epoch) return;
       state.views.set(next.namespace.sessionId, next);
       state.selected = next.namespace.sessionId;
+      await remember(next.namespace.sessionId);
       await list(false);
     } catch (error) {
       if (current === epoch) state.createError = fail(error);
@@ -470,6 +535,7 @@ export function createAssistant(
       await client.submit(pending.command);
       if (current !== epoch) return;
       state.pending.delete(id);
+      state.history.delete(id);
       if (pending.draft !== undefined && state.drafts.get(id) === pending.draft)
         state.drafts.set(id, "");
     } catch (error) {
@@ -501,7 +567,7 @@ export function createAssistant(
       return;
     state.pending.set(id, {
       command: {
-        schemaVersion: 4,
+        schemaVersion: 5,
         kind: "command",
         sessionId: id,
         commandId: identity(),
@@ -523,6 +589,9 @@ export function createAssistant(
         type: "prompt",
         text: draft.value.trim(),
         policy,
+        ...(policy === "queue_next" && state.history.has(state.selected)
+          ? { history: state.history.get(state.selected)! }
+          : {}),
         ...(policy === "steer"
           ? { targetRunId: active.value!.dispatch!.nativeRunId! }
           : {}),
@@ -639,6 +708,7 @@ export function createAssistant(
     busy,
     active,
     canSend,
+    connectionReady,
     canSteer,
     canCancel,
     canResume,

@@ -1,3 +1,9 @@
+import { activeStage } from "../../../packages/ai-contract/dist/index.js";
+import {
+  replaceStage,
+  startStage,
+  providerStage,
+} from "../../../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { VerifiedProviderSession } from "../../../packages/ai-contract/dist/session.js";
@@ -22,7 +28,7 @@ async function persistIntent(store, session, command, attempt) {
     await store.command(session.namespace, command.commandId),
   );
   const record = {
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "commandRecord",
     command: accepted.command,
     receipt: accepted.receipt,
@@ -66,10 +72,10 @@ async function persistDispatch(
   };
   const resolution = certainty === "submitted" ? "running" : "unknown";
   const proof = await verifiedReconciliation(
-    {
-      ...persisted.session,
-      binding: { ...persisted.session.binding, ...coordinates },
-    },
+    replaceStage(persisted.session, {
+      ...activeStage(persisted.session).binding,
+      ...coordinates,
+    }),
     persisted.record,
     resolution,
     "completed",
@@ -84,10 +90,11 @@ async function persistDispatch(
     await store.commit({
       ...batch,
       providerFacts: [proof],
-      session: {
-        ...batch.session,
-        binding: { ...persisted.session.binding, ...coordinates },
-      },
+      session: replaceStage(
+        { ...batch.session },
+        { ...activeStage(persisted.session).binding, ...coordinates },
+        undefined,
+      ),
     }),
   );
   return {
@@ -168,16 +175,18 @@ test(
     const admitted = unwrap(
       await VerifiedProviderSession.open(port, fixture.configuration, budget()),
     );
-    const session = {
-      schemaVersion: 4,
-      kind: "session",
-      namespace: fixture.configuration.namespace,
-      revision: 0,
-      lastSequence: 0,
-      status: "active",
-      binding: admitted.binding,
-      capabilities: admitted.capabilities,
-    };
+    const session = startStage(
+      {
+        schemaVersion: 5,
+        kind: "session",
+        namespace: fixture.configuration.namespace,
+        revision: 0,
+        lastSequence: 0,
+        status: "active",
+        stages: [],
+      },
+      providerStage(admitted.binding, admitted.capabilities),
+    );
     const store = new MemorySessionStore();
     unwrap(await store.create(session));
     const first = prompt(admitted.binding, "first-before-steer-race");
@@ -390,7 +399,7 @@ test(
       );
     const failure = { code: "stale_binding", retry: "never" };
     const invalidated = {
-      schemaVersion: 4,
+      schemaVersion: 5,
       kind: "commandRecord",
       command: durable.record.command,
       receipt: durable.record.receipt,
@@ -457,16 +466,18 @@ test(
       ),
     );
     const persisted = await conversation(firstPort, admitted, "persisted");
-    const previous = {
-      schemaVersion: 4,
-      kind: "session",
-      namespace: fixture.configuration.namespace,
-      revision: 0,
-      lastSequence: 0,
-      status: "active",
-      binding: persisted.submission.binding,
-      capabilities: admitted.capabilities,
-    };
+    const previous = startStage(
+      {
+        schemaVersion: 5,
+        kind: "session",
+        namespace: fixture.configuration.namespace,
+        revision: 0,
+        lastSequence: 0,
+        status: "active",
+        stages: [],
+      },
+      providerStage(persisted.submission.binding, admitted.capabilities),
+    );
     fixture.lineage.set(admitted.binding.nativeThreadId, {
       nativeSessionId: admitted.binding.nativeSessionId,
       nativeThreadId: admitted.binding.nativeThreadId,
@@ -482,11 +493,11 @@ test(
         budget(),
       ),
     );
-    const current = {
-      ...previous,
-      binding: restored.binding,
-      capabilities: restored.capabilities,
-    };
+    const current = replaceStage(
+      { ...previous },
+      restored.binding,
+      restored.capabilities,
+    );
     const store = new MemorySessionStore();
     unwrap(await store.create(current));
     const missing = prompt(restored.binding, "cold-missing-history");

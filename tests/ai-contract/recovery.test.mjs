@@ -1,3 +1,4 @@
+import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { decode } from "../../packages/ai-contract/dist/index.js";
@@ -22,9 +23,9 @@ test("dispatch identity separates the original attempt from its current observer
     state: "reconciliation_required",
     dispatch: {
       attemptId: "attempt-1",
-      originGeneration: session.binding.generation,
+      originGeneration: activeStage(session).binding.generation,
       observerGeneration: "restored-generation",
-      nativeSessionId: session.binding.nativeSessionId,
+      nativeSessionId: activeStage(session).binding.nativeSessionId,
       certainty: "unknown",
       correlationId: "provider-lookup-key",
     },
@@ -57,7 +58,7 @@ test("surface mutations cannot leave the stable subscription watermark unchanged
   const store = new MemorySessionStore(),
     seeded = await seedInteraction(store);
   const surface = {
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "surface",
     namespace: seeded.session.namespace,
     generation: seeded.interaction.generation,

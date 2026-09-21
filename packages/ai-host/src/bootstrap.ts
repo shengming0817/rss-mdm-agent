@@ -54,6 +54,7 @@ const control = new Channel(
       active = true;
       const input = data as {
         artifact: string;
+        activation?: unknown;
         previous: Binding | null;
         configuration: ProviderConfiguration;
       };
@@ -65,6 +66,7 @@ const control = new Channel(
       port = await module.createProvider({
         configuration: input.configuration,
         previous: input.previous,
+        activation: input.activation,
         ...(input.configuration.permissions === "host_mediated"
           ? { tools: bridge }
           : {}),

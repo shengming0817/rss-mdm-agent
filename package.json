@@ -16,7 +16,7 @@
     "typecheck": "vue-tsc --noEmit -p tsconfig.json",
     "check:boundaries": "node --test scripts/boundaries.test.mjs",
     "check:consumer": "node scripts/check-consumer.mjs",
-    "format:check": "prettier --check packages/ui/runtime.ts packages/ui/src packages/ui/tests apps/desktop/src scripts packages/ai-contract/src tests/ai-contract packages/ai-access/src packages/ai-client/src packages/ai-ui-bridge/src tests/ai-access packages/ai-adapters/claude/src tests/ai-adapters/claude packages/ai-store-sqlite/src tests/ai-store-recovery packages/ai-host/src apps/ai-host/src tests/ai-host packages/ai-adapters/codex/src tests/ai-adapters/codex packages/ai-adapters/deepseek/src tests/ai-adapters/deepseek tests/ai-provider-conformance tests/ai-recovery-integration",
+    "format:check": "prettier --check packages/ui/runtime.ts packages/ui/src packages/ui/tests apps/desktop/src scripts packages/ai-contract/src tests/ai-contract packages/ai-access/src packages/ai-client/src packages/ai-ui-bridge/src tests/ai-access packages/ai-adapters/claude/src tests/ai-adapters/claude packages/ai-store-sqlite/src tests/ai-store-recovery packages/ai-host/src apps/ai-host/src tests/ai-host packages/ai-adapters/codex/src tests/ai-adapters/codex packages/ai-adapters/deepseek/src tests/ai-adapters/deepseek tests/ai-provider-conformance tests/ai-recovery-integration tests/desktop",
     "generate:ai-contract": "node scripts/generate-ai-contract.mjs",
     "check:ai-contract": "node scripts/generate-ai-contract.mjs --check",
     "build:ai-contract": "pnpm --filter @rss-mdm-agent/ai-contract build",

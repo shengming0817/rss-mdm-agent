@@ -28,6 +28,7 @@ function fixture(answer = async () => ({})) {
       resolveConfiguration: async () => ({
         configuration: c,
         persistenceDirectory: "/tmp/dsh",
+        endpointIdentity: "https://custom.example.test/v1",
         apiUrl: "https://custom.example.test/v1",
         apiKey: "fixture",
         model: "deepseek-chat",

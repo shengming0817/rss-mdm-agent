@@ -1,3 +1,4 @@
+import { activeStage } from "../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import { chromium } from "playwright-core";
 import { startFixture } from "../tests/assistant/server.mjs";
@@ -59,7 +60,7 @@ try {
       type: "delta",
       attemptId: `attempt-${command.commandId}`,
       commandId: command.commandId,
-      binding: liveSession.binding,
+      binding: activeStage(liveSession).binding,
       messageId: "transient",
       text: "临时片段",
     }),
@@ -131,7 +132,10 @@ try {
     (c) => c.command.input.interactionId === "background-question",
   ).command;
   assert.equal(answer.input.nativeRunId, `run-${command.commandId}`);
-  assert.equal(answer.input.generation, snapshot.session.binding.generation);
+  assert.equal(
+    answer.input.generation,
+    activeStage(snapshot.session).binding.generation,
+  );
   // Ordinary ACP permission callbacks disappear on cancellation from the owner process.
   const obsolete = fixture.permission(sessionId);
   await page.getByRole("region", { name: "AI 工具权限请求" }).waitFor();

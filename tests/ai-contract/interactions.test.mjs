@@ -1,3 +1,4 @@
+import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { decode } from "../../packages/ai-contract/dist/index.js";
@@ -25,13 +26,13 @@ async function dispatched() {
 }
 function question(session, id = "question-1", callback = "callback-1") {
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "interaction",
     category: "question",
     namespace: session.namespace,
     interactionId: id,
     commandId: "command-1",
-    generation: session.binding.generation,
+    generation: activeStage(session).binding.generation,
     nativeCallbackId: callback,
     expiresAtMs: 100,
     status: "pending",
@@ -49,7 +50,7 @@ function pending(session, rows) {
     },
     interactions: rows,
     events: rows.map((row, index) => ({
-      schemaVersion: 4,
+      schemaVersion: 5,
       kind: "event",
       namespace: session.namespace,
       eventId: `pending-${row.interactionId}`,

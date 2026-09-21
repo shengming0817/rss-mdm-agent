@@ -1,3 +1,4 @@
+import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -118,7 +119,7 @@ test("delivery survives an ended run and SQLite reopen; unknown never causes bli
     (
       await owner.propose(
         f.session.namespace,
-        f.session.binding.generation,
+        activeStage(f.session).binding.generation,
         "command-1",
         proposal,
         budget(),
@@ -167,7 +168,7 @@ test("exact operation/content conflict is permanent and a hung receiver has a bo
     (
       await owner.propose(
         f.session.namespace,
-        f.session.binding.generation,
+        activeStage(f.session).binding.generation,
         "command-1",
         proposal,
         budget(30),
@@ -178,7 +179,7 @@ test("exact operation/content conflict is permanent and a hung receiver has a bo
   assert.ok(Date.now() - started < 500);
   const conflict = await owner.propose(
     f.session.namespace,
-    f.session.binding.generation,
+    activeStage(f.session).binding.generation,
     "command-1",
     {
       ...proposal,
@@ -200,7 +201,7 @@ test("hung deliveries cannot starve ready operations or later pages", async (t) 
   for (const id of ["a-hung", "b-ready", "c-hung", "d-hung", "e-ready"])
     await owner.propose(
       f.session.namespace,
-      f.session.binding.generation,
+      activeStage(f.session).binding.generation,
       "command-1",
       {
         ...proposal,

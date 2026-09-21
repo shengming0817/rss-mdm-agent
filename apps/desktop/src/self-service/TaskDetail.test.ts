@@ -47,10 +47,7 @@ test("approval shows the frozen actor, authority and AI account separately from 
       account: { platform: "macos", subject: "os-user" },
       session: "os-session",
     },
-    providerAccount: {
-      account: "ai-account",
-      config: { id: "ai-config", revision: "r7" },
-    },
+    config: { id: "ai-config", revision: "r7" },
     conversation: "conversation-7",
     toolCall: "tool-call-7",
   };
@@ -68,7 +65,6 @@ test("approval shows the frozen actor, authority and AI account separately from 
     "origin-device",
     "os-user",
     "os-session",
-    "ai-account",
     "ai-config",
     "r7",
     "conversation-7",

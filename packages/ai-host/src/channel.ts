@@ -2,6 +2,21 @@ import { randomUUID } from "node:crypto";
 import type { Duplex } from "node:stream";
 import { boundedJson, type Budget } from "@rss-mdm-agent/ai-contract";
 
+const peerCodes = [
+  "authentication_required",
+  "invalid_input",
+  "context_unavailable",
+  "unsupported_capability",
+] as const;
+type PeerCode = (typeof peerCodes)[number];
+function peerCode(value: unknown): PeerCode | undefined {
+  return peerCodes.find((code) => code === value);
+}
+export class PeerFailure extends Error {
+  constructor(readonly code: PeerCode) {
+    super(code);
+  }
+}
 const maxFrame = 256 * 1024;
 const limits = {
   maxBytes: maxFrame,
@@ -131,10 +146,18 @@ export class Channel {
     if (packet.type === "reply" || packet.type === "failure") {
       const pending = this.pending.get(id);
       if (!pending) return;
+      const code =
+        packet.type === "failure" ? peerCode(packet.code) : undefined;
+      if (packet.type === "failure" && packet.code !== undefined && !code)
+        throw new Error("IPC error code");
       this.pending.delete(id);
       pending.cleanup();
       if (packet.type === "reply") pending.resolve(packet.data);
-      else pending.reject(new Error("IPC peer failure"));
+      else {
+        pending.reject(
+          code ? new PeerFailure(code) : new Error("IPC peer failure"),
+        );
+      }
     } else if (packet.type === "cancel") this.active.get(id)?.abort();
     else if (packet.type === "call") {
       if (
@@ -162,8 +185,18 @@ export class Channel {
             if (!controller.signal.aborted)
               this.send({ type: "reply", id, data: data ?? null });
           },
-          () => {
-            if (!controller.signal.aborted) this.send({ type: "failure", id });
+          (error: unknown) => {
+            const raw =
+              error && typeof error === "object" && "code" in error
+                ? error.code
+                : undefined;
+            const code = peerCode(
+              raw === "configuration_invalid" || raw === "configuration_file"
+                ? "invalid_input"
+                : raw,
+            );
+            if (!controller.signal.aborted)
+              this.send({ type: "failure", id, ...(code ? { code } : {}) });
           },
         )
         .catch(() => this.close())

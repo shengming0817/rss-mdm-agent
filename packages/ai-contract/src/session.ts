@@ -1,3 +1,5 @@
+import { replaceStage, startStage, providerStage } from "./contexts.js";
+import { activeStage } from "./contexts.js";
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import canonicalize from "canonicalize";
@@ -88,7 +90,7 @@ export interface VerifiedProviderFact {
 const observations = new WeakMap<
   VerifiedProviderFact,
   {
-    session: Pick<Session, "namespace" | "binding">;
+    session: { namespace: Namespace; binding: Binding };
     record: CommandRecord;
     observation: Reconciliation;
   }
@@ -103,7 +105,7 @@ export function providerFactFor(
   return evidence &&
     same(evidence.session, {
       namespace: session.namespace,
-      binding: providerIdentity(session.binding),
+      binding: providerIdentity(activeStage(session).binding),
     }) &&
     same(evidence.record.command, record.command) &&
     same(evidence.record.receipt, record.receipt) &&
@@ -142,7 +144,7 @@ export class VerifiedProviderSession {
   readonly #port: ProviderAgentPort;
   readonly #capabilities: Capabilities;
   readonly #tools?: ToolEndpoint;
-  readonly #previous?: Pick<Session, "namespace" | "binding">;
+  readonly #previous?: { namespace: Namespace; binding: Binding };
   private constructor(
     token: symbol,
     port: ProviderAgentPort,
@@ -150,7 +152,7 @@ export class VerifiedProviderSession {
     binding: Binding,
     capabilities: Capabilities,
     tools?: ToolEndpoint,
-    previous?: Pick<Session, "namespace" | "binding">,
+    previous?: { namespace: Namespace; binding: Binding },
   ) {
     if (token !== authority) throw new TypeError("unverified provider session");
     this.#binding = structuredClone(binding);
@@ -167,6 +169,9 @@ export class VerifiedProviderSession {
   get capabilities(): Capabilities {
     return structuredClone(this.#capabilities);
   }
+  opens(namespace: Namespace): boolean {
+    return this.#previous === undefined && same(this.#namespace, namespace);
+  }
   matches(binding: Binding, tools?: ToolEndpoint): boolean {
     return same(this.#binding, binding) && this.#tools === tools;
   }
@@ -175,7 +180,10 @@ export class VerifiedProviderSession {
     return (
       this.#previous !== undefined &&
       same(
-        { namespace: previous.namespace, binding: previous.binding },
+        {
+          namespace: previous.namespace,
+          binding: activeStage(previous).binding,
+        },
         this.#previous,
       )
     );
@@ -222,7 +230,7 @@ export class VerifiedProviderSession {
         !same(head.namespace, this.#namespace) ||
         !same(original.receipt.namespace, this.#namespace) ||
         !same(
-          providerIdentity(head.binding),
+          providerIdentity(activeStage(head).binding),
           providerIdentity(this.#binding),
         ) ||
         original.dispatch.observerGeneration !== this.#binding.generation ||
@@ -242,7 +250,10 @@ export class VerifiedProviderSession {
       )
         return denied();
       decode(
-        boundedJson({ ...head, binding: observed.binding }, limits),
+        boundedJson(
+          replaceStage({ ...head }, observed.binding, undefined),
+          limits,
+        ),
         limits,
       );
       if (observed.status === "observed") {
@@ -251,12 +262,12 @@ export class VerifiedProviderSession {
           decode(
             boundedJson(
               {
-                schemaVersion: 4,
+                schemaVersion: 5,
                 kind: "event",
                 namespace: head.namespace,
                 eventId: "verify-observation",
                 sequence: 1,
-                generation: head.binding.generation,
+                generation: activeStage(head).binding.generation,
                 commandId: original.command.commandId,
                 attemptId: original.dispatch!.attemptId,
                 body:
@@ -312,7 +323,7 @@ export class VerifiedProviderSession {
       observations.set(proof, {
         session: {
           namespace: structuredClone(head.namespace),
-          binding: providerIdentity(head.binding),
+          binding: providerIdentity(activeStage(head).binding),
         },
         record: structuredClone(original),
         observation,
@@ -339,7 +350,7 @@ export class VerifiedProviderSession {
     const basis = {
       commandId: original.command.commandId,
       attemptId: original.dispatch.attemptId,
-      binding: head.binding,
+      binding: activeStage(head).binding,
     };
     if (!this.mint(head, original, { ...basis, status: "unknown" }).ok)
       return denied();
@@ -348,7 +359,7 @@ export class VerifiedProviderSession {
         () => budget,
         (b) =>
           this.#port.dispatch(
-            head.binding,
+            activeStage(head).binding,
             original.command,
             original.dispatch!,
             b,
@@ -398,7 +409,7 @@ export class VerifiedProviderSession {
       !this.mint(head, original, {
         status: "unknown",
         binding: {
-          ...head.binding,
+          ...activeStage(head).binding,
           ...(original.dispatch.nativeRunId !== undefined
             ? { nativeRunId: original.dispatch.nativeRunId }
             : {}),
@@ -414,7 +425,7 @@ export class VerifiedProviderSession {
     try {
       const result = await withinBudget(
         () => budget,
-        (b) => this.#port.reconcile(head.binding, original, b),
+        (b) => this.#port.reconcile(activeStage(head).binding, original, b),
       );
       if (!result.ok) return result;
       if (
@@ -441,7 +452,10 @@ export class VerifiedProviderSession {
     const head = structuredClone(session),
       original = structuredClone(record);
     if (!original.dispatch) return;
-    for await (const observation of this.#port.observe(head.binding, budget)) {
+    for await (const observation of this.#port.observe(
+      activeStage(head).binding,
+      budget,
+    )) {
       if (budget.signal.aborted) return;
       let resolution: Reconciliation;
       const base = {
@@ -505,7 +519,6 @@ export class VerifiedProviderSession {
         parentId === childId ||
         !same(parentScope, childScope) ||
         configuration.provider !== this.#binding.provider ||
-        configuration.accountRef !== this.#binding.accountRef ||
         !same(configuration.config, this.#binding.config) ||
         workspaceIdentity(configuration.workingDirectory) !==
           this.#binding.workspaceId ||
@@ -619,7 +632,7 @@ export class VerifiedProviderSession {
     const workspaceId = workspaceIdentity(configuration.workingDirectory);
     if (
       previous &&
-      (previous.binding.workspaceId !== workspaceId ||
+      (activeStage(previous).binding.workspaceId !== workspaceId ||
         !same(previous.namespace, configuration.namespace))
     )
       return denied();
@@ -637,7 +650,6 @@ export class VerifiedProviderSession {
     // are captured separately, so concurrent caller mutation cannot switch the verifier.
     const namespace = structuredClone(configuration.namespace);
     const config = structuredClone(configuration.config),
-      accountRef = configuration.accountRef,
       provider = configuration.provider;
     const tools = admission?.tools,
       verifier = admission?.verifier;
@@ -646,7 +658,6 @@ export class VerifiedProviderSession {
       ...configuration,
       namespace: structuredClone(namespace),
       config: structuredClone(config),
-      accountRef,
     };
     let initialized;
     if (fork) {
@@ -676,7 +687,7 @@ export class VerifiedProviderSession {
     } else
       initialized = previous
         ? await port.resume!(
-            structuredClone(previous.binding),
+            structuredClone(activeStage(previous).binding),
             settings,
             budget,
           )
@@ -692,16 +703,18 @@ export class VerifiedProviderSession {
       };
       decode(
         boundedJson(
-          {
-            schemaVersion: 4,
-            kind: "session",
-            namespace,
-            revision: 0,
-            lastSequence: 0,
-            status: "active",
-            binding,
-            capabilities,
-          },
+          startStage(
+            {
+              schemaVersion: 5,
+              kind: "session",
+              namespace,
+              revision: 0,
+              lastSequence: 0,
+              status: "active",
+              stages: [],
+            },
+            providerStage(binding, capabilities),
+          ),
           limits,
         ),
         limits,
@@ -713,19 +726,17 @@ export class VerifiedProviderSession {
       binding.workspaceId !== workspaceId ||
       binding.provider !== provider ||
       !same(binding.config, config) ||
-      binding.accountRef !== accountRef ||
       capabilities.tools !== (controlled ? "host_mediated" : "disabled")
     )
       return denied();
     if (previous) {
-      const prior = previous.binding;
+      const prior = activeStage(previous).binding;
       if (
         binding.workspaceId !== prior.workspaceId ||
         binding.generation === prior.generation ||
         binding.provider !== prior.provider ||
         binding.providerVersion !== prior.providerVersion ||
         binding.adapterVersion !== prior.adapterVersion ||
-        binding.accountRef !== prior.accountRef ||
         !same(binding.config, prior.config) ||
         binding.nativeSessionId !== prior.nativeSessionId ||
         binding.nativeThreadId !== prior.nativeThreadId ||
@@ -758,7 +769,7 @@ export class VerifiedProviderSession {
         tools,
         previous && {
           namespace: previous.namespace,
-          binding: previous.binding,
+          binding: activeStage(previous).binding,
         },
       ),
     };

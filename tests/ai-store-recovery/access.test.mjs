@@ -1,3 +1,4 @@
+import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { join } from "node:path";
@@ -105,7 +106,7 @@ test("SQLite verified restart preserves renderable surface history while revokin
     path = join(h.directory, "rebound-access.sqlite");
   let store = unwrap(h.open(path));
   const initial = fixtureSession();
-  initial.capabilities.continuation = "across_processes";
+  activeStage(initial).capabilities.continuation = "across_processes";
   const seeded = await seedSurface(store, initial);
   unwrap(await store.close(budget()));
   store = unwrap(h.open(path, "open"));
@@ -114,7 +115,7 @@ test("SQLite verified restart preserves renderable surface history while revokin
     await store.rebind({
       namespace: initial.namespace,
       expectedRevision: seeded.session.revision,
-      expectedGeneration: initial.binding.generation,
+      expectedGeneration: activeStage(initial).binding.generation,
       restored,
       eventId: "access-rebind",
     }),
@@ -122,12 +123,12 @@ test("SQLite verified restart preserves renderable surface history while revokin
   const snapshot = unwrap(await readSnapshot(store, initial.namespace));
   const surface = validateSurface(snapshot.surfaces[0]);
   assert.equal(surface.status, "invalidated");
-  assert.equal(surface.generation, initial.binding.generation);
+  assert.equal(surface.generation, activeStage(initial).binding.generation);
   assert.deepEqual(surface.messages, seeded.surface.messages);
   const event = snapshot.events.find(
     (e) => e.body.type === "surface" && e.body.surface.status === "invalidated",
   );
-  assert.equal(event.generation, session.binding.generation);
+  assert.equal(event.generation, activeStage(session).binding.generation);
   assert.deepEqual(
     decode(boundedJson(event, fixtureLimits), fixtureLimits),
     event,

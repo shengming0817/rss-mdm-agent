@@ -1,3 +1,4 @@
+import type { PreferencesPatch } from "./wire.js";
 import type {
   Binding,
   Capabilities,
@@ -22,6 +23,10 @@ import type {
   DispatchAttempt,
   Outcome,
   Acknowledgement,
+  Connection,
+  UserPreferences,
+  ConnectionPage,
+  HistoryPreview,
 } from "./wire.js";
 /** Supplied by authenticated ingress, never decoded from model/tool/action content.
  * This port does not authenticate its caller; the composition root owns that proof. */
@@ -61,9 +66,12 @@ export interface ControlledToolVerifier {
   >;
 }
 export interface SessionOptions {
+  readonly connectionId?: Id;
+}
+export interface ConnectionOptions {
   readonly provider: Id;
   readonly config: ConfigRef;
-  readonly accountRef: Id;
+
   readonly profile: "conversation" | "controlled_tools";
 }
 /** Only a proposal/result bridge; it cannot issue execution permits or approve a plan. */
@@ -82,7 +90,7 @@ interface ProviderConfigurationBase {
   readonly namespace: Namespace;
   readonly provider: Id;
   readonly config: ConfigRef;
-  readonly accountRef: Id;
+
   readonly workingDirectory: string;
 }
 /** Pure data crossing the private worker IPC boundary. */
@@ -196,6 +204,32 @@ export interface Closeable {
 }
 /** Acceptance is durable only when backed by a real store; testing exports explicitly simulate it. */
 export interface HostPort extends Closeable {
+  connections(caller: Caller, budget: Budget): Promise<Result<ConnectionPage>>;
+  saveConnection(
+    caller: Caller,
+    connection: Connection,
+    expectedRevision: Counter | null,
+    budget: Budget,
+  ): Promise<Result<Connection>>;
+  savePreferences(
+    caller: Caller,
+    preferences: PreferencesPatch,
+    budget: Budget,
+  ): Promise<Result<UserPreferences>>;
+  selectConnection(
+    caller: Caller,
+    sessionId: Id,
+    connectionId: Id,
+    budget: Budget,
+    freshContext?: boolean,
+  ): Promise<Result<Session>>;
+  previewHistory(
+    caller: Caller,
+    sessionId: Id,
+    connectionId: Id,
+    recent: Counter | undefined,
+    budget: Budget,
+  ): Promise<Result<HistoryPreview>>;
   negotiate(offered: Negotiation): Result<Negotiation>;
   createSession(
     caller: Caller,
@@ -279,6 +313,29 @@ export interface Page<T> {
 }
 /** One logical session coordinator; no distributed worker/lease promise. */
 export interface SessionStore extends Closeable {
+  connections(caller: Caller): Promise<Result<readonly Connection[]>>;
+  connection(
+    caller: Caller,
+    id: Id,
+    revision?: Counter,
+  ): Promise<Result<Connection>>;
+  saveConnection(
+    caller: Caller,
+    connection: Connection,
+    expectedRevision: Counter | null,
+  ): Promise<Result<Connection>>;
+  preferences(caller: Caller): Promise<Result<UserPreferences>>;
+  savePreferences(
+    caller: Caller,
+    preferences: PreferencesPatch,
+  ): Promise<Result<UserPreferences>>;
+  selectConnection(
+    namespace: Namespace,
+    connectionId: Id,
+    expectedRevision: Counter,
+    freshContext?: boolean,
+  ): Promise<Result<Session>>;
+  activateStage(input: StageActivation): Promise<Result<Session>>;
   create(session: Session): Promise<Result<void>>;
   session(namespace: Namespace): Promise<Result<Session>>;
   accept(input: AcceptCommand): Promise<Result<Receipt>>;
@@ -297,6 +354,7 @@ export interface SessionStore extends Closeable {
   listSessions(caller: Caller, query: PageQuery): Promise<Result<SessionPage>>;
   rebind(input: SessionRebind): Promise<Result<Session>>;
   recoverUnavailable(input: RecoveryUnavailable): Promise<Result<Session>>;
+  suspend(input: SessionSuspension): Promise<Result<Session>>;
   events(
     namespace: Namespace,
     after: Counter,
@@ -319,6 +377,15 @@ export interface SessionStore extends Closeable {
   /** Delete retired sessions only after all receipts expire and delivery is settled.
    * Missing/retired namespaces never implicitly recreate a session. */
   pruneRetired(nowMs: Counter): Promise<Result<number>>;
+}
+
+/** A fresh phase needs real provider admission; a wire record cannot mint it. */
+export interface StageActivation {
+  readonly namespace: Namespace;
+  readonly expectedRevision: Counter;
+  readonly configRevision: Counter;
+
+  readonly opened: import("./session.js").VerifiedProviderSession;
 }
 
 export type { Subscription, Negotiation } from "./wire.js";
@@ -358,6 +425,11 @@ export interface SessionRebind {
   readonly expectedGeneration: Id;
   readonly restored: import("./session.js").VerifiedProviderSession;
   readonly eventId: Id;
+}
+
+export interface SessionSuspension extends RecoveryUnavailable {
+  readonly nowMs: Counter;
+  readonly retention: Retention;
 }
 
 export interface RecoveryUnavailable {

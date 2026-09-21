@@ -1,3 +1,4 @@
+import { promptText } from "@rss-mdm-agent/ai-contract";
 import { workspaceIdentity } from "@rss-mdm-agent/ai-contract/session";
 import { randomUUID } from "node:crypto";
 import {
@@ -132,13 +133,11 @@ export class ClaudeAdapter implements ProviderAgentPort {
         prior &&
         (prior.provider !== request.provider ||
           !same(prior.config, request.config) ||
-          prior.accountRef !== request.accountRef ||
           prior.workspaceId !== workspaceIdentity(request.workingDirectory))
       )
         return fail("stale_binding");
       const identity = copy({
         config: request.config,
-        accountRef: request.accountRef,
       });
       const supplied = await bounded(
         this.options.resolveConfiguration(identity, budget),
@@ -152,15 +151,14 @@ export class ClaudeAdapter implements ProviderAgentPort {
       const resolved = {
         ...supplied,
         configuration: config,
-        credential: { ...supplied.credential },
+        authentication: structuredClone(supplied.authentication),
       };
       if (epoch !== this.epoch || !liveBudget(remaining()))
         return fail("unavailable");
       if (
         config.provider !== "claude" ||
         request.provider !== "claude" ||
-        !same(config.config, identity.config) ||
-        config.accountRef !== identity.accountRef
+        !same(config.config, identity.config)
       )
         return fail("stale_binding");
       if (
@@ -193,7 +191,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
         providerVersion: PROVIDER_VERSION,
         adapterVersion: ADAPTER_VERSION,
         config: identity.config,
-        accountRef: identity.accountRef,
+
         generation: randomUUID(),
         nativeSessionId: resume ? prior.nativeSessionId : randomUUID(),
       };
@@ -391,6 +389,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
       );
       void this.pump(session);
       await bounded(runtime.query.initializationResult(), remaining());
+
       if (
         epoch !== this.epoch ||
         budget.signal.aborted ||
@@ -453,7 +452,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
       decode(
         boundedJson(
           {
-            schemaVersion: 4,
+            schemaVersion: 5,
             kind: "event",
             namespace: this.session?.configuration.namespace,
             eventId: "control-attempt",
@@ -523,7 +522,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
     try {
       c = this.checked(command);
       const attemptEvent = {
-        schemaVersion: 4,
+        schemaVersion: 5,
         kind: "event",
         namespace: this.session?.configuration.namespace,
         eventId: "validate-attempt",
@@ -601,7 +600,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
         type: "user",
         session_id: binding.nativeSessionId,
         uuid: live.nativeRequestId as `${string}-${string}-${string}-${string}-${string}`,
-        message: { role: "user", content: c.input.text },
+        message: { role: "user", content: promptText(c.input) },
         parent_tool_use_id: null,
       });
       const accepted = await bounded(turn.acceptance.promise, budget);

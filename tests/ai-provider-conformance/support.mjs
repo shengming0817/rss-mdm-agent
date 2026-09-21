@@ -1,9 +1,21 @@
+import { activeStage } from "../../packages/ai-contract/dist/index.js";
+import { openSqliteStore } from "../../packages/ai-store-sqlite/dist/index.js";
+import { ConnectionSecrets } from "../../apps/ai-host/dist/secrets.js";
+import { NativeControl } from "../../apps/ai-host/dist/native.js";
+import { spawn } from "node:child_process";
+import { executionServer } from "../ai-host/rust-execution.mjs";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { connect } from "node:net";
 import { once } from "node:events";
-import { Readable, Writable } from "node:stream";
-import { mkdtemp, mkdir, writeFile, rm, realpath } from "node:fs/promises";
+import { Duplex, PassThrough } from "node:stream";
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  writeFile,
+  rm,
+  realpath,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startLocalApp } from "../../apps/ai-host/dist/index.js";
@@ -40,7 +52,7 @@ export async function until(check, label = "condition", timeoutMs = 15000) {
 }
 export function command(sessionId, commandId, text = "hello") {
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "command",
     sessionId,
     commandId,
@@ -166,48 +178,123 @@ export async function configuration(
 ) {
   const nativeDirectory = join(directory, "native");
   await mkdir(nativeDirectory, { mode: 0o700 });
-  const credentialPath = join(directory, "credential");
-  await writeFile(credentialPath, "fixture-only-key", { mode: 0o600 });
   const config = {
+    version: 1,
     databasePath: join(directory, "ai.sqlite"),
-    socketPath: join(directory, "ai.sock"),
+    nativeDirectory,
+    workingDirectory: directory,
     caller: {
-      tenantId: "s1-test",
+      tenantId: "test-users",
       principalId: "fixture-actor",
       authorityId: "desktop-fixture",
     },
     session: {
       provider,
-      config: { id: "local", revision: "r1" },
-      accountRef: "test-account",
+      config: { id: "local", revision: "1" },
+
       profile,
     },
-    workingDirectory: directory,
-    nativeDirectory,
     connection: {
-      source: "custom_endpoint",
-      credentialPath,
-      credentialType: "api_key",
-      apiUrl,
-      model: provider === "deepseek" ? "deepseek-chat" : "fixture-model",
+      schemaVersion: 5,
+      kind: "connection",
+      connectionId: "local",
+      name: "Native fixture",
+      provider,
+      configRevision: 1,
+
+      profile,
+      status: "ready",
+      source: {
+        type: "custom_api",
+        apiUrl,
+        credentialType: "api_key",
+        model: provider === "deepseek" ? "deepseek-chat" : "fixture-model",
+      },
     },
   };
+  const store = unwrap(
+    openSqliteStore({ path: config.databasePath, mode: "create" }),
+  );
+  const secrets = new ConnectionSecrets(store, async () => Buffer.alloc(32, 7));
+  unwrap(
+    await store.saveConnection(
+      config.caller,
+      config.connection,
+      null,
+      await secrets.seal(config.caller, config.connection, "fixture-only-key"),
+    ),
+  );
+  await store.close(budget());
   const path = join(directory, "configuration.json");
-  await writeFile(path, JSON.stringify(config), { mode: 0o600 });
+  await writeConfiguration(path, config);
   return { config, path };
 }
-export async function clientAt(socketPath) {
-  const socket = connect(socketPath);
-  await once(socket, "connect");
-  const client = new RuntimeClient(
-    ndJsonStream(Writable.toWeb(socket), Readable.toWeb(socket)),
+export async function writeConfiguration(path, config) {
+  const { caller, session, connection, ...paths } = config;
+  await writeFile(path, JSON.stringify(paths), { mode: 0o600 });
+}
+export function nativePeer(socket) {
+  const inputs = new Map();
+  const control = new NativeControl(
+    async (call) => {
+      if (call.method !== "masterKey") throw Error("unexpected parent request");
+      return [...Buffer.alloc(32, 7)];
+    },
+    ({ channel, message }) => inputs.get(channel)?.enqueue(message),
+    socket,
   );
+  return { control, inputs, next: 0 };
+}
+export async function executionGeneration(directory) {
+  const path = join(directory, "execution-user.json");
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    try {
+      const record = JSON.parse(await readFile(path, "utf8"));
+      assert.equal(typeof record.generation, "string");
+      return record.generation;
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+  assert.fail("execution user generation unavailable");
+}
+export async function clientAt(parent, generation = "fixture-generation") {
+  const channel = `fixture-view-${++parent.next}`;
+  const readable = new ReadableStream({
+    start(input) {
+      parent.inputs.set(channel, input);
+    },
+  });
+  const writable = new WritableStream({
+    write(message) {
+      parent.control.emit(channel, message);
+    },
+  });
+  await parent.control.call("attach", {
+    channel,
+    context: {
+      schemaVersion: 5,
+      kind: "userContext",
+      generation,
+      user: {
+        schemaVersion: 5,
+        kind: "testUser",
+        userId: "fixture-actor",
+        displayName: "Fixture",
+        nameKey: "fixture",
+      },
+    },
+  });
+  const client = new RuntimeClient({ readable, writable });
   await client.initialize();
   return {
     client,
     close() {
       client.close();
-      socket.destroy();
+      parent.inputs.delete(channel);
+      void parent.control.call("detach", { channel }).catch(() => {});
     },
   };
 }
@@ -219,7 +306,7 @@ export async function fixture(t, provider) {
     provider,
     model.apiUrl,
   );
-  let app;
+  let app, rust, parent;
   const peers = [];
   const f = {
     directory,
@@ -230,16 +317,43 @@ export async function fixture(t, provider) {
       return app;
     },
     async start() {
-      app = await startLocalApp(path);
+      rust = spawn(
+        executionServer(),
+        [
+          join(directory, "execution.sqlite"),
+          join(directory, "audit.json"),
+          "ai-unknown",
+        ],
+        { stdio: ["pipe", "pipe", "ignore"] },
+      );
+      rust.stdin.on("error", () => {});
+      const toHost = new PassThrough(),
+        fromHost = new PassThrough();
+      const native = Duplex.from({ readable: fromHost, writable: toHost });
+      const hostPipe = Duplex.from({ readable: toHost, writable: fromHost });
+      parent = nativePeer(native);
+      app = await startLocalApp(
+        path,
+        { input: rust.stdout, output: rust.stdin },
+        hostPipe,
+      );
       return app;
     },
     async stop() {
       for (const peer of peers.splice(0)) peer.close();
       await app?.close();
       app = undefined;
+      parent?.control.close();
+      parent = undefined;
+      if (rust && rust.exitCode === null && rust.signalCode === null) {
+        const exited = once(rust, "exit");
+        rust.kill("SIGTERM");
+        await exited;
+      }
+      rust = undefined;
     },
     async connect() {
-      const peer = await clientAt(config.socketPath);
+      const peer = await clientAt(parent, await executionGeneration(directory));
       peers.push(peer);
       return peer;
     },
@@ -255,7 +369,7 @@ export async function fixture(t, provider) {
   return f;
 }
 export function evidence(t, scenario, session, requests, extra = {}) {
-  const { workspaceId: _workspace, ...binding } = session.binding;
+  const { workspaceId: _workspace, ...binding } = activeStage(session).binding;
   t.diagnostic(
     JSON.stringify({
       a06: 1,
@@ -264,11 +378,11 @@ export function evidence(t, scenario, session, requests, extra = {}) {
       proof: "real_process_local_model",
       provider: binding.provider,
       profile:
-        session.capabilities.tools === "disabled"
+        activeStage(session).capabilities.tools === "disabled"
           ? "conversation"
           : "controlled_tools",
       binding,
-      capabilities: session.capabilities,
+      capabilities: activeStage(session).capabilities,
       ...extra,
       modelRequests: requests.length,
       nativeTools: nativeToolInventory(requests),

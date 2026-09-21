@@ -1,3 +1,5 @@
+import { openFixture, fixtureArtifact } from "./harness.mjs";
+import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { spawn } from "node:child_process";
@@ -82,11 +84,11 @@ test("Host SIGKILL closes worker group; restart reconciles the original attempt 
           namespace,
           provider: options.provider,
           config: options.config,
-          accountRef: options.accountRef,
+
           workingDirectory: directory,
           permissions: "tools_disabled",
         },
-        artifact: new URL("./provider.mjs", import.meta.url).href,
+        artifact: await fixtureArtifact(store, namespace, options),
       }),
     }),
   );
@@ -169,7 +171,7 @@ test("registration precedes provider import, and rejected registration leaves no
       namespace,
       provider: "fake",
       config: { id: "config", revision: "1" },
-      accountRef: "account",
+
       workingDirectory: directory,
       permissions: "tools_disabled",
     },
@@ -202,7 +204,7 @@ test("blocked SDK activation is killed with real process-exit evidence", async (
           namespace,
           provider: "fake",
           config: { id: "config", revision: "activation_block" },
-          accountRef: "account",
+
           workingDirectory: directory,
           permissions: "tools_disabled",
         },
@@ -289,7 +291,10 @@ test("unresolved registered process group freezes recovery without signaling or 
   );
   assert.equal(snapshot.session.status, "recovery_required");
   assert.equal(snapshot.commands[0].state, "accepted");
-  assert.deepEqual(snapshot.session.binding, session.binding);
+  assert.deepEqual(
+    activeStage(snapshot.session).binding,
+    activeStage(session).binding,
+  );
   assert.equal(
     unwrap(await reopened.listSessions(session.namespace, { limit: 256 }))
       .items[0].status,
@@ -354,12 +359,14 @@ for (const hasSession of [true, false])
     child.kill("SIGKILL");
     await once(child, "exit");
     await until(() => groupEmpty(child.pid));
-    await host.createSession(
+    await openFixture(
+      host,
+      reopened,
       session.namespace,
       {
         provider: "fake",
         config: { id: "c", revision: "1" },
-        accountRef: "a",
+
         profile: "conversation",
       },
       budget(),
@@ -397,7 +404,7 @@ test("worker close cannot finish before an outstanding launch reservation settle
       namespace,
       provider: "fake",
       config: { id: "c", revision: "1" },
-      accountRef: "a",
+
       workingDirectory: directory,
       permissions: "tools_disabled",
     },
@@ -442,9 +449,9 @@ test("recovery unavailability atomically preserves queues and invalidates stale 
         commandId: "control",
         input: {
           type: "cancel",
-          generation: head.binding.generation,
+          generation: activeStage(head).binding.generation,
           targetCommandId: "command-1",
-          nativeRunId: head.binding.nativeRunId,
+          nativeRunId: activeStage(head).binding.nativeRunId,
         },
       }),
     ),
@@ -454,12 +461,12 @@ test("recovery unavailability atomically preserves queues and invalidates stale 
     await store.recoverUnavailable({
       namespace,
       expectedRevision: head.revision,
-      expectedGeneration: head.binding.generation,
+      expectedGeneration: activeStage(head).binding.generation,
       eventId: "recover-unavailable",
     }),
   );
   const snapshot = unwrap(await store.snapshotPage(namespace, { limit: 256 }));
-  assert.deepEqual(recovered.binding, head.binding);
+  assert.deepEqual(activeStage(recovered).binding, activeStage(head).binding);
   assert.equal(recovered.status, "recovery_required");
   assert.equal(
     snapshot.commands.find((row) => row.command.commandId === "queued").state,

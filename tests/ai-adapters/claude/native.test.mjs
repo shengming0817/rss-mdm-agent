@@ -23,7 +23,7 @@ const budget = (ms = 15000) => ({
   signal: AbortSignal.timeout(ms),
 });
 const command = (id, text = "Exercise the fixed native SDK fixture.") => ({
-  schemaVersion: 4,
+  schemaVersion: 5,
   kind: "command",
   sessionId: "native-fixture",
   commandId: id,
@@ -71,7 +71,7 @@ async function fixture(t, replies, controlled = false) {
   const configuration = {
     provider: "claude",
     config: { id: "native-fixture", revision: "1" },
-    accountRef: "fixture-account",
+
     workingDirectory: cwd,
     namespace: { ...fixtureSession().namespace, sessionId: "native-fixture" },
     ...(controlled
@@ -104,20 +104,25 @@ async function fixture(t, replies, controlled = false) {
         }
       : { permissions: "tools_disabled" }),
   };
+  const resolved = {
+    configuration: providerConfiguration(configuration),
+    configurationDirectory: configDirectory,
+    authentication: {
+      type: "custom_api",
+      apiUrl: `http://127.0.0.1:${server.address().port}`,
+      credential: { type: "api_key", value: "fixture-only-key" },
+    },
+    model: "fixture-model",
+  };
   const create = () =>
     createClaudeAdapter({
       tools: configuration.tools,
-      resolveConfiguration: async () => ({
-        configuration: providerConfiguration(configuration),
-        configurationDirectory: configDirectory,
-        apiUrl: `http://127.0.0.1:${server.address().port}`,
-        credential: { type: "api_key", value: "fixture-only-key" },
-        model: "fixture-model",
-      }),
+      resolveConfiguration: async () => resolved,
     });
   const adapters = [];
   t.after(() => closeFixture(adapters, server, directory));
   return {
+    resolved,
     configuration,
     cwd,
     configDirectory,
@@ -738,3 +743,46 @@ function providerAdmission({ tools, verifier }) {
     ? { tools, verifier }
     : undefined;
 }
+
+test(
+  "existing Claude config is resolved by the official SDK while hooks stay disabled",
+  { timeout: 30000 },
+  async (t) => {
+    const f = await fixture(t, [text("existing configuration reply")]);
+    const { readFileSync } = await import("node:fs");
+    const content = JSON.stringify({
+      model: "fixture-model",
+      env: {
+        ANTHROPIC_BASE_URL: f.resolved.authentication.apiUrl,
+        ANTHROPIC_API_KEY: "fixture-only-key",
+      },
+      hooks: {
+        SessionStart: [
+          {
+            hooks: [{ type: "command", command: "touch forbidden-user-hook" }],
+          },
+        ],
+      },
+    });
+    const settings = join(f.configDirectory, "settings.json");
+    writeFileSync(settings, content);
+    f.resolved.authentication = {
+      type: "existing_config",
+      directory: f.configDirectory,
+    };
+    delete f.resolved.model;
+    f.resolved.verification = true;
+    const adapter = f.create(),
+      admitted = unwrap(
+        await VerifiedProviderSession.open(
+          adapter,
+          providerConfiguration(f.configuration),
+          budget(),
+        ),
+      );
+    await run(adapter, admitted.binding, command("existing-config"));
+    assert.equal(f.requests[0].model, "fixture-model");
+    assert.equal(readFileSync(settings, "utf8"), content);
+    assert.equal(existsSync(join(f.cwd, "forbidden-user-hook")), false);
+  },
+);

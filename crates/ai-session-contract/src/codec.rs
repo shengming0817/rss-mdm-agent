@@ -50,7 +50,7 @@ fn error(code: Diagnostic) -> ContractError {
 }
 fn serde_error<E: serde::de::Error>(code: Diagnostic) -> E {
     E::custom(format!(
-        "ai-v4:{}",
+        "ai-v5:{}",
         serde_json::to_string(&code).expect("closed diagnostic")
     ))
 }
@@ -62,7 +62,7 @@ fn from_serde(e: serde_json::Error) -> ContractError {
         return error(Diagnostic::Number);
     }
     let code = message
-        .strip_prefix("ai-v4:")
+        .strip_prefix("ai-v5:")
         .and_then(|s| serde_json::from_str(s.split(" at line ").next().unwrap_or(s)).ok())
         .unwrap_or(Diagnostic::Encoding);
     error(code)
@@ -194,7 +194,7 @@ fn check_limits(limits: &Limits) -> Result<(), ContractError> {
     }
     Ok(())
 }
-/// Decode strict bounded V3 JSON. Does not authenticate or dispatch anything.
+/// Decode strict bounded V5 JSON. Does not authenticate or dispatch anything.
 pub fn decode(bytes: &[u8], limits: &Limits) -> Result<WireRecord, ContractError> {
     check_limits(limits)?;
     if bytes.len() > limits.max_bytes {
@@ -210,7 +210,7 @@ pub fn decode(bytes: &[u8], limits: &Limits) -> Result<WireRecord, ContractError
     .deserialize(&mut deserializer)
     .map_err(from_serde)?;
     deserializer.end().map_err(from_serde)?;
-    if value.get("schemaVersion").is_some_and(|v| v != 4) {
+    if value.get("schemaVersion").is_some_and(|v| v != 5) {
         return Err(error(Diagnostic::Version));
     }
     if !VALIDATOR.is_valid(&value) {
@@ -226,7 +226,26 @@ fn context(v: &Value) -> Result<(), ContractError> {
             v["commandId"] != v["body"]["command"]["commandId"]
                 || v["namespace"]["sessionId"] != v["body"]["command"]["sessionId"]
         }
+        Some("session") => {
+            let stages = v["stages"]
+                .as_array()
+                .ok_or_else(|| error(Diagnostic::Context))?;
+            let mut ids = std::collections::BTreeSet::new();
+            v.get("currentStageId") != stages.last().map(|stage| &stage["stageId"])
+                || stages.iter().any(|stage| {
+                    !ids.insert(stage["stageId"].as_str())
+                        || stage["connectionId"] != stage["binding"]["config"]["id"]
+                        || stage["configRevision"].as_u64() == Some(0)
+                })
+        }
+        Some("sessionPage") => {
+            for session in v["items"].as_array().into_iter().flatten() {
+                context(session)?;
+            }
+            false
+        }
         Some("snapshotPage") => {
+            context(&v["session"])?;
             let mut invalid = v["cursor"] != v["session"]["lastSequence"];
             for field in ["events", "commands", "interactions", "surfaces"] {
                 for row in v[field].as_array().into_iter().flatten() {

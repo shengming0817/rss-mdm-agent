@@ -155,6 +155,10 @@ export type Initiator =
     }
   | {
       /**
+       * Exact connection configuration used at initiation; no external account identity.
+       */
+      config: VersionedRef;
+      /**
        * Originating AI conversation reference in the provider namespace.
        */
       conversation: Id;
@@ -164,13 +168,9 @@ export type Initiator =
        */
       osSession: OsSessionRef;
       /**
-       * Provider/CLI namespace of the recorded AI account; not product authentication.
+       * Provider namespace, independent of product authentication.
        */
       provider: Id;
-      /**
-       * Explicit provider account and configuration references at initiation.
-       */
-      providerAccount: ProviderAccountRef;
       /**
        * Originating tool-call reference; cannot act as a product approval.
        */
@@ -464,22 +464,6 @@ export interface OsAccountRef {
    * Opaque stable OS account reference, such as a SID/UID reference, not an authentication credential.
    */
   subject: Id;
-}
-/**
- * Non-secret provider/CLI account provenance. Neither field proves product authentication.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "ProviderAccountRef".
- */
-export interface ProviderAccountRef {
-  /**
-   * Opaque account reference scoped by Initiator's provider, not a token or email credential.
-   */
-  account: Id;
-  /**
-   * Exact configuration revision used by the originating AI session.
-   */
-  config: VersionedRef;
 }
 /**
  * Exact resource/configuration reference. Resolution and authenticity belong to the owner.

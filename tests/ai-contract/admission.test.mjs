@@ -1,3 +1,4 @@
+import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { VerifiedProviderSession } from "../../packages/ai-contract/dist/session.js";
@@ -9,7 +10,7 @@ import {
 const configuration = {
   provider: "fake",
   config: { id: "config-1", revision: "1" },
-  accountRef: "account-1",
+
   workingDirectory: ".",
   namespace: fixtureSession().namespace,
   permissions: "tools_disabled",
@@ -21,7 +22,7 @@ test("post-create validation failure closes only the consumed provider instance"
   let closes = 0;
   port.createSession = async (...args) => {
     const result = unwrap(await create(...args));
-    result.binding.accountRef = "wrong";
+    result.binding.config = { id: "wrong", revision: "1" };
     return { ok: true, value: result };
   };
   port.close = async (b) => {
@@ -50,12 +51,12 @@ test("resume identity rejection closes its new observer and retains the primary 
     ok: true,
     value: {
       binding: {
-        ...fixtureSession().binding,
+        ...activeStage(fixtureSession()).binding,
         generation: "new",
         nativeSessionId: "wrong",
       },
       capabilities: {
-        ...fixtureSession().capabilities,
+        ...activeStage(fixtureSession()).capabilities,
         continuation: "across_processes",
       },
     },
@@ -113,7 +114,7 @@ test("provider cannot emit host-owned lifecycle events through the observation p
 
 test("restore rejects a different workspace before resuming the native session", async () => {
   const previous = fixtureSession();
-  previous.capabilities.continuation = "across_processes";
+  activeStage(previous).capabilities.continuation = "across_processes";
   let resumed = 0;
   const port = {
     resume: async () => {
@@ -121,8 +122,11 @@ test("restore rejects a different workspace before resuming the native session",
       return {
         ok: true,
         value: {
-          binding: { ...previous.binding, generation: "cross-directory" },
-          capabilities: previous.capabilities,
+          binding: {
+            ...activeStage(previous).binding,
+            generation: "cross-directory",
+          },
+          capabilities: activeStage(previous).capabilities,
         },
       };
     },
@@ -217,9 +221,9 @@ test("fork admission rejects invalid child identity and retains cleanup ownershi
 
 test("fork runs the child's controlled verifier and closes it after denial", async () => {
   const source = fixtureSession();
-  source.capabilities.fork = "supported";
-  source.capabilities.tools = "host_mediated";
-  source.binding.nativeThreadId = "parent-thread";
+  activeStage(source).capabilities.fork = "supported";
+  activeStage(source).capabilities.tools = "host_mediated";
+  activeStage(source).binding.nativeThreadId = "parent-thread";
   let verifications = 0,
     closes = 0;
   const controlled = {
@@ -239,7 +243,13 @@ test("fork runs the child's controlled verifier and closes it after denial", asy
     },
   };
   const parentPort = {
-    createSession: async () => ({ ok: true, value: source }),
+    createSession: async () => ({
+      ok: true,
+      value: {
+        binding: activeStage(source).binding,
+        capabilities: activeStage(source).capabilities,
+      },
+    }),
     close: async () => ({ ok: true, value: { processStopped: true } }),
   };
   const parent = unwrap(
@@ -264,9 +274,9 @@ test("fork runs the child's controlled verifier and closes it after denial", asy
           certainty: "created",
           source: sourceRequest,
           value: {
-            capabilities: source.capabilities,
+            capabilities: activeStage(source).capabilities,
             binding: {
-              ...source.binding,
+              ...activeStage(source).binding,
               generation: "child-generation",
               nativeSessionId: "child-native",
               nativeThreadId: "child-thread",

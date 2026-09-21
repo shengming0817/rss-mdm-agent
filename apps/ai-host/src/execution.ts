@@ -7,7 +7,12 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import type { Readable, Writable } from "node:stream";
 import { createHash, randomUUID } from "node:crypto";
-import { boundedJson, isId, type Budget } from "@rss-mdm-agent/ai-contract";
+import {
+  boundedJson,
+  isId,
+  type Budget,
+  type ExecutionOrigin,
+} from "@rss-mdm-agent/ai-contract";
 import {
   defaultLimits,
   fail,
@@ -104,10 +109,10 @@ function businessId(proposal: DeliveryRequest["body"]["proposal"]): unknown {
 export async function connectExecution(
   input: Readable,
   output: Writable,
-  binding: Pick<
-    import("./configuration.js").LocalConfiguration,
-    "caller" | "session"
-  >,
+  resolveBinding: (request: DeliveryRequest) => Promise<{
+    binding: import("@rss-mdm-agent/ai-contract").Binding;
+    userGeneration: string;
+  }>,
 ) {
   const client = new Client({ name: "rss-ai-host", version: "0.1.0" });
   const transport = new ParentTransport(input, output);
@@ -130,19 +135,28 @@ export async function connectExecution(
     args: Record<string, unknown>,
     b: Budget,
   ): Promise<any> => {
+    const { binding, userGeneration } = await resolveBinding(request);
+    if (
+      !(["codex", "claude", "deepseek"] as const).includes(
+        binding.provider as ExecutionOrigin["provider"],
+      )
+    )
+      throw new Error("execution origin unavailable");
+    const origin: ExecutionOrigin = {
+      schemaVersion: 5,
+      kind: "executionOrigin",
+      namespace: request.namespace,
+      userGeneration,
+      operationId: request.body.operationId,
+      provider: binding.provider as ExecutionOrigin["provider"],
+      config: binding.config,
+    };
     const reply = await client.callTool(
       {
         name,
         arguments: args,
         _meta: {
-          "com.rss-mdm/ai-origin": {
-            version: 1,
-            namespace: request.namespace,
-            operationId: request.body.operationId,
-            provider: binding.session.provider,
-            accountRef: binding.session.accountRef,
-            config: binding.session.config,
-          },
+          "com.rss-mdm/ai-origin": origin,
         },
       },
       undefined,

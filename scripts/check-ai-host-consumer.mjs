@@ -33,7 +33,13 @@ try {
       "../../packages/ai-contract/dist/session.js",
       "@rss-mdm-agent/ai-contract/session",
     );
-  writeFileSync(join(directory, "provider.mjs"), provider);
+  writeFileSync(
+    join(directory, "provider.mjs"),
+    provider.replaceAll(
+      "../../packages/ai-contract/dist/index.js",
+      "@rss-mdm-agent/ai-contract",
+    ),
+  );
   writeFileSync(
     join(directory, "tsconfig.json"),
     JSON.stringify({
@@ -57,10 +63,10 @@ import {openSqliteStore} from '@rss-mdm-agent/ai-store-sqlite';import type {Resu
 const unwrap=<T>(r:Result<T>):T=>{if(!r.ok)throw new Error(r.error.code);return r.value;};
 const dir=await mkdtemp(join(tmpdir(),'isolated-host-db-')),caller={tenantId:'t',principalId:'p',authorityId:'a'},budget=()=>({timeoutMs:5000,signal:new AbortController().signal});
 const store=unwrap(openSqliteStore({path:join(dir,'host.sqlite'),mode:'create'}));
-const options:HostOptions={delivery:null,store,launchFences:store,resolve:async(caller,options,namespace)=>({configuration:{namespace,provider:options.provider,config:options.config,accountRef:options.accountRef,workingDirectory:dir,permissions:'tools_disabled'},artifact:new URL('../provider.mjs',import.meta.url).href})};
+const options:HostOptions={delivery:null,store,launchFences:store,resolve:async(caller,options,namespace)=>({configuration:{namespace,provider:options.provider,config:options.config,workingDirectory:dir,permissions:'tools_disabled'},artifact:new URL('../provider.mjs',import.meta.url).href})};
 const host:HostPort=unwrap(await createHost(options));
-try{const session=unwrap(await host.createSession(caller,{provider:'fake',config:{id:'c',revision:'1'},accountRef:'a',profile:'conversation'},budget()));
-const command:Command={schemaVersion:4,kind:'command',commandId:'prompt',sessionId:session.namespace.sessionId,expiresAtMs:Date.now()+10000,input:{type:'prompt',policy:'queue_next',text:'quick'}};
+try{unwrap(await store.saveConnection(caller,{schemaVersion:5,kind:'connection',connectionId:'c',name:'Consumer',provider:'codex',configRevision:1,profile:'conversation',status:'ready',source:{type:'custom_api',apiUrl:'https://example.invalid',model:'fixture'}},null));const session=unwrap(await host.createSession(caller,{connectionId:'c'},budget()));
+const command:Command={schemaVersion:5,kind:'command',commandId:'prompt',sessionId:session.namespace.sessionId,expiresAtMs:Date.now()+10000,input:{type:'prompt',policy:'queue_next',text:'quick'}};
 unwrap(await host.submit(caller,command,budget()));const deadline=Date.now()+5000;let terminal=false;
 while(Date.now()<deadline){if(unwrap(await store.command(session.namespace,'prompt')).state==='terminal'){terminal=true;break;}await new Promise(resolve=>setTimeout(resolve,10));}
 assert.equal(terminal,true);assert.equal(unwrap(await store.launches()).length,1);

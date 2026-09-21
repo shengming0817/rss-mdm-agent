@@ -13,7 +13,7 @@ test("A01 provider conformance: submitted, unknown and late admission", async ()
       namespace: fixtureSession().namespace,
       provider: "deepseek",
       config: { id: "config-1", revision: "1" },
-      accountRef: "account-1",
+
       workingDirectory: process.cwd(),
       permissions: "tools_disabled",
     },

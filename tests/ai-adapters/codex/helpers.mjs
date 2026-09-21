@@ -98,7 +98,7 @@ export async function nativeFixture(
     namespace: fixtureSession().namespace,
     provider: "codex",
     config: { id: "native-fixture", revision: "1" },
-    accountRef: "fixture-account",
+
     workingDirectory: cwd,
     permissions: controlled ? "host_mediated" : "tools_disabled",
   };
@@ -163,7 +163,7 @@ export async function nativeFixture(
 export function prompt(binding, commandId) {
   return {
     command: {
-      schemaVersion: 4,
+      schemaVersion: 5,
       kind: "command",
       sessionId: "session-1",
       commandId,

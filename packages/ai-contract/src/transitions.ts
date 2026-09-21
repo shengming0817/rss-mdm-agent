@@ -1,3 +1,5 @@
+import { replaceStage, providerStage, startStage } from "./contexts.js";
+import { activeStage } from "./contexts.js";
 import { validateSurface } from "./a2ui.js";
 import { createHash } from "node:crypto";
 import {
@@ -21,7 +23,9 @@ import type {
   SessionCommit,
   SessionRebind,
   RecoveryUnavailable,
+  SessionSuspension,
   Reconciliation,
+  StageActivation,
 } from "./ports.js";
 import type {
   CommandRecord,
@@ -33,17 +37,8 @@ import type {
   Session,
   SnapshotPage,
 } from "./wire.js";
-export const defaultLimits: Readonly<Limits> = Object.freeze({
-  maxBytes: 262144,
-  maxTextBytes: 131072,
-  maxDepth: 32,
-  maxNodes: 16384,
-});
-export const ok = <T>(value: T): Result<T> => ({ ok: true, value });
-export const fail = <T = never>(
-  code: import("./wire.js").ErrorCode,
-  retry: import("./wire.js").Retry = "never",
-): Result<T> => ({ ok: false, error: { code, retry } });
+import { defaultLimits, ok, fail } from "./results.js";
+export { defaultLimits, ok, fail } from "./results.js";
 const clone = <T>(value: T): T => structuredClone(value);
 export const namespaceKey = (n: Namespace): string => {
   const parts = [n?.tenantId, n?.principalId, n?.authorityId, n?.sessionId];
@@ -88,7 +83,9 @@ export function createState(
     return fail("invalid_input");
   return ok({
     session: clone(session),
-    generations: new Set([session.binding.generation]),
+    generations: new Set(
+      session.stages.map((stage) => stage.binding.generation),
+    ),
     commands: new Map(),
     events: [],
     interactions: new Map(),
@@ -100,6 +97,7 @@ function reduceAcceptance(
   state: SessionState,
   input: AcceptCommand,
   limits: Limits = defaultLimits,
+  suspending = false,
 ): Result<{ state: SessionState; receipt: import("./wire.js").Receipt }> {
   try {
     valid(input.command, limits);
@@ -121,7 +119,16 @@ function reduceAcceptance(
       ? ok({ state, receipt: clone(prior.receipt) })
       : fail("expired");
   }
-  if (state.session.status !== "active") return fail("session_gone");
+  if (
+    state.session.status !== "active" &&
+    !(
+      suspending &&
+      state.session.status === "recovery_required" &&
+      input.command.input.type === "cancel"
+    )
+  )
+    return fail("session_gone");
+  if (!state.session.currentStageId) return fail("connection_required");
   if (
     !Number.isSafeInteger(input.nowMs) ||
     input.nowMs < 0 ||
@@ -138,17 +145,20 @@ function reduceAcceptance(
   )
     return fail("invalid_input");
   const check = checkState(
-    state,
+    suspending
+      ? { ...state, session: { ...state.session, status: "active" } }
+      : state,
     input.expectedRevision,
     input.expectedGeneration,
   );
   if (!check.ok) return check;
   const receipt: import("./wire.js").Receipt = {
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "receipt",
     namespace: clone(input.namespace),
     commandId: input.command.commandId,
     contentHash: digest,
+    stageId: activeStage(state.session).stageId,
     acceptedAtMs: input.nowMs,
     retryUntilMs: Math.min(
       input.command.expiresAtMs,
@@ -158,7 +168,7 @@ function reduceAcceptance(
     acceptedRevision: state.session.revision + 1,
   };
   const record: CommandRecord = {
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "commandRecord",
     command: clone(input.command),
     receipt,
@@ -216,17 +226,17 @@ function reduceAcceptance(
       commands: [record],
       events: [
         {
-          schemaVersion: 4,
+          schemaVersion: 5,
           kind: "event",
           namespace: clone(input.namespace),
           eventId: input.eventId,
           sequence: state.session.lastSequence + 1,
           commandId: input.command.commandId,
-          generation: state.session.binding.generation,
+          generation: activeStage(state.session).binding.generation,
           body: { type: "command_accepted", command: clone(input.command) },
         },
         ...interactions.map((row, i) => ({
-          schemaVersion: 4 as const,
+          schemaVersion: 5 as const,
           kind: "event" as const,
           namespace: input.namespace,
           eventId: eventId(input.eventId, `answer-${i}`),
@@ -248,6 +258,7 @@ function reduceAcceptance(
     },
     limits,
     true,
+    suspending,
   );
   return result.ok
     ? ok({ state: result.value, receipt: clone(receipt) })
@@ -259,7 +270,7 @@ export function checkState(
   generation: Id,
 ): Result<void> {
   if (state.session.status !== "active") return fail("session_gone");
-  if (state.session.binding.generation !== generation)
+  if (activeStage(state.session).binding.generation !== generation)
     return fail("stale_binding");
   if (state.session.revision !== revision)
     return fail("revision_conflict", "same_command");
@@ -302,10 +313,11 @@ function reduceCommit(
   batch: SessionCommit,
   limits: Limits,
   accepting: boolean,
+  suspending = false,
 ): Result<SessionState> {
   const deliveryOnly = isDeliveryCommit(state, batch);
   const check = checkState(
-    deliveryOnly
+    deliveryOnly || suspending
       ? { ...state, session: { ...state.session, status: "active" } }
       : state,
     batch.expectedRevision,
@@ -332,15 +344,30 @@ function reduceCommit(
     batch.session.revision !== state.session.revision + 1 ||
     batch.session.lastSequence !==
       state.session.lastSequence + batch.events.length ||
-    (!deliveryOnly && batch.session.status !== "active")
+    (!deliveryOnly && !suspending && batch.session.status !== "active") ||
+    (suspending && batch.session.status !== state.session.status)
   )
     return fail("invalid_input");
   if (
+    batch.session.freshContext !== state.session.freshContext ||
+    batch.session.currentStageId !== state.session.currentStageId ||
+    batch.session.selectedConnectionId !== state.session.selectedConnectionId ||
     !same(
-      providerIdentity(batch.session.binding),
-      providerIdentity(state.session.binding),
+      batch.session.stages.slice(0, -1),
+      state.session.stages.slice(0, -1),
     ) ||
-    !same(batch.session.capabilities, state.session.capabilities)
+    !same(
+      { ...activeStage(batch.session), binding: undefined },
+      { ...activeStage(state.session), binding: undefined },
+    ) ||
+    !same(
+      providerIdentity(activeStage(batch.session).binding),
+      providerIdentity(activeStage(state.session).binding),
+    ) ||
+    !same(
+      activeStage(batch.session).capabilities,
+      activeStage(state.session).capabilities,
+    )
   )
     return fail("stale_binding");
   const copy = clone(state);
@@ -357,6 +384,8 @@ function reduceCommit(
     providerFacts.set(proof.commandId, observation);
   }
   for (const c of batch.commands) {
+    if (c.receipt.stageId !== state.session.currentStageId)
+      return fail("stale_binding");
     const id = c.command.commandId;
     if (commandIds.has(id)) return fail("invalid_input");
     commandIds.add(id);
@@ -380,7 +409,8 @@ function reduceCommit(
     if (
       c.dispatch &&
       (c.dispatch.observerGeneration !== batch.expectedGeneration ||
-        c.dispatch.nativeThreadId !== state.session.binding.nativeThreadId)
+        c.dispatch.nativeThreadId !==
+          activeStage(state.session).binding.nativeThreadId)
     )
       return fail("stale_binding");
     if (resolution && resolution.status !== "observed") {
@@ -392,7 +422,7 @@ function reduceCommit(
         resolution.attemptId !== old.dispatch.attemptId ||
         !same(
           providerIdentity(resolution.binding),
-          providerIdentity(state.session.binding),
+          providerIdentity(activeStage(state.session).binding),
         ) ||
         resolution.binding.nativeSessionId !== old.dispatch.nativeSessionId ||
         resolution.binding.nativeThreadId !== old.dispatch.nativeThreadId ||
@@ -494,7 +524,8 @@ function reduceCommit(
         c.state !== "dispatching" ||
         c.dispatch.certainty !== "intent" ||
         c.dispatch.originGeneration !== batch.expectedGeneration ||
-        c.dispatch.nativeSessionId !== state.session.binding.nativeSessionId ||
+        c.dispatch.nativeSessionId !==
+          activeStage(state.session).binding.nativeSessionId ||
         attemptIds.has(c.dispatch.attemptId)
       )
         return fail("invalid_input");
@@ -522,8 +553,8 @@ function reduceCommit(
       ) {
         const target = c.command.input.targetRunId;
         if (
-          state.session.capabilities.steer !== "supported" ||
-          target !== state.session.binding.nativeRunId ||
+          activeStage(state.session).capabilities.steer !== "supported" ||
+          target !== activeStage(state.session).binding.nativeRunId ||
           c.dispatch.nativeRunId !== target ||
           ![...state.commands.values()].some(
             (record) =>
@@ -695,11 +726,11 @@ function reduceCommit(
     ).length > 1
   )
     return fail("content_conflict");
-  const oldBinding = state.session.binding,
-    nextBinding = batch.session.binding;
+  const oldBinding = activeStage(state.session).binding,
+    nextBinding = activeStage(batch.session).binding;
   const coordinatesMatch = (
     dispatch: CommandRecord["dispatch"],
-    binding: Session["binding"],
+    binding: Session["stages"][number]["binding"],
   ) =>
     dispatch !== undefined &&
     dispatch.nativeRunId === binding.nativeRunId &&
@@ -1173,12 +1204,14 @@ function reduceHandoff(
       !VerifiedProviderSession.prototype.restores.call(restored, state.session))
   )
     return fail("permission_denied");
-  const binding = restored?.binding ?? state.session.binding,
-    capabilities = restored?.capabilities ?? state.session.capabilities;
+  const binding = restored?.binding ?? activeStage(state.session).binding,
+    capabilities =
+      restored?.capabilities ?? activeStage(state.session).capabilities;
   if (
     restored &&
     (state.generations.has(binding.generation) ||
-      state.session.capabilities.continuation !== "across_processes")
+      activeStage(state.session).capabilities.continuation !==
+        "across_processes")
   )
     return fail("stale_binding");
   const copy = clone(state),
@@ -1188,7 +1221,7 @@ function reduceHandoff(
     label: string,
   ) => {
     const event = {
-      schemaVersion: 4,
+      schemaVersion: 5,
       kind: "event",
       namespace: input.namespace,
       eventId: eventId(input.eventId, label),
@@ -1206,7 +1239,7 @@ function reduceHandoff(
       body: restored
         ? {
             type: "session_rebound",
-            previousGeneration: state.session.binding.generation,
+            previousGeneration: activeStage(state.session).binding.generation,
           }
         : { type: "session_recovery_unavailable" },
     },
@@ -1220,7 +1253,7 @@ function reduceHandoff(
         observerGeneration: binding.generation,
       };
       copy.commands.set(id, {
-        schemaVersion: 4,
+        schemaVersion: 5,
         kind: "commandRecord",
         command: c.command,
         receipt: c.receipt,
@@ -1244,7 +1277,7 @@ function reduceHandoff(
         retry: "never" as const,
       };
       copy.commands.set(id, {
-        schemaVersion: 4,
+        schemaVersion: 5,
         kind: "commandRecord",
         command: c.command,
         receipt: c.receipt,
@@ -1293,14 +1326,16 @@ function reduceHandoff(
     );
   }
   copy.events.push(...events);
-  copy.session = {
-    ...copy.session,
+  copy.session = replaceStage(
+    {
+      ...copy.session,
+      status: restored ? "active" : "recovery_required",
+      revision: copy.session.revision + 1,
+      lastSequence: copy.session.lastSequence + events.length,
+    },
     binding,
     capabilities,
-    status: restored ? "active" : "recovery_required",
-    revision: copy.session.revision + 1,
-    lastSequence: copy.session.lastSequence + events.length,
-  };
+  );
   valid(copy.session, limits);
   copy.generations.add(binding.generation);
   return ok(copy);
@@ -1328,7 +1363,7 @@ function reduceRetirement(
     lastSequence: copy.session.lastSequence + 1,
   };
   const event: Event = {
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "event",
     namespace: copy.session.namespace,
     eventId: eventId(
@@ -1408,6 +1443,139 @@ export function recoverUnavailable(
   return guarded(() => reduceHandoff(state, input, limits));
 }
 
+/** A caller fence cancels unsent work even without a provider; dispatched work remains uncertain.
+ * The Store persists this entire reducer once. The private suspension path admits only local cancels. */
+export function suspendSession(
+  state: SessionState,
+  input: SessionSuspension,
+  limits: Limits = defaultLimits,
+): Result<SessionState> {
+  return guarded(() => {
+    if (namespaceKey(state.session.namespace) !== namespaceKey(input.namespace))
+      return fail("permission_denied");
+    if (state.session.revision !== input.expectedRevision)
+      return fail("revision_conflict", "same_command");
+    if (state.session.status === "retired" || !state.session.currentStageId)
+      return ok(state);
+    const generation = activeStage(state.session).binding.generation;
+    if (generation !== input.expectedGeneration || !isId(input.eventId))
+      return fail("stale_binding");
+    let next = state;
+    for (const target of state.commands.values()) {
+      if (
+        target.state !== "accepted" ||
+        target.dispatch ||
+        target.command.input.type !== "prompt" ||
+        target.command.input.policy !== "queue_next"
+      )
+        continue;
+      const commandId = eventId(
+        input.eventId,
+        `cancel-${target.command.commandId}`,
+      );
+      const accepted = reduceAcceptance(
+        next,
+        {
+          namespace: input.namespace,
+          expectedRevision: next.session.revision,
+          expectedGeneration: generation,
+          nowMs: input.nowMs,
+          retention: input.retention,
+          eventId: eventId(commandId, "accepted"),
+          command: {
+            schemaVersion: 5,
+            kind: "command",
+            sessionId: input.namespace.sessionId,
+            commandId,
+            expiresAtMs: input.nowMs + input.retention.retryWindowMs,
+            input: {
+              type: "cancel",
+              targetCommandId: target.command.commandId,
+              generation,
+            },
+          },
+        },
+        limits,
+        true,
+      );
+      if (!accepted.ok) return accepted;
+      next = accepted.value.state;
+      const cancel = next.commands.get(commandId)!;
+      const acknowledgement = {
+        type: "queued_cancelled" as const,
+        targetCommandId: target.command.commandId,
+      };
+      const bodies: [string, Event["body"]][] = [
+        [commandId, { type: "acknowledged", acknowledgement }],
+        [
+          target.command.commandId,
+          { type: "cancelled", cancelledBy: commandId },
+        ],
+      ];
+      const committed = reduceCommit(
+        next,
+        {
+          namespace: input.namespace,
+          expectedRevision: next.session.revision,
+          expectedGeneration: generation,
+          nowMs: input.nowMs,
+          session: {
+            ...next.session,
+            revision: next.session.revision + 1,
+            lastSequence: next.session.lastSequence + 2,
+          },
+          commands: [
+            {
+              schemaVersion: 5,
+              kind: "commandRecord",
+              command: cancel.command,
+              receipt: cancel.receipt,
+              state: "acknowledged",
+              acknowledgement,
+            },
+            {
+              schemaVersion: 5,
+              kind: "commandRecord",
+              command: target.command,
+              receipt: target.receipt,
+              state: "cancelled",
+              cancelledBy: commandId,
+            },
+          ],
+          events: bodies.map(
+            ([id, body], index) =>
+              ({
+                schemaVersion: 5,
+                kind: "event",
+                namespace: input.namespace,
+                generation,
+                commandId: id,
+                eventId: eventId(commandId, String(index)),
+                sequence: next.session.lastSequence + index + 1,
+                body,
+              }) as Event,
+          ),
+          interactions: [],
+          surfaces: [],
+          deliveries: [],
+        },
+        limits,
+        false,
+        true,
+      );
+      if (!committed.ok) return committed;
+      next = committed.value;
+    }
+    return next.session.status === "active"
+      ? reduceHandoff(
+          next,
+          { ...input, expectedRevision: next.session.revision },
+          limits,
+        )
+      : ok(next);
+  });
+}
+
 /** Controls are scoped to their current native run, never the most recent unrelated turn. */
 export function controlIsStale(
   session: Session,
@@ -1418,19 +1586,96 @@ export function controlIsStale(
   if (input.type === "prompt")
     return (
       input.policy === "steer" &&
-      (input.targetRunId !== session.binding.nativeRunId ||
+      (input.targetRunId !== activeStage(session).binding.nativeRunId ||
         !records.some(
           (row) =>
             row.state === "running" &&
             row.dispatch?.nativeRunId === input.targetRunId,
         ))
     );
-  if (input.generation !== session.binding.generation) return true;
+  if (input.generation !== activeStage(session).binding.generation) return true;
   if (
     input.type === "cancel" &&
     !records.find((row) => row.command.commandId === input.targetCommandId)
       ?.dispatch
   )
     return false;
-  return input.nativeRunId !== session.binding.nativeRunId;
+  return input.nativeRunId !== activeStage(session).binding.nativeRunId;
+}
+
+/** Selection changes the next prompt's intent, never an already accepted receipt. */
+export function selectConnection(
+  state: SessionState,
+  connectionId: Id,
+  revision: Counter,
+  freshContext = false,
+): Result<SessionState> {
+  return guarded(() => {
+    if (!isId(connectionId)) return fail("invalid_input");
+    if (state.session.status === "retired") return fail("session_gone");
+    if (state.session.revision !== revision)
+      return fail("revision_conflict", "same_command");
+    if (
+      freshContext &&
+      [...state.commands.values()].some((row) => !isSettled(row))
+    )
+      return fail("connection_switch_pending");
+    if (!freshContext && state.session.selectedConnectionId === connectionId)
+      return ok(state);
+    const copy = clone(state);
+    copy.session = {
+      ...copy.session,
+      selectedConnectionId: connectionId,
+      revision: revision + 1,
+    };
+    if (freshContext) {
+      copy.session.freshContext = true;
+      copy.session.status = "active";
+    }
+    return ok(copy);
+  });
+}
+
+export function activateStage(
+  state: SessionState,
+  input: StageActivation,
+): Result<SessionState> {
+  return guarded(() => {
+    if (namespaceKey(state.session.namespace) !== namespaceKey(input.namespace))
+      return fail("permission_denied");
+    if (state.session.status === "retired") return fail("session_gone");
+    if (state.session.revision !== input.expectedRevision)
+      return fail("revision_conflict", "same_command");
+    if (
+      !(input.opened instanceof VerifiedProviderSession) ||
+      !input.opened.opens(input.namespace)
+    )
+      return fail("permission_denied");
+    if ([...state.commands.values()].some((command) => !isSettled(command)))
+      return fail("connection_switch_pending");
+    const binding = input.opened.binding;
+    if (
+      binding.config.id !== state.session.selectedConnectionId ||
+      state.generations.has(binding.generation)
+    )
+      return fail("stale_binding");
+    const copy = clone(state);
+    copy.session = startStage(
+      {
+        ...copy.session,
+        status: "active",
+        revision: copy.session.revision + 1,
+      },
+      providerStage(binding, input.opened.capabilities, input.configRevision),
+    );
+    valid(copy.session, defaultLimits);
+    copy.generations.add(binding.generation);
+    for (const [id, interaction] of copy.interactions)
+      if (interaction.status === "pending")
+        copy.interactions.set(id, { ...interaction, status: "unavailable" });
+    for (const [id, surface] of copy.surfaces)
+      if (surface.status === "active")
+        copy.surfaces.set(id, { ...surface, status: "invalidated" });
+    return ok(copy);
+  });
 }

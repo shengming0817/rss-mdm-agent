@@ -1,44 +1,43 @@
-//! Desktop-owned Node child and bounded ACP connections. MCP uses the child's pipes.
-// ref: Tauri crates/tauri/src/app.rs@tauri-v2.11.2
-use super::execution::ExecutionHandle;
+//! One desktop execution service and one Node child. UI channels share a private inherited pipe.
+// ref: Rust std::os::unix::net::UnixStream::pair; Tauri crates/tauri/src/app.rs@tauri-v2.11.2
+use super::{control::Control, execution::ExecutionHandle};
 use crate::self_service::{self as ui, fixtures};
 use execution_mcp::{ExecutionMcp, McpLimits};
-use futures_util::{SinkExt, StreamExt};
+use futures_util::StreamExt;
 use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
+    os::fd::AsRawFd,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
     },
     time::Duration,
 };
 use tokio::{
-    net::{
-        unix::{OwnedReadHalf, OwnedWriteHalf},
-        UnixStream,
-    },
-    process::{Child, Command},
-    sync::Mutex,
+    process::Command,
+    sync::{mpsc, Mutex},
 };
 use tokio_util::{
-    codec::{FramedRead, FramedWrite, LinesCodec},
+    codec::{FramedRead, LinesCodec},
     sync::CancellationToken,
 };
-
 fn unavailable() -> ui::ServiceError {
     ui::error("ai_unavailable", "AI 服务不可用；已登记任务仍可查询")
 }
 struct Connection {
-    reader: Mutex<FramedRead<OwnedReadHalf, LinesCodec>>,
-    writer: Mutex<FramedWrite<OwnedWriteHalf, LinesCodec>>,
+    reader: Mutex<mpsc::Receiver<Value>>,
     stop: CancellationToken,
 }
 pub struct DesktopRuntime {
     pub execution: ExecutionHandle,
-    socket: PathBuf,
-    child: Mutex<Option<Child>>,
+    pub users: Arc<std::sync::Mutex<super::users::Users>>,
+    switching: Mutex<()>,
+    control: Arc<Control>,
+    child_alive: Arc<AtomicBool>,
+    child_stop: CancellationToken,
+    child_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
     mcp_stop: CancellationToken,
     connections: Mutex<BTreeMap<String, Arc<Connection>>>,
     next: AtomicU64,
@@ -60,75 +59,68 @@ fn private_directory(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     }
     Ok(())
 }
-fn configuration(
-    root: &Path,
-) -> Result<(PathBuf, PathBuf, super::origin::AiBinding), Box<dyn std::error::Error>> {
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-    let path = root.join("client.json");
-    if !path.exists() {
-        let home = std::env::var_os("HOME").ok_or("user home unavailable")?;
-        let user = std::env::var_os("CODEX_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(home).join(".codex"));
-        let value = json!({"databasePath":root.join("ai.sqlite"),"socketPath":root.join("ai.sock"),"nativeDirectory":root.join("native"),"workingDirectory":root.join("workspace"),
-            "caller":{"tenantId":"s1-test","principalId":"fixture-actor","authorityId":"desktop-fixture"},
-            "session":{"provider":"codex","accountRef":"s1-user-codex","config":{"id":"s1-local","revision":"r1"},"profile":"controlled_tools"},
-            "connection":{"source":"existing_user_config","directory":user}});
-        std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&path)?
-            .write_all(&serde_json::to_vec_pretty(&value)?)?;
-    }
-    // The Node configuration owner performs exact validation; Rust reads only the endpoint.
-    use std::io::Read;
-    use std::os::unix::fs::{MetadataExt, PermissionsExt};
-    let before = std::fs::symlink_metadata(&path)?;
-    if !before.is_file()
-        || before.file_type().is_symlink()
-        || before.permissions().mode() & 0o077 != 0
-    {
-        return Err("private configuration file required".into());
-    }
-    let file = std::fs::File::open(&path)?;
-    let actual = file.metadata()?;
-    if before.ino() != actual.ino() || before.dev() != actual.dev() {
-        return Err("configuration identity changed".into());
-    }
-    let mut bytes = Vec::new();
-    file.take(65537).read_to_end(&mut bytes)?;
-    if bytes.len() > 65536 {
-        return Err("configuration size".into());
-    }
-    let value: Value = serde_json::from_slice(&bytes)?;
-    let socket = PathBuf::from(value["socketPath"].as_str().ok_or("socket configuration")?);
-    if socket != root.join("ai.sock") {
-        return Err("desktop socket must remain in its private directory".into());
-    }
-    Ok((
-        path,
-        socket,
-        super::origin::AiBinding::from_configuration(&value)?,
-    ))
+fn configuration(root: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    use std::{io::Write, os::unix::fs::OpenOptionsExt};
+    let path = root.join("host.json");
+    let value = json!({"version":1,"databasePath":root.join("ai.sqlite"),"nativeDirectory":root.join("native"),"workingDirectory":root.join("workspace")});
+    let temporary = root.join(format!("host-{}.tmp", uuid::Uuid::new_v4()));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&temporary)?;
+    file.write_all(&serde_json::to_vec(&value)?)?;
+    file.sync_all()?;
+    std::fs::rename(temporary, &path)?;
+    Ok(path)
 }
 impl DesktopRuntime {
     pub async fn start(root: &Path, artifact: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::start_with_key_backend(root, artifact, super::credentials::Keychain).await
+    }
+    /// Test/embedding seam: the default product constructor uses the macOS backend.
+    pub async fn start_with_key_backend<B: super::credentials::KeyBackend + 'static>(
+        root: &Path,
+        artifact: &Path,
+        backend: B,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         private_directory(root)?;
         private_directory(&root.join("workspace"))?;
-        let (configuration, socket, ai_binding) = configuration(root)?;
-        let execution = ExecutionHandle::start(&root.join("execution.sqlite"), ai_binding)?;
+        let users = Arc::new(std::sync::Mutex::new(
+            super::users::Users::open(root).map_err(|_| "user registry unavailable")?,
+        ));
+        let execution = ExecutionHandle::start(&root.join("execution.sqlite"))?
+            .with_trusted_users(users.clone());
+        let configuration = configuration(root)?;
         let mcp_stop = CancellationToken::new();
-        let mut child = None;
-        // Missing AI credentials/artifact never substitute fixture conversations or erase tasks.
-        let launched = Command::new(artifact.join("bin/rss-ai-host"))
+        let (parent_pipe, child_pipe) = std::os::unix::net::UnixStream::pair()?;
+        parent_pipe.set_nonblocking(true)?;
+        let control = Control::start(tokio::net::UnixStream::from_std(parent_pipe)?, backend);
+        let mut command = Command::new(artifact.join("bin/rss-ai-host"));
+        command
             .arg(configuration)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true)
-            .spawn();
+            .kill_on_drop(true);
+        let fd = child_pipe.as_raw_fd();
+        // Only this child inherits fd 3. Node provider spawns explicitly replace their descriptors.
+        unsafe {
+            command.pre_exec(move || {
+                if fd != 3 && libc::dup2(fd, 3) < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if libc::fcntl(3, libc::F_SETFD, 0) < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let launched = command.spawn();
+        drop(child_pipe);
+        let child_alive = Arc::new(AtomicBool::new(false));
+        let child_stop = CancellationToken::new();
+        let mut child_task = None;
         if let Err(error) = &launched {
             eprintln!("AI Host spawn failed: {:?}", error.kind());
         }
@@ -163,57 +155,107 @@ impl DesktopRuntime {
             tokio::spawn(async move {
                 let _ = server.serve(reader, writer, stop).await;
             });
-            child = Some(process);
+            child_alive.store(true, Ordering::Release);
+            let alive = child_alive.clone();
+            let stop = child_stop.clone();
+            let stopped_control = control.clone();
+            child_task = Some(tokio::spawn(async move {
+                let status = tokio::select! {
+                    status = process.wait() => status,
+                    _ = stop.cancelled() => {
+                        if let Some(pid) = process.id() {
+                            let _ = Command::new("/bin/kill").args(["-TERM", &pid.to_string()]).status().await;
+                        }
+                        match tokio::time::timeout(Duration::from_secs(8), process.wait()).await {
+                            Ok(status) => status,
+                            Err(_) => {
+                                let _ = process.kill().await;
+                                process.wait().await
+                            }
+                        }
+                    }
+                };
+                alive.store(false, Ordering::Release);
+                stopped_control.close();
+                if !stop.is_cancelled() {
+                    let code = status.ok().and_then(|status| status.code());
+                    eprintln!(
+                        "AI Host exited: {}",
+                        code.map_or("signal".into(), |value| value.to_string())
+                    );
+                }
+            }));
         }
         Ok(Self {
             execution,
-            socket,
-            child: Mutex::new(child),
+            users,
+            switching: Mutex::new(()),
+            control,
+            child_alive,
+            child_stop,
+            child_task: Mutex::new(child_task),
             mcp_stop,
             connections: Mutex::new(BTreeMap::new()),
             next: AtomicU64::new(1),
         })
     }
-    pub async fn connect(&self) -> ui::Result<String> {
+    pub fn current(&self, generation: &str) -> ui::Result<ai_session_contract::UserContext> {
+        let _switch = self.switching.try_lock().map_err(|_| unavailable())?;
+        self.users
+            .lock()
+            .map_err(|_| unavailable())?
+            .require(generation)
+    }
+    pub fn execution_for(&self, generation: &str) -> ui::Result<ExecutionHandle> {
+        let context = self.current(generation)?;
+        self.execution
+            .for_caller(context.user.user_id.as_str())
+            .map_err(|_| unavailable())
+    }
+    pub async fn select_user(&self, name: &str) -> ui::Result<ai_session_contract::UserContext> {
+        let _switch = self.switching.lock().await;
+        let (page, previous) = {
+            let users = self.users.lock().map_err(|_| unavailable())?;
+            (users.prepare(name)?, users.page().current)
+        };
+        self.detach_views().await;
+        if let Some(previous) = previous {
+            if self.child_alive.load(Ordering::Acquire) {
+                self.control
+                    .suspend(&previous, Duration::from_secs(15))
+                    .await?;
+            }
+        }
+        self.users.lock().map_err(|_| unavailable())?.commit(page)
+    }
+    pub async fn connect(&self, generation: &str) -> ui::Result<String> {
+        let _switch = self.switching.lock().await;
+        let context = self
+            .users
+            .lock()
+            .map_err(|_| unavailable())?
+            .require(generation)?;
         let mut connections = self.connections.lock().await;
-        if connections.len() >= 4 || self.mcp_stop.is_cancelled() {
+        if connections.len() >= 4
+            || self.mcp_stop.is_cancelled()
+            || !self.child_alive.load(Ordering::Acquire)
+        {
             return Err(unavailable());
         }
-        let stream = tokio::time::timeout(Duration::from_secs(15), async {
-            loop {
-                {
-                    let mut child = self.child.lock().await;
-                    if let Some(status) = child
-                        .as_mut()
-                        .ok_or_else(unavailable)?
-                        .try_wait()
-                        .map_err(|_| unavailable())?
-                    {
-                        eprintln!("AI Host exited: {status}");
-                        return Err(unavailable());
-                    }
-                }
-                if let Ok(stream) = UnixStream::connect(&self.socket).await {
-                    return Ok(stream);
-                }
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-        })
-        .await
-        .map_err(|_| unavailable())??;
-        let (reader, writer) = stream.into_split();
         let id = format!("view-{}", self.next.fetch_add(1, Ordering::Relaxed));
+        let reader = self.control.view(id.clone())?;
+        if let Err(error) = self
+            .control
+            .attach(&id, &context, Duration::from_secs(15))
+            .await
+        {
+            self.control.detach(&id);
+            return Err(error);
+        }
         connections.insert(
             id.clone(),
             Arc::new(Connection {
-                reader: Mutex::new(FramedRead::new(
-                    reader,
-                    LinesCodec::new_with_max_length(262144),
-                )),
-                writer: Mutex::new(FramedWrite::new(
-                    writer,
-                    LinesCodec::new_with_max_length(262144),
-                )),
+                reader: Mutex::new(reader),
                 stop: self.mcp_stop.child_token(),
             }),
         );
@@ -233,53 +275,64 @@ impl DesktopRuntime {
         tokio::select! {
             _ = c.stop.cancelled() => Err(unavailable()),
             _ = tokio::time::sleep(Duration::from_secs(20)) => Ok(None),
-            message = reader.next() => match message {
-                Some(Ok(line)) => serde_json::from_str(&line).map(Some).map_err(|_| unavailable()),
-                _ => { c.stop.cancel(); Err(unavailable()) }
-            }
+            message = reader.recv() => message.map(Some).ok_or_else(unavailable),
         }
     }
     pub async fn send(&self, id: &str, message: Value) -> ui::Result<()> {
-        let bytes = serde_json::to_string(&message).map_err(|_| unavailable())?;
-        if bytes.len() > 262144 {
+        if serde_json::to_vec(&message)
+            .map_err(|_| unavailable())?
+            .len()
+            > 262144
+        {
             return Err(unavailable());
         }
-        let c = self.connection(id).await?;
-        let mut writer = c.writer.try_lock().map_err(|_| unavailable())?;
-        tokio::select! {
-            _ = c.stop.cancelled() => Err(unavailable()),
-            result = tokio::time::timeout(Duration::from_secs(5), writer.send(bytes)) => match result {
-                Ok(Ok(())) => Ok(()), _ => { c.stop.cancel(); Err(unavailable()) }
-            }
+        let connection = self.connection(id).await?;
+        if connection.stop.is_cancelled() {
+            return Err(unavailable());
         }
+        self.control.send(id, message).await
+    }
+    pub async fn save_connection(
+        &self,
+        generation: &str,
+        connection: ai_session_contract::Connection,
+        expected: Option<u64>,
+        secret: Option<String>,
+    ) -> ui::Result<Value> {
+        self.current(generation)?;
+        let result = self
+            .control
+            .save_connection(
+                generation,
+                connection,
+                expected,
+                secret,
+                Duration::from_secs(100),
+            )
+            .await?;
+        self.current(generation)?;
+        Ok(result)
     }
     pub async fn disconnect(&self, id: &str) {
-        if let Some(c) = self.connections.lock().await.remove(id) {
-            c.stop.cancel();
+        if let Some(connection) = self.connections.lock().await.remove(id) {
+            connection.stop.cancel();
         }
+        self.control.detach(id);
+        let _ = self.control.detach_remote(id, Duration::from_secs(2)).await;
     }
     pub async fn detach_views(&self) {
-        for (_, c) in std::mem::take(&mut *self.connections.lock().await) {
-            c.stop.cancel();
+        for (id, connection) in std::mem::take(&mut *self.connections.lock().await) {
+            connection.stop.cancel();
+            self.control.detach(&id);
         }
     }
     pub async fn shutdown(&self) {
         self.detach_views().await;
-        if let Some(mut child) = self.child.lock().await.take() {
-            if let Some(pid) = child.id() {
-                // Bounded graceful Host shutdown; this is process lifecycle, never business cancel.
-                let _ = Command::new("/bin/kill")
-                    .args(["-TERM", &pid.to_string()])
-                    .status()
-                    .await;
-            }
-            if tokio::time::timeout(Duration::from_secs(8), child.wait())
-                .await
-                .is_err()
-            {
-                let _ = child.kill().await;
-            }
+        self.child_stop.cancel();
+        if let Some(task) = self.child_task.lock().await.take() {
+            let _ = task.await;
         }
+        self.control.close();
         self.mcp_stop.cancel();
         self.execution.close().await;
     }
@@ -297,6 +350,7 @@ fn diagnostic(line: &str) -> Option<String> {
         "dispatch",
         "observe",
         "recovery",
+        "credential",
         "close",
     ]
     .contains(&stage)
@@ -330,6 +384,7 @@ fn diagnostic(line: &str) -> Option<String> {
 }
 #[cfg(test)]
 mod tests {
+    use super::*;
     #[test]
     fn diagnostics_accept_only_closed_product_codes() {
         assert_eq!(
@@ -337,6 +392,8 @@ mod tests {
             Some("AI Host could not start: authentication_required")
         );
         assert!(super::diagnostic("AI Host recovery: unavailable").is_some());
+        assert!(super::diagnostic("AI Host credential: unavailable").is_some());
+        assert!(super::diagnostic("AI Host credential: secret-token").is_none());
         assert!(super::diagnostic("AI Host cleanup incomplete").is_some());
         for line in [
             "native secret-token",
@@ -345,5 +402,58 @@ mod tests {
         ] {
             assert!(super::diagnostic(line).is_none());
         }
+    }
+
+    struct NoKey;
+    impl super::super::credentials::KeyBackend for NoKey {
+        fn read(
+            &self,
+        ) -> std::result::Result<Option<Vec<u8>>, super::super::credentials::KeyUnavailable>
+        {
+            Ok(None)
+        }
+        fn create(
+            &self,
+            _key: &[u8],
+        ) -> std::result::Result<(), super::super::credentials::KeyUnavailable> {
+            Ok(())
+        }
+    }
+    #[tokio::test]
+    async fn exited_host_is_reaped_and_rejected_as_not_alive() {
+        use std::io::Write;
+        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+        let root = std::env::temp_dir().join(format!("rss-host-exit-{}", uuid::Uuid::new_v4()));
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(root.join("artifact/bin"))
+            .unwrap();
+        let root = root.canonicalize().unwrap();
+        let artifact = root.join("artifact");
+        let executable = artifact.join("bin/rss-ai-host");
+        let mut file = std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o700)
+            .open(&executable)
+            .unwrap();
+        file.write_all(b"#!/bin/sh\nexit 7\n").unwrap();
+        drop(file);
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let runtime = DesktopRuntime::start_with_key_backend(&root.join("state"), &artifact, NoKey)
+            .await
+            .unwrap();
+        for _ in 0..50 {
+            if !runtime.child_alive.load(Ordering::Acquire) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(!runtime.child_alive.load(Ordering::Acquire));
+        let context = runtime.select_user("Alice").await.unwrap();
+        assert!(runtime.connect(context.generation.as_str()).await.is_err());
+        runtime.shutdown().await;
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

@@ -169,6 +169,39 @@ impl Store {
         );
         w.finish(Outcome::Changed, 0, audit)
     }
+    /// Device service recovery scan. Every row requires independent RunnerFact authorization.
+    /// This does not grant ordinary callers a cross-actor listing endpoint.
+    pub fn device_execution_requests(
+        &self,
+        device: &execution_contract::DeviceId,
+        after: Option<&execution_contract::RequestId>,
+        limit: usize,
+        host: &impl Host,
+    ) -> Result<ExecutionRequestPage, Error> {
+        if !(1..=128).contains(&limit) {
+            return Err(Error::InvalidInput);
+        }
+        crate::database::ensure_current(&self.conn, &self.authority, self.limits)?;
+        let mut statement = self.conn.prepare("SELECT request_id FROM executions WHERE request_id>?1 AND json_extract(CAST(plan AS TEXT),'$.request.target.device')=?2 ORDER BY request_id LIMIT ?3")?;
+        let rows = statement.query_map(
+            params![
+                after.map_or("", |id| id.as_str()),
+                device.as_str(),
+                limit + 1
+            ],
+            |r| r.get::<_, String>(0),
+        )?;
+        let mut requests = rows
+            .map(|r| execution_contract::RequestId::new(r?).map_err(|_| Error::Corrupt))
+            .collect::<Result<Vec<_>, _>>()?;
+        let more = requests.len() > limit;
+        requests.truncate(limit);
+        for request in &requests {
+            self.execution_by_request(request, ExecutionAccess::RunnerFact, host)?;
+        }
+        let next = more.then(|| requests.last().expect("nonempty page").clone());
+        Ok(ExecutionRequestPage { requests, next })
+    }
     /// Read a bounded page only for the selected actor/device; each row requires result access.
     pub fn execution_requests(
         &self,

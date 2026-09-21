@@ -17,7 +17,7 @@ import {
 } from "../../packages/ai-contract/dist/testing/index.js";
 const options = {
   provider: "fake",
-  accountRef: "account",
+
   config: { id: "cfg", revision: "1" },
   profile: "conversation",
 };
@@ -27,7 +27,7 @@ async function fixture(t) {
   const host = new FakeHost(store),
     service = createAccessService({
       host,
-      sessionOptions: options,
+      sessionOptions: { connectionId: "cfg" },
       now: () => 0,
     });
   t.after(() => service.close());
@@ -40,11 +40,11 @@ async function fixture(t) {
     return runtime;
   }
   const action = (commandId = "answer") => ({
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "actionRequest",
     expiresAtMs: 100,
     metadata: {
-      schemaVersion: 4,
+      schemaVersion: 5,
       kind: "surfaceAction",
       sessionId: seeded.session.namespace.sessionId,
       commandId,
@@ -192,7 +192,7 @@ test("expired or lost question callback stays unavailable after display recovery
       interactions: [{ ...f.interaction, status: "unavailable" }],
       events: [
         {
-          schemaVersion: 4,
+          schemaVersion: 5,
           kind: "event",
           namespace: head.namespace,
           eventId: "callback-lost",

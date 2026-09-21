@@ -1,7 +1,3 @@
-import type { LoginAccountParams } from "./protocol/v2/LoginAccountParams.js";
-import type { LoginAccountResponse } from "./protocol/v2/LoginAccountResponse.js";
-import type { GetAccountParams } from "./protocol/v2/GetAccountParams.js";
-import type { GetAccountResponse } from "./protocol/v2/GetAccountResponse.js";
 import type { InitializeParams } from "./protocol/InitializeParams.js";
 import type { InitializeResponse } from "./protocol/InitializeResponse.js";
 import type { ThreadStartParams } from "./protocol/v2/ThreadStartParams.js";
@@ -59,8 +55,6 @@ export function nativeNotification(
 }
 interface Methods {
   initialize: [InitializeParams, InitializeResponse];
-  "account/login/start": [LoginAccountParams, LoginAccountResponse];
-  "account/read": [GetAccountParams, GetAccountResponse];
   "thread/start": [ThreadStartParams, ThreadStartResponse];
   "thread/resume": [ThreadResumeParams, ThreadResumeResponse];
   "thread/fork": [ThreadForkParams, ThreadForkResponse];

@@ -16,6 +16,7 @@ struct Evidence {
     path: PathBuf,
     phase: AtomicUsize,
     finished: AtomicBool,
+    source: serde_json::Value,
 }
 fn window(app: &tauri::AppHandle, evidence: Arc<Evidence>) -> tauri::Result<()> {
     let events = evidence.clone();
@@ -25,8 +26,9 @@ fn window(app: &tauri::AppHandle, evidence: Arc<Evidence>) -> tauri::Result<()> 
         .on_page_load(move |window, payload| {
             if payload.event() == tauri::webview::PageLoadEvent::Finished {
                 let script = format!(
-                    "window.__RSS_ACCEPTANCE_PHASE__={};\n{}",
+                    "window.__RSS_ACCEPTANCE_PHASE__={};window.__RSS_CONNECTION_SOURCE__={};\n{}",
                     evidence.phase.load(Ordering::Acquire),
+                    evidence.source,
                     include_str!("../../../../tests/desktop/native-flow.js")
                 );
                 let _ = window.eval(&script);
@@ -95,6 +97,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         path: PathBuf::from(&args[2]),
         phase: AtomicUsize::new(0),
         finished: AtomicBool::new(false),
+        source: serde_json::from_slice(&std::fs::read(root.join("acceptance.json"))?)?,
     });
     let setup = evidence.clone();
     let app = ipc::register(tauri::Builder::default())

@@ -39,12 +39,10 @@ defineProps<{ plan: Pick<Plan, "actor" | "authority" | "initiator"> }>();
       <template v-if="plan.initiator.kind === 'ai'">
         <dt>AI 引擎</dt>
         <dd>{{ plan.initiator.provider }}</dd>
-        <dt>AI 账号引用</dt>
-        <dd class="identifier">{{ plan.initiator.providerAccount.account }}</dd>
         <dt>AI 配置版本</dt>
         <dd>
-          {{ plan.initiator.providerAccount.config.id }} /
-          {{ plan.initiator.providerAccount.config.revision }}
+          {{ plan.initiator.config.id }} /
+          {{ plan.initiator.config.revision }}
         </dd>
         <dt>AI 会话</dt>
         <dd class="identifier">{{ plan.initiator.conversation }}</dd>

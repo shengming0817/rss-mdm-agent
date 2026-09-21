@@ -1,3 +1,4 @@
+import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import { readSnapshot } from "../../packages/ai-contract/dist/testing/index.js";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -71,7 +72,7 @@ test("delivery is atomically tied to the event, content and stable operation ide
   const head = unwrap(await store.session(initial.namespace)),
     event = unwrap(await store.events(initial.namespace, 0, 1))[0];
   const delivery = {
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "delivery",
     namespace: initial.namespace,
     operationId: "operation-1",
@@ -234,7 +235,11 @@ test("capacity fails explicitly; retirement retains an irreversible namespace to
   );
   const head = unwrap(await store.session(initial.namespace));
   unwrap(
-    await store.retire(head.namespace, head.revision, head.binding.generation),
+    await store.retire(
+      head.namespace,
+      head.revision,
+      activeStage(head).binding.generation,
+    ),
   );
   assert.equal(unwrap(await store.pruneRetired(200)), 0);
   assert.equal(unwrap(await store.pruneRetired(201)), 1);

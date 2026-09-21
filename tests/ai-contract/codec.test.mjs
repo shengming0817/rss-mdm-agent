@@ -12,7 +12,7 @@ const limits = {
   maxNodes: 4096,
 };
 const command = {
-  schemaVersion: 4,
+  schemaVersion: 5,
   kind: "command",
   sessionId: "s1",
   commandId: "c1",
@@ -29,6 +29,49 @@ test("old formats, duplicate keys and excess authority fields fail closed", () =
     JSON.stringify(command).replace('"c1"', '"c1","commandId":"c2"'),
   ])
     assert.throws(() => decode(raw, limits), ContractError);
+});
+test("private control and execution provenance use the same closed generated schema", () => {
+  const context = {
+    schemaVersion: 5,
+    kind: "userContext",
+    user: {
+      schemaVersion: 5,
+      kind: "testUser",
+      userId: "alice",
+      displayName: "Alice",
+      nameKey: "alice",
+    },
+    generation: "generation-1",
+  };
+  const suspend = {
+    schemaVersion: 5,
+    kind: "nativeCall",
+    id: 1,
+    method: "suspend",
+    data: { context },
+  };
+  assert.deepEqual(decode(JSON.stringify(suspend), limits), suspend);
+  const origin = {
+    schemaVersion: 5,
+    kind: "executionOrigin",
+    userGeneration: "generation-a",
+    namespace: {
+      tenantId: "test-users",
+      principalId: "alice",
+      authorityId: "desktop-fixture",
+      sessionId: "session-1",
+    },
+    operationId: "operation-1",
+    provider: "codex",
+    config: { id: "connection-1", revision: "1" },
+  };
+  assert.deepEqual(decode(JSON.stringify(origin), limits), origin);
+  for (const invalid of [
+    { ...suspend, method: "unknown" },
+    { ...suspend, data: { context, generation: "duplicate-authority" } },
+    { ...origin, provider: "arbitrary" },
+  ])
+    assert.throws(() => decode(JSON.stringify(invalid), limits), ContractError);
 });
 test("canonical command identity ignores key order but binds all content", () => {
   assert.equal(

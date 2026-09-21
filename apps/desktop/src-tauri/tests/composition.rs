@@ -6,14 +6,15 @@ use rss_mdm_desktop::{
     composition::{
         execution::{ExecutionHandle, BINDING},
         origin::AiBinding,
+        users::Users,
     },
     self_service as ui,
 };
 use serde_json::json;
-use std::{path::PathBuf, sync::Arc};
+use std::{io::Write, path::PathBuf, sync::Arc};
 use tokio_util::sync::CancellationToken;
 fn binding() -> AiBinding {
-    AiBinding::from_configuration(&json!({"caller":{"tenantId":"s1-test","principalId":"fixture-actor","authorityId":"desktop-fixture"},"session":{"provider":"codex","accountRef":"test-account","config":{"id":"local","revision":"r1"},"profile":"controlled_tools"}})).unwrap()
+    AiBinding::for_user("fixture-actor").unwrap()
 }
 fn directory() -> PathBuf {
     use std::os::unix::fs::DirBuilderExt;
@@ -27,8 +28,50 @@ fn directory() -> PathBuf {
     std::fs::DirBuilder::new().mode(0o700).create(&p).unwrap();
     p.canonicalize().unwrap()
 }
-fn bound(handle: &ExecutionHandle, session: &str, operation: &str) -> Arc<ExecutionHandle> {
-    Arc::new(handle.clone()).bind_call(json!({"com.rss-mdm/ai-origin":{"version":1,"namespace":{"tenantId":"s1-test","principalId":"fixture-actor","authorityId":"desktop-fixture","sessionId":session},"operationId":operation,"provider":"codex","accountRef":"test-account","config":{"id":"local","revision":"r1"}}}).as_object().unwrap()).unwrap()
+fn started(path: &std::path::Path) -> (ExecutionHandle, String) {
+    let root = path.parent().unwrap();
+    let users_path = root.join("users.json");
+    if !users_path.exists() {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .open(&users_path)
+            .unwrap()
+            .write_all(
+                serde_json::to_string(&json!({
+                    "schemaVersion": 5,
+                    "kind": "testUserPage",
+                    "users": [{"schemaVersion":5,"kind":"testUser","userId":"fixture-actor","displayName":"Fixture","nameKey":"fixture"}],
+                    "current": {"schemaVersion":5,"kind":"userContext","user":{"schemaVersion":5,"kind":"testUser","userId":"fixture-actor","displayName":"Fixture","nameKey":"fixture"},"generation":"fixture-generation"}
+                }))
+                .unwrap()
+                .as_bytes(),
+            )
+            .unwrap();
+    }
+    let mut users = Users::open(root).unwrap();
+    if users.current().is_err() {
+        users.select("fixture-actor").unwrap();
+    }
+    let generation = users.current().unwrap().generation.to_string();
+    (
+        ExecutionHandle::start(path)
+            .unwrap()
+            .with_trusted_users(Arc::new(std::sync::Mutex::new(users)))
+            .for_caller(binding().caller.principal_id.as_str())
+            .unwrap(),
+        generation,
+    )
+}
+fn bound(
+    handle: &ExecutionHandle,
+    generation: &str,
+    session: &str,
+    operation: &str,
+) -> Arc<ExecutionHandle> {
+    Arc::new(handle.clone()).bind_call(json!({"com.rss-mdm/ai-origin":{"schemaVersion":5,"kind":"executionOrigin","namespace":{"tenantId":"test-users","principalId":"fixture-actor","authorityId":"desktop-fixture","sessionId":session},"userGeneration":generation,"operationId":operation,"provider":"codex","config":{"id":"local","revision":"r1"}}}).as_object().unwrap()).unwrap()
 }
 async fn draft(handle: &ExecutionHandle, request: &str, item: &str) -> ui::PlanView {
     let snapshot = handle.snapshot(Default::default()).await.unwrap();
@@ -58,13 +101,20 @@ fn submission(plan: &ui::PlanView) -> ui::Submission {
         digest: plan.digest.clone(),
     }
 }
+#[test]
+fn production_mcp_requires_a_trusted_user_registry_before_startup() {
+    let root = directory();
+    let handle = ExecutionHandle::start(&root.join("execution.sqlite")).unwrap();
+    assert!(handle.check_binding().is_err());
+    std::fs::remove_dir_all(root).unwrap();
+}
 #[tokio::test]
 async fn ai_cannot_preview_submit_read_or_cancel_a_human_request() {
     let root = directory();
-    let handle = ExecutionHandle::start(&root.join("execution.sqlite"), binding()).unwrap();
+    let (handle, generation) = started(&root.join("execution.sqlite"));
     let plan = draft(&handle, "human-private", "office").await;
     let details = handle.details(plan.request_id.clone()).await.unwrap();
-    let ai = bound(&handle, "conversation-a", "foreign-access");
+    let ai = bound(&handle, &generation, "conversation-a", "foreign-access");
     let request = || OperationRequest {
         operation_request_id: plan.request_id.clone(),
     };
@@ -101,7 +151,7 @@ async fn ai_cannot_preview_submit_read_or_cancel_a_human_request() {
 async fn shared_durable_service_distinguishes_preview_submission_approval_and_replay() {
     let root = directory();
     let path = root.join("execution.sqlite");
-    let handle = ExecutionHandle::start(&path, binding()).unwrap();
+    let (handle, _generation) = started(&path);
     let plan = draft(&handle, "human-office", "office").await;
     let before = handle.details(plan.request_id.clone()).await.unwrap();
     assert!(!before.status.submitted);
@@ -150,7 +200,7 @@ async fn shared_durable_service_distinguishes_preview_submission_approval_and_re
         execution_app::TaskPhase::TestCompleted
     );
     handle.close().await;
-    let restored = ExecutionHandle::start(&path, binding()).unwrap();
+    let (restored, _generation) = started(&path);
     restored.submit_ui(submission(&plan)).await.unwrap();
     assert_eq!(
         restored
@@ -168,7 +218,7 @@ async fn shared_durable_service_distinguishes_preview_submission_approval_and_re
 async fn ai_origin_is_host_bound_and_recovery_never_redispatches_unknown_attempts() {
     let root = directory();
     let path = root.join("execution.sqlite");
-    let handle = ExecutionHandle::start(&path, binding()).unwrap();
+    let (handle, generation) = started(&path);
     assert!(Arc::new(handle.clone())
         .bind_call(
             json!({"actor":"admin","approved":true})
@@ -176,15 +226,13 @@ async fn ai_origin_is_host_bound_and_recovery_never_redispatches_unknown_attempt
                 .unwrap()
         )
         .is_err());
-    let valid = json!({"version":1,"namespace":{"tenantId":"s1-test","principalId":"fixture-actor","authorityId":"desktop-fixture","sessionId":"conversation-a"},"operationId":"preview-delivery","provider":"codex","accountRef":"test-account","config":{"id":"local","revision":"r1"}});
+    let valid = json!({"schemaVersion":5,"kind":"executionOrigin","namespace":{"tenantId":"test-users","principalId":"fixture-actor","authorityId":"desktop-fixture","sessionId":"conversation-a"},"userGeneration":generation.as_str(),"operationId":"preview-delivery","provider":"codex","config":{"id":"local","revision":"r1"}});
     for pointer in [
         "/namespace/tenantId",
         "/namespace/principalId",
         "/namespace/authorityId",
+        "/userGeneration",
         "/provider",
-        "/accountRef",
-        "/config/id",
-        "/config/revision",
     ] {
         let mut changed = valid.clone();
         *changed.pointer_mut(pointer).unwrap() = json!("foreign");
@@ -204,7 +252,7 @@ async fn ai_origin_is_host_bound_and_recovery_never_redispatches_unknown_attempt
     assert!(Arc::new(handle.clone())
         .bind_call(json!({"com.rss-mdm/ai-origin":forged}).as_object().unwrap())
         .is_err());
-    let ai = bound(&handle, "conversation-a", "preview-delivery");
+    let ai = bound(&handle, &generation, "conversation-a", "preview-delivery");
     let catalog = ai.catalog(None, CancellationToken::new()).await.unwrap();
     let selected=catalog.select(&serde_json::to_vec(&json!({"catalog":catalog.reference(),"itemId":"unknown","variantId":"test","arguments":{}})).unwrap(), &service_catalog::CatalogLimits { max_bytes:262144,max_depth:32,max_nodes:16384,max_string_bytes:16384,max_collection_items:128 }, &service_catalog::ParameterLimits { max_bytes:16384,max_string_bytes:4096,max_parameters:32 }).unwrap();
     let request = RequestId::new("ai-unknown").unwrap();
@@ -218,11 +266,32 @@ async fn ai_origin_is_host_bound_and_recovery_never_redispatches_unknown_attempt
         )
         .await
         .unwrap();
+    // The trusted Host can name another connection, but it cannot use that origin to read an old task.
+    for pointer in ["/config/id", "/config/revision"] {
+        let mut changed = valid.clone();
+        *changed.pointer_mut(pointer).unwrap() = json!("foreign");
+        let other = Arc::new(handle.clone())
+            .bind_call(
+                json!({"com.rss-mdm/ai-origin":changed})
+                    .as_object()
+                    .unwrap(),
+            )
+            .unwrap();
+        assert!(other
+            .status(
+                OperationRequest {
+                    operation_request_id: request.clone()
+                },
+                CancellationToken::new()
+            )
+            .await
+            .is_err());
+    }
     let detail = handle.details(request.clone()).await.unwrap();
     assert!(
         matches!(detail.plan.initiator,Initiator::Ai {conversation,tool_call,..} if conversation.as_str()=="conversation-a" && tool_call.as_str()=="preview-delivery")
     );
-    let submit = bound(&handle, "conversation-a", "submit-delivery");
+    let submit = bound(&handle, &generation, "conversation-a", "submit-delivery");
     submit
         .submit(
             SubmitRequest {
@@ -233,18 +302,25 @@ async fn ai_origin_is_host_bound_and_recovery_never_redispatches_unknown_attempt
         )
         .await
         .unwrap();
-    assert!(bound(&handle, "conversation-b", "status-delivery")
-        .status(
-            OperationRequest {
-                operation_request_id: request.clone()
-            },
-            CancellationToken::new()
-        )
-        .await
-        .is_err());
+    assert!(
+        bound(&handle, &generation, "conversation-b", "status-delivery")
+            .status(
+                OperationRequest {
+                    operation_request_id: request.clone()
+                },
+                CancellationToken::new()
+            )
+            .await
+            .is_err()
+    );
     handle.close().await;
-    let restored = ExecutionHandle::start(&path, binding()).unwrap();
-    let ai = bound(&restored, "conversation-a", "submit-delivery");
+    let (restored, restored_generation) = started(&path);
+    let ai = bound(
+        &restored,
+        &restored_generation,
+        "conversation-a",
+        "submit-delivery",
+    );
     let status = ai
         .submit(
             SubmitRequest {

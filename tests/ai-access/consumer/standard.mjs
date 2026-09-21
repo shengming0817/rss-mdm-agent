@@ -10,12 +10,7 @@ const host = new FakeHost(),
   service = createAccessService({
     host,
     now: () => 0,
-    sessionOptions: {
-      provider: "fake",
-      config: { id: "cfg", revision: "1" },
-      accountRef: "a",
-      profile: "conversation",
-    },
+    sessionOptions: { connectionId: "cfg" },
   });
 const a = new TransformStream(),
   b = new TransformStream();

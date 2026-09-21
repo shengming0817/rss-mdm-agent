@@ -1,3 +1,5 @@
+import { activeStage } from "../../packages/ai-contract/dist/index.js";
+import { openFixture, fixtureArtifact } from "./harness.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -27,7 +29,7 @@ const { client: acpClient } = await import(
 async function standardPeer(t, f, accessOptions = {}) {
   const service = createAccessService({
     host: f.host,
-    sessionOptions: f.options,
+    sessionOptions: { connectionId: f.session.selectedConnectionId },
     ...accessOptions,
   });
   const [a, b] = localTransportPair(),
@@ -80,7 +82,7 @@ async function setup(t, revision = "1", extras = {}) {
   const options = {
     provider: "fake",
     config: { id: "config", revision },
-    accountRef: "account",
+
     profile: extras.admission ? "controlled_tools" : "conversation",
   };
   host = unwrap(
@@ -121,11 +123,11 @@ async function setup(t, revision = "1", extras = {}) {
           namespace,
           provider: options.provider,
           config: options.config,
-          accountRef: options.accountRef,
+
           workingDirectory: directory,
           permissions: extras.admission ? "host_mediated" : "tools_disabled",
         },
-        artifact: new URL("./provider.mjs", import.meta.url).href,
+        artifact: await fixtureArtifact(store, namespace, options),
         ...(extras.admission ? { admission: extras.admission } : {}),
       }),
       ...extras.hostOptions,
@@ -135,9 +137,11 @@ async function setup(t, revision = "1", extras = {}) {
     unwrap(await host.close(budget()));
     await rm(directory, { recursive: true, force: true });
   });
-  const session = unwrap(await host.createSession(caller, options, budget()));
+  const session = unwrap(
+    await openFixture(host, store, caller, options, budget()),
+  );
   const command = (id, text = "hold") => ({
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "command",
     sessionId: session.namespace.sessionId,
     commandId: id,
@@ -164,7 +168,7 @@ test("real worker keeps a long run, durable FIFO and control acknowledgement ind
     ...f.command("cancel"),
     input: {
       type: "cancel",
-      generation: f.session.binding.generation,
+      generation: activeStage(f.session).binding.generation,
       targetCommandId: "long",
       nativeRunId: long.dispatch.nativeRunId,
     },
@@ -200,7 +204,7 @@ test("native queued ACK stays dispatching and queued cancellation never calls pr
         ...f.command("cancel-queued"),
         input: {
           type: "cancel",
-          generation: f.session.binding.generation,
+          generation: activeStage(f.session).binding.generation,
           targetCommandId: "queued",
         },
       },
@@ -330,7 +334,7 @@ test("standard ACP queued input outlives the request budget and executes in FIFO
     await f.host.cancel(
       caller,
       {
-        schemaVersion: 4,
+        schemaVersion: 5,
         kind: "command",
         sessionId: session.namespace.sessionId,
         commandId: "release-long-run",
@@ -338,7 +342,7 @@ test("standard ACP queued input outlives the request budget and executes in FIFO
         input: {
           type: "cancel",
           targetCommandId: active.command.commandId,
-          generation: session.binding.generation,
+          generation: activeStage(session).binding.generation,
           nativeRunId: active.dispatch.nativeRunId,
         },
       },
@@ -362,7 +366,7 @@ test("question response is timely during a long run and has its own acknowledgem
     ...f.command("answer"),
     input: {
       type: "respond",
-      generation: f.session.binding.generation,
+      generation: activeStage(f.session).binding.generation,
       interactionId: "question-1",
       nativeRunId: (await f.record("asking")).dispatch.nativeRunId,
       answer: { text: "yes" },
@@ -386,7 +390,7 @@ test("slow subscriber is asked to resync while another account remains usable", 
   t.after(() => abort.abort());
   const ready = iterator.next();
   // A draining peer proves the Host has published enough bytes to overflow the paused peer.
-  // No assumption about how many provider callbacks fit in 700 ms under parallel CI load.
+  // Text alone reaches the 1 MiB Output cap; JSON envelopes make overflow strict.
   const fast = f.host
     .subscribe(caller, f.session.namespace.sessionId, 0, {
       timeoutMs: 5000,
@@ -400,21 +404,17 @@ test("slow subscriber is asked to resync while another account remains usable", 
   for await (const item of fast) {
     assert.notEqual(item.type, "resync_required", "draining peer remains live");
     if (item.type === "delta") bytes += Buffer.byteLength(item.text);
-    if (bytes >= 2 * 1024 * 1024) break;
+    if (bytes >= 1024 * 1024) break;
   }
   assert.ok(
-    bytes >= 2 * 1024 * 1024,
-    "Host published more than the paused peer's byte budget",
+    bytes >= 1024 * 1024,
+    `Host published ${bytes} bytes, exceeding the paused peer's budget`,
   );
   assert.equal((await iterator.next()).value.type, "resync_required");
   abort.abort();
   await iterator.return();
   const second = unwrap(
-    await f.host.createSession(
-      caller,
-      { ...f.options, accountRef: "separate-account" },
-      budget(),
-    ),
+    await openFixture(f.host, f.store, caller, { ...f.options }, budget()),
   );
   const command = {
     ...f.command("isolated", "quick"),
@@ -427,29 +427,12 @@ test("slow subscriber is asked to resync while another account remains usable", 
       "terminal",
   );
 });
-test("worker quotas bind provider/account and count real process owners", async (t) => {
-  const f = await setup(t, "1", {
-    hostOptions: { workerLimit: 2, accountWorkerLimit: 1 },
-  });
+test("global worker limit counts process owners across multiple sessions using the same configuration", async (t) => {
+  const f = await setup(t, "1", { hostOptions: { workerLimit: 2 } });
+  unwrap(await openFixture(f.host, f.store, caller, f.options, budget()));
   assert.equal(
-    (await f.host.createSession(caller, f.options, budget())).error.code,
-    "limit_exceeded",
-  );
-  unwrap(
-    await f.host.createSession(
-      caller,
-      { ...f.options, accountRef: "second" },
-      budget(),
-    ),
-  );
-  assert.equal(
-    (
-      await f.host.createSession(
-        caller,
-        { ...f.options, accountRef: "third" },
-        budget(),
-      )
-    ).error.code,
+    (await openFixture(f.host, f.store, caller, f.options, budget())).error
+      .code,
     "limit_exceeded",
   );
   assert.equal(unwrap(await f.store.launches()).length, 2);
@@ -522,9 +505,11 @@ test("worker tool bridge stays closed through factory/session creation and paren
     ok: false,
     error: { code: "permission_denied", retry: "never" },
   });
-  const rejected = await f.host.createSession(
+  const rejected = await openFixture(
+    f.host,
+    f.store,
     caller,
-    { ...f.options, accountRef: "rejected" },
+    { ...f.options },
     budget(),
   );
   assert.equal(rejected.ok, false);
@@ -543,9 +528,11 @@ test("Host close drains admission without reading a session that is not yet pers
     await held;
     return reserve(input);
   };
-  const admission = f.host.createSession(
+  const admission = openFixture(
+    f.host,
+    f.store,
     caller,
-    { ...f.options, accountRef: "closing" },
+    { ...f.options },
     budget(),
   );
   await until(() => entered);
@@ -565,6 +552,19 @@ test("Host close drains admission without reading a session that is not yet pers
 });
 test("shared Host conformance runs against SQLite and a real isolated worker", async (t) => {
   const f = await setup(t, "1", { hostOptions: { now: () => 0 } });
+  const { fixtureCaller } = await import(
+    "../../packages/ai-contract/dist/testing/index.js"
+  );
+  const row = unwrap(
+    await f.store.connection(caller, f.session.selectedConnectionId),
+  );
+  unwrap(
+    await f.store.saveConnection(
+      fixtureCaller,
+      { ...row, connectionId: "cfg" },
+      null,
+    ),
+  );
   await runHostConformance(
     () => f.host,
     () => budget(),
@@ -572,7 +572,10 @@ test("shared Host conformance runs against SQLite and a real isolated worker", a
 });
 test("real Host and A04 recover the same stable client projection after detach", async (t) => {
   const f = await setup(t),
-    service = createAccessService({ host: f.host, sessionOptions: f.options }),
+    service = createAccessService({
+      host: f.host,
+      sessionOptions: { connectionId: f.session.selectedConnectionId },
+    }),
     [a, b] = localTransportPair();
   service.connect(a, caller);
   const client = new RuntimeClient(b);
@@ -634,12 +637,7 @@ test("explicit supported steer is attempt-bound and never starts a competing mod
   );
 });
 
-for (const option of [
-  "queueLimit",
-  "workerLimit",
-  "accountWorkerLimit",
-  "operationTimeoutMs",
-])
+for (const option of ["queueLimit", "workerLimit", "operationTimeoutMs"])
   test(`Host factory returns invalid_input for invalid ${option}`, async () => {
     for (const value of [0, -1, NaN, Infinity, 1.5]) {
       const result = await createHost({
@@ -746,7 +744,10 @@ for (const fault of ["session_result", "recovery_rejection", "recovery_hang"])
 
 test("client restore keeps recovery_required visible on an attached real Host session", async (t) => {
   const f = await setup(t),
-    service = createAccessService({ host: f.host, sessionOptions: f.options });
+    service = createAccessService({
+      host: f.host,
+      sessionOptions: { connectionId: f.session.selectedConnectionId },
+    });
   const [a, b] = localTransportPair();
   service.connect(a, caller);
   const client = new RuntimeClient(b);

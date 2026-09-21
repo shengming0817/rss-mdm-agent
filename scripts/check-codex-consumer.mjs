@@ -107,7 +107,7 @@ import {createCodexAdapter,CODEX_VERSION,type CodexAdapterOptions,type ResolvedC
 import type {ProviderAgentPort} from '@rss-mdm-agent/ai-contract';
 const project=join(process.cwd(),'project'),native=join(process.cwd(),'native');
 mkdirSync(project);mkdirSync(native,{mode:0o700});chmodSync(native,0o700);
-const configuration={provider:'codex',config:{id:'consumer',revision:'1'},accountRef:'consumer',workingDirectory:project,namespace:{tenantId:'consumer',principalId:'consumer',authorityId:'consumer',sessionId:'consumer-session'},permissions:'tools_disabled'} as const;
+const configuration={provider:'codex',config:{id:'consumer',revision:'1'},workingDirectory:project,namespace:{tenantId:'consumer',principalId:'consumer',authorityId:'consumer',sessionId:'consumer-session'},permissions:'tools_disabled'} as const;
 const options:CodexAdapterOptions={resolveConfiguration:async()=>({configuration,nativeDirectory:native,authentication: { type: "api_key", apiUrl:'http://127.0.0.1:9/v1', apiKey:'fixture-only' },model:'fixture-model'})};
 const adapter=createCodexAdapter(options);const port:ProviderAgentPort=adapter.agent;
 // @ts-expect-error Native history is not a public provider operation.

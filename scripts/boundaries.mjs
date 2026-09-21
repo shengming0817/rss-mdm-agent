@@ -20,8 +20,14 @@ const assistantCommands = [
   "ai_disconnect",
   "execution_task_details",
 ];
-const compositionCommands = [...selfServiceCommands, ...assistantCommands];
+const userCommands = ["test_users", "select_test_user", "save_connection"];
+const compositionCommands = [
+  ...selfServiceCommands,
+  ...assistantCommands,
+  ...userCommands,
+];
 const nativeAdapters = new Map([
+  ["apps/desktop/src/test-users.ts", userCommands],
   ["apps/desktop/src/self-service/native.ts", selfServiceCommands],
   ["apps/desktop/src/assistant/native.ts", assistantCommands],
 ]);
@@ -56,7 +62,12 @@ export function checkSource(file, source) {
       ? "apps/desktop/src"
       : "packages/ui/src";
   const allowed = desktop
-    ? ["vue", "@rss-mdm-agent/ui", "@rss-mdm-agent/ui/style.css"]
+    ? [
+        "vue",
+        "@rss-mdm-agent/ui",
+        "@rss-mdm-agent/ui/style.css",
+        "@rss-mdm-agent/ai-contract",
+      ]
     : ["vue"];
   if (nativeAdapters.has(file)) allowed.push("@tauri-apps/api/core");
   if (assistant)
@@ -174,7 +185,20 @@ export function checkSource(file, source) {
     if (desktop)
       for (const value of ["Object", "String", "Map", "Date"])
         globals.add(value);
-    if (file === "apps/desktop/src/App.vue") globals.add("crypto");
+    if (
+      [
+        "apps/desktop/src/Workspace.vue",
+        "apps/desktop/src/assistant/Connections.vue",
+      ].includes(file)
+    )
+      globals.add("crypto");
+    if (
+      [
+        "apps/desktop/src/test-users.ts",
+        "apps/desktop/src/assistant/Connections.vue",
+      ].includes(file)
+    )
+      globals.add("Error");
     const assistantGlobals = {
       "apps/desktop/src/self-service/SelfService.vue": [
         "setInterval",
@@ -231,6 +255,13 @@ export function checkSource(file, source) {
       if (
         name.startsWith(".") &&
         // The assistant shares only this data-only frozen-origin projection.
+        !(
+          [
+            "apps/desktop/src/assistant/Connections.vue",
+            "apps/desktop/src/assistant/native.ts",
+            "apps/desktop/src/self-service/native.ts",
+          ].includes(file) && name === "../test-users"
+        ) &&
         !(
           file === "apps/desktop/src/assistant/ExecutionDetails.vue" &&
           name === "../self-service/RequestOrigin.vue"
@@ -405,13 +436,13 @@ export function checkTree(treeRoot = root) {
     Object.keys(desktop.dependencies ?? {})
       .sort()
       .join() !==
-      "@rss-mdm-agent/ai-client,@rss-mdm-agent/ai-ui-bridge,@rss-mdm-agent/ui,@tauri-apps/api,vue" ||
+      "@rss-mdm-agent/ai-client,@rss-mdm-agent/ai-contract,@rss-mdm-agent/ai-ui-bridge,@rss-mdm-agent/ui,@tauri-apps/api,vue" ||
     desktop.dependencies?.["@tauri-apps/api"] !== "2.11.1" ||
     Object.keys(desktop.optionalDependencies ?? {}).length ||
     Object.keys(desktop.peerDependencies ?? {}).length
   )
     errors.push(
-      "desktop production dependencies must be UI, public AI client/bridge, Vue and pinned Tauri core only",
+      "desktop production dependencies must be UI, public AI contract/client/bridge, Vue and pinned Tauri core only",
     );
   const config = JSON.parse(read("apps/desktop/src-tauri/tauri.conf.json"));
   const capabilityFiles = files(
@@ -495,6 +526,14 @@ export function checkTree(treeRoot = root) {
     [
       "apps/desktop/src-tauri/Cargo.toml",
       [
+        'ai-session-contract = { path = "../../../crates/ai-session-contract" }',
+        'unicode-normalization = "=0.1.25"',
+        'uuid = { version = "=1.26.0", features = ["v4"] }',
+        'libc = "=0.2.189"',
+        'security-framework = "=3.5.1"',
+        'objc2 = "=0.6.4"',
+        'objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSAlert", "NSButton", "NSControl", "NSSecureTextField", "NSTextField", "NSView", "NSResponder", "NSWindow", "NSApplication"] }',
+        'objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSString", "NSGeometry"] }',
         'execution-app = { path = "../../../crates/execution-app" }',
         'execution-sqlite = { path = "../../../crates/execution-sqlite" }',
         'execution-mcp = { path = "../../../crates/execution-mcp" }',
@@ -577,7 +616,7 @@ export function checkTree(treeRoot = root) {
   const registered =
     ipc
       .match(/generate_handler!\s*\[([\s\S]*?)\]/)?.[1]
-      .match(/\b(?:self_service_\w+|ai_\w+|execution_task_details)\b/g) ?? [];
+      .match(/\b[a-z_][a-z0-9_]*\b/g) ?? [];
   if (
     JSON.stringify(registered.toSorted()) !==
     JSON.stringify(compositionCommands.toSorted())

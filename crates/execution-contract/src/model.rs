@@ -51,14 +51,14 @@ pub enum Initiator {
         /// Originating OS account/session reference, separate from requested run-as identity.
         os_session: OsSessionRef,
     },
-    /// AI origin with separate OS and provider/CLI account references.
+    /// AI origin with OS provenance and the exact product connection configuration.
     Ai {
-        /// Provider/CLI namespace of the recorded AI account; not product authentication.
+        /// Provider namespace, independent of product authentication.
         provider: Id,
         /// Originating OS account/session reference, separate from requested run-as identity.
         os_session: OsSessionRef,
-        /// Explicit provider account and configuration references at initiation.
-        provider_account: ProviderAccountRef,
+        /// Exact connection configuration used at initiation; no external account identity.
+        config: VersionedRef,
         /// Originating AI conversation reference in the provider namespace.
         conversation: Id,
         /// Originating tool-call reference; cannot act as a product approval.
@@ -100,15 +100,6 @@ pub struct OsSessionRef {
     pub account: OsAccountRef,
     /// Origin OS login/session reference, including an explicit test reference in fixtures.
     pub session: Id,
-}
-/// Non-secret provider/CLI account provenance. Neither field proves product authentication.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ProviderAccountRef {
-    /// Opaque account reference scoped by Initiator's provider, not a token or email credential.
-    pub account: Id,
-    /// Exact configuration revision used by the originating AI session.
-    pub config: VersionedRef,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]

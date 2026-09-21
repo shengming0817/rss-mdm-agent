@@ -35,7 +35,7 @@ await store.close({ timeoutMs: 1000, signal: new AbortController().signal });
 
 ## Schema、安全与容量
 
-独立 application ID 与 schema version 3（AI wire V4）。`open` 先通过临时只读连接验证身份与 schema，不改变外部数据库；取得长期写连接后，在写事务内重新验证，再设置持久配置。首次建库的 DDL、版本和 checksum 在同一事务；已有 schema v1/v2、缺版本、缺表、对象变化、较新版本或校验失败时拒绝打开；旧库只读检查，不自动修改、删除或重建。没有旧 PR 数据库导入、双读、fallback 或损坏后重建。首次建库失败可能留下无 schema 的文件；必须由操作方检查并处置，`open` 不将其当成新库。
+独立 application ID 与 schema version 4（AI wire V5）。`open` 先通过临时只读连接验证身份与 schema，不改变外部数据库；取得长期写连接后，在写事务内重新验证，再设置持久配置。首次建库的 DDL、版本和 checksum 在同一事务；已有 schema v1/v2/v3、缺版本、缺表、对象变化、较新版本或校验失败时拒绝打开；旧库只读检查，不自动修改、删除或重建。没有旧 PR 数据库导入、双读、fallback 或损坏后重建。首次建库失败可能留下无 schema 的文件；必须由操作方检查并处置，`open` 不将其当成新库。
 
 `path` 必须是本机私有目录中的绝对文件路径。所有数值必须为安全整数；组合根通过 `StoreOptions` 选择下列范围内的值，超过边界返回 `invalid_input`。运行中超过容量预算返回 `limit_exceeded`。
 
@@ -50,7 +50,7 @@ await store.close({ timeoutMs: 1000, signal: new AbortController().signal });
 
 单条记录继续使用 A01 的262144字节及字符串/节点/深度预算；页大小最多1024。主文件通过 `max_page_count` 限制，WAL 自动 checkpoint 为256页；WAL 在事务/checkpoint 期间需要额外磁盘空间，`maxDatabaseBytes` 不是主文件与 WAL 总和的硬配额。磁盘满返回 limit_exceeded，锁/存储错误返回不含原始 SQL、路径、正文或 provider 数据的 Failure。
 
-POSIX 新目录0700、文件0600；已有目录/文件过宽、文件为 symlink 或 hard link 均拒绝。Windows 使用宿主用户目录 ACL，组合根负责专用账户与目录准入；本次 POSIX 权限测试不替代 Windows ACL 验收。扩展加载关闭、双引号字符串关闭、foreign_keys 开启、trusted_schema 关闭。配置只存引用，session 文本本身仍是敏感数据；SQLite 文件/WAL 未加密，密钥托管、备份和账户隔离归产品装配。
+POSIX 新目录0700、文件0600；已有目录/文件过宽、文件为 symlink 或 hard link 均拒绝。Windows 使用宿主用户目录 ACL，组合根负责专用账户与目录准入；本次 POSIX 权限测试不替代 Windows ACL 验收。扩展加载关闭、双引号字符串关闭、foreign_keys 开启、trusted_schema 关闭。自定义连接的 `encrypted_secret` 由产品装配加密后传入，与连接修订及默认偏好同事务写入；删除连接在同事务清除该连接所有修订的密文，保留历史配置元数据。公开连接 API 不返回密文，主密钥不入库。session 文本本身仍是敏感数据；SQLite 文件/WAL 整体未加密，密钥托管、备份和账户隔离归产品装配。
 
 ## 验证与耐久边界
 

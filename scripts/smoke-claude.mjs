@@ -1,3 +1,7 @@
+import {
+  startStage,
+  providerStage,
+} from "../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
@@ -37,16 +41,18 @@ export function smokeCommand(id, text, expiresAtMs) {
   };
 }
 export function smokeSession(namespace, binding, capabilities) {
-  return {
-    schemaVersion: schema.Session.properties.schemaVersion.const,
-    kind: "session",
-    namespace,
-    revision: 0,
-    lastSequence: 0,
-    status: "active",
-    binding,
-    capabilities,
-  };
+  return startStage(
+    {
+      schemaVersion: schema.Session.properties.schemaVersion.const,
+      kind: "session",
+      namespace,
+      revision: 0,
+      lastSequence: 0,
+      status: "active",
+      stages: [],
+    },
+    providerStage(binding, capabilities),
+  );
 }
 export function describeFailure(stage, detail = {}) {
   const stages = [
@@ -160,7 +166,7 @@ async function main() {
   const configuration = {
     provider: "claude",
     config: { id: "model-smoke", revision: "1" },
-    accountRef: "model-smoke",
+
     workingDirectory: join(directory, "project"),
     namespace: {
       tenantId: "model-smoke",
@@ -175,10 +181,14 @@ async function main() {
       resolveConfiguration: async () => ({
         configuration,
         configurationDirectory: join(directory, "config"),
-        apiUrl: selected.apiUrl,
-        credential: key
-          ? { type: "api_key", value: key }
-          : { type: "auth_token", value: token },
+        authentication: {
+          type: "custom_api",
+          apiUrl: selected.apiUrl,
+          credential: key
+            ? { type: "api_key", value: key }
+            : { type: "auth_token", value: token },
+        },
+
         ...(credentials.ANTHROPIC_MODEL
           ? { model: credentials.ANTHROPIC_MODEL }
           : {}),

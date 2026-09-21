@@ -1,3 +1,4 @@
+import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { decode } from "../../packages/ai-contract/dist/index.js";
@@ -88,7 +89,10 @@ test("reconcile snapshots caller data and validates the exact admitted observer 
   const port = {
     createSession: async () => ({
       ok: true,
-      value: { binding: session.binding, capabilities: session.capabilities },
+      value: {
+        binding: activeStage(session).binding,
+        capabilities: activeStage(session).capabilities,
+      },
     }),
     close: async () => ({ ok: true, value: { processStopped: true } }),
     reconcile: async (binding, input) => {
@@ -112,9 +116,9 @@ test("reconcile snapshots caller data and validates the exact admitted observer 
       port,
       {
         namespace: session.namespace,
-        provider: session.binding.provider,
-        config: session.binding.config,
-        accountRef: session.binding.accountRef,
+        provider: activeStage(session).binding.provider,
+        config: activeStage(session).binding.config,
+
         workingDirectory: ".",
         permissions: "tools_disabled",
       },
@@ -140,12 +144,12 @@ test("reconcile snapshots caller data and validates the exact admitted observer 
   unwrap(await store.commit(reset(session, original, proof)));
   for (const patch of [
     { attemptId: "wrong" },
-    { binding: { ...session.binding, generation: "wrong" } },
+    { binding: { ...activeStage(session).binding, generation: "wrong" } },
     { status: "terminal", outcome: "invented" },
     { status: "not_submitted", outcome: "completed" },
   ]) {
     observation = {
-      binding: session.binding,
+      binding: activeStage(session).binding,
       commandId: original.command.commandId,
       attemptId: original.dispatch.attemptId,
       status: "not_submitted",

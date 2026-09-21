@@ -814,7 +814,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2947,6 +2947,7 @@ dependencies = [
 name = "rss-mdm-desktop"
 version = "0.1.0"
 dependencies = [
+ "ai-session-contract",
  "execution-admission",
  "execution-app",
  "execution-approval",
@@ -2957,8 +2958,13 @@ dependencies = [
  "execution-mcp",
  "execution-sqlite",
  "futures-util",
+ "libc",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
  "proc-macro2",
  "schemars 1.2.2",
+ "security-framework",
  "serde",
  "serde_json",
  "service-catalog",
@@ -2968,6 +2974,8 @@ dependencies = [
  "tauri-build",
  "tokio",
  "tokio-util",
+ "unicode-normalization",
+ "uuid",
 ]
 
 [[package]]
@@ -3098,6 +3106,29 @@ dependencies = [
  "execution-contract",
  "serde_json",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "security-framework"
+version = "3.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b3297343eaf830f66ede390ea39da1d462b6b0c1b000f420d0a83f898bbbe6ef"
+dependencies = [
+ "bitflags 2.13.1",
+ "core-foundation",
+ "core-foundation-sys",
+ "libc",
+ "security-framework-sys",
+]
+
+[[package]]
+name = "security-framework-sys"
+version = "2.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ce2691df843ecc5d231c0b14ece2acc3efb62c0a398c7e1d875f3983ce020e3"
+dependencies = [
+ "core-foundation-sys",
+ "libc",
 ]
 
 [[package]]
@@ -4319,6 +4350,15 @@ name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
+
+[[package]]
+name = "unicode-normalization"
+version = "0.1.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fd4f6878c9cb28d874b009da9e8d183b5abc80117c40bbd187a1fde336be6e8"
+dependencies = [
+ "tinyvec",
+]
 
 [[package]]
 name = "unicode-segmentation"

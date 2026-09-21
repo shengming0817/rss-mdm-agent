@@ -1,3 +1,4 @@
+import { activeStage } from "@rss-mdm-agent/ai-contract";
 import { ClientError } from "./errors.js";
 import {
   validateSurface,
@@ -60,6 +61,9 @@ export interface SessionView {
   /** Identity of this attachment's snapshot, not a second live Host Session. */
   namespace: Session["namespace"];
   generation: string;
+  stageId?: string;
+  connectionPending?: boolean;
+  selectedConnectionId?: string;
   cursor: number;
   capabilities: Capabilities;
   sessionStatus: Session["status"];
@@ -92,9 +96,29 @@ const messageKey = (command: string, message: string) =>
 export function emptyView(session: Session, cursor: number): SessionView {
   return {
     namespace: structuredClone(session.namespace),
-    generation: session.binding.generation,
+    generation: session.currentStageId
+      ? activeStage(session).binding.generation
+      : "",
+    stageId: session.currentStageId,
+    connectionPending:
+      !!session.freshContext ||
+      (!!session.currentStageId &&
+        session.selectedConnectionId !== activeStage(session).connectionId),
+    selectedConnectionId: session.selectedConnectionId,
     cursor,
-    capabilities: structuredClone(session.capabilities),
+    capabilities: session.currentStageId
+      ? structuredClone(activeStage(session).capabilities)
+      : {
+          continuation: "unknown",
+          cancellation: "unknown",
+          tools: "disabled",
+          steer: "unknown",
+          fork: "unknown",
+          subagent: "unknown",
+          terminal: "unknown",
+          structuredQuestion: "unknown",
+          multimodal: "unknown",
+        },
     sessionStatus: session.status,
     timeline: [],
     connection: "detached",

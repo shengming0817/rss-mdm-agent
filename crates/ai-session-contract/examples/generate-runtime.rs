@@ -40,6 +40,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut types = typify::TypeSpace::default();
     types.add_root_schema(schema)?;
     let mut file: syn::File = syn::parse2(types.to_stream())?;
+    box_command_record(&mut file)?;
     let mut debug = Vec::new();
     for item in &mut file.items {
         // typify does not emit documentation for enum variants. Their parent schema
@@ -133,6 +134,87 @@ fn document_fields(fields: &mut syn::Fields) {
                     .unwrap_or_default()
             );
             field.attrs.push(syn::parse_quote!(#[doc = #doc]));
+        }
+    }
+}
+
+// This representation optimization must rewrite the variant and its constructor together.
+fn box_command_record(file: &mut syn::File) -> Result<(), &'static str> {
+    let (mut variants, mut conversions) = (0, 0);
+    for item in &mut file.items {
+        if let syn::Item::Enum(enumeration) = item {
+            if enumeration.ident == "WireRecord" {
+                for variant in &mut enumeration.variants {
+                    if variant.ident != "CommandRecord" {
+                        continue;
+                    }
+                    let syn::Fields::Unnamed(fields) = &mut variant.fields else {
+                        return Err("CommandRecord variant shape changed");
+                    };
+                    if fields.unnamed.len() != 1 {
+                        return Err("CommandRecord tuple arity changed");
+                    }
+                    let field = fields
+                        .unnamed
+                        .first_mut()
+                        .ok_or("CommandRecord field missing")?;
+                    if !matches!(&field.ty, syn::Type::Path(path) if path.path.is_ident("CommandRecord"))
+                    {
+                        return Err("CommandRecord type changed");
+                    }
+                    let ty = &field.ty;
+                    field.ty = syn::parse_quote!(::std::boxed::Box<#ty>);
+                    variants += 1;
+                }
+            }
+        }
+        if let syn::Item::Impl(implementation) = item {
+            if matches!(&*implementation.self_ty, syn::Type::Path(path) if path.path.is_ident("WireRecord"))
+            {
+                for item in &mut implementation.items {
+                    if let syn::ImplItem::Fn(function) = item {
+                        if function.sig.ident != "from" {
+                            continue;
+                        }
+                        if let Some(syn::Stmt::Expr(syn::Expr::Call(call), _)) =
+                            function.block.stmts.last_mut()
+                        {
+                            if matches!(&*call.func, syn::Expr::Path(path) if path.path.segments.last().is_some_and(|part| part.ident == "CommandRecord"))
+                            {
+                                if call.args.len() != 1 {
+                                    return Err("CommandRecord conversion arity changed");
+                                }
+                                let value = call
+                                    .args
+                                    .first_mut()
+                                    .ok_or("CommandRecord conversion missing")?;
+                                *value = syn::parse_quote!(::std::boxed::Box::new(#value));
+                                conversions += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (variants, conversions) != (1, 1) {
+        return Err("CommandRecord boxing must match exactly one variant and one conversion");
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    const VARIANT: &str = "enum WireRecord { CommandRecord(CommandRecord) }";
+    const CONVERSION: &str = "impl From<CommandRecord> for WireRecord { fn from(value: CommandRecord) -> Self { Self::CommandRecord(value) } }";
+    #[test]
+    fn boxing_requires_exactly_one_variant_and_conversion() {
+        let mut valid = syn::parse_file(&format!("{VARIANT} {CONVERSION}")).unwrap();
+        box_command_record(&mut valid).unwrap();
+        assert_eq!(quote!(#valid).to_string().matches("Box").count(), 2);
+        for source in [VARIANT.to_string(), CONVERSION.to_string(), format!("{VARIANT} {CONVERSION} {CONVERSION}"), format!("{VARIANT} impl From<CommandRecord> for WireRecord {{ fn from(value: CommandRecord) -> Self {{ return Self::CommandRecord(value); }} }}")] {
+            assert!(box_command_record(&mut syn::parse_file(&source).unwrap()).is_err());
         }
     }
 }

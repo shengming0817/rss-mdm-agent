@@ -52,15 +52,24 @@ impl AuthorityVerifier for FixtureHost {
     }
 }
 impl AppHost for FixtureHost {
-    fn binding(&self) -> Result<Binding, Error> {
+    fn service_binding(&self) -> Result<ServiceBinding, Error> {
         let p = &self.0.spec().request;
-        Ok(Binding {
+        Ok(ServiceBinding {
             authority: p.authority.clone(),
-            actor: p.actor.clone(),
             device: p.target.device.clone(),
         })
     }
-    fn authorize(&self, request: AccessRequest<'_>) -> Result<(), execution_sqlite::Error> {
+    fn authorize(
+        &self,
+        caller: &RequestContext,
+        request: AccessRequest<'_>,
+    ) -> Result<(), execution_sqlite::Error> {
+        if caller.actor != request.scope.actor {
+            return Err(execution_sqlite::Error::Denied);
+        }
+        self.authorize_service(request)
+    }
+    fn authorize_service(&self, request: AccessRequest<'_>) -> Result<(), execution_sqlite::Error> {
         let p = &self.0.spec().request;
         if request.scope.authority != p.authority || request.scope.actor != p.actor {
             return Err(execution_sqlite::Error::Denied);
@@ -135,6 +144,9 @@ fn main() {
         &limits.plan,
     )
     .unwrap();
+    let caller = RequestContext {
+        actor: plan.spec().request.actor.clone(),
+    };
     let host = FixtureHost(plan.clone());
     // Establish that the provisioned policy is a real C07 consumer, not a parallel allow decision.
     let admission = execution_admission::decide(
@@ -167,6 +179,7 @@ fn main() {
     let worker_runner = runner.clone();
     let worker_db = db.clone();
     let worker_plan = plan.clone();
+    let worker_caller = caller.clone();
     std::thread::spawn(move || {
         let mut app = ExecutionApp::start(
             &worker_db,
@@ -177,7 +190,7 @@ fn main() {
         )
         .unwrap();
         let request = &worker_plan.spec().request.request_id;
-        let accepted = app.submit(request, &worker_plan).unwrap();
+        let accepted = app.submit(&worker_caller, request, &worker_plan).unwrap();
         assert!(response.send(accepted).is_err()); // transport loss does not own/cancel execution
         assert_eq!(
             app.reconcile(request).unwrap().phase,
@@ -196,16 +209,18 @@ fn main() {
     .unwrap();
     let request = &plan.spec().request.request_id;
     assert_eq!(
-        app.submit(request, &plan).unwrap().phase,
+        app.submit(&caller, request, &plan).unwrap().phase,
         TaskPhase::TestCompleted
     );
-    let results = app.pull_results(request, &id("consumer"), 32).unwrap();
+    let results = app
+        .pull_results(&caller, request, &id("consumer"), 32)
+        .unwrap();
     for result in results {
-        app.confirm(request, &id("consumer"), &result.event_id)
+        app.confirm(&caller, request, &id("consumer"), &result.event_id)
             .unwrap();
     }
     assert!(app
-        .pull_results(request, &id("consumer"), 32)
+        .pull_results(&caller, request, &id("consumer"), 32)
         .unwrap()
         .is_empty());
     assert_eq!(runner.dispatch_count(), 1);

@@ -1,3 +1,6 @@
+import { mount, flushPromises } from "@vue/test-utils";
+import Connections from "./Connections.vue";
+import { activeStage } from "@rss-mdm-agent/ai-contract";
 import { describe, expect, it, vi } from "vitest";
 import {
   ClientError,
@@ -5,7 +8,7 @@ import {
   type RuntimeClient,
   type SessionView,
 } from "@rss-mdm-agent/ai-client";
-import { createAssistant } from "./controller";
+import { createAssistant, operationMessage } from "./controller";
 import { fixtureSession } from "@rss-mdm-agent/ai-contract/testing";
 import fixtures from "../../../../tests/assistant/execution-fixtures.json";
 import type { ExecutionTaskDetails } from "./execution-types";
@@ -16,9 +19,10 @@ function setup(now = () => 100) {
   const session = fixtureSession(),
     view: SessionView = {
       namespace: session.namespace,
-      generation: session.binding.generation,
+      selectedConnectionId: "config-1",
+      generation: activeStage(session).binding.generation,
       cursor: 0,
-      capabilities: session.capabilities,
+      capabilities: activeStage(session).capabilities,
       sessionStatus: session.status,
       timeline: [],
       connection: "attached",
@@ -31,7 +35,27 @@ function setup(now = () => 100) {
   view.connection = "attached";
   const submit = vi.fn().mockResolvedValue({ kind: "receipt" });
   const client = {
-    initialize: vi.fn().mockResolvedValue({ contractVersion: 4, acp: 1 }),
+    initialize: vi.fn().mockResolvedValue({ contractVersion: 5, acp: 1 }),
+    connections: vi.fn().mockResolvedValue({
+      preferences: { schemaVersion: 5, kind: "userPreferences" },
+      connections: [
+        {
+          schemaVersion: 5,
+          kind: "connection",
+          connectionId: "config-1",
+          name: "Fixture",
+          provider: "codex",
+          configRevision: 1,
+
+          profile: "conversation",
+          status: "ready",
+          source: { type: "existing_config", directory: "/fixture" },
+        },
+      ],
+    }),
+    savePreferences: vi
+      .fn()
+      .mockResolvedValue({ schemaVersion: 5, kind: "userPreferences" }),
     listSessions: vi.fn().mockResolvedValue({ items: [session] }),
     restore: vi.fn().mockResolvedValue(view),
     createSession: vi.fn().mockResolvedValue(view),
@@ -75,7 +99,7 @@ describe("assistant application ownership", () => {
     await t.c.select("session-1");
     t.view.commands.p = {
       command: {
-        schemaVersion: 4,
+        schemaVersion: 5,
         kind: "command",
         sessionId: "session-1",
         commandId: "p",
@@ -475,4 +499,238 @@ it("aborts an in-flight connection on disposal and suppresses its late permissio
     ),
   ).toEqual({ outcome: { outcome: "cancelled" } });
   expect(c.state.permissions.size).toBe(0);
+});
+
+it("connection panel sends exactly the confirmed preview once and never includes unconfirmed history", async () => {
+  const t = setup();
+  const preview = {
+    schemaVersion: 5 as const,
+    kind: "historyPreview" as const,
+    sessionId: "session-1",
+    connectionId: "config-1",
+    configRevision: 1,
+
+    throughSequence: 4,
+    commandIds: ["previous"],
+    messageIds: ["answer"],
+    text: "User:\nprevious\n\nAssistant:\nanswer",
+    contentHash: "a".repeat(64),
+  };
+  const previewHistory = vi.fn().mockResolvedValue(preview);
+  Object.assign(t.client, { previewHistory });
+  await t.c.connect();
+  await t.c.select("session-1");
+  t.view.selectedConnectionId = "config-1";
+  t.emit();
+  const wrapper = mount(Connections, { props: { controller: t.c } });
+  try {
+    await flushPromises();
+    const history = wrapper
+      .findAll("label")
+      .find((label) => label.text().startsWith("带入历史"))!
+      .get("select");
+    t.c.draft.value = "default input";
+    await t.c.prompt();
+    expect(t.submit.mock.calls.at(-1)![0].input.history).toBeUndefined();
+    await history.setValue("recent");
+    await flushPromises();
+    expect(previewHistory).toHaveBeenLastCalledWith("session-1", "config-1", 5);
+    expect(wrapper.get(".history-preview pre").text()).toBe(preview.text);
+    t.c.draft.value = "unconfirmed input";
+    await t.c.prompt();
+    expect(t.submit.mock.calls.at(-1)![0].input.history).toBeUndefined();
+    await wrapper.get(".history-preview button").trigger("click");
+    t.c.draft.value = "confirmed input";
+    await t.c.prompt();
+    expect(t.submit.mock.calls.at(-1)![0].input.history).toEqual(preview);
+    t.c.draft.value = "following input";
+    await t.c.prompt();
+    expect(t.submit.mock.calls.at(-1)![0].input.history).toBeUndefined();
+    await history.setValue("all");
+    await flushPromises();
+    expect(previewHistory).toHaveBeenLastCalledWith(
+      "session-1",
+      "config-1",
+      undefined,
+    );
+    await wrapper.get(".history-preview button").trigger("click");
+    await history.setValue("none");
+    t.c.draft.value = "cleared confirmation";
+    await t.c.prompt();
+    expect(t.submit.mock.calls.at(-1)![0].input.history).toBeUndefined();
+  } finally {
+    wrapper.unmount();
+    await t.c.dispose();
+  }
+});
+
+it("drops a history preview that completes after the selected session changed", async () => {
+  const t = setup();
+  let finish!: (value: unknown) => void;
+  const previewHistory = vi.fn(
+    () => new Promise((resolve) => (finish = resolve)),
+  );
+  Object.assign(t.client, { previewHistory });
+  await t.c.connect();
+  await t.c.select("session-1");
+  t.view.selectedConnectionId = "config-1";
+  t.emit();
+  const wrapper = mount(Connections, { props: { controller: t.c } });
+  await flushPromises();
+  const history = wrapper
+    .findAll("label")
+    .find((label) => label.text().startsWith("带入历史"))!
+    .get("select");
+  await history.setValue("all");
+  await flushPromises();
+  t.c.state.selected = "session-2";
+  await wrapper.vm.$nextTick();
+  finish({
+    schemaVersion: 5,
+    kind: "historyPreview",
+    sessionId: "session-1",
+    connectionId: "config-1",
+    configRevision: 1,
+    throughSequence: 1,
+    commandIds: [],
+    messageIds: [],
+    text: "stale preview",
+    contentHash: "a".repeat(64),
+  });
+  await flushPromises();
+  expect(wrapper.text()).not.toContain("stale preview");
+  wrapper.unmount();
+  t.c.dispose();
+});
+
+it("maps history capacity and user cancellation without a generic retry error", () => {
+  expect(operationMessage("limit_exceeded")).toContain("64 KiB");
+  expect(operationMessage("cancelled")).toBe("");
+});
+
+it("deleting the selected connection preserves history and immediately disables ordinary input", async () => {
+  const t = setup();
+  await t.c.connect();
+  await t.c.select("session-1");
+  t.c.draft.value = "keep draft";
+  const before = t.c.view.value;
+  const saveConnection = vi.fn().mockResolvedValue({});
+  Object.assign(t.client, { saveConnection });
+  const wrapper = mount(Connections, {
+    props: { controller: t.c },
+    attachTo: document.body,
+  });
+  try {
+    await flushPromises();
+    expect(t.c.canSend.value).toBe(true);
+    const deleteButton = wrapper.get('button[aria-label="删除连接 Fixture"]');
+    expect(wrapper.get('button[aria-label="编辑连接 Fixture"]')).toBeTruthy();
+    expect(
+      wrapper.get('button[aria-label="将连接 Fixture 设为默认"]'),
+    ).toBeTruthy();
+    vi.mocked(t.client.connections).mockResolvedValue({
+      schemaVersion: 5,
+      kind: "connectionPage",
+      preferences: { schemaVersion: 5, kind: "userPreferences" },
+      connections: [],
+    });
+    await deleteButton.trigger("click");
+    await flushPromises();
+    expect(saveConnection).not.toHaveBeenCalled();
+    const dialog = wrapper.get('[role="alertdialog"]');
+    expect(dialog.attributes("aria-modal")).toBe("true");
+    expect(dialog.text()).toContain("Fixture");
+    expect(document.activeElement?.textContent).toContain("取消删除");
+    await wrapper
+      .findAll("button")
+      .find((b) => b.text() === "取消删除")!
+      .trigger("click");
+    await flushPromises();
+    expect(document.activeElement).toBe(deleteButton.element);
+    expect(saveConnection).not.toHaveBeenCalled();
+    await wrapper
+      .findAll("button")
+      .find((b) => b.text() === "删除")!
+      .trigger("click");
+    await wrapper
+      .findAll("button")
+      .find((b) => b.text() === "确认删除")!
+      .trigger("click");
+    await flushPromises();
+    expect(saveConnection.mock.calls[0][0].status).toBe("deleted");
+    expect(t.c.view.value).toEqual(before);
+    expect(t.c.canSend.value).toBe(false);
+    expect(wrapper.text()).toContain("当前会话需要选择可用连接");
+    await t.c.prompt();
+    expect(t.submit).not.toHaveBeenCalled();
+  } finally {
+    wrapper.unmount();
+    t.c.dispose();
+  }
+});
+
+it("connection revision conflicts invalidate stale edit and delete actions", async () => {
+  const t = setup();
+  await t.c.connect();
+  const saveConnection = vi
+    .fn()
+    .mockRejectedValue(new ClientError("revision_conflict"));
+  Object.assign(t.client, { saveConnection });
+  const wrapper = mount(Connections, { props: { controller: t.c } });
+  try {
+    await flushPromises();
+    await wrapper.get('button[aria-label="编辑连接 Fixture"]').trigger("click");
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+    expect(wrapper.get("form h3").text()).toBe("添加连接");
+    expect(wrapper.text()).toContain("目录已刷新，请重新打开连接");
+    await wrapper.get('button[aria-label="删除连接 Fixture"]').trigger("click");
+    await wrapper
+      .findAll("button")
+      .find((button) => button.text() === "确认删除")!
+      .trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[role="alertdialog"]').exists()).toBe(false);
+    expect(saveConnection).toHaveBeenCalledTimes(2);
+  } finally {
+    wrapper.unmount();
+    t.c.dispose();
+  }
+});
+
+it("existing configuration cannot become a custom API key and Claude supports configuration reuse", async () => {
+  const t = setup();
+  await t.c.connect();
+  const wrapper = mount(Connections, { props: { controller: t.c } });
+  try {
+    await flushPromises();
+    await wrapper
+      .findAll("button")
+      .find((b) => b.text() === "编辑")!
+      .trigger("click");
+    const field = (name: string) =>
+      wrapper
+        .findAll("label")
+        .find((l) => l.text().startsWith(name))!
+        .get("select");
+    await field("认证来源").setValue("custom_api");
+    expect(wrapper.text()).not.toContain("已选择凭据");
+    expect(
+      wrapper
+        .findAll("button")
+        .find((b) => b.text() === "验证并保存")!
+        .attributes("disabled"),
+    ).toBeDefined();
+    await field("认证来源").setValue("existing_config");
+    await field("服务").setValue("claude");
+    expect(field("认证来源").element.value).toBe("existing_config");
+    expect(
+      field("认证来源")
+        .findAll("option")
+        .some((o) => o.attributes("value") === "existing_config"),
+    ).toBe(true);
+  } finally {
+    wrapper.unmount();
+    t.c.dispose();
+  }
 });

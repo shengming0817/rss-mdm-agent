@@ -4,7 +4,6 @@ import { join, dirname, resolve } from "node:path";
 import ts from "typescript";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const appExternalDependencies = {
-  "@iarna/toml": "2.2.5",
   "@modelcontextprotocol/sdk": "1.30.0",
   yaml: "2.9.1",
 };
@@ -46,7 +45,7 @@ const serverFiles = new Map([
   [join(root, "packages/ai-contract/src/transitions.ts"), ["node:crypto"]],
 ]);
 for (const [file, imports] of Object.entries({
-  "index.ts": ["node:crypto"],
+  "index.ts": ["node:crypto", "node:util"],
   "channel.ts": ["node:crypto", "node:stream"],
   "delivery.ts": ["node:crypto"],
   "bootstrap.ts": ["node:net", "node:child_process"],
@@ -59,11 +58,21 @@ for (const [file, imports] of Object.entries({
 }))
   serverFiles.set(join(root, "packages/ai-host/src", file), imports);
 for (const [file, imports] of Object.entries({
-  "index.ts": ["node:net", "node:stream", "node:fs/promises", "node:path"],
+  "index.ts": ["node:stream", "node:fs/promises", "node:path"],
   "configuration.ts": ["node:path", "node:crypto"],
-  "connection.ts": ["node:crypto", "node:fs", "node:fs/promises", "node:path"],
+  "native.ts": ["node:net", "node:stream", "node:string_decoder"],
+  "secrets.ts": ["node:crypto"],
+  "resolver.ts": ["node:crypto", "node:fs/promises", "node:path"],
+  "connection.ts": ["node:os", "node:path"],
   "execution.ts": ["node:stream", "node:crypto"],
   "provider.ts": ["node:crypto", "node:fs/promises", "node:path"],
+  "egress.ts": [
+    "node:crypto",
+    "node:dns/promises",
+    "node:http",
+    "node:https",
+    "node:net",
+  ],
   "private-file.ts": ["node:fs", "node:fs/promises", "node:path"],
 }))
   serverFiles.set(join(root, "apps/ai-host/src", file), imports);

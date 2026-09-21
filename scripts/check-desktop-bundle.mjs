@@ -37,7 +37,7 @@ export async function checkDesktopBundle(root, runtimeTreeSha256) {
   const isolatedHome = realpathSync(mkdtempSync("/tmp/rss-b-"));
   const data = join(
     isolatedHome,
-    "Library/Application Support/com.rss.mdmagent/s1",
+    "Library/Application Support/com.rss.mdmagent/test-users",
   );
   const env = {
     ...process.env,
@@ -60,7 +60,7 @@ export async function checkDesktopBundle(root, runtimeTreeSha256) {
   });
   try {
     const deadline = Date.now() + 30000;
-    while (!existsSync(join(data, "ai.sock")) && Date.now() < deadline) {
+    while (!existsSync(join(data, "ai.sqlite")) && Date.now() < deadline) {
       if (failure) throw failure;
       assert.equal(
         child.exitCode,
@@ -71,12 +71,17 @@ export async function checkDesktopBundle(root, runtimeTreeSha256) {
       await delay(100);
     }
     assert.ok(
-      existsSync(join(data, "ai.sock")),
-      "bundled Host must create its private socket",
+      existsSync(join(data, "ai.sqlite")),
+      "bundled Host must open its store without a socket listener",
     );
     assert.ok(
+      existsSync(join(data, "users.json")),
+      "native registry must be ready before user selection",
+    );
+    assert.equal(
       existsSync(join(data, "execution.sqlite")),
-      "production execution owner must start",
+      true,
+      "one device execution service starts independently of user selection",
     );
     assert.ok(
       existsSync(join(data, "ai.sqlite")),

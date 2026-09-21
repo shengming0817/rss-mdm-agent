@@ -1,3 +1,4 @@
+import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { VerifiedProviderSession } from "../../packages/ai-contract/dist/session.js";
@@ -24,11 +25,11 @@ async function accept(store, command) {
 function intent(session, record, coordinates = {}) {
   const dispatch = {
     attemptId: `attempt-${record.command.commandId}`,
-    originGeneration: session.binding.generation,
-    observerGeneration: session.binding.generation,
-    nativeSessionId: session.binding.nativeSessionId,
-    ...(session.binding.nativeThreadId
-      ? { nativeThreadId: session.binding.nativeThreadId }
+    originGeneration: activeStage(session).binding.generation,
+    observerGeneration: activeStage(session).binding.generation,
+    nativeSessionId: activeStage(session).binding.nativeSessionId,
+    ...(activeStage(session).binding.nativeThreadId
+      ? { nativeThreadId: activeStage(session).binding.nativeThreadId }
       : {}),
     certainty: "intent",
     ...coordinates,
@@ -59,7 +60,7 @@ test("dispatch serializes ordinary turns including unknown submissions", async (
 test("thread identity survives dispatch and restore, and cannot change under the same root", async () => {
   const store = new MemorySessionStore(),
     session = fixtureSession();
-  session.binding.nativeThreadId = "thread-1";
+  activeStage(session).binding.nativeThreadId = "thread-1";
   unwrap(await store.create(session));
   const head = await accept(store, fixtureCommand());
   const record = unwrap(await store.command(head.namespace, "command-1"));
@@ -71,14 +72,14 @@ test("thread identity survives dispatch and restore, and cannot change under the
   unwrap(await store.commit(intent(head, record)));
   const configuration = {
     namespace: session.namespace,
-    provider: session.binding.provider,
-    config: session.binding.config,
-    accountRef: session.binding.accountRef,
+    provider: activeStage(session).binding.provider,
+    config: activeStage(session).binding.config,
+
     workingDirectory: ".",
     permissions: "tools_disabled",
   };
   for (const thread of ["thread-1", "sibling", undefined]) {
-    const binding = { ...session.binding, generation: "restored" };
+    const binding = { ...activeStage(session).binding, generation: "restored" };
     if (thread) binding.nativeThreadId = thread;
     else delete binding.nativeThreadId;
     const result = await VerifiedProviderSession.restore(
@@ -88,7 +89,7 @@ test("thread identity survives dispatch and restore, and cannot change under the
           value: {
             binding,
             capabilities: {
-              ...session.capabilities,
+              ...activeStage(session).capabilities,
               continuation: "across_processes",
             },
           },
@@ -131,7 +132,7 @@ test("an existing dispatch cannot acquire a thread outside its session binding",
 test("steer observations use their own request; unresolved steer prevents clearing its turn", async () => {
   const store = new MemorySessionStore(),
     session = fixtureSession();
-  session.capabilities.steer = "supported";
+  activeStage(session).capabilities.steer = "supported";
   unwrap(await store.create(session));
   let head = await accept(store, fixtureCommand());
   const started = await dispatchCommand(store, head, "command-1", "submitted", {
@@ -182,7 +183,7 @@ test("steer observations use their own request; unresolved steer prevents cleari
   const host = new FakeHost(store);
   const observation = {
     type: "delta",
-    binding: { ...head.binding, nativeRequestId: "steer-request" },
+    binding: { ...activeStage(head).binding, nativeRequestId: "steer-request" },
     commandId: "steer",
     attemptId: running.dispatch.attemptId,
     messageId: "item-1",
@@ -208,7 +209,7 @@ test("steer observations use their own request; unresolved steer prevents cleari
   unwrap(await store.commit(await terminalCommit(head, started.record)));
   head = unwrap(await store.session(head.namespace));
   const batch = emptyCommit(head);
-  batch.session.binding = { ...session.binding };
+  activeStage(batch.session).binding = { ...activeStage(session).binding };
   assert.equal(
     (await store.commit(batch)).ok,
     false,
@@ -243,14 +244,14 @@ test("steer observations use their own request; unresolved steer prevents cleari
   );
   head = unwrap(await store.session(head.namespace));
   const clear = emptyCommit(head);
-  clear.session.binding = { ...session.binding };
+  activeStage(clear.session).binding = { ...activeStage(session).binding };
   unwrap(await store.commit(clear));
 });
 
 test("steer requires an active matching turn at actual dispatch", async () => {
   const store = new MemorySessionStore(),
     session = fixtureSession();
-  session.capabilities.steer = "supported";
+  activeStage(session).capabilities.steer = "supported";
   unwrap(await store.create(session));
   const command = {
     ...fixtureCommand("steer"),

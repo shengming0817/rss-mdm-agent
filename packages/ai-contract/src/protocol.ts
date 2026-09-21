@@ -40,6 +40,11 @@ export function selectNegotiation(
 /** ACP extension namespace. Advertise through capabilities._meta before calling methods. */
 export const extension = {
   capability: "rss-mdm-agent.ai-runtime",
+  connections: "_rss-mdm-agent/connections",
+  saveConnection: "_rss-mdm-agent/save-connection",
+  preferences: "_rss-mdm-agent/preferences",
+  selectConnection: "_rss-mdm-agent/select-connection",
+  history: "_rss-mdm-agent/history",
   submit: "_rss-mdm-agent/submit",
   snapshot: "_rss-mdm-agent/snapshot",
   attach: "_rss-mdm-agent/attach",
@@ -128,7 +133,7 @@ export async function resolveSurfaceAction(
     decode(
       boundedJson(
         {
-          schemaVersion: 4,
+          schemaVersion: 5,
           kind: "command",
           sessionId: metadata.sessionId,
           commandId: metadata.commandId,

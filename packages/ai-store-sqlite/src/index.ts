@@ -1,4 +1,14 @@
 import {
+  activeStage,
+  emptyPreferences,
+  mergePreferences,
+  type PreferencesPatch,
+  connectionRevision,
+  type Connection,
+  type UserPreferences,
+  type StageActivation,
+} from "@rss-mdm-agent/ai-contract";
+import {
   validLaunch,
   type WorkerLaunch,
   type WorkerLaunchFenceStore,
@@ -39,6 +49,7 @@ import {
   type SessionCommit,
   type SessionRebind,
   type RecoveryUnavailable,
+  type SessionSuspension,
   type SessionStore,
   type StoreCursor,
   type SnapshotPage,
@@ -50,11 +61,14 @@ import {
 } from "@rss-mdm-agent/ai-contract";
 import {
   acceptCommand,
+  selectConnection,
+  activateStage,
   commitSession,
   isDeliveryCommit,
   createState,
   rebindSession,
   recoverUnavailable,
+  suspendSession,
   retireSession,
   defaultLimits,
   namespaceKey,
@@ -223,11 +237,26 @@ function pageLimit(db: DatabaseSync, maxBytes: number): number {
   return pages;
 }
 
+/** Private persistence seam for the app composition. Ciphertext is never a wire field. */
+export interface ConnectionSecretStore {
+  encryptedSecret(
+    caller: Caller,
+    id: Id,
+    revision: number,
+  ): Promise<Result<Uint8Array | null>>;
+  hasSecrets(): Promise<Result<boolean>>;
+  saveConnection(
+    caller: Caller,
+    connection: Connection,
+    expected: number | null,
+    encryptedSecret?: Uint8Array,
+  ): Promise<Result<Connection>>;
+}
 /** One Host owns the whole database for this connection's lifetime. There is no
  * lease, background worker, side-effect execution or asynchronous transaction hook. */
 export function openSqliteStore(
   options: StoreOptions,
-): Result<SessionStore & WorkerLaunchFenceStore> {
+): Result<SessionStore & WorkerLaunchFenceStore & ConnectionSecretStore> {
   let db: DatabaseSync | undefined;
   try {
     if (
@@ -402,7 +431,11 @@ class SqliteSessionStore implements SessionStore, WorkerLaunchFenceStore {
         .all(...params)
         .map((r) => String(r.id)),
     );
-    if (!generations.has(session.binding.generation)) throw new SchemaError();
+    if (
+      session.currentStageId &&
+      !generations.has(activeStage(session).binding.generation)
+    )
+      throw new SchemaError();
     return {
       session,
       generations,
@@ -437,7 +470,7 @@ class SqliteSessionStore implements SessionStore, WorkerLaunchFenceStore {
   #writable(state: SessionState): void {
     if (
       this.#owned.get(namespaceKey(state.session.namespace)) !==
-      state.session.binding.generation
+      activeStage(state.session).binding.generation
     )
       throw new InputError("stale_binding");
   }
@@ -476,13 +509,15 @@ class SqliteSessionStore implements SessionStore, WorkerLaunchFenceStore {
     // Deliberately last: a CAS/constraint failure rolls back every projection.
     const updated = this.#db
       .prepare(
-        `UPDATE sessions SET json=? WHERE ${whereScope} AND revision=? AND generation=?`,
+        `UPDATE sessions SET json=? WHERE ${whereScope} AND revision=? AND generation IS ?`,
       )
       .run(
         boundedJson(after.session, defaultLimits),
         ...params,
         before.session.revision,
-        before.session.binding.generation,
+        before.session.currentStageId
+          ? activeStage(before.session).binding.generation
+          : null,
       );
     if (updated.changes !== 1) throw new InputError("stale_binding");
   }
@@ -505,6 +540,211 @@ class SqliteSessionStore implements SessionStore, WorkerLaunchFenceStore {
     });
     return ok(value);
   }
+  #caller(caller: Caller): string[] {
+    namespaceKey({ ...caller, sessionId: "caller-validation" });
+    return [caller.tenantId, caller.principalId, caller.authorityId];
+  }
+  #connections(caller: Caller): Connection[] {
+    return this.#rows(
+      `SELECT json FROM connections c WHERE tenant_id=? AND principal_id=? AND authority_id=? AND revision=(SELECT max(revision) FROM connections r WHERE r.tenant_id=c.tenant_id AND r.principal_id=c.principal_id AND r.authority_id=c.authority_id AND r.id=c.id) ORDER BY id`,
+      this.#caller(caller),
+    ).map((row) => this.#decode<Connection>(row.json, "connection"));
+  }
+  #connection(
+    caller: Caller,
+    id: Id,
+    revision?: number,
+  ): Connection | undefined {
+    if (!isId(id) || (revision !== undefined && !counter(revision)))
+      throw new InputError("invalid_input");
+    const row = this.#db
+      .prepare(
+        `SELECT json FROM connections WHERE tenant_id=? AND principal_id=? AND authority_id=? AND id=? ${revision === undefined ? "ORDER BY revision DESC LIMIT 1" : "AND revision=?"}`,
+      )
+      .get(
+        ...this.#caller(caller),
+        id,
+        ...(revision === undefined ? [] : [revision]),
+      );
+    return row ? this.#decode<Connection>(row.json, "connection") : undefined;
+  }
+  async connections(caller: Caller): Promise<Result<readonly Connection[]>> {
+    return this.#query(() =>
+      this.#bounded(
+        this.#connections(caller).filter((row) => row.status !== "deleted"),
+      ),
+    );
+  }
+  async connection(
+    caller: Caller,
+    id: Id,
+    revision?: number,
+  ): Promise<Result<Connection>> {
+    return this.#query(() => {
+      const row = this.#connection(caller, id, revision);
+      return row ? ok(row) : fail("connection_required");
+    });
+  }
+  #preferences(caller: Caller): UserPreferences {
+    const row = this.#db
+      .prepare(
+        "SELECT json FROM preferences WHERE tenant_id=? AND principal_id=? AND authority_id=?",
+      )
+      .get(...this.#caller(caller));
+    return row
+      ? this.#decode<UserPreferences>(row.json, "userPreferences")
+      : emptyPreferences();
+  }
+  #savePreferences(caller: Caller, prefs: UserPreferences): void {
+    this.#db
+      .prepare(
+        "INSERT INTO preferences (tenant_id,principal_id,authority_id,json) VALUES (?,?,?,?) ON CONFLICT (tenant_id,principal_id,authority_id) DO UPDATE SET json=excluded.json",
+      )
+      .run(...this.#caller(caller), boundedJson(prefs, defaultLimits));
+  }
+  async preferences(caller: Caller): Promise<Result<UserPreferences>> {
+    return this.#query(() => ok(this.#preferences(caller)));
+  }
+  async savePreferences(
+    caller: Caller,
+    patch: PreferencesPatch,
+  ): Promise<Result<UserPreferences>> {
+    return this.#transaction(() => {
+      const merged = mergePreferences(this.#preferences(caller), patch);
+      if (!merged.ok) return merged;
+      const prefs = merged.value;
+      if (
+        prefs.defaultConnectionId &&
+        this.#connection(caller, prefs.defaultConnectionId)?.status !== "ready"
+      )
+        return fail("connection_required");
+      if (prefs.selectedSessionId)
+        this.#session({ ...caller, sessionId: prefs.selectedSessionId });
+      this.#savePreferences(caller, prefs);
+      return ok(structuredClone(prefs));
+    });
+  }
+  async encryptedSecret(
+    caller: Caller,
+    id: Id,
+    revision: number,
+  ): Promise<Result<Uint8Array | null>> {
+    return this.#query(() => {
+      const current = this.#connection(caller, id);
+      if (
+        !current ||
+        current.status === "deleted" ||
+        !this.#connection(caller, id, revision)
+      )
+        return fail("connection_required");
+      const row = this.#db
+        .prepare(
+          "SELECT encrypted_secret FROM connections WHERE tenant_id=? AND principal_id=? AND authority_id=? AND id=? AND revision=?",
+        )
+        .get(...this.#caller(caller), id, revision)!;
+      return ok(
+        row.encrypted_secret === null
+          ? null
+          : new Uint8Array(row.encrypted_secret as Uint8Array),
+      );
+    });
+  }
+  async hasSecrets(): Promise<Result<boolean>> {
+    return this.#query(() =>
+      ok(
+        !!this.#db
+          .prepare(
+            "SELECT 1 FROM connections WHERE encrypted_secret IS NOT NULL LIMIT 1",
+          )
+          .get(),
+      ),
+    );
+  }
+  async saveConnection(
+    caller: Caller,
+    next: Connection,
+    expected: number | null,
+    encryptedSecret?: Uint8Array,
+  ): Promise<Result<Connection>> {
+    return this.#transaction(() => {
+      if (
+        encryptedSecret &&
+        (!(encryptedSecret instanceof Uint8Array) ||
+          encryptedSecret.length < 29 ||
+          encryptedSecret.length > 16412 ||
+          next.source.type !== "custom_api" ||
+          next.status === "deleted")
+      )
+        return fail("invalid_input");
+      const previous = this.#connection(caller, next.connectionId);
+      const checked = connectionRevision(next, previous, expected);
+      if (!checked.ok) return checked;
+      const rows = this.#connections(caller);
+      if (!previous && rows.length >= 128) return fail("limit_exceeded");
+      const prefs = this.#preferences(caller);
+      if (
+        next.status === "ready" &&
+        !prefs.defaultConnectionId &&
+        !rows.some((row) => row.status === "ready")
+      )
+        prefs.defaultConnectionId = next.connectionId;
+      if (
+        next.status === "deleted" &&
+        prefs.defaultConnectionId === next.connectionId
+      )
+        delete prefs.defaultConnectionId;
+      this.#db
+        .prepare(
+          "INSERT INTO connections (tenant_id,principal_id,authority_id,id,revision,json,encrypted_secret) VALUES (?,?,?,?,?,?,?)",
+        )
+        .run(
+          ...this.#caller(caller),
+          next.connectionId,
+          next.configRevision,
+          boundedJson(next, defaultLimits),
+          encryptedSecret ?? null,
+        );
+      if (next.status === "deleted")
+        this.#db
+          .prepare(
+            "UPDATE connections SET encrypted_secret=NULL WHERE tenant_id=? AND principal_id=? AND authority_id=? AND id=?",
+          )
+          .run(...this.#caller(caller), next.connectionId);
+      this.#savePreferences(caller, prefs);
+      return checked;
+    });
+  }
+  async selectConnection(
+    namespace: Namespace,
+    connectionId: Id,
+    revision: number,
+    freshContext = false,
+  ): Promise<Result<Session>> {
+    return this.#transaction(() => {
+      if (this.#connection(namespace, connectionId)?.status !== "ready")
+        return fail("connection_required");
+      const before = this.#state(namespace),
+        result = selectConnection(before, connectionId, revision, freshContext);
+      if (!result.ok) return result;
+      if (result.value !== before) this.#save(before, result.value);
+      return ok(result.value.session);
+    });
+  }
+  async activateStage(input: StageActivation): Promise<Result<Session>> {
+    const result = this.#transaction(() => {
+      const before = this.#state(input.namespace),
+        result = activateStage(before, input);
+      if (!result.ok) return result;
+      this.#save(before, result.value);
+      return ok(result.value.session);
+    });
+    if (result.ok)
+      this.#owned.set(
+        namespaceKey(input.namespace),
+        activeStage(result.value).binding.generation,
+      );
+    return result;
+  }
   async create(session: Session): Promise<Result<void>> {
     const result = this.#transaction(() => {
       const state = createState(session);
@@ -522,15 +762,16 @@ class SqliteSessionStore implements SessionStore, WorkerLaunchFenceStore {
       this.#db
         .prepare(`INSERT INTO sessions (${scope},json) VALUES (?,?,?,?,?)`)
         .run(...params, boundedJson(session, defaultLimits));
-      this.#db
-        .prepare(`INSERT INTO generations (${scope},id) VALUES (?,?,?,?,?)`)
-        .run(...params, session.binding.generation);
+      if (session.currentStageId)
+        this.#db
+          .prepare(`INSERT INTO generations (${scope},id) VALUES (?,?,?,?,?)`)
+          .run(...params, activeStage(session).binding.generation);
       return ok(undefined);
     });
-    if (result.ok)
+    if (result.ok && session.currentStageId)
       this.#owned.set(
         namespaceKey(session.namespace),
-        session.binding.generation,
+        activeStage(session).binding.generation,
       );
     return result;
   }
@@ -634,8 +875,19 @@ class SqliteSessionStore implements SessionStore, WorkerLaunchFenceStore {
     if (result.ok)
       this.#owned.set(
         namespaceKey(input.namespace),
-        result.value.binding.generation,
+        activeStage(result.value).binding.generation,
       );
+    return result;
+  }
+  async suspend(input: SessionSuspension): Promise<Result<Session>> {
+    const result = this.#transaction(() => {
+      const before = this.#state(input.namespace),
+        result = suspendSession(before, input);
+      if (!result.ok) return result;
+      this.#save(before, result.value);
+      return ok(result.value.session);
+    });
+    if (result.ok) this.#owned.delete(namespaceKey(input.namespace));
     return result;
   }
   async recoverUnavailable(

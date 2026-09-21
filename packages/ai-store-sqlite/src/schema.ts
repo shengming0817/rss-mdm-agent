@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
-export const version = 3;
+export const version = 4;
 export const applicationId = 0x52534149;
 export const scope = "tenant_id, principal_id, authority_id, session_id";
 export const whereScope =
@@ -16,9 +16,11 @@ const statements = [
   "CREATE TABLE schema_meta (version INTEGER PRIMARY KEY, checksum TEXT NOT NULL) STRICT",
   `CREATE TABLE sessions (${columns}, ${row},
     revision INTEGER GENERATED ALWAYS AS (json_extract(json,'$.revision')) STORED NOT NULL,
-    generation TEXT GENERATED ALWAYS AS (json_extract(json,'$.binding.generation')) STORED NOT NULL,
+    generation TEXT GENERATED ALWAYS AS (CASE WHEN json_extract(json,'$.currentStageId') IS NOT NULL THEN json_extract(json,'$.stages[#-1].binding.generation') END) STORED,
     status TEXT GENERATED ALWAYS AS (json_extract(json,'$.status')) STORED NOT NULL,
     PRIMARY KEY (${scope})) STRICT, WITHOUT ROWID`,
+  `CREATE TABLE connections (tenant_id TEXT NOT NULL, principal_id TEXT NOT NULL, authority_id TEXT NOT NULL, id TEXT NOT NULL, revision INTEGER NOT NULL, ${row}, encrypted_secret BLOB, PRIMARY KEY (tenant_id,principal_id,authority_id,id,revision)) STRICT, WITHOUT ROWID`,
+  `CREATE TABLE preferences (tenant_id TEXT NOT NULL, principal_id TEXT NOT NULL, authority_id TEXT NOT NULL, ${row}, PRIMARY KEY (tenant_id,principal_id,authority_id)) STRICT, WITHOUT ROWID`,
   `CREATE TABLE generations (${columns}, id TEXT NOT NULL, PRIMARY KEY (${scope},id), ${sessionFk}) STRICT, WITHOUT ROWID`,
   `CREATE TABLE commands (${columns}, id TEXT NOT NULL, ${row},
     state TEXT GENERATED ALWAYS AS (json_extract(json,'$.state')) STORED NOT NULL,

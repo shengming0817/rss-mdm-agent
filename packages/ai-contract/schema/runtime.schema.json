@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:rss-mdm-agent:ai-runtime:3",
+  "$id": "urn:rss-mdm-agent:ai-runtime:5",
   "title": "WireRecord",
   "description": "Product reliability records only. No record authenticates a caller, grants approval or proves business execution. Standard ACP/A2UI schemas retain their upstream owners.",
   "oneOf": [
@@ -60,6 +60,48 @@
     },
     {
       "$ref": "#/$defs/AttachReceipt"
+    },
+    {
+      "$ref": "#/$defs/Connection"
+    },
+    {
+      "$ref": "#/$defs/UserPreferences"
+    },
+    {
+      "$ref": "#/$defs/TestUser"
+    },
+    {
+      "$ref": "#/$defs/UserContext"
+    },
+    {
+      "$ref": "#/$defs/HistoryPreview"
+    },
+    {
+      "$ref": "#/$defs/ConnectionPage"
+    },
+    {
+      "$ref": "#/$defs/ConnectionsRequest"
+    },
+    {
+      "$ref": "#/$defs/SaveConnectionRequest"
+    },
+    {
+      "$ref": "#/$defs/PreferencesRequest"
+    },
+    {
+      "$ref": "#/$defs/SelectConnectionRequest"
+    },
+    {
+      "$ref": "#/$defs/HistoryRequest"
+    },
+    {
+      "$ref": "#/$defs/TestUserPage"
+    },
+    {
+      "$ref": "#/$defs/NativeControlFrame"
+    },
+    {
+      "$ref": "#/$defs/ExecutionOrigin"
     }
   ],
   "$defs": {
@@ -68,7 +110,7 @@
       "minLength": 1,
       "maxLength": 128,
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+-]*$",
-      "description": "Opaque ASCII correlation identifier (1–128 characters); never an authentication credential."
+      "description": "Opaque ASCII correlation identifier (1\u2013128 characters); never an authentication credential."
     },
     "Counter": {
       "type": "integer",
@@ -96,12 +138,7 @@
           "description": "Logical session identifier, never reusable after retirement."
         }
       },
-      "required": [
-        "tenantId",
-        "principalId",
-        "authorityId",
-        "sessionId"
-      ],
+      "required": ["tenantId", "principalId", "authorityId", "sessionId"],
       "additionalProperties": false,
       "description": "Trusted tenant/principal/authority/logical-session storage scope supplied by authenticated ingress."
     },
@@ -117,10 +154,7 @@
           "description": "Immutable configuration revision; changing it invalidates prior capability evidence."
         }
       },
-      "required": [
-        "id",
-        "revision"
-      ],
+      "required": ["id", "revision"],
       "additionalProperties": false,
       "description": "Immutable configuration identity and revision; contains no credentials."
     },
@@ -142,10 +176,6 @@
         "generation": {
           "$ref": "#/$defs/Id",
           "description": "Live provider incarnation token; rejects callbacks from previous incarnations."
-        },
-        "accountRef": {
-          "$ref": "#/$defs/Id",
-          "description": "Opaque account reference; no token, key or account-directory contents."
         },
         "nativeSessionId": {
           "$ref": "#/$defs/Id",
@@ -177,7 +207,6 @@
         "providerVersion",
         "adapterVersion",
         "generation",
-        "accountRef",
         "nativeSessionId",
         "config",
         "workspaceId"
@@ -187,11 +216,7 @@
     },
     "CapabilityState": {
       "type": "string",
-      "enum": [
-        "supported",
-        "unsupported",
-        "unknown"
-      ],
+      "enum": ["supported", "unsupported", "unknown"],
       "description": "Only supported enables an operation; unknown and unsupported fail closed."
     },
     "Capabilities": {
@@ -219,12 +244,7 @@
         },
         "tools": {
           "type": "string",
-          "enum": [
-            "host_mediated",
-            "provider_managed",
-            "disabled",
-            "unknown"
-          ],
+          "enum": ["host_mediated", "provider_managed", "disabled", "unknown"],
           "description": "host_mediated still requires containment evidence; provider_managed is not controlled execution; disabled/unknown cannot enable tools."
         },
         "steer": {
@@ -295,17 +315,17 @@
         "cursor_expired",
         "session_gone",
         "already_answered",
-        "storage_corrupt"
+        "storage_corrupt",
+        "connection_switch_pending",
+        "connection_required",
+        "authentication_required",
+        "context_unavailable"
       ],
       "description": "Closed value-free error category; diagnostics never include model text or credentials."
     },
     "Retry": {
       "type": "string",
-      "enum": [
-        "same_command",
-        "reconcile_first",
-        "never"
-      ],
+      "enum": ["same_command", "reconcile_first", "never"],
       "description": "same_command preserves identity/content; reconcile_first checks the original operation; never forbids retry."
     },
     "Failure": {
@@ -320,10 +340,7 @@
           "description": "Explicit retry discipline; uncertainty never authorizes blind resubmission."
         }
       },
-      "required": [
-        "code",
-        "retry"
-      ],
+      "required": ["code", "retry"],
       "additionalProperties": false,
       "description": "Value-free failure and explicit retry discipline."
     },
@@ -344,22 +361,18 @@
             },
             "policy": {
               "type": "string",
-              "enum": [
-                "queue_next",
-                "steer"
-              ],
+              "enum": ["queue_next", "steer"],
               "description": "queue_next serializes later work; steer must match the currently active native run."
             },
             "targetRunId": {
               "$ref": "#/$defs/Id",
               "description": "Exact active native run required for steer; forbidden for queue_next."
+            },
+            "history": {
+              "$ref": "#/$defs/HistoryPreview"
             }
           },
-          "required": [
-            "type",
-            "text",
-            "policy"
-          ],
+          "required": ["type", "text", "policy"],
           "additionalProperties": false,
           "description": "prompt variant; all fields are data, never authentication or execution authority."
         },
@@ -384,11 +397,7 @@
               "description": "Provider-owned model-turn/run identifier, required when the provider exposes it."
             }
           },
-          "required": [
-            "type",
-            "targetCommandId",
-            "generation"
-          ],
+          "required": ["type", "targetCommandId", "generation"],
           "additionalProperties": false,
           "description": "cancel variant; all fields are data, never authentication or execution authority."
         },
@@ -422,12 +431,7 @@
               "description": "Mandatory for an interaction associated with a surface; cannot bypass deleted/stale state."
             }
           },
-          "required": [
-            "type",
-            "interactionId",
-            "generation",
-            "answer"
-          ],
+          "required": ["type", "interactionId", "generation", "answer"],
           "additionalProperties": false,
           "description": "respond variant; all fields are data, never authentication or execution authority."
         }
@@ -439,8 +443,8 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 4,
-          "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+          "const": 5,
+          "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
         },
         "kind": {
           "type": "string",
@@ -480,8 +484,8 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 4,
-          "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+          "const": 5,
+          "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
         },
         "kind": {
           "type": "string",
@@ -516,6 +520,10 @@
         "acceptedRevision": {
           "$ref": "#/$defs/Counter",
           "description": "Session revision which atomically accepted this command."
+        },
+        "stageId": {
+          "$ref": "#/$defs/Id",
+          "description": "Immutable provider phase selected by the host at command acceptance."
         }
       },
       "required": [
@@ -527,7 +535,8 @@
         "acceptedAtMs",
         "retryUntilMs",
         "receiptUntilMs",
-        "acceptedRevision"
+        "acceptedRevision",
+        "stageId"
       ],
       "additionalProperties": false,
       "description": "Immutable acceptance fact. Only an actual committed store makes it durable; it is not a model terminal."
@@ -539,8 +548,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 4,
-              "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+              "const": 5,
+              "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -561,13 +570,7 @@
               "description": "Closed command lifecycle projection."
             }
           },
-          "required": [
-            "schemaVersion",
-            "kind",
-            "command",
-            "receipt",
-            "state"
-          ],
+          "required": ["schemaVersion", "kind", "command", "receipt", "state"],
           "additionalProperties": false
         },
         {
@@ -575,8 +578,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 4,
-              "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+              "const": 5,
+              "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -616,8 +619,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 4,
-              "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+              "const": 5,
+              "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -657,8 +660,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 4,
-              "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+              "const": 5,
+              "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -703,8 +706,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 4,
-              "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+              "const": 5,
+              "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -744,8 +747,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 4,
-              "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+              "const": 5,
+              "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -785,8 +788,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 4,
-              "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+              "const": 5,
+              "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -827,8 +830,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 4,
-              "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+              "const": 5,
+              "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -873,8 +876,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 4,
-              "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+              "const": 5,
+              "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -907,10 +910,7 @@
                   "description": "Queued prompt cancelled without a native dispatch."
                 }
               },
-              "required": [
-                "type",
-                "targetCommandId"
-              ],
+              "required": ["type", "targetCommandId"],
               "additionalProperties": false,
               "description": "Closed control acknowledgement; never a model-turn outcome."
             }
@@ -935,8 +935,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 4,
-              "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+              "const": 5,
+              "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -981,11 +981,7 @@
                   "description": "Untrusted model/user text subject to the whole-envelope budgets."
                 }
               },
-              "required": [
-                "type",
-                "messageId",
-                "text"
-              ],
+              "required": ["type", "messageId", "text"],
               "additionalProperties": false,
               "description": "text variant; all fields are data, never authentication or execution authority."
             },
@@ -1012,8 +1008,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 4,
-              "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+              "const": 5,
+              "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -1053,10 +1049,7 @@
                   "description": "Complete immutable original command, committed atomically with its receipt."
                 }
               },
-              "required": [
-                "type",
-                "command"
-              ],
+              "required": ["type", "command"],
               "additionalProperties": false,
               "description": "Immutable command accepted atomically with its receipt; never a model terminal."
             }
@@ -1078,8 +1071,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 4,
-              "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+              "const": 5,
+              "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -1116,18 +1109,11 @@
                 },
                 "state": {
                   "type": "string",
-                  "enum": [
-                    "dispatching",
-                    "running",
-                    "reconciliation_required"
-                  ],
+                  "enum": ["dispatching", "running", "reconciliation_required"],
                   "description": "Closed command lifecycle projection."
                 }
               },
-              "required": [
-                "type",
-                "state"
-              ],
+              "required": ["type", "state"],
               "additionalProperties": false,
               "description": "status variant; all fields are data, never authentication or execution authority."
             },
@@ -1154,8 +1140,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 4,
-              "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+              "const": 5,
+              "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -1195,10 +1181,7 @@
                   "description": "Definite model-turn result; no implication about business side effects."
                 }
               },
-              "required": [
-                "type",
-                "outcome"
-              ],
+              "required": ["type", "outcome"],
               "additionalProperties": false,
               "description": "terminal variant; all fields are data, never authentication or execution authority."
             },
@@ -1225,8 +1208,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 4,
-              "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+              "const": 5,
+              "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -1263,18 +1246,11 @@
                 },
                 "confirmation": {
                   "type": "string",
-                  "enum": [
-                    "request_only",
-                    "already_terminal",
-                    "unsupported"
-                  ],
+                  "enum": ["request_only", "already_terminal", "unsupported"],
                   "description": "Cancellation request transport confirmation only; does not manufacture a model terminal."
                 }
               },
-              "required": [
-                "type",
-                "confirmation"
-              ],
+              "required": ["type", "confirmation"],
               "additionalProperties": false,
               "description": "cancel_dispatched variant; all fields are data, never authentication or execution authority."
             },
@@ -1301,8 +1277,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 4,
-              "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+              "const": 5,
+              "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -1351,12 +1327,7 @@
                   "description": "Untrusted tool JSON arguments, including keys, count toward product budgets."
                 }
               },
-              "required": [
-                "type",
-                "proposalId",
-                "name",
-                "arguments"
-              ],
+              "required": ["type", "proposalId", "name", "arguments"],
               "additionalProperties": false,
               "description": "tool_proposal variant; all fields are data, never authentication or execution authority."
             },
@@ -1383,8 +1354,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 4,
-              "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+              "const": 5,
+              "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -1425,11 +1396,7 @@
                 },
                 "disposition": {
                   "type": "string",
-                  "enum": [
-                    "returned",
-                    "rejected",
-                    "unavailable"
-                  ],
+                  "enum": ["returned", "rejected", "unavailable"],
                   "description": "Protocol tool-result disposition, not authoritative business execution status."
                 },
                 "text": {
@@ -1438,12 +1405,7 @@
                   "description": "Untrusted model/user text subject to the whole-envelope budgets."
                 }
               },
-              "required": [
-                "type",
-                "proposalId",
-                "disposition",
-                "text"
-              ],
+              "required": ["type", "proposalId", "disposition", "text"],
               "additionalProperties": false,
               "description": "tool_result variant; all fields are data, never authentication or execution authority."
             },
@@ -1470,8 +1432,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 4,
-              "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+              "const": 5,
+              "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -1562,8 +1524,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 4,
-              "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+              "const": 5,
+              "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -1644,8 +1606,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 4,
-              "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+              "const": 5,
+              "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -1686,18 +1648,11 @@
                 },
                 "status": {
                   "type": "string",
-                  "enum": [
-                    "expired",
-                    "unavailable"
-                  ],
+                  "enum": ["expired", "unavailable"],
                   "description": "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."
                 }
               },
-              "required": [
-                "type",
-                "interactionId",
-                "status"
-              ],
+              "required": ["type", "interactionId", "status"],
               "additionalProperties": false,
               "description": "Question lifecycle transition; cannot republish or replace its request."
             },
@@ -1724,8 +1679,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 4,
-              "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+              "const": 5,
+              "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -1765,10 +1720,7 @@
                   "description": "Closed failure category and retry discipline."
                 }
               },
-              "required": [
-                "type",
-                "failure"
-              ],
+              "required": ["type", "failure"],
               "additionalProperties": false,
               "description": "error variant; all fields are data, never authentication or execution authority."
             }
@@ -1790,8 +1742,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 4,
-              "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+              "const": 5,
+              "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -1831,10 +1783,7 @@
                   "description": "Local failure without asserting a model terminal."
                 }
               },
-              "required": [
-                "type",
-                "failure"
-              ],
+              "required": ["type", "failure"],
               "additionalProperties": false,
               "description": "Stable event data; never execution or authentication authority."
             }
@@ -1856,8 +1805,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 4,
-              "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+              "const": 5,
+              "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -1897,10 +1846,7 @@
                   "description": "Complete dispatch identity retained for replay and reconciliation."
                 }
               },
-              "required": [
-                "type",
-                "attempt"
-              ],
+              "required": ["type", "attempt"],
               "additionalProperties": false,
               "description": "Stable event data; never execution or authentication authority."
             },
@@ -1927,8 +1873,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 4,
-              "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+              "const": 5,
+              "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -1980,11 +1926,7 @@
                   "description": "Provider observation bound to this attempt and its current observer."
                 }
               },
-              "required": [
-                "type",
-                "attempt",
-                "resolution"
-              ],
+              "required": ["type", "attempt", "resolution"],
               "additionalProperties": false,
               "description": "Stable event data; never execution or authentication authority."
             },
@@ -2011,8 +1953,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 4,
-              "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+              "const": 5,
+              "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -2052,10 +1994,7 @@
                   "description": "Full surface recovery state committed with this event."
                 }
               },
-              "required": [
-                "type",
-                "surface"
-              ],
+              "required": ["type", "surface"],
               "additionalProperties": false,
               "description": "Stable product contract field."
             },
@@ -2082,8 +2021,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 4,
-              "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+              "const": 5,
+              "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -2119,10 +2058,7 @@
                   "description": "Prior provider incarnation invalidated by this verified handoff."
                 }
               },
-              "required": [
-                "type",
-                "previousGeneration"
-              ],
+              "required": ["type", "previousGeneration"],
               "additionalProperties": false,
               "description": "Stable event data; never execution or authentication authority."
             }
@@ -2143,8 +2079,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 4,
-              "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+              "const": 5,
+              "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -2176,9 +2112,7 @@
                   "description": "Closed event discriminator."
                 }
               },
-              "required": [
-                "type"
-              ],
+              "required": ["type"],
               "additionalProperties": false,
               "description": "Stable event data; never execution or authentication authority."
             }
@@ -2199,8 +2133,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 4,
-              "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+              "const": 5,
+              "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -2240,10 +2174,7 @@
                   "description": "Closed control acknowledgement; never a model-turn outcome."
                 }
               },
-              "required": [
-                "type",
-                "acknowledgement"
-              ],
+              "required": ["type", "acknowledgement"],
               "additionalProperties": false,
               "description": "Stable product contract field."
             },
@@ -2270,8 +2201,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 4,
-              "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+              "const": 5,
+              "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -2311,10 +2242,7 @@
                   "description": "Accepted local cancellation command identity."
                 }
               },
-              "required": [
-                "type",
-                "cancelledBy"
-              ],
+              "required": ["type", "cancelledBy"],
               "additionalProperties": false,
               "description": "Stable product contract field."
             }
@@ -2336,8 +2264,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 4,
-              "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+              "const": 5,
+              "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -2369,9 +2297,7 @@
                   "description": "Closed variant discriminator."
                 }
               },
-              "required": [
-                "type"
-              ],
+              "required": ["type"],
               "additionalProperties": false,
               "description": "Stable product contract field."
             }
@@ -2392,8 +2318,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 4,
-              "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+              "const": 5,
+              "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -2441,18 +2367,12 @@
                       "description": "Queued prompt cancelled without a native dispatch."
                     }
                   },
-                  "required": [
-                    "type",
-                    "targetCommandId"
-                  ],
+                  "required": ["type", "targetCommandId"],
                   "additionalProperties": false,
                   "description": "Closed control acknowledgement; never a model-turn outcome."
                 }
               },
-              "required": [
-                "type",
-                "acknowledgement"
-              ],
+              "required": ["type", "acknowledgement"],
               "additionalProperties": false,
               "description": "Stable product contract field."
             }
@@ -2474,8 +2394,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 4,
-              "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+              "const": 5,
+              "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -2526,19 +2446,11 @@
                       "additionalProperties": true
                     }
                   },
-                  "required": [
-                    "name",
-                    "arguments"
-                  ],
+                  "required": ["name", "arguments"],
                   "additionalProperties": false
                 }
               },
-              "required": [
-                "type",
-                "operationId",
-                "target",
-                "proposal"
-              ],
+              "required": ["type", "operationId", "target", "proposal"],
               "additionalProperties": false,
               "description": "Host-owned delivery fact; never provider authority or business success."
             }
@@ -2560,8 +2472,8 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 4,
-              "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+              "const": 5,
+              "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
             },
             "kind": {
               "type": "string",
@@ -2641,8 +2553,8 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 4,
-          "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+          "const": 5,
+          "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
         },
         "kind": {
           "type": "string",
@@ -2661,22 +2573,28 @@
           "$ref": "#/$defs/Counter",
           "description": "Highest committed stable-event sequence at this session revision."
         },
-        "binding": {
-          "$ref": "#/$defs/Binding",
-          "description": "Exact provider incarnation and native context identity."
-        },
-        "capabilities": {
-          "$ref": "#/$defs/Capabilities",
-          "description": "Capabilities bound to this exact provider/configuration/account incarnation."
-        },
         "status": {
           "type": "string",
-          "enum": [
-            "active",
-            "recovery_required",
-            "retired"
-          ],
+          "enum": ["active", "recovery_required", "retired"],
           "description": "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."
+        },
+        "selectedConnectionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "currentStageId": {
+          "$ref": "#/$defs/Id"
+        },
+        "stages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ContextStage"
+          },
+          "maxItems": 128
+        },
+        "freshContext": {
+          "type": "boolean",
+          "const": true,
+          "description": "Explicit next-prompt intent. The current phase remains available for old receipts and device deliveries until the new phase is admitted."
         }
       },
       "required": [
@@ -2685,9 +2603,8 @@
         "namespace",
         "revision",
         "lastSequence",
-        "binding",
-        "capabilities",
-        "status"
+        "status",
+        "stages"
       ],
       "additionalProperties": false,
       "description": "Logical session state and stable event watermark committed at one revision."
@@ -2697,8 +2614,8 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 4,
-          "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+          "const": 5,
+          "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
         },
         "kind": {
           "type": "string",
@@ -2731,12 +2648,7 @@
         },
         "status": {
           "type": "string",
-          "enum": [
-            "pending",
-            "answered",
-            "expired",
-            "unavailable"
-          ],
+          "enum": ["pending", "answered", "expired", "unavailable"],
           "description": "Explicit lifecycle state; missing native evidence cannot be inferred from transport loss."
         },
         "responseCommandId": {
@@ -2783,8 +2695,8 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 4,
-          "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+          "const": 5,
+          "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
         },
         "kind": {
           "type": "string",
@@ -2814,11 +2726,7 @@
         },
         "retry": {
           "type": "string",
-          "enum": [
-            "receiver_idempotent",
-            "reconcile_first",
-            "never"
-          ],
+          "enum": ["receiver_idempotent", "reconcile_first", "never"],
           "description": "Explicit retry discipline; uncertainty never authorizes blind resubmission."
         },
         "status": {
@@ -2861,8 +2769,8 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 4,
-          "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+          "const": 5,
+          "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
         },
         "kind": {
           "type": "string",
@@ -2924,10 +2832,7 @@
           "description": "Current surface revision checked atomically during response acceptance."
         }
       },
-      "required": [
-        "instanceId",
-        "revision"
-      ],
+      "required": ["instanceId", "revision"],
       "additionalProperties": false,
       "description": "Surface revision checked atomically when accepting an action response."
     },
@@ -2953,11 +2858,7 @@
         },
         "certainty": {
           "type": "string",
-          "enum": [
-            "intent",
-            "submitted",
-            "unknown"
-          ],
+          "enum": ["intent", "submitted", "unknown"],
           "description": "intent is stored before native submission; submitted has native acceptance; unknown requires reconciliation."
         },
         "attemptId": {
@@ -2996,8 +2897,8 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 4,
-          "description": "Exact product wire version; Versions 1–3 are rejected without migration or fallback."
+          "const": 5,
+          "description": "Exact product wire version; Versions 1\u20134 are rejected without migration or fallback."
         },
         "kind": {
           "type": "string",
@@ -3055,11 +2956,7 @@
         },
         "status": {
           "type": "string",
-          "enum": [
-            "active",
-            "deleted",
-            "invalidated"
-          ],
+          "enum": ["active", "deleted", "invalidated"],
           "description": "Deleted is an upstream deletion; invalidated is a product-side loss of action authority. Neither may reactivate."
         },
         "messages": {
@@ -3107,16 +3004,14 @@
           "description": "Opaque continuation of one immutable read view; expires independently of the session."
         }
       },
-      "required": [
-        "limit"
-      ],
+      "required": ["limit"],
       "additionalProperties": false
     },
     "SnapshotPage": {
       "type": "object",
       "properties": {
         "schemaVersion": {
-          "const": 4,
+          "const": 5,
           "type": "integer",
           "description": "Exact product contract version; no legacy readers."
         },
@@ -3192,7 +3087,7 @@
       "type": "object",
       "properties": {
         "schemaVersion": {
-          "const": 4,
+          "const": 5,
           "type": "integer",
           "description": "Exact product contract version; no legacy readers."
         },
@@ -3213,11 +3108,7 @@
           "description": "Opaque continuation; absent at end of the read view."
         }
       },
-      "required": [
-        "schemaVersion",
-        "kind",
-        "items"
-      ],
+      "required": ["schemaVersion", "kind", "items"],
       "additionalProperties": false
     },
     "Subscription": {
@@ -3235,10 +3126,7 @@
               "description": "Stable Host event."
             }
           },
-          "required": [
-            "type",
-            "event"
-          ],
+          "required": ["type", "event"],
           "additionalProperties": false
         },
         {
@@ -3266,13 +3154,7 @@
               "description": "Untrusted display text."
             }
           },
-          "required": [
-            "type",
-            "generation",
-            "commandId",
-            "messageId",
-            "text"
-          ],
+          "required": ["type", "generation", "commandId", "messageId", "text"],
           "additionalProperties": false
         },
         {
@@ -3284,9 +3166,7 @@
               "description": "Closed variant discriminator."
             }
           },
-          "required": [
-            "type"
-          ],
+          "required": ["type"],
           "additionalProperties": false
         }
       ]
@@ -3295,7 +3175,7 @@
       "type": "object",
       "properties": {
         "schemaVersion": {
-          "const": 4,
+          "const": 5,
           "type": "integer",
           "description": "Exact product contract version; no legacy readers."
         },
@@ -3313,19 +3193,14 @@
           "description": "Bounded page query with an opaque caller-bound continuation."
         }
       },
-      "required": [
-        "schemaVersion",
-        "kind",
-        "sessionId",
-        "query"
-      ],
+      "required": ["schemaVersion", "kind", "sessionId", "query"],
       "additionalProperties": false
     },
     "ListRequest": {
       "type": "object",
       "properties": {
         "schemaVersion": {
-          "const": 4,
+          "const": 5,
           "type": "integer",
           "description": "Exact product contract version; no legacy readers."
         },
@@ -3339,18 +3214,14 @@
           "description": "Bounded page query with an opaque caller-bound continuation."
         }
       },
-      "required": [
-        "schemaVersion",
-        "kind",
-        "query"
-      ],
+      "required": ["schemaVersion", "kind", "query"],
       "additionalProperties": false
     },
     "AttachRequest": {
       "type": "object",
       "properties": {
         "schemaVersion": {
-          "const": 4,
+          "const": 5,
           "type": "integer",
           "description": "Exact product contract version; no legacy readers."
         },
@@ -3385,7 +3256,7 @@
       "type": "object",
       "properties": {
         "schemaVersion": {
-          "const": 4,
+          "const": 5,
           "type": "integer",
           "description": "Exact product contract version; no legacy readers."
         },
@@ -3403,19 +3274,14 @@
           "description": "Connection-local attachment identity, echoed on every update."
         }
       },
-      "required": [
-        "schemaVersion",
-        "kind",
-        "sessionId",
-        "attachmentId"
-      ],
+      "required": ["schemaVersion", "kind", "sessionId", "attachmentId"],
       "additionalProperties": false
     },
     "ResumeRequest": {
       "type": "object",
       "properties": {
         "schemaVersion": {
-          "const": 4,
+          "const": 5,
           "type": "integer",
           "description": "Exact product contract version; no legacy readers."
         },
@@ -3429,18 +3295,14 @@
           "description": "Product session identity within the authenticated caller namespace."
         }
       },
-      "required": [
-        "schemaVersion",
-        "kind",
-        "sessionId"
-      ],
+      "required": ["schemaVersion", "kind", "sessionId"],
       "additionalProperties": false
     },
     "ActionRequest": {
       "type": "object",
       "properties": {
         "schemaVersion": {
-          "const": 4,
+          "const": 5,
           "type": "integer",
           "description": "Exact product contract version; no legacy readers."
         },
@@ -3476,7 +3338,7 @@
       "type": "object",
       "properties": {
         "schemaVersion": {
-          "const": 4,
+          "const": 5,
           "type": "integer",
           "description": "Exact product contract version; no legacy readers."
         },
@@ -3511,7 +3373,7 @@
       "type": "object",
       "properties": {
         "schemaVersion": {
-          "const": 4,
+          "const": 5,
           "type": "integer",
           "description": "Exact product contract version; no legacy readers."
         },
@@ -3550,7 +3412,7 @@
         "contractVersion": {
           "description": "Exact product contract version.",
           "type": "integer",
-          "const": 4
+          "const": 5
         },
         "acp": {
           "description": "Exact ACP protocol version.",
@@ -3570,12 +3432,7 @@
           "description": "Explicitly selected upstream version and product catalog."
         }
       },
-      "required": [
-        "contractVersion",
-        "acp",
-        "durableReceipts",
-        "cursorAttach"
-      ]
+      "required": ["contractVersion", "acp", "durableReceipts", "cursorAttach"]
     },
     "A2uiNegotiation": {
       "description": "Explicitly selected upstream version and product catalog.",
@@ -3598,17 +3455,11 @@
           "description": "Fixed product catalog revision."
         }
       },
-      "required": [
-        "version",
-        "catalogId",
-        "catalogVersion"
-      ]
+      "required": ["version", "catalogId", "catalogVersion"]
     },
     "CallbackLifetime": {
       "type": "string",
-      "enum": [
-        "generation_bound"
-      ],
+      "enum": ["generation_bound"],
       "description": "A live-generation callback. Restore preserves display history but always makes the previous callback unavailable."
     },
     "Acknowledgement": {
@@ -3623,17 +3474,11 @@
             },
             "confirmation": {
               "type": "string",
-              "enum": [
-                "request_only",
-                "already_terminal"
-              ],
+              "enum": ["request_only", "already_terminal"],
               "description": "Provider confirms the control request, not a model terminal."
             }
           },
-          "required": [
-            "type",
-            "confirmation"
-          ],
+          "required": ["type", "confirmation"],
           "additionalProperties": false
         },
         {
@@ -3645,9 +3490,7 @@
               "description": "Closed variant discriminator."
             }
           },
-          "required": [
-            "type"
-          ],
+          "required": ["type"],
           "additionalProperties": false
         },
         {
@@ -3659,13 +3502,679 @@
               "description": "Closed variant discriminator."
             }
           },
-          "required": [
-            "type"
-          ],
+          "required": ["type"],
           "additionalProperties": false
         }
       ],
       "description": "Native control acknowledgement; never a model turn outcome."
+    },
+    "ContextStage": {
+      "type": "object",
+      "properties": {
+        "stageId": {
+          "$ref": "#/$defs/Id"
+        },
+        "connectionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "configRevision": {
+          "$ref": "#/$defs/Counter"
+        },
+        "binding": {
+          "$ref": "#/$defs/Binding"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/Capabilities"
+        }
+      },
+      "required": [
+        "stageId",
+        "connectionId",
+        "configRevision",
+        "binding",
+        "capabilities"
+      ],
+      "additionalProperties": false,
+      "description": "One provider context phase. Native generations may change only through verified recovery; binding is owned here."
+    },
+    "ConnectionSource": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "custom_api",
+              "type": "string"
+            },
+            "apiUrl": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048
+            },
+            "model": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "credentialType": {
+              "type": "string",
+              "enum": ["api_key", "auth_token"]
+            }
+          },
+          "required": ["type", "apiUrl", "model"],
+          "additionalProperties": false,
+          "description": "An explicit endpoint and model using a native secure credential reference."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "existing_config",
+              "type": "string"
+            },
+            "directory": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32768
+            },
+            "model": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "required": ["type"],
+          "additionalProperties": false,
+          "description": "Explicit API settings read from a private existing CLI configuration."
+        }
+      ]
+    },
+    "Connection": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "integer",
+          "const": 5
+        },
+        "kind": {
+          "type": "string",
+          "const": "connection"
+        },
+        "connectionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "provider": {
+          "type": "string",
+          "enum": ["codex", "claude", "deepseek"]
+        },
+        "configRevision": {
+          "$ref": "#/$defs/Counter"
+        },
+        "profile": {
+          "type": "string",
+          "enum": ["conversation", "controlled_tools"]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "unverified",
+            "ready",
+            "authentication_required",
+            "invalid",
+            "deleted"
+          ]
+        },
+        "source": {
+          "$ref": "#/$defs/ConnectionSource"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "connectionId",
+        "name",
+        "provider",
+        "configRevision",
+        "profile",
+        "status",
+        "source"
+      ],
+      "additionalProperties": false,
+      "description": "A user-owned named provider connection with immutable configuration and credential revisions; contains opaque references, never secrets."
+    },
+    "UserPreferences": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "integer",
+          "const": 5
+        },
+        "kind": {
+          "type": "string",
+          "const": "userPreferences"
+        },
+        "defaultConnectionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "selectedSessionId": {
+          "$ref": "#/$defs/Id"
+        }
+      },
+      "required": ["schemaVersion", "kind"],
+      "additionalProperties": false,
+      "description": "Independent optional selections owned by the current test user."
+    },
+    "TestUser": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "integer",
+          "const": 5
+        },
+        "kind": {
+          "type": "string",
+          "const": "testUser"
+        },
+        "userId": {
+          "$ref": "#/$defs/Id"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "nameKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "required": ["schemaVersion", "kind", "userId", "displayName", "nameKey"],
+      "additionalProperties": false,
+      "description": "TestUser product wire record; validated against the V5 schema."
+    },
+    "UserContext": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "integer",
+          "const": 5
+        },
+        "kind": {
+          "type": "string",
+          "const": "userContext"
+        },
+        "user": {
+          "$ref": "#/$defs/TestUser"
+        },
+        "generation": {
+          "$ref": "#/$defs/Id"
+        }
+      },
+      "required": ["schemaVersion", "kind", "user", "generation"],
+      "additionalProperties": false,
+      "description": "UserContext product wire record; validated against the V5 schema."
+    },
+    "HistoryPreview": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "integer",
+          "const": 5
+        },
+        "kind": {
+          "type": "string",
+          "const": "historyPreview"
+        },
+        "sessionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "connectionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "configRevision": {
+          "$ref": "#/$defs/Counter"
+        },
+        "throughSequence": {
+          "$ref": "#/$defs/Counter"
+        },
+        "commandIds": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Id"
+          },
+          "maxItems": 10000
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 131072
+        },
+        "contentHash": {
+          "$ref": "#/$defs/Id"
+        },
+        "messageIds": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Id"
+          },
+          "maxItems": 10000
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "sessionId",
+        "connectionId",
+        "configRevision",
+        "throughSequence",
+        "commandIds",
+        "text",
+        "contentHash",
+        "messageIds"
+      ],
+      "additionalProperties": false,
+      "description": "Explicit plain-text transcript preview bound to a target connection revision and frozen history watermark."
+    },
+    "ConnectionPage": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "integer",
+          "const": 5
+        },
+        "kind": {
+          "type": "string",
+          "const": "connectionPage"
+        },
+        "connections": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Connection"
+          },
+          "maxItems": 128
+        },
+        "preferences": {
+          "$ref": "#/$defs/UserPreferences"
+        }
+      },
+      "required": ["schemaVersion", "kind", "connections", "preferences"],
+      "additionalProperties": false
+    },
+    "ConnectionsRequest": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "integer",
+          "const": 5
+        },
+        "kind": {
+          "type": "string",
+          "const": "connectionsRequest"
+        }
+      },
+      "required": ["schemaVersion", "kind"],
+      "additionalProperties": false
+    },
+    "SaveConnectionRequest": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "integer",
+          "const": 5
+        },
+        "kind": {
+          "type": "string",
+          "const": "saveConnectionRequest"
+        },
+        "connection": {
+          "$ref": "#/$defs/Connection"
+        },
+        "expectedRevision": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Counter"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": ["schemaVersion", "kind", "connection", "expectedRevision"],
+      "additionalProperties": false
+    },
+    "PreferencesRequest": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "integer",
+          "const": 5
+        },
+        "kind": {
+          "type": "string",
+          "const": "preferencesRequest"
+        },
+        "patch": {
+          "$ref": "#/$defs/PreferencesPatch"
+        }
+      },
+      "required": ["schemaVersion", "kind", "patch"],
+      "additionalProperties": false
+    },
+    "SelectConnectionRequest": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "integer",
+          "const": 5
+        },
+        "kind": {
+          "type": "string",
+          "const": "selectConnectionRequest"
+        },
+        "sessionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "connectionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "freshContext": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "sessionId",
+        "connectionId",
+        "freshContext"
+      ],
+      "additionalProperties": false
+    },
+    "HistoryRequest": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "integer",
+          "const": 5
+        },
+        "kind": {
+          "type": "string",
+          "const": "historyRequest"
+        },
+        "sessionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "connectionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "recent": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        }
+      },
+      "required": ["schemaVersion", "kind", "sessionId", "connectionId"],
+      "additionalProperties": false
+    },
+    "TestUserPage": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "integer",
+          "const": 5
+        },
+        "kind": {
+          "type": "string",
+          "const": "testUserPage"
+        },
+        "users": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TestUser"
+          },
+          "maxItems": 128
+        },
+        "current": {
+          "$ref": "#/$defs/UserContext"
+        }
+      },
+      "required": ["schemaVersion", "kind", "users"],
+      "additionalProperties": false
+    },
+    "NativeControlFrame": {
+      "description": "Private inherited Native-to-Host control frame. The descriptor is the trust boundary; this record only closes framing and payload shape.",
+      "oneOf": [
+        { "$ref": "#/$defs/NativeCall" },
+        { "$ref": "#/$defs/NativeReply" },
+        { "$ref": "#/$defs/NativeEvent" }
+      ]
+    },
+    "NativeCall": {
+      "oneOf": [
+        {
+          "title": "NativeCallAttach",
+          "type": "object",
+          "properties": {
+            "schemaVersion": { "type": "integer", "const": 5 },
+            "kind": { "type": "string", "const": "nativeCall" },
+            "id": { "$ref": "#/$defs/Counter" },
+            "method": { "type": "string", "const": "attach" },
+            "data": {
+              "title": "NativeAttachData",
+              "type": "object",
+              "properties": {
+                "channel": { "$ref": "#/$defs/Id" },
+                "context": { "$ref": "#/$defs/UserContext" }
+              },
+              "required": ["channel", "context"],
+              "additionalProperties": false
+            }
+          },
+          "required": ["schemaVersion", "kind", "id", "method", "data"],
+          "additionalProperties": false
+        },
+        {
+          "title": "NativeCallSuspend",
+          "type": "object",
+          "properties": {
+            "schemaVersion": { "type": "integer", "const": 5 },
+            "kind": { "type": "string", "const": "nativeCall" },
+            "id": { "$ref": "#/$defs/Counter" },
+            "method": { "type": "string", "const": "suspend" },
+            "data": {
+              "title": "NativeSuspendData",
+              "type": "object",
+              "properties": { "context": { "$ref": "#/$defs/UserContext" } },
+              "required": ["context"],
+              "additionalProperties": false
+            }
+          },
+          "required": ["schemaVersion", "kind", "id", "method", "data"],
+          "additionalProperties": false
+        },
+        {
+          "title": "NativeCallDetach",
+          "type": "object",
+          "properties": {
+            "schemaVersion": { "type": "integer", "const": 5 },
+            "kind": { "type": "string", "const": "nativeCall" },
+            "id": { "$ref": "#/$defs/Counter" },
+            "method": { "type": "string", "const": "detach" },
+            "data": {
+              "title": "NativeDetachData",
+              "type": "object",
+              "properties": { "channel": { "$ref": "#/$defs/Id" } },
+              "required": ["channel"],
+              "additionalProperties": false
+            }
+          },
+          "required": ["schemaVersion", "kind", "id", "method", "data"],
+          "additionalProperties": false
+        },
+        {
+          "title": "NativeCallSaveConnection",
+          "type": "object",
+          "properties": {
+            "schemaVersion": { "type": "integer", "const": 5 },
+            "kind": { "type": "string", "const": "nativeCall" },
+            "id": { "$ref": "#/$defs/Counter" },
+            "method": { "type": "string", "const": "saveConnection" },
+            "data": {
+              "title": "NativeSaveConnectionData",
+              "type": "object",
+              "properties": {
+                "generation": { "$ref": "#/$defs/Id" },
+                "connection": { "$ref": "#/$defs/Connection" },
+                "expected": {
+                  "oneOf": [{ "$ref": "#/$defs/Counter" }, { "type": "null" }]
+                },
+                "secret": {
+                  "oneOf": [
+                    { "type": "string", "minLength": 1, "maxLength": 16384 },
+                    { "type": "null" }
+                  ]
+                }
+              },
+              "required": ["generation", "connection", "expected", "secret"],
+              "additionalProperties": false
+            }
+          },
+          "required": ["schemaVersion", "kind", "id", "method", "data"],
+          "additionalProperties": false
+        },
+        {
+          "title": "NativeCallMasterKey",
+          "type": "object",
+          "properties": {
+            "schemaVersion": { "type": "integer", "const": 5 },
+            "kind": { "type": "string", "const": "nativeCall" },
+            "id": { "$ref": "#/$defs/Counter" },
+            "method": { "type": "string", "const": "masterKey" },
+            "data": {
+              "title": "NativeMasterKeyData",
+              "type": "object",
+              "properties": { "create": { "type": "boolean" } },
+              "required": ["create"],
+              "additionalProperties": false
+            }
+          },
+          "required": ["schemaVersion", "kind", "id", "method", "data"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "NativeReply": {
+      "oneOf": [
+        {
+          "title": "NativeReplySuccess",
+          "type": "object",
+          "properties": {
+            "schemaVersion": { "type": "integer", "const": 5 },
+            "kind": { "type": "string", "const": "nativeReply" },
+            "id": { "$ref": "#/$defs/Counter" },
+            "ok": { "const": true, "type": "boolean" },
+            "value": {}
+          },
+          "required": ["schemaVersion", "kind", "id", "ok", "value"],
+          "additionalProperties": false
+        },
+        {
+          "title": "NativeReplyFailure",
+          "type": "object",
+          "properties": {
+            "schemaVersion": { "type": "integer", "const": 5 },
+            "kind": { "type": "string", "const": "nativeReply" },
+            "id": { "$ref": "#/$defs/Counter" },
+            "ok": { "const": false, "type": "boolean" }
+          },
+          "required": ["schemaVersion", "kind", "id", "ok"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "NativeEvent": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": { "type": "integer", "const": 5 },
+        "kind": { "type": "string", "const": "nativeEvent" },
+        "channel": { "$ref": "#/$defs/Id" },
+        "message": {}
+      },
+      "required": ["schemaVersion", "kind", "channel", "message"],
+      "additionalProperties": false
+    },
+    "ExecutionOrigin": {
+      "type": "object",
+      "description": "Non-secret AI operation provenance carried only on the desktop-owned execution pipe.",
+      "properties": {
+        "schemaVersion": { "type": "integer", "const": 5 },
+        "kind": { "type": "string", "const": "executionOrigin" },
+        "namespace": { "$ref": "#/$defs/Namespace" },
+        "userGeneration": {
+          "$ref": "#/$defs/Id",
+          "description": "Native-selected user generation; checked against the current trusted registry before every tool call."
+        },
+        "operationId": { "$ref": "#/$defs/Id" },
+        "provider": {
+          "type": "string",
+          "enum": ["codex", "claude", "deepseek"]
+        },
+        "config": { "$ref": "#/$defs/ConfigRef" }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "namespace",
+        "userGeneration",
+        "operationId",
+        "provider",
+        "config"
+      ],
+      "additionalProperties": false
+    },
+    "PreferenceChange": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "set": {
+              "$ref": "#/$defs/Id"
+            }
+          },
+          "required": ["set"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "clear": {
+              "const": true,
+              "type": "boolean"
+            }
+          },
+          "required": ["clear"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "PreferencesPatch": {
+      "type": "object",
+      "description": "Missing fields remain unchanged; set replaces and clear removes one preference atomically.",
+      "properties": {
+        "defaultConnectionId": {
+          "$ref": "#/$defs/PreferenceChange"
+        },
+        "selectedSessionId": {
+          "$ref": "#/$defs/PreferenceChange"
+        }
+      },
+      "additionalProperties": false
     }
   }
 }

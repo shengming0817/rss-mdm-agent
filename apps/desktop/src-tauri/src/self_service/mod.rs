@@ -128,6 +128,7 @@ impl FixtureService {
                     format!("plan-{}-{}", self.instance_id, self.next_plan),
                     now,
                     &fixtures::human(),
+                    &execution_contract::ActorId::new("fixture-actor").unwrap(),
                 )?;
                 let display = self.display(&draft.item_id, now);
                 selected.display_status(

@@ -16,7 +16,7 @@ import {
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const options = {
   provider: "fake",
-  accountRef: "fixture",
+
   config: { id: "config", revision: "1" },
   profile: "conversation",
 };
@@ -30,10 +30,34 @@ export async function startFixture() {
       continuation: "same_process",
     },
   );
+  unwrap(
+    await host.store.saveConnection(
+      fixtureCaller,
+      {
+        schemaVersion: 5,
+        kind: "connection",
+        connectionId: "cfg",
+        name: "Browser fixture",
+        provider: "codex",
+        configRevision: 1,
+
+
+
+        status: "ready",
+        profile: "conversation",
+        source: {
+          type: "custom_api",
+          apiUrl: "https://example.invalid",
+          model: "fixture",
+        },
+      },
+      null,
+    ),
+  );
   const service = createAccessService({
     host,
     now: Date.now,
-    sessionOptions: options,
+    sessionOptions: { connectionId: "cfg" },
   });
   const peers = new Map(),
     permissions = [];
@@ -131,9 +155,9 @@ export async function startFixture() {
     execution,
     async seed(count = 23) {
       for (let i = 0; i < count; i++)
-        unwrap(await host.createSession(fixtureCaller, options, budget()));
+        unwrap(await host.openSessionForTest(fixtureCaller, options, budget()));
       unwrap(
-        await host.createSession(
+        await host.openSessionForTest(
           { ...fixtureCaller, principalId: "other-user" },
           options,
           budget(),

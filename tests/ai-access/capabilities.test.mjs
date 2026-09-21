@@ -1,3 +1,4 @@
+import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
@@ -19,19 +20,19 @@ test("scripted Host exercises queue, steer, cancel and continuation support and 
       },
     );
     const s = unwrap(
-      await host.createSession(
+      await host.openSessionForTest(
         fixtureCaller,
         {
           provider: "fake",
           config: { id: "c", revision: "1" },
-          accountRef: "a",
+
           profile: "conversation",
         },
         budget(),
       ),
     );
     const command = {
-      schemaVersion: 4,
+      schemaVersion: 5,
       kind: "command",
       sessionId: s.namespace.sessionId,
       commandId: "first",
@@ -67,7 +68,7 @@ test("scripted Host exercises queue, steer, cancel and continuation support and 
             input: {
               type: "prompt",
               policy: "steer",
-              targetRunId: current.binding.nativeRunId,
+              targetRunId: activeStage(current).binding.nativeRunId,
               text: "b",
             },
           },
@@ -86,8 +87,8 @@ test("scripted Host exercises queue, steer, cancel and continuation support and 
             input: {
               type: "cancel",
               targetCommandId: "first",
-              generation: current.binding.generation,
-              nativeRunId: current.binding.nativeRunId,
+              generation: activeStage(current).binding.generation,
+              nativeRunId: activeStage(current).binding.nativeRunId,
             },
           },
           budget(),

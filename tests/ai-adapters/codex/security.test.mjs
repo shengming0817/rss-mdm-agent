@@ -1,3 +1,8 @@
+import {
+  startStage,
+  providerStage,
+} from "../../../packages/ai-contract/dist/index.js";
+import { replaceStage } from "../../../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { getEventListeners } from "node:events";
@@ -377,21 +382,21 @@ test(
 
 test("restore rejects a compatible-looking thread without host lineage", async (t) => {
   const s = await nativeFixture(t);
-  const previous = {
-    ...fixtureSession(),
-    namespace: s.configuration.namespace,
-    binding: {
+  const previous = replaceStage(
+    { ...fixtureSession(), namespace: s.configuration.namespace },
+    {
       provider: "codex",
       providerVersion: "0.155.0",
       adapterVersion: "0.1.0",
       generation: "foreign-generation",
       workspaceId: workspaceIdentity(s.configuration.workingDirectory),
-      accountRef: s.configuration.accountRef,
+
       config: s.configuration.config,
       nativeSessionId: "foreign-session",
       nativeThreadId: "foreign-thread",
     },
-  };
+    undefined,
+  );
   const result = await VerifiedProviderSession.restore(
     s.make(),
     previous,
@@ -519,12 +524,10 @@ test(
       nativeSessionId: admitted.binding.nativeSessionId,
       nativeThreadId: admitted.binding.nativeThreadId,
     });
-    const previous = {
-      ...fixtureSession(),
-      namespace: s.configuration.namespace,
-      binding: first.submission.binding,
-      capabilities: admitted.capabilities,
-    };
+    const previous = startStage(
+      { ...fixtureSession(), namespace: s.configuration.namespace, stages: [] },
+      providerStage(first.submission.binding, admitted.capabilities),
+    );
     unwrap(await firstPort.close(budget()));
 
     const restoredPort = createTestAdapter(s.options, badMcpRuntime);

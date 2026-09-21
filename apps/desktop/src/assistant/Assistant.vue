@@ -3,7 +3,12 @@ import { computed, ref } from "vue";
 import { MessageComposer, MessageStream } from "@rss-mdm-agent/ui";
 import { RuntimeSurface } from "@rss-mdm-agent/ai-ui-bridge";
 import type { CommandView, TimelineItem } from "@rss-mdm-agent/ai-client";
-import { permissionPresentation, type AssistantController } from "./controller";
+import {
+  operationMessage,
+  permissionPresentation,
+  type AssistantController,
+} from "./controller";
+import Connections from "./Connections.vue";
 import QuestionCard from "./QuestionCard.vue";
 import ExecutionDetails from "./ExecutionDetails.vue";
 const props = defineProps<{ controller: AssistantController }>();
@@ -119,6 +124,7 @@ const cancellations = computed(() =>
         >S1 测试装配 · 无真实执行</span
       >
     </div>
+    <Connections :controller="c" />
     <div class="assistant-facts" role="status">
       <span>连接：{{ connectionLabel.get(c.sessionConnection.value) }}</span>
       <span>AI：{{ c.busy.value ? "本轮处理中" : "空闲 / 历史可读" }}</span>
@@ -236,7 +242,7 @@ const cancellations = computed(() =>
             >
           </div>
           <p v-if="s.errors.get(s.selected)" role="alert">
-            操作未确认：{{ s.errors.get(s.selected) }}
+            {{ operationMessage(s.errors.get(s.selected)!) }}
           </p>
           <p v-if="s.pending.has(s.selected)" role="status">
             保留原命令等待确认。<button

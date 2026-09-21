@@ -1,16 +1,17 @@
+import {
+  configuration as fixtureConfiguration,
+  nativePeer,
+  clientAt,
+  executionGeneration,
+} from "../tests/ai-provider-conformance/support.mjs";
+import { executionServer } from "../tests/ai-host/rust-execution.mjs";
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, mkdir, writeFile, rm, lstat } from "node:fs/promises";
-import { connect } from "node:net";
+import { mkdtemp, mkdir, writeFile, rm, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { Readable, Writable } from "node:stream";
-import {
-  RuntimeClient,
-  ndJsonStream,
-} from "../packages/ai-client/dist/index.js";
 import { createModelServer } from "../tests/ai-adapters/claude/model-fixture.mjs";
 
 const executable = resolve(process.argv[2]);
@@ -32,71 +33,55 @@ const groupEmpty = (pgid) => {
   }
 };
 for (const signal of ["SIGTERM", "SIGINT"]) {
-  const directory = await mkdtemp(join(tmpdir(), "rss bundled host-"));
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), "rss bundled host-")),
+  );
   const requests = [],
     server = createModelServer(
       [[{ type: "text", text: "bundled runtime" }]],
       requests,
     );
-  let child, socket, client, database;
+  let child, peer, client, database, rust;
   let groups = [],
     stderr = "";
   try {
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-    const configurationDirectory = join(directory, "claude");
-    await mkdir(configurationDirectory, { mode: 0o700 });
-    const credentialPath = join(directory, "credential");
-    await writeFile(credentialPath, "fixture-only-key", { mode: 0o600 });
-    const configuration = {
-      databasePath: join(directory, "host.sqlite"),
-      socketPath: join(directory, "host.sock"),
-      caller: { tenantId: "t", principalId: "p", authorityId: "a" },
-      session: {
-        provider: "claude",
-        config: { id: "bundled", revision: "1" },
-        accountRef: "fixture",
-        profile: "conversation",
-      },
-      workingDirectory: directory,
-      nativeDirectory: configurationDirectory,
-      connection: {
-        source: "custom_endpoint",
-        credentialPath,
-        credentialType: "api_key",
-        apiUrl: `http://127.0.0.1:${server.address().port}`,
-        model: "fixture-model",
-      },
-    };
-    const configurationPath = join(directory, "configuration.json");
-    await writeFile(configurationPath, JSON.stringify(configuration), {
-      mode: 0o600,
-    });
+    const setup = await fixtureConfiguration(
+      directory,
+      "claude",
+      `http://127.0.0.1:${server.address().port}`,
+    );
+    const configuration = setup.config,
+      configurationPath = setup.path;
+    rust = spawn(
+      executionServer(),
+      [
+        join(directory, "execution.sqlite"),
+        join(directory, "audit.json"),
+        "ai-unknown",
+      ],
+      { stdio: ["pipe", "pipe", "inherit"] },
+    );
+    rust.stdin.on("error", () => {});
     child = spawn(executable, [configurationPath], {
       cwd: directory,
-      stdio: ["ignore", "ignore", "pipe"],
+      stdio: ["pipe", "pipe", "pipe", "pipe"],
       detached: true,
       env: { PATH: "/usr/bin:/bin", HOME: directory, TMPDIR: tmpdir() },
     });
+    child.stdout.pipe(rust.stdin);
+    rust.stdout.pipe(child.stdin);
+    child.stdin.on("error", () => {});
     child.stderr.on("data", (chunk) => {
       stderr = (stderr + chunk).slice(-16384);
     });
     const exited = once(child, "exit");
-    await until(async () => {
-      assert.equal(child.exitCode, null, stderr);
-      assert.equal(child.signalCode, null, stderr);
-      const stat = await lstat(configuration.socketPath).catch(() => undefined);
-      return stat?.isSocket() && (stat.mode & 0o777) === 0o600;
-    });
-    assert.equal((await lstat(configuration.socketPath)).mode & 0o777, 0o600);
-    socket = connect(configuration.socketPath);
-    await once(socket, "connect");
-    client = new RuntimeClient(
-      ndJsonStream(Writable.toWeb(socket), Readable.toWeb(socket)),
-    );
-    await client.initialize();
+    peer = nativePeer(child.stdio[3]);
+    const view = await clientAt(peer, await executionGeneration(directory));
+    client = view.client;
     const session = await client.createSession();
     await client.submit({
-      schemaVersion: 4,
+      schemaVersion: 5,
       kind: "command",
       commandId: "bundled",
       sessionId: session.namespace.sessionId,
@@ -128,7 +113,7 @@ for (const signal of ["SIGTERM", "SIGINT"]) {
       .map(([pid]) => pid);
     assert.equal(groups.length, 1);
     assert.equal(groupEmpty(groups[0]), false);
-    // Keep the client attached: the CLI must close both socket and live worker.
+    // Keep the client attached: the CLI must close both private channel and live worker.
     child.kill(signal);
     let timer;
     const status = await Promise.race([
@@ -152,16 +137,13 @@ for (const signal of ["SIGTERM", "SIGINT"]) {
       database.prepare("SELECT count(*) AS n FROM worker_launches").get().n,
       0,
     );
-    await assert.rejects(
-      lstat(configuration.socketPath),
-      (error) => error.code === "ENOENT",
-    );
+    await peer.control.stopped;
     console.log(
-      `Bundled CLI ${signal}: private socket, fixed model/real SDK, durable terminal, worker group and socket cleanup passed`,
+      `Bundled CLI ${signal}: inherited private channel, fixed model/real SDK, durable terminal, worker group and channel cleanup passed`,
     );
   } finally {
     await client?.close();
-    socket?.destroy();
+    peer?.control.close();
     database?.close();
     if (child && child.exitCode === null && child.signalCode === null) {
       child.kill("SIGKILL");
@@ -174,6 +156,11 @@ for (const signal of ["SIGTERM", "SIGINT"]) {
           process.kill(-pgid, "SIGKILL");
         } catch {}
       }
+    if (rust && rust.exitCode === null && rust.signalCode === null) {
+      const exited = once(rust, "exit");
+      rust.kill("SIGTERM");
+      await exited;
+    }
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
     await rm(directory, { recursive: true, force: true });

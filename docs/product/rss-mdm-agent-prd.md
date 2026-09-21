@@ -11,7 +11,7 @@ Owner repository：rss-mdm-agent。任务容器：[EPIC #2392](https://dev.azure
 C05 经用户扩大范围：提取独立 Vue UI 包和可启动的 Tauri 桌面基础壳，采用根级 `apps/`、`packages/`、`crates/` 组织。
 C20 将 C15/C16 桌面页面通过受限 IPC 接入 Rust SQLite 执行 owner、S1 测试 runner 和独立 AI Host；浏览器继续使用明确的只读样本。UI 与 AI 共用冻结计划、授权、批准和原请求恢复，旧内存生产入口直接替换；具体启动与验证见[桌面指南](../guides/desktop-development.md)。
 
-C16 在同一应用壳直接增加 AI 助手导航，消费公共 ai-client / ai-ui-bridge。固定 Host 测试装配复用同一 App；Tauri 普通启动注入真实本地 AI 服务，不可用时显示未连接。执行详情来自 Rust execution-app 的单次授权记录读取，冻结计划摘要及 TypeScript 类型由 Rust 生成，S1 结果持续标识测试。AI wire V4 与 AI SQLite schema v3 直接替换旧版，不迁移或双读；C20 已接入同一 Rust 持久执行 owner 和独立 Node Host；真实平台执行仍不在 S1 内。页面与故障验收见[助手指南](../guides/assistant-development.md)。
+C16 在同一应用壳直接增加 AI 助手导航，消费公共 ai-client / ai-ui-bridge。固定 Host 测试装配复用同一 App；Tauri 普通启动注入真实本地 AI 服务，不可用时显示未连接。执行详情来自 Rust execution-app 的单次授权记录读取，冻结计划摘要及 TypeScript 类型由 Rust 生成，S1 结果持续标识测试。AI wire V5 与 AI SQLite schema v4 直接替换旧版，不迁移或双读；C20 已接入同一 Rust 持久执行 owner 和独立 Node Host；真实平台执行仍不在 S1 内。页面与故障验收见[助手指南](../guides/assistant-development.md)。
 
 ## 1. 产品定位与完成边界
 
@@ -89,7 +89,7 @@ Agent wire 的唯一 producer 仍为 rss-mdm；`execution-contract` 是本地执
 | 编号 | 要求 | 验收 |
 | --- | --- | --- |
 | CLI-ID01 | 区分 actor、initiator（human/ai/policy）、批准者、委托、设备与目标用户 | 修改 initiator 不扩大同一 actor 的操作权限；AI 自报主体被拒绝 |
-| CLI-ID02 | AI provider/CLI 账号、OS 登录用户、产品主体和特权服务账号分别记录 | Human 必填来源 OS device/account/session，AI 另带 provider account 与配置 ID/revision；均独立于 actor、target 和 runAs 并参与摘要/审计。模型登录成功或本机用户存在不能构造企业授权；运行用户映射可解释 |
+| CLI-ID02 | AI 连接配置、OS 登录用户、产品主体和特权服务账号分别记录 | Human 必填来源 OS device/account/session，AI 另带 provider 与连接配置 ID/revision；均独立于 actor、target 和 runAs 并参与摘要/审计。模型登录成功或本机用户存在不能构造企业授权；运行用户映射可解释 |
 | CLI-ID03 | 本地模式由经OS管理员初始化的本地authority绑定OS主体、目录、政策及批准签发；企业模式消费产品身份和设备注册 | 信任根/签发者与政策版本保存在受保护服务存储，UI/AI不可铸造；缺真实绑定的生产入口拒绝；测试主体仅测试装配可用 |
 | CLI-ID04 | 委托绑定主体、动作/资源、目标、期限和预算，不能扩大授权者权限 | 越权目标、过期委托、跨用户/设备/tenant 重放在执行前拒绝 |
 
@@ -245,11 +245,11 @@ AI请求与手动请求都不能自行取得可执行capability。运行模式�
 
 C03 的当前实现见[目录核心](../../crates/service-catalog/README.md)与[后端对齐](../guides/202609130000-2396-service-catalog.md)：一个格式与参数规则可显式演进，未知语义拒绝；新增目录内容无需修改核心。选择保留目录/资源摘要、变体、参数和要求；上下架/期限绑定快照，外部展示说明绑定精确选择和目标。核心不计算能力或授权，缺少后续 owner 接线时不能声称执行闭环完成。
 
-C01 执行契约保持自身版本与 Rust owner；A01 将 C02 完整替换为 AI Runtime；当前 wire 为 V4，单一 JSON Schema 生成两端绑定，TS 拥有 Provider/Host/SessionStore ports。契约、安全解码与隔离消费见[契约开发说明](../guides/contracts-development.md)及 [AI Runtime 契约](../../packages/ai-contract/README.md)。数据校验和角色声明不产生可信主体、批准或执行证据。V1/V2/V3 不兼容，无历史命令导入、alias 或双写。历史 C02 交付由 Git/PR 保留。
+C01 执行契约保持自身版本与 Rust owner；A01 将 C02 完整替换为 AI Runtime；当前 wire 为 V5，单一 JSON Schema 生成两端绑定，TS 拥有 Provider/Host/SessionStore ports。契约、安全解码与隔离消费见[契约开发说明](../guides/contracts-development.md)及 [AI Runtime 契约](../../packages/ai-contract/README.md)。数据校验和角色声明不产生可信主体、批准或执行证据。V1–V4 不兼容，无历史命令导入、alias 或双写。历史 C02 交付由 Git/PR 保留。
 
 范围基线 `ai-runtime-20260918`：北向 ACP + A2UI，不使用 AG-UI；原生引擎拥有模型上下文，TS AI Host 拥有产品会话、命令接纳及展示/交互投影，Rust 执行服务拥有业务执行权威。TS 不直接写 Rust 批准、intent 或结果表。A01 提供公共契约、fake Host 和 conformance；A04 提供标准 ACP 接入、统一客户端投影及 Vue/Lit renderer 接缝，开发与独立消费见[ACP–A2UI 开发](../guides/ai-access-development.md)。Codex/Claude 原生适配器已在独立包落地，见 [app-server adapter](../../packages/ai-adapters/codex/README.md) 与 [SDK adapter](../../packages/ai-adapters/claude/README.md)。Codex 固定0.155.0直接接入原生协议，实现基础对话、恢复、steer；显式终态fork通过 A01 受控扩展及 Host 准入接缝提供，子会话持久化与产品接入归 A03。动态工具与子代理不支持。C12/#2405 尚未完成可信真实模型身份与连续性验收，不能由本地替身通过或本 PR 合并推定完成。真实进程/本地模型传输、真实模型端点、平台受控工具和C20装配分别提供证据。A02 的 [AI SQLite adapter](../../packages/ai-store-sqlite/README.md)提供真实事务、独占与恢复存储；A03 的 [AI Host](../../packages/ai-host/README.md)提供持久 FIFO、独立 provider worker、核实恢复及[私有本地运行入口](../../apps/ai-host/README.md)。Host 通过独立 lifecycle fence port 管理 OS 启动记录，所有关闭等待受同一预算约束；恢复失败隔离 runtime，客户端分别显示 attachment 与持久健康状态。Claude 持久目录要求本地私有所有权。运行包由根 manifest 固定 Node 24.14.1 并按版本/平台核对 checksum，实际生命周期验收限定 macOS arm64；Tauri 产品装配与本地配置见[桌面指南](../guides/desktop-development.md)。固定模型 HTTP transport 的真实 SDK 测试与外部模型实测分别记录，不能互相替代。
 
-durable accepted 和稳定 cursor 只能在事务提交后确认；命令账本兼任 inbox 与 provider 派发意图，事件日志用于回放，只有可靠跨服务请求/结果使用 delivery。取消派发不证明终止，未知派发先核实；generation 和 config/账号版本阻止旧回调更新新运行。ACP prompt 保持最终响应，receipt/cursor/attach 由协商扩展表达。A2UI surface/action 与会话/运行/交互/revision 精确关联，无 A2UI 时降级到标准文本、工具状态和权限交互。能力与 binding 原子建立，受控工具准入必须消费可信 verifier 的当前 incarnation 证据；surface 删除持久化并在回答事务内再校验，终态投影必须有同批匹配事件。Host/Store 提供有界关闭，分页错误遵守统一 Result。同一 turn 可有多个独立 callback，原生 callback ID 与父请求坐标分离；问题内容与 pending 记录原子发布，回答不签发执行批准。客户端保存的选择不能超出 offer；交互展示与 live/snapshot 共用权威期限、callback lifetime 和首答命令身份。到期自动禁用，竞争 loser 不再重试，本地 winner 丢回执仍按原命令恢复。恢复重绑消费重新验证的 provider 证据；原 attempt 与当前 observer 分离，旧回调及 surface 原子失效且留下稳定事件。未知提交只有明确未提交证据才允许原期限内重试，本地失效不伪造模型终态。具体可靠性基线由 A01 公共契约持有。
+durable accepted 和稳定 cursor 只能在事务提交后确认；命令账本兼任 inbox 与 provider 派发意图，事件日志用于回放，只有可靠跨服务请求/结果使用 delivery。取消派发不证明终止，未知派发先核实；generation 和 config 版本阻止旧回调更新新运行。ACP prompt 保持最终响应，receipt/cursor/attach 由协商扩展表达。A2UI surface/action 与会话/运行/交互/revision 精确关联，无 A2UI 时降级到标准文本、工具状态和权限交互。能力与 binding 原子建立，受控工具准入必须消费可信 verifier 的当前 incarnation 证据；surface 删除持久化并在回答事务内再校验，终态投影必须有同批匹配事件。Host/Store 提供有界关闭，分页错误遵守统一 Result。同一 turn 可有多个独立 callback，原生 callback ID 与父请求坐标分离；问题内容与 pending 记录原子发布，回答不签发执行批准。客户端保存的选择不能超出 offer；交互展示与 live/snapshot 共用权威期限、callback lifetime 和首答命令身份。到期自动禁用，竞争 loser 不再重试，本地 winner 丢回执仍按原命令恢复。恢复重绑消费重新验证的 provider 证据；原 attempt 与当前 observer 分离，旧回调及 surface 原子失效且留下稳定事件。未知提交只有明确未提交证据才允许原期限内重试，本地失效不伪造模型终态。具体可靠性基线由 A01 公共契约持有。
 
 AI工具参数经过MCP/host映射到执行请求，C02不直接嵌入另一份执行状态；该映射在C20验证。
 `execution-admission`就是C07的唯一actor/action/resource/context授权裁决核心；“admission”是包名，“授权”是职责，不另建平行authorization service。C19消费该裁决并强制持久执行准入。
@@ -388,3 +388,21 @@ C20必须证明选定AI宿主自身没有不受控原生工具旁路；做不到
 
 每次证据绑定源码SHA、依赖lock、provider版本、配置/运行模式、命令与原始结果及未覆盖项。
 本仓已有本地 make ci、Cargo/pnpm 工程与独立消费验证；各能力 owner 随实施扩展既有入口。完整 make ci 一次收集失败后集中修复，不跑父仓 CI 代替，不新增远端 CI。
+
+## AI 测试用户、连接与上下文（AGENT-AI-01）
+
+[AGENT-AI-01 #2454](https://dev.azure.com/shengming0923/rss/_workitems/edit/2454) 统一桌面测试主体、个人连接和产品会话。用户手动填写或选择名称：Unicode 去首尾空白、NFC 规范化、ASCII 大小写不敏感，1–64 个字符且不含控制字符；保留首次显示名称，以随机内部 ID 持久归属。重启恢复最后选择并生成新 UI generation。此入口始终显示测试模式，不提供防冒用认证。
+
+原生组合根持有用户注册表、当前 generation 和平台凭据入口；WebView 不提交 caller。每用户独立会话、连接、默认/选中偏好与 UI 状态。切换用户关闭旧订阅、清空草稿与回调、取消旧模型队列和运行；未取得 terminal 的工作保留不确定状态。设备任务继续使用冻结原 actor，一个设备执行服务持有同一 journal，用户属于请求上下文而非服务实例；不预建用户执行线程，也不维护按用户服务池。
+
+每用户可创建多条命名 Codex、Claude、DeepSeek 连接。Codex/Claude 统一选择“本机已有配置”：直接传入默认或指定配置目录，官方 CLI/SDK 自行复用登录、解析默认模型与刷新认证，RSS 不识别真实账号、不提取 token、不读取外部 Keychain。自定义 API 在原生输入框输入；Keychain 仅保存一个应用主密钥，API 密钥以 AES-256-GCM 密文保存于现有 SQLite 连接修订行。连接只有 configRevision，没有独立凭据版本或外部账号引用。验证完成且进程停止后，配置、密文和默认偏好同事务保存；失败、取消、冲突或切用户不写入。编辑默认保留密钥；删除清除该连接全部密文与默认选择，保留元数据及历史，不再启动新 worker。首条可用连接成为默认，后续新增不替换默认，删除默认无自动替补。
+
+Native 与 Host 使用匿名继承管道及固定 Caller/generation 的 UI 通道；不监听文件系统 socket。worker 启动参数仅通过既有私有管道传递，不存参数快照或来源账号文件；主密钥不进入 worker。保留工具、hooks、plugins 和任意 MCP 的限制，既有配置不得开放旁路。Codex 验证使用 ephemeral 线程，Claude 使用不持久化的验证会话；仅恢复 RSS 记录的原生 ID，不管理用户其它 CLI 会话。
+
+本 PR 不增加 HMAC、防重放 nonce、凭据授权票据或 worker grant 系统；后续 S2 独立服务与跨权限边界由 [#2462](https://dev.azure.com/shengming0923/rss/_workitems/edit/2462) 评估并补充必要机制。AES-GCM 随机 IV 保留。测试注入主密钥 backend，不访问真实用户 Keychain。
+
+产品 Session 可在无凭据时创建和读取。首条输入懒创建 provider 阶段，后续连接选择先等待已接收队列按原阶段完成；切换等待期间拒绝新的普通输入。每个阶段固定连接及版本，一次仅有一个 live worker。原生 resume 与新上下文意图分别操作，原命令重试优先返回原回执，不触发新阶段。原生恢复失败不静默换上下文。
+
+跨上下文发送历史默认关闭；用户选择最近 N 轮或全部已完成的用户/助手稳定文本并确认预览。预览冻结目标版本、水位、命令/消息 ID 与内容哈希；不包含工具、系统指令和原始附件，不静默截断或重发。完整历史持续可读。
+
+应用使用 `test-users` 数据根；当前无历史数据，旧账号、凭据及接口直接删除，不实现历史升级、迁移、兼容读取或清理链路。macOS 的来源验收与适配回归分别记录；Windows/Linux 和企业登录/配置下发仍不在已验证能力内。

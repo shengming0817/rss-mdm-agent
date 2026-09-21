@@ -5,8 +5,8 @@ C19 的 Rust 组合根，连接 C06 能力、C07 唯一授权裁决、C08 批准
 ## 公共路径
 
 - `start(CreateTest/OpenTest)` 显式使用 Test authority；缺可信绑定立即失败。更高 schema 返回 `NewerSchema { found, supported }`，不产生可执行/确认的应用句柄，保留原库。`Production` 在 S1 一律拒绝，不自动创建数据库或降级为测试身份。
-- `submit(request, frozen_plan)` 保持原 request/plan/digest。相同业务请求返回现存状态，不重新准入、消费审批或派发；不同内容冲突。内部日志 ID 由 authority/request/阶段/命令确定性派生，没有第二套请求映射表。
-- `advance(request, command)` 是服务 owner 的显式新尝试，不是提交重放。能力预检 → 可信快照 CAS → 事务内当前能力/C07/C08 → 批准消费、意图、审计、回执原子提交 → 当前取消/预算/能力检查 → 消费一次性派发值。
+- `submit(caller, request, frozen_plan)` 保持原 request/plan/digest。相同业务请求返回现存状态，不重新准入、消费审批或派发；不同内容冲突。内部日志 ID 由 authority/request/阶段/命令确定性派生，没有第二套请求映射表。
+- `advance(caller, request, command)` 是服务 owner 的显式新尝试，不是提交重放。能力预检 → 可信快照 CAS → 事务内当前能力/C07/C08 → 批准消费、意图、审计、回执原子提交 → 当前取消/预算/能力检查 → 消费一次性派发值。
 - `reconcile` 只获取可信 runner 的终止和独立效果事实，不产生新尝试。退出零不等于已核实；丢失 runner 记录保持 Unknown，不根据计划合成结果。首次派发值不能序列化、复制或从数据库恢复。
 - 未确认派发以 `DispatchUnconfirmed` 保存精确 attempt 与闭集原因：能力、时钟、配置、权限、取消、具体预算/有效期、陈旧 revision、runner 不匹配、生命周期变化、runner 拒绝/错误或投递未知。C18 审计在陈旧或拒绝事件上也保留它们；当前 attempt 的原因同时进入安全状态投影。原因不替代终止/效果证据，不退款或触发重派。时钟/存储本身无法支持事务时明确返回错误，不伪造可靠时间或已持久化诊断。
 - `cancel` 仅用 Execute 持久化取消请求；独立服务 owner 的 `reconcile` 统一请求 stop 并以 RunnerFact 记录 `StopReported` 的 Acknowledged/Failed，不等于已终止或已回滚。stop 失败后仍观察终止和效果；诊断写入失败也不跳过观察，并向调用者报告该错误。降级状态仍可读、取消和核对。
@@ -19,7 +19,7 @@ C19 的 Rust 组合根，连接 C06 能力、C07 唯一授权裁决、C08 批准
 
 准入拒绝是持久业务结果：C18 在原回执内生成 `AdmissionStatus`，应用在同一读取事务中恢复生命周期与最近准入投影。首次、重放和重启均返回 Denied/ApprovalRequired，而非瞬时错误后变回 Waiting；批准人、规则与完整裁决仍只在特权审计中。已有 attempt 的事实和新的准入结果分别呈现。
 
-`ExecutionApp` 由服务生命周期持有，调用均同步、有界；UI 窗口或模型调用只拥有请求/响应，不能拥有执行 future。owner 独立调度 `reconcile`，新尝试则使用显式稳定 command ID。S1 没有常驻 OS 服务安装器、通用 worker 框架或任意 exec/PTY 接口。
+`ExecutionApp` 由设备服务生命周期持有，只保存 authority/device 的 `ServiceBinding`；每次用户操作显式传入可信入口构造的 `RequestContext`，不建立按用户分配的服务实例。内部核对以冻结任务的 actor 授权，不依赖当前 UI 用户。`service_tasks` 供设备 owner 跨用户恢复原任务，仍须逐任务 RunnerFact 授权，不重派已接纳任务。调用均同步、有界；UI 窗口或模型调用只拥有请求/响应，不能拥有执行 future。owner 独立调度 `reconcile`，新尝试则使用显式稳定 command ID。S1 没有常驻 OS 服务安装器、通用 worker 框架或任意 exec/PTY 接口。
 
 `RequestId` 只标识任务，`CommandId` 标识任务内一次逻辑调用，两者不能混用。适配器须持久保留命令 ID，网络重试不能生成新值：
 
@@ -62,4 +62,4 @@ cargo run -p execution-app --example execution-app-consumer --locked -- crates/e
 
 ## 授权任务详情
 
-`task_details(request_id)` 以 ReadResult 一次读取 ExecutionRecord，并再次核对当前 authority/actor/device binding，返回同一记录的 `ExecutionStatus` 和 `FrozenPlanSummary`。`status` 与它共享投影；不需要 ReadAudit，也不暴露 parameters、argv、cwd、env、stdin、路径/网络明细或批准记录。摘要包括原 plan ID/digest、目标、运行身份、精确资源/制品/解释器、策略版本、有效期、预算与访问数量。`scripts/check-execution-bindings.mjs` 从 Rust 的序列化 schema 生成桌面类型，同时用真实 SQLite + DeterministicTestRunner 生成 running、approvalRequired、outcomeUnknown、testCompleted、cancelled 五种 fixture；没有手写并行执行 DTO。
+`task_details(caller, request_id)` 以 ReadResult 一次读取 ExecutionRecord，并再次核对当前 authority/actor/device binding，返回同一记录的 `ExecutionStatus` 和 `FrozenPlanSummary`。`status` 与它共享投影；不需要 ReadAudit，也不暴露 parameters、argv、cwd、env、stdin、路径/网络明细或批准记录。摘要包括原 plan ID/digest、目标、运行身份、精确资源/制品/解释器、策略版本、有效期、预算与访问数量。`scripts/check-execution-bindings.mjs` 从 Rust 的序列化 schema 生成桌面类型，同时用真实 SQLite + DeterministicTestRunner 生成 running、approvalRequired、outcomeUnknown、testCompleted、cancelled 五种 fixture；没有手写并行执行 DTO。

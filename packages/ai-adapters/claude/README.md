@@ -11,15 +11,15 @@ import { VerifiedProviderSession } from '@rss-mdm-agent/ai-contract/session';
 const configuration = {
   namespace: { tenantId:'tenant', principalId:'principal', authorityId:'authority', sessionId:'session' },
   provider: 'claude', config: { id: 'tenant-config', revision: '1' },
-  accountRef: 'account-ref', workingDirectory: '/absolute/workspace',
+  workingDirectory: '/absolute/workspace',
   permissions: 'tools_disabled',
 } as const;
 const adapter = createClaudeAdapter({
   resolveConfiguration: async (identity, budget) => {
-    // Composition resolves the exact immutable config/account refs from its secret store.
+    // Composition resolves the exact immutable configuration revision from its secret store.
     const secret = await resolveTrustedSecret(identity, budget);
     return { configuration, configurationDirectory: secret.nativeContextDirectory,
-      apiUrl: secret.apiUrl, credential: { type: 'api_key', value: secret.apiKey } };
+      authentication: { type: 'custom_api', apiUrl: secret.apiUrl, credential: { type: 'api_key', value: secret.apiKey } } };
   },
 });
 const budget = { timeoutMs: 30000, signal: new AbortController().signal };

@@ -1,3 +1,4 @@
+import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { deliveryFingerprint } from "../../packages/ai-contract/dist/index.js";
@@ -21,11 +22,11 @@ async function setup() {
   await dispatchCommand(store, session, "command-1", "submitted");
   session = unwrap(await store.session(session.namespace));
   const event = {
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "event",
     namespace: session.namespace,
     eventId: "delivery-request",
-    generation: session.binding.generation,
+    generation: activeStage(session).binding.generation,
     sequence: session.lastSequence + 1,
     commandId: "command-1",
     body: {
@@ -39,7 +40,7 @@ async function setup() {
     },
   };
   const delivery = {
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "delivery",
     namespace: session.namespace,
     operationId: event.body.operationId,

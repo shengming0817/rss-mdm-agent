@@ -111,12 +111,7 @@ export default defineConfig({plugins:[{name:'forbid-server-imports',enforce:'pre
   service = createAccessService({
     host,
     now: () => 0,
-    sessionOptions: {
-      provider: "fake",
-      config: { id: "cfg", revision: "1" },
-      accountRef: "a",
-      profile: "conversation",
-    },
+    sessionOptions: { connectionId: "cfg" },
   });
   let receive, disconnect;
   const outgoing = [];

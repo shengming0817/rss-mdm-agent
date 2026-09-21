@@ -34,7 +34,7 @@ C01 唯一持有 `LaunchSpec`：精确 interpreter artifact 与 profile revision
 
 `Target` 明确 device/platform 和 device/user scope；`RunAs` 单独描述目标 OS 身份，两者平台须一致。产物/解释器必须携带资源 ID、revision 和 SHA-256；本 crate 不解析、下载或验证文件。cwd/readPaths/writePaths 要求绝对路径，无 NUL 或 `.`/`..` 分量；真实路径、符号链接、OS 能力和 sandbox 强制由平台 owner 验证。argv 是独立参数，禁止 NUL，不拼接 shell。env 是显式映射，无环境继承默认。`EnvironmentKey` 仅接受 1–128 字节的 ASCII `[A-Za-z_][A-Za-z0-9_]*`；Windows 冻结前拒绝 PATH/Path 等大小写冲突，并将单一键统一为大写。macOS/Linux 保留大小写、区分不同键。环境 literal 必须是无 NUL 的字符串，秘密值仍用版本引用。
 
-`Initiator::Human` 必须携带来源 OS device/account/session；`Initiator::Ai` 另带 provider、providerAccount 的 account/config(id/revision) 及 conversation/toolCall。来源账号、产品 actor、目标用户和 runAs 分别记录并独立参与摘要，来源设备或 OS 可以不同于执行目标；策略来源没有虚构的交互登录。审计复用相同发起引用，不存账号凭据或据此授予权限。
+`Initiator::Human` 必须携带来源 OS device/account/session；`Initiator::Ai` 另带 provider、连接 config(id/revision) 及 conversation/toolCall。来源账号、产品 actor、目标用户和 runAs 分别记录并独立参与摘要，来源设备或 OS 可以不同于执行目标；策略来源没有虚构的交互登录。审计复用相同发起引用，不存账号凭据或据此授予权限。
 
 `NetworkAccess::Denied` 表示禁止网络；Allowlist 每项使用 `{scheme, host, port}`，拒绝旧 URL 字符串、空集合和重复的规范端点。scheme 仅有 http/https/tcp/udp，port 必填且为 1–65535，不推断默认端口。`NetworkHost` 复用 url 的 WHATWG/IDNA 解析：DNS 为小写 ASCII 并移除末尾根点，IPv4/带方括号 IPv6 为规范 IP 表示；包括缩写 IPv4 在内的等价主机在冻结前统一。拒绝 userinfo、路径、查询、fragment、zone、通配符、空白及编码分隔符，不作 DNS 查询。runner 必须支持并强制所有 constraints，不能因声明存在就视作隔离已落实。
 

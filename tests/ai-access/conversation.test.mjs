@@ -15,12 +15,7 @@ test("two clients receive the same full command without snapshot hydration and k
   const host = new FakeHost(undefined, { now: () => 0 });
   const service = createAccessService({
     host,
-    sessionOptions: {
-      provider: "fake",
-      accountRef: "a",
-      config: { id: "c", revision: "1" },
-      profile: "conversation",
-    },
+    sessionOptions: { connectionId: "cfg" },
   });
   const clients = [];
   try {
@@ -41,7 +36,7 @@ test("two clients receive the same full command without snapshot hydration and k
       return original(...args);
     };
     const command = {
-      schemaVersion: 4,
+      schemaVersion: 5,
       kind: "command",
       sessionId: id,
       commandId: "prompt-1",
@@ -59,6 +54,9 @@ test("two clients receive the same full command without snapshot hydration and k
       i++
     )
       await new Promise((r) => setTimeout(r, 5));
+    assert.equal(clients[1].getSession(id).connection, "resync_required");
+    await clients[1].restore(id);
+    snapshots = 0;
     assert.deepEqual(
       clients[1].getSession(id).commands["prompt-1"].command,
       command,

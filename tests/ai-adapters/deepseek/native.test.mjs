@@ -1,3 +1,9 @@
+import {
+  startStage,
+  providerStage,
+} from "../../../packages/ai-contract/dist/index.js";
+import { replaceStage } from "../../../packages/ai-contract/dist/index.js";
+import { activeStage } from "../../../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { fingerprint } from "../../../packages/ai-contract/dist/index.js";
@@ -68,12 +74,10 @@ test("real Harness process: true deltas, durable terminal, cold read and native 
   await first.close(budget());
   const before = await files(env.dir);
   assert.ok(Object.keys(before).length);
-  const previous = {
-    ...fixtureSession(),
-    namespace: env.config.namespace,
-    binding: sent.binding,
-    capabilities: admitted.capabilities,
-  };
+  const previous = startStage(
+    { ...fixtureSession(), namespace: env.config.namespace, stages: [] },
+    providerStage(sent.binding, admitted.capabilities),
+  );
   const second = env.port(),
     restored = unwrap(
       await VerifiedProviderSession.restore(
@@ -92,12 +96,13 @@ test("real Harness process: true deltas, durable terminal, cold read and native 
   );
   assert.equal(env.requests.length, 1, "restore must not request a model");
   const record = {
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "commandRecord",
     command: c,
     receipt: {
-      schemaVersion: 4,
+      schemaVersion: 5,
       kind: "receipt",
+      stageId: previous.currentStageId,
       namespace: env.config.namespace,
       commandId: c.commandId,
       contentHash: fingerprint(c, fixtureLimits),
@@ -114,7 +119,7 @@ test("real Harness process: true deltas, durable terminal, cold read and native 
       nativeRequestId: sent.binding.nativeRequestId,
     },
   };
-  const current = { ...previous, binding: restored.binding };
+  const current = replaceStage({ ...previous }, restored.binding, undefined);
   const proof = unwrap(await restored.reconcile(current, record, budget()));
   assert.equal(proof.observation.status, "terminal");
   assert.deepEqual(await files(env.dir), before);
@@ -153,18 +158,16 @@ test("terminal commit -> restore/rebind -> new command without reconciling settl
     await VerifiedProviderSession.open(p, env.config, budget(), env.admission),
   );
   const store = new MemorySessionStore(),
-    initial = {
-      ...fixtureSession(),
-      namespace: env.config.namespace,
-      binding: admitted.binding,
-      capabilities: admitted.capabilities,
-    };
+    initial = startStage(
+      { ...fixtureSession(), namespace: env.config.namespace, stages: [] },
+      providerStage(admitted.binding, admitted.capabilities),
+    );
   unwrap(await store.create(initial));
   const c = command();
   unwrap(await store.accept(acceptance(initial, c)));
   let head = unwrap(await store.session(initial.namespace));
   let record = unwrap(await store.command(head.namespace, c.commandId));
-  const attempt = fixtureAttempt(head.binding, c);
+  const attempt = fixtureAttempt(activeStage(head).binding, c);
   record = { ...record, state: "dispatching", dispatch: attempt };
   unwrap(
     await store.commit(
@@ -191,7 +194,7 @@ test("terminal commit -> restore/rebind -> new command without reconciling settl
     { type: "reconciled", attempt, resolution: "submitted" },
     { type: "dispatch", attempt: record.dispatch },
   ]);
-  committed.session.binding = sent.binding;
+  activeStage(committed.session).binding = sent.binding;
   committed.providerFacts = [dispatched];
   unwrap(await store.commit(committed));
   assert.equal(
@@ -225,7 +228,7 @@ test("terminal commit -> restore/rebind -> new command without reconciling settl
     await store.rebind({
       namespace: head.namespace,
       expectedRevision: previous.revision,
-      expectedGeneration: previous.binding.generation,
+      expectedGeneration: activeStage(previous).binding.generation,
       restored,
       eventId: "settled-rebind",
     }),
@@ -242,9 +245,9 @@ test("terminal commit -> restore/rebind -> new command without reconciling settl
   assert.equal(env.requests.length, 1);
   const c2 = command("after-settled");
   const sent2 = await next.dispatch(
-    head.binding,
+    activeStage(head).binding,
     c2,
-    fixtureAttempt(head.binding, c2),
+    fixtureAttempt(activeStage(head).binding, c2),
     budget(),
   );
   assert.equal(sent2.certainty, "submitted");
@@ -266,18 +269,16 @@ test("real native evidence through restore -> rebind -> reconcile -> atomic stor
       ),
     );
   const store = new MemorySessionStore(),
-    initial = {
-      ...fixtureSession(),
-      namespace: env.config.namespace,
-      binding: admitted.binding,
-      capabilities: admitted.capabilities,
-    };
+    initial = startStage(
+      { ...fixtureSession(), namespace: env.config.namespace, stages: [] },
+      providerStage(admitted.binding, admitted.capabilities),
+    );
   unwrap(await store.create(initial));
   const c = command();
   unwrap(await store.accept(acceptance(initial, c)));
   let head = unwrap(await store.session(initial.namespace));
   let record = unwrap(await store.command(head.namespace, c.commandId));
-  const attempt = fixtureAttempt(head.binding, c),
+  const attempt = fixtureAttempt(activeStage(head).binding, c),
     preparing = { ...record, state: "dispatching", dispatch: attempt };
   unwrap(
     await store.commit(
@@ -287,7 +288,12 @@ test("real native evidence through restore -> rebind -> reconcile -> atomic stor
       ]),
     ),
   );
-  const sent = await p.dispatch(head.binding, c, attempt, budget());
+  const sent = await p.dispatch(
+    activeStage(head).binding,
+    c,
+    attempt,
+    budget(),
+  );
   assert.equal(sent.certainty, "submitted");
   await collect(p, sent.binding);
   head = unwrap(await store.session(head.namespace));
@@ -325,7 +331,7 @@ test("real native evidence through restore -> rebind -> reconcile -> atomic stor
       await store.rebind({
         namespace: head.namespace,
         expectedRevision: previous.revision,
-        expectedGeneration: previous.binding.generation,
+        expectedGeneration: activeStage(previous).binding.generation,
         restored: JSON.parse(JSON.stringify(restored)),
         eventId: "forged",
       })
@@ -336,7 +342,7 @@ test("real native evidence through restore -> rebind -> reconcile -> atomic stor
     await store.rebind({
       namespace: head.namespace,
       expectedRevision: previous.revision,
-      expectedGeneration: previous.binding.generation,
+      expectedGeneration: activeStage(previous).binding.generation,
       restored,
       eventId: "rebind-native",
     }),
@@ -394,12 +400,10 @@ test("request checkpoint precedes HTTP dispatch; crash and synthetic interrupted
   assert.match(atEffect, /user\/message/);
   await p.close(budget());
   const logs = await files(env.dir),
-    previous = {
-      ...fixtureSession(),
-      namespace: env.config.namespace,
-      binding: sent.binding,
-      capabilities: admitted.capabilities,
-    };
+    previous = startStage(
+      { ...fixtureSession(), namespace: env.config.namespace, stages: [] },
+      providerStage(sent.binding, admitted.capabilities),
+    );
   const replacement = env.port(),
     admitted2 = unwrap(
       await VerifiedProviderSession.restore(
@@ -411,12 +415,13 @@ test("request checkpoint precedes HTTP dispatch; crash and synthetic interrupted
       ),
     );
   const record = {
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "commandRecord",
     command: c,
     receipt: {
-      schemaVersion: 4,
+      schemaVersion: 5,
       kind: "receipt",
+      stageId: previous.currentStageId,
       namespace: env.config.namespace,
       commandId: c.commandId,
       contentHash: fingerprint(c, fixtureLimits),
@@ -435,7 +440,7 @@ test("request checkpoint precedes HTTP dispatch; crash and synthetic interrupted
   };
   const proof = unwrap(
     await admitted2.reconcile(
-      { ...previous, binding: admitted2.binding },
+      replaceStage({ ...previous }, admitted2.binding, undefined),
       record,
       budget(),
     ),
@@ -478,12 +483,10 @@ test("fresh admission checkpoints an empty session before immediate close and co
   const restored = unwrap(
     await VerifiedProviderSession.restore(
       second,
-      {
-        ...fixtureSession(),
-        namespace: env.config.namespace,
-        binding: admitted.binding,
-        capabilities: admitted.capabilities,
-      },
+      startStage(
+        { ...fixtureSession(), namespace: env.config.namespace, stages: [] },
+        providerStage(admitted.binding, admitted.capabilities),
+      ),
       env.config,
       budget(),
       env.admission,

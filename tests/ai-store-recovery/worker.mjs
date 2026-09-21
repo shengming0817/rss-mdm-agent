@@ -1,3 +1,4 @@
+import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import { writeSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { openSqliteStore } from "../../packages/ai-store-sqlite/dist/index.js";
@@ -32,7 +33,7 @@ if (!result.ok) {
 }
 const store = result.value,
   initial = fixtureSession();
-initial.capabilities.continuation = "across_processes";
+activeStage(initial).capabilities.continuation = "across_processes";
 if (config.mode === "create") unwrap(await store.create(initial));
 if (config.scenario === "probe") {
   tell({ ok: true, session: unwrap(await store.session(initial.namespace)) });

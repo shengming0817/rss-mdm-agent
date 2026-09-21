@@ -166,7 +166,7 @@ fn origin_accounts_are_required_independent_and_bound_in_plan_and_audit() {
     let mut v = fixture();
     let origin = json!({"kind":"ai","provider":"provider-1","conversation":"conversation-1","toolCall":"call-1",
         "osSession":{"device":"origin-device","account":{"platform":"macos","subject":"uid:501"},"session":"login-1"},
-        "providerAccount":{"account":"provider-user","config":{"id":"profile-1","revision":"1"}}});
+        "config":{"id":"profile-1","revision":"1"}});
     v["request"]["initiator"] = origin.clone();
     let original = freeze(&v);
     for (path, replacement) in [
@@ -174,9 +174,8 @@ fn origin_accounts_are_required_independent_and_bound_in_plan_and_audit() {
         ("/osSession/account/platform", "windows"),
         ("/osSession/account/subject", "different-user"),
         ("/osSession/session", "different-login"),
-        ("/providerAccount/account", "different-provider-user"),
-        ("/providerAccount/config/id", "different-config"),
-        ("/providerAccount/config/revision", "2"),
+        ("/config/id", "different-config"),
+        ("/config/revision", "2"),
         ("/provider", "different-provider"),
         ("/conversation", "different-conversation"),
         ("/toolCall", "different-call"),
@@ -187,7 +186,7 @@ fn origin_accounts_are_required_independent_and_bound_in_plan_and_audit() {
         assert_eq!(changed["request"]["actor"], v["request"]["actor"]);
         assert_eq!(changed["runAs"], v["runAs"]);
     }
-    for key in ["osSession", "providerAccount"] {
+    for key in ["osSession", "config"] {
         let mut missing = v.clone();
         missing["request"]["initiator"]
             .as_object_mut()
@@ -195,9 +194,9 @@ fn origin_accounts_are_required_independent_and_bound_in_plan_and_audit() {
             .remove(key);
         assert!(decode(&missing).is_err());
     }
-    for key in ["account", "config"] {
+    for key in ["id", "revision"] {
         let mut missing = v.clone();
-        missing["request"]["initiator"]["providerAccount"]
+        missing["request"]["initiator"]["config"]
             .as_object_mut()
             .unwrap()
             .remove(key);

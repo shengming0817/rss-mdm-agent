@@ -1,3 +1,4 @@
+import { activeStage } from "../contexts.js";
 import assert from "node:assert/strict";
 import {
   withinBudget,
@@ -9,12 +10,7 @@ import {
 } from "./budget.js";
 import type { HostPort, SessionOptions } from "../ports.js";
 import { fixtureCaller, fixtureCommand, unwrap } from "./conformance.js";
-const options: SessionOptions = {
-  provider: "fake",
-  config: { id: "cfg", revision: "1" },
-  accountRef: "account-1",
-  profile: "conversation",
-};
+const options: SessionOptions = { connectionId: "cfg" };
 const budget = () => ({ timeoutMs: 1000, signal: AbortSignal.timeout(1000) });
 /** Each factory supplies an isolated Host backed by a deterministic, non-terminal
  * provider and clock at zero. The same boundary suite applies to real Host coordinators. */
@@ -31,7 +27,7 @@ export async function runHostConformance(
 async function runHostScenarios(host: HostPort): Promise<void> {
   unwrap(
     host.negotiate({
-      contractVersion: 4,
+      contractVersion: 5,
       acp: 1,
       durableReceipts: true,
       cursorAttach: true,
@@ -41,20 +37,30 @@ async function runHostScenarios(host: HostPort): Promise<void> {
     (
       await host.createSession(
         fixtureCaller,
-        { ...options, profile: "controlled_tools" },
+        { connectionId: "missing-connection" },
         budget(),
       )
     ).ok,
     false,
   );
-  const session = unwrap(
+  let session = unwrap(
     await host.createSession(fixtureCaller, options, budget()),
   );
+  assert.equal(session.currentStageId, undefined);
+  assert.deepEqual(session.stages, []);
   const command = {
     ...fixtureCommand(),
     sessionId: session.namespace.sessionId,
   };
   const receipt = unwrap(await host.submit(fixtureCaller, command, budget()));
+  session = unwrap(
+    await host.snapshotPage(
+      fixtureCaller,
+      command.sessionId,
+      { limit: 256 },
+      budget(),
+    ),
+  ).session;
   assert.deepEqual(
     unwrap(await host.submit(fixtureCaller, command, budget())),
     receipt,
@@ -199,7 +205,7 @@ async function runHostScenarios(host: HostPort): Promise<void> {
         ...cancellation,
         input: {
           ...cancellation.input,
-          generation: session.binding.generation,
+          generation: activeStage(session).binding.generation,
           ...(target.dispatch?.nativeRunId
             ? { nativeRunId: target.dispatch.nativeRunId }
             : {}),

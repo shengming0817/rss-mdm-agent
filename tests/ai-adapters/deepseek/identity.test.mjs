@@ -1,3 +1,5 @@
+import { replaceStage } from "../../../packages/ai-contract/dist/index.js";
+import { activeStage } from "../../../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { DeepSeekAdapter } from "../../../packages/ai-adapters/deepseek/dist/adapter.js";
@@ -71,7 +73,7 @@ test("binding and attempt identity fence before native submission", async () => 
   for (const patch of [
     { generation: "old" },
     { workspaceId: "other" },
-    { accountRef: "other" },
+    { config: { id: "foreign-config", revision: "99" } },
   ])
     assert.equal(
       (await p.dispatch({ ...b, ...patch }, cmd, a, budget())).certainty,
@@ -100,11 +102,11 @@ test("unknown correlation is attempt-specific, survives records and cannot autho
     ...fixtureDispatchedRecord(b, cmd),
     dispatch: { ...a, certainty: "unknown", correlationId: sent.correlationId },
   };
-  const session = {
-    ...fixtureSession(),
-    binding: b,
-    capabilities: admitted.capabilities,
-  };
+  const session = replaceStage(
+    { ...fixtureSession() },
+    b,
+    admitted.capabilities,
+  );
   assert.equal(
     unwrap(
       await admitted.reconcile(
@@ -146,11 +148,11 @@ test("restore rejects tenant, workspace and configuration drift before creating 
       await VerifiedProviderSession.open(original, c, budget()),
     );
   await original.close(budget());
-  const session = {
-    ...fixtureSession(),
-    binding: admitted.binding,
-    capabilities: admitted.capabilities,
-  };
+  const session = replaceStage(
+    { ...fixtureSession() },
+    admitted.binding,
+    admitted.capabilities,
+  );
   for (const changed of [
     { ...c, namespace: { ...c.namespace, tenantId: "other" } },
     { ...c, workingDirectory: "/tmp/other" },
@@ -165,7 +167,10 @@ test("restore rejects tenant, workspace and configuration drift before creating 
   assert.equal(
     (
       await p.resume(
-        { ...session.binding, config: { id: "drift", revision: "2" } },
+        {
+          ...activeStage(session).binding,
+          config: { id: "drift", revision: "2" },
+        },
         c,
         budget(),
       )
@@ -181,6 +186,7 @@ test("late resolver cannot spawn after close; incomplete child cleanup is preser
     resolved = {
       configuration: c,
       persistenceDirectory: "/tmp/dsh",
+      endpointIdentity: "https://custom.example.test/v1",
       apiUrl: "https://custom.example.test/v1",
       apiKey: "fixture",
       model: "deepseek-chat",
@@ -228,15 +234,41 @@ test("late resolver cannot spawn after close; incomplete child cleanup is preser
 
 // Persisted identities must be independent of JSON object member order.
 test("native scope and attempt hashes are canonical", async () => {
-  const { digest } = await import(
+  const { digest, sessionPrefix } = await import(
     "../../../packages/ai-adapters/deepseek/dist/configuration.js"
   );
   assert.equal(
     digest({ a: 1, nested: { b: 2, c: 3 } }),
     digest({ nested: { c: 3, b: 2 }, a: 1 }),
   );
+  const c = configuration(),
+    resolved = {
+      configuration: c,
+      persistenceDirectory: "/tmp/dsh",
+      endpointIdentity: "https://custom.example.test/v1",
+      apiUrl: "http://127.0.0.1:41001/private-route",
+      apiKey: "fixture",
+      model: "deepseek-chat",
+    };
+  assert.equal(
+    sessionPrefix(c, resolved, "composition"),
+    sessionPrefix(
+      c,
+      { ...resolved, apiUrl: "http://127.0.0.1:41002/other-route" },
+      "composition",
+    ),
+    "ephemeral transport routes must not change durable native identity",
+  );
+  assert.notEqual(
+    sessionPrefix(c, resolved, "composition"),
+    sessionPrefix(
+      c,
+      { ...resolved, endpointIdentity: "https://other.example/v1" },
+      "composition",
+    ),
+    "changing the credential target must change durable native identity",
+  );
   const p = scriptedAdapter(),
-    c = configuration(),
     admitted = unwrap(await VerifiedProviderSession.open(p, c, budget()));
   await p.close(budget());
   const reordered = {
@@ -283,6 +315,7 @@ test("raw port admission also requires a complete trusted namespace before spawn
         resolveConfiguration: async () => ({
           configuration: c,
           persistenceDirectory: "/tmp/dsh",
+          endpointIdentity: "https://custom.example.test/v1",
           apiUrl: "https://custom.example.test/v1",
           apiKey: "fixture",
           model: "deepseek-chat",
@@ -311,6 +344,7 @@ test("initialize NativeFault produces one sanitized operation diagnostic", async
       resolveConfiguration: async () => ({
         configuration: c,
         persistenceDirectory: "/tmp/dsh",
+        endpointIdentity: "https://custom.example.test/v1",
         apiUrl: "https://custom.example.test/v1",
         apiKey: "fixture",
         model: "deepseek-chat",
