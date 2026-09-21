@@ -215,9 +215,9 @@ function containRemovalFocus(event: KeyboardEvent) {
     <div>
       <h3>个人 AI 连接（{{ rows.length }}）</h3>
       <p v-if="c.state.connection !== 'connected'" role="status">
-        AI Host 未连接；已加载的连接仅供查看。
+        AI Host 未连接；可先编辑配置，恢复连接后再验证并保存。
       </p>
-      <fieldset :disabled="busy || c.state.connection !== 'connected'">
+      <fieldset :disabled="busy">
         <p>
           连接修改仅影响后续上下文；已接收请求保持原绑定。验证会产生新修订，失败不改变原配置。
         </p>
@@ -254,6 +254,7 @@ function containRemovalFocus(event: KeyboardEvent) {
               ><button
                 :disabled="
                   busy ||
+                  c.state.connection !== 'connected' ||
                   row.status !== 'ready' ||
                   prefs.defaultConnectionId === row.connectionId
                 "
@@ -263,7 +264,7 @@ function containRemovalFocus(event: KeyboardEvent) {
                 设为默认</button
               ><button
                 :aria-label="`删除连接 ${row.name}`"
-                :disabled="busy"
+                :disabled="busy || c.state.connection !== 'connected'"
                 @click="requestRemoval(row, $event)"
               >
                 删除
@@ -362,7 +363,10 @@ function containRemovalFocus(event: KeyboardEvent) {
             }}）？连接将不可再使用，保存的 API 密钥会删除；所有会话历史保留。
           </p>
           <button :disabled="busy" @click="closeRemoval">取消删除</button>
-          <button :disabled="busy" @click="remove(pendingRemoval)">
+          <button
+            :disabled="busy || c.state.connection !== 'connected'"
+            @click="remove(pendingRemoval)"
+          >
             确认删除
           </button>
         </div>
