@@ -125,7 +125,7 @@ it("restart and connection deletion dialogs trap both tab directions, escape and
       t.button("重启 AI Host"),
       t.wrapper.get('button[aria-label="删除连接 Connection"]'),
     ]) {
-      trigger.element.focus();
+      (trigger.element as HTMLElement).focus();
       await trigger.trigger("click");
       await flushPromises();
       const dialog = t.wrapper.get('[role="alertdialog"]');
