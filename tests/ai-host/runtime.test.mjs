@@ -2,7 +2,7 @@ import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import { openFixture, fixtureArtifact } from "./harness.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
@@ -379,9 +379,11 @@ test("question response is timely during a long run and has its own acknowledgem
   assert.equal((await f.record("asking")).state, "running");
 });
 test("slow subscriber is asked to resync while another account remains usable", async (t) => {
-  // Capacity/isolation proof, not a five-second throughput SLO. Concurrent native
-  // and SQLite tests may delay draining; the measured 1 MiB threshold is unchanged.
+  // Pace the real worker through the draining peer so only the paused
+  // subscriber reaches capacity, independently of worker IPC throughput.
   const f = await setup(t);
+  const credit = join(f.directory, "flood-credit");
+  await writeFile(credit, "0");
   const abort = new AbortController(),
     iterator = f.host
       .subscribe(caller, f.session.namespace.sessionId, 0, {
@@ -402,11 +404,17 @@ test("slow subscriber is asked to resync while another account remains usable", 
   const fastReady = fast.next();
   unwrap(await f.host.submit(caller, f.command("flood", "flood"), budget()));
   await Promise.all([ready, fastReady]);
-  let bytes = 0;
+  let bytes = 0,
+    chunks = 0;
+  await writeFile(credit, "1");
   for await (const item of fast) {
     assert.notEqual(item.type, "resync_required", "draining peer remains live");
-    if (item.type === "delta") bytes += Buffer.byteLength(item.text);
-    if (bytes >= 1024 * 1024) break;
+    if (item.type === "delta") {
+      bytes += Buffer.byteLength(item.text);
+      chunks += 1;
+      if (bytes >= 1024 * 1024) break;
+      await writeFile(credit, String(chunks + 1));
+    }
   }
   assert.ok(
     bytes >= 1024 * 1024,
@@ -415,14 +423,15 @@ test("slow subscriber is asked to resync while another account remains usable", 
   assert.equal((await iterator.next()).value.type, "resync_required");
   abort.abort();
   await iterator.return();
+  const other = { ...caller, principalId: "other" };
   const second = unwrap(
-    await openFixture(f.host, f.store, caller, { ...f.options }, budget()),
+    await openFixture(f.host, f.store, other, { ...f.options }, budget()),
   );
   const command = {
     ...f.command("isolated", "quick"),
     sessionId: second.namespace.sessionId,
   };
-  unwrap(await f.host.submit(caller, command, budget()));
+  unwrap(await f.host.submit(other, command, budget()));
   await until(
     async () =>
       unwrap(await f.store.command(second.namespace, "isolated")).state ===

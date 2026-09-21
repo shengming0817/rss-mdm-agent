@@ -1,7 +1,7 @@
 import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fixtureSession } from "../../packages/ai-contract/dist/testing/index.js";
 import { workspaceIdentity } from "../../packages/ai-contract/dist/session.js";
@@ -187,16 +187,26 @@ export async function createProvider({ configuration, tools }) {
       if (command.input.text === "flood") {
         let count = 0;
         const timer = setInterval(() => {
-          if (closed || run.done || count++ >= 500) {
+          if (closed || run.done) {
             clearInterval(timer);
             return;
           }
+          // One chunk per consuming peer acknowledgement: fill the paused
+          // subscriber without overflowing the independent worker IPC queue.
+          const credit = Number(
+            readFileSync(
+              join(configuration.workingDirectory, "flood-credit"),
+              "utf8",
+            ),
+          );
+          if (credit <= count || !Number.isSafeInteger(credit)) return;
+          count += 1;
           emit(run, {
             type: "delta",
             messageId: "flood",
             text: "x".repeat(8192),
           });
-        }, 1);
+        }, 5);
       }
       if (
         command.input.text === "quick" ||
