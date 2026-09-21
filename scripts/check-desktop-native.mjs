@@ -31,12 +31,10 @@ if (
 verifyRuntimeIntegrity(artifact, manifest.runtimeTreeSha256);
 const directory = realpathSync(mkdtempSync(join(tmpdir(), "rss-desktop-"))),
   report = join(directory, "result.json");
-const model = process.env.CODEX_SMOKE_MODEL ?? "gpt-5.5";
 writeFileSync(
   join(directory, "acceptance.json"),
   JSON.stringify({
     directory: process.env.CODEX_HOME ?? join(homedir(), ".codex"),
-    model,
   }),
   { mode: 0o600 },
 );
@@ -205,7 +203,7 @@ try {
           .update(readFileSync(join(artifact, "manifest.json")))
           .digest("hex"),
         authentication: "existing_user_config",
-        model,
+        modelSelection: "official_configuration_default",
         modelFixture: false,
         executor: "S1 deterministic test runner",
         behavior,

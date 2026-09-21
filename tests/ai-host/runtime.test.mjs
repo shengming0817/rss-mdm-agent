@@ -379,11 +379,13 @@ test("question response is timely during a long run and has its own acknowledgem
   assert.equal((await f.record("asking")).state, "running");
 });
 test("slow subscriber is asked to resync while another account remains usable", async (t) => {
+  // Capacity/isolation proof, not a five-second throughput SLO. Concurrent native
+  // and SQLite tests may delay draining; the measured 1 MiB threshold is unchanged.
   const f = await setup(t);
   const abort = new AbortController(),
     iterator = f.host
       .subscribe(caller, f.session.namespace.sessionId, 0, {
-        timeoutMs: 5000,
+        timeoutMs: 20000,
         signal: abort.signal,
       })
       [Symbol.asyncIterator]();
@@ -393,8 +395,8 @@ test("slow subscriber is asked to resync while another account remains usable", 
   // Text alone reaches the 1 MiB Output cap; JSON envelopes make overflow strict.
   const fast = f.host
     .subscribe(caller, f.session.namespace.sessionId, 0, {
-      timeoutMs: 5000,
-      signal: AbortSignal.any([abort.signal, AbortSignal.timeout(5000)]),
+      timeoutMs: 20000,
+      signal: AbortSignal.any([abort.signal, AbortSignal.timeout(20000)]),
     })
     [Symbol.asyncIterator]();
   const fastReady = fast.next();

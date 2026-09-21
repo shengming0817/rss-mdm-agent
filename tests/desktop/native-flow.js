@@ -63,7 +63,6 @@
     for (const [name, value] of [
       ["名称", "Existing Codex"],
       ["配置目录", window.__RSS_CONNECTION_SOURCE__.directory],
-      ["模型", window.__RSS_CONNECTION_SOURCE__.model],
       ["工具", "controlled_tools"],
     ]) {
       const el = [...panel.querySelectorAll("label")]
