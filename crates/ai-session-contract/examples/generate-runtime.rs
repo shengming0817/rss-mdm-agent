@@ -113,10 +113,10 @@ fn singleton_constants(file: &syn::File) -> Vec<syn::ItemImpl> {
         let Some((_, trait_path, _)) = &implementation.trait_ else {
             continue;
         };
-        if !trait_path
+        if trait_path
             .segments
             .last()
-            .is_some_and(|s| s.ident == "TryFrom")
+            .is_none_or(|s| s.ident != "TryFrom")
         {
             continue;
         }
