@@ -93,6 +93,7 @@ export function verifyDevelopmentRuntime(root, directory) {
     ],
     directory,
   );
+  return manifest;
 }
 
 export function ensureDevelopmentRuntime(
@@ -123,10 +124,16 @@ export function ensureDevelopmentRuntime(
     manifest.status === "failed"
   )
     build();
-  verify(root, directory);
+  const verifiedManifest = verify(root, directory);
   if (developmentFingerprint(root) !== fingerprint)
     throw new Error(
       "AI Host source changed during preparation; rerun pnpm dev",
     );
+  if (
+    verifiedManifest?.kind !== "development" ||
+    verifiedManifest.status !== "passed" ||
+    verifiedManifest.developmentFingerprint !== fingerprint
+  )
+    throw new Error("AI Host runtime provenance mismatch; rerun pnpm dev");
   return directory;
 }

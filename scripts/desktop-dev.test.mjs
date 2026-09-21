@@ -96,12 +96,14 @@ test("missing and stale runtimes rebuild, unchanged runtime reuses and validates
         "runtime/manifest.json",
         JSON.stringify({
           kind: "development",
+          status: "passed",
           developmentFingerprint: developmentFingerprint(root),
         }),
       );
     },
     verify() {
       verified++;
+      return JSON.parse(readFileSync(join(directory, "manifest.json"), "utf8"));
     },
   };
   ensureDevelopmentRuntime(root, directory, options);
@@ -242,47 +244,110 @@ test("release stage rejects development, absent and unknown manifest kinds", (t)
   }
 });
 
-test("SIGTERM to the wrapper cleans pnpm and its grandchild process group", async (t) => {
-  const { root, write } = fixture(t);
-  mkdirSync(join(root, "apps/desktop"), { recursive: true });
-  write(
-    "bin/pnpm",
-    `#!${process.execPath}\nimport {spawn} from 'node:child_process';\nimport {writeFileSync} from 'node:fs';\nconst child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});\nwriteFileSync(${JSON.stringify(join(root, "pids.json"))},JSON.stringify([process.pid,child.pid]));\nsetInterval(()=>{},1000);\n`,
-  );
-  chmodSync(join(root, "bin/pnpm"), 0o755);
-  const module = fileURLToPath(
-    new URL("desktop-dev-process.mjs", import.meta.url),
-  );
-  const wrapper = spawn(
-    process.execPath,
-    [
-      "--input-type=module",
-      "-e",
-      `import {runDesktop} from ${JSON.stringify(module)}; process.exitCode=await runDesktop(${JSON.stringify(root)},'/runtime');`,
-    ],
-    {
-      env: { ...process.env, PATH: `${join(root, "bin")}:${process.env.PATH}` },
-      stdio: "pipe",
-    },
-  );
-  t.after(() => wrapper.kill("SIGKILL"));
-  const exit = once(wrapper, "exit");
-  const deadline = Date.now() + 5000;
-  while (!existsSync(join(root, "pids.json"))) {
-    assert.ok(Date.now() < deadline, "child startup");
-    await new Promise((r) => setTimeout(r, 20));
-  }
-  const pids = JSON.parse(readFileSync(join(root, "pids.json")));
-  t.after(() => {
-    for (const pid of pids) {
-      try {
-        process.kill(pid, "SIGKILL");
-      } catch {}
+for (const [signal, expectedCode] of [
+  ["SIGTERM", 143],
+  ["SIGHUP", 129],
+])
+  test(`${signal} to the wrapper cleans pnpm and its grandchild process group`, async (t) => {
+    const { root, write } = fixture(t);
+    mkdirSync(join(root, "apps/desktop"), { recursive: true });
+    write(
+      "bin/pnpm",
+      `#!${process.execPath}\nimport {spawn} from 'node:child_process';\nimport {writeFileSync} from 'node:fs';\nconst child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});\nwriteFileSync(${JSON.stringify(join(root, "pids.json"))},JSON.stringify([process.pid,child.pid]));\nsetInterval(()=>{},1000);\n`,
+    );
+    chmodSync(join(root, "bin/pnpm"), 0o755);
+    const module = fileURLToPath(
+      new URL("desktop-dev-process.mjs", import.meta.url),
+    );
+    const wrapper = spawn(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `import {runDesktop} from ${JSON.stringify(module)}; process.exitCode=await runDesktop(${JSON.stringify(root)},'/runtime');`,
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: `${join(root, "bin")}:${process.env.PATH}`,
+        },
+        stdio: "pipe",
+      },
+    );
+    t.after(() => wrapper.kill("SIGKILL"));
+    const exit = once(wrapper, "exit");
+    const deadline = Date.now() + 5000;
+    while (!existsSync(join(root, "pids.json"))) {
+      assert.ok(Date.now() < deadline, "child startup");
+      await new Promise((r) => setTimeout(r, 20));
     }
+    const pids = JSON.parse(readFileSync(join(root, "pids.json")));
+    t.after(() => {
+      for (const pid of pids) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {}
+      }
+    });
+    wrapper.kill(signal);
+    const [code] = await exit;
+    assert.equal(code, expectedCode);
+    for (const pid of pids)
+      assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
   });
-  wrapper.kill("SIGTERM");
-  const [code] = await exit;
-  assert.equal(code, 143);
-  for (const pid of pids)
-    assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+
+test("reject runtime built from B when source changes A to B to A", (t) => {
+  const { root, write } = fixture(t);
+  const directory = join(root, "runtime");
+  assert.throws(
+    () =>
+      ensureDevelopmentRuntime(root, directory, {
+        build() {
+          write("apps/ai-host/src/index.ts", "B");
+          write(
+            "runtime/manifest.json",
+            JSON.stringify({
+              kind: "development",
+              status: "passed",
+              developmentFingerprint: developmentFingerprint(root),
+            }),
+          );
+          write("apps/ai-host/src/index.ts", "original");
+        },
+        verify() {
+          return JSON.parse(
+            readFileSync(join(directory, "manifest.json"), "utf8"),
+          );
+        },
+      }),
+    /provenance mismatch/,
+  );
+});
+
+test("preparation admits only verified passed development provenance", (t) => {
+  const { root, write } = fixture(t),
+    directory = join(root, "runtime");
+  const valid = {
+    kind: "development",
+    status: "passed",
+    developmentFingerprint: developmentFingerprint(root),
+  };
+  write("runtime/manifest.json", JSON.stringify(valid));
+  for (const malformed of [
+    { ...valid, kind: "release" },
+    { ...valid, status: "failed" },
+    { ...valid, developmentFingerprint: undefined },
+  ])
+    assert.throws(
+      () =>
+        ensureDevelopmentRuntime(root, directory, {
+          build() {
+            assert.fail("cache matches");
+          },
+          verify() {
+            return malformed;
+          },
+        }),
+      /provenance mismatch/,
+    );
 });

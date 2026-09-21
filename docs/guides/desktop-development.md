@@ -12,7 +12,7 @@ pnpm dev                 # 自动准备/复用开发 AI Host 后启动桌面
 pnpm desktop:build       # 干净、已提交源码；自动打包 Node/依赖、stage、构建 .app
 ```
 
-分步诊断可单独执行 `pnpm bundle:ai-host` 和 `pnpm stage:desktop-runtime`。`pnpm dev` 使用独立的 `.local-ci-runs/ai-host-dev-runtime` 和 development manifest，允许未提交源码；首次启动自动构建，后续按 Host、adapter、contract、相关 workspace 包、Rust execution schema 与绑定检查、lock、固定 Node 和打包脚本的内容摘要判断是否重建。普通 UI 修改不触发重建。每次启动校验运行包完整性与真实 CLI 生命周期，准备失败会非零退出，不启动 Tauri。修改 Host 后重新运行 `pnpm dev`。
+分步诊断可单独执行 `pnpm bundle:ai-host` 和 `pnpm stage:desktop-runtime`。`pnpm dev` 使用独立的 `.local-ci-runs/ai-host-dev-runtime` 和 development manifest，允许未提交源码；首次启动自动构建，后续按 Host、adapter、contract、相关 workspace 包、Rust execution schema 与绑定检查、lock、固定 Node 和打包脚本的内容摘要判断是否重建。普通 UI 修改不触发重建。每次启动校验运行包完整性、manifest 与本轮源码摘要一致性及真实 CLI 生命周期，准备失败会非零退出，不启动 Tauri。修改 Host 后重新运行 `pnpm dev`。终端断开（SIGHUP）、中断（SIGINT）与停止（SIGTERM）均转发到独立开发进程组并有界清理。
 
 高级诊断可用 `RSS_AI_HOST_RUNTIME=/absolute/verified/ai-host-runtime pnpm dev` 显式选择并验证运行包。缺依赖先运行 `pnpm install --frozen-lockfile`；构建失败查看命令输出；运行包损坏时删除开发 runtime 目录后重试。准备进程异常中止留下锁时，确认没有其他准备进程后删除 `.cache/desktop-dev.lock`。开发包不进入发布 stage；release 忽略该 override，仍要求干净、已提交源码和固定候选摘要。
 

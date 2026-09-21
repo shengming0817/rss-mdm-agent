@@ -33,6 +33,7 @@ export function runDesktop(root, directory, args = []) {
       clearInterval(timer);
       process.off("SIGINT", interrupt);
       process.off("SIGTERM", terminate);
+      process.off("SIGHUP", hangup);
       resolve(exitCode);
     };
     const stop = (signal) => {
@@ -50,17 +51,27 @@ export function runDesktop(root, directory, args = []) {
     };
     const interrupt = () => stop("SIGINT");
     const terminate = () => stop("SIGTERM");
+    const hangup = () => stop("SIGHUP");
     process.on("SIGINT", interrupt);
     process.on("SIGTERM", terminate);
+    process.on("SIGHUP", hangup);
     child.once("error", (error) => {
       clearInterval(timer);
       process.off("SIGINT", interrupt);
       process.off("SIGTERM", terminate);
+      process.off("SIGHUP", hangup);
       reject(error);
     });
     child.once("exit", (code, signal) => {
       exitCode =
-        code ?? (signal === "SIGINT" ? 130 : signal === "SIGTERM" ? 143 : 1);
+        code ??
+        (signal === "SIGINT"
+          ? 130
+          : signal === "SIGTERM"
+            ? 143
+            : signal === "SIGHUP"
+              ? 129
+              : 1);
       stop("SIGTERM");
     });
   });
