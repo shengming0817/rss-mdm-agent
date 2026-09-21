@@ -776,13 +776,17 @@ export class SessionHost implements HostPort {
           if (sent.certainty === "not_sent")
             return { ok: false, error: sent.error };
           if (sent.certainty !== "submitted") return fail("unavailable");
-          let completed = false;
+          let completed = false,
+            responseObserved = false;
           let failure: import("@rss-mdm-agent/ai-contract").Failure = {
             code: "unavailable",
             retry: "never",
           };
           for await (const item of worker.observe(sent.binding, b)) {
-            if (item.type !== "event") continue;
+            if (item.type !== "event" || item.commandId !== command.commandId)
+              continue;
+            if (item.body.type === "text" && item.body.text.trim())
+              responseObserved = true;
             if (item.body.type === "error") failure = item.body.failure;
             if (item.body.type === "terminal") {
               completed = item.body.outcome === "completed";
@@ -798,7 +802,8 @@ export class SessionHost implements HostPort {
             }
           }
           probing = false;
-          if (!completed) return { ok: false, error: failure };
+          if (!completed || !responseObserved)
+            return { ok: false, error: failure };
           if (
             connection.profile === "controlled_tools" &&
             (!toolObserved || toolViolation)

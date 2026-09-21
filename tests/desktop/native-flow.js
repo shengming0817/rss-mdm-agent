@@ -78,7 +78,6 @@
     }
     await click("验证并保存");
     await wait(() => panel.querySelector("li")?.textContent.includes("可用"));
-    await click("AI 助手");
   };
   const snapshot = () =>
     window.__TAURI_INTERNALS__.invoke("self_service_snapshot", {
@@ -163,7 +162,7 @@
       setStage("ai_connect");
       await click("AI 助手");
       await saveExistingConnection();
-      await click("新建会话");
+      await click("新建对话并前往 AI");
       const input = await wait(() => {
         const e = document.querySelector(".assistant textarea");
         return visible(e) && e;
@@ -269,7 +268,7 @@
         throw new Error("foreign AI state visible");
       // Both users intentionally choose the same real CLI login, with independent catalogs/history.
       await saveExistingConnection();
-      await click("新建会话");
+      await click("新建对话并前往 AI");
       const draft = await wait(() =>
         document.querySelector(".assistant textarea"),
       );
@@ -310,6 +309,37 @@
         document.querySelectorAll(".assistant-sessions li").length !== 1
       )
         throw new Error("catalog or sessions not isolated");
+      setStage("same_user_reconnect");
+      const beforeReconnect = await details("ai-s1-smoke");
+      const selectedBefore = document.querySelector(
+        '.assistant-sessions button[aria-current="true"]',
+      ).textContent;
+      const commandsBefore = document.querySelectorAll(
+        ".assistant .command-state",
+      ).length;
+      await click("设置");
+      await click("重新连接");
+      await click("AI 助手");
+      await wait(() =>
+        document
+          .querySelector(".assistant-facts")
+          ?.textContent.includes("连接：已连接"),
+      );
+      await wait(() =>
+        [...document.querySelectorAll(".assistant .message")].some((e) =>
+          e.textContent.includes("RSS_S1_DONE"),
+        ),
+      );
+      if (
+        document.querySelector(
+          '.assistant-sessions button[aria-current="true"]',
+        ).textContent !== selectedBefore ||
+        document.querySelectorAll(".assistant .command-state").length !==
+          commandsBefore ||
+        JSON.stringify(await details("ai-s1-smoke")) !==
+          JSON.stringify(beforeReconnect)
+      )
+        throw new Error("reconnect changed facts");
       setStage("host_restart");
       const oldHost = await invoke("ai_host_status");
       const oldTask = await details("ai-s1-smoke");
@@ -370,6 +400,7 @@
         oldGenerationRejected: true,
         originalTaskContinued: true,
         originalHistoryRestored: true,
+        sameUserReconnected: true,
         hostRestarted: true,
         restartPreservedTask: true,
         newModelSessionAfterRestart: true,

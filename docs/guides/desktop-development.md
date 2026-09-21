@@ -55,7 +55,7 @@ make ci CI_BASE=origin/develop
 
 无凭据发布资源验收使用 `pnpm bundle:ai-host && pnpm check:desktop-bundle`，要求干净、已提交源码。入口构建实际 `.app`，在隔离 HOME 下启动生产 main，禁用 runtime override，核验完整 runtime 树与 Native 输出的 health 握手结果；结果写入 `.local-ci-runs/desktop-bundle.json`。此 smoke 只证明启动与资源定位，使用隔离进程组清理，不作为优雅退出证据。
 
-真实 macOS arm64 桌面验收单独运行 `pnpm check:desktop-native`，消费同一提交的固定 runtime 和现有 Codex 配置。实际 WebView 验收覆盖首次配置、关闭/重开、用户隔离、授权历史、Host-only 重启、设备任务事实保持，以及重启后的真实新对话。结果写入 `.local-ci-runs/desktop-native.json`，绑定源码、lock、配置模式和 runtime manifest；不属于无凭据 CI，不证明真实 OS 效果。
+真实 macOS arm64 桌面验收单独运行 `pnpm bundle:ai-host && pnpm check:desktop-native`，消费同一提交的固定 runtime 和现有 Codex 配置。实际 WebView 验收覆盖首次配置、关闭/重开、用户隔离、授权历史、Host-only 重启、设备任务事实保持，以及重启后的真实新对话。结果写入 `.local-ci-runs/desktop-native.json`，绑定源码、lock、配置模式和 runtime manifest；不属于无凭据 CI，不证明真实 OS 效果。
 
 真实验收默认明确选择 `gpt-5.5`，可通过 `CODEX_SMOKE_MODEL` 指定其他已支持直接工具调用的模型；复用已有用户登录，不修改用户配置。需要 code-mode host 的模型不能据此宣称支持当前受控工具模式。
 

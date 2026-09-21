@@ -12,7 +12,6 @@ import { nativePort } from "./self-service/native";
 import preview from "./self-service/preview";
 import Settings from "./settings/Settings.vue";
 import type { HostSettings } from "./settings/controller";
-import { nativeTestMode } from "./test-users";
 import "./self-service/style.css";
 import "./assistant/style.css";
 const props = defineProps<{
@@ -31,7 +30,6 @@ const assistant = createAssistant(
   props.assistantServices ?? nativeAssistant(),
   newIdentity,
 );
-let disposed = false;
 watch(
   () => props.page,
   (id) => {
@@ -59,19 +57,10 @@ watch(
     ),
   { immediate: true },
 );
-onMounted(async () => {
-  await assistant.connect();
-  if (
-    !disposed &&
-    nativeTestMode &&
-    !assistant.state.connections.some((c) => c.status === "ready")
-  )
-    emit("navigate", "settings");
+onMounted(() => {
+  void assistant.connect();
 });
-onBeforeUnmount(() => {
-  disposed = true;
-  assistant.dispose();
-});
+onBeforeUnmount(assistant.dispose);
 </script>
 <template>
   <SelfService

@@ -28,6 +28,7 @@ struct Evidence {
     path: PathBuf,
     finished: AtomicBool,
     source: serde_json::Value,
+    secret: String,
 }
 
 #[cfg(target_os = "macos")]
@@ -125,11 +126,30 @@ fn window(app: &tauri::AppHandle, evidence: Arc<Evidence>) -> tauri::Result<()> 
             let Some(raw) = title.strip_prefix("RSS_CUSTOM_CONNECTION:") else {
                 return;
             };
-            let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) else {
+            let Ok(mut value) = serde_json::from_str::<serde_json::Value>(raw) else {
                 return;
             };
             if value["step"] == "progress" || events.finished.swap(true, Ordering::AcqRel) {
                 return;
+            }
+            let outputs = value.as_object_mut().unwrap().remove("observedOutputs");
+            let outputs_clean = outputs
+                .as_ref()
+                .is_some_and(|v| !v.to_string().contains(&events.secret));
+            let runtime = window.state::<DesktopRuntime>();
+            let diagnostics =
+                rss_mdm_desktop::composition::diagnostics::snapshot(&runtime.status()).unwrap();
+            let diagnostics_clean = !String::from_utf8_lossy(&diagnostics).contains(&events.secret);
+            let exported = rss_mdm_desktop::composition::diagnostics::save(
+                &events.path.with_file_name("diagnostics.json"),
+                &diagnostics,
+            )
+            .is_ok();
+            value["secretOutputsClean"] =
+                serde_json::json!(outputs_clean && diagnostics_clean && exported);
+            if !outputs_clean || !diagnostics_clean || !exported {
+                value["step"] = serde_json::json!("failed");
+                value["stage"] = serde_json::json!("secret_outputs");
             }
             let recorded = std::fs::write(
                 &events.path,
@@ -173,6 +193,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let evidence = Arc::new(Evidence {
         path: report,
+        secret: secret.clone(),
         finished: AtomicBool::new(false),
         source: serde_json::from_slice(&std::fs::read(root.join("acceptance.json"))?)?,
     });

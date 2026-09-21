@@ -409,3 +409,50 @@ mod tests {
             .unwrap();
     }
 }
+
+#[cfg(test)]
+mod incarnation_tests {
+    use super::super::credentials::{KeyBackend, KeyUnavailable};
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+    struct Slow {
+        calls: Arc<AtomicUsize>,
+    }
+    impl KeyBackend for Slow {
+        fn read(&self) -> std::result::Result<Option<Vec<u8>>, KeyUnavailable> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            std::thread::sleep(Duration::from_millis(300));
+            Ok(None)
+        }
+        fn create(&self, _: &[u8]) -> std::result::Result<(), KeyUnavailable> {
+            Err(KeyUnavailable)
+        }
+    }
+    #[tokio::test]
+    async fn a_cancelled_incarnation_retains_the_shared_key_permit_until_the_native_call_returns() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let master = Arc::new(MasterKey::new(Slow {
+            calls: calls.clone(),
+        }));
+        let (a, pa) = UnixStream::pair().unwrap();
+        let first = Control::start(a, master.clone());
+        let mut wa = FramedWrite::new(pa, LinesCodec::new());
+        wa.send(json!({"schemaVersion":5,"kind":"nativeCall","id":1,"method":"masterKey","data":{"create":false}}).to_string()).await.unwrap();
+        for _ in 0..100 {
+            if calls.load(Ordering::SeqCst) == 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+        first.close();
+        let (b, pb) = UnixStream::pair().unwrap();
+        let second = Control::start(b, master.clone());
+        let mut wb = FramedWrite::new(pb, LinesCodec::new());
+        wb.send(json!({"schemaVersion":5,"kind":"nativeCall","id":2,"method":"masterKey","data":{"create":false}}).to_string()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(master.permit.available_permits(), 0);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        first.shutdown().await;
+        second.shutdown().await;
+    }
+}

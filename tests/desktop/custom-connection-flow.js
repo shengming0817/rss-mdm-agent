@@ -1,6 +1,18 @@
 // Injected only by custom-connection-acceptance into the real bundled WebView.
 (async () => {
   let stage = "load";
+  const ipcOutputs = [];
+  const originalInvoke = window.__TAURI_INTERNALS__.invoke;
+  window.__TAURI_INTERNALS__.invoke = async (...args) => {
+    try {
+      const value = await originalInvoke(...args);
+      if (args[0] === "save_connection") ipcOutputs.push(value);
+      return value;
+    } catch (error) {
+      if (args[0] === "save_connection") ipcOutputs.push(error);
+      throw error;
+    }
+  };
   const report = (value) => {
     document.title = "RSS_CUSTOM_CONNECTION:" + JSON.stringify(value);
   };
@@ -90,6 +102,11 @@
       secureEntry: true,
       modelProbe: "local_openai_compatible_protocol",
       deleted: true,
+      observedOutputs: {
+        dom: document.documentElement.outerHTML,
+        ipc: ipcOutputs,
+        status: await originalInvoke("ai_host_status"),
+      },
     });
   } catch (error) {
     report({ step: "failed", stage, reason: "acceptance_flow_failed" });

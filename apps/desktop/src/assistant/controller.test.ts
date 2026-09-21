@@ -762,3 +762,26 @@ it("retains same-user history, draft and unknown command through a failed reconn
   expect(t.c.state.pending.size).toBe(0);
   expect(t.c.state.drafts.size).toBe(0);
 });
+
+it("a single failed history restore leaves the healthy connection usable without resending", async () => {
+  const t = setup();
+  await t.c.connect();
+  await t.c.select("session-1");
+  t.c.draft.value = "keep";
+  vi.mocked(t.client.restore).mockRejectedValueOnce(
+    new ClientError("context_unavailable"),
+  );
+  await t.c.connect();
+  expect(t.c.state.connection).toBe("connected");
+  expect(t.c.runtime.value).toBeDefined();
+  expect(t.c.state.errors.get("session-1")).toBe("context_unavailable");
+  expect(t.c.state.views.get("session-1")?.connection).toBe("detached");
+  expect(t.c.draft.value).toBe("keep");
+  expect(t.c.canSend.value).toBe(false);
+  expect(t.submit).not.toHaveBeenCalled();
+  await t.c.refreshConnections();
+  expect(t.c.state.connections).toHaveLength(1);
+  await t.c.create();
+  expect(t.client.createSession).toHaveBeenCalledTimes(1);
+  t.c.dispose();
+});

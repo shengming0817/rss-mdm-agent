@@ -95,6 +95,7 @@ try {
       "oldGenerationRejected",
       "originalTaskContinued",
       "originalHistoryRestored",
+      "sameUserReconnected",
       "hostRestarted",
       "restartPreservedTask",
       "newModelSessionAfterRestart",

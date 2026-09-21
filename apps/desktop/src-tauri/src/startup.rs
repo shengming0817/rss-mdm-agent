@@ -55,9 +55,12 @@ mod tests {
 
     #[test]
     fn diagnostic_never_exports_raw_error_or_cause() {
-        let message = diagnostic(&StartupError(std::io::Error::other("WebView unavailable")));
+        let message = diagnostic(&StartupError(std::io::Error::other(
+            "CANARY_SECRET /Users/private/account/token",
+        )));
         assert!(!message.contains("window initialization"));
-        assert!(!message.contains("WebView unavailable"));
+        assert!(!message.contains("CANARY_SECRET"));
+        assert!(!message.contains("/Users/private"));
         assert!(message.contains("启动失败"));
     }
 }

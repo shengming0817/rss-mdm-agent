@@ -426,14 +426,18 @@ export function createAssistant(
       const selected = state.selected || catalog.preferences.selectedSessionId;
       if (selected) {
         const id = selected;
-        const next = await connected.runtime.restore(id);
-        if (current === epoch) {
-          state.selected = id;
-          state.views.set(id, next);
-          state.sessions.set(id, {
-            namespace: next.namespace,
-            status: next.sessionStatus,
-          });
+        try {
+          const next = await connected.runtime.restore(id);
+          if (current === epoch) {
+            state.selected = id;
+            state.views.set(id, next);
+            state.sessions.set(id, {
+              namespace: next.namespace,
+              status: next.sessionStatus,
+            });
+          }
+        } catch (error) {
+          if (current === epoch) state.errors.set(id, fail(error));
         }
       }
       if (current === epoch && !owner.signal.aborted)

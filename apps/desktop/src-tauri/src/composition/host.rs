@@ -8,7 +8,10 @@ use serde_json::{json, Value};
 use std::{
     os::fd::AsRawFd,
     path::Path,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     time::Duration,
 };
 use tokio::{process::Command, task::JoinHandle};
@@ -89,11 +92,15 @@ pub enum Phase {
     Stopped,
     Failed(Fault),
 }
+enum Waiter {
+    Pending(JoinHandle<bool>),
+    Reaped(bool),
+}
 pub struct Process {
     pub control: Arc<Control>,
     pub stop: CancellationToken,
     phase: Arc<Mutex<Phase>>,
-    task: tokio::sync::Mutex<Option<JoinHandle<bool>>>,
+    task: tokio::sync::Mutex<Waiter>,
 }
 impl Process {
     pub fn phase(&self) -> Phase {
@@ -108,17 +115,21 @@ impl Process {
         self.phase() == Phase::Ready
     }
     pub async fn close(&self) -> bool {
-        let mut task = self.task.lock().await;
-        if let Some(task) = task.take() {
-            *self.phase.lock().unwrap() = Phase::Stopping;
-            self.stop.cancel();
-            let reaped = task.await.unwrap_or(false);
-            if !reaped {
-                *self.phase.lock().unwrap() = Phase::Failed(Fault::Cleanup);
-            }
-            return reaped;
+        let mut waiter = self.task.lock().await;
+        if let Waiter::Reaped(result) = *waiter {
+            return result;
         }
-        !matches!(self.phase(), Phase::Failed(Fault::Cleanup))
+        let Waiter::Pending(task) = std::mem::replace(&mut *waiter, Waiter::Reaped(false)) else {
+            unreachable!()
+        };
+        *self.phase.lock().unwrap() = Phase::Stopping;
+        self.stop.cancel();
+        let reaped = task.await.unwrap_or(false);
+        if !reaped {
+            *self.phase.lock().unwrap() = Phase::Failed(Fault::Cleanup);
+        }
+        *waiter = Waiter::Reaped(reaped);
+        reaped
     }
 }
 fn preflight(artifact: &Path) -> Result<(), Fault> {
@@ -133,6 +144,27 @@ fn preflight(artifact: &Path) -> Result<(), Fault> {
     })?;
     if !meta.is_file() || meta.file_type().is_symlink() || meta.permissions().mode() & 0o111 == 0 {
         return Err(Fault::Invalid);
+    }
+    let root = artifact.canonicalize().map_err(|_| Fault::Invalid)?;
+    for file in [
+        "bin/node",
+        "package.json",
+        "pnpm-lock.yaml",
+        "node_modules/@rss-mdm-agent/ai-host-app/dist/cli.js",
+        "node_modules/@rss-mdm-agent/ai-host/dist/index.js",
+        "node_modules/@rss-mdm-agent/ai-contract/dist/index.js",
+        "node_modules/@rss-mdm-agent/ai-store-sqlite/dist/index.js",
+        "node_modules/@rss-mdm-agent/ai-access/dist/index.js",
+    ] {
+        let path = artifact.join(file);
+        let resolved = path.canonicalize().map_err(|_| Fault::Invalid)?;
+        let metadata = std::fs::metadata(&resolved).map_err(|_| Fault::Invalid)?;
+        if !resolved.starts_with(&root)
+            || !metadata.is_file()
+            || (file == "bin/node" && metadata.permissions().mode() & 0o111 == 0)
+        {
+            return Err(Fault::Invalid);
+        }
     }
     let bytes = std::fs::read(artifact.join("manifest.json")).map_err(|_| Fault::Invalid)?;
     if bytes.len() > 1024 * 1024 {
@@ -150,6 +182,12 @@ fn preflight(artifact: &Path) -> Result<(), Fault> {
         || !cfg!(all(target_os = "macos", target_arch = "aarch64"))
     {
         return Err(Fault::Version);
+    }
+    if !manifest["runtimeTreeSha256"]
+        .as_str()
+        .is_some_and(|value| value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit()))
+    {
+        return Err(Fault::Invalid);
     }
     Ok(())
 }
@@ -213,10 +251,15 @@ pub async fn launch(
     let diagnostics = child.stderr.take().expect("piped stderr");
     let phase = Arc::new(Mutex::new(Phase::Starting));
     let diagnostic_phase = phase.clone();
+    let cleanup = Arc::new(AtomicBool::new(false));
+    let reported_cleanup = cleanup.clone();
     let diagnostic_task = tokio::spawn(async move {
         let mut lines = FramedRead::new(diagnostics, LinesCodec::new_with_max_length(256));
         while let Some(line) = lines.next().await {
             if let Ok(line) = line {
+                if line == "AI Host cleanup incomplete" {
+                    reported_cleanup.store(true, Ordering::Release);
+                }
                 if let Some(fault) = startup_fault(&line) {
                     let mut phase = diagnostic_phase.lock().unwrap();
                     if matches!(
@@ -252,16 +295,16 @@ pub async fn launch(
     let waiter_phase = phase.clone();
     let waiter_control = control.clone();
     let task = tokio::spawn(async move {
-        let result = tokio::select! {
-            result = child.wait() => result,
+        let (result, forced) = tokio::select! {
+            result = child.wait() => (result, false),
             _ = waiter_stop.cancelled() => {
                 if let Some(pid) = child.id() {
                     // SAFETY: the Child is still owned and has not been reaped; this is not a persisted PID.
                     unsafe { libc::kill(pid as i32, libc::SIGTERM); }
                 }
                 match tokio::time::timeout(Duration::from_secs(8), child.wait()).await {
-                    Ok(result) => result,
-                    Err(_) => { let _ = child.start_kill(); child.wait().await }
+                    Ok(result) => (result, false),
+                    Err(_) => { let _ = child.start_kill(); (child.wait().await, true) }
                 }
             }
         };
@@ -297,7 +340,14 @@ pub async fn launch(
                     | Fault::Start
             )
         ) {
-            *phase = if result.is_err() {
+            *phase = if result.is_err()
+                || forced
+                || cleanup.load(Ordering::Acquire)
+                || (requested
+                    && result
+                        .as_ref()
+                        .is_ok_and(|status| status.code().is_some_and(|code| code != 0)))
+            {
                 Phase::Failed(Fault::Cleanup)
             } else if requested {
                 Phase::Stopped
@@ -311,7 +361,7 @@ pub async fn launch(
         control,
         stop,
         phase,
-        task: tokio::sync::Mutex::new(Some(task)),
+        task: tokio::sync::Mutex::new(Waiter::Pending(task)),
     });
     let health = process.control.health().await;
     if health.is_ok() {
@@ -330,4 +380,26 @@ pub async fn launch(
         }
     }
     Ok(process)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn unconfirmed_reaping_cannot_be_reclassified_as_stopped_on_a_later_close() {
+        let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
+        let control = Control::start(stream, Arc::new(MasterKey::default()));
+        let task = tokio::spawn(std::future::pending::<bool>());
+        task.abort();
+        let process = Process {
+            control,
+            stop: CancellationToken::new(),
+            phase: Arc::new(Mutex::new(Phase::Ready)),
+            task: tokio::sync::Mutex::new(Waiter::Pending(task)),
+        };
+        assert!(!process.close().await);
+        assert!(!process.close().await);
+        assert_eq!(process.phase(), Phase::Failed(Fault::Cleanup));
+        process.control.shutdown().await;
+    }
 }

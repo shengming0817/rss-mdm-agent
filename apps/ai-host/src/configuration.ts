@@ -10,6 +10,9 @@ export interface LocalConfiguration {
 export class ConfigurationError extends Error {
   constructor(
     readonly code:
+      | "storage_corrupt"
+      | "startup_failed"
+      | "unsupported_version"
       | "configuration_file"
       | "configuration_invalid"
       | "authentication_required"

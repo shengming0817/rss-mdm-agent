@@ -33,16 +33,19 @@ enum Host {
     Running(Arc<Process>),
     Failed(Fault),
 }
+struct HostState {
+    generation: u64,
+    owner: Host,
+}
 pub struct DesktopRuntime {
     pub execution: ExecutionHandle,
     pub users: Arc<std::sync::Mutex<super::users::Users>>,
     switching: Mutex<()>,
-    host: std::sync::Mutex<Host>,
+    host: std::sync::Mutex<HostState>,
     root: PathBuf,
     artifact: PathBuf,
     source: ai_session_contract::HostStatusSource,
     master: Arc<MasterKey>,
-    generation: AtomicU64,
     recent: std::sync::Mutex<Vec<(u64, Fault, ai_session_contract::HostDiagnostic)>>,
     connections: Mutex<BTreeMap<String, Arc<Connection>>>,
     next: AtomicU64,
@@ -104,12 +107,14 @@ impl DesktopRuntime {
             execution,
             users,
             switching: Mutex::new(()),
-            host: std::sync::Mutex::new(Host::Stopped),
+            host: std::sync::Mutex::new(HostState {
+                generation: 0,
+                owner: Host::Stopped,
+            }),
             root: root.into(),
             artifact: artifact.into(),
             source,
             master: Arc::new(MasterKey::new(backend)),
-            generation: AtomicU64::new(0),
             recent: std::sync::Mutex::new(Vec::new()),
             connections: Mutex::new(BTreeMap::new()),
             next: AtomicU64::new(1),
@@ -117,19 +122,25 @@ impl DesktopRuntime {
         runtime.restart(0).await;
         Ok(runtime)
     }
+    fn epoch(&self) -> u64 {
+        self.host.lock().unwrap().generation
+    }
     fn process(&self) -> Option<Arc<Process>> {
-        match &*self.host.lock().unwrap() {
+        match &self.host.lock().unwrap().owner {
             Host::Running(process) => Some(process.clone()),
             _ => None,
         }
     }
     pub fn status(&self) -> ai_session_contract::HostStatus {
-        let generation = self.generation.load(Ordering::Acquire);
-        let phase = match &*self.host.lock().unwrap() {
-            Host::Closed | Host::Stopped => Phase::Stopped,
-            Host::Starting => Phase::Starting,
-            Host::Failed(fault) => Phase::Failed(*fault),
-            Host::Running(process) => process.phase(),
+        let (generation, phase) = {
+            let state = self.host.lock().unwrap();
+            let phase = match &state.owner {
+                Host::Closed | Host::Stopped => Phase::Stopped,
+                Host::Starting => Phase::Starting,
+                Host::Failed(fault) => Phase::Failed(*fault),
+                Host::Running(process) => process.phase(),
+            };
+            (state.generation, phase)
         };
         let (phase, fault) = match phase {
             Phase::Starting => ("starting", None),
@@ -163,19 +174,22 @@ impl DesktopRuntime {
     /// expected is the UI's observed incarnation. Concurrent clicks cannot start another owner.
     pub async fn restart(&self, expected: u64) -> ai_session_contract::HostStatus {
         let _switch = self.switching.lock().await;
-        if matches!(*self.host.lock().unwrap(), Host::Closed)
-            || expected != self.generation.load(Ordering::Acquire)
-        {
+        if matches!(self.host.lock().unwrap().owner, Host::Closed) || expected != self.epoch() {
             return self.status();
         }
         self.detach_views().await;
         if let Some(process) = self.process() {
-            if !process.close().await {
+            let reaped = process.close().await;
+            self.status(); // Record cleanup evidence before replacing the incarnation.
+            if !reaped {
                 return self.status();
             }
         }
-        self.generation.fetch_add(1, Ordering::AcqRel);
-        *self.host.lock().unwrap() = Host::Starting;
+        {
+            let mut state = self.host.lock().unwrap();
+            state.generation += 1;
+            state.owner = Host::Starting;
+        }
         let next = match configuration(&self.root).map_err(|_| Fault::Configuration) {
             Ok(configuration) => match host::launch(
                 &self.artifact,
@@ -190,7 +204,7 @@ impl DesktopRuntime {
             },
             Err(_) => Host::Failed(Fault::Configuration),
         };
-        *self.host.lock().unwrap() = next;
+        self.host.lock().unwrap().owner = next;
         self.status()
     }
     pub fn current(&self, generation: &str) -> ui::Result<ai_session_contract::UserContext> {
@@ -214,11 +228,19 @@ impl DesktopRuntime {
         };
         self.detach_views().await;
         if let Some(previous) = previous {
-            if let Some(process) = self.process().filter(|p| p.ready()) {
-                process
-                    .control
-                    .suspend(&previous, Duration::from_secs(15))
-                    .await?;
+            if let Some(process) = self.process() {
+                if process.ready() {
+                    process
+                        .control
+                        .suspend(&previous, Duration::from_secs(15))
+                        .await?;
+                } else {
+                    let reaped = process.close().await;
+                    self.status();
+                    if !reaped {
+                        return Err(unavailable());
+                    }
+                }
             }
         }
         self.users.lock().map_err(|_| unavailable())?.commit(page)
@@ -297,7 +319,7 @@ impl DesktopRuntime {
         secret: Option<String>,
     ) -> ui::Result<Value> {
         self.current(generation)?;
-        let epoch = self.generation.load(Ordering::Acquire);
+        let epoch = self.epoch();
         let process = self
             .process()
             .filter(|p| p.ready())
@@ -313,7 +335,7 @@ impl DesktopRuntime {
             )
             .await?;
         self.current(generation)?;
-        if epoch != self.generation.load(Ordering::Acquire) {
+        if epoch != self.epoch() {
             return Err(unavailable());
         }
         Ok(result)
@@ -346,7 +368,7 @@ impl DesktopRuntime {
         if let Some(process) = self.process() {
             process.close().await;
         }
-        *self.host.lock().unwrap() = Host::Closed;
+        self.host.lock().unwrap().owner = Host::Closed;
         self.execution.close().await;
     }
 }
@@ -386,7 +408,7 @@ mod tests {
         let (first, second) =
             tokio::join!(runtime.restart(generation), runtime.restart(generation));
         assert_eq!(first.generation.0, second.generation.0);
-        assert_eq!(runtime.generation.load(Ordering::Acquire), generation + 1);
+        assert_eq!(runtime.epoch(), generation + 1);
         assert!(runtime.connect(user.generation.as_str()).await.is_err());
         runtime.shutdown().await;
         std::fs::remove_dir_all(root).unwrap();
@@ -395,15 +417,35 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let artifact = root.join("artifact");
         private_directory(&artifact.join("bin")).unwrap();
-        std::fs::write(artifact.join("manifest.json"),r#"{"status":"passed","desktopProtocol":1,"contractVersion":5,"verification":{"platform":"darwin","arch":"arm64"}}"#).unwrap();
+        std::fs::write(artifact.join("manifest.json"),r#"{"status":"passed","desktopProtocol":1,"contractVersion":5,"verification":{"platform":"darwin","arch":"arm64"},"runtimeTreeSha256":"0000000000000000000000000000000000000000000000000000000000000000"}"#).unwrap();
+        for name in [
+            "bin/node",
+            "package.json",
+            "pnpm-lock.yaml",
+            "node_modules/@rss-mdm-agent/ai-host-app/dist/cli.js",
+            "node_modules/@rss-mdm-agent/ai-host/dist/index.js",
+            "node_modules/@rss-mdm-agent/ai-contract/dist/index.js",
+            "node_modules/@rss-mdm-agent/ai-store-sqlite/dist/index.js",
+            "node_modules/@rss-mdm-agent/ai-access/dist/index.js",
+        ] {
+            let path = artifact.join(name);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, b"fixture").unwrap();
+            if name == "bin/node" {
+                std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+            }
+        }
         let script = format!(
             r#"#!/usr/bin/python3
-import socket,json,os,sys,time
+import socket,json,os,sys,time,signal
+if {mode:?} == 'ignore_term': signal.signal(signal.SIGTERM, signal.SIG_IGN)
 if {mode:?} == 'exit': sys.exit(7)
 stream=socket.socket(fileno=3).makefile('rwb',buffering=0)
 for line in stream:
     frame=json.loads(line)
     if frame['kind'] != 'nativeCall': continue
+    if frame['method']=='health' and {mode:?} == 'delayed': time.sleep(0.4)
+    if frame['method']=='health' and {mode:?} == 'no_health': time.sleep(60)
     value={{'schemaVersion':5,'kind':'hostHealth','ready':True,'protocol':1}} if frame['method']=='health' else True
     stream.write((json.dumps({{'schemaVersion':5,'kind':'nativeReply','id':frame['id'],'ok':True,'value':value}})+'\n').encode())
 "#
@@ -434,7 +476,7 @@ for line in stream:
         let context = runtime.select_user("Alice").await.unwrap();
         let connection = runtime.connect(context.generation.as_str()).await.unwrap();
         let old = runtime.process().unwrap();
-        let generation = runtime.generation.load(Ordering::Acquire);
+        let generation = runtime.epoch();
         let (a, b) = tokio::join!(runtime.restart(generation), runtime.restart(generation));
         assert_eq!(a.generation.0, b.generation.0);
         assert_eq!(a.phase, ai_session_contract::HostStatusPhase::Ready);
@@ -476,13 +518,163 @@ for line in stream:
             "host_exited"
         );
         std::fs::write(artifact.join("manifest.json"), r#"{"desktopProtocol":0}"#).unwrap();
-        let generation = runtime.generation.load(Ordering::Acquire);
+        let generation = runtime.epoch();
         let failed = runtime.restart(generation).await;
         assert_eq!(
             serde_json::to_value(failed).unwrap()["diagnostic"]["code"],
             "unsupported_version"
         );
         runtime.shutdown().await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[tokio::test]
+    async fn starting_snapshot_is_coherent_and_no_channel_opens_before_health() {
+        let root = std::env::temp_dir().join(format!("rss-starting-{}", uuid::Uuid::new_v4()));
+        private_directory(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        let artifact = root.join("artifact");
+        let runtime = Arc::new(
+            DesktopRuntime::start_with_key_backend(
+                &root,
+                &artifact,
+                ai_session_contract::HostStatusSource::DevelopmentOverride,
+                NoKey,
+            )
+            .await
+            .unwrap(),
+        );
+        let user = runtime.select_user("Alice").await.unwrap();
+        let epoch = runtime.epoch();
+        fixture(&root, "delayed");
+        let r = runtime.clone();
+        let restart = tokio::spawn(async move { r.restart(epoch).await });
+        for _ in 0..100 {
+            if runtime.status().phase == ai_session_contract::HostStatusPhase::Starting {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+        let status = runtime.status();
+        assert_eq!(status.generation.0 as u64, epoch + 1);
+        assert_eq!(status.phase, ai_session_contract::HostStatusPhase::Starting);
+        assert!(tokio::time::timeout(
+            Duration::from_millis(40),
+            runtime.connect(user.generation.as_str())
+        )
+        .await
+        .is_err());
+        assert_eq!(
+            restart.await.unwrap().phase,
+            ai_session_contract::HostStatusPhase::Ready
+        );
+        runtime.shutdown().await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[tokio::test]
+    async fn a_lost_control_pipe_fences_user_switch_until_forced_exit_and_keeps_cleanup_evidence() {
+        let root = std::env::temp_dir().join(format!("rss-forced-{}", uuid::Uuid::new_v4()));
+        private_directory(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        let artifact = fixture(&root, "ignore_term");
+        let runtime = Arc::new(
+            DesktopRuntime::start_with_key_backend(
+                &root,
+                &artifact,
+                ai_session_contract::HostStatusSource::DevelopmentOverride,
+                NoKey,
+            )
+            .await
+            .unwrap(),
+        );
+        let alice = runtime.select_user("Alice").await.unwrap();
+        runtime.process().unwrap().control.close();
+        let r = runtime.clone();
+        let switching = tokio::spawn(async move { r.select_user("Bob").await });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(!switching.is_finished());
+        assert_eq!(
+            runtime
+                .users
+                .lock()
+                .unwrap()
+                .current()
+                .unwrap()
+                .generation
+                .as_str(),
+            alice.generation.as_str()
+        );
+        let bob = tokio::time::timeout(Duration::from_secs(12), switching)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_ne!(bob.generation.as_str(), alice.generation.as_str());
+        assert_eq!(
+            serde_json::to_value(runtime.status()).unwrap()["diagnostic"]["code"],
+            "cleanup_incomplete"
+        );
+        fixture(&root, "ready");
+        let status = runtime.restart(runtime.epoch()).await;
+        assert_eq!(status.phase, ai_session_contract::HostStatusPhase::Ready);
+        assert!(status
+            .recent
+            .iter()
+            .any(|d| d.code.to_string() == "cleanup_incomplete"));
+        runtime.shutdown().await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[tokio::test]
+    async fn absent_health_is_bounded_and_never_ready() {
+        let root = std::env::temp_dir().join(format!("rss-timeout-{}", uuid::Uuid::new_v4()));
+        private_directory(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        let artifact = fixture(&root, "no_health");
+        let runtime = tokio::time::timeout(
+            Duration::from_secs(20),
+            DesktopRuntime::start_with_key_backend(
+                &root,
+                &artifact,
+                ai_session_contract::HostStatusSource::DevelopmentOverride,
+                NoKey,
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(runtime.status()).unwrap()["diagnostic"]["code"],
+            "readiness_timeout"
+        );
+        runtime.shutdown().await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[tokio::test]
+    async fn preflight_rejects_missing_node_cli_and_dependencies_without_launching() {
+        let root = std::env::temp_dir().join(format!("rss-preflight-{}", uuid::Uuid::new_v4()));
+        private_directory(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        for file in [
+            "bin/node",
+            "node_modules/@rss-mdm-agent/ai-host-app/dist/cli.js",
+            "node_modules/@rss-mdm-agent/ai-store-sqlite/dist/index.js",
+        ] {
+            let artifact = fixture(&root, "ready");
+            std::fs::remove_file(artifact.join(file)).unwrap();
+            let runtime = DesktopRuntime::start_with_key_backend(
+                &root,
+                &artifact,
+                ai_session_contract::HostStatusSource::DevelopmentOverride,
+                NoKey,
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                serde_json::to_value(runtime.status()).unwrap()["diagnostic"]["code"],
+                "runtime_invalid"
+            );
+            assert!(runtime.process().is_none());
+            runtime.shutdown().await;
+        }
         std::fs::remove_dir_all(root).unwrap();
     }
 }

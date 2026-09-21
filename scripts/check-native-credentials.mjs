@@ -49,6 +49,8 @@ const model = "local-deepseek-protocol-fixture";
 let requests = 0;
 let authenticatedRequests = 0;
 let validProbeBodies = 0;
+let outputLeak = false,
+  outputTail = "";
 let behavior;
 let exit;
 let failure;
@@ -134,8 +136,15 @@ try {
   await new Promise((resolve, reject) => {
     const child = spawn(executable, [directory, artifact, resultPath], {
       cwd: repository,
-      stdio: ["ignore", "ignore", "ignore"],
+      stdio: ["ignore", "pipe", "pipe"],
     });
+    const scanOutput = (chunk) => {
+      const text = outputTail + chunk.toString();
+      outputLeak ||= text.includes(syntheticSecret);
+      outputTail = text.slice(-syntheticSecret.length);
+    };
+    child.stdout.on("data", scanOutput);
+    child.stderr.on("data", scanOutput);
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
       reject(new Error("native process timeout"));
@@ -157,6 +166,13 @@ try {
     throw new Error(`native_process_failed_at_${behavior.stage ?? "unknown"}`);
   assert.equal(behavior.step, "passed");
   assert.equal(behavior.secureEntry, true);
+  assert.equal(behavior.secretOutputsClean, true);
+  assert.equal(outputLeak, false);
+  for (const file of [resultPath, join(directory, "diagnostics.json")])
+    assert.equal(
+      readFileSync(file).includes(Buffer.from(syntheticSecret)),
+      false,
+    );
   assert.equal(behavior.deleted, true);
   assert.equal(behavior.modelProbe, "local_openai_compatible_protocol");
   assert.equal(requests, 1);
@@ -206,6 +222,8 @@ try {
     authenticatedRequests === 1 &&
     validProbeBodies === 1 &&
     ciphertextCleared &&
+    !outputLeak &&
+    behavior?.secretOutputsClean === true &&
     sameCommittedSource(start, end);
   mkdirSync(join(repository, ".local-ci-runs"), { recursive: true });
   writeFileSync(
@@ -232,6 +250,8 @@ try {
         mode: "production AppKit secure entry/private channel/Host/encrypted SQLite; injected test master key; local OpenAI-compatible protocol",
         cloudAuthentication: false,
         syntheticCredential: true,
+        secretOutputsClean:
+          !outputLeak && behavior?.secretOutputsClean === true,
         fixture: {
           requests,
           authenticatedRequests,

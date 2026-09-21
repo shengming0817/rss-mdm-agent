@@ -913,6 +913,7 @@ test("user fence settles persistent offline queues across pages and propagates d
 test("verification preserves definite failures and never calls unknown acceptance an authentication failure", async (t) => {
   for (const [scenario, expected] of [
     ["unknown", "unavailable"],
+    ["empty_probe", "unavailable"],
     ["verification_auth", "authentication_required"],
     ["verification_model", "unsupported_capability"],
   ]) {
@@ -958,7 +959,11 @@ test("verification preserves definite failures and never calls unknown acceptanc
 });
 
 test("controlled connection verification requires the dedicated harmless tool call", async () => {
-  for (const toolWorks of [false, true]) {
+  for (const [toolWorks, empty] of [
+    [false, false],
+    [true, false],
+    [true, true],
+  ]) {
     const root = await mkdtemp(join(tmpdir(), "rss-tool-probe-"));
     const store = unwrap(
       openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
@@ -977,7 +982,7 @@ test("controlled connection verification requires the dedicated harmless tool ca
             permissions: "host_mediated",
           },
           artifact: new URL(
-            `./provider.mjs?scenario=${toolWorks ? "tool_probe" : "no_tool_probe"}`,
+            `./provider.mjs?scenario=${empty ? "empty_tool_probe" : toolWorks ? "tool_probe" : "no_tool_probe"}`,
             import.meta.url,
           ).href,
           admission: {
@@ -998,9 +1003,16 @@ test("controlled connection verification requires the dedicated harmless tool ca
         null,
         budget(),
       );
-      assert.equal(result.ok, toolWorks);
-      if (!toolWorks) assert.equal(result.error.code, "unsupported_capability");
-      assert.equal((await store.connection(caller, "probe")).ok, toolWorks);
+      assert.equal(result.ok, toolWorks && !empty);
+      if (!result.ok)
+        assert.equal(
+          result.error.code,
+          empty ? "unavailable" : "unsupported_capability",
+        );
+      assert.equal(
+        (await store.connection(caller, "probe")).ok,
+        toolWorks && !empty,
+      );
     } finally {
       await host.close(budget());
       await rm(root, { recursive: true, force: true });

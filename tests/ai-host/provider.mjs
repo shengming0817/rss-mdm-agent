@@ -129,7 +129,7 @@ export async function createProvider({ configuration, tools }) {
           binding,
           acknowledgement: { type: "steer" },
         };
-      if (scenario.startsWith("verification_"))
+      if (["verification_auth", "verification_model"].includes(scenario))
         return {
           certainty: "not_sent",
           error: {
@@ -175,7 +175,10 @@ export async function createProvider({ configuration, tools }) {
         void tools
           .propose(
             {
-              name: scenario === "tool_probe" ? "connection_probe" : "fixture",
+              name:
+                scenario === "tool_probe" || scenario === "empty_tool_probe"
+                  ? "connection_probe"
+                  : "fixture",
               arguments: {},
             },
             { timeoutMs: 1000, signal: new AbortController().signal },
@@ -199,13 +202,16 @@ export async function createProvider({ configuration, tools }) {
         command.input.text === "quick" ||
         scenario === "tool_probe" ||
         scenario === "no_tool_probe" ||
+        scenario === "empty_tool_probe" ||
+        scenario === "empty_probe" ||
         command.input.text === "Reply with OK only. Do not use any tools."
       )
         setTimeout(() => {
-          emit(run, {
-            type: "event",
-            body: { type: "text", messageId: "message", text: "completed" },
-          });
+          if (!["empty_probe", "empty_tool_probe"].includes(scenario))
+            emit(run, {
+              type: "event",
+              body: { type: "text", messageId: "message", text: "completed" },
+            });
           if (
             scenario === "probe_reject" &&
             command.input.text === "Reply with OK only. Do not use any tools."
