@@ -49,8 +49,7 @@ const model = "local-deepseek-protocol-fixture";
 let requests = 0;
 let authenticatedRequests = 0;
 let validProbeBodies = 0;
-let outputLeak = false,
-  outputTail = "";
+let outputLeak = false;
 let behavior;
 let exit;
 let failure;
@@ -138,13 +137,14 @@ try {
       cwd: repository,
       stdio: ["ignore", "pipe", "pipe"],
     });
-    const scanOutput = (chunk) => {
-      const text = outputTail + chunk.toString();
-      outputLeak ||= text.includes(syntheticSecret);
-      outputTail = text.slice(-syntheticSecret.length);
-    };
-    child.stdout.on("data", scanOutput);
-    child.stderr.on("data", scanOutput);
+    for (const stream of [child.stdout, child.stderr]) {
+      let tail = "";
+      stream.on("data", (chunk) => {
+        const text = tail + chunk.toString();
+        outputLeak ||= text.includes(syntheticSecret);
+        tail = text.slice(-syntheticSecret.length);
+      });
+    }
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
       reject(new Error("native process timeout"));
