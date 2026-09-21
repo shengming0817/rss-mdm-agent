@@ -113,6 +113,8 @@ try {
     JSON.stringify(
       {
         status: deliverable ? "passed" : "failed",
+        desktopProtocol: 1,
+        contractVersion: 5,
         behaviorPassed,
         source: { start, end },
         node: { version, target, archiveSha256: sha256 },

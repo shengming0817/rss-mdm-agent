@@ -135,6 +135,7 @@ async function setup(t, overrides = {}, admit = true) {
                     forkedFromId: thread.id,
                   }
                 : thread,
+            model: resolved.model ?? "fixture",
             approvalPolicy: "on-request",
             sandbox: { type: "readOnly", networkAccess: false },
             environments: [],
@@ -966,4 +967,25 @@ test("Host owns fork admission, child cleanup and the three explicit ports", asy
     );
     assert.equal(retry.certainty, "not_created");
   }
+});
+
+test("explicit models cannot silently fall back and actual returned identity is required", async (t) => {
+  const f = await setup(t, {}, false);
+  f.fault((method) =>
+    method === "thread/start"
+      ? { thread: f.thread, model: "another-model" }
+      : undefined,
+  );
+  const result = await VerifiedProviderSession.open(
+    f.adapter,
+    f.configuration,
+    budget(),
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, "unsupported_capability");
+  assert.equal(
+    f.calls.find((c) => c.method === "thread/start").params
+      .allowProviderModelFallback,
+    false,
+  );
 });

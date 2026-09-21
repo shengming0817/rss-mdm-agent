@@ -15,7 +15,7 @@ pnpm desktop:build       # 干净、已提交源码；自动打包 Node/依赖�
 
 普通 Cargo/schema 检查使用基础 Tauri 配置，不依赖运行包；发布构建显式合并 `tauri.bundle.conf.json`。打包脚本先校验固定 Node archive、源码与部署 lock、真实 SDK 生命周期，再将通过的当前候选复制到被忽略的 resources 目录。macOS bundle 通过 `bundle.macOS.files` 整目录复制 runtime，以保留 pnpm 依赖符号链接；普通 resources 文件枚举会漏掉这些链接，不能用于该 runtime。发布应用只从自身资源目录启动 AI Host。缺失或不可用的 AI 不影响 Rust 任务读取，也不会降级为虚构对话。
 
-第一次启动在应用数据目录 `test-users` 创建私有用户注册表、Host 路径配置、AI 库与设备 journal。用户先选择测试名称，再在助手中添加连接；无凭据也能创建空产品会话和读取已有历史。旧 `s1/client.json` 不读取、不迁移。连接来源、版本和认证约束见 [AI Host](../../apps/ai-host/README.md)。
+第一次启动在应用数据目录 `test-users` 创建私有用户注册表、Host 路径配置、AI 库与设备 journal。用户在底部“设置”选择测试名称，再添加个人连接并验证保存；无凭据也能创建空产品会话和读取已有历史。旧 `s1/client.json` 不读取、不迁移。连接来源、版本和认证约束见 [AI Host](../../apps/ai-host/README.md)。
 
 切换测试用户会卸载旧工作区，原生 IPC 检查捕获的 generation；迟到返回不能进入新用户视图。原有设备任务的 actor 不变，模型队列被取消；取消未确认时保留未知结果。重选已有名称保持稳定 ID，重启恢复上次选择并换新 generation。
 
@@ -35,7 +35,7 @@ Host 在发送工具操作前原子保存 delivery intent；回复丢失后按�
 
 ## 边界和验证
 
-`self-service/native.ts`、`assistant/native.ts` 和 `test-users.ts` 只调用各自固定字面量 IPC。WebView 无网络、文件、进程、凭据或 SDK 入口；capability 只授权本地 main 窗口。原生进程、socket 和 SQLite 只在 Rust composition 层。CSP、导航拒绝、IPC ACL、源码 AST 守卫分别验证，源码守卫不是 OS 沙箱证明。fixture 自己持有测试 Human/OS session 构造，源码守卫拒绝 fixture 反向依赖 composition。
+`self-service/native.ts`、`assistant/native.ts`、`settings/native.ts` 和 `test-users.ts` 只调用各自固定字面量 IPC。WebView 无网络、文件、进程、凭据或 SDK 入口；capability 只授权本地 main 窗口。原生进程、socket 和 SQLite 只在 Rust composition 层。CSP、导航拒绝、IPC ACL、源码 AST 守卫分别验证，源码守卫不是 OS 沙箱证明。fixture 自己持有测试 Human/OS session 构造，源码守卫拒绝 fixture 反向依赖 composition。
 
 Rust 命令、task details 和 MCP schema 生成前端/模型声明，无手写第二份 wire：
 
@@ -53,6 +53,22 @@ make ci CI_BASE=origin/develop
 
 来源：Tauri `crates/tauri/src/app.rs` / `webview/webview_window.rs` @ 2.11.2；runtime-wry `src/lib.rs` @ 2.11.4（最后窗口销毁与 ExitRequested）；rmcp `src/model/meta.rs` @ 3.4.0（request metadata）；MCP TypeScript SDK `client/index.ts` / `shared/stdio.ts` @ 1.30.0。
 
-真实 macOS arm64 桌面验收使用 `pnpm bundle:ai-host && pnpm check:desktop-native`，要求源码已提交且工作树干净。入口构建实际 WebView 并消费固定 runtime，使用现有 Codex 用户登录；生产 `main` 与验收 carrier 共用 `composition::lifecycle` 的销毁、退出与 Reopen 处理，确定性测试覆盖关闭后重开、关闭后明确退出及非零退出码。另构建实际 `.app` 并在隔离 HOME 下启动生产入口，禁用 runtime 环境覆盖，校验 bundle 内的完整 runtime 树及 Host socket、AI SQLite 与未选择用户的原生注册表就绪；此 smoke 只证明启动与资源定位，清理使用隔离进程组终止，不能作为优雅退出证据。结果写入 `.local-ci-runs/desktop-native.json`，绑定源码、lock 和 runtime manifest。每次使用全新私有目录，窗口销毁后重新连接同一后端，再从可信任务详情批准测试计划。该验收不属于无凭证 CI，也不证明真实 OS 效果。
+无凭据发布资源验收使用 `pnpm bundle:ai-host && pnpm check:desktop-bundle`，要求干净、已提交源码。入口构建实际 `.app`，在隔离 HOME 下启动生产 main，禁用 runtime override，核验完整 runtime 树与 Native 输出的 health 握手结果；结果写入 `.local-ci-runs/desktop-bundle.json`。此 smoke 只证明启动与资源定位，使用隔离进程组清理，不作为优雅退出证据。
+
+真实 macOS arm64 桌面验收单独运行 `pnpm check:desktop-native`，消费同一提交的固定 runtime 和现有 Codex 配置。实际 WebView 验收覆盖首次配置、关闭/重开、用户隔离、授权历史、Host-only 重启、设备任务事实保持，以及重启后的真实新对话。结果写入 `.local-ci-runs/desktop-native.json`，绑定源码、lock、配置模式和 runtime manifest；不属于无凭据 CI，不证明真实 OS 效果。
 
 真实验收默认明确选择 `gpt-5.5`，可通过 `CODEX_SMOKE_MODEL` 指定其他已支持直接工具调用的模型；复用已有用户登录，不修改用户配置。需要 code-mode host 的模型不能据此宣称支持当前受控工具模式。
+
+## 设置、诊断和 AI 恢复
+
+设置入口始终可达，未选择用户或 AI Host 不可用时仍可查看诊断与关于。首次路径是用户名、连接验证保存、新建对话；“稍后配置”保留空产品会话和自助入口。常规与通知仅说明已有行为，不提供无底层服务的开关。
+
+Native 长期持有用户、一个设备执行服务和应用主密钥访问 owner；Host 进程可以单独替换。启动前核验关键文件、平台和契约版本，配置、存储和恢复完成后的私有 health 应答才表示 ready。运行包不匹配直接拒绝；release 构建忽略开发 override。关闭/回收旧 Host 后才启动新代，worker fence 未解决时禁止重复 worker。
+
+“重新连接”只建立视图通道并核对历史，不重启 Host，不重发请求。“重启 AI Host”有明确提示，模型请求可能中断，设备任务继续；它不调用设备服务关闭，也不记录虚假的任务完成或取消。Host 不可用时仅显示当前用户已加载的只读历史；未加载历史在恢复后按原接口分页读取，切用户清空全部旧视图。不存在 Native SQLite 历史旁路。
+
+连接操作区分配置、认证、能力、限额、拒绝、取消和未确认结果。仅明确认证错误提示更新凭据；普通失败不伪装为认证失效。普通对话运行真实文本探针，受控用途还要求所选模型调用验证专用无副作用工具；探针不接设备执行服务。只有验证及进程退出确认后才事务保存。Codex 禁止模型 fallback，并核对返回模型；已有配置的默认模型由官方工具解析。
+
+诊断只包含闭集阶段/错误码、时间、运行版本和资源来源类别，最多保留 64 条故障记录。通过原生保存对话框导出，不包含凭据、原始错误、端点、个人路径、对话或数据库内容。缺包按开发/发布来源分别提示构建或重装，旧进程回收未确认则保留阻断。
+
+设计参考：Microsoft [设置指南](https://learn.microsoft.com/en-us/windows/apps/design/app-settings/guidelines-for-app-settings) 与 [WinUI Gallery SettingsPage.xaml](https://github.com/microsoft/WinUI-Gallery/blob/main/WinUIGallery/Pages/SettingsPage.xaml)。Vue/Tauri 保持现有技术栈。

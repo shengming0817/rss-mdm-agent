@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { onBeforeUnmount, onMounted, ref, nextTick } from "vue";
+import { AppShell, NavigationList } from "@rss-mdm-agent/ui";
 import Workspace from "./Workspace.vue";
 import type { AssistantServices } from "./assistant/controller";
 import {
@@ -10,28 +11,37 @@ import {
   selectionMessage,
 } from "./test-users";
 import type { TestUser } from "@rss-mdm-agent/ai-contract";
+import Settings from "./settings/Settings.vue";
+import TestUsers from "./settings/TestUsers.vue";
+import { nativeHost } from "./settings/native";
+import { createHostSettings } from "./settings/controller";
 defineProps<{ assistantServices?: AssistantServices }>();
 const users = ref<TestUser[]>([]),
-  name = ref(""),
   loading = ref(nativeTestMode),
   message = ref("");
+const page = ref(nativeTestMode ? "settings" : "home"),
+  attention = ref(0),
+  mode = ref(nativeTestMode ? "本地测试模式" : "浏览器只读预览");
+const content = ref<HTMLElement>();
+const host = createHostSettings(nativeHost());
+let polling: ReturnType<typeof setInterval> | undefined;
 async function refresh() {
   try {
-    const page = await loadTestUsers();
-    users.value = page.users;
+    users.value = (await loadTestUsers()).users;
   } catch {
     message.value = "无法读取测试用户记录";
   } finally {
     loading.value = false;
   }
 }
-async function select(value = name.value) {
-  if (loading.value || !value.trim()) return;
+async function select(name: string) {
+  if (loading.value || !name.trim()) return;
   loading.value = true;
   message.value = "";
   try {
-    await selectTestUser(value);
-    name.value = "";
+    await selectTestUser(name);
+    attention.value = 0;
+    page.value = "settings";
     await refresh();
   } catch (error) {
     message.value = selectionMessage(error);
@@ -39,76 +49,95 @@ async function select(value = name.value) {
     loading.value = false;
   }
 }
+async function navigate(id: string) {
+  page.value = id;
+  await nextTick();
+  if (id === "settings")
+    content.value?.querySelector<HTMLElement>(".settings h1")?.focus();
+}
 onMounted(() => {
   if (nativeTestMode) void refresh();
+  if (host.available) {
+    void host.refresh();
+    polling = setInterval(() => void host.refresh(), 2000);
+  }
+});
+onBeforeUnmount(() => {
+  if (polling) clearInterval(polling);
+  host.dispose();
 });
 </script>
 <template>
-  <section v-if="nativeTestMode" class="test-users" aria-label="测试用户">
-    <strong>测试模式</strong>
-    <small
-      >切换用户会取消当前用户的模型请求并记录结果、清空未发送草稿；设备任务仍属于原用户并继续。</small
+  <AppShell>
+    <template #header
+      ><div class="brand">
+        <div>
+          <span class="eyebrow">RSS / WORKSPACE</span
+          ><strong>自助服务中心</strong>
+        </div>
+        <span class="mode-label">{{ mode }}</span>
+      </div></template
     >
-    <span>{{
-      currentUser
-        ? `当前用户：${currentUser.user.displayName}`
-        : "请先选择或创建测试用户"
-    }}</span>
-    <select
-      aria-label="已有测试用户"
-      :disabled="loading"
-      :value="currentUser?.user.userId ?? ''"
-      @change="
-        select(
-          users.find(
-            (user) =>
-              user.userId === ($event.target as HTMLSelectElement).value,
-          )?.displayName ?? '',
-        )
-      "
+    <template #navigation
+      ><NavigationList
+        :items="[
+          { id: 'home', label: '首页' },
+          { id: 'software', label: '软件中心' },
+          { id: 'tools', label: '工具中心' },
+          { id: 'tasks', label: '请求与任务' },
+          {
+            id: 'assistant',
+            label: attention ? `AI 助手（待回应 ${attention}）` : 'AI 助手',
+          },
+          { id: 'help', label: '设备与帮助' },
+        ]"
+        :active-id="page"
+        @select="navigate"
+    /></template>
+    <template #navigation-footer
+      ><NavigationList
+        :items="[{ id: 'settings', label: '设置' }]"
+        :active-id="page"
+        @select="navigate"
+    /></template>
+    <div ref="content" :inert="loading ? true : undefined">
+      <Workspace
+        v-if="!nativeTestMode || currentUser"
+        :key="currentUser?.generation ?? 'browser-preview'"
+        :assistant-services="assistantServices"
+        :page="page"
+        :host="host"
+        @navigate="navigate"
+        @attention="attention = $event"
+        @mode="mode = $event"
+      >
+        <template #user
+          ><TestUsers
+            :users="users"
+            :current="currentUser"
+            :native="nativeTestMode"
+            :loading="loading"
+            :message="message"
+            @select="select"
+        /></template>
+      </Workspace>
+      <Settings v-else :host="host"
+        ><template #user
+          ><TestUsers
+            :users="users"
+            :current="currentUser"
+            :native="nativeTestMode"
+            :loading="loading"
+            :message="message"
+            @select="select" /></template
+      ></Settings>
+    </div>
+    <p v-if="loading" role="status">正在读取或切换测试用户…</p>
+    <template #status
+      ><div class="footer-note">
+        <span>S1 测试服务 · 无系统副作用 · 独立测试批准</span
+        ><span>AI 对话与设备执行分别核对</span>
+      </div></template
     >
-      <option value="" disabled>选择测试用户</option>
-      <option v-for="user in users" :key="user.userId" :value="user.userId">
-        {{ user.displayName }}
-      </option>
-    </select>
-    <form @submit.prevent="select()">
-      <input
-        v-model="name"
-        aria-label="测试用户名"
-        placeholder="新建或切换测试用户"
-        :disabled="loading"
-      /><button :disabled="loading || !name.trim()">进入</button>
-    </form>
-    <span v-if="loading" role="status">正在切换并清理旧视图…</span
-    ><span v-if="message" role="alert">{{ message }}</span>
-  </section>
-  <div :inert="loading ? true : undefined">
-    <Workspace
-      v-if="!nativeTestMode || currentUser"
-      :key="currentUser?.generation ?? 'browser-preview'"
-      :assistant-services="assistantServices"
-    />
-  </div>
+  </AppShell>
 </template>
-<style scoped>
-.test-users {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 12px;
-  padding: 12px 24px;
-  background: #eef5f1;
-  border-bottom: 1px solid #d4e4dc;
-}
-.test-users form {
-  display: flex;
-  gap: 8px;
-}
-.test-users input,
-.test-users select {
-  padding: 7px 10px;
-  border: 1px solid #b9cfc2;
-  border-radius: 6px;
-}
-</style>

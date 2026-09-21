@@ -108,6 +108,9 @@ const upstreamHeaders = (headers: IncomingHttpHeaders) => {
 
 export interface EgressProxy {
   readonly endpoint: string;
+  readonly failure:
+    | import("@rss-mdm-agent/ai-contract").Failure["code"]
+    | undefined;
   close(): Promise<void>;
 }
 
@@ -127,6 +130,7 @@ export async function startEgressProxy(
     throw new Error("egress_rejected");
   const route = `/${randomUUID()}`;
   const upstream = new Set<ClientRequest>();
+  let failure: EgressProxy["failure"];
   const server = createServer(async (incoming, outgoing) => {
     try {
       const requestUrl = new URL(incoming.url ?? "/", "http://localhost");
@@ -154,6 +158,18 @@ export async function startEgressProxy(
           agent: false,
         },
         (response) => {
+          failure =
+            response.statusCode === 401
+              ? "authentication_required"
+              : response.statusCode === 403
+                ? "permission_denied"
+                : response.statusCode === 429
+                  ? "limit_exceeded"
+                  : response.statusCode === 400 || response.statusCode === 404
+                    ? "invalid_input"
+                    : response.statusCode && response.statusCode >= 500
+                      ? "unavailable"
+                      : undefined;
           if (
             response.statusCode !== undefined &&
             response.statusCode >= 300 &&
@@ -196,6 +212,9 @@ export async function startEgressProxy(
     throw new Error("egress_rejected");
   let closed: Promise<void> | undefined;
   return {
+    get failure() {
+      return failure;
+    },
     endpoint: `http://127.0.0.1:${address.port}${route}`,
     close: () =>
       (closed ??= new Promise<void>((resolveClose, reject) => {

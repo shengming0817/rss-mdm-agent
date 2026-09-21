@@ -24,4 +24,6 @@ export const errorCodes = Object.freeze([
   "connection_required",
   "authentication_required",
   "context_unavailable",
+  "verification_cancelled",
+  "verification_refused",
 ] as const);

@@ -84,7 +84,12 @@ it("expires navigation badge, background entry and question card together withou
       wrapper.find(".question-card fieldset").attributes("disabled"),
     ).toBeUndefined();
     await vi.advanceTimersByTimeAsync(1001);
-    expect(wrapper.text()).not.toContain("待回应");
+    expect(
+      wrapper
+        .findAll("button")
+        .find((b) => b.text().startsWith("AI 助手"))!
+        .text(),
+    ).toBe("AI 助手");
     expect(wrapper.find(".assistant .notice").exists()).toBe(false);
     expect(
       wrapper.find(".question-card fieldset").attributes("disabled"),
@@ -95,4 +100,18 @@ it("expires navigation badge, background entry and question card together withou
     expect(vi.getTimerCount()).toBe(0);
     vi.useRealTimers();
   }
+});
+
+it("keeps settings and diagnostics reachable without an AI connection", async () => {
+  const wrapper = mount(App);
+  const settings = wrapper
+    .findAll("button")
+    .find((button) => button.text() === "设置");
+  expect(settings).toBeDefined();
+  await settings!.trigger("click");
+  expect(wrapper.text()).toContain("数据与诊断");
+  expect(wrapper.text()).toContain("非登录");
+  expect(wrapper.text()).toContain("隐私");
+  expect(wrapper.find('input[type="password"]').exists()).toBe(false);
+  wrapper.unmount();
 });

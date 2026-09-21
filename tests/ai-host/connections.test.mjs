@@ -909,3 +909,101 @@ test("user fence settles persistent offline queues across pages and propagates d
     );
   }
 });
+
+test("verification preserves definite failures and never calls unknown acceptance an authentication failure", async (t) => {
+  for (const [scenario, expected] of [
+    ["unknown", "unavailable"],
+    ["verification_auth", "authentication_required"],
+    ["verification_model", "unsupported_capability"],
+  ]) {
+    const root = await mkdtemp(join(tmpdir(), "rss-verification-"));
+    const store = unwrap(
+      openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
+    );
+    const host = unwrap(
+      await createHost({
+        store,
+        launchFences: store,
+        delivery: null,
+        resolve: async (_caller, options, namespace) => ({
+          configuration: {
+            namespace,
+            provider: options.provider,
+            config: options.config,
+            workingDirectory: root,
+            permissions: "tools_disabled",
+          },
+          artifact: new URL(
+            `./provider.mjs?scenario=${scenario}`,
+            import.meta.url,
+          ).href,
+        }),
+      }),
+    );
+    try {
+      const result = await host.saveConnection(
+        caller,
+        connection("test"),
+        null,
+        budget(),
+      );
+      assert.equal(result.ok, false);
+      assert.equal(result.error.code, expected);
+      assert.equal((await store.connection(caller, "test")).ok, false);
+    } finally {
+      await host.close(budget());
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test("controlled connection verification requires the dedicated harmless tool call", async () => {
+  for (const toolWorks of [false, true]) {
+    const root = await mkdtemp(join(tmpdir(), "rss-tool-probe-"));
+    const store = unwrap(
+      openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
+    );
+    const host = unwrap(
+      await createHost({
+        store,
+        launchFences: store,
+        delivery: null,
+        resolve: async (_caller, options, namespace) => ({
+          configuration: {
+            namespace,
+            provider: options.provider,
+            config: options.config,
+            workingDirectory: root,
+            permissions: "host_mediated",
+          },
+          artifact: new URL(
+            `./provider.mjs?scenario=${toolWorks ? "tool_probe" : "no_tool_probe"}`,
+            import.meta.url,
+          ).href,
+          admission: {
+            verifier: {
+              verify: async () => ({
+                ok: true,
+                value: { platform: "fixture", verificationRef: "fixture-only" },
+              }),
+            },
+          },
+        }),
+      }),
+    );
+    try {
+      const result = await host.saveConnection(
+        caller,
+        { ...connection("probe"), profile: "controlled_tools" },
+        null,
+        budget(),
+      );
+      assert.equal(result.ok, toolWorks);
+      if (!toolWorks) assert.equal(result.error.code, "unsupported_capability");
+      assert.equal((await store.connection(caller, "probe")).ok, toolWorks);
+    } finally {
+      await host.close(budget());
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+});

@@ -125,6 +125,7 @@ pub async fn save_connection<R: tauri::Runtime>(
     replace_key: bool,
 ) -> Result<serde_json::Value> {
     state.current(&generation)?;
+    let epoch = state.status().generation.0;
     let connection = decode_connection(input)?;
     let data = serde_json::to_value(&connection).map_err(|_| error("input", "无效连接"))?;
     let secret = if data["source"]["type"] == "custom_api"
@@ -136,13 +137,38 @@ pub async fn save_connection<R: tauri::Runtime>(
         None
     };
     state.current(&generation)?;
+    if epoch != state.status().generation.0 {
+        return Err(error("ai_unavailable", "Host 已重启，请重新验证连接"));
+    }
     state
         .save_connection(&generation, connection, expected, secret)
         .await
 }
 
+#[tauri::command]
+pub fn ai_host_status(state: State<'_, DesktopRuntime>) -> ai_session_contract::HostStatus {
+    state.status()
+}
+#[tauri::command]
+pub async fn ai_restart_host(
+    state: State<'_, DesktopRuntime>,
+    generation: u64,
+) -> Result<ai_session_contract::HostStatus> {
+    Ok(state.restart(generation).await)
+}
+#[tauri::command]
+pub async fn ai_export_diagnostics<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, DesktopRuntime>,
+) -> Result<bool> {
+    super::diagnostics::export(app, state.status()).await
+}
+
 pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder.invoke_handler(tauri::generate_handler![
+        ai_host_status,
+        ai_restart_host,
+        ai_export_diagnostics,
         save_connection,
         test_users,
         select_test_user,
@@ -213,6 +239,7 @@ mod tests {
         let runtime = tauri::async_runtime::block_on(DesktopRuntime::start(
             &root,
             &root.join("missing-artifact"),
+            ai_session_contract::HostStatusSource::DevelopmentOverride,
         ))
         .unwrap();
         tauri::async_runtime::block_on(runtime.select_user("Alice")).unwrap();
@@ -237,6 +264,9 @@ mod tests {
         .unwrap();
         assert_eq!(snapshot["catalog"].as_array().unwrap().len(), 9);
         for command in [
+            "ai_host_status",
+            "ai_restart_host",
+            "ai_export_diagnostics",
             "self_service_snapshot",
             "self_service_preview",
             "self_service_submit",

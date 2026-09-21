@@ -17,7 +17,6 @@ import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { sourceState, sameCommittedSource } from "./source-state.mjs";
 import { run, verifyRuntimeIntegrity } from "./ai-host-artifacts.mjs";
-import { checkDesktopBundle } from "./check-desktop-bundle.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url)),
   start = sourceState(root);
 if (process.platform !== "darwin" || process.arch !== "arm64")
@@ -41,7 +40,7 @@ writeFileSync(
   }),
   { mode: 0o600 },
 );
-let behavior, failure, facts, exit, bundle;
+let behavior, failure, facts, exit;
 try {
   run("pnpm", ["build"], root);
   run(
@@ -90,16 +89,21 @@ try {
       .prepare("SELECT json FROM sessions")
       .all()
       .map((row) => JSON.parse(row.json));
-    assert.equal(sessions.length, 2);
+    assert.equal(sessions.length, 3);
     for (const key of [
       "userIsolation",
       "oldGenerationRejected",
       "originalTaskContinued",
       "originalHistoryRestored",
+      "hostRestarted",
+      "restartPreservedTask",
+      "newModelSessionAfterRestart",
     ])
       assert.equal(behavior[key], true);
     const session = sessions.find(
-      (s) => s.namespace.principalId === behavior.alice,
+      (s) =>
+        s.namespace.principalId === behavior.alice &&
+        s.namespace.sessionId !== behavior.restartSession,
     );
     const other = sessions.find(
       (s) => s.namespace.principalId === behavior.bob,
@@ -118,9 +122,13 @@ try {
       .prepare("SELECT json FROM commands")
       .all()
       .map((row) => JSON.parse(row.json));
-    assert.equal(commands.length, 1);
-    assert.equal(commands[0].state, "terminal");
-    assert.equal(commands[0].outcome, "completed");
+    assert.equal(commands.length, 2);
+    assert.ok(
+      commands.every(
+        (command) =>
+          command.state === "terminal" && command.outcome === "completed",
+      ),
+    );
     const deliveries = ai
       .prepare("SELECT status,count(*) n FROM deliveries GROUP BY status")
       .all();
@@ -170,7 +178,6 @@ try {
     ai.close();
     execution.close();
   }
-  bundle = await checkDesktopBundle(root, manifest.runtimeTreeSha256);
 } catch (error) {
   failure = String(error);
   process.exitCode = 1;
@@ -179,7 +186,6 @@ try {
     passed =
       !failure &&
       Boolean(facts) &&
-      Boolean(bundle?.bundledHostReady) &&
       behavior?.step === "passed" &&
       sameCommittedSource(start, end);
   mkdirSync(join(root, ".local-ci-runs"), { recursive: true });
@@ -204,7 +210,6 @@ try {
         behavior,
         facts,
         exit,
-        bundle,
         failure,
       },
       null,

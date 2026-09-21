@@ -48,11 +48,12 @@
     await wait(() => document.querySelector(".self-service .hero"));
 
     progress("open_connections");
-    await click("AI 助手");
+    await click("设置");
     const panel = await wait(() =>
-      document.querySelector(".connections details"),
+      document.querySelector(".settings .connections"),
     );
-    panel.open = true;
+    for (const details of panel.querySelectorAll("details"))
+      details.open = true;
     set(panel, "名称", "Local DeepSeek protocol fixture");
     set(panel, "服务", "deepseek");
     await wait(() =>

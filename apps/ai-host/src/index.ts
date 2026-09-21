@@ -174,6 +174,13 @@ export async function startLocalApp(
   };
   control = new NativeControl(
     async ({ method, data }) => {
+      if (method === "health")
+        return {
+          schemaVersion: 5,
+          kind: "hostHealth",
+          ready: true,
+          protocol: 1,
+        };
       if (method === "attach")
         return switchUser(async () => {
           const next = context(data.context),

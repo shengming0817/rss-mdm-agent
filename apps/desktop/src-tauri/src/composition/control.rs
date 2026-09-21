@@ -1,5 +1,5 @@
 //! Anonymous native↔Host control transport. No local listener or discoverable socket path.
-use super::credentials::{KeyBackend, MasterKey};
+use super::credentials::MasterKey;
 use crate::self_service::{error, Result};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
@@ -13,7 +13,7 @@ use std::{
 };
 use tokio::{
     net::{unix::OwnedWriteHalf, UnixStream},
-    sync::{mpsc, oneshot, Semaphore},
+    sync::{mpsc, oneshot},
 };
 use tokio_util::{
     codec::{FramedRead, FramedWrite, LinesCodec},
@@ -29,9 +29,10 @@ pub struct Control {
     views: Mutex<BTreeMap<String, mpsc::Sender<Value>>>,
     sequence: AtomicU64,
     stop: CancellationToken,
+    reader_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 impl Control {
-    pub fn start<B: KeyBackend + 'static>(stream: UnixStream, backend: B) -> Arc<Self> {
+    pub fn start(stream: UnixStream, master: Arc<MasterKey>) -> Arc<Self> {
         let (reader, writer) = stream.into_split();
         let control = Arc::new(Self {
             writer: tokio::sync::Mutex::new(FramedWrite::new(
@@ -42,11 +43,11 @@ impl Control {
             views: Mutex::new(BTreeMap::new()),
             sequence: AtomicU64::new(1),
             stop: CancellationToken::new(),
+            reader_task: Mutex::new(None),
         });
         let task = control.clone();
-        let master = Arc::new(MasterKey::new(backend));
-        let credential = Arc::new(Semaphore::new(1));
-        tokio::spawn(async move {
+        let credential = master.permit.clone();
+        let reader_task = tokio::spawn(async move {
             let mut reader = FramedRead::new(reader, LinesCodec::new_with_max_length(524288));
             loop {
                 let line = tokio::select! { _ = task.stop.cancelled() => break, line = reader.next() => match line { Some(Ok(line)) => line, _ => break } };
@@ -137,6 +138,7 @@ impl Control {
             }
             task.close();
         });
+        *control.reader_task.lock().unwrap() = Some(reader_task);
         control
     }
     async fn write(&self, frame: Value) -> Result<()> {
@@ -201,6 +203,26 @@ impl Control {
         self.pending.lock().unwrap().remove(&id);
         result
     }
+    pub async fn health(&self) -> Result<()> {
+        let reply = self
+            .call("health", json!({}), Duration::from_secs(15))
+            .await?;
+        match ai_session_contract::decode(
+            &serde_json::to_vec(&reply).map_err(|_| unavailable())?,
+            &ai_session_contract::Limits {
+                max_bytes: 4096,
+                max_text_bytes: 2048,
+                max_depth: 8,
+                max_nodes: 64,
+            },
+        ) {
+            Ok(ai_session_contract::WireRecord::HostHealth(_)) => Ok(()),
+            _ => Err(crate::self_service::error(
+                "unsupported_version",
+                "AI Host 协议版本不兼容",
+            )),
+        }
+    }
     pub async fn attach(
         &self,
         channel: &str,
@@ -257,6 +279,22 @@ impl Control {
     pub fn detach(&self, id: &str) {
         self.views.lock().unwrap().remove(id);
     }
+    pub fn closed(&self) -> bool {
+        self.stop.is_cancelled()
+    }
+    pub async fn shutdown(&self) {
+        self.close();
+        let task = self.reader_task.lock().unwrap().take();
+        if let Some(mut task) = task {
+            if tokio::time::timeout(Duration::from_secs(5), &mut task)
+                .await
+                .is_err()
+            {
+                task.abort();
+                let _ = task.await;
+            }
+        }
+    }
     pub fn close(&self) {
         self.stop.cancel();
         self.views.lock().unwrap().clear();
@@ -268,6 +306,7 @@ impl Control {
 
 #[cfg(test)]
 mod tests {
+    use super::super::credentials::KeyBackend;
     use super::*;
     use futures_util::StreamExt;
     struct SlowKey;
@@ -289,7 +328,7 @@ mod tests {
     #[tokio::test]
     async fn blocking_keychain_does_not_block_events_or_control_shutdown() {
         let (native, peer) = UnixStream::pair().unwrap();
-        let control = Control::start(native, SlowKey);
+        let control = Control::start(native, Arc::new(MasterKey::new(SlowKey)));
         let mut view = control.view("view".into()).unwrap();
         let mut writer = FramedWrite::new(peer, LinesCodec::new_with_max_length(524288));
         writer
@@ -327,7 +366,7 @@ mod tests {
     #[tokio::test]
     async fn master_key_failure_replies_without_leaking_and_keeps_control_live() {
         let (native, peer) = UnixStream::pair().unwrap();
-        let control = Control::start(native, FailedKey);
+        let control = Control::start(native, Arc::new(MasterKey::new(FailedKey)));
         let mut view = control.view("view".into()).unwrap();
         let (reader, writer) = peer.into_split();
         let mut reader = FramedRead::new(reader, LinesCodec::new_with_max_length(524288));
@@ -357,7 +396,7 @@ mod tests {
     #[tokio::test]
     async fn duplicate_native_fields_close_the_strict_control_ingress() {
         let (native, peer) = UnixStream::pair().unwrap();
-        let control = Control::start(native, FailedKey);
+        let control = Control::start(native, Arc::new(MasterKey::new(FailedKey)));
         let mut writer = FramedWrite::new(peer, LinesCodec::new_with_max_length(524288));
         writer
             .send(String::from(

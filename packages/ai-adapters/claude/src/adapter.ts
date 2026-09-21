@@ -714,6 +714,30 @@ export class ClaudeAdapter implements ProviderAgentPort {
     }
     if (m.type === "assistant") {
       if (!turn.accepted) return;
+      if (m.error) {
+        const code = [
+          "authentication_failed",
+          "cloud_credential_error",
+        ].includes(m.error)
+          ? "authentication_required"
+          : m.error === "model_not_found"
+            ? "unsupported_capability"
+            : m.error === "invalid_request"
+              ? "invalid_input"
+              : ["rate_limit", "max_output_tokens", "billing_error"].includes(
+                    m.error,
+                  )
+                ? "limit_exceeded"
+                : [
+                      "oauth_org_not_allowed",
+                      "account_on_hold",
+                      "verification_required",
+                    ].includes(m.error)
+                  ? "permission_denied"
+                  : "unavailable";
+        this.emit(turn, { type: "error", failure: { code, retry: "never" } });
+        return;
+      }
       if (!isId(m.message.id)) throw new Error("invalid message id");
       for (const part of m.message.content)
         if (part.type === "text")

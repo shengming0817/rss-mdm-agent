@@ -77,3 +77,28 @@ test("the fixed proxy refuses redirects before credentials reach another origin"
   assert.equal(response.status, 502);
   assert.equal(leakedAuthorization, undefined);
 });
+
+test("egress reports closed HTTP categories without retaining provider error bodies", async (t) => {
+  let status = 401;
+  const server = createServer((_req, res) =>
+    res.writeHead(status).end("CANARY_SECRET_PRIVATE_PATH"),
+  );
+  const proxy = await startEgressProxy(await listen(server));
+  t.after(async () => {
+    await proxy.close();
+    server.closeAllConnections();
+    await new Promise((r) => server.close(r));
+  });
+  for (const [http, expected] of [
+    [401, "authentication_required"],
+    [403, "permission_denied"],
+    [429, "limit_exceeded"],
+    [500, "unavailable"],
+    [200, undefined],
+  ]) {
+    status = http;
+    await (await fetch(proxy.endpoint)).text();
+    assert.equal(proxy.failure, expected);
+    assert.equal(JSON.stringify(proxy).includes("CANARY"), false);
+  }
+});

@@ -21,12 +21,26 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let app = ipc::register(tauri::Builder::default())
         .setup(|app| {
             let root = app.path().app_data_dir()?.join("test-users");
-            let artifact = std::env::var_os("RSS_AI_HOST_RUNTIME")
+            let override_path = if cfg!(debug_assertions) {
+                std::env::var_os("RSS_AI_HOST_RUNTIME")
+            } else {
+                None
+            };
+            let source = if override_path.is_some() {
+                ai_session_contract::HostStatusSource::DevelopmentOverride
+            } else {
+                ai_session_contract::HostStatusSource::BundledResource
+            };
+            let artifact = override_path
                 .map(std::path::PathBuf::from)
                 .unwrap_or(app.path().resource_dir()?.join("ai-host-runtime"));
-            app.manage(tauri::async_runtime::block_on(DesktopRuntime::start(
-                &root, &artifact,
-            ))?);
+            let runtime =
+                tauri::async_runtime::block_on(DesktopRuntime::start(&root, &artifact, source))?;
+            eprintln!(
+                "RSS_AI_HOST_STATUS {}",
+                serde_json::to_string(&runtime.status())?
+            );
+            app.manage(runtime);
             use tauri::menu::{Menu, MenuItem, Submenu};
             let show = MenuItem::with_id(app, "show", "显示窗口", true, None::<&str>)?;
             let quit =

@@ -30,8 +30,9 @@ impl KeyBackend for Keychain {
         set_generic_password(SERVICE, ACCOUNT, key).map_err(|_| KeyUnavailable)
     }
 }
-pub struct MasterKey<B: KeyBackend = Keychain> {
-    backend: B,
+pub struct MasterKey {
+    backend: Box<dyn KeyBackend>,
+    pub permit: std::sync::Arc<tokio::sync::Semaphore>,
     key: Mutex<Option<Vec<u8>>>,
 }
 impl Default for MasterKey {
@@ -39,10 +40,11 @@ impl Default for MasterKey {
         Self::new(Keychain)
     }
 }
-impl<B: KeyBackend> MasterKey<B> {
-    pub fn new(backend: B) -> Self {
+impl MasterKey {
+    pub fn new(backend: impl KeyBackend + 'static) -> Self {
         Self {
-            backend,
+            backend: Box::new(backend),
+            permit: std::sync::Arc::new(tokio::sync::Semaphore::new(1)),
             key: Mutex::new(None),
         }
     }

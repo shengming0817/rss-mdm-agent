@@ -1,7 +1,7 @@
 import { mount, flushPromises } from "@vue/test-utils";
 import { expect, it, vi } from "vitest";
 import type { RuntimeClient } from "@rss-mdm-agent/ai-client";
-import Connections from "./Connections.vue";
+import Connections from "../settings/ConnectionSettings.vue";
 import { createAssistant } from "./controller";
 import { saveNativeConnection } from "../test-users";
 vi.mock("../test-users", () => ({

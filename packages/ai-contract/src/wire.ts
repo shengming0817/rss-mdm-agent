@@ -36,7 +36,9 @@ export type WireRecord =
   | HistoryRequest
   | TestUserPage
   | NativeControlFrame
-  | ExecutionOrigin;
+  | ExecutionOrigin
+  | HostStatus
+  | HostHealth;
 /**
  * Opaque ASCII correlation identifier (1–128 characters); never an authentication credential.
  */
@@ -379,7 +381,9 @@ export type ErrorCode =
   | "connection_switch_pending"
   | "connection_required"
   | "authentication_required"
-  | "context_unavailable";
+  | "context_unavailable"
+  | "verification_cancelled"
+  | "verification_refused";
 /**
  * same_command preserves identity/content; reconcile_first checks the original operation; never forbids retry.
  */
@@ -1310,7 +1314,8 @@ export type NativeCall =
   | NativeCallSuspend
   | NativeCallDetach
   | NativeCallSaveConnection
-  | NativeCallMasterKey;
+  | NativeCallMasterKey
+  | NativeCallHealth;
 export type NativeReply = NativeReplySuccess | NativeReplyFailure;
 
 /**
@@ -2053,6 +2058,13 @@ export interface NativeCallMasterKey {
 export interface NativeMasterKeyData {
   create: boolean;
 }
+export interface NativeCallHealth {
+  schemaVersion: 5;
+  kind: "nativeCall";
+  id: Counter;
+  method: "health";
+  data: {};
+}
 export interface NativeReplySuccess {
   schemaVersion: 5;
   kind: "nativeReply";
@@ -2084,6 +2096,54 @@ export interface ExecutionOrigin {
   operationId: Id;
   provider: "codex" | "claude" | "deepseek";
   config: ConfigRef;
+}
+export interface HostStatus {
+  schemaVersion: 5;
+  kind: "hostStatus";
+  generation: Counter;
+  phase: "stopped" | "starting" | "ready" | "stopping" | "failed";
+  source: "development_override" | "bundled_resource";
+  version: string;
+  diagnostic?: HostDiagnostic;
+  /**
+   * @maxItems 64
+   */
+  recent: HostDiagnostic[];
+}
+export interface HostDiagnostic {
+  stage:
+    | "runtime_package"
+    | "host_process"
+    | "configuration"
+    | "authentication"
+    | "storage"
+    | "shutdown";
+  code:
+    | "runtime_missing"
+    | "runtime_invalid"
+    | "unsupported_version"
+    | "host_start_failed"
+    | "host_exited"
+    | "readiness_timeout"
+    | "configuration_invalid"
+    | "authentication_required"
+    | "storage_corrupt"
+    | "cleanup_incomplete"
+    | "control_closed";
+  action:
+    | "prepare_runtime"
+    | "reinstall_runtime"
+    | "restart_host"
+    | "check_configuration"
+    | "check_credentials"
+    | "check_storage";
+  atMs: Counter;
+}
+export interface HostHealth {
+  schemaVersion: 5;
+  kind: "hostHealth";
+  ready: true;
+  protocol: 1;
 }
 
 /**

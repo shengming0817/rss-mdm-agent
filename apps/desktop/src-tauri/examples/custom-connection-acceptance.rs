@@ -180,7 +180,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = ipc::register(tauri::Builder::default())
         .setup(move |app| {
             app.manage(tauri::async_runtime::block_on(
-                DesktopRuntime::start_with_key_backend(&root, &artifact, TestKey),
+                DesktopRuntime::start_with_key_backend(
+                    &root,
+                    &artifact,
+                    ai_session_contract::HostStatusSource::DevelopmentOverride,
+                    TestKey,
+                ),
             )?);
             window(app.handle(), setup.clone())?;
             automate_secure_entry(secret.clone(), setup.clone());

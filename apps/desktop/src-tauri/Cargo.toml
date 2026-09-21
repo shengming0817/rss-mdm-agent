@@ -36,8 +36,8 @@ futures-util.workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "=3.5.1"
 objc2 = "=0.6.4"
-objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSAlert", "NSButton", "NSControl", "NSSecureTextField", "NSTextField", "NSView", "NSResponder", "NSWindow", "NSApplication"] }
-objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSString", "NSGeometry"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSAlert", "NSButton", "NSControl", "NSSecureTextField", "NSTextField", "NSView", "NSResponder", "NSWindow", "NSApplication", "NSSavePanel", "NSPanel"] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSString", "NSGeometry", "NSURL"] }
 
 [features]
 default = ["custom-protocol"]

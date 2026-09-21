@@ -103,7 +103,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = ipc::register(tauri::Builder::default())
         .setup(move |app| {
             app.manage(tauri::async_runtime::block_on(DesktopRuntime::start(
-                &root, &artifact,
+                &root, &artifact, ai_session_contract::HostStatusSource::DevelopmentOverride,
             ))?);
             window(app.handle(), setup.clone())?;
             let probe=app.handle().clone();

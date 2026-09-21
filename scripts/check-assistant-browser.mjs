@@ -1,5 +1,7 @@
 import { activeStage } from "../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
+import { mkdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { startFixture } from "../tests/assistant/server.mjs";
 import {
@@ -388,6 +390,41 @@ try {
   await page.getByRole("button", { name: "软件中心", exact: true }).click();
   await page.getByRole("button", { name: "AI 助手", exact: true }).click();
   assert.equal(await composer.inputValue(), "保留草稿");
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page
+    .getByRole("heading", { name: "数据与诊断", exact: true })
+    .waitFor();
+  assert.equal(
+    await page
+      .locator(".settings h1")
+      .evaluate((el) => el === document.activeElement),
+    true,
+  );
+  await page.setViewportSize({ width: 480, height: 760 });
+  assert.equal(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+    true,
+    "settings fit the native minimum width",
+  );
+  mkdirSync(new URL("../.local-ci-runs/", import.meta.url), {
+    recursive: true,
+  });
+  await page.screenshot({
+    path: fileURLToPath(
+      new URL("../.local-ci-runs/settings-480.png", import.meta.url),
+    ),
+    fullPage: true,
+  });
+  await page.keyboard.press("Tab");
+  assert.equal(
+    await page.evaluate(() => document.activeElement !== document.body),
+    true,
+  );
+  await page.getByRole("button", { name: "AI 助手", exact: true }).click();
+  assert.equal(await composer.inputValue(), "保留草稿");
+  await page.setViewportSize({ width: 1280, height: 900 });
   fixture.disconnect();
   await page.getByText("连接：AI 服务未连接", { exact: true }).waitFor();
   assert.equal(

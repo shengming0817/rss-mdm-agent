@@ -1,5 +1,6 @@
 import { mount, flushPromises } from "@vue/test-utils";
-import Connections from "./Connections.vue";
+import SessionConnection from "./SessionConnection.vue";
+import ConnectionSettings from "../settings/ConnectionSettings.vue";
 import { activeStage } from "@rss-mdm-agent/ai-contract";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -230,7 +231,7 @@ describe("assistant application ownership", () => {
     expect(t.c.state.permissions.size).toBe(0);
     t.c.dispose();
   });
-  it("clears all caller display and pending callbacks on a new authenticated connection", async () => {
+  it("retains same-user display but invalidates transport-bound callbacks on reconnect", async () => {
     const t = setup();
     await t.c.connect();
     await t.c.select("session-1");
@@ -244,8 +245,8 @@ describe("assistant application ownership", () => {
       new AbortController().signal,
     );
     await t.c.connect();
-    expect(t.c.state.views.size).toBe(0);
-    expect(t.c.draft.value).toBe("");
+    expect(t.c.state.views.size).toBe(1);
+    expect(t.c.draft.value).not.toBe("");
     expect(await result).toEqual({ outcome: { outcome: "cancelled" } });
     t.c.dispose();
   });
@@ -317,8 +318,8 @@ describe("assistant application ownership", () => {
     });
     await t.c.connect();
     expect(await pending).toEqual({ outcome: { outcome: "cancelled" } });
-    expect(t.c.state.views.size).toBe(0);
-    expect(t.c.draft.value).toBe("");
+    expect(t.c.state.views.size).toBe(1);
+    expect(t.c.draft.value).not.toBe("");
     expect(t.c.state.cleanupError).toBe("cleanup_failed");
     expect(() => t.c.dispose()).not.toThrow();
     expect(t.c.runtime.value).toBeUndefined();
@@ -522,7 +523,7 @@ it("connection panel sends exactly the confirmed preview once and never includes
   await t.c.select("session-1");
   t.view.selectedConnectionId = "config-1";
   t.emit();
-  const wrapper = mount(Connections, { props: { controller: t.c } });
+  const wrapper = mount(SessionConnection, { props: { controller: t.c } });
   try {
     await flushPromises();
     const history = wrapper
@@ -575,7 +576,7 @@ it("drops a history preview that completes after the selected session changed", 
   await t.c.select("session-1");
   t.view.selectedConnectionId = "config-1";
   t.emit();
-  const wrapper = mount(Connections, { props: { controller: t.c } });
+  const wrapper = mount(SessionConnection, { props: { controller: t.c } });
   await flushPromises();
   const history = wrapper
     .findAll("label")
@@ -616,7 +617,7 @@ it("deleting the selected connection preserves history and immediately disables 
   const before = t.c.view.value;
   const saveConnection = vi.fn().mockResolvedValue({});
   Object.assign(t.client, { saveConnection });
-  const wrapper = mount(Connections, {
+  const wrapper = mount(ConnectionSettings, {
     props: { controller: t.c },
     attachTo: document.body,
   });
@@ -660,7 +661,7 @@ it("deleting the selected connection preserves history and immediately disables 
     expect(saveConnection.mock.calls[0][0].status).toBe("deleted");
     expect(t.c.view.value).toEqual(before);
     expect(t.c.canSend.value).toBe(false);
-    expect(wrapper.text()).toContain("当前会话需要选择可用连接");
+    expect(t.c.connectionReady.value).toBe(false);
     await t.c.prompt();
     expect(t.submit).not.toHaveBeenCalled();
   } finally {
@@ -676,7 +677,7 @@ it("connection revision conflicts invalidate stale edit and delete actions", asy
     .fn()
     .mockRejectedValue(new ClientError("revision_conflict"));
   Object.assign(t.client, { saveConnection });
-  const wrapper = mount(Connections, { props: { controller: t.c } });
+  const wrapper = mount(ConnectionSettings, { props: { controller: t.c } });
   try {
     await flushPromises();
     await wrapper.get('button[aria-label="编辑连接 Fixture"]').trigger("click");
@@ -701,7 +702,7 @@ it("connection revision conflicts invalidate stale edit and delete actions", asy
 it("existing configuration cannot become a custom API key and Claude supports configuration reuse", async () => {
   const t = setup();
   await t.c.connect();
-  const wrapper = mount(Connections, { props: { controller: t.c } });
+  const wrapper = mount(ConnectionSettings, { props: { controller: t.c } });
   try {
     await flushPromises();
     await wrapper
@@ -733,4 +734,31 @@ it("existing configuration cannot become a custom API key and Claude supports co
     wrapper.unmount();
     t.c.dispose();
   }
+});
+
+it("retains same-user history, draft and unknown command through a failed reconnect without sending", async () => {
+  const t = setup();
+  await t.c.connect();
+  await t.c.select("session-1");
+  t.c.draft.value = "unsent private draft";
+  t.submit.mockRejectedValueOnce(new ClientError("request_failed"));
+  await t.c.prompt();
+  const pending = t.c.state.pending.get("session-1");
+  expect(pending).toBeDefined();
+  t.c.draft.value = "new draft";
+  vi.mocked(t.client.initialize).mockRejectedValueOnce(
+    new ClientError("transport_closed"),
+  );
+  await t.c.connect();
+  expect(t.c.state.connection).toBe("disconnected");
+  expect(t.c.state.views.has("session-1")).toBe(true);
+  expect(t.c.state.selected).toBe("session-1");
+  expect(t.c.draft.value).toBe("new draft");
+  expect(t.c.state.pending.get("session-1")).toEqual(pending);
+  expect(t.c.canSend.value).toBe(false);
+  expect(t.submit).toHaveBeenCalledTimes(1);
+  t.c.dispose();
+  expect(t.c.state.views.size).toBe(0);
+  expect(t.c.state.pending.size).toBe(0);
+  expect(t.c.state.drafts.size).toBe(0);
 });

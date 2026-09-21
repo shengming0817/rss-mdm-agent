@@ -43,7 +43,16 @@ it.each([
         };
       throw { code, message: "SECRET_CANARY" };
     });
-    const wrapper = mount(App, { global: { stubs: { Workspace: true } } });
+    const wrapper = mount(App, {
+      global: {
+        stubs: {
+          Workspace: {
+            name: "Workspace",
+            template: '<div><slot name="user" /></div>',
+          },
+        },
+      },
+    });
     try {
       await flushPromises();
       await wrapper.get('[aria-label="测试用户名"]').setValue("Bob");
@@ -73,7 +82,16 @@ it("keeps the current workspace mounted and inert while a switch is pending", as
       };
     return new Promise((resolve) => (finish = resolve));
   });
-  const wrapper = mount(App, { global: { stubs: { Workspace: true } } });
+  const wrapper = mount(App, {
+    global: {
+      stubs: {
+        Workspace: {
+          name: "Workspace",
+          template: '<div><slot name="user" /></div>',
+        },
+      },
+    },
+  });
   await flushPromises();
   const workspace = wrapper.findComponent({ name: "Workspace" }).element;
   await wrapper.get('[aria-label="测试用户名"]').setValue("Bob");

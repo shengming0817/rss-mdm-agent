@@ -20,13 +20,20 @@ const assistantCommands = [
   "ai_disconnect",
   "execution_task_details",
 ];
+const settingsCommands = [
+  "ai_host_status",
+  "ai_restart_host",
+  "ai_export_diagnostics",
+];
 const userCommands = ["test_users", "select_test_user", "save_connection"];
 const compositionCommands = [
   ...selfServiceCommands,
   ...assistantCommands,
   ...userCommands,
+  ...settingsCommands,
 ];
 const nativeAdapters = new Map([
+  ["apps/desktop/src/settings/native.ts", settingsCommands],
   ["apps/desktop/src/test-users.ts", userCommands],
   ["apps/desktop/src/self-service/native.ts", selfServiceCommands],
   ["apps/desktop/src/assistant/native.ts", assistantCommands],
@@ -188,18 +195,20 @@ export function checkSource(file, source) {
     if (
       [
         "apps/desktop/src/Workspace.vue",
-        "apps/desktop/src/assistant/Connections.vue",
+        "apps/desktop/src/settings/ConnectionSettings.vue",
       ].includes(file)
     )
       globals.add("crypto");
     if (
       [
         "apps/desktop/src/test-users.ts",
-        "apps/desktop/src/assistant/Connections.vue",
+        "apps/desktop/src/settings/native.ts",
+        "apps/desktop/src/settings/ConnectionSettings.vue",
       ].includes(file)
     )
       globals.add("Error");
     const assistantGlobals = {
+      "apps/desktop/src/App.vue": ["setInterval", "clearInterval"],
       "apps/desktop/src/self-service/SelfService.vue": [
         "setInterval",
         "clearInterval",
@@ -257,7 +266,7 @@ export function checkSource(file, source) {
         // The assistant shares only this data-only frozen-origin projection.
         !(
           [
-            "apps/desktop/src/assistant/Connections.vue",
+            "apps/desktop/src/settings/ConnectionSettings.vue",
             "apps/desktop/src/assistant/native.ts",
             "apps/desktop/src/self-service/native.ts",
           ].includes(file) && name === "../test-users"
@@ -532,8 +541,8 @@ export function checkTree(treeRoot = root) {
         'libc = "=0.2.189"',
         'security-framework = "=3.5.1"',
         'objc2 = "=0.6.4"',
-        'objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSAlert", "NSButton", "NSControl", "NSSecureTextField", "NSTextField", "NSView", "NSResponder", "NSWindow", "NSApplication"] }',
-        'objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSString", "NSGeometry"] }',
+        'objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSAlert", "NSButton", "NSControl", "NSSecureTextField", "NSTextField", "NSView", "NSResponder", "NSWindow", "NSApplication", "NSSavePanel", "NSPanel"] }',
+        'objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSString", "NSGeometry", "NSURL"] }',
         'execution-app = { path = "../../../crates/execution-app" }',
         'execution-sqlite = { path = "../../../crates/execution-sqlite" }',
         'execution-mcp = { path = "../../../crates/execution-mcp" }',

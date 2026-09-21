@@ -129,6 +129,17 @@ export async function createProvider({ configuration, tools }) {
           binding,
           acknowledgement: { type: "steer" },
         };
+      if (scenario.startsWith("verification_"))
+        return {
+          certainty: "not_sent",
+          error: {
+            code:
+              scenario === "verification_auth"
+                ? "authentication_required"
+                : "unsupported_capability",
+            retry: "never",
+          },
+        };
       if (scenario === "block") while (true) {}
       current = {
         ...binding,
@@ -160,10 +171,13 @@ export async function createProvider({ configuration, tools }) {
             request: { question: "Continue?", options: ["yes", "no"] },
           },
         });
-      if (tools)
+      if (tools && scenario !== "no_tool_probe")
         void tools
           .propose(
-            { name: "fixture", arguments: {} },
+            {
+              name: scenario === "tool_probe" ? "connection_probe" : "fixture",
+              arguments: {},
+            },
             { timeoutMs: 1000, signal: new AbortController().signal },
           )
           .then((result) => trace("tool-result", { ok: result.ok }));
@@ -183,6 +197,8 @@ export async function createProvider({ configuration, tools }) {
       }
       if (
         command.input.text === "quick" ||
+        scenario === "tool_probe" ||
+        scenario === "no_tool_probe" ||
         command.input.text === "Reply with OK only. Do not use any tools."
       )
         setTimeout(() => {

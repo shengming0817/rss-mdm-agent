@@ -26,6 +26,7 @@
     window.__TAURI_INTERNALS__.invoke(command, args);
   const current = async () => (await invoke("test_users")).current;
   const selectUser = async (name) => {
+    await click("设置");
     const previous = (await current())?.generation;
     const input = await wait(() =>
       document.querySelector('[aria-label="测试用户名"]'),
@@ -53,10 +54,12 @@
     throw new Error("old scope remained accessible");
   };
   const saveExistingConnection = async () => {
+    await click("设置");
     const panel = await wait(() =>
-      document.querySelector(".connections details"),
+      document.querySelector(".settings .connections"),
     );
-    panel.open = true;
+    for (const details of panel.querySelectorAll("details"))
+      details.open = true;
     for (const [name, value] of [
       ["名称", "Existing Codex"],
       ["配置目录", window.__RSS_CONNECTION_SOURCE__.directory],
@@ -75,7 +78,7 @@
     }
     await click("验证并保存");
     await wait(() => panel.querySelector("li")?.textContent.includes("可用"));
-    panel.open = false;
+    await click("AI 助手");
   };
   const snapshot = () =>
     window.__TAURI_INTERNALS__.invoke("self_service_snapshot", {
@@ -256,7 +259,7 @@
       if ((await snapshot()).requests.length)
         throw new Error("foreign tasks visible");
       await click("AI 助手");
-      await wait(() => document.querySelector(".connections details"));
+      await wait(() => document.querySelector(".settings .connections"));
       await wait(() => button("新建会话"));
       if (
         document.querySelector(".connections li") ||
@@ -307,6 +310,52 @@
         document.querySelectorAll(".assistant-sessions li").length !== 1
       )
         throw new Error("catalog or sessions not isolated");
+      setStage("host_restart");
+      const oldHost = await invoke("ai_host_status");
+      const oldTask = await details("ai-s1-smoke");
+      await click("设置");
+      await click("重启 AI Host");
+      await click("确认重启");
+      await wait(async () => {
+        const status = await invoke("ai_host_status");
+        return (
+          status.phase === "ready" && status.generation > oldHost.generation
+        );
+      });
+      await click("AI 助手");
+      await wait(() => button("新建会话"));
+      if (
+        JSON.stringify(await details("ai-s1-smoke")) !== JSON.stringify(oldTask)
+      )
+        throw new Error("restart changed device task");
+      await wait(() =>
+        [...document.querySelectorAll(".assistant .message")].some((e) =>
+          e.textContent.includes("RSS_S1_DONE"),
+        ),
+      );
+      setStage("new_conversation_after_restart");
+      await click("新建会话");
+      const restartedInput = await wait(() => {
+        const el = document.querySelector(".assistant textarea");
+        return visible(el) && el;
+      });
+      restartedInput.value =
+        "Reply with RSS_RESTART_OK only. Do not use tools.";
+      restartedInput.dispatchEvent(new Event("input", { bubbles: true }));
+      await click("发送");
+      await wait(() =>
+        [...document.querySelectorAll(".assistant .command-state")].some((e) =>
+          e.textContent.includes("模型本轮结束：completed"),
+        ),
+      );
+      await wait(() =>
+        [...document.querySelectorAll(".assistant .message")].some((e) =>
+          e.textContent.includes("RSS_RESTART_OK"),
+        ),
+      );
+      const restartSession = document
+        .querySelector('.assistant-sessions button[aria-current="true"]')
+        .childNodes[0].textContent.trim();
       report({
         step: "passed",
         humanCompleted: true,
@@ -321,6 +370,10 @@
         oldGenerationRejected: true,
         originalTaskContinued: true,
         originalHistoryRestored: true,
+        hostRestarted: true,
+        restartPreservedTask: true,
+        newModelSessionAfterRestart: true,
+        restartSession,
         alice: alice.user.userId,
         bob: bob.user.userId,
       });

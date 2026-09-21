@@ -188,13 +188,18 @@ test(
       ).certainty,
       "submitted",
     );
-    let terminal;
-    for await (const event of port.observe(admitted.binding, budget()))
+    let terminal, failure;
+    for await (const event of port.observe(admitted.binding, budget())) {
+      if (event.body?.type === "error") failure = event.body.failure;
       if (event.body?.type === "terminal") {
         terminal = event;
         break;
       }
+    }
     assert.equal(terminal?.body.outcome, "failed");
+    // The fixed CLI reports this fixture as a generic error. Only the composition
+    // egress owner has HTTP evidence to classify it as authentication failure.
+    assert.equal(failure?.code, "unavailable");
   },
 );
 
