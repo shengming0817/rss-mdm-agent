@@ -791,3 +791,26 @@ test("F1 selection may disable offered booleans, never enable unoffered ones", a
     offer,
   );
 });
+
+test("Host budget expiry and exceptions project a closed ACP error", async (t) => {
+  const { host, service } = setup(t, { timeoutMs: 20 });
+  const agent = await standard(t, service);
+  let observed;
+  for (const mode of ["timeout", "throw"]) {
+    host.listSessions = (_caller, _query, budget) => {
+      observed = budget.signal;
+      if (mode === "throw") throw new Error("private Host detail");
+      return new Promise(() => {});
+    };
+    await assert.rejects(agent.request("session/list", {}), (error) => {
+      assert.equal(error.code, -32001);
+      assert.equal(error.data.code, "unavailable");
+      assert.doesNotMatch(
+        error.message,
+        /private Host detail|budget exhausted/,
+      );
+      return true;
+    });
+    assert.equal(observed.aborted, true);
+  }
+});

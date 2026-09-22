@@ -152,11 +152,20 @@ export function createAccessService(options: AccessOptions) {
     promptTtlMs > 2_147_483_647
   )
     throw new RangeError("invalid promptTtlMs");
-  const budget = <T>(
+  const budget = async <T>(
     signal: AbortSignal,
     operation: (budget: Budget) => T | PromiseLike<T>,
-  ): Promise<T> =>
-    withinBudget(() => ({ signal, timeoutMs }), operation, lifetime.signal);
+  ): Promise<T> => {
+    try {
+      return await withinBudget(
+        () => ({ signal, timeoutMs }),
+        operation,
+        lifetime.signal,
+      );
+    } catch {
+      return fail("unavailable");
+    }
+  };
   const parse = <K extends WireRecord["kind"]>(kind: K) => ({
     parse(input: unknown): Extract<WireRecord, { kind: K }> {
       try {
