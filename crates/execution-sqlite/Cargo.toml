@@ -26,3 +26,6 @@ path = "../../tests/execution-sqlite/acceptance.rs"
 
 [lints.clippy]
 cognitive_complexity = "warn"
+
+[target.'cfg(windows)'.dependencies]
+native-process = { path = "../native-process" }

@@ -2,12 +2,13 @@ import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import { openSqliteStore } from "../../packages/ai-store-sqlite/dist/index.js";
 import { ConnectionSecrets } from "../../apps/ai-host/dist/secrets.js";
 import { NativeControl } from "../../apps/ai-host/dist/native.js";
+import { PrivateLink } from "../../packages/ai-host/dist/private-link.js";
 import { spawn } from "node:child_process";
 import { executionServer } from "../ai-host/rust-execution.mjs";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
-import { Duplex, PassThrough } from "node:stream";
+import { PassThrough } from "node:stream";
 import {
   mkdtemp,
   mkdir,
@@ -306,7 +307,7 @@ export async function fixture(t, provider) {
     provider,
     model.apiUrl,
   );
-  let app, rust, parent;
+  let app, rust, parent, link;
   const peers = [];
   const f = {
     directory,
@@ -329,14 +330,11 @@ export async function fixture(t, provider) {
       rust.stdin.on("error", () => {});
       const toHost = new PassThrough(),
         fromHost = new PassThrough();
-      const native = Duplex.from({ readable: fromHost, writable: toHost });
-      const hostPipe = Duplex.from({ readable: toHost, writable: fromHost });
-      parent = nativePeer(native);
-      app = await startLocalApp(
-        path,
-        { input: rust.stdout, output: rust.stdin },
-        hostPipe,
-      );
+      link = new PrivateLink(fromHost, toHost, "native");
+      link.lane("execution").pipe(rust.stdin);
+      rust.stdout.pipe(link.lane("execution"));
+      parent = nativePeer(link.lane("native"));
+      app = await startLocalApp(path, { input: toHost, output: fromHost });
       return app;
     },
     async stop() {
@@ -345,6 +343,8 @@ export async function fixture(t, provider) {
       app = undefined;
       parent?.control.close();
       parent = undefined;
+      link?.close();
+      link = undefined;
       if (rust && rust.exitCode === null && rust.signalCode === null) {
         const exited = once(rust, "exit");
         rust.kill("SIGTERM");

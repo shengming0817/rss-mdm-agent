@@ -4275,7 +4275,7 @@ const schema31 = {
         schemaVersion: { type: "integer", const: 5 },
         kind: { type: "string", const: "hostHealth" },
         ready: { type: "boolean", const: true },
-        protocol: { type: "integer", const: 2 },
+        protocol: { type: "integer", const: 3 },
       },
       required: ["schemaVersion", "kind", "ready", "protocol"],
       additionalProperties: false,

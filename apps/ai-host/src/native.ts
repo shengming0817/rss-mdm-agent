@@ -1,4 +1,3 @@
-import { Socket } from "node:net";
 import type { Duplex } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import {
@@ -34,11 +33,7 @@ export class NativeControl {
   constructor(
     private readonly request: (call: NativeCall) => Promise<unknown>,
     private readonly event: (event: NativeEvent) => void,
-    private readonly socket: Duplex = new Socket({
-      fd: 3,
-      readable: true,
-      writable: true,
-    }),
+    private readonly socket: Duplex,
   ) {
     this.stopped = new Promise((resolve) => {
       this.finish = resolve;

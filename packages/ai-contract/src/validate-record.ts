@@ -4332,7 +4332,7 @@ const schema31 = {
         schemaVersion: { type: "integer", const: 5 },
         kind: { type: "string", const: "hostHealth" },
         ready: { type: "boolean", const: true },
-        protocol: { type: "integer", const: 2 },
+        protocol: { type: "integer", const: 3 },
       },
       required: ["schemaVersion", "kind", "ready", "protocol"],
       additionalProperties: false,
@@ -4376,7 +4376,7 @@ const schema357 = {
     schemaVersion: { type: "integer", const: 5 },
     kind: { type: "string", const: "hostHealth" },
     ready: { type: "boolean", const: true },
-    protocol: { type: "integer", const: 2 },
+    protocol: { type: "integer", const: 3 },
   },
   required: ["schemaVersion", "kind", "ready", "protocol"],
   additionalProperties: false,
@@ -61534,7 +61534,7 @@ function validate20(
                                                                                       errors++;
                                                                                     }
                                                                                     if (
-                                                                                      2 !==
+                                                                                      3 !==
                                                                                       data5
                                                                                     ) {
                                                                                       const err16 =
@@ -61548,7 +61548,7 @@ function validate20(
                                                                                             "const",
                                                                                           params:
                                                                                             {
-                                                                                              allowedValue: 2,
+                                                                                              allowedValue: 3,
                                                                                             },
                                                                                           message:
                                                                                             "must be equal to constant",

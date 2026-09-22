@@ -1,3 +1,4 @@
+import { workerRuntime } from "./worker-runtime.mjs";
 import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import { openFixture, fixtureArtifact } from "./harness.mjs";
 import { createHost } from "../../packages/ai-host/dist/index.js";
@@ -16,7 +17,7 @@ if (mode === "registered") {
   store.registerLaunch = async (...args) => {
     const result = await register(...args);
     process.stdout.write(
-      JSON.stringify({ phase: "registered", pid: args[2] }) + "\n",
+      JSON.stringify({ phase: "registered", scope: args[2] }) + "\n",
     );
     await new Promise(() => {});
     return result;
@@ -35,6 +36,7 @@ const options = {
 };
 const host = unwrap(
   await createHost({
+    workerRuntime,
     delivery: null,
     store,
     launchFences: store,

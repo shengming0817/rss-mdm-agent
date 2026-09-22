@@ -1,12 +1,12 @@
 # AI Session Host 的状态与进程所有权
 
-对应 [A03 #2441](https://dev.azure.com/shengming0923/rss/_workitems/edit/2441)。本方案按依赖顺序统一修改 A01 schema/ports/transition、A02 SQLite、Host/worker、A04 与客户端投影、Claude adapter，最后装配本地入口及独立产物验收。所有实现文件由主任务串行维护；探索和交付审查可独立并行。AGENT-AI-01 当前为 V5 wire 与 SQLite schema version 4，直接协同替换旧版本，没有数据升级、迁移或兼容读取分支。
+对应 [A03 #2441](https://dev.azure.com/shengming0923/rss/_workitems/edit/2441)。本方案按依赖顺序统一修改 A01 schema/ports/transition、A02 SQLite、Host/worker、A04 与客户端投影、Claude adapter，最后装配本地入口及独立产物验收。所有实现文件由主任务串行维护；探索和交付审查可独立并行。AGENT-AI-01 当前为 V5 wire 与 SQLite schema version 5，直接协同替换旧版本，没有数据升级、迁移或兼容读取分支。
 
 持久事实只有一份：Session 持有绑定及可用状态，CommandRecord 持有队列和 attempt，Event 持有稳定展示，Interaction / SurfaceState 持有回调展示关联。`ProviderAgentPort.dispatch` 覆盖 prompt / steer / cancel / respond；Host 北向仍保留各语义方法。`VerifiedProviderFact` 将 dispatch、observe、reconcile 的证据绑定到 namespace、完整 provider identity 与原 attempt，Store 在提交时另做 revision / generation CAS。新接纳命令改变 revision，不使已发起的异步结果失效。
 
 提交确认、运行状态、模型终态和控制确认分别表示不同事实。队列由 Host 提供，与 provider 原生排队能力无关。尚未派发的 queue_next 可以本地取消，取消双方记录和事件原子提交。控制命令没有模型 Outcome。unknown 不能回到 accepted，只有真实 not_submitted 证据且仍在原重试窗口内才可再次派发。
 
-Host 独立 `WorkerLaunchFenceStore` 持有进程 fence 类型与校验，SQLite 同时实现该 port 和公共 `SessionStore`，组合根分别注入。A01 不拥有 artifact/PID/PGID 或 OS 测试替身。worker 启动只采用最小 durable fence：reserve → spawn → 验证 PID/PGID → register → activate。reservation 不依赖已存在 Session，因为原生绑定在 activate 后才产生。bootstrap 不提前导入 provider、读取凭据或启动 native runtime；私有 IPC 不被原生子进程继承。没有第二套恢复 socket、nonce、lease、heartbeat 或自动接管协议。
+Host 独立 `WorkerLaunchFenceStore` 持有进程 fence 类型与校验，SQLite 同时实现该 port 和公共 `SessionStore`，组合根分别注入。A01 不拥有 artifact/runtimeDigest/平台 scope 或 OS 测试替身。worker 启动只采用最小 durable fence：reserve → spawn → 验证当前 launcher/worker 与平台 scope → register → activate。reservation 不依赖已存在 Session，因为原生绑定在 activate 后才产生。bootstrap 不提前导入 provider、读取凭据或启动 native runtime；私有 IPC 不被原生子进程继承。没有第二套恢复 socket、nonce、lease、heartbeat 或自动接管协议。
 
 正常生命周期由当前 ChildProcess 句柄和验证过的存活 group root 授权关闭；成功同时核实 root exit 和空进程组。重启只查询已存 group 的存在性，ESRCH 才允许清除 registered fence；非空、EPERM 或未知保持阻断，不能向保存的 PID 发信号。reserved fence 不代表 SDK 曾获得激活权限，清除它也不声称旧 bootstrap 已退出。
 
@@ -24,6 +24,6 @@ Host 先检查原 commandId 回执，后核对已确认历史，再等待旧队�
 
 provider activation 通过既有 worker 私有管道传递，不写快照或来源账号文件。配置声明与内部密文由同一 SQLite 事务持有；Host 组合根解密，只把当次所需秘密交给 worker。主密钥由 Native 延迟提供，worker 不持有主密钥。已有配置直接交由官方 CLI/SDK 解析及认证，RSS 不处理外部 token、账户身份或刷新。临时验证 namespace 不生成产品 Session，探针完成且进程停止后才保存；编辑保留或替换密钥，删除清除全部密文并阻止新 worker。恢复只读取 RSS 自有 native context 索引。历史预览仍是普通新输入的一部分。
 
-Native–Host 使用匿名 socketpair；Native 用户注册表产生可信 Caller/generation，UI 只能在绑定逻辑通道内通信。Host 只从当前 Native 上下文生成 execution-origin，Rust MCP 逐调用核对 principal 与 generation，协议 metadata 不能自证身份。设备执行服务按 authority/device 绑定，用户操作显式携带 RequestContext，内部核对以任务冻结 actor 授权。仅一个队列、SQLite owner 和执行线程，无按用户服务池；无任务时阻塞等待。
+Native–Host 使用私有继承 stdin/stdout 的 V1 有界承载，native/execution 两条逻辑通道共用同一 owner；Native 用户注册表产生可信 Caller/generation，UI 只能在绑定逻辑通道内通信。Host 只从当前 Native 上下文生成 execution-origin，Rust MCP 逐调用核对 principal 与 generation，协议 metadata 不能自证身份。设备执行服务按 authority/device 绑定，用户操作显式携带 RequestContext，内部核对以任务冻结 actor 授权。仅一个队列、SQLite owner 和执行线程，无按用户服务池；无任务时阻塞等待。
 
-当前没有历史数据兼容或迁移。本 PR 不新增 HMAC、防重放 nonce、凭据票据或 worker grant；S2 必要补充见 [#2462](https://dev.azure.com/shengming0923/rss/_workitems/edit/2462)。AES-GCM 随机 IV 保留。运行和验证边界见 [Host 应用](../../apps/ai-host/README.md)。
+当前没有历史数据兼容或迁移。[#2462](https://dev.azure.com/shengming0923/rss/_workitems/edit/2462) 增加独立安全状态服务的一次性 challenge，不向 AI worker 分发服务凭据；HMAC、凭据票据与 worker grant 不采用。进程承载、恢复与实验室边界见[安全服务架构](local-service.md)。AES-GCM 随机 IV 保留。运行和验证边界见 [Host 应用](../../apps/ai-host/README.md)。

@@ -1,4 +1,5 @@
 import { run } from "node:test";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync, mkdirSync, writeFileSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
@@ -219,7 +220,12 @@ async function main() {
         .map((name) => fileURLToPath(new URL(name, directory)));
     },
   );
-  for await (const event of run({ files, concurrency: 1, timeout: 120000 })) {
+  for await (const event of run({
+    files,
+    concurrency: 1,
+    timeout: 120000,
+    forceExit: true,
+  })) {
     if (
       event.type === "test:diagnostic" &&
       event.data.message.startsWith('{"a06":1,')
@@ -282,5 +288,23 @@ async function main() {
   process.exitCode = verdict.passed ? 0 : 1;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
-  await main();
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
+  const node = fileURLToPath(
+    new URL(
+      "../.local-ci-runs/worker-runtime/bin/node" +
+        (process.platform === "win32" ? ".exe" : ""),
+      import.meta.url,
+    ),
+  );
+  if (process.execPath === node) await main();
+  else {
+    const result = spawnSync(node, [fileURLToPath(import.meta.url)], {
+      stdio: "inherit",
+    });
+    if (result.error) throw result.error;
+    process.exitCode = result.status ?? 1;
+  }
+}

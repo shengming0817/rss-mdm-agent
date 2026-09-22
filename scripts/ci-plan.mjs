@@ -35,6 +35,7 @@ const always = new Set(["CI runner tests", "docs and diff"]);
 const anyCode = new Set([
   "product harness tests",
   "frozen dependencies",
+  "native service/process generated contracts",
   "frontend format",
   "AI access boundaries",
   "boundaries",

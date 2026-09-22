@@ -22,19 +22,27 @@ pub fn snapshot(status: &ai_session_contract::HostStatus) -> Result<Vec<u8>> {
 /// The native dialog owns path selection. Acceptance reuses the same file writer in a private directory.
 pub fn save(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
     use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(path)
-        .map_err(|_| failed())?;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.custom_flags(0x00200000);
+        if path.is_symlink() {
+            return Err(failed());
+        }
+    }
+    let mut file = options.open(path).map_err(|_| failed())?;
     file.write_all(bytes)
         .and_then(|_| file.sync_all())
         .map_err(|_| failed())
 }
+#[cfg(target_os = "macos")]
 pub async fn export<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     status: ai_session_contract::HostStatus,
@@ -94,4 +102,28 @@ mod tests {
         )
         .is_err());
     }
+}
+
+#[cfg(windows)]
+pub async fn export<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    status: ai_session_contract::HostStatus,
+) -> Result<bool> {
+    let bytes = snapshot(&status)?;
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    app.run_on_main_thread(move || {
+        let _ = sender.send(native_process::private_storage::save_dialog());
+    })
+    .map_err(|_| failed())?;
+    let Some(path) = receiver
+        .await
+        .map_err(|_| failed())?
+        .map_err(|_| failed())?
+    else {
+        return Ok(false);
+    };
+    tokio::task::spawn_blocking(move || save(&path, &bytes))
+        .await
+        .map_err(|_| failed())??;
+    Ok(true)
 }

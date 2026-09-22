@@ -48,19 +48,26 @@ for (const [file, imports] of Object.entries({
   "index.ts": ["node:crypto", "node:util"],
   "channel.ts": ["node:crypto", "node:stream"],
   "delivery.ts": ["node:crypto"],
-  "bootstrap.ts": ["node:net", "node:child_process"],
+  "bootstrap.ts": [],
+  "private-link.ts": ["node:stream"],
   "process.ts": [
     "node:child_process",
     "node:crypto",
     "node:stream",
-    "node:url",
+    "node:path",
   ],
 }))
   serverFiles.set(join(root, "packages/ai-host/src", file), imports);
 for (const [file, imports] of Object.entries({
-  "index.ts": ["node:stream", "node:fs/promises", "node:path"],
+  "index.ts": [
+    "node:stream",
+    "node:fs/promises",
+    "node:path",
+    "node:fs",
+    "node:crypto",
+  ],
   "configuration.ts": ["node:path", "node:crypto"],
-  "native.ts": ["node:net", "node:stream", "node:string_decoder"],
+  "native.ts": ["node:stream", "node:string_decoder"],
   "secrets.ts": ["node:crypto"],
   "resolver.ts": ["node:crypto", "node:fs/promises", "node:path"],
   "connection.ts": ["node:os", "node:path"],
@@ -73,7 +80,12 @@ for (const [file, imports] of Object.entries({
     "node:https",
     "node:net",
   ],
-  "private-file.ts": ["node:fs", "node:fs/promises", "node:path"],
+  "private-file.ts": [
+    "node:fs",
+    "node:fs/promises",
+    "node:path",
+    "node:child_process",
+  ],
 }))
   serverFiles.set(join(root, "apps/ai-host/src", file), imports);
 const runtimeEdges = new Map();

@@ -21,6 +21,14 @@
     "./launch-fence": {
       "types": "./dist/launch-fence.d.ts",
       "import": "./dist/launch-fence.js"
+    },
+    "./private-link": {
+      "types": "./dist/private-link.d.ts",
+      "import": "./dist/private-link.js"
+    },
+    "./process-contract": {
+      "types": "./dist/process-contract.d.ts",
+      "import": "./dist/process-contract.js"
     }
   },
   "scripts": {

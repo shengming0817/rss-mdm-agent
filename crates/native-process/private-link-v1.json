@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "magic": [82, 83, 83],
+  "headerBytes": 9,
+  "maxFrameBytes": 524288,
+  "maxQueuedBytes": 1048576,
+  "maxQueuedFrames": 64,
+  "lanes": {
+    "native": ["native", "execution"],
+    "worker": ["control", "tools", "events"]
+  }
+}

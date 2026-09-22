@@ -1,3 +1,4 @@
+import type { ServiceView } from "./service-contract";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import {
   boundedJson,
@@ -23,4 +24,9 @@ export function nativeHost() {
       return invoke<boolean>("ai_export_diagnostics");
     },
   };
+}
+
+export function nativeService() {
+  if (!isTauri()) return undefined;
+  return { read: () => invoke<ServiceView>("local_service_status") };
 }

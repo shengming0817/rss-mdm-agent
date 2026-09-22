@@ -5,6 +5,7 @@
 
 当前包含独立自助目录核心、执行/AI 会话契约、Vue UI 包、Tauri 桌面自助页面与同导航 AI 助手。桌面通过受限 IPC 消费 Rust 持久化执行服务，并装配独立 AI Host；人和 AI 共用计划、提交与任务事实，批准由可信桌面入口处理。关闭窗口后后台继续，显式退出才有界停止进程。普通浏览器入口提供只读自助预览。本批 C01–C20 交付测试执行器 S1 闭环；真实平台命令、软件安装、提权、远程管理与 T3 留后续交付。真实桌面验收范围限定 macOS arm64 Codex。
 
+- [双平台安全服务实验室](docs/guides/local-service-lab.md)：#2462 候选实现、固定产物安装、验证缺口与不兼容退出；不代表完整 S2 实际执行。
 - [产品 PRD](docs/product/rss-mdm-agent-prd.md)：需求、范围、验收和任务追踪。
 - [协作入口](AGENTS.md)与[Codex工作方式](docs/guides/codex-workflow.md)。
 - [文档导航](docs/README.md)：文档唯一入口。

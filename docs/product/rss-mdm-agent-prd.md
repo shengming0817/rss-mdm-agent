@@ -11,7 +11,7 @@ Owner repository：rss-mdm-agent。任务容器：[EPIC #2392](https://dev.azure
 C05 经用户扩大范围：提取独立 Vue UI 包和可启动的 Tauri 桌面基础壳，采用根级 `apps/`、`packages/`、`crates/` 组织。
 C20 将 C15/C16 桌面页面通过受限 IPC 接入 Rust SQLite 执行 owner、S1 测试 runner 和独立 AI Host；浏览器继续使用明确的只读样本。UI 与 AI 共用冻结计划、授权、批准和原请求恢复，旧内存生产入口直接替换；具体启动与验证见[桌面指南](../guides/desktop-development.md)。
 
-C16 在同一应用壳直接增加 AI 助手导航，消费公共 ai-client / ai-ui-bridge。固定 Host 测试装配复用同一 App；Tauri 普通启动注入真实本地 AI 服务，不可用时显示未连接。执行详情来自 Rust execution-app 的单次授权记录读取，冻结计划摘要及 TypeScript 类型由 Rust 生成，S1 结果持续标识测试。AI wire V5 与 AI SQLite schema v4 直接替换旧版，不迁移或双读；C20 已接入同一 Rust 持久执行 owner 和独立 Node Host；真实平台执行仍不在 S1 内。页面与故障验收见[助手指南](../guides/assistant-development.md)。
+C16 在同一应用壳直接增加 AI 助手导航，消费公共 ai-client / ai-ui-bridge。固定 Host 测试装配复用同一 App；Tauri 普通启动注入真实本地 AI 服务，不可用时显示未连接。执行详情来自 Rust execution-app 的单次授权记录读取，冻结计划摘要及 TypeScript 类型由 Rust 生成，S1 结果持续标识测试。AI wire V5 与 AI SQLite schema v5 直接替换旧版，不迁移或双读；C20 已接入同一 Rust 持久执行 owner 和独立 Node Host；真实平台执行仍不在 S1 内。页面与故障验收见[助手指南](../guides/assistant-development.md)。
 
 ## 1. 产品定位与完成边界
 
@@ -399,7 +399,7 @@ C20必须证明选定AI宿主自身没有不受控原生工具旁路；做不到
 
 Native 与 Host 使用匿名继承管道及固定 Caller/generation 的 UI 通道；不监听文件系统 socket。worker 启动参数仅通过既有私有管道传递，不存参数快照或来源账号文件；主密钥不进入 worker。保留工具、hooks、plugins 和任意 MCP 的限制，既有配置不得开放旁路。Codex 验证使用 ephemeral 线程，Claude 使用不持久化的验证会话；仅恢复 RSS 记录的原生 ID，不管理用户其它 CLI 会话。
 
-本 PR 不增加 HMAC、防重放 nonce、凭据授权票据或 worker grant 系统；后续 S2 独立服务与跨权限边界由 [#2462](https://dev.azure.com/shengming0923/rss/_workitems/edit/2462) 评估并补充必要机制。AES-GCM 随机 IV 保留。测试注入主密钥 backend，不访问真实用户 Keychain。
+[#2462](https://dev.azure.com/shengming0923/rss/_workitems/edit/2462) 经用户扩大为 macOS arm64 / Windows 11 x64 独立安全状态服务及桌面候选接线：服务仅 GetServiceStatus，采用 OS 双向身份和连接内一次性 challenge；不采用 HMAC、凭据票据或 worker grant，不接收 AI 密钥。该实现不包含真实脚本、软件安装或生产授权签发，双平台真实验证后补且 issue 保持未完成。详见[安全服务架构](../architecture/local-service.md)与[实验室验收](../guides/local-service-lab.md)。AES-GCM 随机 IV 保留。测试注入主密钥 backend，不访问真实用户 Keychain。
 
 产品 Session 可在无凭据时创建和读取。首条输入懒创建 provider 阶段，后续连接选择先等待已接收队列按原阶段完成；切换等待期间拒绝新的普通输入。每个阶段固定连接及版本，一次仅有一个 live worker。原生 resume 与新上下文意图分别操作，原命令重试优先返回原回执，不触发新阶段。原生恢复失败不静默换上下文。
 

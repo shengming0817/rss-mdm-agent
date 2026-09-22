@@ -15,3 +15,5 @@ mod control;
 pub mod diagnostics;
 mod host;
 mod runtime_package;
+
+mod private_link;

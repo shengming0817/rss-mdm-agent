@@ -1,7 +1,9 @@
-import { fileURLToPath } from "node:url";
-import { spawn, type ChildProcess } from "node:child_process";
+import { isAbsolute } from "node:path";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import type { Duplex } from "node:stream";
+import { PrivateLink } from "./private-link.js";
+import type { Ready, Scope } from "./process-contract.js";
+import { validScope } from "./launch-fence.js";
 import type {
   Binding,
   Budget,
@@ -24,25 +26,66 @@ import { Output } from "./queue.js";
 import { Deadline } from "./deadline.js";
 import type { WorkerLaunchFenceStore } from "./launch-fence.js";
 
-export function groupEmpty(pgid: number): boolean {
-  if (!Number.isSafeInteger(pgid) || pgid <= 1) return false;
-  try {
-    process.kill(-pgid, 0);
+export interface WorkerRuntime {
+  readonly launcher: string;
+  readonly manifestDigest: string;
+}
+export function scopeAbsent(runtime: WorkerRuntime, scope: Scope): boolean {
+  if (!validScope(scope) || !isAbsolute(runtime.launcher)) return false;
+  const result = spawnSync(
+    runtime.launcher,
+    ["absent", JSON.stringify(scope)],
+    { timeout: 2000, stdio: "ignore", windowsHide: true },
+  );
+  return result.status === 0;
+}
+/** Deadline-bound probe. No synchronous spawn can freeze the Host control loop. */
+export async function scopeAbsentWithin(
+  runtime: WorkerRuntime,
+  scope: Scope,
+  budget: Budget,
+): Promise<boolean> {
+  if (
+    !validScope(scope) ||
+    !isAbsolute(runtime.launcher) ||
+    budget.signal.aborted ||
+    budget.timeoutMs <= 0
+  )
     return false;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "ESRCH";
-  }
+  return new Promise((resolve) => {
+    const child = spawn(runtime.launcher, ["absent", JSON.stringify(scope)], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    let expired = false;
+    const cancel = () => {
+      expired = true;
+      child.kill("SIGKILL");
+    };
+    const timer = setTimeout(cancel, Math.min(2000, budget.timeoutMs));
+    const finish = (absent: boolean) => {
+      clearTimeout(timer);
+      budget.signal.removeEventListener("abort", cancel);
+      resolve(!expired && absent);
+    };
+    budget.signal.addEventListener("abort", cancel, { once: true });
+    if (budget.signal.aborted) cancel();
+    child.once("error", () => finish(false));
+    child.once("exit", (code) => finish(code === 0));
+  });
 }
 const pause = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms));
 export class WorkerPort implements ProviderAgentPort {
   readonly launchId = randomUUID();
   private child?: ChildProcess;
+  private link?: PrivateLink;
+  private scope?: Scope;
+  private scopePersisted = false;
   private control?: Channel;
   private output?: Channel;
   private tools?: Channel;
   private readonly streams = new Map<string, Output<ProviderObservation>>();
-  private registered = false;
   private exited = false;
   private closing = false;
   private released = false;
@@ -54,6 +97,7 @@ export class WorkerPort implements ProviderAgentPort {
   private toolsAdmitted = false;
   onFailure?: () => void;
   constructor(
+    private readonly runtime: WorkerRuntime,
     private readonly store: WorkerLaunchFenceStore,
     private readonly namespace: Namespace,
     private readonly artifact: string,
@@ -93,7 +137,11 @@ export class WorkerPort implements ProviderAgentPort {
     budget: Budget,
     previous: Binding | null,
   ): Promise<Result<void>> {
-    if (process.platform === "win32" || !this.artifact.startsWith("file:"))
+    if (
+      !isAbsolute(this.runtime.launcher) ||
+      !/^[a-f0-9]{64}$/.test(this.runtime.manifestDigest) ||
+      !this.artifact.startsWith("file:")
+    )
       return fail("unsupported_capability");
     const check = () => {
       if (this.closing || budget.signal.aborted)
@@ -105,28 +153,27 @@ export class WorkerPort implements ProviderAgentPort {
         namespace: this.namespace,
         launchId: this.launchId,
         artifact: this.artifact,
+        runtimeDigest: this.runtime.manifestDigest,
         phase: "reserved",
       });
       if (!reserved.ok) return reserved;
       this.reserved = true;
       check();
-      this.child = spawn(
-        process.execPath,
-        [
-          fileURLToPath(new URL("./bootstrap.js", import.meta.url)),
-          this.launchId,
-        ],
-        {
-          detached: true,
-          stdio: ["ignore", "ignore", "ignore", "pipe", "pipe", "pipe"],
-          // Provider credentials belong to its trusted resolver, never inherited accidentally.
-          env: Object.fromEntries(
-            ["PATH", "HOME", "TMPDIR", "SystemRoot"].flatMap((k) =>
-              process.env[k] ? [[k, process.env[k]!]] : [],
-            ),
-          ),
-        },
-      );
+      this.child = spawn(this.runtime.launcher, ["launch", this.launchId], {
+        stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
+        env: Object.fromEntries(
+          [
+            "PATH",
+            "HOME",
+            "TMPDIR",
+            "SystemRoot",
+            "USERPROFILE",
+            "LOCALAPPDATA",
+            "TEMP",
+          ].flatMap((k) => (process.env[k] ? [[k, process.env[k]!]] : [])),
+        ),
+      });
       this.child.once("exit", () => {
         this.exited = true;
         this.failed();
@@ -135,10 +182,60 @@ export class WorkerPort implements ProviderAgentPort {
         this.exited = true;
         this.failed();
       });
-      this.control = new Channel(this.child.stdio[3] as Duplex, this.launchId);
-      this.output = new Channel(this.child.stdio[4] as Duplex, this.launchId);
+      // On Unix the launcher PID is the process-group identity before any
+      // untrusted readiness bytes are parsed. Windows retains the reservation
+      // until the launcher reports its session-qualified Job Object identity.
+      if (process.platform !== "win32" && this.child.pid) {
+        this.scope = { kind: "processGroup", root: this.child.pid };
+        const persisted = await this.store.registerLaunch(
+          this.namespace,
+          this.launchId,
+          this.scope,
+        );
+        if (!persisted.ok) throw new Error(persisted.error.code);
+        this.scopePersisted = true;
+      }
+      const ownership = new Promise<Ready>((resolve, reject) => {
+        let text = "",
+          received = false;
+        const timer = setTimeout(
+          () => reject(new Error("worker startup deadline")),
+          Math.min(budget.timeoutMs, 5000),
+        );
+        const failed = () => {
+          clearTimeout(timer);
+          reject(new Error("worker startup failed"));
+        };
+        this.child!.once("exit", failed).once("error", failed);
+        this.child!.stderr!.on("data", (bytes: Buffer) => {
+          if (received) return;
+          text += bytes.toString("utf8");
+          if (text.length > 8192) {
+            failed();
+            return;
+          }
+          const end = text.indexOf("\n");
+          if (end < 0) return;
+          received = true;
+          clearTimeout(timer);
+          try {
+            resolve(JSON.parse(text.slice(0, end)));
+          } catch {
+            failed();
+          }
+        });
+      });
+      // Install a rejection handler immediately, before any asynchronous startup stage.
+      void ownership.catch(() => {});
+      this.link = new PrivateLink(
+        this.child.stdout!,
+        this.child.stdin!,
+        "worker",
+      );
+      this.control = new Channel(this.link.lane("control"), this.launchId);
+      this.output = new Channel(this.link.lane("events"), this.launchId);
       this.tools = new Channel(
-        (this.child.stdio as unknown as Duplex[])[5],
+        this.link.lane("tools"),
         this.launchId,
         async (method, data, b) => {
           if (
@@ -181,27 +278,42 @@ export class WorkerPort implements ProviderAgentPort {
           this.control?.close();
         }
       };
-      const hello = (await this.control.call("hello", null, budget)) as {
-        pid: number;
-        pgid: number;
-        parentPid: number;
-      };
+      const ready = await ownership;
       check();
       if (
-        hello.pid !== this.child.pid ||
-        hello.pgid !== hello.pid ||
-        hello.parentPid !== process.pid ||
-        hello.pgid === process.pid
+        ready.version !== 1 ||
+        ready.launchId !== this.launchId ||
+        ready.launcherPid !== this.child.pid ||
+        !Number.isSafeInteger(ready.workerPid) ||
+        ready.workerPid <= 1 ||
+        !validScope(ready.scope) ||
+        ready.artifact !== this.runtime.manifestDigest ||
+        (process.platform === "win32"
+          ? ready.scope.kind !== "jobObject" ||
+            ready.scope.name !== "Local\\rss-mdm-worker-" + this.launchId
+          : ready.scope.kind !== "processGroup" ||
+            ready.scope.root !== ready.launcherPid)
       )
         throw new Error("worker ownership");
-      const registered = await this.store.registerLaunch(
-        this.namespace,
-        this.launchId,
-        hello.pid,
-        hello.pgid,
-      );
-      if (!registered.ok) throw new Error(registered.error.code);
-      this.registered = true;
+      this.scope = ready.scope;
+      const hello = (await this.control.call("hello", null, budget)) as {
+        pid: number;
+        parentPid: number;
+      };
+      if (
+        hello.pid !== ready.workerPid ||
+        hello.parentPid !== ready.launcherPid
+      )
+        throw new Error("worker ownership");
+      if (!this.scopePersisted) {
+        const persisted = await this.store.registerLaunch(
+          this.namespace,
+          this.launchId,
+          ready.scope,
+        );
+        if (!persisted.ok) throw new Error(persisted.error.code);
+        this.scopePersisted = true;
+      }
       check();
       await this.control.call(
         "activate",
@@ -302,10 +414,12 @@ export class WorkerPort implements ProviderAgentPort {
     this.startupAbort.abort();
     if (this.child?.pid && !this.exited) {
       try {
-        if (this.registered) process.kill(-this.child.pid, "SIGKILL");
+        if (this.scope?.kind === "processGroup")
+          process.kill(-this.scope.root, "SIGKILL");
         else this.child.kill("SIGKILL");
       } catch {}
     }
+    this.link?.close();
     this.tools?.close();
     this.control?.close();
     this.output?.close();
@@ -332,11 +446,15 @@ export class WorkerPort implements ProviderAgentPort {
           );
       } catch {}
       this.terminate();
-      while (
-        this.child &&
-        (!this.exited || (this.registered && !groupEmpty(this.child.pid!)))
-      )
+      while (this.child) {
+        const absent = this.scope
+          ? await deadline.wait(() =>
+              scopeAbsentWithin(this.runtime, this.scope!, deadline.budget()),
+            )
+          : false;
+        if (this.exited && absent) break;
         await deadline.wait(() => pause(10));
+      }
       if (this.reserved) {
         const released = await deadline.wait(
           () =>

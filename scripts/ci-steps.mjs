@@ -13,11 +13,17 @@ export const steps = [
   ["frozen dependencies", "pnpm", ["install", "--frozen-lockfile"]],
   ["workspace build inputs", "pnpm", ["-r", "build"]],
   [
+    "native service/process generated contracts",
+    "node",
+    ["scripts/generate-process-contract.mjs", "--check"],
+  ],
+  [
     "product harness tests",
     "node",
     [
       "--test",
       "scripts/ci-workspace.test.mjs",
+      "scripts/service-verification.test.mjs",
       "scripts/desktop-dev.test.mjs",
       "scripts/runtime-integrity.test.mjs",
       "scripts/rust-consumers.test.mjs",

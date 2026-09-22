@@ -9,7 +9,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
-import { packHost, installArtifacts, run } from "./ai-host-artifacts.mjs";
+import {
+  packHost,
+  installArtifacts,
+  run,
+  stageWorkerRuntime,
+} from "./ai-host-artifacts.mjs";
 import { sourceState, sameCommittedSource } from "./source-state.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url)),
   start = sourceState(root),
@@ -57,13 +62,15 @@ try {
   writeFileSync(
     join(directory, "consumer.ts"),
     `import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';import {createHash} from 'node:crypto';import {fileURLToPath} from 'node:url';
 import {mkdtemp,rm} from 'node:fs/promises';import {tmpdir} from 'node:os';import {join} from 'node:path';
 import {createHost,type HostOptions} from '@rss-mdm-agent/ai-host';import type {WorkerFactory} from '@rss-mdm-agent/ai-host/worker';
 import {openSqliteStore} from '@rss-mdm-agent/ai-store-sqlite';import type {Result,HostPort,Command} from '@rss-mdm-agent/ai-contract';
 const unwrap=<T>(r:Result<T>):T=>{if(!r.ok)throw new Error(r.error.code);return r.value;};
 const dir=await mkdtemp(join(tmpdir(),'isolated-host-db-')),caller={tenantId:'t',principalId:'p',authorityId:'a'},budget=()=>({timeoutMs:5000,signal:new AbortController().signal});
 const store=unwrap(openSqliteStore({path:join(dir,'host.sqlite'),mode:'create'}));
-const options:HostOptions={delivery:null,store,launchFences:store,resolve:async(caller,options,namespace)=>({configuration:{namespace,provider:options.provider,config:options.config,workingDirectory:dir,permissions:'tools_disabled'},artifact:new URL('../provider.mjs',import.meta.url).href})};
+const workerRuntime={launcher:fileURLToPath(new URL('../bin/rss-ai-worker-launcher'+(process.platform==='win32'?'.exe':''),import.meta.url)),manifestDigest:createHash('sha256').update(readFileSync(new URL('../worker-manifest.json',import.meta.url))).digest('hex')};
+const options:HostOptions={workerRuntime,delivery:null,store,launchFences:store,resolve:async(caller,options,namespace)=>({configuration:{namespace,provider:options.provider,config:options.config,workingDirectory:dir,permissions:'tools_disabled'},artifact:new URL('../provider.mjs',import.meta.url).href})};
 const host:HostPort=unwrap(await createHost(options));
 try{unwrap(await store.saveConnection(caller,{schemaVersion:5,kind:'connection',connectionId:'c',name:'Consumer',provider:'codex',configRevision:1,profile:'conversation',status:'ready',source:{type:'custom_api',apiUrl:'https://example.invalid',model:'fixture'}},null));const session=unwrap(await host.createSession(caller,{connectionId:'c'},budget()));
 const command:Command={schemaVersion:5,kind:'command',commandId:'prompt',sessionId:session.namespace.sessionId,expiresAtMs:Date.now()+10000,input:{type:'prompt',policy:'queue_next',text:'quick'}};
@@ -74,8 +81,13 @@ assert.equal(terminal,true);assert.equal(unwrap(await store.launches()).length,1
 console.log('Isolated Host tarballs: typed public API, real SQLite, activated worker, durable terminal and real shutdown passed');`,
   );
   deploymentLockSha256 = installArtifacts(root, directory);
+  stageWorkerRuntime(root, directory);
   run("pnpm", ["exec", "tsc"], directory);
-  run(process.execPath, ["out/consumer.js"], directory);
+  run(
+    join(directory, "bin/node" + (process.platform === "win32" ? ".exe" : "")),
+    ["out/consumer.js"],
+    directory,
+  );
   behaviorPassed = true;
 } catch (error) {
   failure = String(error);

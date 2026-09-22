@@ -1,3 +1,4 @@
+import { workerRuntime } from "./worker-runtime.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -59,6 +60,7 @@ test("real Host lazily opens phases, drains accepted work before switching, and 
     disposed = 0;
   const host = unwrap(
     await createHost({
+      workerRuntime,
       store,
       launchFences: store,
       delivery: null,
@@ -317,6 +319,7 @@ test("switching test users cancels queued model work and keeps the old user's re
   );
   const host = unwrap(
     await createHost({
+      workerRuntime,
       store,
       launchFences: store,
       delivery: null,
@@ -436,6 +439,7 @@ test("ordinary runtime snapshot cleanup is retained and retried after a failure"
   let attempts = 0;
   const host = unwrap(
     await createHost({
+      workerRuntime,
       store,
       launchFences: store,
       delivery: null,
@@ -497,6 +501,7 @@ test("saving a connection requires a completed model probe and preserves the pre
   const diagnostics = [];
   const host = unwrap(
     await createHost({
+      workerRuntime,
       store,
       launchFences: store,
       delivery: null,
@@ -597,6 +602,7 @@ test("failed probe disposal leaves worker capacity available and retries cleanup
   let disposals = 0;
   const host = unwrap(
     await createHost({
+      workerRuntime,
       store,
       launchFences: store,
       delivery: null,
@@ -644,6 +650,7 @@ test("typed resolver and persistence failures keep closed codes and credential d
   let resolverFailure = true;
   const host = unwrap(
     await createHost({
+      workerRuntime,
       store,
       launchFences: store,
       delivery: null,
@@ -715,6 +722,7 @@ test("application persistence reencrypts retained secrets and lets only one comp
   let available = true;
   const host = unwrap(
     await createHost({
+      workerRuntime,
       store,
       launchFences: store,
       delivery: null,
@@ -840,6 +848,7 @@ test("user fence settles persistent offline queues across pages and propagates d
   };
   const host = unwrap(
     await createHost({
+      workerRuntime,
       store,
       launchFences: store,
       delivery: null,
@@ -923,6 +932,7 @@ test("verification preserves definite failures and never calls unknown acceptanc
     );
     const host = unwrap(
       await createHost({
+        workerRuntime,
         store,
         launchFences: store,
         delivery: null,
@@ -970,6 +980,7 @@ test("controlled connection verification requires the dedicated harmless tool ca
     );
     const host = unwrap(
       await createHost({
+        workerRuntime,
         store,
         launchFences: store,
         delivery: null,

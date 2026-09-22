@@ -2144,7 +2144,7 @@ export interface HostHealth {
   schemaVersion: 5;
   kind: "hostHealth";
   ready: true;
-  protocol: 2;
+  protocol: 3;
 }
 /**
  * Closed diagnostic frame on the inherited Host diagnostic pipe. Raw stderr and unknown frames never become product diagnostics.

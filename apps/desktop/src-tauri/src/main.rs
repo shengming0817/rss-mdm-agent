@@ -63,6 +63,22 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 fn main() -> std::process::ExitCode {
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args.len() == 1 && args[0] == "--service-probe" {
+        let status = local_service::inspect();
+        println!(
+            "{}",
+            serde_json::to_string(&status).expect("closed service projection")
+        );
+        return if matches!(status, local_service::ServiceView::Connected { .. }) {
+            std::process::ExitCode::SUCCESS
+        } else {
+            std::process::ExitCode::FAILURE
+        };
+    }
+    if !args.is_empty() {
+        return std::process::ExitCode::FAILURE;
+    }
     match run() {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {

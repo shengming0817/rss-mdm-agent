@@ -1,6 +1,6 @@
 # 本地 AI Host 应用
 
-本应用装配 V5 契约、SQLite schema 4、独立 provider worker 和 ACP–A2UI 服务。原生桌面持有测试用户选择、UI generation 和一个设备执行服务；Host 持有个人连接、产品 Session、provider 阶段及持久交付。当前验证平台为 macOS arm64。
+本应用装配 V5 契约、SQLite schema 5、独立 provider worker 和 ACP–A2UI 服务。原生桌面持有测试用户选择、UI generation 和一个设备执行服务；Host 持有个人连接、产品 Session、provider 阶段及持久交付。当前验证平台为 macOS arm64。
 
 ```sh
 pnpm build:ai-host
@@ -8,7 +8,7 @@ pnpm bundle:ai-host
 pnpm desktop:build
 ```
 
-`host.json` 只包含 `version: 1`、`databasePath`、`nativeDirectory`、`workingDirectory`。Native 与 Host 通过匿名 socketpair 的继承 fd 3 通信，stdio 单独承载 Rust 执行 MCP；control frame 与 execution-origin 由 AI Runtime V5 schema 生成 Rust/TS 绑定。每条 UI 逻辑连接固定可信 Caller 和 generation；execution-origin 也携带 Native 当前 generation，Rust 在每次工具调用时与用户注册表核对，旧代际或 metadata 自选主体均拒绝。即使 Host 刚重启且尚未 attach，用户切换也先以 Native 恢复的完整旧上下文完成持久 fence，再提交新选择。没有可发现的 AI/凭据 socket、入站监听或按用户启动的服务池。
+`host.json` 只包含 `version: 1`、`databasePath`、`nativeDirectory`、`workingDirectory`。Native 与 Host 通过私有继承 stdin/stdout 的 V1 有界帧通信，native/execution 两条逻辑 lane 分别承载控制与 Rust 执行 MCP；control frame 与 execution-origin 由 AI Runtime V5 schema 生成 Rust/TS 绑定。每条 UI 逻辑连接固定可信 Caller 和 generation；execution-origin 也携带 Native 当前 generation，Rust 在每次工具调用时与用户注册表核对，旧代际或 metadata 自选主体均拒绝。即使 Host 刚重启且尚未 attach，用户切换也先以 Native 恢复的完整旧上下文完成持久 fence，再提交新选择。没有可发现的 AI/凭据 socket、入站监听或按用户启动的服务池。
 
 ## 连接来源
 
@@ -46,3 +46,5 @@ worker 的 activation 数据通过既有私有管道传入，包含该次启动�
 `node scripts/check-connection-sources.mjs` 把当前用户已有配置目录交给官方 Codex/Claude，发送最小真实模型请求。两个来源均须完成探针；目录缺失记 partial，认证或能力失败仍判失败。报告不包含账号、目录或秘密，该入口不纳入无凭据 CI。平台窗口验收见[桌面指南](../../docs/guides/desktop-development.md)。
 
 来源：Rust `std::os::unix::net::UnixStream::pair`；[Codex 0.155.0 config merge](https://github.com/openai/codex/blob/rust-v0.155.0/codex-rs/config/src/merge.rs) 与 [CLI profile 入口](https://github.com/openai/codex/blob/rust-v0.155.0/codex-rs/cli/src/main.rs)；Claude Agent SDK 0.3.277 `sdk.d.ts`；[Node `http.request` 自定义 `lookup`](https://nodejs.org/api/http.html#httprequestoptions-callback)；[OWASP SSRF DNS/redirect 防护](https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html)；[Node crypto](https://nodejs.org/api/crypto.html)；security-framework 3.5.1 `src/passwords.rs`、`src/random.rs`；objc2-app-kit 0.3.2 `NSAlert` / `NSSecureTextField`。没有复制上游认证实现。
+
+#2462 的独立状态服务采用 OS 双向身份与单次 challenge，与本应用的 AI 凭据链隔离。见[架构](../../docs/architecture/local-service.md)和[实验室指南](../../docs/guides/local-service-lab.md)。

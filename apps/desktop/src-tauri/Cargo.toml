@@ -11,6 +11,8 @@ tauri-build.workspace = true
 serde_json.workspace = true
 
 [dependencies]
+native-process = { path = "../../../crates/native-process" }
+local-service = { path = "../../../crates/local-service" }
 ai-session-contract = { path = "../../../crates/ai-session-contract" }
 unicode-normalization = "=0.1.25"
 uuid = { version = "=1.26.0", features = ["v4"] }
@@ -49,3 +51,6 @@ custom-protocol = ["tauri/custom-protocol"]
 syn = { version = "=2.0.119", features = ["full", "visit"] }
 proc-macro2 = "=1.0.107"
 tauri = { workspace = true, features = ["test"] }
+
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_System_Threading"] }

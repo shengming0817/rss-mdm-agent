@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from "vue";
 import type { AssistantController } from "../assistant/controller";
+import LocalService from "./LocalService.vue";
 import ConnectionSettings from "./ConnectionSettings.vue";
 import { diagnosticMessage, type HostSettings } from "./controller";
 const props = defineProps<{
@@ -73,6 +74,7 @@ function keys(event: KeyboardEvent) {
   <section class="settings" aria-label="设置">
     <h1 tabindex="-1">设置</h1>
     <div :inert="confirming ? true : undefined">
+      <LocalService />
       <section class="settings-card">
         <h2>测试用户</h2>
         <p>本地测试模式 · 非登录 · 不代表企业身份认证。</p>
@@ -110,7 +112,10 @@ function keys(event: KeyboardEvent) {
           <dt>外观</dt>
           <dd>跟随系统</dd>
           <dt>关闭窗口</dt>
-          <dd>关闭视图，后台服务继续；应用菜单“退出”关闭服务。</dd>
+          <dd>
+            关闭视图后 AI Host
+            继续运行；应用菜单“退出”关闭应用进程。独立状态服务由系统管理。
+          </dd>
           <dt>通知</dt>
           <dd>应用内显示待回应计数；当前未提供系统通知和自动更新设置。</dd>
         </dl>
