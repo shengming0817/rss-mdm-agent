@@ -16,6 +16,8 @@ import { checkRustConsumers, rustConsumers } from "./check-rust-consumers.mjs";
 import { git } from "./source-state.mjs";
 
 const names = [
+  "native-process",
+  "local-service",
   "execution-contract",
   "ai-session-contract",
   "execution-interaction",
@@ -301,7 +303,7 @@ test("unexpected local or git dependencies fail isolation without hiding later c
 for (const [mode, code, packageName] of [
   ["workspace", "workspace-isolation-drift", undefined],
   ["target", "target-isolation-drift", undefined],
-  ["owner", "missing-consumer-owner", "execution-contract"],
+  ["owner", "missing-consumer-owner", rustConsumers[0].name],
   ["registry", "missing-registry-dependency", "serde_json"],
   ["local", "unexpected-local-dependency", "forbidden-owner"],
   ["git", "non-registry-dependency", "forbidden-owner"],

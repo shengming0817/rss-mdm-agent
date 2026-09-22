@@ -421,20 +421,71 @@ mod tests {
         runtime.shutdown().await;
         std::fs::remove_dir_all(root).unwrap();
     }
+    fn fixture_binary() -> &'static Path {
+        static BINARY: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+        BINARY.get_or_init(|| {
+            let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .ancestors()
+                .nth(3)
+                .unwrap();
+            let output = std::process::Command::new("cargo")
+                .args([
+                    "build",
+                    "--locked",
+                    "--message-format=json",
+                    "-p",
+                    "native-process",
+                    "--example",
+                    "host-fixture",
+                ])
+                .current_dir(root)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8(output.stdout)
+                .unwrap()
+                .lines()
+                .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                .find_map(|value| {
+                    (value["target"]["name"] == "host-fixture")
+                        .then(|| value["executable"].as_str().map(PathBuf::from))
+                        .flatten()
+                })
+                .unwrap()
+        })
+    }
+    fn fixture_alive(pid: i32) -> bool {
+        #[cfg(unix)]
+        {
+            unsafe { libc::kill(pid, 0) == 0 }
+        }
+        #[cfg(windows)]
+        {
+            use windows_sys::Win32::{Foundation::*, System::Threading::*};
+            unsafe {
+                let handle = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid as u32);
+                if handle.is_null() {
+                    return GetLastError() == ERROR_ACCESS_DENIED;
+                }
+                let alive = WaitForSingleObject(handle, 0) == WAIT_TIMEOUT;
+                CloseHandle(handle);
+                alive
+            }
+        }
+    }
     fn fixture(root: &Path, mode: &str) -> PathBuf {
-        use std::os::unix::fs::PermissionsExt;
         let artifact = root.join("artifact");
         private_directory(&artifact.join("bin")).unwrap();
-        std::fs::write(artifact.join("manifest.json"),r#"{"status":"passed","desktopProtocol":3,"contractVersion":5,"verification":{"platform":"darwin","arch":"arm64"},"runtimeTreeSha256":"0000000000000000000000000000000000000000000000000000000000000000"}"#).unwrap();
+        let suffix = if cfg!(windows) { ".exe" } else { "" };
         for name in [
-            "bin/node",
-            "bin/rss-ai-worker-launcher",
-            "bin/rss-private-storage",
-            "worker-manifest.json",
             "package.json",
             "pnpm-lock.yaml",
             "NODE-LICENSE",
-            "node_modules/@rss-mdm-agent/ai-host-app/dist/cli.js",
+            "worker-manifest.json",
             "node_modules/@rss-mdm-agent/ai-host/dist/index.js",
             "node_modules/@rss-mdm-agent/ai-contract/dist/index.js",
             "node_modules/@rss-mdm-agent/ai-store-sqlite/dist/index.js",
@@ -442,61 +493,21 @@ mod tests {
         ] {
             let path = artifact.join(name);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(&path, b"fixture").unwrap();
-            if name == "bin/node" {
-                std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
-            }
+            std::fs::write(path, b"fixture").unwrap();
         }
-        let script = format!(
-            r#"#!/usr/bin/python3
-import json,os,sys,time,signal,struct
-open(os.path.join(os.path.dirname(sys.argv[2]), 'fixture.pid'),'w').write(str(os.getpid()))
-if {mode:?}.startswith('diagnostic_'):
-    sys.stderr.write(json.dumps({{'schemaVersion':5,'kind':'hostProcessDiagnostic','code':{mode:?}[11:]}})+'\n')
-    sys.exit(1)
-if {mode:?} == 'ignore_term': signal.signal(signal.SIGTERM, signal.SIG_IGN)
-if {mode:?} == 'nonzero_term': signal.signal(signal.SIGTERM, lambda *_: sys.exit(7))
-if {mode:?} == 'exit': sys.exit(7)
-def exact(size):
-    result=b''
-    while len(result)<size:
-        data=sys.stdin.buffer.read(size-len(result))
-        if not data: return None
-        result+=data
-    return result
-buffer=b''
-while True:
-    header=exact(9)
-    if header is None: break
-    if header[:4] != b'RSS\x01': sys.exit(7)
-    data=exact(struct.unpack('>I',header[5:9])[0])
-    if data is None: break
-    if header[4] != 0: continue
-    buffer+=data
-    while b'\n' in buffer:
-        line,buffer=buffer.split(b'\n',1)
-        frame=json.loads(line)
-        if frame['kind'] != 'nativeCall': continue
-        if frame['method']=='health' and {mode:?} == 'delayed': time.sleep(0.4)
-        if frame['method']=='health' and {mode:?} == 'no_health': time.sleep(60)
-        value={{'schemaVersion':5,'kind':'hostHealth','ready':True,'protocol':3}} if frame['method']=='health' else True
-        if frame['method']=='health' and {mode:?} == 'bad_health': value['protocol']=0
-        data=(json.dumps({{'schemaVersion':5,'kind':'nativeReply','id':frame['id'],'ok':True,'value':value}})+'\n').encode()
-        sys.stdout.buffer.write(b'RSS\x01'+bytes([0])+struct.pack('>I',len(data))+data)
-        sys.stdout.buffer.flush()
-if {mode:?} == 'ignore_term': time.sleep(60)
-if {mode:?} == 'nonzero_term': sys.exit(7)
-
-"#
-        );
-        let executable = artifact.join("bin/node");
-        std::fs::write(&executable, script).unwrap();
-        std::fs::set_permissions(executable, std::fs::Permissions::from_mode(0o700)).unwrap();
-        let mut manifest: Value =
-            serde_json::from_slice(&std::fs::read(artifact.join("manifest.json")).unwrap())
-                .unwrap();
-        manifest["runtimeTreeSha256"] =
-            json!(super::super::runtime_package::digest(&artifact).unwrap());
+        for binary in ["node", "rss-ai-worker-launcher", "rss-private-storage"] {
+            std::fs::copy(
+                fixture_binary(),
+                artifact.join(format!("bin/{binary}{suffix}")),
+            )
+            .unwrap();
+        }
+        let script = artifact.join("node_modules/@rss-mdm-agent/ai-host-app/dist/cli.js");
+        std::fs::create_dir_all(script.parent().unwrap()).unwrap();
+        std::fs::write(script, mode).unwrap();
+        let manifest = json!({"status":"passed","desktopProtocol":3,"contractVersion":5,
+            "verification":{"platform":if cfg!(windows){"win32"}else{"darwin"},"arch":if cfg!(windows){"x64"}else{"arm64"}},
+            "runtimeTreeSha256":super::super::runtime_package::digest(&artifact).unwrap()});
         std::fs::write(
             artifact.join("manifest.json"),
             serde_json::to_vec(&manifest).unwrap(),
@@ -695,6 +706,47 @@ if {mode:?} == 'nonzero_term': sys.exit(7)
     }
 
     #[tokio::test]
+    async fn surviving_scope_blocks_restart_until_the_same_owner_confirms_empty() {
+        let root = std::env::temp_dir().join(format!("rss-scope-{}", uuid::Uuid::new_v4()));
+        private_directory(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        let artifact = fixture(&root, "leak");
+        let runtime = DesktopRuntime::start_with_key_backend(
+            &root,
+            &artifact,
+            ai_session_contract::HostStatusSource::DevelopmentOverride,
+            NoKey,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            runtime.status().phase,
+            ai_session_contract::HostStatusPhase::Ready
+        );
+        let generation = runtime.epoch();
+        let blocked = runtime.restart(generation).await;
+        assert_eq!(blocked.generation.0 as u64, generation);
+        assert_eq!(blocked.phase, ai_session_contract::HostStatusPhase::Failed);
+        let pid: i32 = std::fs::read_to_string(root.join("descendant.pid"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        for _ in 0..500 {
+            if !fixture_alive(pid) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(!fixture_alive(pid));
+        fixture(&root, "ready");
+        let ready = runtime.restart(generation).await;
+        assert_eq!(ready.generation.0 as u64, generation + 1);
+        assert_eq!(ready.phase, ai_session_contract::HostStatusPhase::Ready);
+        runtime.shutdown().await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
     async fn absent_health_is_bounded_and_never_ready() {
         let root = std::env::temp_dir().join(format!("rss-timeout-{}", uuid::Uuid::new_v4()));
         private_directory(&root).unwrap();
@@ -722,7 +774,7 @@ if {mode:?} == 'nonzero_term': sys.exit(7)
             .parse()
             .unwrap();
         // SAFETY: signal zero only tests process existence; it sends no signal.
-        let alive = unsafe { libc::kill(pid, 0) == 0 };
+        let alive = fixture_alive(pid);
         runtime.shutdown().await;
         std::fs::remove_dir_all(root).unwrap();
         assert!(
@@ -741,7 +793,12 @@ if {mode:?} == 'nonzero_term': sys.exit(7)
         private_directory(&root).unwrap();
         let root = root.canonicalize().unwrap();
         let artifact = fixture(&root, "ready");
-        std::fs::write(artifact.join("bin/node"), b"modified executable bytes").unwrap();
+        let executable = if cfg!(windows) {
+            "bin/node.exe"
+        } else {
+            "bin/node"
+        };
+        std::fs::write(artifact.join(executable), b"modified executable bytes").unwrap();
         let runtime = DesktopRuntime::start_with_key_backend(
             &root,
             &artifact,
@@ -787,11 +844,15 @@ if {mode:?} == 'nonzero_term': sys.exit(7)
                 .parse()
                 .unwrap();
             // SAFETY: signal zero only checks this fixture's process existence.
-            let alive = unsafe { libc::kill(pid, 0) == 0 };
+            let alive = fixture_alive(pid);
             runtime.shutdown().await;
             std::fs::remove_dir_all(root).unwrap();
             assert!(!alive, "{mode} must be reaped");
             assert_eq!(status["diagnostic"]["code"], expected, "{mode}");
+            if mode == "diagnostic_unsupported_version" {
+                assert_eq!(status["diagnostic"]["stage"], "storage");
+                assert_eq!(status["diagnostic"]["action"], "check_storage");
+            }
             assert_eq!(
                 status["recent"].as_array().unwrap().last().unwrap()["code"],
                 expected
@@ -804,7 +865,11 @@ if {mode:?} == 'nonzero_term': sys.exit(7)
         private_directory(&root).unwrap();
         let root = root.canonicalize().unwrap();
         for file in [
-            "bin/node",
+            if cfg!(windows) {
+                "bin/node.exe"
+            } else {
+                "bin/node"
+            },
             "node_modules/@rss-mdm-agent/ai-host-app/dist/cli.js",
             "node_modules/@rss-mdm-agent/ai-store-sqlite/dist/index.js",
         ] {

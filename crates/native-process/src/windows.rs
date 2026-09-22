@@ -4,6 +4,7 @@ use std::{
     os::windows::{ffi::OsStrExt, process::CommandExt},
     ptr::{null, null_mut},
 };
+use windows_sys::Win32::System::RemoteDesktop::ProcessIdToSessionId;
 use windows_sys::Win32::{
     Foundation::*,
     System::{
@@ -15,6 +16,8 @@ fn wide(text: &str) -> Vec<u16> {
 }
 struct Handle(HANDLE);
 unsafe impl Send for Handle {}
+// Kernel job/process query and termination operations support shared live handles.
+unsafe impl Sync for Handle {}
 impl Drop for Handle {
     fn drop(&mut self) {
         unsafe {
@@ -114,9 +117,12 @@ impl Job {
     }
 }
 pub fn absent(scope: &Scope) -> bool {
-    let Scope::JobObject { name } = scope else {
+    let Scope::JobObject { name, session } = scope else {
         return false;
     };
+    if current_session().ok().as_ref() != Some(session) {
+        return false;
+    }
     let Some(id) = name.strip_prefix("Local\\rss-mdm-worker-") else {
         return false;
     };
@@ -153,6 +159,7 @@ fn parent() -> io::Result<Handle> {
     Err(io::Error::other("missing parent"))
 }
 pub struct Owner {
+    session: u32,
     child: Child,
     parent: Handle,
     job: Job,
@@ -160,6 +167,7 @@ pub struct Owner {
 impl Owner {
     pub fn spawn(command: &mut Command, id: &str) -> io::Result<Self> {
         let parent = parent()?;
+        let session = current_session()?;
         let job = Job::new(Some(format!("Local\\rss-mdm-worker-{id}")))?;
         command.creation_flags(CREATE_SUSPENDED | CREATE_NO_WINDOW);
         let mut child = command.spawn()?;
@@ -168,7 +176,12 @@ impl Owner {
             let _ = child.wait();
             return Err(error);
         }
-        Ok(Self { child, parent, job })
+        Ok(Self {
+            child,
+            parent,
+            job,
+            session,
+        })
     }
     pub fn child(&mut self) -> &mut Child {
         &mut self.child
@@ -176,6 +189,7 @@ impl Owner {
     pub fn scope(&self) -> Scope {
         Scope::JobObject {
             name: self.job.name.clone().unwrap(),
+            session: self.session,
         }
     }
     pub fn parent_gone(&self) -> bool {
@@ -215,5 +229,25 @@ impl HostScope {
     }
     pub fn empty(&self) -> bool {
         self.job.empty()
+    }
+}
+
+fn current_session() -> io::Result<u32> {
+    let mut session = 0;
+    if unsafe { ProcessIdToSessionId(GetCurrentProcessId(), &mut session) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(session)
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn another_session_is_unknown_even_if_its_local_job_name_is_absent_here() {
+        let session = current_session().unwrap();
+        assert!(!absent(&Scope::JobObject {
+            name: "Local\\rss-mdm-worker-00000000-0000-0000-0000-000000000000".into(),
+            session: session.wrapping_add(1)
+        }));
     }
 }

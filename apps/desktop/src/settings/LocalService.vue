@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { nativeService } from "./native";
 import type { ServiceView } from "./service-contract";
 const view = ref<ServiceView>();
 const pending = ref(false);
-const native = isTauri();
+const native = nativeService();
 async function refresh() {
   if (!native || pending.value) return;
   pending.value = true;
   try {
-    view.value = await invoke<ServiceView>("local_service_status");
+    view.value = await native.read();
   } catch {
     view.value = { phase: "unavailable" };
   } finally {

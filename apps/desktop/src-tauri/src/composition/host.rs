@@ -32,6 +32,7 @@ pub enum Fault {
     Configuration,
     Authentication,
     Storage,
+    StorageVersion,
     Cleanup,
     Control,
 }
@@ -67,6 +68,7 @@ impl Fault {
                 A::CheckCredentials,
             ),
             Self::Storage => (S::Storage, C::StorageCorrupt, A::CheckStorage),
+            Self::StorageVersion => (S::Storage, C::UnsupportedVersion, A::CheckStorage),
             Self::Control => (S::HostProcess, C::ControlClosed, A::RestartHost),
             Self::Cleanup => (S::Shutdown, C::CleanupIncomplete, A::RestartHost),
         };
@@ -98,6 +100,7 @@ enum Waiter {
 }
 pub struct Process {
     pub control: Arc<Control>,
+    scope: Arc<native_process::OwnedHost>,
     pub stop: CancellationToken,
     mcp_stop: CancellationToken,
     phase: Arc<Mutex<Phase>>,
@@ -118,7 +121,7 @@ impl Process {
     pub async fn close(&self) -> bool {
         let mut waiter = self.task.lock().await;
         if let Waiter::Reaped(result) = *waiter {
-            return result;
+            return result && self.scope.empty();
         }
         let Waiter::Pending(task) = std::mem::replace(&mut *waiter, Waiter::Reaped(false)) else {
             unreachable!()
@@ -135,11 +138,12 @@ impl Process {
         self.mcp_stop.cancel();
         self.stop.cancel();
         let reaped = task.await.unwrap_or(false);
-        if !reaped {
+        let replaceable = reaped && self.scope.empty();
+        if !replaceable {
             *self.phase.lock().unwrap() = Phase::Failed(Fault::Cleanup);
         }
         *waiter = Waiter::Reaped(reaped);
-        reaped
+        replaceable
     }
 }
 fn preflight(artifact: &Path, trusted_digest: Option<&str>) -> Result<(), Fault> {
@@ -238,7 +242,7 @@ fn startup_fault(line: &str) -> Option<Fault> {
         C::ConfigurationInvalid => Fault::Configuration,
         C::AuthenticationRequired => Fault::Authentication,
         C::StorageCorrupt => Fault::Storage,
-        C::UnsupportedVersion => Fault::Version,
+        C::UnsupportedVersion => Fault::StorageVersion,
         C::HostStartFailed => Fault::Start,
         C::CleanupIncomplete => Fault::Cleanup,
     })
@@ -280,6 +284,7 @@ pub async fn launch(
         let _ = child.kill().await;
         return Err(Fault::Start);
     }
+    let scope = Arc::new(scope);
     let reader = child.stdout.take().expect("piped stdout");
     let writer = child.stdin.take().expect("piped stdin");
     let diagnostics = child.stderr.take().expect("piped stderr");
@@ -337,7 +342,9 @@ pub async fn launch(
     let process_mcp_stop = mcp_stop.clone();
     let waiter_phase = phase.clone();
     let waiter_control = control.clone();
+    let waiter_scope = scope.clone();
     let task = tokio::spawn(async move {
+        let scope = waiter_scope;
         let (result, forced) = tokio::select! {
             result = child.wait() => (result, false),
             _ = waiter_stop.cancelled() => {
@@ -381,6 +388,7 @@ pub async fn launch(
                 Fault::Configuration
                     | Fault::Authentication
                     | Fault::Storage
+                    | Fault::StorageVersion
                     | Fault::Version
                     | Fault::Start
             )
@@ -405,6 +413,7 @@ pub async fn launch(
     });
     let process = Arc::new(Process {
         control,
+        scope,
         stop,
         mcp_stop: process_mcp_stop,
         phase,
@@ -447,7 +456,7 @@ mod tests {
             ("configuration_invalid", Fault::Configuration),
             ("authentication_required", Fault::Authentication),
             ("storage_corrupt", Fault::Storage),
-            ("unsupported_version", Fault::Version),
+            ("unsupported_version", Fault::StorageVersion),
             ("host_start_failed", Fault::Start),
             ("cleanup_incomplete", Fault::Cleanup),
         ] {
@@ -470,6 +479,10 @@ mod tests {
         task.abort();
         let process = Process {
             control,
+            scope: Arc::new(
+                native_process::OwnedHost::prepare(&mut std::process::Command::new("not-started"))
+                    .unwrap(),
+            ),
             stop: CancellationToken::new(),
             mcp_stop: CancellationToken::new(),
             phase: Arc::new(Mutex::new(Phase::Ready)),

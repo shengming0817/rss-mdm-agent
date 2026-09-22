@@ -39,6 +39,41 @@ export function scopeAbsent(runtime: WorkerRuntime, scope: Scope): boolean {
   );
   return result.status === 0;
 }
+/** Deadline-bound probe. No synchronous spawn can freeze the Host control loop. */
+export async function scopeAbsentWithin(
+  runtime: WorkerRuntime,
+  scope: Scope,
+  budget: Budget,
+): Promise<boolean> {
+  if (
+    !validScope(scope) ||
+    !isAbsolute(runtime.launcher) ||
+    budget.signal.aborted ||
+    budget.timeoutMs <= 0
+  )
+    return false;
+  return new Promise((resolve) => {
+    const child = spawn(runtime.launcher, ["absent", JSON.stringify(scope)], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    let expired = false;
+    const cancel = () => {
+      expired = true;
+      child.kill("SIGKILL");
+    };
+    const timer = setTimeout(cancel, Math.min(2000, budget.timeoutMs));
+    const finish = (absent: boolean) => {
+      clearTimeout(timer);
+      budget.signal.removeEventListener("abort", cancel);
+      resolve(!expired && absent);
+    };
+    budget.signal.addEventListener("abort", cancel, { once: true });
+    if (budget.signal.aborted) cancel();
+    child.once("error", () => finish(false));
+    child.once("exit", (code) => finish(code === 0));
+  });
+}
 const pause = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms));
 export class WorkerPort implements ProviderAgentPort {
@@ -364,7 +399,7 @@ export class WorkerPort implements ProviderAgentPort {
     this.startupAbort.abort();
     if (this.child?.pid && !this.exited) {
       try {
-        if (this.registered && this.scope?.kind === "processGroup")
+        if (this.scope?.kind === "processGroup")
           process.kill(-this.scope.root, "SIGKILL");
         else this.child.kill("SIGKILL");
       } catch {}
@@ -396,13 +431,15 @@ export class WorkerPort implements ProviderAgentPort {
           );
       } catch {}
       this.terminate();
-      while (
-        this.child &&
-        (!this.exited ||
-          (this.registered &&
-            (!this.scope || !scopeAbsent(this.runtime, this.scope))))
-      )
+      while (this.child) {
+        const absent = this.scope
+          ? await deadline.wait(() =>
+              scopeAbsentWithin(this.runtime, this.scope!, deadline.budget()),
+            )
+          : !this.registered;
+        if (this.exited && absent) break;
         await deadline.wait(() => pause(10));
+      }
       if (this.reserved) {
         const released = await deadline.wait(
           () =>

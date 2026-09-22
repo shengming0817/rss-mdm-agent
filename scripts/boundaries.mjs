@@ -21,6 +21,7 @@ const assistantCommands = [
   "execution_task_details",
 ];
 const settingsCommands = [
+  "local_service_status",
   "ai_host_status",
   "ai_restart_host",
   "ai_export_diagnostics",
@@ -536,6 +537,9 @@ export function checkTree(treeRoot = root) {
       "apps/desktop/src-tauri/Cargo.toml",
       [
         'ai-session-contract = { path = "../../../crates/ai-session-contract" }',
+        'native-process = { path = "../../../crates/native-process" }',
+        'local-service = { path = "../../../crates/local-service" }',
+        'windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_System_Threading"] }',
         'unicode-normalization = "=0.1.25"',
         'uuid = { version = "=1.26.0", features = ["v4"] }',
         'libc = "=0.2.189"',

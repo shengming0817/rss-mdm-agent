@@ -237,11 +237,7 @@ mod tests {
             std::process::id(),
             super::super::execution::now().unwrap()
         ));
-        use std::os::unix::fs::DirBuilderExt;
-        std::fs::DirBuilder::new()
-            .mode(0o700)
-            .create(&root)
-            .unwrap();
+        native_process::private_storage::directory(&root).unwrap();
         let root = root.canonicalize().unwrap();
         let runtime = tauri::async_runtime::block_on(DesktopRuntime::start(
             &root,
@@ -270,7 +266,18 @@ mod tests {
         .deserialize::<serde_json::Value>()
         .unwrap();
         assert_eq!(snapshot["catalog"].as_array().unwrap().len(), 9);
+        let service = call(
+            &main,
+            "local_service_status",
+            "tauri://localhost",
+            serde_json::json!({}),
+        )
+        .unwrap()
+        .deserialize::<serde_json::Value>()
+        .unwrap();
+        assert!(service.get("phase").is_some());
         for command in [
+            "local_service_status",
             "ai_host_status",
             "ai_restart_host",
             "ai_export_diagnostics",

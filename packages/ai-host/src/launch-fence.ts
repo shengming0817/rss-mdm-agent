@@ -59,7 +59,10 @@ export function validScope(scope: Scope): boolean {
         scope.root > 1 &&
         scope.root <= 2147483647
       : scope.kind === "jobObject" &&
-        Object.keys(scope).length === 2 &&
+        Object.keys(scope).length === 3 &&
+        Number.isSafeInteger(scope.session) &&
+        scope.session >= 0 &&
+        scope.session <= 4294967295 &&
         /^Local\\rss-mdm-worker-[a-f0-9-]{36}$/.test(scope.name))
   );
 }

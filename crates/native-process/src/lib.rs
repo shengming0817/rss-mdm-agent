@@ -22,7 +22,7 @@ use windows as platform;
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub enum Scope {
     ProcessGroup { root: u32 },
-    JobObject { name: String },
+    JobObject { name: String, session: u32 },
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]

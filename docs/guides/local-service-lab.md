@@ -10,7 +10,7 @@
     pnpm desktop:build
     cargo build --release --locked -p local-service
 
-桌面构建选择 macOS app / Windows NSIS 配置，携带当前平台运行包。Windows 从 pnpm 环境运行脚本，安装 C/C++ 与 WebView2 构建先决条件。候选包不代表完成发布签名或平台验收。
+桌面构建选择 macOS app / Windows NSIS 配置，携带当前平台运行包；Windows 同时产出 .local-ci-runs/windows-lab-desktop，管理员安装只消费这个带摘要清单的展开目录。Windows 从 pnpm 环境运行脚本，安装 C/C++ 与 WebView2 构建先决条件。候选包不代表完成发布签名或平台验收。
 
 AI SQLite schema 5 不迁移旧库。使用全新的实验室 OS 用户/应用数据目录；旧数据保留，旧格式打开应明确失败。不得删除原账户数据来通过测试。
 
@@ -22,13 +22,15 @@ macOS：
 
 脚本创建非登录服务账号、固定 app/服务与 LaunchDaemon，采用 ad-hoc cdhash 固定实验室产物，无正式发布者身份承诺。已有 app 要求操作者先处理旧实验室安装；不自动删除旧 app 或恢复旧信任清单。
 
-Windows 管理员 PowerShell：
+macOS 固定桌面安装于 `/Library/Application Support/RSS MDM Agent/desktop/RSS MDM Agent.app`；普通用户从该位置打开。其祖先目录均须 root 拥有且不可被组或其它用户写入，不使用通常带 admin 组写权限的 `/Applications`。
 
-    .\scripts\service\install-windows.ps1 -DesktopDirectory '<完整桌面目录，包含 exe 与 ai-host-runtime>' -ServiceExecutable '.\target\release\rss-local-service.exe' -AllowedUserSid '<普通用户SID>'
+Windows 管理员 Windows PowerShell 5.1（Desktop edition，使用原子创建目录 ACL 的 .NET Framework API）：
+
+    .\scripts\service\install-windows.ps1 -DesktopDirectory '.\.local-ci-runs\windows-lab-desktop' -ServiceExecutable '.\target\release\rss-local-service.exe' -AllowedUserSid '<普通用户SID>'
 
 脚本注册虚拟服务账号，设置目录与查询 ACL。固定 SHA-256 来自管理员安装产物；不以未验证的签名链代替固定映像身份。
 
-获准普通用户打开桌面设置中的“本机安全服务”，应显示已连接/statusOnly。运行 node scripts/verify-local-service.mjs <安装后的桌面可执行文件> 生成仅覆盖查询的原始回执，不标记其它攻击场景已通过。
+获准普通用户打开桌面设置中的“本机安全服务”，应显示已连接/statusOnly。运行 node scripts/verify-local-service.mjs <安装后的桌面可执行文件> <target/release/rss-untrusted-service-probe 或 .exe> 将同一安装/构建的正向查询、独立进程负例与再次正向查询写入同一回执；任一步失败都不能标记通过，其它攻击场景仍单独验收。
 
 ## 撤销与卸载
 

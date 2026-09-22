@@ -89,7 +89,9 @@ export async function startLocalApp(
     throw new ConfigurationError(
       opened.error.code === "storage_corrupt"
         ? "storage_corrupt"
-        : "startup_failed",
+        : opened.error.code === "unsupported_version"
+          ? "unsupported_version"
+          : "startup_failed",
     );
   const store = opened.value;
   let activeUser: UserContext | undefined;

@@ -28,6 +28,7 @@ fn main() {
             "save_connection",
             "test_users",
             "select_test_user",
+            "local_service_status",
             "ai_host_status",
             "ai_restart_host",
             "ai_export_diagnostics",

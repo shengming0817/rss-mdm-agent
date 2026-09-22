@@ -80,8 +80,11 @@ export const diagnosticMessage = (status?: HostStatus) => {
       return status.source === "development_override"
         ? "缺少开发运行包。请构建运行包并设置开发路径后重启 AI Host。"
         : "安装包缺少 AI 运行资源，请重新安装完整应用。";
-    case "runtime_invalid":
     case "unsupported_version":
+      if (status.diagnostic.stage === "storage")
+        return "当前 AI 数据库版本不受支持；旧数据已保留，请使用新的实验室数据目录。";
+      return "运行包无效或版本不匹配，请使用与应用匹配的完整运行包。";
+    case "runtime_invalid":
       return "运行包无效或版本不匹配，请使用与应用匹配的完整运行包。";
     case "configuration_invalid":
       return "Host 路径配置无法读取，请检查本地数据目录权限后重启 AI Host。";

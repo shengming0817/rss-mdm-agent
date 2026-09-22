@@ -22,3 +22,5 @@ run(
   ],
   fileURLToPath(new URL("../apps/desktop", import.meta.url)),
 );
+
+if (process.platform === "win32") await import("./stage-windows-desktop.mjs");

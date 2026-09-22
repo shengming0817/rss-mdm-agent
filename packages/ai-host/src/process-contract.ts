@@ -8,6 +8,7 @@ export type Scope =
   | {
       kind: "jobObject";
       name: string;
+      session: number;
     };
 
 export interface Ready {

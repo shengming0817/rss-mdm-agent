@@ -18,6 +18,20 @@ import { sameCommittedSource, sourceState } from "./source-state.mjs";
 // One explicit inventory for real public-API consumers; no runtime plugin discovery.
 export const rustConsumers = [
   {
+    name: "native-process",
+    example: "process-consumer.rs",
+    locals: ["native-process"],
+    registry: ["serde_json"],
+    fixtures: [],
+  },
+  {
+    name: "local-service",
+    example: "service-consumer.rs",
+    locals: ["local-service"],
+    registry: ["serde_json"],
+    fixtures: [],
+  },
+  {
     name: "execution-contract",
     example: "execution-consumer.rs",
     locals: ["execution-contract"],
@@ -74,6 +88,7 @@ export const rustConsumers = [
     example: "execution-sqlite-consumer.rs",
     locals: [
       "execution-sqlite",
+      "native-process",
       "execution-contract",
       "execution-interaction",
       "execution-admission",
@@ -95,6 +110,7 @@ export const rustConsumers = [
       "execution-lifecycle",
       "execution-interaction",
       "execution-sqlite",
+      "native-process",
     ],
     registry: [],
     fixtures: ["crates/execution-contract/tests/fixtures/plan.json"],

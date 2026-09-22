@@ -132,6 +132,7 @@ pub fn protected(path: &Path) -> Result<(), Rejected> {
                             | FILE_APPEND_DATA
                             | FILE_WRITE_EA
                             | FILE_WRITE_ATTRIBUTES
+                            | FILE_DELETE_CHILD
                             | DELETE
                             | WRITE_DAC
                             | WRITE_OWNER
@@ -160,7 +161,7 @@ pub fn protected(path: &Path) -> Result<(), Rejected> {
     Ok(())
 }
 
-fn peer(pipe: HANDLE, client: bool, policy: &Policy) -> Result<Handle, Rejected> {
+fn image_peer(pipe: HANDLE, client: bool, policy: &Policy) -> Result<Handle, Rejected> {
     unsafe {
         let mut pid = 0;
         let result = if client {
@@ -179,6 +180,25 @@ fn peer(pipe: HANDLE, client: bool, policy: &Policy) -> Result<Handle, Rejected>
         if process.0.is_null() || WaitForSingleObject(process.0, 0) != WAIT_TIMEOUT {
             return Err(Rejected);
         }
+        let mut image = vec![0u16; 32768];
+        let mut len = image.len() as u32;
+        if QueryFullProcessImageNameW(process.0, 0, image.as_mut_ptr(), &mut len) == 0 {
+            return Err(Rejected);
+        }
+        let path = PathBuf::from(String::from_utf16(&image[..len as usize]).map_err(|_| Rejected)?);
+        let artifact = if client {
+            &policy.client
+        } else {
+            &policy.service
+        };
+        artifact.verify(&path)?;
+        Ok(process)
+    }
+}
+
+fn peer(pipe: HANDLE, client: bool, policy: &Policy) -> Result<Handle, Rejected> {
+    let process = image_peer(pipe, client, policy)?;
+    unsafe {
         let mut token = null_mut();
         if OpenProcessToken(process.0, TOKEN_QUERY, &mut token) == 0 {
             return Err(Rejected);
@@ -221,18 +241,6 @@ fn peer(pipe: HANDLE, client: bool, policy: &Policy) -> Result<Handle, Rejected>
         } else if sid != policy.service_subject || session != 0 {
             return Err(Rejected);
         }
-        let mut image = vec![0u16; 32768];
-        let mut len = image.len() as u32;
-        if QueryFullProcessImageNameW(process.0, 0, image.as_mut_ptr(), &mut len) == 0 {
-            return Err(Rejected);
-        }
-        let path = PathBuf::from(String::from_utf16(&image[..len as usize]).map_err(|_| Rejected)?);
-        let artifact = if client {
-            &policy.client
-        } else {
-            &policy.service
-        };
-        artifact.verify(&path)?;
         // Retain the process handle through the complete exchange, never trust a
         // later process that happens to reuse this PID.
         Ok(process)
@@ -287,7 +295,7 @@ pub fn query(policy: &Policy) -> Result<Status, Rejected> {
         .map_err(|_| Rejected)?
     })
 }
-async fn listen(policy: &Policy) -> Result<(), Rejected> {
+async fn listen(policy: &Policy, status_handle: SERVICE_STATUS_HANDLE) -> Result<(), Rejected> {
     let mut sddl = String::from("D:P(A;;FA;;;SY)(A;;FA;;;BA)");
     for user in &policy.allowed_users {
         // SID text only, no arbitrary SDDL from configuration.
@@ -340,15 +348,25 @@ async fn listen(policy: &Policy) -> Result<(), Rejected> {
             .map_err(|_| Rejected)
     };
     let mut pending = make(true)?;
+    report(status_handle, SERVICE_RUNNING, 0)?;
     let mut peers = tokio::task::JoinSet::new();
     loop {
+        if STOP.load(Ordering::Acquire) {
+            peers.abort_all();
+            return Ok(());
+        }
         tokio::select! {
             connected = pending.connect() => {
                 connected.map_err(|_| Rejected)?;
                 let mut pipe = std::mem::replace(&mut pending, make(false)?);
+                // Reject a different image before it can occupy a waiting slot.
+                // This uses kernel process identity and immutable installation bytes,
+                // not a caller-provided preamble. Full token checks still follow.
+                let Ok(candidate) = image_peer(pipe.as_raw_handle(), true, policy) else { continue; };
                 if peers.len() >= 64 { continue; }
                 let policy = policy.clone();
                 peers.spawn_local(async move {
+                    let _candidate = candidate;
                     let _ = tokio::time::timeout(DEADLINE, async {
                         let mut preamble = [0u8; 10];
                         pipe.read_exact(&mut preamble).await.map_err(|_| Rejected)?;
@@ -381,6 +399,11 @@ async fn listen(policy: &Policy) -> Result<(), Rejected> {
 unsafe extern "system" fn control(code: u32, _: u32, _: *mut c_void, _: *mut c_void) -> u32 {
     if code == SERVICE_CONTROL_STOP || code == SERVICE_CONTROL_SHUTDOWN {
         STOP.store(true, Ordering::Release);
+        let _ = report(
+            STATUS_HANDLE.load(Ordering::Acquire),
+            SERVICE_STOP_PENDING,
+            0,
+        );
     }
     NO_ERROR
 }
@@ -390,30 +413,24 @@ unsafe extern "system" fn service_main(_: u32, _: *mut *mut u16) {
     if handle.is_null() {
         return;
     }
-    let mut status = SERVICE_STATUS {
-        dwServiceType: SERVICE_WIN32_OWN_PROCESS,
-        dwCurrentState: SERVICE_RUNNING,
-        dwControlsAccepted: SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN,
-        dwWin32ExitCode: 0,
-        dwServiceSpecificExitCode: 0,
-        dwCheckPoint: 0,
-        dwWaitHint: 0,
-    };
-    unsafe {
-        SetServiceStatus(handle, &status);
+    STATUS_HANDLE.store(handle, Ordering::Release);
+    if report(handle, SERVICE_START_PENDING, 0).is_err() {
+        return;
     }
     let result = runtime().and_then(|runtime| {
-        tokio::task::LocalSet::new().block_on(&runtime, listen(POLICY.get().ok_or(Rejected)?))
+        tokio::task::LocalSet::new()
+            .block_on(&runtime, listen(POLICY.get().ok_or(Rejected)?, handle))
     });
-    status.dwCurrentState = SERVICE_STOPPED;
-    status.dwControlsAccepted = 0;
-    if result.is_err() {
-        status.dwWin32ExitCode = ERROR_SERVICE_SPECIFIC_ERROR;
-        status.dwServiceSpecificExitCode = 1;
-    }
-    unsafe {
-        SetServiceStatus(handle, &status);
-    }
+    let _ = report(
+        handle,
+        SERVICE_STOPPED,
+        if result.is_err() {
+            ERROR_SERVICE_SPECIFIC_ERROR
+        } else {
+            0
+        },
+    );
+    STATUS_HANDLE.store(null_mut(), Ordering::Release);
 }
 pub fn run(policy: Policy) -> Result<(), Rejected> {
     POLICY.set(policy).map_err(|_| Rejected)?;
@@ -429,6 +446,29 @@ pub fn run(policy: Policy) -> Result<(), Rejected> {
         },
     ];
     if unsafe { StartServiceCtrlDispatcherW(table.as_ptr()) } == 0 {
+        return Err(Rejected);
+    }
+    Ok(())
+}
+
+static STATUS_HANDLE: std::sync::atomic::AtomicPtr<c_void> =
+    std::sync::atomic::AtomicPtr::new(null_mut());
+fn report(handle: SERVICE_STATUS_HANDLE, state: u32, error: u32) -> Result<(), Rejected> {
+    let pending = state == SERVICE_START_PENDING || state == SERVICE_STOP_PENDING;
+    let status = SERVICE_STATUS {
+        dwServiceType: SERVICE_WIN32_OWN_PROCESS,
+        dwCurrentState: state,
+        dwControlsAccepted: if state == SERVICE_RUNNING {
+            SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN
+        } else {
+            0
+        },
+        dwWin32ExitCode: error,
+        dwServiceSpecificExitCode: u32::from(error != 0),
+        dwCheckPoint: u32::from(pending),
+        dwWaitHint: if pending { 5000 } else { 0 },
+    };
+    if handle.is_null() || unsafe { SetServiceStatus(handle, &status) } == 0 {
         return Err(Rejected);
     }
     Ok(())

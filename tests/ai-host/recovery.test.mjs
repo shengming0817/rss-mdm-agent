@@ -160,7 +160,9 @@ test("registration precedes provider import, and rejected registration leaves no
   );
   t.after(() => store.close(budget()));
   const namespace = fixtureSession().namespace;
-  store.registerLaunch = async () => {
+  let rejectedScope;
+  store.registerLaunch = async (_namespace, _launchId, scope) => {
+    rejectedScope = scope;
     await assert.rejects(
       readFile(join(directory, "trace.ndjson")),
       (error) => error.code === "ENOENT",
@@ -185,6 +187,8 @@ test("registration precedes provider import, and rejected registration leaves no
     budget(),
   );
   assert.equal(started.ok, false);
+  assert.ok(rejectedScope);
+  assert.equal(scopeAbsent(workerRuntime, rejectedScope), true);
   assert.deepEqual(unwrap(await store.launches()), []);
   await assert.rejects(
     readFile(join(directory, "trace.ndjson")),

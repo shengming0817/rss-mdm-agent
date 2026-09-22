@@ -27,13 +27,13 @@ macOS 以非登录账号运行 LaunchDaemon，NSXPCConnection 对等代码 requi
 
 ## 私有 AI 进程
 
-Native 唯一拥有 Host，Host 唯一拥有逻辑 worker。全部使用私有继承 stdin/stdout，stderr 为诊断。V1 帧是 RSS + 版本字节 1、闭集 lane 字节、四字节 big-endian 长度和有界 payload。Native 固定 native/execution，worker 固定 control/tools/events；各 payload 的声明源不合并。旧 fd3–5 入口删除。
+Native 唯一拥有 Host，Host 唯一拥有逻辑 worker。Native–Host 与 Host–bootstrap 两条 owner 链统一使用私有继承 stdin/stdout，stderr 为诊断；provider SDK/adapter 内部子进程保留其专属协议，不属于此承载。V1 帧是 RSS + 版本字节 1、闭集 lane 字节、四字节 big-endian 长度和有界 payload。Native 固定 native/execution，worker 固定 control/tools/events；各 payload 的声明源不合并。上述两条 owner 链的旧 fd3–5 入口删除。
 
 单 reader 只分帧分发，单 writer 优先控制队列，各 lane 独立限额；饱和或非法帧关闭连接。物理管道堵塞由 owner 的 OS 终止预算兜底。控制队列优先不等于任意输出期间都能及时交付。
 
 固定 launcher 从自身目录读取 manifest，校验 Node/bootstrap 摘要，不接收任意命令或入口路径。macOS 使用进程组，Windows 在恢复初始线程前加入 Job Object，禁止 breakaway，并启用 kill-on-close。launcher 监视 Host 的父进程生命周期。普通权限私有文件工具只检查当前用户的文件/ACL，不提供提权能力。
 
-launch fence 保存 namespace、launchId、provider artifact、runtimeDigest 和带平台标签的 scope；保留预留/登记两阶段，登记前禁止 activation。OS handle 不持久化。恢复只能只读确认范围已不存在；未知、权限不足、仍存活都阻断，禁止凭保存 PID/job 名称终止进程。
+launch fence 保存 namespace、launchId、provider artifact、runtimeDigest 和带平台标签的 scope；保留预留/登记两阶段，登记前禁止 activation。Windows scope 同时保存创建 session；跨 session 查询返回未知并阻断恢复。OS handle 不持久化。恢复只能只读确认范围已不存在；未知、权限不足、仍存活都阻断，禁止凭保存 PID/job 名称终止进程。
 
 ## 直接替换
 

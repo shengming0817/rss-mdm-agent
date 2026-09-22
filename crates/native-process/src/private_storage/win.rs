@@ -291,14 +291,14 @@ pub fn random_key() -> io::Result<Vec<u8>> {
     Ok(key)
 }
 pub fn enter_secret() -> io::Result<Option<String>> {
-    let caption = wide("RSS API 密钥");
-    let message = wide("输入当前连接的 API 密钥。取消不会保存。");
+    let caption = wide("RSS 连接凭据");
+    let message = wide("输入所选连接的凭据。取消不会保存。");
     let mut info: CREDUI_INFOW = unsafe { std::mem::zeroed() };
     info.cbSize = size_of_val(&info) as u32;
     info.pszCaptionText = caption.as_ptr();
     info.pszMessageText = message.as_ptr();
     let mut user = vec![0u16; 256];
-    user[..7].copy_from_slice(&wide("API key")[..7]);
+    user[..6].copy_from_slice(&wide("Secret")[..6]);
     let mut password = vec![0u16; 1024];
     let mut save = 0;
     let result = unsafe {

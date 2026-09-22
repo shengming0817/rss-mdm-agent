@@ -106,6 +106,8 @@ pub(crate) fn protected(path: &Path) -> Result<(), Rejected> {
     {
         use std::os::unix::fs::MetadataExt;
         for entry in path.ancestors() {
+            #[cfg(target_os = "macos")]
+            super::macos::acl_empty(entry)?;
             let metadata = std::fs::symlink_metadata(entry).map_err(|_| Rejected)?;
             if metadata.file_type().is_symlink()
                 || metadata.uid() != 0

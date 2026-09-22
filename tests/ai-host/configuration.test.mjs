@@ -18,6 +18,33 @@ import {
   readConfiguration,
 } from "../../apps/ai-host/dist/configuration.js";
 import { startLocalApp } from "../../apps/ai-host/dist/index.js";
+import { DatabaseSync } from "node:sqlite";
+
+test("old AI storage is explicitly rejected and preserved", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "rss-old-store-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const databasePath = join(root, "ai.sqlite");
+  const db = new DatabaseSync(databasePath);
+  db.exec(
+    "PRAGMA user_version = 4; CREATE TABLE retained (value TEXT); INSERT INTO retained VALUES ('old task');",
+  );
+  db.close();
+  await chmod(databasePath, 0o600);
+  const before = await readFile(databasePath);
+  const config = join(root, "host.json");
+  await writeFile(
+    config,
+    JSON.stringify({
+      version: 1,
+      databasePath,
+      nativeDirectory: root,
+      workingDirectory: root,
+    }),
+    { mode: 0o600 },
+  );
+  await assert.rejects(startLocalApp(config), { code: "unsupported_version" });
+  assert.deepEqual(await readFile(databasePath), before);
+});
 test("private configuration and credentials require bounded owned files in private directories", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "rss-private-file-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
