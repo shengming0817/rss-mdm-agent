@@ -1,9 +1,19 @@
-import { spawnSync } from "node:child_process";
-import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { stepResult } from "./ci-result.mjs";
-import { sameCommittedSource, sourceState } from "./source-state.mjs";
+import { sameCommittedSource } from "./source-state.mjs";
+import { selectImpact, ciSourceState } from "./ci-impact.mjs";
+import { steps } from "./ci-steps.mjs";
+import {
+  planSteps,
+  executeSteps,
+  prepareEvidence,
+  publishPlan,
+  writeReceipt,
+} from "./ci-plan.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url));
+const preview = process.env.CI_PLAN === "1";
+// Invalidate prior success even when runtime/source prerequisites fail early.
+if (!preview) prepareEvidence(root);
 const requiredNode = JSON.parse(
   readFileSync(new URL("../package.json", import.meta.url), "utf8"),
 ).engines.node;
@@ -13,112 +23,40 @@ if (process.versions.node !== requiredNode) {
   );
   process.exit(1);
 }
-const start = sourceState(root);
-const steps = [
-  [
-    "CI runner tests",
-    "node",
-    [
-      "--test",
-      "scripts/source-state.test.mjs",
-      "scripts/desktop-dev.test.mjs",
-      "scripts/ci-result.test.mjs",
-      "scripts/runtime-integrity.test.mjs",
-      "scripts/rust-consumers.test.mjs",
-      "scripts/execution-evolution.test.mjs",
-      "scripts/ai-acceptance.test.mjs",
-      "scripts/connection-source-results.test.mjs",
-    ],
-  ],
-  ["frozen dependencies", "pnpm", ["install", "--frozen-lockfile"]],
-  [
-    "desktop native acceptance syntax",
-    "node",
-    ["--check", "tests/desktop/native-flow.js"],
-  ],
-  [
-    "desktop credential acceptance syntax",
-    "node",
-    ["--check", "tests/desktop/custom-connection-flow.js"],
-  ],
-  ["AI generated contracts", "pnpm", ["check:ai-contract"]],
-  ["AI contract conformance", "pnpm", ["test:ai-contract"]],
-  ["AI access conformance", "pnpm", ["test:ai-access"]],
-  ["AI access boundaries", "pnpm", ["check:ai-boundaries"]],
-  ["AI access browser consumer", "pnpm", ["check:ai-access-consumer"]],
-  ["AI packed consumer", "pnpm", ["check:ai-consumer"]],
-  ["AI SQLite recovery", "pnpm", ["test:ai-store"]],
-  ["AI SQLite packed consumer", "pnpm", ["check:ai-store-consumer"]],
-  ["Claude SDK adapter", "pnpm", ["test:ai-claude"]],
-  ["Claude packed consumer", "pnpm", ["check:claude-consumer"]],
-  ["AI Host lifecycle", "pnpm", ["test:ai-host"]],
-  ["AI Host packed consumer", "pnpm", ["check:ai-host-consumer"]],
-  ["AI Host local runtime", "pnpm", ["bundle:ai-host"]],
-  ["Codex pinned protocol", "pnpm", ["check:codex-protocol"]],
-  ["Codex native adapter", "pnpm", ["test:ai-codex"]],
-  ["Codex packed consumer", "pnpm", ["check:codex-consumer"]],
-  ["DeepSeek Harness adapter", "pnpm", ["test:ai-deepseek"]],
-  ["DeepSeek packed consumer", "pnpm", ["check:deepseek-consumer"]],
-  ["AI provider acceptance", "pnpm", ["test:ai-acceptance"]],
-  ["frontend build", "pnpm", ["build"]],
-  ["assistant product acceptance", "pnpm", ["check:assistant"]],
-  ["types", "pnpm", ["typecheck"]],
-  ["frontend format", "pnpm", ["format:check"]],
-  ["components", "pnpm", ["test"]],
-  ["boundaries", "pnpm", ["check:boundaries"]],
-  ["packed consumer", "pnpm", ["check:consumer"]],
-  ["docs and diff", "node", ["scripts/check-docs.mjs"]],
-  ["rust fmt", "cargo", ["fmt", "--all", "--", "--check"]],
-  ["rust build", "cargo", ["build", "--workspace", "--locked"]],
-  ["rust test", "cargo", ["test", "--workspace", "--locked"]],
-  ["self-service fixtures", "node", ["scripts/check-self-service.mjs"]],
-  ["rust consumers", "node", ["scripts/check-rust-consumers.mjs"]],
-  [
-    "rust clippy",
-    "cargo",
-    [
-      "clippy",
-      "--workspace",
-      "--all-targets",
-      "--locked",
-      "--",
-      "-D",
-      "warnings",
-    ],
-  ],
-];
-const results = [];
-for (const [name, command, args] of steps) {
-  console.log(`\n[ci] ${name}`);
-  const result = spawnSync(command, args, { cwd: root, stdio: "inherit" });
-  results.push(stepResult(name, [command, ...args], result));
-}
-const end = sourceState(root);
+const start = ciSourceState(root);
+const impact = selectImpact(root);
+const plan = {
+  sha: start.head,
+  impact,
+  steps: planSteps(steps, impact),
+  provenance: {
+    selected: true,
+    check:
+      "Committed source HEAD, base/baseRef/baseOid and clean worktree must remain unchanged",
+  },
+};
+publishPlan(root, plan, preview);
+console.log(JSON.stringify(plan, null, 2));
+if (preview) process.exit(0);
+const results = executeSteps(plan.steps, root);
+const end = ciSourceState(root);
+const valid = sameCommittedSource(start, end);
 results.push({
   name: "committed source provenance",
-  status: sameCommittedSource(start, end) ? 0 : 1,
+  status: valid ? 0 : 1,
+  outcome: valid ? "passed" : "failed",
 });
-mkdirSync(new URL("../.local-ci-runs/", import.meta.url), { recursive: true });
-writeFileSync(
-  new URL("../.local-ci-runs/latest.json", import.meta.url),
-  JSON.stringify(
-    {
-      sha: start.head,
-      source: { start, end },
-      platform: process.platform,
-      arch: process.arch,
-      node: process.version,
-      timestamp: new Date().toISOString(),
-      results,
-    },
-    null,
-    2,
-  ),
-);
+writeReceipt(root, "latest.json", {
+  sha: start.head,
+  source: { start, end },
+  impact,
+  platform: process.platform,
+  arch: process.arch,
+  node: process.version,
+  timestamp: new Date().toISOString(),
+  results,
+});
 console.table(
-  results.map(({ name, status }) => ({
-    name,
-    result: status === 0 ? "PASS" : "FAIL",
-  })),
+  results.map(({ name, outcome }) => ({ name, result: outcome.toUpperCase() })),
 );
-process.exitCode = results.some((r) => r.status !== 0) ? 1 : 0;
+process.exitCode = results.some((r) => r.outcome === "failed") ? 1 : 0;

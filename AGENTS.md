@@ -24,7 +24,7 @@
 
 ## 验证与协作
 
-- 按[验证规则](docs/rules/verification-scope.md)选择最小有效检查。完整`make ci`一次收集全部失败后集中修复，不逐条修复后反复跑全量。
+- 按[验证规则](docs/rules/verification-scope.md)选择最小有效检查。`make ci CI_BASE=origin/develop`按影响范围验证（`make ci-full`强制全量、`make ci-plan`查看计划），一次收集全部失败后集中修复，不逐条修复后反复跑全量。
 - 无验证入口时如实记录，不执行父仓CI代替，也不创建无实际消费者的测试/工程空壳。
 - 仅在用户或适用技能要求时派子agent，显式`fork_turns`只用`none`、`1`或`2`；按结果协调，不逐步骤指挥或短周期轮询。实现/修复的分工遵循所用技能。
 - 问题澄清可使用当前可用的人工输入MCP；工具执行和沙箱批准始终遵循Codex原生机制，不通过消息卡片替代。
