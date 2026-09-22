@@ -47,6 +47,8 @@ renderer npm 版本、协议版本、导入路径、产品 catalog revision 是�
 
 ## 失败与资源生命周期
 
+配置 `timeoutMs` 必须为 `1..2147483647` 的安全整数（默认 30 秒），非法值在服务构造期抛出 `RangeError("invalid timeoutMs")`，不延迟到请求期报告不可用。
+
 Host 单次调用、权限整次分发与各 peer 请求复用 A01 `withinBudget`：作用域完成时移除父 signal 监听、清理 watchdog 并取消剩余等待者。caller、service、session cancel 与 pump detach 各自保持取消权；无效 option 不赢得首答。订阅使用 pump 生命周期，prompt 的终态等待不受单次 Host 接纳预算截断。没有新增 wire、预算接口或授权权威。
 
 `tests/ai-access/permission-ownership.test.mjs` 固定 Node 24.14.1，使用真实 ACP SDK 双端 consumer 与 FakeHost：20,000 次允许/拒绝交替交付，每 1,000 次换轮后 GC 并检查 service/caller/pump 监听与 Node dependent graph 回到基线、无残留 watchdog；另覆盖 200 次超时、200 次双端 detach/restore、无效首答与 Host 请求作用域释放。此证据是协议与生命周期压力回归，不代表真实模型或 OS 执行验收。机制参考：[Node v24.14.1 abort_controller.js](https://github.com/nodejs/node/blob/v24.14.1/lib/internal/abort_controller.js) 的 composite source/dependant 链接。

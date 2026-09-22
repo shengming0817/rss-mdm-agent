@@ -141,6 +141,12 @@ export function createAccessService(options: AccessOptions) {
     now = options.now ?? Date.now,
     shutdownTimeoutMs = options.shutdownTimeoutMs ?? 5_000;
   if (
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs < 1 ||
+    timeoutMs > 2_147_483_647
+  )
+    throw new RangeError("invalid timeoutMs");
+  if (
     !Number.isSafeInteger(shutdownTimeoutMs) ||
     shutdownTimeoutMs < 0 ||
     shutdownTimeoutMs > 2_147_483_647

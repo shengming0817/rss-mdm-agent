@@ -814,3 +814,27 @@ test("Host budget expiry and exceptions project a closed ACP error", async (t) =
     assert.equal(observed.aborted, true);
   }
 });
+
+test("access validates timeoutMs before accepting any connections", async () => {
+  const options = {
+    host: new FakeHost(),
+    sessionOptions: { connectionId: "cfg" },
+  };
+  for (const timeoutMs of [
+    0,
+    -1,
+    1.5,
+    NaN,
+    Infinity,
+    2147483648,
+    Number.MAX_SAFE_INTEGER,
+  ])
+    assert.throws(() => createAccessService({ ...options, timeoutMs }), {
+      name: "RangeError",
+      message: "invalid timeoutMs",
+    });
+  for (const timeoutMs of [undefined, 1, 2147483647]) {
+    const service = createAccessService({ ...options, timeoutMs });
+    await service.close();
+  }
+});
