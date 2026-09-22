@@ -47,6 +47,10 @@ renderer npm 版本、协议版本、导入路径、产品 catalog revision 是�
 
 ## 失败与资源生命周期
 
+Host 单次调用、权限整次分发与各 peer 请求复用 A01 `withinBudget`：作用域完成时移除父 signal 监听、清理 watchdog 并取消剩余等待者。caller、service、session cancel 与 pump detach 各自保持取消权；无效 option 不赢得首答。订阅使用 pump 生命周期，prompt 的终态等待不受单次 Host 接纳预算截断。没有新增 wire、预算接口或授权权威。
+
+`tests/ai-access/permission-ownership.test.mjs` 固定 Node 24.14.1，使用真实 ACP SDK 双端 consumer 与 FakeHost：20,000 次允许/拒绝交替交付，每 1,000 次换轮后 GC 并检查 service/caller/pump 监听与 Node dependent graph 回到基线、无残留 watchdog；另覆盖 200 次超时、200 次双端 detach/restore、无效首答与 Host 请求作用域释放。此证据是协议与生命周期压力回归，不代表真实模型或 OS 执行验收。机制参考：[Node v24.14.1 abort_controller.js](https://github.com/nodejs/node/blob/v24.14.1/lib/internal/abort_controller.js) 的 composite source/dependant 链接。
+
 服务的 `shutdownTimeoutMs` 独立于接纳 `timeoutMs`，默认5秒。取消后有界等待自有任务；`cleanup_timeout` 表示未全部结算，不能据此宣称 provider 终止，组合根承担残留隔离。resume 停止旧订阅后从返回 Session 的 lastSequence 重建，产品 attachment 先进入 resync_required；客户端显式 resume 则先 detach，再恢复新视图。
 
 客户端公共失败使用 ClientError，renderer 使用 RendererError；均保留闭合 code，不转发底层 payload/cause。observer 失败与诊断 callback 失败彼此隔离。分页先收齐同水位历史再覆盖权威投影。交互期限是含端点的 UTC 毫秒，UI 的本地过期展示不改写 pending 的权威状态；answered 仅为本地同 commandId 保留回执重试，其他终态展示原因并禁用。
