@@ -30,7 +30,7 @@ test("runtime declaration and CI preflight reject an unverified Node version bef
     [
       "--input-type=module",
       "-e",
-      `Object.defineProperty(process.versions,"node",{value:"24.0.0"});await import(${JSON.stringify(new URL("../../scripts/ci.mjs", import.meta.url).href)});`,
+      `Object.defineProperty(process.versions,"node",{value:"24.0.0"});const {runCI}=await import(${JSON.stringify(new URL("../../scripts/ci.mjs", import.meta.url).href)});process.exitCode=await runCI(process.cwd(),{preview:true,steps:[]});`,
     ],
     { timeout: 5000, encoding: "utf8" },
   );
