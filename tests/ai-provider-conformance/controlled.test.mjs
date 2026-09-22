@@ -4,6 +4,7 @@ import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { once } from "node:events";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -77,11 +78,15 @@ for (const provider of engines) {
         ],
         { stdio: ["pipe", "pipe", "pipe"] },
       );
+      // Register ownership before the next spawn can throw.
+      t.after(() => stop(rust));
       const app = spawn(
-        new URL(
-          "../../.local-ci-runs/worker-runtime/bin/node" +
-            (process.platform === "win32" ? ".exe" : ""),
-          import.meta.url,
+        fileURLToPath(
+          new URL(
+            "../../.local-ci-runs/worker-runtime/bin/node" +
+              (process.platform === "win32" ? ".exe" : ""),
+            import.meta.url,
+          ),
         ),
         ["apps/ai-host/dist/cli.js", f.path],
         {
@@ -89,6 +94,7 @@ for (const provider of engines) {
           stdio: ["pipe", "pipe", "pipe"],
         },
       );
+      t.after(() => stop(app));
       const link = new PrivateLink(app.stdout, app.stdin, "native");
       link.lane("execution").pipe(rust.stdin);
       rust.stdout.pipe(link.lane("execution"));

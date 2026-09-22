@@ -83,12 +83,20 @@ for (const provider of engines) {
               ready.record.command.commandId,
             ),
           );
-          return record.dispatch?.observerGeneration !==
-            ready.record.dispatch.observerGeneration &&
-            ["reconciliation_required", "terminal"].includes(record.state)
+          const session = unwrap(
+            await recovered.store.session(ready.session.namespace),
+          );
+          // A model request does not prove the SDK flushed resumable history.
+          // Forced scope reclamation can leave only durable Host uncertainty.
+          return ["reconciliation_required", "terminal"].includes(
+            record.state,
+          ) &&
+            (record.dispatch?.observerGeneration !==
+              ready.record.dispatch.observerGeneration ||
+              session.status === "recovery_required")
             ? record
             : undefined;
-        }, "original attempt reconciled");
+        }, "original attempt uncertainty preserved or reconciled");
         assert.equal(
           current.dispatch.attemptId,
           ready.record.dispatch.attemptId,
@@ -120,6 +128,19 @@ for (const provider of engines) {
         const session = unwrap(
           await recovered.store.session(ready.session.namespace),
         );
+        const restored =
+          current.dispatch.observerGeneration !==
+          ready.record.dispatch.observerGeneration;
+        if (!restored) {
+          assert.equal(session.status, "recovery_required");
+          assert.equal(current.state, "reconciliation_required");
+          assert.equal(current.outcome, undefined);
+          assert.ok(
+            recovered.diagnostics.some(
+              (row) => row.stage === "admission" && row.code === "unavailable",
+            ),
+          );
+        }
         evidence(
           t,
           "provider-received-host-fact-lost",
@@ -128,6 +149,7 @@ for (const provider of engines) {
           {
             result: "supported",
             reconciliation: current.state,
+            nativeRecovery: restored ? "restored" : "unavailable",
             outcome: current.outcome ?? "unknown",
             attempts: 1,
           },

@@ -120,43 +120,6 @@ pub async fn enter<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<String
     .map_err(|_| unavailable())?;
     receiver.await.map_err(|_| unavailable())?
 }
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    };
-    struct Fake {
-        stored: Mutex<Option<Vec<u8>>>,
-        writes: Arc<AtomicUsize>,
-    }
-    impl KeyBackend for Fake {
-        fn read(&self) -> std::result::Result<Option<Vec<u8>>, KeyUnavailable> {
-            Ok(self.stored.lock().unwrap().clone())
-        }
-        fn create(&self, key: &[u8]) -> std::result::Result<(), KeyUnavailable> {
-            *self.stored.lock().unwrap() = Some(key.to_vec());
-            self.writes.fetch_add(1, Ordering::SeqCst);
-            Ok(())
-        }
-    }
-    #[test]
-    fn missing_master_with_ciphertext_never_creates_a_replacement() {
-        let writes = Arc::new(AtomicUsize::new(0));
-        let keys = MasterKey::new(Fake {
-            stored: Mutex::new(None),
-            writes: writes.clone(),
-        });
-        assert!(keys.get(false).is_err());
-        assert_eq!(writes.load(Ordering::SeqCst), 0);
-        let first = keys.get(true).unwrap();
-        assert_eq!(first.len(), 32);
-        assert_eq!(keys.get(false).unwrap(), first);
-        assert_eq!(writes.load(Ordering::SeqCst), 1);
-    }
-}
-
 #[cfg(windows)]
 pub struct Dpapi;
 #[cfg(windows)]
@@ -206,4 +169,41 @@ pub async fn enter<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<String
     })
     .map_err(|_| unavailable())?;
     receiver.await.map_err(|_| unavailable())?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    struct Fake {
+        stored: Mutex<Option<Vec<u8>>>,
+        writes: Arc<AtomicUsize>,
+    }
+    impl KeyBackend for Fake {
+        fn read(&self) -> std::result::Result<Option<Vec<u8>>, KeyUnavailable> {
+            Ok(self.stored.lock().unwrap().clone())
+        }
+        fn create(&self, key: &[u8]) -> std::result::Result<(), KeyUnavailable> {
+            *self.stored.lock().unwrap() = Some(key.to_vec());
+            self.writes.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+    #[test]
+    fn missing_master_with_ciphertext_never_creates_a_replacement() {
+        let writes = Arc::new(AtomicUsize::new(0));
+        let keys = MasterKey::new(Fake {
+            stored: Mutex::new(None),
+            writes: writes.clone(),
+        });
+        assert!(keys.get(false).is_err());
+        assert_eq!(writes.load(Ordering::SeqCst), 0);
+        let first = keys.get(true).unwrap();
+        assert_eq!(first.len(), 32);
+        assert_eq!(keys.get(false).unwrap(), first);
+        assert_eq!(writes.load(Ordering::SeqCst), 1);
+    }
 }
