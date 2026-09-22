@@ -16,7 +16,7 @@
 
 `make ci` 在任务分支比较 `CI_BASE`（默认 `origin/develop`）与受测 HEAD 的 merge-base，
 按 Cargo normal/dev/build/optional 与 pnpm dependency/dev/peer/optional 反向依赖闭包选择。
-`develop`、`make ci-full` 或 `CI_FULL=1` 执行全量；Cargo/npm manifest、lock、工具链、
+`develop`、detached HEAD、`make ci-full` 或 `CI_FULL=1` 执行全量；Cargo/npm manifest、lock、工具链、
 CI 脚本与共享配置、rename/copy、未知路径/删除、缺失基线或分析异常均保守全量。
 必须使用 package.json 指定的 Node 与 pnpm 版本。源码身份或基线读取失败不阻止后续 gate 收集，
 但最终 provenance 必须失败，不能当作可交付通过证明。
@@ -28,10 +28,11 @@ CI 脚本与共享配置、rename/copy、未知路径/删除、缺失基线或�
 
 Rust build/test/clippy 使用受影响包；Rust 独立消费者保持整组验证。Node gate 按公共 package
 及其消费者选择，先构建选中包的正向生产依赖；类型、格式、边界等共享检查保持保守范围。
+无依赖 CI runner 自测先运行，需要 workspace 依赖的产品 harness 在 frozen install 后运行。
 纯文档/无变更只运行 CI runner tests、文档/diff 和 committed-source provenance；实际 provider、
 原生桌面、凭据与真实 OS 验收仍按各自入口单独运行，选择性 CI 不代替这些证明。
 
-`make ci-plan` 只写 `.local-ci-runs/plan.json`，不执行检查或覆盖正式结果。正式选择写入
+正式 `make ci`/`make ci-full` 强制关闭继承的预览模式。`make ci-plan` 只写 `.local-ci-runs/plan.json`，不执行检查或覆盖正式结果。正式选择写入
 `selection.json`，执行结果原子写入 `latest.json`，带选择原因、范围、命令、实际状态和源码身份。
 结果区分 passed/failed/skipped；skipped 的 status 为 null，不能当作通过。运行前清理 gate 自有
 旧回执与固定 CI runtime，保留手工原生/凭据/smoke 验收和开发 runtime 的独立记录。

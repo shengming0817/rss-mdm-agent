@@ -83,6 +83,9 @@ export const sourceEdges = [
   [npm("ai-client"), npm("ai-host-app")],
 ];
 export const testOwners = [
+  ["apps/ai-host/src/execution-tools.json", "execution-mcp"],
+  ["apps/desktop/src/assistant/execution-types.ts", "execution-app"],
+  ["tests/assistant/execution-fixtures.json", "execution-app"],
   ["tests/ai-contract", npm("ai-contract")],
   ["tests/ai-access", npm("ai-access")],
   ["tests/ai-access", npm("ai-client")],
@@ -220,8 +223,9 @@ export function selectImpact(
       decision.reasons = ["explicit-full"];
       return decision;
     }
-    if (run(root, git, ["branch", "--show-current"]).trim() === "develop") {
-      decision.reasons = ["develop"];
+    const branch = run(root, git, ["branch", "--show-current"]).trim();
+    if (!branch || branch === "develop") {
+      decision.reasons = [branch ? "develop" : "detached-head"];
       return decision;
     }
     if (
@@ -301,10 +305,19 @@ export function selectImpact(
 }
 
 // Missing comparison refs must expand CI, not abort before the remaining gates.
-export function ciSourceState(root) {
+export function ciSourceState(
+  root,
+  baseRef = process.env.CI_BASE || "origin/develop",
+) {
   try {
-    return sourceState(root);
+    return sourceState(root, baseRef);
   } catch (error) {
-    return { clean: false, error: error.message };
+    let head = null;
+    try {
+      head = run(root, git, ["rev-parse", "HEAD"]).trim();
+    } catch {
+      /* Git itself may be unavailable. */
+    }
+    return { head, baseRef, clean: false, error: error.message };
   }
 }

@@ -8,7 +8,7 @@ import {
   selectImpact,
   workspaceGraph,
   parseChanges,
-  loadGraph,
+  ciSourceState,
 } from "./ci-impact.mjs";
 
 const npm = (name) => `@rss-mdm-agent/${name}`;
@@ -205,22 +205,6 @@ test("explicit cross-language inputs and external test owners remain in closure"
   }
 });
 
-test("real workspace resolves all metadata and source/test bridges", () => {
-  const graph = loadGraph(new URL("../", import.meta.url).pathname);
-  assert.ok(graph.rust.has("rss-mdm-desktop"));
-  assert.ok(graph.reverse.get(npm("ai-contract")).has("ai-session-contract"));
-  assert.ok(graph.reverse.get("execution-app").has(npm("ai-host-app")));
-  for (const adapter of ["claude", "codex", "deepseek"]) {
-    assert.ok(
-      graph.roots.some(
-        ([path, owner]) =>
-          path === "tests/ai-provider-conformance" &&
-          owner === npm(`ai-adapter-${adapter}`),
-      ),
-    );
-  }
-});
-
 test("deepest package ownership and known file deletion remain selective", () => {
   const f = fixture();
   try {
@@ -231,6 +215,20 @@ test("deepest package ownership and known file deletion remain selective", () =>
     f.run("rm", "crates/core/src/lib.rs");
     f.run("commit", "-qm", "delete known source");
     assert.deepEqual(f.select({ baseRef }).rustPackages, ["core", "leaf"]);
+  } finally {
+    f.close();
+  }
+});
+
+test("detached HEAD is conservative and missing baseline retains the real HEAD", () => {
+  const f = fixture();
+  try {
+    f.run("checkout", "--detach");
+    assert.equal(f.select().full, true);
+    const state = ciSourceState(f.root, "missing-ref");
+    assert.equal(state.head, f.run("rev-parse", "HEAD"));
+    assert.equal(state.baseRef, "missing-ref");
+    assert.equal(state.clean, false);
   } finally {
     f.close();
   }

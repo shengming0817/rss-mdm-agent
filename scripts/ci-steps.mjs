@@ -5,10 +5,20 @@ export const steps = [
     [
       "--test",
       "scripts/source-state.test.mjs",
-      "scripts/desktop-dev.test.mjs",
       "scripts/ci-result.test.mjs",
       "scripts/ci-impact.test.mjs",
       "scripts/ci-plan.test.mjs",
+    ],
+  ],
+  ["frozen dependencies", "pnpm", ["install", "--frozen-lockfile"]],
+  ["workspace build inputs", "pnpm", ["-r", "build"]],
+  [
+    "product harness tests",
+    "node",
+    [
+      "--test",
+      "scripts/ci-workspace.test.mjs",
+      "scripts/desktop-dev.test.mjs",
       "scripts/runtime-integrity.test.mjs",
       "scripts/rust-consumers.test.mjs",
       "scripts/execution-evolution.test.mjs",
@@ -16,8 +26,6 @@ export const steps = [
       "scripts/connection-source-results.test.mjs",
     ],
   ],
-  ["frozen dependencies", "pnpm", ["install", "--frozen-lockfile"]],
-  ["workspace build inputs", "pnpm", ["-r", "build"]],
   [
     "desktop native acceptance syntax",
     "node",

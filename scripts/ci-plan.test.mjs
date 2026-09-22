@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -7,6 +8,7 @@ import {
   existsSync,
   readFileSync,
   rmSync,
+  cpSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -109,3 +111,62 @@ test("plan preserves formal evidence; execution retires gate receipts but retain
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("formal Make targets cannot inherit preview mode", () => {
+  const root = mkdtempSync(join(tmpdir(), "agent-make-"));
+  try {
+    cpSync(new URL("../Makefile", import.meta.url), join(root, "Makefile"));
+    writeFileSync(join(root, "node"), '#!/bin/sh\nprintf "%s" "$CI_PLAN"\n', {
+      mode: 0o755,
+    });
+    for (const target of ["ci", "ci-full", "ci-plan"]) {
+      const result = spawnSync("make", ["-s", target], {
+        cwd: root,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${root}:${process.env.PATH}`,
+          CI_PLAN: "1",
+        },
+      });
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stdout, target === "ci-plan" ? "1" : "0");
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("dependency-using harness follows frozen install", () => {
+  const names = steps.map(([name]) => name);
+  assert.ok(
+    names.indexOf("product harness tests") >
+      names.indexOf("frozen dependencies"),
+  );
+});
+
+test(
+  "docs runner succeeds in a checkout with no node_modules",
+  { skip: process.env.CI_FIXTURE_CHILD === "1" },
+  () => {
+    const root = mkdtempSync(join(tmpdir(), "agent-fresh-runner-"));
+    try {
+      cpSync(new URL("./", import.meta.url), join(root, "scripts"), {
+        recursive: true,
+      });
+      cpSync(new URL("../Makefile", import.meta.url), join(root, "Makefile"));
+      const [, command, args] = steps.find(
+        ([name]) => name === "CI runner tests",
+      );
+      const result = spawnSync(command, args, {
+        cwd: root,
+        encoding: "utf8",
+        env: { ...process.env, CI_FIXTURE_CHILD: "1" },
+        maxBuffer: 8 * 1024 * 1024,
+      });
+      assert.equal(result.status, 0, result.stdout + result.stderr);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);

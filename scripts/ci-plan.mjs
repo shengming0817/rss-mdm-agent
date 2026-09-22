@@ -33,6 +33,7 @@ const groups = {
 };
 const always = new Set(["CI runner tests", "docs and diff"]);
 const anyCode = new Set([
+  "product harness tests",
   "frozen dependencies",
   "frontend format",
   "AI access boundaries",
