@@ -966,12 +966,12 @@ export function createAccessService(options: AccessOptions) {
     signal: AbortSignal,
   ): Promise<RequestPermissionResponse> {
     boundedJson(request, limits);
-    const recipients = [...peers].filter(
-      (peer) =>
-        peer.initialized &&
-        sameCaller(peer.caller, caller) &&
-        peer.pumps.has(request.sessionId),
-    );
+    const recipients = [...peers].flatMap((peer) => {
+      const pump = peer.pumps.get(request.sessionId);
+      return peer.initialized && sameCaller(peer.caller, caller) && pump
+        ? [{ peer, pump }]
+        : [];
+    });
     if (!recipients.length || signal.aborted || lifetime.signal.aborted)
       return { outcome: { outcome: "cancelled" } };
     const done = new AbortController();
@@ -983,9 +983,7 @@ export function createAccessService(options: AccessOptions) {
           () => owner,
           (delivery) =>
             Promise.any(
-              recipients.map((peer) => {
-                const pump = peer.pumps.get(request.sessionId);
-                if (!pump) return Promise.reject(requestError("unavailable"));
+              recipients.map(({ peer, pump }) => {
                 return withinBudget(
                   () => delivery,
                   async (requestBudget) => {
