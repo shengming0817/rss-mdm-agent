@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { PassThrough, Writable } from "node:stream";
+import { spawnSync } from "node:child_process";
 import { PrivateLink } from "../../packages/ai-host/dist/private-link.js";
 
 test("fixed lanes demultiplex fragmented frames and close together", async () => {
@@ -66,4 +67,31 @@ test("legacy, unknown version and oversized framing closes before dispatch", () 
     assert.equal(link.closed, true);
     assert.equal(calls, 0);
   }
+});
+
+test("the TypeScript encoder is decoded by the production Rust implementation", async () => {
+  const input = new PassThrough(),
+    output = new PassThrough(),
+    link = new PrivateLink(input, output, "native");
+  const frame = new Promise((resolve) => output.once("data", resolve));
+  link.lane("native").write(Buffer.from("ts-conformance"));
+  const encoded = await frame;
+  link.close();
+  const result = spawnSync(
+    "cargo",
+    [
+      "test",
+      "-p",
+      "rss-mdm-desktop",
+      "typescript_encoder_reaches_rust_decoder",
+    ],
+    {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        RSS_PRIVATE_LINK_TS_FRAME: encoded.toString("hex"),
+      },
+    },
+  );
+  assert.equal(result.status, 0, result.stdout + result.stderr);
 });

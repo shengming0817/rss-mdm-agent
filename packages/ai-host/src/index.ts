@@ -349,7 +349,7 @@ export class SessionHost implements HostPort {
         await this.options.launchFences.launches(),
       )) {
         if (
-          launch.phase === "reserved" ||
+          launch.phase === "registered" &&
           scopeAbsent(this.options.workerRuntime, launch.scope)
         )
           requireValue(
@@ -453,8 +453,8 @@ export class SessionHost implements HostPort {
       const blockedKey = namespaceKey(launch.namespace);
       if (
         this.blocked.has(blockedKey) &&
-        (launch.phase === "reserved" ||
-          scopeAbsent(this.options.workerRuntime, launch.scope))
+        launch.phase === "registered" &&
+        scopeAbsent(this.options.workerRuntime, launch.scope)
       ) {
         requireValue(
           await this.options.launchFences.releaseLaunch(
@@ -482,18 +482,18 @@ export class SessionHost implements HostPort {
       const fence = requireValue(
         await this.options.launchFences.launches(),
       ).find((row) => namespaceKey(row.namespace) === key);
-      if (
-        fence?.phase === "registered" &&
-        !scopeAbsent(this.options.workerRuntime, fence.scope)
-      )
+      if (fence?.phase === "reserved")
         return fail("reconciliation_required", "reconcile_first");
-      if (fence)
+      if (fence?.phase === "registered") {
+        if (!scopeAbsent(this.options.workerRuntime, fence.scope))
+          return fail("reconciliation_required", "reconcile_first");
         requireValue(
           await this.options.launchFences.releaseLaunch(
             namespace,
             fence.launchId,
           ),
         );
+      }
       this.blocked.delete(key);
     }
     const resolved = await this.options.resolve(

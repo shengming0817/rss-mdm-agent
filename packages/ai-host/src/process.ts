@@ -81,11 +81,11 @@ export class WorkerPort implements ProviderAgentPort {
   private child?: ChildProcess;
   private link?: PrivateLink;
   private scope?: Scope;
+  private scopePersisted = false;
   private control?: Channel;
   private output?: Channel;
   private tools?: Channel;
   private readonly streams = new Map<string, Output<ProviderObservation>>();
-  private registered = false;
   private exited = false;
   private closing = false;
   private released = false;
@@ -174,6 +174,27 @@ export class WorkerPort implements ProviderAgentPort {
           ].flatMap((k) => (process.env[k] ? [[k, process.env[k]!]] : [])),
         ),
       });
+      this.child.once("exit", () => {
+        this.exited = true;
+        this.failed();
+      });
+      this.child.once("error", () => {
+        this.exited = true;
+        this.failed();
+      });
+      // On Unix the launcher PID is the process-group identity before any
+      // untrusted readiness bytes are parsed. Windows retains the reservation
+      // until the launcher reports its session-qualified Job Object identity.
+      if (process.platform !== "win32" && this.child.pid) {
+        this.scope = { kind: "processGroup", root: this.child.pid };
+        const persisted = await this.store.registerLaunch(
+          this.namespace,
+          this.launchId,
+          this.scope,
+        );
+        if (!persisted.ok) throw new Error(persisted.error.code);
+        this.scopePersisted = true;
+      }
       const ownership = new Promise<Ready>((resolve, reject) => {
         let text = "",
           received = false;
@@ -211,14 +232,6 @@ export class WorkerPort implements ProviderAgentPort {
         this.child.stdin!,
         "worker",
       );
-      this.child.once("exit", () => {
-        this.exited = true;
-        this.failed();
-      });
-      this.child.once("error", () => {
-        this.exited = true;
-        this.failed();
-      });
       this.control = new Channel(this.link.lane("control"), this.launchId);
       this.output = new Channel(this.link.lane("events"), this.launchId);
       this.tools = new Channel(
@@ -292,13 +305,15 @@ export class WorkerPort implements ProviderAgentPort {
         hello.parentPid !== ready.launcherPid
       )
         throw new Error("worker ownership");
-      const registered = await this.store.registerLaunch(
-        this.namespace,
-        this.launchId,
-        ready.scope,
-      );
-      if (!registered.ok) throw new Error(registered.error.code);
-      this.registered = true;
+      if (!this.scopePersisted) {
+        const persisted = await this.store.registerLaunch(
+          this.namespace,
+          this.launchId,
+          ready.scope,
+        );
+        if (!persisted.ok) throw new Error(persisted.error.code);
+        this.scopePersisted = true;
+      }
       check();
       await this.control.call(
         "activate",
@@ -436,7 +451,7 @@ export class WorkerPort implements ProviderAgentPort {
           ? await deadline.wait(() =>
               scopeAbsentWithin(this.runtime, this.scope!, deadline.budget()),
             )
-          : !this.registered;
+          : false;
         if (this.exited && absent) break;
         await deadline.wait(() => pause(10));
       }

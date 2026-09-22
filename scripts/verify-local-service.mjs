@@ -5,6 +5,27 @@ import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { sourceState } from "./source-state.mjs";
+const digest = (file) =>
+  createHash("sha256").update(readFileSync(file)).digest("hex");
+
+export function verifiedCandidate(policy, source, hash = digest) {
+  const validArtifact = (artifact) =>
+    artifact &&
+    typeof artifact.path === "string" &&
+    resolve(artifact.path) === artifact.path &&
+    /^[a-f0-9]{64}$/.test(artifact.sha256 ?? "") &&
+    hash(artifact.path) === artifact.sha256;
+  if (
+    policy?.version !== 1 ||
+    !/^[a-f0-9]{40}$/.test(policy.sourceSha ?? "") ||
+    !source.clean ||
+    source.head !== policy.sourceSha ||
+    !validArtifact(policy.client) ||
+    !validArtifact(policy.probe)
+  )
+    return undefined;
+  return { executable: policy.client.path, negative: policy.probe.path };
+}
 export function serviceChecks(executable, negative, execute = spawnSync) {
   const steps = [];
   const call = (name, program, args) => {
@@ -51,29 +72,31 @@ if (
   process.argv[1] &&
   pathToFileURL(resolve(process.argv[1])).href === import.meta.url
 ) {
-  if (!process.argv[2] || !process.argv[3])
-    throw new Error("Pass installed desktop and untrusted probe executables.");
-  const executable = resolve(process.argv[2]),
-    negative = resolve(process.argv[3]);
-  const hash = (file) =>
-    createHash("sha256").update(readFileSync(file)).digest("hex");
-  const desktopHash = hash(executable),
-    probeHash = hash(negative);
-  const checks = serviceChecks(executable, negative);
-  const passed =
-    checks.passed &&
-    desktopHash === hash(executable) &&
-    probeHash === hash(negative);
+  const policyPath =
+    process.platform === "win32"
+      ? resolve(
+          process.env.ProgramData ?? "C:\\ProgramData",
+          "RSS MDM Agent/service/policy.json",
+        )
+      : "/Library/Application Support/RSS MDM Agent/service/policy.json";
+  const source = sourceState(process.cwd());
+  const policy = JSON.parse(readFileSync(policyPath, "utf8"));
+  const candidate = verifiedCandidate(policy, source);
+  const checks = candidate
+    ? serviceChecks(candidate.executable, candidate.negative)
+    : { passed: false, steps: [] };
+  const passed = checks.passed && !!verifiedCandidate(policy, source);
   mkdirSync(".local-ci-runs", { recursive: true });
   writeFileSync(
     ".local-ci-runs/service-platform.json",
     JSON.stringify(
       {
-        source: sourceState(process.cwd()),
+        source,
         platform: process.platform,
         arch: process.arch,
-        artifactSha256: desktopHash,
-        probeSha256: probeHash,
+        policyPath,
+        artifactSha256: policy.client?.sha256,
+        probeSha256: policy.probe?.sha256,
         at: new Date().toISOString(),
         status: passed
           ? "passed-controlled-query-and-negative-fixture"

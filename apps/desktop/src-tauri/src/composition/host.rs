@@ -8,6 +8,7 @@ use futures_util::StreamExt;
 use serde_json::json;
 use serde_json::Value;
 use std::{
+    ffi::{OsStr, OsString},
     path::Path,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -247,6 +248,31 @@ fn startup_fault(line: &str) -> Option<Fault> {
         C::CleanupIncomplete => Fault::Cleanup,
     })
 }
+const HOST_ENV_ALLOWLIST: [&str; 7] = [
+    "PATH",
+    "HOME",
+    "TMPDIR",
+    "SystemRoot",
+    "USERPROFILE",
+    "LOCALAPPDATA",
+    "TEMP",
+];
+fn host_command(
+    executable: impl AsRef<OsStr>,
+    environment: impl IntoIterator<Item = (OsString, OsString)>,
+) -> Command {
+    let mut command = Command::new(executable);
+    command.env_clear();
+    for (name, value) in environment {
+        if HOST_ENV_ALLOWLIST
+            .iter()
+            .any(|allowed| OsStr::new(allowed) == name)
+        {
+            command.env(name, value);
+        }
+    }
+    command
+}
 pub async fn launch(
     artifact: &Path,
     configuration: &Path,
@@ -259,11 +285,14 @@ pub async fn launch(
     tokio::task::spawn_blocking(move || preflight(&checked, trusted.as_deref()))
         .await
         .map_err(|_| Fault::Invalid)??;
-    let mut command = Command::new(artifact.join(if cfg!(windows) {
-        "bin/node.exe"
-    } else {
-        "bin/node"
-    }));
+    let mut command = host_command(
+        artifact.join(if cfg!(windows) {
+            "bin/node.exe"
+        } else {
+            "bin/node"
+        }),
+        std::env::vars_os(),
+    );
     command
         .arg(artifact.join("node_modules/@rss-mdm-agent/ai-host-app/dist/cli.js"))
         .arg(configuration)
@@ -450,6 +479,29 @@ pub async fn launch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn host_environment_drops_node_preload_and_keeps_only_platform_inputs() {
+        let command = host_command(
+            "node",
+            [
+                (OsString::from("PATH"), OsString::from("trusted")),
+                (
+                    OsString::from("NODE_OPTIONS"),
+                    OsString::from("--require hostile.js"),
+                ),
+                (OsString::from("UNDECLARED"), OsString::from("secret")),
+            ],
+        );
+        let environment: Vec<_> = command
+            .as_std()
+            .get_envs()
+            .map(|(name, value)| (name.to_owned(), value.map(OsStr::to_owned)))
+            .collect();
+        assert_eq!(
+            environment,
+            vec![(OsString::from("PATH"), Some(OsString::from("trusted")))]
+        );
+    }
     #[test]
     fn process_diagnostics_accept_only_the_generated_closed_frame() {
         for (code, fault) in [

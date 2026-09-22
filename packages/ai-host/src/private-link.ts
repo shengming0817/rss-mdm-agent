@@ -1,13 +1,11 @@
 import { Duplex, type Readable, type Writable } from "node:stream";
+import { privateLinkV1 } from "./process-contract.js";
 
-const laneSets = {
-  native: ["native", "execution"],
-  worker: ["control", "tools", "events"],
-} as const;
+const laneSets = privateLinkV1.lanes;
 type Role = keyof typeof laneSets;
-const maxFrame = 512 * 1024;
-const maxQueued = 1024 * 1024;
-const magic = Buffer.from([82, 83, 83, 1]);
+const maxFrame = privateLinkV1.maxFrameBytes;
+const maxQueued = privateLinkV1.maxQueuedBytes;
+const magic = Buffer.from([...privateLinkV1.magic, privateLinkV1.version]);
 
 /** Fixed private-process transport V1. No discovery, listener or legacy mode.
  * A link has one reader/writer; every lane has independent bounded capacity.
@@ -43,17 +41,19 @@ export class PrivateLink {
             !data.length ||
             data.length > maxFrame ||
             this.queued[id] + data.length > maxQueued ||
-            this.queues[id].length >= 64
+            this.queues[id].length >= privateLinkV1.maxQueuedFrames
           ) {
             this.close();
             done(new Error("private link unavailable"));
             return;
           }
-          const frame = Buffer.allocUnsafe(9 + data.length);
+          const frame = Buffer.allocUnsafe(
+            privateLinkV1.headerBytes + data.length,
+          );
           magic.copy(frame);
           frame[4] = id;
           frame.writeUInt32BE(data.length, 5);
-          data.copy(frame, 9);
+          data.copy(frame, privateLinkV1.headerBytes);
           this.queues[id].push(frame);
           this.queued[id] += data.length;
           // Defer one tick so control can preempt queued bulk frames.
@@ -73,17 +73,24 @@ export class PrivateLink {
         if (this.ended) return;
         if (this.buffer.length + data.length > maxFrame * 3) throw new Error();
         this.buffer = Buffer.concat([this.buffer, data]);
-        while (this.buffer.length >= 9) {
+        while (this.buffer.length >= privateLinkV1.headerBytes) {
           if (!this.buffer.subarray(0, 4).equals(magic)) throw new Error();
           const id = this.buffer[4],
             size = this.buffer.readUInt32BE(5);
           if (id >= this.lanes.length || !size || size > maxFrame)
             throw new Error();
-          if (this.buffer.length < size + 9) break;
+          if (this.buffer.length < size + privateLinkV1.headerBytes) break;
           const lane = this.lanes[id];
           if (lane.readableLength + size > maxQueued) throw new Error();
-          lane.push(Buffer.from(this.buffer.subarray(9, size + 9)));
-          this.buffer = this.buffer.subarray(size + 9);
+          lane.push(
+            Buffer.from(
+              this.buffer.subarray(
+                privateLinkV1.headerBytes,
+                size + privateLinkV1.headerBytes,
+              ),
+            ),
+          );
+          this.buffer = this.buffer.subarray(size + privateLinkV1.headerBytes);
         }
       } catch {
         this.close();
@@ -107,7 +114,7 @@ export class PrivateLink {
         const id = this.queues.findIndex((q) => q.length > 0);
         if (id < 0) break;
         const frame = this.queues[id].shift()!;
-        this.queued[id] -= frame.length - 9;
+        this.queued[id] -= frame.length - privateLinkV1.headerBytes;
         if (!this.output.write(frame)) {
           this.waiting = true;
           break;

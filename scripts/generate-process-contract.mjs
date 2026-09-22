@@ -9,11 +9,15 @@ const result = spawnSync(
 );
 if (result.status !== 0) throw new Error(result.stderr);
 const schema = JSON.parse(result.stdout);
+const privateLink = JSON.parse(
+  readFileSync("crates/native-process/private-link-v1.json", "utf8"),
+);
 const path = "packages/ai-host/src/process-contract.ts";
 const text = await format(
-  await compile(schema, "Ready", {
-    bannerComment: "// @generated from native-process::Ready. Do not edit.",
-  }),
+  `${await compile(schema, "Ready", {
+    bannerComment:
+      "// @generated from native-process::Ready and private-link-v1.json. Do not edit.",
+  })}\nexport const privateLinkV1 = ${JSON.stringify(privateLink)} as const;\n`,
   { parser: "typescript" },
 );
 if (process.argv.includes("--check")) {

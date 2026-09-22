@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { serviceChecks } from "./verify-local-service.mjs";
+import { serviceChecks, verifiedCandidate } from "./verify-local-service.mjs";
 const healthy = {
   phase: "connected",
   status: {
@@ -41,5 +41,26 @@ test("negative result requires matching healthy bookends", () => {
       { ...healthy, status: { ...healthy.status, installation: "other" } },
     ]).passed,
     false,
+  );
+});
+test("caller-selected programs cannot pass without protected candidate provenance", () => {
+  const source = { head: "a".repeat(40), clean: true };
+  const fakePolicy = {
+    version: 1,
+    sourceSha: source.head,
+    client: { path: "/fake/desktop", sha256: "b".repeat(64) },
+    probe: { path: "/fake/probe", sha256: "c".repeat(64) },
+  };
+  assert.equal(
+    verifiedCandidate(fakePolicy, source, () => "d".repeat(64)),
+    undefined,
+  );
+  assert.equal(
+    verifiedCandidate(
+      { ...fakePolicy, sourceSha: "e".repeat(40) },
+      source,
+      (path) => (path.endsWith("desktop") ? "b".repeat(64) : "c".repeat(64)),
+    ),
+    undefined,
   );
 });

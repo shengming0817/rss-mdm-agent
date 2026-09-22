@@ -87,7 +87,8 @@ fn descriptor() -> io::Result<Local> {
 }
 pub fn file(file: &File) -> io::Result<()> {
     use std::os::windows::fs::MetadataExt;
-    if file.metadata()?.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+    let metadata = file.metadata()?;
+    if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
         return Err(io::Error::other("reparse private path"));
     }
     let user = current_sid()?;
@@ -118,11 +119,17 @@ pub fn file(file: &File) -> io::Result<()> {
                 return Err(io::Error::last_os_error());
             }
             let header = &*(ace as *const ACE_HEADER);
-            if header.AceFlags & 0x08 != 0 || header.AceType == 1 {
+            if header.AceType == 1 {
                 continue;
             }
             if header.AceType != 0 {
                 return Err(io::Error::other("unsupported private ACE"));
+            }
+            let applies_to_object = header.AceFlags & INHERIT_ONLY_ACE as u8 == 0;
+            let propagates_to_children = metadata.is_dir()
+                && header.AceFlags & (OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE) as u8 != 0;
+            if !applies_to_object && !propagates_to_children {
+                continue;
             }
             let allowed = &*(ace as *const ACCESS_ALLOWED_ACE);
             let subject = sid((&allowed.SidStart as *const u32).cast_mut().cast())?;
@@ -135,6 +142,46 @@ pub fn file(file: &File) -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn inherit_only_world_access_on_private_directory_is_rejected() {
+        let root = std::env::temp_dir().join(format!("rss-private-acl-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let text = wide(format!(
+            "O:{}D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICIIO;FA;;;WD)",
+            current_sid().unwrap()
+        ));
+        let mut security = null_mut();
+        assert_ne!(
+            unsafe {
+                ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                    text.as_ptr(),
+                    1,
+                    &mut security,
+                    null_mut(),
+                )
+            },
+            0
+        );
+        let _security = Local(security);
+        let attributes = SECURITY_ATTRIBUTES {
+            nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: security,
+            bInheritHandle: 0,
+        };
+        assert_ne!(
+            unsafe { CreateDirectoryW(wide(&root).as_ptr(), &attributes) },
+            0
+        );
+        assert!(validate(&root).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
 }
 pub fn validate(path: &Path) -> io::Result<()> {
     let handle = OpenOptions::new()

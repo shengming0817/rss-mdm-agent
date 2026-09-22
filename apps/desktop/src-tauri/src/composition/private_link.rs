@@ -3,8 +3,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, DuplexStream
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-const MAX: usize = 512 * 1024;
-const MAGIC: [u8; 4] = [82, 83, 83, 1];
+include!(concat!(env!("OUT_DIR"), "/private_link_contract.rs"));
 
 pub fn start(
     mut input: impl AsyncRead + Unpin + Send + 'static,
@@ -106,18 +105,37 @@ pub fn start(
 mod tests {
     use super::*;
     #[tokio::test]
-    async fn protocol_matches_node_and_rejects_legacy() {
+    async fn protocol_rejects_legacy() {
         let (wire, mut peer) = tokio::io::duplex(MAX * 2);
         let (read, write) = tokio::io::split(wire);
         let (mut native, _execution, stop) = start(read, write);
         native.write_all(b"hello").await.unwrap();
         let mut frame = [0; 14];
         peer.read_exact(&mut frame).await.unwrap();
-        assert_eq!(&frame[..9], &[82, 83, 83, 1, 0, 0, 0, 0, 5]);
+        assert_eq!(&frame[..4], &MAGIC);
+        assert_eq!(&frame[4..9], &[0, 0, 0, 0, 5]);
         assert_eq!(&frame[9..], b"hello");
         peer.write_all(b"{\"legacy\":true}\n").await.unwrap();
         tokio::time::timeout(std::time::Duration::from_secs(1), stop.cancelled())
             .await
             .unwrap();
+    }
+    #[tokio::test]
+    async fn typescript_encoder_reaches_rust_decoder() {
+        let Ok(hex) = std::env::var("RSS_PRIVATE_LINK_TS_FRAME") else {
+            return;
+        };
+        let bytes = hex
+            .as_bytes()
+            .chunks_exact(2)
+            .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+            .collect::<Vec<_>>();
+        let (wire, mut peer) = tokio::io::duplex(MAX * 2);
+        let (read, write) = tokio::io::split(wire);
+        let (mut native, _execution, _stop) = start(read, write);
+        peer.write_all(&bytes).await.unwrap();
+        let mut payload = [0; 14];
+        native.read_exact(&mut payload).await.unwrap();
+        assert_eq!(&payload, b"ts-conformance");
     }
 }

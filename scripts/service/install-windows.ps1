@@ -3,6 +3,7 @@
 param(
     [Parameter(Mandatory=$true)][string]$DesktopDirectory,
     [Parameter(Mandatory=$true)][string]$ServiceExecutable,
+    [Parameter(Mandatory=$true)][string]$ProbeExecutable,
     [Parameter(Mandatory=$true)][string[]]$AllowedUserSid
 )
 $ErrorActionPreference = 'Stop'
@@ -14,6 +15,7 @@ $product = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'RSS MDM Age
 $dataRoot = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'RSS MDM Agent'
 $root = Join-Path $dataRoot 'service'
 $service = Join-Path $root 'rss-local-service.exe'
+$probe = Join-Path $root 'rss-untrusted-service-probe.exe'
 $desktop = Join-Path $product 'rss-mdm-desktop.exe'
 foreach ($sid in $AllowedUserSid) { $null = [Security.Principal.SecurityIdentifier]::new($sid) }
 if (Test-Path -LiteralPath $product) { throw 'Inspect and remove the previous laboratory app before reinstalling; existing service has not been stopped.' }
@@ -21,7 +23,8 @@ $manifest = Get-Content (Join-Path $DesktopDirectory 'desktop-manifest.json') -R
 if ($manifest.platform -ne 'win32' -or $manifest.arch -ne 'x64' -or
     (Get-FileHash (Join-Path $DesktopDirectory 'rss-mdm-desktop.exe') -Algorithm SHA256).Hash.ToLowerInvariant() -ne $manifest.executableSha256 -or
     -not (Test-Path (Join-Path $DesktopDirectory 'ai-host-runtime/worker-manifest.json'))) { throw 'Fixed expanded desktop candidate required.' }
-if (-not (Test-Path -LiteralPath $ServiceExecutable -PathType Leaf)) { throw 'Service artifact required.' }
+if (-not (Test-Path -LiteralPath $ServiceExecutable -PathType Leaf) -or
+    -not (Test-Path -LiteralPath $ProbeExecutable -PathType Leaf)) { throw 'Service and probe artifacts required.' }
 function Restricted-Acl([string[]]$Readers) {
     $acl = [Security.AccessControl.DirectorySecurity]::new()
     $acl.SetAccessRuleProtection($true, $false)
@@ -77,6 +80,7 @@ New-ProtectedDirectory $dataRoot
 New-ProtectedDirectory $root
 $stage = Join-Path (Split-Path $product) ('RSS MDM Agent.stage-' + [Guid]::NewGuid())
 $stagedService = Join-Path $root ('service-' + [Guid]::NewGuid() + '.new')
+$stagedProbe = Join-Path $root ('probe-' + [Guid]::NewGuid() + '.new')
 $createdRegistration = $false; $published = $false; $stopped = $false
 try {
     New-ProtectedDirectory $stage
@@ -85,6 +89,7 @@ try {
         Copy-Item -LiteralPath $item.FullName -Destination $stage -Recurse
     }
     Copy-Locked $ServiceExecutable $stagedService
+    Copy-Locked $ProbeExecutable $stagedProbe
     Assert-ProtectedTree $stage
     Assert-ProtectedTree $root
     if ((Get-FileHash (Join-Path $stage 'rss-mdm-desktop.exe') -Algorithm SHA256).Hash.ToLowerInvariant() -ne $manifest.executableSha256) { throw 'Desktop changed during staging.' }
@@ -115,12 +120,14 @@ try {
     $installation = [Guid]::NewGuid().ToString()
     if (Test-Path $policyPath) { $installation = (Get-Content $policyPath -Raw | ConvertFrom-Json).installation }
     $serviceHash = (Get-FileHash $stagedService -Algorithm SHA256).Hash.ToLowerInvariant()
-    $policy = @{version=1;installation=$installation;build=$serviceHash;platform='windows-x64';service_subject=$serviceSid;allowed_users=$AllowedUserSid;
-        client=@{path=$desktop;sha256=$manifest.executableSha256;cdhash=$null};service=@{path=$service;sha256=$serviceHash;cdhash=$null}}
+    $probeHash = (Get-FileHash $stagedProbe -Algorithm SHA256).Hash.ToLowerInvariant()
+    $policy = @{version=1;sourceSha=$manifest.sourceSha;installation=$installation;build=$serviceHash;platform='windows-x64';service_subject=$serviceSid;allowed_users=$AllowedUserSid;
+        client=@{path=$desktop;sha256=$manifest.executableSha256;cdhash=$null};probe=@{path=$probe;sha256=$probeHash;cdhash=$null};service=@{path=$service;sha256=$serviceHash;cdhash=$null}}
     $temporary = Join-Path $root 'policy.new'
     [IO.File]::WriteAllText($temporary, ($policy | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
     [IO.Directory]::Move($stage, $product); $published = $true
     Move-Item -LiteralPath $stagedService -Destination $service -Force
+    Move-Item -LiteralPath $stagedProbe -Destination $probe -Force
     Move-Item -LiteralPath $temporary -Destination $policyPath -Force
     Start-Service $name
     (Get-Service $name).WaitForStatus('Running', [TimeSpan]::FromSeconds(10))
@@ -134,4 +141,5 @@ try {
 } finally {
     if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
     if (Test-Path -LiteralPath $stagedService) { Remove-Item -LiteralPath $stagedService -Force }
+    if (Test-Path -LiteralPath $stagedProbe) { Remove-Item -LiteralPath $stagedProbe -Force }
 }

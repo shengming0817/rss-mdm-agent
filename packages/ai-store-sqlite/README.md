@@ -35,18 +35,18 @@ await store.close({ timeoutMs: 1000, signal: new AbortController().signal });
 
 ## Schema、安全与容量
 
-独立 application ID 与 schema version 5（AI wire V5）。`open` 先通过临时只读连接验证身份与 schema，不改变外部数据库；取得长期写连接后，在写事务内重新验证，再设置持久配置。首次建库的 DDL、版本和 checksum 在同一事务；已有 schema v1/v2/v3、缺版本、缺表、对象变化、较新版本或校验失败时拒绝打开；旧库只读检查，不自动修改、删除或重建。没有旧 PR 数据库导入、双读、fallback 或损坏后重建。首次建库失败可能留下无 schema 的文件；必须由操作方检查并处置，`open` 不将其当成新库。
+独立 application ID 与 schema version 5（AI wire V5）。`open` 先通过临时只读连接验证身份与 schema，不改变外部数据库；取得长期写连接后，在写事务内重新验证，再设置持久配置。首次建库的 DDL、版本和 checksum 在同一事务；已有 schema v1/v2/v3/v4、缺版本、缺表、对象变化、较新版本或校验失败时拒绝打开；旧库只读检查，不自动修改、删除或重建。没有旧 PR 数据库导入、双读、fallback 或损坏后重建。首次建库失败可能留下无 schema 的文件；必须由操作方检查并处置，`open` 不将其当成新库。
 
 `path` 必须是本机私有目录中的绝对文件路径。所有数值必须为安全整数；组合根通过 `StoreOptions` 选择下列范围内的值，超过边界返回 `invalid_input`。运行中超过容量预算返回 `limit_exceeded`。
 
-| 选项 | 默认值 | 有效范围（含边界） | 约束对象 |
-| --- | --- | --- | --- |
-| busyTimeoutMs | 1000 | 1–10000 | SQLite 锁等待毫秒 |
-| maxDatabaseBytes | 256 MiB | 65536–1073741824 | 主数据库页数上限；WAL 保留目标同值 |
-| maxSessionRecords | 10000 | 1–100000 | 会话及其事件、投影和 generation 历史 |
-| maxSessionBytes | 16 MiB | 1–1073741824 | 会话持久记录 JSON 与 generation 字节总量 |
-| maxBatchRecords | 1024 | 1–100000 | 一次 commit 的输入记录与 prune 的会话数 |
-| maxQueryBytes | 4 MiB | 1–1073741824 | 每次查询返回总量；分页先在 SQL 中核对原始字节量 |
+| 选项              | 默认值  | 有效范围（含边界） | 约束对象                                        |
+| ----------------- | ------- | ------------------ | ----------------------------------------------- |
+| busyTimeoutMs     | 1000    | 1–10000            | SQLite 锁等待毫秒                               |
+| maxDatabaseBytes  | 256 MiB | 65536–1073741824   | 主数据库页数上限；WAL 保留目标同值              |
+| maxSessionRecords | 10000   | 1–100000           | 会话及其事件、投影和 generation 历史            |
+| maxSessionBytes   | 16 MiB  | 1–1073741824       | 会话持久记录 JSON 与 generation 字节总量        |
+| maxBatchRecords   | 1024    | 1–100000           | 一次 commit 的输入记录与 prune 的会话数         |
+| maxQueryBytes     | 4 MiB   | 1–1073741824       | 每次查询返回总量；分页先在 SQL 中核对原始字节量 |
 
 单条记录继续使用 A01 的262144字节及字符串/节点/深度预算；页大小最多1024。主文件通过 `max_page_count` 限制，WAL 自动 checkpoint 为256页；WAL 在事务/checkpoint 期间需要额外磁盘空间，`maxDatabaseBytes` 不是主文件与 WAL 总和的硬配额。磁盘满返回 limit_exceeded，锁/存储错误返回不含原始 SQL、路径、正文或 provider 数据的 Failure。
 
@@ -74,17 +74,16 @@ WAL 使用 `synchronous=FULL`，按 SQLite 的文件系统同步契约请求提�
 
 SQLite 扩展结果码按低8位取得稳定 primary code，再投影到产品 Failure；不保留 SQL、文件路径或原生异常文本。
 
-| 原因 | code | retry |
-| --- | --- | --- |
-| BUSY / LOCKED（含扩展码） | unavailable | same_command |
-| CORRUPT / NOTADB、已确认本产品 schema 的对象/元数据/完整性损坏、持久 wire 非法 | storage_corrupt | never |
-| FULL | limit_exceeded | never |
-| PERM / READONLY / AUTH、EACCES / EPERM | permission_denied | never |
-| 路径缺失、create 已存在、错误路径种类 | invalid_input | never |
-| 外部 application ID、未知 schema 版本、未验证 runtime | unsupported_version | never |
-| 未知错误与其它 I/O 故障 | unavailable | never |
+| 原因                                                                           | code                | retry        |
+| ------------------------------------------------------------------------------ | ------------------- | ------------ |
+| BUSY / LOCKED（含扩展码）                                                      | unavailable         | same_command |
+| CORRUPT / NOTADB、已确认本产品 schema 的对象/元数据/完整性损坏、持久 wire 非法 | storage_corrupt     | never        |
+| FULL                                                                           | limit_exceeded      | never        |
+| PERM / READONLY / AUTH、EACCES / EPERM                                         | permission_denied   | never        |
+| 路径缺失、create 已存在、错误路径种类                                          | invalid_input       | never        |
+| 外部 application ID、未知 schema 版本、未验证 runtime                          | unsupported_version | never        |
+| 未知错误与其它 I/O 故障                                                        | unavailable         | never        |
 
 损坏或未知 I/O 不触发盲目重放、自动删除或重建。双进程测试在 contender 内计量实际 open 耗时，对 busyTimeoutMs=50ms 要求 <1000ms 宽松上界，并验证明确的 unavailable/same_command；进程启动耗时不混入锁等待测量。重启后的 reconciliation 使用 A01 的 VerifiedProviderSession 实际调用凭证，不能再手写 not_submitted 结构授权重新派发。Id 验证直接使用 A01 从唯一 schema 编译的 isId，无复制正则。
-
 
 A03 的 `WorkerLaunchFenceStore` 独立于 `SessionStore`，SQLite 对象同时实现两者。`worker_launches` 启动 fence（namespace / launchId / artifact，registered 时附带 平台 scope 与 runtimeDigest）。reserve 发生在原生 Session 创建前，故不持有 sessions 外键；登记和清除均按原 launchId CAS。它不赋予重启 Host 向旧 PID 发信号的权限。`recoverUnavailable` 在无法准入原生会话时原子保留旧身份与普通队列、冻结未决派发及旧回调。列表包括 active / recovery_required，recovery 排除 acknowledged / cancelled。schema 版本由上文的数据库身份规则统一声明，直接协同替换，无迁移或旧格式兼容分支。

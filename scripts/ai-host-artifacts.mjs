@@ -284,7 +284,12 @@ export function runtimeArtifact(root, target) {
 }
 
 /** Stage the fixed native launcher alongside a packaged Host, including isolated consumers. */
-export function stageWorkerRuntime(root, directory, node = process.execPath) {
+export function stageWorkerRuntime(
+  root,
+  directory,
+  node = process.execPath,
+  bootstrap = "node_modules/@rss-mdm-agent/ai-host/dist/bootstrap.js",
+) {
   const suffix = process.platform === "win32" ? ".exe" : "";
   mkdirSync(join(directory, "bin"), { recursive: true });
   const runtimeNode = join(directory, "bin/node" + suffix);
@@ -297,7 +302,6 @@ export function stageWorkerRuntime(root, directory, node = process.execPath) {
     if (process.platform !== "win32")
       chmodSync(join(directory, "bin", name + suffix), 0o755);
   }
-  const bootstrap = "node_modules/@rss-mdm-agent/ai-host/dist/bootstrap.js";
   const hash = (path) =>
     createHash("sha256")
       .update(readFileSync(join(directory, path)))

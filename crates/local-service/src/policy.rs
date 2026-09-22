@@ -36,12 +36,15 @@ impl Artifact {
 #[serde(deny_unknown_fields)]
 pub struct Policy {
     pub version: u32,
+    #[serde(rename = "sourceSha")]
+    pub source_sha: String,
     pub installation: String,
     pub build: String,
     pub platform: String,
     pub service_subject: String,
     pub allowed_users: Vec<String>,
     pub client: Artifact,
+    pub probe: Artifact,
     pub service: Artifact,
 }
 impl Policy {
@@ -62,6 +65,8 @@ impl Policy {
         };
         if p.version != VERSION
             || p.platform != platform
+            || p.source_sha.len() != 40
+            || !p.source_sha.bytes().all(|b| b.is_ascii_hexdigit())
             || p.allowed_users.len() > 64
             || p.installation.is_empty()
             || p.build.is_empty()
@@ -72,6 +77,7 @@ impl Policy {
             return Err(Rejected);
         }
         p.client.verify(&p.client.path)?;
+        p.probe.verify(&p.probe.path)?;
         p.service.verify(&p.service.path)?;
         Ok(p)
     }

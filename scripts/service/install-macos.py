@@ -101,6 +101,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--desktop', type=Path, required=True)
     parser.add_argument('--service', type=Path, required=True)
+    parser.add_argument('--probe', type=Path, required=True)
     parser.add_argument('--allow-user', action='append', required=True)
     args = parser.parse_args()
     if os.geteuid() != 0:
@@ -111,6 +112,8 @@ def main():
     if '0' in users:
         raise RuntimeError('ordinary user required')
     executable = preflight(args.desktop, args.service)
+    if not args.probe.is_file():
+        raise RuntimeError('probe artifact required')
     try:
         account = pwd.getpwnam(ACCOUNT)
         if account.pw_uid == 0 or account.pw_shell != '/usr/bin/false' or account.pw_dir != '/var/empty':
@@ -138,27 +141,38 @@ def main():
         stage = Path(temporary)
         staged_app = stage / APP.name
         staged_service = stage / 'rss-local-service'
+        staged_probe = stage / 'rss-untrusted-service-probe'
         try:
             shutil.copytree(args.desktop, staged_app, symlinks=True)
             shutil.copy2(args.service, staged_service)
-            for path in (staged_app, staged_service):
+            shutil.copy2(args.probe, staged_probe)
+            for path in (staged_app, staged_service, staged_probe):
                 run('/bin/chmod', '-RN', str(path))
-            for path in (staged_app, staged_service):
+            for path in (staged_app, staged_service, staged_probe):
                 run('/usr/bin/codesign', '--force', '--options', 'runtime', '--sign', '-', str(path))
                 run('/usr/bin/codesign', '--verify', '--strict', str(path))
             protect(staged_app)
             os.chown(staged_service, 0, 0)
             os.chmod(staged_service, 0o755)
+            os.chown(staged_probe, 0, 0)
+            os.chmod(staged_probe, 0o755)
             service = ROOT / 'rss-local-service'
-            policy = dict(version=1, installation=installation, build=hashlib.sha256(staged_service.read_bytes()).hexdigest(),
+            probe = ROOT / 'rss-untrusted-service-probe'
+            runtime_manifest = json.loads((staged_app / 'Contents/Resources/ai-host-runtime/manifest.json').read_text())
+            source_sha = runtime_manifest.get('source', {}).get('end', {}).get('head')
+            if not isinstance(source_sha, str) or not re.fullmatch(r'[a-f0-9]{40}', source_sha):
+                raise RuntimeError('desktop source provenance unavailable')
+            policy = dict(version=1, sourceSha=source_sha, installation=installation, build=hashlib.sha256(staged_service.read_bytes()).hexdigest(),
                           platform='macos-arm64', service_subject=str(account.pw_uid), allowed_users=users,
                           client=artifact(staged_app / 'Contents/MacOS' / executable, APP / 'Contents/MacOS' / executable),
+                          probe=artifact(staged_probe, probe),
                           service=artifact(staged_service, service))
             stop()
             stopped = True
             staged_app.rename(APP)
             published = True
             staged_service.replace(service)
+            staged_probe.replace(probe)
             new_policy = ROOT / ('policy-' + str(uuid.uuid4()) + '.new')
             new_policy.write_text(json.dumps(policy, indent=2) + '\n')
             os.chown(new_policy, 0, 0)

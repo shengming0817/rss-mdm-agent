@@ -1,5 +1,28 @@
 // ref: Tauri crates/tauri-build/src/acl.rs@tauri-build-v2.6.2
 fn main() {
+    let private_link = "../../../crates/native-process/private-link-v1.json";
+    println!("cargo:rerun-if-changed={private_link}");
+    let contract: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(private_link).expect("private-link contract"))
+            .expect("private-link contract JSON");
+    let magic = contract["magic"].as_array().expect("private-link magic");
+    assert_eq!(magic.len(), 3);
+    let version = contract["version"].as_u64().expect("private-link version");
+    let max = contract["maxFrameBytes"]
+        .as_u64()
+        .expect("private-link max frame");
+    let generated = format!(
+        "const MAGIC: [u8; 4] = [{}, {}, {}, {version}];\nconst MAX: usize = {max};\n",
+        magic[0].as_u64().expect("magic byte"),
+        magic[1].as_u64().expect("magic byte"),
+        magic[2].as_u64().expect("magic byte"),
+    );
+    std::fs::write(
+        std::path::Path::new(&std::env::var("OUT_DIR").expect("OUT_DIR"))
+            .join("private_link_contract.rs"),
+        generated,
+    )
+    .expect("generated private-link Rust contract");
     let manifest = "resources/ai-host-runtime/manifest.json";
     println!("cargo:rerun-if-changed={manifest}");
     if let Ok(bytes) = std::fs::read(manifest) {

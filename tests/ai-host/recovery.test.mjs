@@ -69,8 +69,10 @@ async function crash(t, mode) {
   });
   child.kill("SIGKILL");
   await once(child, "exit");
-  const pid = ready.scope?.root ?? ready.launches[0].scope.root;
+  const scope = ready.scope ?? ready.launches[0].scope;
+  const pid = scope.root;
   await until(() => processGone(pid));
+  await until(() => scopeAbsent(workerRuntime, scope));
   return { directory, ready, pid };
 }
 test("Host SIGKILL closes worker group; restart reconciles the original attempt without resending", async (t) => {
@@ -188,7 +190,10 @@ test("registration precedes provider import, and rejected registration leaves no
   );
   assert.equal(started.ok, false);
   assert.ok(rejectedScope);
-  assert.equal(scopeAbsent(workerRuntime, rejectedScope), true);
+  await until(() => scopeAbsent(workerRuntime, rejectedScope));
+  await until(
+    async () => unwrap(await worker.close(budget(1000))).processStopped,
+  );
   assert.deepEqual(unwrap(await store.launches()), []);
   await assert.rejects(
     readFile(join(directory, "trace.ndjson")),
