@@ -10,6 +10,7 @@ import {
   type Stream,
 } from "@agentclientprotocol/sdk";
 import {
+  withinBudget,
   accessLimits,
   boundedStream,
   boundedJson,
@@ -140,6 +141,12 @@ export function createAccessService(options: AccessOptions) {
     now = options.now ?? Date.now,
     shutdownTimeoutMs = options.shutdownTimeoutMs ?? 5_000;
   if (
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs < 1 ||
+    timeoutMs > 2_147_483_647
+  )
+    throw new RangeError("invalid timeoutMs");
+  if (
     !Number.isSafeInteger(shutdownTimeoutMs) ||
     shutdownTimeoutMs < 0 ||
     shutdownTimeoutMs > 2_147_483_647
@@ -151,10 +158,20 @@ export function createAccessService(options: AccessOptions) {
     promptTtlMs > 2_147_483_647
   )
     throw new RangeError("invalid promptTtlMs");
-  const budget = (signal: AbortSignal): Budget => ({
-    signal: AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]),
-    timeoutMs,
-  });
+  const budget = async <T>(
+    signal: AbortSignal,
+    operation: (budget: Budget) => T | PromiseLike<T>,
+  ): Promise<T> => {
+    try {
+      return await withinBudget(
+        () => ({ signal, timeoutMs }),
+        operation,
+        lifetime.signal,
+      );
+    } catch {
+      return fail("unavailable");
+    }
+  };
   const parse = <K extends WireRecord["kind"]>(kind: K) => ({
     parse(input: unknown): Extract<WireRecord, { kind: K }> {
       try {
@@ -176,7 +193,9 @@ export function createAccessService(options: AccessOptions) {
     signal: AbortSignal,
   ): Promise<Session> =>
     value(
-      await host.snapshotPage(peer.caller, id, { limit: 1 }, budget(signal)),
+      await budget(signal, (budget) =>
+        host.snapshotPage(peer.caller, id, { limit: 1 }, budget),
+      ),
     ).session;
   const standard = async (
     peer: Peer,
@@ -433,7 +452,9 @@ export function createAccessService(options: AccessOptions) {
     const token = { attachmentId: previous?.attachmentId };
     peer.resumes.set(id, token);
     try {
-      const resumed = value(await host.resume(peer.caller, id, budget(signal)));
+      const resumed = value(
+        await budget(signal, (budget) => host.resume(peer.caller, id, budget)),
+      );
       if (
         peer.resumes.get(id) !== token ||
         signal.aborted ||
@@ -471,7 +492,11 @@ export function createAccessService(options: AccessOptions) {
         : command.input.type === "cancel"
           ? "cancel"
           : "respond";
-    return value(await host[method](peer.caller, command, budget(signal)));
+    return value(
+      await budget(signal, (budget) =>
+        host[method](peer.caller, command, budget),
+      ),
+    );
   }
   function connect(stream: Stream, caller: Caller): AgentConnection {
     if (lifetime.signal.aborted) throw new Error("access service closed");
@@ -535,10 +560,8 @@ export function createAccessService(options: AccessOptions) {
       ready(peer);
       if (params.mcpServers.length) return fail("unsupported_capability");
       const created = value(
-        await host.createSession(
-          peer.caller,
-          options.sessionOptions,
-          budget(signal),
+        await budget(signal, (budget) =>
+          host.createSession(peer.caller, options.sessionOptions, budget),
         ),
       );
       if (!peer.selected) startPump(peer, created.namespace.sessionId, 0);
@@ -547,13 +570,15 @@ export function createAccessService(options: AccessOptions) {
     app.onRequest("session/list", async ({ params, signal }) => {
       ready(peer);
       const page = value(
-        await host.listSessions(
-          peer.caller,
-          {
-            limit: 64,
-            ...(params.cursor ? { continuation: params.cursor } : {}),
-          },
-          budget(signal),
+        await budget(signal, (budget) =>
+          host.listSessions(
+            peer.caller,
+            {
+              limit: 64,
+              ...(params.cursor ? { continuation: params.cursor } : {}),
+            },
+            budget,
+          ),
         ),
       );
       return {
@@ -579,11 +604,13 @@ export function createAccessService(options: AccessOptions) {
       };
       do {
         const page = value(
-          await host.snapshotPage(
-            peer.caller,
-            params.sessionId,
-            { limit: 64, ...(continuation ? { continuation } : {}) },
-            budget(signal),
+          await budget(signal, (budget) =>
+            host.snapshotPage(
+              peer.caller,
+              params.sessionId,
+              { limit: 64, ...(continuation ? { continuation } : {}) },
+              budget,
+            ),
           ),
         );
         cursor = page.cursor;
@@ -657,11 +684,13 @@ export function createAccessService(options: AccessOptions) {
         >();
       do {
         const page = value(
-          await host.snapshotPage(
-            peer.caller,
-            params.sessionId,
-            { limit: 64, ...(continuation ? { continuation } : {}) },
-            budget(signal),
+          await budget(signal, (budget) =>
+            host.snapshotPage(
+              peer.caller,
+              params.sessionId,
+              { limit: 64, ...(continuation ? { continuation } : {}) },
+              budget,
+            ),
           ),
         );
         for (const record of page.commands) {
@@ -733,7 +762,11 @@ export function createAccessService(options: AccessOptions) {
       parse("connectionsRequest"),
       async ({ signal }) => {
         ready(peer, true);
-        return value(await host.connections(peer.caller, budget(signal)));
+        return value(
+          await budget(signal, (budget) =>
+            host.connections(peer.caller, budget),
+          ),
+        );
       },
     );
     app.onRequest(
@@ -742,11 +775,13 @@ export function createAccessService(options: AccessOptions) {
       async ({ params, signal }) => {
         ready(peer, true);
         return value(
-          await host.saveConnection(
-            peer.caller,
-            params.connection,
-            params.expectedRevision,
-            budget(signal),
+          await budget(signal, (budget) =>
+            host.saveConnection(
+              peer.caller,
+              params.connection,
+              params.expectedRevision,
+              budget,
+            ),
           ),
         );
       },
@@ -757,7 +792,9 @@ export function createAccessService(options: AccessOptions) {
       async ({ params, signal }) => {
         ready(peer, true);
         return value(
-          await host.savePreferences(peer.caller, params.patch, budget(signal)),
+          await budget(signal, (budget) =>
+            host.savePreferences(peer.caller, params.patch, budget),
+          ),
         );
       },
     );
@@ -767,12 +804,14 @@ export function createAccessService(options: AccessOptions) {
       async ({ params, signal }) => {
         ready(peer, true);
         return value(
-          await host.selectConnection(
-            peer.caller,
-            params.sessionId,
-            params.connectionId,
-            budget(signal),
-            params.freshContext,
+          await budget(signal, (budget) =>
+            host.selectConnection(
+              peer.caller,
+              params.sessionId,
+              params.connectionId,
+              budget,
+              params.freshContext,
+            ),
           ),
         );
       },
@@ -783,12 +822,14 @@ export function createAccessService(options: AccessOptions) {
       async ({ params, signal }) => {
         ready(peer, true);
         return value(
-          await host.previewHistory(
-            peer.caller,
-            params.sessionId,
-            params.connectionId,
-            params.recent,
-            budget(signal),
+          await budget(signal, (budget) =>
+            host.previewHistory(
+              peer.caller,
+              params.sessionId,
+              params.connectionId,
+              params.recent,
+              budget,
+            ),
           ),
         );
       },
@@ -807,11 +848,13 @@ export function createAccessService(options: AccessOptions) {
       async ({ params, signal }) => {
         ready(peer, true);
         const page = value(
-          await host.snapshotPage(
-            peer.caller,
-            params.sessionId,
-            params.query,
-            budget(signal),
+          await budget(signal, (budget) =>
+            host.snapshotPage(
+              peer.caller,
+              params.sessionId,
+              params.query,
+              budget,
+            ),
           ),
         );
         for (const surface of page.surfaces) validateSurface(surface, limits);
@@ -824,7 +867,9 @@ export function createAccessService(options: AccessOptions) {
       async ({ params, signal }) => {
         ready(peer, true);
         return value(
-          await host.listSessions(peer.caller, params.query, budget(signal)),
+          await budget(signal, (budget) =>
+            host.listSessions(peer.caller, params.query, budget),
+          ),
         );
       },
     );
@@ -866,11 +911,8 @@ export function createAccessService(options: AccessOptions) {
         const { metadata } = params;
         const resolver = {
           surface: async (_namespace: unknown, instance: string) => {
-            const result = await host.surface(
-              peer.caller,
-              metadata.sessionId,
-              instance,
-              budget(signal),
+            const result = await budget(signal, (budget) =>
+              host.surface(peer.caller, metadata.sessionId, instance, budget),
             );
             if (result.ok) validateSurface(result.value, limits);
             return result;
@@ -930,45 +972,50 @@ export function createAccessService(options: AccessOptions) {
     signal: AbortSignal,
   ): Promise<RequestPermissionResponse> {
     boundedJson(request, limits);
-    const recipients = [...peers].filter(
-      (peer) =>
-        peer.initialized &&
-        sameCaller(peer.caller, caller) &&
-        peer.pumps.has(request.sessionId),
-    );
+    const recipients = [...peers].flatMap((peer) => {
+      const pump = peer.pumps.get(request.sessionId);
+      return peer.initialized && sameCaller(peer.caller, caller) && pump
+        ? [{ peer, pump }]
+        : [];
+    });
     if (!recipients.length || signal.aborted || lifetime.signal.aborted)
       return { outcome: { outcome: "cancelled" } };
-    const done = new AbortController(),
-      delivery = AbortSignal.any([
-        signal,
-        done.signal,
-        lifetime.signal,
-        AbortSignal.timeout(timeoutMs),
-      ]);
+    const done = new AbortController();
     const pending = { caller, sessionId: request.sessionId, controller: done };
     permissions.add(pending);
     try {
-      return await Promise.any(
-        recipients.map(async (peer) => {
-          const answer = await peer.connection.client.request(
-            "session/request_permission",
-            request,
-            {
-              cancellationSignal: AbortSignal.any([
-                delivery,
-                peer.pumps.get(request.sessionId)!.controller.signal,
-              ]),
-            },
-          );
-          if (delivery.aborted) return fail("unavailable");
-          const outcome = answer.outcome;
-          if (
-            outcome.outcome === "selected" &&
-            !request.options.some((o) => o.optionId === outcome.optionId)
-          )
-            return fail("invalid_input");
-          return answer;
-        }),
+      return await budget(signal, (owner) =>
+        withinBudget(
+          () => owner,
+          (delivery) =>
+            Promise.any(
+              recipients.map(({ peer, pump }) => {
+                return withinBudget(
+                  () => delivery,
+                  async (requestBudget) => {
+                    const answer = await peer.connection.client.request(
+                      "session/request_permission",
+                      request,
+                      { cancellationSignal: requestBudget.signal },
+                    );
+                    if (requestBudget.signal.aborted)
+                      return fail("unavailable");
+                    const outcome = answer.outcome;
+                    if (
+                      outcome.outcome === "selected" &&
+                      !request.options.some(
+                        (o) => o.optionId === outcome.optionId,
+                      )
+                    )
+                      return fail("invalid_input");
+                    return answer;
+                  },
+                  pump.controller.signal,
+                );
+              }),
+            ),
+          done.signal,
+        ),
       );
     } catch {
       return { outcome: { outcome: "cancelled" } };

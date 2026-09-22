@@ -25,3 +25,9 @@ prmonitor 只提供 AI 引擎与通用 UI 的提取来源，新客户端不包�
 本仓的 Linux 宿主设计不自动扩大 rss-mdm 当前 Windows/macOS 企业受管平台承诺。
 
 默认集成分支为 `develop`。各产品独立发布，禁止依赖相邻仓目录才能构建；工程使用根级 Cargo/pnpm workspace，入口与验证说明见[桌面开发指南](docs/guides/desktop-development.md)。
+
+## 本地验证
+
+提交受测源码后运行 `make ci CI_BASE=origin/develop`，按影响范围选择本仓检查；
+`make ci-full` 强制全量，`make ci-plan` 查看计划。选择边界与结果语义见
+[验证范围](docs/rules/verification-scope.md)。

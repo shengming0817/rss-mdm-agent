@@ -49,7 +49,7 @@ node scripts/check-self-service.mjs --write  # 仅浏览器只读 fixture
 cargo test -p rss-mdm-desktop --test composition --locked
 pnpm test:ai-host
 pnpm check:boundaries
-make ci CI_BASE=origin/develop
+make ci CI_BASE=origin/develop # 按影响范围；ci-full 强制全量，ci-plan 查看计划
 ```
 
 浏览器未在 Tauri 环境运行时只显示明确的静态样本，写入口禁用。静态样本不作为真实桌面/AI 验收。真实模型与原生窗口验收仅覆盖 macOS arm64、固定 Codex 0.155.0；不要求 Windows/Linux 或三个引擎完成同一 E2E。S2 真实平台执行、安装签名、公证、升级及 T3 企业身份仍在本次范围外。
