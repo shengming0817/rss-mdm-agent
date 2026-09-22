@@ -17,7 +17,7 @@
 `make ci` 在任务分支比较 `CI_BASE`（默认 `origin/develop`）与受测 HEAD 的 merge-base，
 按 Cargo normal/dev/build/optional 与 pnpm dependency/dev/peer/optional 反向依赖闭包选择。
 `develop`、detached HEAD、`make ci-full` 或 `CI_FULL=1` 执行全量；Cargo/npm manifest、lock、工具链、
-CI 脚本与共享配置、rename/copy、未知路径/删除、缺失基线或分析异常均保守全量。
+CI 脚本与共享配置、rename/copy、未知路径或无法归属到当前 owner 的删除、缺失基线或分析异常均保守全量。
 必须使用 package.json 指定的 Node 与 pnpm 版本。源码身份或基线读取失败不阻止后续 gate 收集，
 但最终 provenance 必须失败，不能当作可交付通过证明。
 
@@ -37,3 +37,11 @@ Rust build/test/clippy 使用受影响包；Rust 独立消费者保持整组验�
 结果区分 passed/failed/skipped；skipped 的 status 为 null，不能当作通过。运行前清理 gate 自有
 旧回执与固定 CI runtime，保留手工原生/凭据/smoke 验收和开发 runtime 的独立记录。
 所有选中检查执行完才统一返回失败；同阶段不重复全量 CI，只集中修复后精确复验失败项和受影响测试。
+
+
+已知 owner 内的文件删除仍选择该 owner 及其完整反向依赖；manifest 删除属于全局输入，
+无法归属的删除回退全量，已识别文档删除不贡献 package seed。该边界与 RSS 参考选择器一致。
+正式入口在调用 pnpm 前精确核验 package.json 的 Node 与 packageManager 版本，并把实际版本
+写入证据。正式回执状态为 running → passed/failed/cancelled；每个完成 gate 原子更新结果。
+前置失败和顶层异常写 failed；SIGINT/SIGTERM 取消活动子进程、保留已完成结果，未启动 gate
+记录 skipped/cancelled 原因。不可捕获的强制终止可能留下 running，不能解释为成功。

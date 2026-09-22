@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { stepResult } from "./ci-result.mjs";
@@ -67,30 +67,91 @@ export function planSteps(steps, impact) {
   });
 }
 
-export function executeSteps(plan, root, execute = spawnSync) {
+// ref: Node.js v24.14.1 lib/child_process.js (spawn, close, abort lifecycle).
+export function runCommand(command, args, { signal, ...options }) {
+  return new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve({ status: null, signal: signal.reason });
+      return;
+    }
+    const child = spawn(command, args, {
+      ...options,
+      detached: process.platform !== "win32",
+    });
+    let failure, timer;
+    const stop = (kind) => {
+      if (!child.pid) return;
+      try {
+        if (process.platform === "win32") child.kill(kind);
+        else process.kill(-child.pid, kind);
+      } catch (error) {
+        if (error.code !== "ESRCH") failure = error;
+      }
+    };
+    const cancel = () => {
+      stop("SIGTERM");
+      timer ??= setTimeout(() => stop("SIGKILL"), 5000);
+    };
+    signal?.addEventListener("abort", cancel, { once: true });
+    if (signal?.aborted) cancel();
+    child.once("spawn", () => {
+      if (signal?.aborted) cancel();
+    });
+    child.once("error", (error) => {
+      failure = error;
+    });
+    child.once("close", (status, exitSignal) => {
+      if (signal?.aborted) stop("SIGKILL");
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", cancel);
+      resolve({ status, signal: exitSignal, error: failure });
+    });
+  });
+}
+
+export async function executeSteps(
+  plan,
+  root,
+  execute = runCommand,
+  { signal, env = process.env, onStart = () => {}, onResult = () => {} } = {},
+) {
   const results = [];
+  const record = (result) => {
+    results.push(result);
+    onResult(result);
+  };
   for (const { name, command, args, selected } of plan) {
-    if (!selected) {
+    if (!selected || signal?.aborted) {
       console.log(`[ci] ${name}: SKIP`);
-      results.push({
+      record({
         name,
         command: [command, ...args],
         status: null,
         outcome: "skipped",
-        reason: "unaffected",
+        reason: signal?.aborted ? "cancelled" : "unaffected",
       });
       continue;
     }
     console.log(`\n[ci] ${name}`);
+    onStart(name);
     let result;
     try {
-      result = execute(command, args, { cwd: root, stdio: "inherit" });
+      result = await execute(command, args, {
+        cwd: root,
+        stdio: "inherit",
+        env,
+        signal,
+      });
     } catch (error) {
       result = { status: null, error };
     }
-    results.push({
+    record({
       ...stepResult(name, [command, ...args], result),
-      outcome: result.status === 0 ? "passed" : "failed",
+      outcome: signal?.aborted
+        ? "cancelled"
+        : result.status === 0
+          ? "passed"
+          : "failed",
     });
   }
   return results;
