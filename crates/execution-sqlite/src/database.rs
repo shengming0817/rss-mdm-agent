@@ -138,7 +138,10 @@ fn staging_connection(final_path: &Path) -> Result<(std::path::PathBuf, Connecti
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
+    #[cfg(unix)]
     drop(options.open(&staged).map_err(|_| Error::Storage)?);
+    #[cfg(windows)]
+    drop(native_process::private_storage::create_new(&staged).map_err(|_| Error::Storage)?);
     let conn = Connection::open_with_flags(&staged, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
     Ok((staged, conn))
 }
@@ -265,7 +268,8 @@ fn check_metadata(path: &Path, directory: bool) -> Result<(), Error> {
             return Err(Error::Storage);
         }
     }
-    // Windows ACL enforcement is not claimed by S1; only explicit Test bootstrap is supplied.
+    #[cfg(windows)]
+    native_process::private_storage::validate(path).map_err(|_| Error::Storage)?;
     Ok(())
 }
 

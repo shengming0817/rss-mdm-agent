@@ -11,6 +11,8 @@ tauri-build.workspace = true
 serde_json.workspace = true
 
 [dependencies]
+native-process = { path = "../../../crates/native-process" }
+local-service = { path = "../../../crates/local-service" }
 ai-session-contract = { path = "../../../crates/ai-session-contract" }
 unicode-normalization = "=0.1.25"
 uuid = { version = "=1.26.0", features = ["v4"] }

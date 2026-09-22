@@ -1,9 +1,10 @@
+import { workerRuntime } from "../ai-host/worker-runtime.mjs";
 import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { fork } from "node:child_process";
 import { once } from "node:events";
-import { groupEmpty } from "../../packages/ai-host/dist/process.js";
+import { scopeAbsent } from "../../packages/ai-host/dist/process.js";
 import { openHost } from "./host.mjs";
 import {
   engines,
@@ -30,7 +31,7 @@ for (const provider of engines) {
         }
         for (const launch of ready?.launches ?? [])
           await until(
-            () => groupEmpty(launch.rootPid),
+            () => scopeAbsent(workerRuntime, launch.scope),
             "old worker group exit",
           );
       });
@@ -69,7 +70,10 @@ for (const provider of engines) {
       child.kill("SIGKILL");
       await exited;
       for (const launch of ready.launches)
-        await until(() => groupEmpty(launch.rootPid), "old worker group exit");
+        await until(
+          () => scopeAbsent(workerRuntime, launch.scope),
+          "old worker group exit",
+        );
       const recovered = await openHost(f.path, "open");
       try {
         const current = await until(async () => {

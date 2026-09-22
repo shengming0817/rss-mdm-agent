@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+import type { Scope } from "@rss-mdm-agent/ai-host/process-contract";
 import {
   activeStage,
   emptyPreferences,
@@ -202,6 +204,12 @@ function privatePath(options: StoreOptions): string {
   const parent = dirname(options.path);
   if (options.mode === "create")
     mkdirSync(parent, { recursive: true, mode: 0o700 });
+  if (process.platform === "win32")
+    execFileSync(
+      join(dirname(process.execPath), "rss-private-storage.exe"),
+      ["directory", parent],
+      { timeout: 5000, windowsHide: true, stdio: "ignore" },
+    );
   const directory = realpathSync(parent),
     stat = lstatSync(directory);
   if (
@@ -226,6 +234,12 @@ function privatePath(options: StoreOptions): string {
     (process.platform !== "win32" && (file.mode & 0o077) !== 0)
   )
     throw new InputError("invalid_input");
+  if (process.platform === "win32")
+    execFileSync(
+      join(dirname(process.execPath), "rss-private-storage.exe"),
+      ["validate", path],
+      { timeout: 5000, windowsHide: true, stdio: "ignore" },
+    );
   return path;
 }
 
@@ -935,8 +949,7 @@ class SqliteSessionStore implements SessionStore, WorkerLaunchFenceStore {
   async registerLaunch(
     namespace: Namespace,
     launchId: Id,
-    rootPid: number,
-    pgid: number,
+    scope: Scope,
   ): Promise<Result<void>> {
     return this.#transaction(() => {
       const row = this.#db
@@ -947,7 +960,7 @@ class SqliteSessionStore implements SessionStore, WorkerLaunchFenceStore {
       if (!row) return fail("stale_binding");
       const old = JSON.parse(String(row.json)) as WorkerLaunch;
       if (old.phase !== "reserved") return fail("content_conflict");
-      const next: WorkerLaunch = { ...old, phase: "registered", rootPid, pgid };
+      const next: WorkerLaunch = { ...old, phase: "registered", scope };
       validLaunch(next);
       this.#db
         .prepare(

@@ -20,7 +20,7 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    net::{unix::OwnedWriteHalf, UnixStream},
+    io::{DuplexStream, WriteHalf},
     sync::{mpsc, oneshot},
 };
 use tokio_util::{
@@ -32,7 +32,7 @@ fn unavailable() -> crate::self_service::ServiceError {
 }
 type Pending = BTreeMap<u64, oneshot::Sender<Result<Value>>>;
 pub struct Control {
-    writer: tokio::sync::Mutex<FramedWrite<OwnedWriteHalf, LinesCodec>>,
+    writer: tokio::sync::Mutex<FramedWrite<WriteHalf<DuplexStream>, LinesCodec>>,
     pending: Mutex<Pending>,
     views: Mutex<BTreeMap<String, mpsc::Sender<Value>>>,
     sequence: AtomicU64,
@@ -40,8 +40,8 @@ pub struct Control {
     reader_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 impl Control {
-    pub fn start(stream: UnixStream, master: Arc<MasterKey>) -> Arc<Self> {
-        let (reader, writer) = stream.into_split();
+    pub fn start(stream: DuplexStream, master: Arc<MasterKey>) -> Arc<Self> {
+        let (reader, writer) = tokio::io::split(stream);
         let control = Arc::new(Self {
             writer: tokio::sync::Mutex::new(FramedWrite::new(
                 writer,
@@ -401,7 +401,7 @@ mod tests {
     }
     #[tokio::test]
     async fn blocking_keychain_does_not_block_events_or_control_shutdown() {
-        let (native, peer) = UnixStream::pair().unwrap();
+        let (native, peer) = tokio::io::duplex(1048576);
         let control = Control::start(native, Arc::new(MasterKey::new(SlowKey)));
         let mut view = control.view("view".into()).unwrap();
         let mut writer = FramedWrite::new(peer, LinesCodec::new_with_max_length(524288));
@@ -439,10 +439,10 @@ mod tests {
 
     #[tokio::test]
     async fn master_key_failure_replies_without_leaking_and_keeps_control_live() {
-        let (native, peer) = UnixStream::pair().unwrap();
+        let (native, peer) = tokio::io::duplex(1048576);
         let control = Control::start(native, Arc::new(MasterKey::new(FailedKey)));
         let mut view = control.view("view".into()).unwrap();
-        let (reader, writer) = peer.into_split();
+        let (reader, writer) = tokio::io::split(peer);
         let mut reader = FramedRead::new(reader, LinesCodec::new_with_max_length(524288));
         let mut writer = FramedWrite::new(writer, LinesCodec::new_with_max_length(524288));
         writer
@@ -469,7 +469,7 @@ mod tests {
 
     #[tokio::test]
     async fn duplicate_native_fields_close_the_strict_control_ingress() {
-        let (native, peer) = UnixStream::pair().unwrap();
+        let (native, peer) = tokio::io::duplex(1048576);
         let control = Control::start(native, Arc::new(MasterKey::new(FailedKey)));
         let mut writer = FramedWrite::new(peer, LinesCodec::new_with_max_length(524288));
         writer
@@ -508,7 +508,7 @@ mod incarnation_tests {
         let master = Arc::new(MasterKey::new(Slow {
             calls: calls.clone(),
         }));
-        let (a, pa) = UnixStream::pair().unwrap();
+        let (a, pa) = tokio::io::duplex(1048576);
         let first = Control::start(a, master.clone());
         let mut wa = FramedWrite::new(pa, LinesCodec::new());
         wa.send(json!({"schemaVersion":5,"kind":"nativeCall","id":1,"method":"masterKey","data":{"create":false}}).to_string()).await.unwrap();
@@ -519,7 +519,7 @@ mod incarnation_tests {
             tokio::time::sleep(Duration::from_millis(2)).await;
         }
         first.close();
-        let (b, pb) = UnixStream::pair().unwrap();
+        let (b, pb) = tokio::io::duplex(1048576);
         let second = Control::start(b, master.clone());
         let mut wb = FramedWrite::new(pb, LinesCodec::new());
         wb.send(json!({"schemaVersion":5,"kind":"nativeCall","id":2,"method":"masterKey","data":{"create":false}}).to_string()).await.unwrap();

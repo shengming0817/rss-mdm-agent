@@ -33,3 +33,6 @@
 - [来源与对标](reference/sources.md)：prmonitor 固定源码证据、服务端产品基线及上游参考。
 
 本地文档描述稳定需求与追踪映射。进度、父子关系和滚动波次只在 Azure Boards 的 [EPIC #2392](https://dev.azure.com/shengming0923/rss/_workitems/edit/2392) 维护，不在仓内复制 backlog 状态。
+
+- [本机安全服务架构](architecture/local-service.md)与[实验室指南](guides/local-service-lab.md)：#2462 双平台候选、一次性查询、私有进程协议与平台验收边界。
+- [本机安全服务来源](reference/local-service.md)：固定上游 revision、公开平台接口和运行包校验来源。

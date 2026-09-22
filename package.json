@@ -45,7 +45,7 @@
     "test:ai-codex": "pnpm build:ai-codex && tsc --noEmit --strict --skipLibCheck --module NodeNext --target ES2022 tests/ai-adapters/codex/protocol.types.ts && node --test tests/ai-adapters/codex/*.test.mjs",
     "check:codex-consumer": "node scripts/check-codex-consumer.mjs",
     "smoke:codex": "node scripts/smoke-codex.mjs",
-    "build:ai-host": "pnpm --filter @rss-mdm-agent/ai-host-app... --filter @rss-mdm-agent/ai-client build",
+    "build:ai-host": "pnpm --filter @rss-mdm-agent/ai-host-app... --filter @rss-mdm-agent/ai-client build && node scripts/build-worker-runtime.mjs",
     "test:ai-host": "pnpm build:ai-host && node --test tests/ai-host/*.test.mjs",
     "check:ai-host-consumer": "node scripts/check-ai-host-consumer.mjs",
     "bundle:ai-host": "node scripts/bundle-ai-host.mjs",

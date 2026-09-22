@@ -4,7 +4,7 @@ use ai_session_contract::{TestUser, TestUserPage, UserContext};
 use serde_json::json;
 use std::{
     fs,
-    io::{Read, Write},
+    io::Write,
     path::{Path, PathBuf},
 };
 use unicode_normalization::UnicodeNormalization;
@@ -42,28 +42,10 @@ pub struct Users {
 }
 impl Users {
     pub fn open(root: &Path) -> Result<Self> {
-        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
         let path = root.join("users.json");
         let page = if path.exists() {
-            let stat = fs::symlink_metadata(&path).map_err(|_| storage())?;
-            if !stat.is_file()
-                || stat.file_type().is_symlink()
-                || stat.permissions().mode() & 0o077 != 0
-            {
-                return Err(storage());
-            }
-            let mut data = Vec::new();
-            fs::OpenOptions::new()
-                .read(true)
-                .custom_flags(libc::O_NOFOLLOW)
-                .open(&path)
-                .map_err(|_| storage())?
-                .take(65537)
-                .read_to_end(&mut data)
-                .map_err(|_| storage())?;
-            if data.len() > 65536 {
-                return Err(storage());
-            }
+            let data =
+                native_process::private_storage::read(&path, 65536).map_err(|_| storage())?;
             let record = ai_session_contract::decode(
                 &data,
                 &ai_session_contract::Limits {
@@ -159,27 +141,17 @@ impl Users {
         self.commit(page)
     }
     fn persist(&self, page: &TestUserPage) -> Result<()> {
-        use std::os::unix::fs::OpenOptionsExt;
         let temporary = self.path.with_extension(format!("{}.tmp", Uuid::new_v4()));
         let result = (|| {
-            let mut file = fs::OpenOptions::new()
-                .create_new(true)
-                .write(true)
-                .mode(0o600)
-                .open(&temporary)?;
+            let mut file = native_process::private_storage::create_new(&temporary)?;
             let data = serde_json::to_vec(page)?;
             if data.len() > 65536 {
                 return Err("user registry capacity".into());
             }
             file.write_all(&data)?;
             file.sync_all()?;
-            fs::rename(&temporary, &self.path)?;
-            fs::File::open(
-                self.path
-                    .parent()
-                    .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound))?,
-            )?
-            .sync_all()?;
+            drop(file);
+            native_process::private_storage::replace(&temporary, &self.path)?;
             Ok::<_, Box<dyn std::error::Error>>(())
         })();
         if result.is_err() {
@@ -206,7 +178,7 @@ mod tests {
     #[test]
     fn selection_restores_actor_but_rotates_generation_and_preserves_first_spelling() {
         let root = std::env::temp_dir().join(format!("rss-users-{}", Uuid::new_v4()));
-        fs::create_dir(&root).unwrap();
+        native_process::private_storage::directory(&root).unwrap();
         let mut users = Users::open(&root).unwrap();
         assert!(users.current().is_err());
         let a = users.select(" Alice ").unwrap();

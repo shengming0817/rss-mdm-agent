@@ -60,7 +60,7 @@ export type {
   DeliveryRequest,
   DeliveryReceipt,
 } from "./delivery.js";
-import { WorkerPort, groupEmpty } from "./process.js";
+import { WorkerPort, scopeAbsent, type WorkerRuntime } from "./process.js";
 import { Output } from "./queue.js";
 import { Deadline } from "./deadline.js";
 import type { WorkerLaunchFenceStore } from "./launch-fence.js";
@@ -76,6 +76,7 @@ export interface HostDiagnostic {
   readonly code: import("@rss-mdm-agent/ai-contract").Failure["code"];
 }
 export interface HostOptions {
+  readonly workerRuntime: WorkerRuntime;
   /** Trusted persistence composition; secrets never enter public wire records. */
   readonly persistConnection?: (
     caller: Caller,
@@ -347,7 +348,10 @@ export class SessionHost implements HostPort {
       for (const launch of requireValue(
         await this.options.launchFences.launches(),
       )) {
-        if (launch.phase === "reserved" || groupEmpty(launch.pgid))
+        if (
+          launch.phase === "reserved" ||
+          scopeAbsent(this.options.workerRuntime, launch.scope)
+        )
           requireValue(
             await this.options.launchFences.releaseLaunch(
               launch.namespace,
@@ -449,7 +453,8 @@ export class SessionHost implements HostPort {
       const blockedKey = namespaceKey(launch.namespace);
       if (
         this.blocked.has(blockedKey) &&
-        (launch.phase === "reserved" || groupEmpty(launch.pgid))
+        (launch.phase === "reserved" ||
+          scopeAbsent(this.options.workerRuntime, launch.scope))
       ) {
         requireValue(
           await this.options.launchFences.releaseLaunch(
@@ -477,7 +482,10 @@ export class SessionHost implements HostPort {
       const fence = requireValue(
         await this.options.launchFences.launches(),
       ).find((row) => namespaceKey(row.namespace) === key);
-      if (fence?.phase === "registered" && !groupEmpty(fence.pgid))
+      if (
+        fence?.phase === "registered" &&
+        !scopeAbsent(this.options.workerRuntime, fence.scope)
+      )
         return fail("reconciliation_required", "reconcile_first");
       if (fence)
         requireValue(
@@ -532,6 +540,7 @@ export class SessionHost implements HostPort {
       ? { verifier: resolved.admission.verifier, tools }
       : undefined;
     const worker = new WorkerPort(
+      this.options.workerRuntime,
       this.options.launchFences,
       namespace,
       resolved.artifact,
@@ -708,6 +717,7 @@ export class SessionHost implements HostPort {
           },
         };
         const worker = new WorkerPort(
+          this.options.workerRuntime,
           this.options.launchFences,
           probe,
           resolved.artifact,

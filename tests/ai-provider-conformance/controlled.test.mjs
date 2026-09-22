@@ -1,3 +1,4 @@
+import { PrivateLink } from "../../packages/ai-host/dist/private-link.js";
 import { ConnectionSecrets } from "../../apps/ai-host/dist/secrets.js";
 import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
@@ -77,15 +78,20 @@ for (const provider of engines) {
         { stdio: ["pipe", "pipe", "pipe"] },
       );
       const app = spawn(
-        process.execPath,
+        new URL(
+          "../../.local-ci-runs/worker-runtime/bin/node" +
+            (process.platform === "win32" ? ".exe" : ""),
+          import.meta.url,
+        ),
         ["apps/ai-host/dist/cli.js", f.path],
         {
           cwd: new URL("../..", import.meta.url),
-          stdio: ["pipe", "pipe", "pipe", "pipe"],
+          stdio: ["pipe", "pipe", "pipe"],
         },
       );
-      app.stdout.pipe(rust.stdin);
-      rust.stdout.pipe(app.stdin);
+      const link = new PrivateLink(app.stdout, app.stdin, "native");
+      link.lane("execution").pipe(rust.stdin);
+      rust.stdout.pipe(link.lane("execution"));
       let stderr = "";
       for (const process of [rust, app]) {
         process.stderr.on("data", (data) => {
@@ -96,7 +102,7 @@ for (const provider of engines) {
       let peer;
       try {
         peer = await clientAt(
-          nativePeer(app.stdio[3]),
+          nativePeer(link.lane("native")),
           await executionGeneration(f.directory),
         );
         if (provider !== "codex") {

@@ -8,7 +8,6 @@ use futures_util::StreamExt;
 use serde_json::json;
 use serde_json::Value;
 use std::{
-    os::fd::AsRawFd,
     path::Path,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -144,21 +143,39 @@ impl Process {
     }
 }
 fn preflight(artifact: &Path, trusted_digest: Option<&str>) -> Result<(), Fault> {
-    use std::os::unix::fs::PermissionsExt;
-    let executable = artifact.join("bin/rss-ai-host");
+    let executable = artifact.join(if cfg!(windows) {
+        "bin/node.exe"
+    } else {
+        "bin/node"
+    });
     let meta = std::fs::symlink_metadata(executable).map_err(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound {
+        if e.kind() == std::io::ErrorKind::NotFound && !artifact.exists() {
             Fault::Missing
         } else {
             Fault::Invalid
         }
     })?;
-    if !meta.is_file() || meta.file_type().is_symlink() || meta.permissions().mode() & 0o111 == 0 {
+    if !meta.is_file() || meta.file_type().is_symlink() {
         return Err(Fault::Invalid);
     }
     let root = artifact.canonicalize().map_err(|_| Fault::Invalid)?;
     for file in [
-        "bin/node",
+        if cfg!(windows) {
+            "bin/node.exe"
+        } else {
+            "bin/node"
+        },
+        if cfg!(windows) {
+            "bin/rss-ai-worker-launcher.exe"
+        } else {
+            "bin/rss-ai-worker-launcher"
+        },
+        if cfg!(windows) {
+            "bin/rss-private-storage.exe"
+        } else {
+            "bin/rss-private-storage"
+        },
+        "worker-manifest.json",
         "package.json",
         "pnpm-lock.yaml",
         "node_modules/@rss-mdm-agent/ai-host-app/dist/cli.js",
@@ -170,10 +187,7 @@ fn preflight(artifact: &Path, trusted_digest: Option<&str>) -> Result<(), Fault>
         let path = artifact.join(file);
         let resolved = path.canonicalize().map_err(|_| Fault::Invalid)?;
         let metadata = std::fs::metadata(&resolved).map_err(|_| Fault::Invalid)?;
-        if !resolved.starts_with(&root)
-            || !metadata.is_file()
-            || (file == "bin/node" && metadata.permissions().mode() & 0o111 == 0)
-        {
+        if !resolved.starts_with(&root) || !metadata.is_file() {
             return Err(Fault::Invalid);
         }
     }
@@ -188,9 +202,12 @@ fn preflight(artifact: &Path, trusted_digest: Option<&str>) -> Result<(), Fault>
     {
         return Err(Fault::Version);
     }
-    if manifest["verification"]["platform"] != "darwin"
-        || manifest["verification"]["arch"] != "arm64"
-        || !cfg!(all(target_os = "macos", target_arch = "aarch64"))
+    if manifest["verification"]["platform"] != if cfg!(windows) { "win32" } else { "darwin" }
+        || manifest["verification"]["arch"] != if cfg!(windows) { "x64" } else { "arm64" }
+        || !cfg!(any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(windows, target_arch = "x86_64")
+        ))
     {
         return Err(Fault::Version);
     }
@@ -238,47 +255,37 @@ pub async fn launch(
     tokio::task::spawn_blocking(move || preflight(&checked, trusted.as_deref()))
         .await
         .map_err(|_| Fault::Invalid)??;
-    let (parent_pipe, child_pipe) =
-        std::os::unix::net::UnixStream::pair().map_err(|_| Fault::Start)?;
-    parent_pipe
-        .set_nonblocking(true)
-        .map_err(|_| Fault::Start)?;
-    let control = Control::start(
-        tokio::net::UnixStream::from_std(parent_pipe).map_err(|_| Fault::Start)?,
-        master,
-    );
-    let mut command = Command::new(artifact.join("bin/rss-ai-host"));
+    let mut command = Command::new(artifact.join(if cfg!(windows) {
+        "bin/node.exe"
+    } else {
+        "bin/node"
+    }));
     command
+        .arg(artifact.join("node_modules/@rss-mdm-agent/ai-host-app/dist/cli.js"))
         .arg(configuration)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
-    let fd = child_pipe.as_raw_fd();
-    // SAFETY: only async-signal-safe descriptor operations occur in the child before exec.
-    unsafe {
-        command.pre_exec(move || {
-            if fd != 3 && libc::dup2(fd, 3) < 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            if libc::fcntl(3, libc::F_SETFD, 0) < 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        });
-    }
+    let mut scope =
+        native_process::OwnedHost::prepare(command.as_std_mut()).map_err(|_| Fault::Start)?;
     let launched = command.spawn();
-    drop(child_pipe);
     let mut child = match launched {
         Ok(child) => child,
         Err(_) => {
-            control.close();
             return Err(Fault::Start);
         }
     };
+    if scope.attach(child.id().ok_or(Fault::Start)?).is_err() {
+        let _ = child.kill().await;
+        return Err(Fault::Start);
+    }
     let reader = child.stdout.take().expect("piped stdout");
     let writer = child.stdin.take().expect("piped stdin");
     let diagnostics = child.stderr.take().expect("piped stderr");
+    let (native, execution_lane, link_stop) = super::private_link::start(reader, writer);
+    let control = Control::start(native, master);
+    let (reader, writer) = tokio::io::split(execution_lane);
     let phase = Arc::new(Mutex::new(Phase::Starting));
     let was_ready = Arc::new(AtomicBool::new(false));
     let waiter_was_ready = was_ready.clone();
@@ -334,19 +341,18 @@ pub async fn launch(
         let (result, forced) = tokio::select! {
             result = child.wait() => (result, false),
             _ = waiter_stop.cancelled() => {
-                if let Some(pid) = child.id() {
-                    // SAFETY: the Child is still owned and has not been reaped; this is not a persisted PID.
-                    unsafe { libc::kill(pid as i32, libc::SIGTERM); }
-                }
+                waiter_control.close();
+                let _ = scope.request_stop();
                 match tokio::time::timeout(Duration::from_secs(8), child.wait()).await {
                     Ok(result) => (result, false),
-                    Err(_) => { let _ = child.start_kill(); (child.wait().await, true) }
+                    Err(_) => { let _ = scope.terminate(); let _ = child.start_kill(); (child.wait().await, true) }
                 }
             }
         };
         let requested = waiter_stop.is_cancelled();
         waiter_stop.cancel();
         waiter_control.shutdown().await;
+        link_stop.cancel();
         mcp_stop.cancel();
         let mut mcp_task = mcp_task;
         if tokio::time::timeout(Duration::from_secs(1), &mut mcp_task)
@@ -381,6 +387,7 @@ pub async fn launch(
         ) {
             *phase = if result.is_err()
                 || forced
+                || !scope.empty()
                 || cleanup.load(Ordering::Acquire)
                 || (requested && waiter_was_ready.load(Ordering::Acquire) && failed_exit)
             {
@@ -415,7 +422,6 @@ pub async fn launch(
         let fault = match process.phase() {
             Phase::Failed(fault) => fault,
             _ if health.is_err_and(|e| e.code == "unsupported_version") => Fault::Version,
-            _ if process.control.closed() => Fault::Exited,
             _ => Fault::Timeout,
         };
         // Revoke capabilities before waiting for exit. An uncertain reap retains
@@ -458,7 +464,7 @@ mod tests {
     }
     #[tokio::test]
     async fn unconfirmed_reaping_cannot_be_reclassified_as_stopped_on_a_later_close() {
-        let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
+        let (stream, _peer) = tokio::io::duplex(1048576);
         let control = Control::start(stream, Arc::new(MasterKey::default()));
         let task = tokio::spawn(std::future::pending::<bool>());
         task.abort();

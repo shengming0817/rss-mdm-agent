@@ -17,7 +17,7 @@ const result = await createHost({
 
 `artifact` 是可信组合根选定的 `file:` 模块，导出 `createProvider: WorkerFactory`。它只在持久 launch fence 登记后加载。配置是纯数据；parent 独占 verifier，仅在准入验证与 Session 持久化成功后开放 worker 的反向 ToolEndpoint RPC。工具提案不携带身份或执行批准，实际调用者来自 `resolve` 的可信 Caller。调用者必须检查所有 `Result`，包括可重试的 `close`。
 
-`SessionStore` 只承载公共会话语义；`WorkerLaunchFenceStore` 及其 artifact/PID/PGID 校验由 `ai-host/launch-fence` 持有。SQLite 同时实现两个窄 port，组合根分别注入，不向 A01/MemoryStore 增加 OS 接口。
+`SessionStore` 只承载公共会话语义；`WorkerLaunchFenceStore` 及其 artifact/runtimeDigest/平台 scope 校验由 `ai-host/launch-fence` 持有。SQLite 同时实现两个窄 port，组合根分别注入，不向 A01/MemoryStore 增加 OS 接口。
 
 Host 默认普通队列上限 64，控制待处理上限 64，worker 总数 8，每 provider/account 2；控制优先 burst 为 8，provider 操作预算 30 秒。`queueLimit`、`workerLimit`、`operationTimeoutMs` 可配置，无效配置通过 `createHost` 返回 `invalid_input`；控制队列上限与 burst 固定。持久 `CommandRecord` 是唯一队列，内存仅持有 mailbox、运行任务和短时重试截止。长时间模型观察不占用 mailbox；健康 worker 的控制派发由测试验证在 1 秒内完成。
 

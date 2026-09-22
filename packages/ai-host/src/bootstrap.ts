@@ -1,5 +1,4 @@
-import { Socket } from "node:net";
-import { execFileSync } from "node:child_process";
+import { PrivateLink } from "./private-link.js";
 import type {
   Binding,
   Budget,
@@ -14,25 +13,15 @@ import type { WorkerFactory } from "./worker.js";
 import { Channel } from "./channel.js";
 
 const launchId = process.argv[2];
-if (!launchId || process.platform === "win32") process.exit(2);
+if (!launchId) process.exit(2);
 // This bootstrap imports no provider SDK and opens no credential before activation.
-const pgid = Number(
-  execFileSync("/bin/ps", ["-o", "pgid=", "-p", String(process.pid)], {
-    encoding: "utf8",
-  }).trim(),
-);
+const link = new PrivateLink(process.stdin, process.stdout, "worker");
 let port: ProviderAgentPort | undefined,
   active = false,
   stopped = false;
 const observations = new Set<AbortController>();
-const output = new Channel(
-  new Socket({ fd: 4, readable: true, writable: true }),
-  launchId,
-);
-const tools = new Channel(
-  new Socket({ fd: 5, readable: true, writable: true }),
-  launchId,
-);
+const output = new Channel(link.lane("events"), launchId);
+const tools = new Channel(link.lane("tools"), launchId);
 const bridge: ToolEndpoint = {
   propose: async (proposal, budget) => {
     if (stopped)
@@ -43,14 +32,14 @@ const bridge: ToolEndpoint = {
   },
 };
 const control = new Channel(
-  new Socket({ fd: 3, readable: true, writable: true }),
+  link.lane("control"),
   launchId,
   async (method, data, budget) => {
     if (stopped) throw new Error("worker stopping");
     if (method === "hello")
-      return { pid: process.pid, pgid, parentPid: process.ppid };
+      return { pid: process.pid, parentPid: process.ppid };
     if (method === "activate") {
-      if (active || pgid !== process.pid) throw new Error("invalid activation");
+      if (active) throw new Error("invalid activation");
       active = true;
       const input = data as {
         artifact: string;
@@ -145,15 +134,8 @@ async function orphaned() {
   tools.close();
   output.close();
   for (const abort of observations) abort.abort();
-  // Keep the group root alive until group-wide termination. Native children never
-  // inherit fds 3–5, so their lifetime cannot mask loss of the Host pipe.
-  const kill = () => {
-    try {
-      process.kill(-process.pid, "SIGKILL");
-    } catch {
-      process.exit(1);
-    }
-  };
+  // Launcher owns the OS process scope and observes bootstrap exit.
+  const kill = () => process.exit(1);
   const deadline = setTimeout(kill, 1500);
   try {
     await port?.close({ timeoutMs: 1000, signal: AbortSignal.timeout(1000) });

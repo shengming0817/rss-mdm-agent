@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from "vue";
 import type { AssistantController } from "../assistant/controller";
+import LocalService from "./LocalService.vue";
 import ConnectionSettings from "./ConnectionSettings.vue";
 import { diagnosticMessage, type HostSettings } from "./controller";
 const props = defineProps<{
@@ -73,6 +74,7 @@ function keys(event: KeyboardEvent) {
   <section class="settings" aria-label="设置">
     <h1 tabindex="-1">设置</h1>
     <div :inert="confirming ? true : undefined">
+      <LocalService />
       <section class="settings-card">
         <h2>测试用户</h2>
         <p>本地测试模式 · 非登录 · 不代表企业身份认证。</p>

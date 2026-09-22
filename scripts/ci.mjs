@@ -16,6 +16,11 @@ if (process.versions.node !== requiredNode) {
 const start = sourceState(root);
 const steps = [
   [
+    "native service/process generated contracts",
+    "node",
+    ["scripts/generate-process-contract.mjs", "--check"],
+  ],
+  [
     "CI runner tests",
     "node",
     [

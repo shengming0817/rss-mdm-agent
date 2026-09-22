@@ -164,8 +164,15 @@ pub async fn ai_export_diagnostics<R: tauri::Runtime>(
     super::diagnostics::export(app, state.status()).await
 }
 
+#[tauri::command]
+pub async fn local_service_status() -> local_service::ServiceView {
+    tokio::task::spawn_blocking(local_service::inspect)
+        .await
+        .unwrap_or(local_service::ServiceView::Unavailable)
+}
 pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder.invoke_handler(tauri::generate_handler![
+        local_service_status,
         ai_host_status,
         ai_restart_host,
         ai_export_diagnostics,

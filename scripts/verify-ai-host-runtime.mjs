@@ -1,3 +1,7 @@
+import { scopeAbsent } from "../packages/ai-host/dist/process.js";
+import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { PrivateLink } from "../packages/ai-host/dist/private-link.js";
 import {
   configuration as fixtureConfiguration,
   nativePeer,
@@ -11,10 +15,15 @@ import { once } from "node:events";
 import { mkdtemp, mkdir, writeFile, rm, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { createModelServer } from "../tests/ai-adapters/claude/model-fixture.mjs";
 
-const executable = resolve(process.argv[2]);
+const runtimeRoot = resolve(process.argv[2]);
+const executable = join(
+  runtimeRoot,
+  "bin/node" + (process.platform === "win32" ? ".exe" : ""),
+);
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 async function until(check) {
   const deadline = Date.now() + 15000;
@@ -24,13 +33,14 @@ async function until(check) {
   }
   assert.fail("runtime lifecycle deadline");
 }
-const groupEmpty = (pgid) => {
-  try {
-    process.kill(-pgid, 0);
-    return false;
-  } catch (error) {
-    return error.code === "ESRCH";
-  }
+const workerRuntime = {
+  launcher: join(
+    runtimeRoot,
+    "bin/rss-ai-worker-launcher" + (process.platform === "win32" ? ".exe" : ""),
+  ),
+  manifestDigest: createHash("sha256")
+    .update(readFileSync(join(runtimeRoot, "worker-manifest.json")))
+    .digest("hex"),
 };
 for (const signal of ["SIGTERM", "SIGINT"]) {
   const directory = await realpath(
@@ -63,20 +73,39 @@ for (const signal of ["SIGTERM", "SIGINT"]) {
       { stdio: ["pipe", "pipe", "inherit"] },
     );
     rust.stdin.on("error", () => {});
-    child = spawn(executable, [configurationPath], {
-      cwd: directory,
-      stdio: ["pipe", "pipe", "pipe", "pipe"],
-      detached: true,
-      env: { PATH: "/usr/bin:/bin", HOME: directory, TMPDIR: tmpdir() },
-    });
-    child.stdout.pipe(rust.stdin);
-    rust.stdout.pipe(child.stdin);
+    child = spawn(
+      executable,
+      [
+        join(
+          runtimeRoot,
+          "node_modules/@rss-mdm-agent/ai-host-app/dist/cli.js",
+        ),
+        configurationPath,
+      ],
+      {
+        cwd: directory,
+        stdio: ["pipe", "pipe", "pipe"],
+        detached: true,
+        env: {
+          PATH:
+            process.platform === "win32" ? process.env.PATH : "/usr/bin:/bin",
+          HOME: directory,
+          TMPDIR: tmpdir(),
+          SystemRoot: process.env.SystemRoot,
+          USERPROFILE: directory,
+          TEMP: tmpdir(),
+        },
+      },
+    );
+    const link = new PrivateLink(child.stdout, child.stdin, "native");
+    link.lane("execution").pipe(rust.stdin);
+    rust.stdout.pipe(link.lane("execution"));
     child.stdin.on("error", () => {});
     child.stderr.on("data", (chunk) => {
       stderr = (stderr + chunk).slice(-16384);
     });
     const exited = once(child, "exit");
-    peer = nativePeer(child.stdio[3]);
+    peer = nativePeer(link.lane("native"));
     const view = await clientAt(peer, await executionGeneration(directory));
     client = view.client;
     const session = await client.createSession();
@@ -103,18 +132,41 @@ for (const signal of ["SIGTERM", "SIGINT"]) {
       ).some((message) => message.text === "bundled runtime"),
     );
     assert.equal(requests.length, 1);
-    groups = execFileSync("/bin/ps", ["-ax", "-o", "pid=,ppid=,pgid="], {
-      encoding: "utf8",
-    })
-      .trim()
-      .split("\n")
-      .map((line) => line.trim().split(/\s+/).map(Number))
-      .filter(([pid, parent, pgid]) => parent === child.pid && pid === pgid)
-      .map(([pid]) => pid);
+    if (process.platform === "win32") {
+      groups = JSON.parse(
+        execFileSync(
+          join(
+            process.env.SystemRoot,
+            "System32/WindowsPowerShell/v1.0/powershell.exe",
+          ),
+          [
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            fileURLToPath(
+              new URL("./worker-scopes-windows.ps1", import.meta.url),
+            ),
+            "-ParentPid",
+            String(child.pid),
+          ],
+          { encoding: "utf8" },
+        ),
+      );
+    } else {
+      groups = execFileSync("/bin/ps", ["-ax", "-o", "pid=,ppid=,pgid="], {
+        encoding: "utf8",
+      })
+        .trim()
+        .split("\n")
+        .map((line) => line.trim().split(/\s+/).map(Number))
+        .filter(([pid, parent, pgid]) => parent === child.pid && pid === pgid)
+        .map(([root]) => ({ kind: "processGroup", root }));
+    }
     assert.equal(groups.length, 1);
-    assert.equal(groupEmpty(groups[0]), false);
+    assert.equal(scopeAbsent(workerRuntime, groups[0]), false);
     // Keep the client attached: the CLI must close both private channel and live worker.
-    child.kill(signal);
+    if (process.platform === "win32") peer.control.close();
+    else child.kill(signal);
     let timer;
     const status = await Promise.race([
       exited,
@@ -126,7 +178,9 @@ for (const signal of ["SIGTERM", "SIGINT"]) {
       }),
     ]).finally(() => clearTimeout(timer));
     assert.deepEqual(status, [0, null], stderr);
-    await until(() => groups.every(groupEmpty));
+    await until(() =>
+      groups.every((scope) => scopeAbsent(workerRuntime, scope)),
+    );
     database = new DatabaseSync(configuration.databasePath, { readOnly: true });
     const record = JSON.parse(
       database.prepare("SELECT json FROM commands WHERE id='bundled'").get()
@@ -149,13 +203,10 @@ for (const signal of ["SIGTERM", "SIGINT"]) {
       child.kill("SIGKILL");
       await once(child, "exit");
     }
-    // Only current test-launched groups are eligible for emergency cleanup.
-    for (const pgid of groups)
-      if (!groupEmpty(pgid)) {
-        try {
-          process.kill(-pgid, "SIGKILL");
-        } catch {}
-      }
+    if (groups.length)
+      await until(() =>
+        groups.every((scope) => scopeAbsent(workerRuntime, scope)),
+      );
     if (rust && rust.exitCode === null && rust.signalCode === null) {
       const exited = once(rust, "exit");
       rust.kill("SIGTERM");

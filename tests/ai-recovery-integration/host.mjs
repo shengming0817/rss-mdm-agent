@@ -1,3 +1,4 @@
+import { workerRuntime } from "../ai-host/worker-runtime.mjs";
 import { ConnectionSecrets } from "../../apps/ai-host/dist/secrets.js";
 import { createHost } from "../../packages/ai-host/dist/index.js";
 import { openSqliteStore } from "../../packages/ai-store-sqlite/dist/index.js";
@@ -21,6 +22,7 @@ export async function openHost(path, mode, beforeCommit) {
   const diagnostics = [];
   const host = unwrap(
     await createHost({
+      workerRuntime,
       store,
       launchFences: store,
       delivery: null,

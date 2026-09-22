@@ -1,8 +1,11 @@
 //! Native API-key input and one app master key. Official CLI credentials are never inspected.
 use crate::self_service::{error, Result};
+#[cfg(target_os = "macos")]
 use security_framework::passwords::{get_generic_password, set_generic_password};
 use std::sync::Mutex;
+#[cfg(target_os = "macos")]
 const SERVICE: &str = "RSS MDM Agent";
+#[cfg(target_os = "macos")]
 const ACCOUNT: &str = "connection-master-key";
 fn unavailable() -> crate::self_service::ServiceError {
     error(
@@ -17,7 +20,9 @@ pub trait KeyBackend: Send + Sync {
     fn read(&self) -> std::result::Result<Option<Vec<u8>>, KeyUnavailable>;
     fn create(&self, key: &[u8]) -> std::result::Result<(), KeyUnavailable>;
 }
+#[cfg(target_os = "macos")]
 pub struct Keychain;
+#[cfg(target_os = "macos")]
 impl KeyBackend for Keychain {
     fn read(&self) -> std::result::Result<Option<Vec<u8>>, KeyUnavailable> {
         match get_generic_password(SERVICE, ACCOUNT) {
@@ -37,7 +42,7 @@ pub struct MasterKey {
 }
 impl Default for MasterKey {
     fn default() -> Self {
-        Self::new(Keychain)
+        Self::new(platform_backend())
     }
 }
 impl MasterKey {
@@ -58,10 +63,17 @@ impl MasterKey {
             Some(_) => return Err(unavailable()),
             None if !create => return Err(unavailable()),
             None => {
-                let mut key = vec![0; 32];
-                security_framework::random::SecRandom::default()
-                    .copy_bytes(&mut key)
-                    .map_err(|_| unavailable())?;
+                #[cfg(target_os = "macos")]
+                let key = {
+                    let mut key = vec![0; 32];
+                    security_framework::random::SecRandom::default()
+                        .copy_bytes(&mut key)
+                        .map_err(|_| unavailable())?;
+                    key
+                };
+                #[cfg(windows)]
+                let key =
+                    native_process::private_storage::random_key().map_err(|_| unavailable())?;
                 self.backend.create(&key).map_err(|_| unavailable())?;
                 key
             }
@@ -71,6 +83,7 @@ impl MasterKey {
     }
 }
 /// Returns input only to the native save operation, never to the WebView.
+#[cfg(target_os = "macos")]
 pub async fn enter<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<String> {
     let (sender, receiver) = tokio::sync::oneshot::channel();
     app.run_on_main_thread(move || {
@@ -142,4 +155,55 @@ mod tests {
         assert_eq!(keys.get(false).unwrap(), first);
         assert_eq!(writes.load(Ordering::SeqCst), 1);
     }
+}
+
+#[cfg(windows)]
+pub struct Dpapi;
+#[cfg(windows)]
+impl KeyBackend for Dpapi {
+    fn read(&self) -> std::result::Result<Option<Vec<u8>>, KeyUnavailable> {
+        let path = native_process::private_storage::key_path().map_err(|_| KeyUnavailable)?;
+        match native_process::private_storage::read(&path, 65536) {
+            Ok(bytes) => native_process::private_storage::unprotect_key(&bytes)
+                .map(Some)
+                .map_err(|_| KeyUnavailable),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(_) => Err(KeyUnavailable),
+        }
+    }
+    fn create(&self, key: &[u8]) -> std::result::Result<(), KeyUnavailable> {
+        let path = native_process::private_storage::key_path().map_err(|_| KeyUnavailable)?;
+        let encrypted =
+            native_process::private_storage::protect_key(key).map_err(|_| KeyUnavailable)?;
+        native_process::private_storage::write_new(&path, &encrypted).map_err(|_| KeyUnavailable)
+    }
+}
+pub fn platform_backend() -> impl KeyBackend {
+    #[cfg(target_os = "macos")]
+    {
+        Keychain
+    }
+    #[cfg(windows)]
+    {
+        Dpapi
+    }
+}
+#[cfg(windows)]
+pub async fn enter<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<String> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    app.run_on_main_thread(move || {
+        let result = native_process::private_storage::enter_secret()
+            .map_err(|_| unavailable())
+            .and_then(|value| value.ok_or_else(|| error("cancelled", "未保存连接")))
+            .and_then(|value| {
+                if value.trim().is_empty() || value.chars().any(char::is_control) {
+                    Err(unavailable())
+                } else {
+                    Ok(value)
+                }
+            });
+        let _ = sender.send(result);
+    })
+    .map_err(|_| unavailable())?;
+    receiver.await.map_err(|_| unavailable())?
 }

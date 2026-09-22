@@ -27,7 +27,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .parent()
         .ok_or("execution database must have a parent")?
         .join("execution-users");
-    std::fs::create_dir_all(&user_root)?;
+    native_process::private_storage::directory(&user_root)?;
     let users_path = user_root.join("users.json");
     if !users_path.try_exists()? {
         std::fs::OpenOptions::new()

@@ -78,7 +78,7 @@ export function verifyDevelopmentRuntime(root, directory) {
     );
   verifyRuntimeIntegrity(directory, manifest.runtimeTreeSha256);
   run(
-    join(directory, "bin/node"),
+    join(directory, "bin/node" + (process.platform === "win32" ? ".exe" : "")),
     [
       "--eval",
       `if(process.versions.node!==${JSON.stringify(node.version)}||process.versions.sqlite!==${JSON.stringify(node.sqlite)})process.exit(1)`,
@@ -86,11 +86,8 @@ export function verifyDevelopmentRuntime(root, directory) {
     directory,
   );
   run(
-    join(directory, "bin/node"),
-    [
-      join(root, "scripts/verify-ai-host-runtime.mjs"),
-      join(directory, "bin/rss-ai-host"),
-    ],
+    join(directory, "bin/node" + (process.platform === "win32" ? ".exe" : "")),
+    [join(root, "scripts/verify-ai-host-runtime.mjs"), directory],
     directory,
   );
   return manifest;

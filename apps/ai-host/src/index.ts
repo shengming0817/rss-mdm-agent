@@ -1,7 +1,10 @@
-import type { Duplex } from "node:stream";
+import { privateDirectory } from "./private-file.js";
+import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { Readable, Writable } from "node:stream";
-import { lstat, mkdir } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { lstat } from "node:fs/promises";
+import { dirname, resolve, join } from "node:path";
+import { PrivateLink } from "@rss-mdm-agent/ai-host/private-link";
 import { createHost } from "@rss-mdm-agent/ai-host";
 import { openSqliteStore } from "@rss-mdm-agent/ai-store-sqlite";
 import { createAccessService, type Stream } from "@rss-mdm-agent/ai-access";
@@ -60,21 +63,17 @@ export async function startLocalApp(
     input: process.stdin as Readable,
     output: process.stdout as Writable,
   },
-  controlSocket?: Duplex,
 ) {
   const local = await readConfiguration(resolve(configurationPath));
-  if (process.platform !== "darwin" || process.arch !== "arm64")
+  if (
+    !(
+      (process.platform === "darwin" && process.arch === "arm64") ||
+      (process.platform === "win32" && process.arch === "x64")
+    )
+  )
     throw new Error("runtime platform is not verified");
   const directory = dirname(local.databasePath);
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  const stat = await lstat(directory);
-  if (
-    !stat.isDirectory() ||
-    stat.isSymbolicLink() ||
-    (stat.mode & 0o077) !== 0 ||
-    (process.getuid && stat.uid !== process.getuid())
-  )
-    throw new Error("runtime directory ownership");
+  await privateDirectory(directory);
   const exists = await lstat(local.databasePath).then(
     () => true,
     (error) => {
@@ -99,9 +98,11 @@ export async function startLocalApp(
     caller.principalId === activeUser.user.userId &&
     caller.tenantId === "test-users" &&
     caller.authorityId === "desktop-fixture";
+  const link = new PrivateLink(parent.input, parent.output, "native");
+  const executionLane = link.lane("execution");
   const execution = await connectExecution(
-    parent.input,
-    parent.output,
+    executionLane,
+    executionLane,
     async (request) => {
       const current = activeUser;
       if (!current || current.user.userId !== request.namespace.principalId)
@@ -134,7 +135,18 @@ export async function startLocalApp(
       throw new Error("authentication_required");
     return Uint8Array.from(bytes);
   });
+  const runtimeRoot = dirname(dirname(process.execPath));
   const created = await createHost({
+    workerRuntime: {
+      launcher: join(
+        runtimeRoot,
+        "bin",
+        "rss-ai-worker-launcher" + (process.platform === "win32" ? ".exe" : ""),
+      ),
+      manifestDigest: createHash("sha256")
+        .update(readFileSync(join(runtimeRoot, "worker-manifest.json")))
+        .digest("hex"),
+    },
     delivery: execution?.router ?? null,
     store,
     launchFences: store,
@@ -189,7 +201,7 @@ export async function startLocalApp(
           schemaVersion: 5,
           kind: "hostHealth",
           ready: true,
-          protocol: 2,
+          protocol: 3,
         } satisfies HostHealth;
       if (method === "attach")
         return switchUser(async () => {
@@ -288,7 +300,7 @@ export async function startLocalApp(
       }
       view.input.enqueue(message);
     },
-    controlSocket,
+    link.lane("native"),
   );
   let closing: Promise<void> | undefined;
   const close = () => {

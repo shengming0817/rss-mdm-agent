@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
 import {
   packHost,
+  stageWorkerRuntime,
   installArtifacts,
   run,
   runtimeArtifact,
@@ -28,8 +29,9 @@ const { version, target, sha256, sqlite } = runtimeArtifact(
   root,
   `${process.platform}-${process.arch}`,
 );
-if (process.platform !== "darwin" || process.arch !== "arm64")
-  throw new Error("This runtime artifact is verified only on macOS arm64");
+const windows = process.platform === "win32";
+const suffix = windows ? ".exe" : "";
+const extension = windows ? "zip" : "tar.gz";
 const directory = join(
     root,
     development
@@ -37,7 +39,7 @@ const directory = join(
       : ".local-ci-runs/ai-host-runtime",
   ),
   cache = join(root, ".cache/ai-host"),
-  archive = join(cache, `node-v${version}-${target}.tar.gz`),
+  archive = join(cache, `node-v${version}-${target}.${extension}`),
   scratch = mkdtempSync(join(tmpdir(), "rss-host-node-"));
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 let stage = "Node archive verification",
@@ -49,7 +51,7 @@ try {
   mkdirSync(cache, { recursive: true });
   if (!existsSync(archive) || hash(readFileSync(archive)) !== sha256) {
     const response = await fetch(
-      `https://nodejs.org/download/release/v${version}/node-v${version}-${target}.tar.gz`,
+      `https://nodejs.org/download/release/v${version}/node-v${version}-${target}.${extension}`,
       { signal: AbortSignal.timeout(60000) },
     );
     if (!response.ok) throw new Error("Node runtime download failed");
@@ -66,38 +68,48 @@ try {
   artifacts = packHost(root, directory, true);
   deploymentLockSha256 = installArtifacts(root, directory, true);
   stage = "Node runtime extraction";
-  run("/usr/bin/tar", ["-xzf", archive, "-C", scratch], root);
+  run(
+    windows
+      ? join(process.env.SystemRoot, "System32", "tar.exe")
+      : "/usr/bin/tar",
+    ["-xf", archive, "-C", scratch],
+    root,
+  );
   mkdirSync(join(directory, "bin"));
   copyFileSync(
-    join(scratch, `node-v${version}-${target}/bin/node`),
-    join(directory, "bin/node"),
+    join(
+      scratch,
+      `node-v${version}-${target}`,
+      windows ? "node.exe" : "bin/node",
+    ),
+    join(directory, "bin/node" + suffix),
   );
-  chmodSync(join(directory, "bin/node"), 0o755);
+  chmodSync(join(directory, "bin/node" + suffix), 0o755);
   copyFileSync(
     join(scratch, `node-v${version}-${target}/LICENSE`),
     join(directory, "NODE-LICENSE"),
   );
-  writeFileSync(
-    join(directory, "bin/rss-ai-host"),
-    '#!/bin/sh\nbase=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)\nexec "$base/bin/node" "$base/node_modules/@rss-mdm-agent/ai-host-app/dist/cli.js" "$@"\n',
-  );
-  chmodSync(join(directory, "bin/rss-ai-host"), 0o755);
+  stageWorkerRuntime(root, directory, join(directory, "bin/node" + suffix));
   stage = "runtime validation";
   run(
-    join(directory, "bin/node"),
+    join(directory, "bin/node" + suffix),
     [
       "--eval",
       `if(process.versions.node!=='${version}'||process.versions.sqlite!=='${sqlite}')process.exit(1)`,
     ],
     directory,
   );
-  run(join(directory, "bin/rss-ai-host"), ["--help"], directory);
   run(
-    join(directory, "bin/node"),
+    join(directory, "bin/node" + suffix),
     [
-      join(root, "scripts/verify-ai-host-runtime.mjs"),
-      join(directory, "bin/rss-ai-host"),
+      join(directory, "node_modules/@rss-mdm-agent/ai-host-app/dist/cli.js"),
+      "--help",
     ],
+    directory,
+  );
+  run(
+    join(directory, "bin/node" + suffix),
+    [join(root, "scripts/verify-ai-host-runtime.mjs"), directory],
     directory,
   );
   behaviorPassed = true;

@@ -1,3 +1,4 @@
+import { workerRuntime } from "./worker-runtime.mjs";
 import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import { openFixture, fixtureArtifact } from "./harness.mjs";
 import assert from "node:assert/strict";
@@ -7,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
 import { createHost } from "../../packages/ai-host/dist/index.js";
-import { groupEmpty } from "../../packages/ai-host/dist/process.js";
+import { scopeAbsent } from "../../packages/ai-host/dist/process.js";
 import { openSqliteStore } from "../../packages/ai-store-sqlite/dist/index.js";
 import { runHostConformance } from "../../packages/ai-contract/dist/testing/index.js";
 import { createAccessService } from "../../packages/ai-access/dist/index.js";
@@ -87,6 +88,7 @@ async function setup(t, revision = "1", extras = {}) {
   };
   host = unwrap(
     await createHost({
+      workerRuntime,
       delivery: extras.admission
         ? {
             prepare: () => ({
@@ -652,6 +654,7 @@ for (const option of ["queueLimit", "workerLimit", "operationTimeoutMs"])
   test(`Host factory returns invalid_input for invalid ${option}`, async () => {
     for (const value of [0, -1, NaN, Infinity, 1.5]) {
       const result = await createHost({
+        workerRuntime,
         delivery: null,
         store: {},
         resolve: async () => {},
@@ -697,7 +700,7 @@ for (const method of [
       assert.notEqual(result, "deadline exceeded");
       assert.equal(result.ok, false);
       assert.equal(result.error.retry, "same_command");
-      await until(() => groupEmpty(pid));
+      await until(() => processGone(pid));
     } finally {
       f.store[method] = original;
       release();
@@ -737,7 +740,7 @@ for (const fault of ["session_result", "recovery_rejection", "recovery_hang"])
       // Break a real worker IPC channel while the OS process is still alive.
       runtime.worker.control.close();
       await until(() => diagnostics.some((d) => d.stage === "recovery"));
-      await until(() => groupEmpty(pid));
+      await until(() => processGone(pid));
       assert.equal(runtime.abort.signal.aborted, true);
       assert.equal(
         (await f.host.submit(caller, f.command("after-failure"), budget())).ok,
@@ -781,3 +784,12 @@ test("client restore keeps recovery_required visible on an attached real Host se
   assert.equal(view.sessionStatus, "recovery_required");
   await assert.rejects(client.submit(f.command("unavailable")));
 });
+
+function processGone(pid) {
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    return error.code === "ESRCH";
+  }
+}

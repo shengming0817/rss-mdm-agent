@@ -196,7 +196,7 @@ test("schema creation is transactional and partial/newer/foreign files are not r
   assert.equal(h.open(newer, "open").error.code, "unsupported_version");
   assert.deepEqual(readFileSync(newer), bytes);
   const legacy = new DatabaseSync(newer);
-  legacy.exec("PRAGMA user_version=1; UPDATE schema_meta SET version=1");
+  legacy.exec("PRAGMA user_version=4; UPDATE schema_meta SET version=4");
   legacy.close();
   const legacyBytes = readFileSync(newer);
   assert.equal(h.open(newer, "open").error.code, "unsupported_version");

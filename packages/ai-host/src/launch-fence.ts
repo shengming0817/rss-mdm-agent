@@ -1,3 +1,4 @@
+import type { Scope } from "./process-contract.js";
 import {
   ContractError,
   isId,
@@ -13,8 +14,7 @@ export interface WorkerLaunchFenceStore {
   registerLaunch(
     namespace: Namespace,
     launchId: Id,
-    rootPid: number,
-    pgid: number,
+    scope: Scope,
   ): Promise<Result<void>>;
   releaseLaunch(namespace: Namespace, launchId: Id): Promise<Result<void>>;
   launches(): Promise<Result<readonly WorkerLaunch[]>>;
@@ -25,30 +25,41 @@ export type WorkerLaunch = {
   readonly namespace: Namespace;
   readonly launchId: Id;
   readonly artifact: string;
+  readonly runtimeDigest: string;
 } & (
   | {
       readonly phase: "reserved";
-      readonly rootPid?: never;
-      readonly pgid?: never;
+      readonly scope?: never;
     }
   | {
       readonly phase: "registered";
-      readonly rootPid: number;
-      readonly pgid: number;
+      readonly scope: Scope;
     }
 );
 export function validLaunch(launch: WorkerLaunch): void {
   namespaceKey(launch.namespace);
   if (
     !isId(launch.launchId) ||
+    !/^[a-f0-9]{64}$/.test(launch.runtimeDigest) ||
     typeof launch.artifact !== "string" ||
     !launch.artifact ||
     launch.artifact.length > 4096 ||
     !["reserved", "registered"].includes(launch.phase) ||
-    (launch.phase === "registered" &&
-      (!Number.isSafeInteger(launch.rootPid) ||
-        launch.rootPid <= 1 ||
-        launch.pgid !== launch.rootPid))
+    (launch.phase === "registered" && !validScope(launch.scope))
   )
     throw new ContractError("context");
+}
+
+export function validScope(scope: Scope): boolean {
+  return (
+    !!scope &&
+    (scope.kind === "processGroup"
+      ? Object.keys(scope).length === 2 &&
+        Number.isSafeInteger(scope.root) &&
+        scope.root > 1 &&
+        scope.root <= 2147483647
+      : scope.kind === "jobObject" &&
+        Object.keys(scope).length === 2 &&
+        /^Local\\rss-mdm-worker-[a-f0-9-]{36}$/.test(scope.name))
+  );
 }

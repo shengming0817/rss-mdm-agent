@@ -14,11 +14,11 @@ if (
   manifest.kind !== "release" ||
   !state.clean ||
   manifest.source.end.head !== state.head ||
-  process.platform !== "darwin" ||
-  process.arch !== "arm64"
+  manifest.verification.platform !== process.platform ||
+  manifest.verification.arch !== process.arch
 )
   throw new Error(
-    "A verified artifact from this committed macOS arm64 source is required",
+    "A verified artifact from this committed source and current platform is required",
   );
 verifyRuntimeIntegrity(source, manifest.runtimeTreeSha256);
 const destination = join(
@@ -34,6 +34,7 @@ for (const name of [
   "NODE-LICENSE",
   "package.json",
   "pnpm-lock.yaml",
+  "worker-manifest.json",
 ])
   cpSync(join(source, name), join(destination, name), {
     recursive: true,

@@ -25,6 +25,7 @@ const roots = [
   "NODE-LICENSE",
   "package.json",
   "pnpm-lock.yaml",
+  "worker-manifest.json",
 ];
 
 function runtimeFixture(parent, name) {
@@ -35,9 +36,13 @@ function runtimeFixture(parent, name) {
     { recursive: true },
   );
   writeFileSync(join(directory, "bin/node"), "node-binary\n", { mode: 0o755 });
-  writeFileSync(join(directory, "bin/rss-ai-host"), "#!/bin/sh\n", {
-    mode: 0o755,
-  });
+  writeFileSync(
+    join(directory, "bin/rss-ai-worker-launcher"),
+    "launcher-fixture\n",
+    {
+      mode: 0o755,
+    },
+  );
   writeFileSync(
     join(
       directory,
@@ -52,6 +57,7 @@ function runtimeFixture(parent, name) {
   writeFileSync(join(directory, "NODE-LICENSE"), "license\n");
   writeFileSync(join(directory, "package.json"), '{"private":true}\n');
   writeFileSync(join(directory, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+  writeFileSync(join(directory, "worker-manifest.json"), "{}\n");
   return directory;
 }
 

@@ -9166,7 +9166,7 @@ impl ::std::convert::From<HostHealthProtocol> for i64 {
 impl ::std::convert::TryFrom<i64> for HostHealthProtocol {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![2_i64].contains(&value) {
+        if ![3_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -15581,7 +15581,7 @@ impl HistoryRequestSchemaVersion {
 }
 impl HostHealthProtocol {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(2_i64);
+    pub const VALUE: Self = Self(3_i64);
 }
 impl HostHealthSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]

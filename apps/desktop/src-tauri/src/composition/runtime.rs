@@ -52,35 +52,19 @@ pub struct DesktopRuntime {
     next: AtomicU64,
 }
 fn private_directory(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
-    if !path.exists() {
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(path)?;
-    }
-    let metadata = std::fs::symlink_metadata(path)?;
-    if !metadata.is_dir()
-        || metadata.file_type().is_symlink()
-        || metadata.permissions().mode() & 0o077 != 0
-    {
-        return Err("private directory required".into());
-    }
+    native_process::private_storage::directory(path)?;
     Ok(())
 }
 fn configuration(root: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    use std::{io::Write, os::unix::fs::OpenOptionsExt};
+    use std::io::Write;
     let path = root.join("host.json");
     let value = json!({"version":1,"databasePath":root.join("ai.sqlite"),"nativeDirectory":root.join("native"),"workingDirectory":root.join("workspace")});
     let temporary = root.join(format!("host-{}.tmp", uuid::Uuid::new_v4()));
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&temporary)?;
+    let mut file = native_process::private_storage::create_new(&temporary)?;
     file.write_all(&serde_json::to_vec(&value)?)?;
     file.sync_all()?;
-    std::fs::rename(temporary, &path)?;
+    drop(file);
+    native_process::private_storage::replace(&temporary, &path)?;
     Ok(path)
 }
 impl DesktopRuntime {
@@ -89,7 +73,13 @@ impl DesktopRuntime {
         artifact: &Path,
         source: ai_session_contract::HostStatusSource,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        Self::start_with_key_backend(root, artifact, source, super::credentials::Keychain).await
+        Self::start_with_key_backend(
+            root,
+            artifact,
+            source,
+            super::credentials::platform_backend(),
+        )
+        .await
     }
     pub async fn start_with_key_backend(
         root: &Path,
@@ -435,9 +425,12 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let artifact = root.join("artifact");
         private_directory(&artifact.join("bin")).unwrap();
-        std::fs::write(artifact.join("manifest.json"),r#"{"status":"passed","desktopProtocol":2,"contractVersion":5,"verification":{"platform":"darwin","arch":"arm64"},"runtimeTreeSha256":"0000000000000000000000000000000000000000000000000000000000000000"}"#).unwrap();
+        std::fs::write(artifact.join("manifest.json"),r#"{"status":"passed","desktopProtocol":3,"contractVersion":5,"verification":{"platform":"darwin","arch":"arm64"},"runtimeTreeSha256":"0000000000000000000000000000000000000000000000000000000000000000"}"#).unwrap();
         for name in [
             "bin/node",
+            "bin/rss-ai-worker-launcher",
+            "bin/rss-private-storage",
+            "worker-manifest.json",
             "package.json",
             "pnpm-lock.yaml",
             "NODE-LICENSE",
@@ -456,26 +449,47 @@ mod tests {
         }
         let script = format!(
             r#"#!/usr/bin/python3
-import socket,json,os,sys,time,signal
-open(os.path.join(os.path.dirname(sys.argv[1]), 'fixture.pid'),'w').write(str(os.getpid()))
+import json,os,sys,time,signal,struct
+open(os.path.join(os.path.dirname(sys.argv[2]), 'fixture.pid'),'w').write(str(os.getpid()))
 if {mode:?}.startswith('diagnostic_'):
     sys.stderr.write(json.dumps({{'schemaVersion':5,'kind':'hostProcessDiagnostic','code':{mode:?}[11:]}})+'\n')
     sys.exit(1)
 if {mode:?} == 'ignore_term': signal.signal(signal.SIGTERM, signal.SIG_IGN)
 if {mode:?} == 'nonzero_term': signal.signal(signal.SIGTERM, lambda *_: sys.exit(7))
 if {mode:?} == 'exit': sys.exit(7)
-stream=socket.socket(fileno=3).makefile('rwb',buffering=0)
-for line in stream:
-    frame=json.loads(line)
-    if frame['kind'] != 'nativeCall': continue
-    if frame['method']=='health' and {mode:?} == 'delayed': time.sleep(0.4)
-    if frame['method']=='health' and {mode:?} == 'no_health': time.sleep(60)
-    value={{'schemaVersion':5,'kind':'hostHealth','ready':True,'protocol':2}} if frame['method']=='health' else True
-    if frame['method']=='health' and {mode:?} == 'bad_health': value['protocol']=0
-    stream.write((json.dumps({{'schemaVersion':5,'kind':'nativeReply','id':frame['id'],'ok':True,'value':value}})+'\n').encode())
+def exact(size):
+    result=b''
+    while len(result)<size:
+        data=sys.stdin.buffer.read(size-len(result))
+        if not data: return None
+        result+=data
+    return result
+buffer=b''
+while True:
+    header=exact(9)
+    if header is None: break
+    if header[:4] != b'RSS\x01': sys.exit(7)
+    data=exact(struct.unpack('>I',header[5:9])[0])
+    if data is None: break
+    if header[4] != 0: continue
+    buffer+=data
+    while b'\n' in buffer:
+        line,buffer=buffer.split(b'\n',1)
+        frame=json.loads(line)
+        if frame['kind'] != 'nativeCall': continue
+        if frame['method']=='health' and {mode:?} == 'delayed': time.sleep(0.4)
+        if frame['method']=='health' and {mode:?} == 'no_health': time.sleep(60)
+        value={{'schemaVersion':5,'kind':'hostHealth','ready':True,'protocol':3}} if frame['method']=='health' else True
+        if frame['method']=='health' and {mode:?} == 'bad_health': value['protocol']=0
+        data=(json.dumps({{'schemaVersion':5,'kind':'nativeReply','id':frame['id'],'ok':True,'value':value}})+'\n').encode()
+        sys.stdout.buffer.write(b'RSS\x01'+bytes([0])+struct.pack('>I',len(data))+data)
+        sys.stdout.buffer.flush()
+if {mode:?} == 'ignore_term': time.sleep(60)
+if {mode:?} == 'nonzero_term': sys.exit(7)
+
 "#
         );
-        let executable = artifact.join("bin/rss-ai-host");
+        let executable = artifact.join("bin/node");
         std::fs::write(&executable, script).unwrap();
         std::fs::set_permissions(executable, std::fs::Permissions::from_mode(0o700)).unwrap();
         let mut manifest: Value =

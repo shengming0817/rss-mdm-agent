@@ -1,6 +1,9 @@
 import { spawnSync } from "node:child_process";
 import {
   lstatSync,
+  mkdirSync,
+  copyFileSync,
+  chmodSync,
   readFileSync,
   readdirSync,
   readlinkSync,
@@ -16,6 +19,7 @@ const runtimeRoots = [
   "NODE-LICENSE",
   "package.json",
   "pnpm-lock.yaml",
+  "worker-manifest.json",
 ];
 const sourceDirectory = (name) =>
   name === "ai-host-app"
@@ -24,6 +28,15 @@ const sourceDirectory = (name) =>
       ? `packages/ai-adapters/${name.slice("ai-adapter-".length)}`
       : `packages/${name}`;
 export function run(command, args, cwd) {
+  if (process.platform === "win32" && command === "pnpm") {
+    const cli = process.env.npm_execpath;
+    if (!cli || !/\.[cm]?js$/.test(cli))
+      throw new Error(
+        "Run Windows build tools from pnpm so its pinned CLI is explicit.",
+      );
+    args = [cli, ...args];
+    command = process.execPath;
+  }
   const result = spawnSync(command, args, {
     cwd,
     stdio: "inherit",
@@ -181,6 +194,7 @@ export function installArtifacts(root, directory, production = false) {
       "install",
       "--offline",
       "--frozen-lockfile",
+      ...(process.platform === "win32" ? ["--node-linker=hoisted"] : []),
       ...(production ? ["--prod"] : []),
     ],
     directory,
@@ -216,7 +230,9 @@ function hashRuntimeEntry(hash, root, name) {
   }
   if (!stat.isFile())
     throw new Error(`unsupported runtime entry: ${portableName}`);
-  hash.update(`file\0${portableName}\0${stat.mode & 0o777}\0${stat.size}\0`);
+  hash.update(
+    `file\0${portableName}\0${process.platform === "win32" ? 0 : stat.mode & 0o777}\0${stat.size}\0`,
+  );
   hash.update(readFileSync(path));
 }
 
@@ -253,8 +269,47 @@ export function runtimeArtifact(root, target) {
       sqlite: "3.51.2",
     },
   };
+  artifacts["24.14.1/win32-x64"] = {
+    sha256: "6e50ce5498c0cebc20fd39ab3ff5df836ed2f8a31aa093cecad8497cff126d70",
+    sqlite: "3.51.2",
+  };
   const artifact = artifacts[`${version}/${target}`];
   if (!artifact)
     throw new Error(`No verified Node artifact for ${version}/${target}`);
-  return { version, target, ...artifact };
+  return {
+    version,
+    target: target === "win32-x64" ? "win-x64" : target,
+    ...artifact,
+  };
+}
+
+/** Stage the fixed native launcher alongside a packaged Host, including isolated consumers. */
+export function stageWorkerRuntime(root, directory, node = process.execPath) {
+  const suffix = process.platform === "win32" ? ".exe" : "";
+  mkdirSync(join(directory, "bin"), { recursive: true });
+  const runtimeNode = join(directory, "bin/node" + suffix);
+  if (resolve(node) !== resolve(runtimeNode)) copyFileSync(node, runtimeNode);
+  for (const name of ["rss-ai-worker-launcher", "rss-private-storage"]) {
+    copyFileSync(
+      join(root, "target/release", name + suffix),
+      join(directory, "bin", name + suffix),
+    );
+    if (process.platform !== "win32")
+      chmodSync(join(directory, "bin", name + suffix), 0o755);
+  }
+  const bootstrap = "node_modules/@rss-mdm-agent/ai-host/dist/bootstrap.js";
+  const hash = (path) =>
+    createHash("sha256")
+      .update(readFileSync(join(directory, path)))
+      .digest("hex");
+  writeFileSync(
+    join(directory, "worker-manifest.json"),
+    JSON.stringify({
+      version: 1,
+      node: "bin/node" + suffix,
+      bootstrap,
+      node_sha256: hash("bin/node" + suffix),
+      bootstrap_sha256: hash(bootstrap),
+    }) + "\n",
+  );
 }

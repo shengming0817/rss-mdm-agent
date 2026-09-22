@@ -1,3 +1,4 @@
+import { workerRuntime } from "./worker-runtime.mjs";
 import { openFixture, fixtureArtifact } from "./harness.mjs";
 import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
@@ -8,7 +9,10 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHost } from "../../packages/ai-host/dist/index.js";
-import { WorkerPort, groupEmpty } from "../../packages/ai-host/dist/process.js";
+import {
+  WorkerPort,
+  scopeAbsent,
+} from "../../packages/ai-host/dist/process.js";
 import { openSqliteStore } from "../../packages/ai-store-sqlite/dist/index.js";
 import {
   fixtureSession,
@@ -65,8 +69,8 @@ async function crash(t, mode) {
   });
   child.kill("SIGKILL");
   await once(child, "exit");
-  const pid = ready.pid ?? ready.launches[0].rootPid;
-  await until(() => groupEmpty(pid));
+  const pid = ready.scope?.root ?? ready.launches[0].scope.root;
+  await until(() => processGone(pid));
   return { directory, ready, pid };
 }
 test("Host SIGKILL closes worker group; restart reconciles the original attempt without resending", async (t) => {
@@ -76,6 +80,7 @@ test("Host SIGKILL closes worker group; restart reconciles the original attempt 
   );
   const host = unwrap(
     await createHost({
+      workerRuntime,
       delivery: null,
       store,
       launchFences: store,
@@ -135,6 +140,7 @@ test("crash after durable registration cannot import the SDK before activation",
   );
   const host = unwrap(
     await createHost({
+      workerRuntime,
       delivery: null,
       store,
       launchFences: store,
@@ -162,6 +168,7 @@ test("registration precedes provider import, and rejected registration leaves no
     return { ok: false, error: { code: "unavailable", retry: "never" } };
   };
   const worker = new WorkerPort(
+    workerRuntime,
     store,
     namespace,
     new URL("./provider.mjs", import.meta.url).href,
@@ -193,30 +200,37 @@ test("blocked SDK activation is killed with real process-exit evidence", async (
   t.after(() => store.close(budget()));
   const namespace = fixtureSession().namespace,
     worker = new WorkerPort(
+      workerRuntime,
       store,
       namespace,
       new URL("./provider.mjs", import.meta.url).href,
     );
-  assert.equal(
-    (
-      await worker.start(
-        {
-          namespace,
-          provider: "fake",
-          config: { id: "config", revision: "activation_block" },
+  const controller = new AbortController();
+  const starting = worker.start(
+    {
+      namespace,
+      provider: "fake",
+      config: { id: "config", revision: "activation_block" },
 
-          workingDirectory: directory,
-          permissions: "tools_disabled",
-        },
-        budget(300),
-      )
-    ).ok,
-    false,
+      workingDirectory: directory,
+      permissions: "tools_disabled",
+    },
+    { timeoutMs: 5000, signal: controller.signal },
   );
+  await until(async () => {
+    try {
+      await readFile(join(directory, "trace.ndjson"));
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  controller.abort();
+  assert.equal((await starting).ok, false);
   const pid = JSON.parse(
     (await readFile(join(directory, "trace.ndjson"), "utf8")).trim(),
   ).pid;
-  assert.equal(groupEmpty(pid), true);
+  assert.equal(processGone(pid), true);
   assert.deepEqual(unwrap(await store.launches()), []);
 });
 test("Host crash also terminates a retained native grandchild despite a false adapter stopped claim", async (t) => {
@@ -227,7 +241,7 @@ test("Host crash also terminates a retained native grandchild despite a false ad
       .split("\n")
       .map(JSON.parse),
     grandchild = trace.find((row) => row.type === "grandchild").childPid;
-  assert.equal(groupEmpty(pid), true);
+  assert.equal(processGone(pid), true);
   assert.throws(
     () => process.kill(grandchild, 0),
     (error) => error.code === "ESRCH",
@@ -255,6 +269,7 @@ test("unresolved registered process group freezes recovery without signaling or 
   unwrap(await store.accept(acceptance(session)));
   unwrap(
     await store.reserveLaunch({
+      runtimeDigest: workerRuntime.manifestDigest,
       namespace: session.namespace,
       launchId: "old-launch",
       artifact: "file:///trusted/provider.mjs",
@@ -262,18 +277,17 @@ test("unresolved registered process group freezes recovery without signaling or 
     }),
   );
   unwrap(
-    await store.registerLaunch(
-      session.namespace,
-      "old-launch",
-      child.pid,
-      child.pid,
-    ),
+    await store.registerLaunch(session.namespace, "old-launch", {
+      kind: "processGroup",
+      root: child.pid,
+    }),
   );
   unwrap(await store.close(budget()));
   const reopened = unwrap(openSqliteStore({ path, mode: "open" }));
   let resolves = 0;
   host = unwrap(
     await createHost({
+      workerRuntime,
       delivery: null,
       store: reopened,
       launchFences: reopened,
@@ -285,7 +299,7 @@ test("unresolved registered process group freezes recovery without signaling or 
   );
   assert.equal(resolves, 0);
   assert.equal(child.exitCode, null);
-  assert.equal(groupEmpty(child.pid), false);
+  assert.equal(processGone(child.pid), false);
   const snapshot = unwrap(
     await reopened.snapshotPage(session.namespace, { limit: 256 }),
   );
@@ -324,6 +338,7 @@ for (const hasSession of [true, false])
     if (hasSession) unwrap(await store.create(session));
     unwrap(
       await store.reserveLaunch({
+        runtimeDigest: workerRuntime.manifestDigest,
         namespace: session.namespace,
         launchId: "idle-launch",
         artifact: "file:///trusted/provider.mjs",
@@ -331,17 +346,16 @@ for (const hasSession of [true, false])
       }),
     );
     unwrap(
-      await store.registerLaunch(
-        session.namespace,
-        "idle-launch",
-        child.pid,
-        child.pid,
-      ),
+      await store.registerLaunch(session.namespace, "idle-launch", {
+        kind: "processGroup",
+        root: child.pid,
+      }),
     );
     unwrap(await store.close(budget()));
     const reopened = unwrap(openSqliteStore({ path, mode: "open" }));
     host = unwrap(
       await createHost({
+        workerRuntime,
         delivery: null,
         store: reopened,
         launchFences: reopened,
@@ -350,7 +364,7 @@ for (const hasSession of [true, false])
         },
       }),
     );
-    assert.equal(groupEmpty(child.pid), false);
+    assert.equal(processGone(child.pid), false);
     if (hasSession)
       assert.equal(
         unwrap(await reopened.session(session.namespace)).status,
@@ -358,7 +372,7 @@ for (const hasSession of [true, false])
       );
     child.kill("SIGKILL");
     await once(child, "exit");
-    await until(() => groupEmpty(child.pid));
+    await until(() => processGone(child.pid));
     await openFixture(
       host,
       reopened,
@@ -395,6 +409,7 @@ test("worker close cannot finish before an outstanding launch reservation settle
   };
   const namespace = fixtureSession().namespace,
     worker = new WorkerPort(
+      workerRuntime,
       store,
       namespace,
       new URL("./provider.mjs", import.meta.url).href,
@@ -484,3 +499,12 @@ test("recovery unavailability atomically preserves queues and invalidates stale 
   assert.equal(snapshot.interactions[0].status, "unavailable");
   assert.equal(snapshot.surfaces[0].status, "invalidated");
 });
+
+function processGone(pid) {
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    return error.code === "ESRCH";
+  }
+}

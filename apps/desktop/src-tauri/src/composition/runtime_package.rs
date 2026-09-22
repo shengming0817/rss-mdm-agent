@@ -3,7 +3,6 @@
 use sha2::{Digest, Sha256};
 use std::{
     io::Read,
-    os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Component, Path},
 };
 
@@ -11,7 +10,7 @@ pub(super) fn digest(root: &Path) -> std::io::Result<String> {
     fn entry(hash: &mut Sha256, root: &Path, name: &Path) -> std::io::Result<()> {
         let path = root.join(name);
         let metadata = std::fs::symlink_metadata(&path)?;
-        let name_text = name.to_str().ok_or_else(invalid)?;
+        let name_text = name.to_str().ok_or_else(invalid)?.replace('\\', "/");
         if metadata.is_symlink() {
             let target = std::fs::read_link(&path)?;
             let mut depth = 0usize;
@@ -46,13 +45,22 @@ pub(super) fn digest(root: &Path) -> std::io::Result<String> {
         } else if metadata.is_file() {
             hash.update(format!(
                 "file\0{name_text}\0{}\0{}\0",
-                metadata.permissions().mode() & 0o777,
+                mode(&metadata),
                 metadata.len()
             ));
-            let mut file = std::fs::OpenOptions::new()
-                .read(true)
-                .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-                .open(path)?;
+            let mut options = std::fs::OpenOptions::new();
+            options.read(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+            }
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::OpenOptionsExt;
+                options.custom_flags(0x00200000);
+            }
+            let mut file = options.open(path)?;
             if !file.metadata()?.is_file() {
                 return Err(invalid());
             }
@@ -76,6 +84,7 @@ pub(super) fn digest(root: &Path) -> std::io::Result<String> {
         "NODE-LICENSE",
         "package.json",
         "pnpm-lock.yaml",
+        "worker-manifest.json",
     ] {
         entry(&mut hash, root, Path::new(name))?;
     }
@@ -104,9 +113,10 @@ pub(super) fn verify(root: &Path, manifest: &str, trusted: Option<&str>) -> std:
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
     #[test]
     fn canonical_digest_matches_packager_and_rejects_bytes_modes_links_and_forged_metadata() {
         let root = std::env::temp_dir().join(format!("rss-tree-{}", uuid::Uuid::new_v4()));
@@ -121,6 +131,7 @@ mod tests {
             "NODE-LICENSE",
             "package.json",
             "pnpm-lock.yaml",
+            "worker-manifest.json",
         ] {
             std::fs::write(root.join(name), name).unwrap();
             std::fs::set_permissions(root.join(name), std::fs::Permissions::from_mode(0o600))
@@ -170,5 +181,18 @@ mod tests {
             .success());
         assert!(digest(&root).is_err());
         std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+fn mode(metadata: &std::fs::Metadata) -> u32 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o777
+    }
+    #[cfg(windows)]
+    {
+        let _ = metadata;
+        0
     }
 }
