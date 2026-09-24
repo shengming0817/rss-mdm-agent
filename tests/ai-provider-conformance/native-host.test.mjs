@@ -9,7 +9,7 @@ import {
   unwrap,
   budget,
   capabilities,
-  evidence,
+  assertNativeSession,
 } from "./support.mjs";
 
 for (const provider of engines) {
@@ -189,15 +189,7 @@ for (const provider of engines) {
         );
       }
       assert.equal(f.model.requests.length, 6);
-      evidence(
-        t,
-        "native-basic-ledger-queue-replay",
-        session,
-        f.model.requests,
-        {
-          result: "supported",
-        },
-      );
+      assertNativeSession(session, f.model.requests);
     },
   );
 }

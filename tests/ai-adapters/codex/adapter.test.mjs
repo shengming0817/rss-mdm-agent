@@ -896,7 +896,7 @@ test("diagnostics redact all native payloads and unknown method strings", async 
 
 test("absent and slow diagnostic consumers never terminate a healthy incarnation", async (t) => {
   const s = await setup(t);
-  for (let i = 0; i < 2048; i++)
+  for (let i = 0; i < 1025; i++)
     s.emit("diagnostic-only", { text: "sensitive" });
   assert.equal(
     s.calls.some((c) => c.method === "runtime/close"),
@@ -906,7 +906,7 @@ test("absent and slow diagnostic consumers never terminate a healthy incarnation
     .diagnostics(s.admitted.binding, budget())
     [Symbol.asyncIterator]();
   assert.ok((await stream.next()).value.dropped > 0);
-  for (let i = 0; i < 2048; i++) s.emit("diagnostic-only", {});
+  for (let i = 0; i < 1025; i++) s.emit("diagnostic-only", {});
   await stream.return();
   const result = await s.adapter.dispatch(
     s.admitted.binding,

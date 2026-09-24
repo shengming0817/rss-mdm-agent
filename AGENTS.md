@@ -1,6 +1,6 @@
 # RSS MDM Client / Agent 协作说明
 
-本仓拥有桌面自助、AI引擎适配和客户端受控执行。需求以[产品PRD](docs/product/rss-mdm-agent-prd.md)为准；当前桌面通过 Rust 执行服务与独立 AI Host 装配持久化 S1 闭环，执行器仅为显式测试实现；不能把样本或规划当作真实 OS 执行能力。
+本仓拥有桌面自助、AI引擎适配和客户端受控执行。需求以[产品PRD](docs/product/rss-mdm-agent-prd.md)为准；当前桌面通过 Rust 执行服务与独立 AI Host 装配持久化 S1 闭环，执行器仅为显式测试实现；另有 S2 statusOnly 本机安全服务候选。样本、候选实现和真实平台验收分别说明。
 
 - [仓库入口](README.md)与[文档导航](docs/README.md)。
 - 稳定规则：[范围](docs/rules/project-scope.md)、[依赖](docs/rules/dependencies.md)、[验证](docs/rules/verification-scope.md)、[文档维护](docs/rules/documentation.md)。
@@ -11,7 +11,7 @@
 - 默认中文沟通；修改前读目标文件和相关规则，用`rg`查找已有实现。
 - 使用系统Git `/usr/bin/git`，默认集成分支`develop`，通过任务分支/worktree和PR交付；提交遵循Conventional Commits。
 - Git/forge操作始终绑定当前目标仓。共享技能、参考源码所在仓不是本次修改或验证目标。
-- 只改授权范围；功能/行为变化同步需求与对应文档。禁止`git add -f`提交被忽略的本地内容。
+- 只改授权范围；文档仅在读者操作、外部接入/部署步骤或必要理解变化时更新已有入口，详见文档维护规则。禁止`git add -f`提交被忽略的本地内容。
 - Azure Boards默认EPIC直接关联PBI，不新增Feature；实施顺序在EPIC评论维护，不复制进度看板到文档。
 - 计划和范围授权不等于已实现或已验证；S1测试执行器、真实平台能力、企业接线分别提供证据。
 - 创建heartbeat/automation使用UTC；不把用户token、账号目录、本机绝对路径或个人信任设置提交到仓库。

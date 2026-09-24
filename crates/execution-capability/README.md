@@ -1,17 +1,7 @@
 # execution-capability
 
-C06（#2399）：`match_capabilities(&FrozenPlan, &EnvironmentSnapshot, MatchLimits)` 纯计算能力匹配。仅依赖执行契约和静态错误基础库，不探测OS、不创建服务或沙箱。
+以冻结计划和可信环境快照计算能力匹配，不探测 OS、不启动服务或创建沙箱。宿主负责快照真实性、新鲜度及覆盖度。
 
-所有执行要求来自冻结计划，尤其是必填的 `SessionRequirement`；没有单独覆盖参数，也不从发起人的OS登录推断目标会话。逐项检查完整authority/tenant与目标设备、平台、精确解释器（ID/revision/hash）、运行身份、指定用户会话、网络/读写路径限制，以及需要时的子进程限制和沙箱边界。`requireSandbox=false`不取消其它强制约束。
+完整清单缺项与不完整观察缺项分别表达不支持和未知；空列表不默认为支持。目标、authority 或设备不匹配不能借用另一设备能力。解释器、用户会话与 IO 支持不能从同名程序推断。
 
-Inventory 明确标记观察覆盖度：命中条目是 Available 或 Blocked；完整清单缺项为 Unsupported，不完整清单缺项为 Unknown。所有inventory都验证重复项和总条目上限，结构错误不会返回部分成功。列表为空不默认为支持。
-
-EnvironmentSnapshot、PlanSpec、ExecutionRequest、Constraints（以及target/launch）以穷尽解构处理，新增字段必须明确归属。每个inventory通过同一入口计入总预算、检查重复项并提供查询，未要求的用户会话inventory仍要校验。结构突变测试要求生产matcher因未处理新增字段而编译失败。
-
-MatchReport 绑定 plan digest 和 snapshot source/revision，保留稳定顺序的所有必需维度；总体优先级为 Unsupported > Unknown > Blocked > Supported。authority/tenant或目标设备不匹配时，全部维度归 Unknown，不能使用另一设备的能力放行。
-
-Supported 不是授权、执行许可或真实OS支持证据。host 必须验证快照真实性、新鲜度和探测覆盖；隔离能力表示能强制整项计划约束，不只是存在同名API。runner仍负责实际端点、路径解析、权限和隔离强制，C06不证明这些效果。
-
-验证：`cargo test -p execution-capability --locked`。公共示例 `capability-consumer` 接收固定计划 fixture，仅生成明确的测试快照；完整独立消费见[开发指南](../../docs/guides/contracts-development.md)。
-
-解释器 inventory 精确匹配 artifact 与 profile revision。`launch_io` 分别声明受控 stdin 编码和捕获文本编码，stdout/stderr 各自检查；缺少正向事实返回 Unknown/Unsupported，不能从解释器名称推断 IO 能力。该匹配不证明实际 runner 已关闭继承、实施输入/输出上限或验证文件编码。
+Supported 仅表示输入快照能覆盖要求，不是授权或真实 OS 执行证明；runner 仍须强制全部隔离和累计预算。新增计划字段须明确匹配归属，具体结构和优先级见 [src](src/)。

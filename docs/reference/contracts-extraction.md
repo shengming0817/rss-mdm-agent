@@ -1,6 +1,6 @@
 # C01/C02 契约来源与改写
 
-对应 [C01 #2394](https://dev.azure.com/shengming0923/rss/_workitems/edit/2394) 和 [C02 #2395](https://dev.azure.com/shengming0923/rss/_workitems/edit/2395)。本文记录 #2394/#2395 的历史纯契约交付；C02 当前代码已由 A01 V2 替换，历史文件清单不表示继续保留旧实现。固定产品来源见[来源索引](sources.md)。查阅日期：2026-09-12 UTC。
+对应 [C01 #2394](https://dev.azure.com/shengming0923/rss/_workitems/edit/2394) 和 [C02 #2395](https://dev.azure.com/shengming0923/rss/_workitems/edit/2395)。本文记录 #2394/#2395 的历史纯契约交付；C02 当前代码已由 A01 生成绑定替换，历史文件清单不表示继续保留旧实现。固定产品来源见[来源索引](sources.md)。查阅日期：2026-09-12 UTC。
 
 ## 固定来源与唯一 owner
 
@@ -35,6 +35,6 @@ C01 为依照客户端 PRD 新建的本地执行契约，没有从服务端或�
 
 未复制 prmonitor 或 ACP/Codex/MCP 源码、生成 schema、示例数据和版权正文；无需为不存在的源码复制添加第三方 NOTICE。serde、serde_json、schemars、thiserror、sha2、url、canonicalizer 和测试用 jsonschema 通过 Cargo 发布包正常消费，版本/校验和由 Cargo.lock 持有，许可证随原包保留。若后续复制源码，应单独核对对应固定版本权利并记录范围。
 
-本次证据是类型/预算/编码/能力匹配及隔离源码 consumer 的 T1。没有真实 provider、SQLite、OS runner 或企业 identity 的 T2/T3 证明；结果和源码 SHA 在 PR 与本地 CI 输出关联，不把规划或来源能力写作已实现状态。
+来源不代表当前产品验证结果，测试操作由对应 owner 持有。
 
 A01 当前真源、生成工具、源码与许可见 [AI Runtime 来源](ai-runtime.md)。历史 C02 的取消/未知状态、提案不授予权威、输入预算及安全诊断语义在 V2 重新验证；没有保留 V1 运行入口或数据迁移器。

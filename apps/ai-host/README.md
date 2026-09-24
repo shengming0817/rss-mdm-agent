@@ -1,6 +1,6 @@
 # 本地 AI Host 应用
 
-本应用装配 V5 契约、SQLite schema 5、独立 provider worker 和 ACP–A2UI 服务。原生桌面持有测试用户选择、UI generation 和一个设备执行服务；Host 持有个人连接、产品 Session、provider 阶段及持久交付。当前验证平台为 macOS arm64。
+本应用装配 AI 契约、SQLite、独立 provider worker 和 ACP–A2UI 服务。原生桌面持有测试用户选择、UI generation 和一个设备执行服务；Host 持有个人连接、产品 Session、provider 阶段及持久交付。当前验证平台为 macOS arm64。
 
 ```sh
 pnpm build:ai-host
@@ -8,7 +8,7 @@ pnpm bundle:ai-host
 pnpm desktop:build
 ```
 
-`host.json` 只包含 `version: 1`、`databasePath`、`nativeDirectory`、`workingDirectory`。Native 与 Host 通过私有继承 stdin/stdout 的 V1 有界帧通信，native/execution 两条逻辑 lane 分别承载控制与 Rust 执行 MCP；control frame 与 execution-origin 由 AI Runtime V5 schema 生成 Rust/TS 绑定。每条 UI 逻辑连接固定可信 Caller 和 generation；execution-origin 也携带 Native 当前 generation，Rust 在每次工具调用时与用户注册表核对，旧代际或 metadata 自选主体均拒绝。即使 Host 刚重启且尚未 attach，用户切换也先以 Native 恢复的完整旧上下文完成持久 fence，再提交新选择。没有可发现的 AI/凭据 socket、入站监听或按用户启动的服务池。
+启动配置由 [应用入口](src/) 和 [运行时 schema](../../packages/ai-contract/schema/) 持有。Native 经私有继承管道绑定可信 caller/generation，Host 不开可发现的凭据 socket，也不建立按用户服务池。信任与恢复设计见[架构](../../docs/architecture/ai-host.md)。
 
 ## 连接来源
 
@@ -17,7 +17,7 @@ pnpm desktop:build
 | 本机已有配置 | 直接设置官方 `CODEX_HOME`，默认 `~/.codex` | 直接设置官方 `CLAUDE_CONFIG_DIR`，默认 `~/.claude` | 不提供             |
 | 自定义 API   | URL、API Key、模型                         | URL、API Key/Auth Token、模型                      | URL、API Key、模型 |
 
-本机已有配置的登录、账号识别、凭据读取与刷新均由官方工具负责。RSS 不解析 auth.json、提取 OAuth token、访问外部工具 Keychain 或复制登录状态；模型留空时采用官方默认配置。固定 Codex 0.155.0 app-server 不支持 CLI 命名 profile，界面不提供该选项，也不实现替代配置解析器。
+本机已有配置的登录、账号识别、凭据读取与刷新均由官方工具负责。RSS 不解析 auth.json、提取 OAuth token、访问外部工具 Keychain 或复制登录状态；模型留空时采用官方默认配置。所用 Codex app-server 不支持 CLI 命名 profile，界面不提供该选项，也不实现替代配置解析器。
 
 用户的配置目录与 RSS 运行目录分开。RSS 不向用户目录写入 config.toml；Codex 通过运行参数限制工具、hooks、plugins 和 MCP。官方配置表递归合并，因此在创建线程前读取官方配置 API，对每个非 RSS MCP 显式禁用，并校验实际工具清单。Claude 使用 user 设置来源，同时显式关闭 hooks、plugins、skills 和任意 MCP，只保留产品允许的工具。项目设置不能覆盖产品限制。恢复只使用 RSS 自己登记的原生会话 ID，不枚举或清理用户的其它会话。
 
@@ -35,16 +35,24 @@ worker 的 activation 数据通过既有私有管道传入，包含该次启动�
 
 历史预览只包含已完成用户输入和稳定助手文本；用户选择最近 N 轮或全部并确认。预览绑定目标配置版本、水位、命令/消息 ID 和内容哈希，不包含工具、系统指令或原始附件。设备任务始终保留冻结 actor；模型终态不等于设备业务完成。
 
-当前无历史数据升级要求，不实现旧凭据、账号或参数快照的兼容读取、迁移和清理流程。本 PR 不新增 HMAC、防重放 nonce、凭据授权票据或 worker grant。后续 S2 独立服务/跨权限进程边界按 [#2462](https://dev.azure.com/shengming0923/rss/_workitems/edit/2462) 评估并补充必要机制；AES-GCM 随机 IV 不属于该延期范围。
+当前无历史数据升级要求，不实现旧凭据、账号或参数快照的兼容读取、迁移和清理流程。S2 状态服务与本应用凭据链隔离，见[安全服务架构](../../docs/architecture/local-service.md)。
 
 ## 验证与来源
 
 `pnpm test:ai-host` 覆盖真实 SQLite、worker 进程、取消、阶段和交付恢复；`pnpm test:ai-acceptance` 使用固定 SDK/native 进程和本地模型协议服务。加密测试注入测试主密钥，不访问用户 Keychain。
 
-`node scripts/check-native-credentials.mjs` 验证真实 WebView → AppKit 输入 → 私有通道 → Host 模型探针 → 加密 SQLite 保存和删除。验收程序注入主密钥 backend，脚本不调用系统钥匙串命令。它使用同一 clean commit 的固定 runtime artifact，输出 `.local-ci-runs/native-credentials.json`，证明本地接缝而非云端认证。
+`node scripts/check-native-credentials.mjs` 验证真实 WebView → AppKit 输入 → 私有通道 → Host 模型探针 → 加密 SQLite 保存和删除。验收程序注入主密钥 backend，脚本不调用系统钥匙串命令。它使用实际构建的 runtime，输出 `.local-ci-runs/native-credentials.json`，证明本地接缝而非云端认证。
 
 `node scripts/check-connection-sources.mjs` 把当前用户已有配置目录交给官方 Codex/Claude，发送最小真实模型请求。两个来源均须完成探针；目录缺失记 partial，认证或能力失败仍判失败。报告不包含账号、目录或秘密，该入口不纳入无凭据 CI。平台窗口验收见[桌面指南](../../docs/guides/desktop-development.md)。
 
 来源：Rust `std::os::unix::net::UnixStream::pair`；[Codex 0.155.0 config merge](https://github.com/openai/codex/blob/rust-v0.155.0/codex-rs/config/src/merge.rs) 与 [CLI profile 入口](https://github.com/openai/codex/blob/rust-v0.155.0/codex-rs/cli/src/main.rs)；Claude Agent SDK 0.3.277 `sdk.d.ts`；[Node `http.request` 自定义 `lookup`](https://nodejs.org/api/http.html#httprequestoptions-callback)；[OWASP SSRF DNS/redirect 防护](https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html)；[Node crypto](https://nodejs.org/api/crypto.html)；security-framework 3.5.1 `src/passwords.rs`、`src/random.rs`；objc2-app-kit 0.3.2 `NSAlert` / `NSSecureTextField`。没有复制上游认证实现。
 
 #2462 的独立状态服务采用 OS 双向身份与单次 challenge，与本应用的 AI 凭据链隔离。见[架构](../../docs/architecture/local-service.md)和[实验室指南](../../docs/guides/local-service-lab.md)。
+
+## 能力与运行范围
+
+三个 provider 均提供普通会话与跨进程上下文续接；Host 持有 FIFO。Codex 提供 steer/fork，Claude 与 DeepSeek 提供结构化问题。取消确认仅表示已请求，不证明模型、进程或设备业务已经终止。
+
+产品受控工具目前只准入 macOS arm64 上的 Codex；其余 provider 明确拒绝。组件协议测试不能扩大这一准入，也不证明任意同 UID 文件、网络或 IPC 隔离。
+
+`pnpm test:ai-acceptance` 运行真实原生进程与本地模型协议服务；标准测试结果判断通过或失败。外部模型分别通过 `pnpm smoke:codex`、`pnpm smoke:claude`、`pnpm smoke:deepseek` 验证，配置见各 adapter README。没有明确配置时不搜索个人目录或自动替换为 fixture。自定义网关可达不等于验证了上游模型身份。

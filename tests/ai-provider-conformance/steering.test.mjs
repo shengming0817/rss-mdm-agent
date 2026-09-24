@@ -7,7 +7,7 @@ import {
   until,
   unwrap,
   budget,
-  evidence,
+  assertNativeSession,
 } from "./support.mjs";
 
 for (const provider of engines) {
@@ -85,9 +85,7 @@ for (const provider of engines) {
       );
       assert.equal(events.filter((e) => e.body.type === "terminal").length, 1);
       assert.equal(f.model.requests.length, provider === "codex" ? 2 : 1);
-      evidence(t, "native-steer-difference", session, f.model.requests, {
-        result: provider === "codex" ? "supported" : "unsupported",
-      });
+      assertNativeSession(session, f.model.requests);
     },
   );
 }

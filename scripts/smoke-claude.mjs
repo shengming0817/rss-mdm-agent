@@ -20,7 +20,6 @@ import {
   CLI_VERSION,
 } from "../packages/ai-adapters/claude/dist/index.js";
 import { VerifiedProviderSession } from "../packages/ai-contract/dist/session.js";
-import { sourceState, sameCommittedSource } from "./source-state.mjs";
 const schema = JSON.parse(
   readFileSync(
     new URL(
@@ -138,8 +137,7 @@ export function smokeEndpoint(value) {
   }
 }
 async function main() {
-  const root = fileURLToPath(new URL("../", import.meta.url)),
-    start = sourceState(root);
+  const root = fileURLToPath(new URL("../", import.meta.url));
   // Optional explicitly selected file is read only for credential/URL fields. No user settings enter the child.
   const args = process.argv.slice(2);
   if (args.length && !(args.length === 2 && args[0] === "--credential-file"))
@@ -166,7 +164,6 @@ async function main() {
   const configuration = {
     provider: "claude",
     config: { id: "model-smoke", revision: "1" },
-
     workingDirectory: join(directory, "project"),
     namespace: {
       tenantId: "model-smoke",
@@ -188,7 +185,6 @@ async function main() {
             ? { type: "api_key", value: key }
             : { type: "auth_token", value: token },
         },
-
         ...(credentials.ANTHROPIC_MODEL
           ? { model: credentials.ANTHROPIC_MODEL }
           : {}),
@@ -305,9 +301,7 @@ async function main() {
     const cleanup = await closeAdapters(adapters, directory);
     const { processesStopped } = cleanup;
     if (!processesStopped && !failure) failure = describeFailure("cleanup");
-    const end = sourceState(root),
-      deliverable =
-        passed && processesStopped && sameCommittedSource(start, end);
+    const deliverable = passed && processesStopped;
     if (!deliverable) process.exitCode = 1;
     const evidence = {
       evidence: "real-sdk-configured-endpoint-smoke",
@@ -318,12 +312,8 @@ async function main() {
       behaviorPassed: passed,
       processesStopped,
       cleanup,
-      source: { start, end },
       sdk: SDK_VERSION,
       cli: CLI_VERSION,
-      lockSha256: createHash("sha256")
-        .update(readFileSync(join(root, "pnpm-lock.yaml")))
-        .digest("hex"),
       platform: process.platform,
       arch: process.arch,
       node: process.version,

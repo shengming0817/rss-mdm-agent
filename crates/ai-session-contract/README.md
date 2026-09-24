@@ -1,18 +1,7 @@
 # ai-session-contract
 
-[AI Runtime V5](../../packages/ai-contract/README.md) 的 Rust wire consumer。唯一 schema owner 为 `packages/ai-contract/schema/runtime.schema.json`；公共可靠性记录、私有 Native control frame 与 execution-origin 均从该 owner 生成，本 crate 的 generated.rs 和 schema.json 禁止手写修改。生成 Rust 随源码交付，独立消费不需要 Node、相邻 package、build.rs 或联网生成。
+AI 产品 wire 的 Rust 绑定与安全解码。唯一声明在 [AI schema](../../packages/ai-contract/schema/runtime.schema.json)，生成物随源码交付，不能手写修改；生成操作见[契约指南](../../docs/guides/contracts-development.md)。
 
-公共 `decode`/`encode` 使用必填 Limits，拒绝重复键、未知版本/字段、非法 UTF-8、预算越界、安全整数越界及关联冲突；fingerprint 使用 JCS/SHA-256 并先执行同一校验。生成类型的 Debug 由生成器统一脱敏，ContractError 只返回闭合 Diagnostic。直接 serde 反序列化 DTO 不代替完整契约校验。
+外部字节经过有界解码，普通 serde DTO 不替代完整契约校验。生成类型和错误保持脱敏。Rust 不实现 AI Host/Store/provider ports，也不从模型输出、能力声明或工具响应签发执行权限。
 
-Rust 不实现 AI Host/Store/provider 行为 port，不签发可信主体或批准。模型输出、tool proposal/response、capability 声明都不是执行 Evidence。取消派发不是终态；native context 恢复属于 provider，业务执行恢复继续归 Rust 执行服务。
-
-V5 完整替换 V1–V4，无兼容 reader/alias/历史导入；历史 #2395 由 Git 和 PR 保留。消费者更新公共 API 并重新建立会话，不能给旧命令补造派发身份或用户输入。
-
-```sh
-cargo test -p ai-session-contract --locked
-cargo run -p ai-session-contract --example ai-session-consumer --locked -- packages/ai-contract/src/testing/fixtures.json
-pnpm generate:ai-contract
-pnpm check:ai-contract
-```
-
-共享 golden 的字节拒绝、往返和摘要证明为 T1，不是实际模型、SQLite、OS 或安全隔离验证。
+取消派发、原生上下文恢复和业务执行恢复分别归各自 owner。不支持的格式明确拒绝，不补造旧命令身份或输入。

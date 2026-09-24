@@ -12,7 +12,6 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { sourceState } from "./source-state.mjs";
 import { setTimeout as delay } from "node:timers/promises";
 import { run, verifyRuntimeIntegrity } from "./ai-host-artifacts.mjs";
 
@@ -150,19 +149,15 @@ if (
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
   const root = fileURLToPath(new URL("../", import.meta.url));
-  const source = sourceState(root);
+
   const manifest = JSON.parse(
     readFileSync(
       join(root, ".local-ci-runs/ai-host-runtime/manifest.json"),
       "utf8",
     ),
   );
-  if (
-    !source.clean ||
-    manifest.status !== "passed" ||
-    manifest.source.end.head !== source.head
-  )
-    throw new Error("same committed runtime required");
+  if (manifest.status !== "passed")
+    throw new Error("Build the runtime before checking the bundle");
   run("pnpm", ["build"], root);
   let result, failure;
   try {
@@ -172,7 +167,7 @@ if (
   }
   writeFileSync(
     join(root, ".local-ci-runs/desktop-bundle.json"),
-    JSON.stringify({ source, credentials: "none", result, failure }, null, 2),
+    JSON.stringify({ credentials: "none", result, failure }, null, 2),
   );
   if (failure) throw new Error(failure);
 }

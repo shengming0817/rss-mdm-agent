@@ -158,11 +158,7 @@ def main():
             os.chmod(staged_probe, 0o755)
             service = ROOT / 'rss-local-service'
             probe = ROOT / 'rss-untrusted-service-probe'
-            runtime_manifest = json.loads((staged_app / 'Contents/Resources/ai-host-runtime/manifest.json').read_text())
-            source_sha = runtime_manifest.get('source', {}).get('end', {}).get('head')
-            if not isinstance(source_sha, str) or not re.fullmatch(r'[a-f0-9]{40}', source_sha):
-                raise RuntimeError('desktop source provenance unavailable')
-            policy = dict(version=1, sourceSha=source_sha, installation=installation, build=hashlib.sha256(staged_service.read_bytes()).hexdigest(),
+            policy = dict(version=1, installation=installation, build=hashlib.sha256(staged_service.read_bytes()).hexdigest(),
                           platform='macos-arm64', service_subject=str(account.pw_uid), allowed_users=users,
                           client=artifact(staged_app / 'Contents/MacOS' / executable, APP / 'Contents/MacOS' / executable),
                           probe=artifact(staged_probe, probe),

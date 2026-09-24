@@ -9,14 +9,14 @@
 ```sh
 pnpm install --frozen-lockfile
 pnpm dev                 # 自动准备/复用开发 AI Host 后启动桌面
-pnpm desktop:build       # 干净、已提交源码；自动打包 Node/依赖、stage、构建 .app
+pnpm desktop:build       # 自动打包 Node/依赖、stage、构建 .app
 ```
 
 分步诊断可单独执行 `pnpm bundle:ai-host` 和 `pnpm stage:desktop-runtime`。`pnpm dev` 使用独立的 `.local-ci-runs/ai-host-dev-runtime` 和 development manifest，允许未提交源码；首次启动自动构建，后续按 Host、adapter、contract、相关 workspace 包、Rust execution schema 与绑定检查、lock、固定 Node 和打包脚本的内容摘要判断是否重建。普通 UI 修改不触发重建。每次启动校验运行包完整性、manifest 与本轮源码摘要一致性及真实 CLI 生命周期，准备失败会非零退出，不启动 Tauri。修改 Host 后重新运行 `pnpm dev`。终端断开（SIGHUP）、中断（SIGINT）与停止（SIGTERM）均转发到独立开发进程组并有界清理。
 
-高级诊断可用 `RSS_AI_HOST_RUNTIME=/absolute/verified/ai-host-runtime pnpm dev` 显式选择并验证运行包。缺依赖先运行 `pnpm install --frozen-lockfile`；构建失败查看命令输出；运行包损坏时删除开发 runtime 目录后重试。准备进程异常中止留下锁时，确认没有其他准备进程后删除 `.cache/desktop-dev.lock`。开发包不进入发布 stage；release 忽略该 override，仍要求干净、已提交源码和固定候选摘要。
+高级诊断可用 `RSS_AI_HOST_RUNTIME=/absolute/verified/ai-host-runtime pnpm dev` 显式选择并验证运行包。缺依赖先运行 `pnpm install --frozen-lockfile`；构建失败查看命令输出；运行包损坏时删除开发 runtime 目录后重试。准备进程异常中止留下锁时，确认没有其他准备进程后删除 `.cache/desktop-dev.lock`。开发包不进入发布 stage；release 忽略该 override，并校验实际运行包完整性。
 
-普通 Cargo/schema 检查使用基础 Tauri 配置，不依赖运行包；发布构建显式合并 `tauri.bundle.conf.json`。打包脚本先校验固定 Node archive、源码与部署 lock、真实 SDK 生命周期，再将通过的当前候选复制到被忽略的 resources 目录。macOS bundle 通过 `bundle.macOS.files` 整目录复制 runtime，以保留 pnpm 依赖符号链接；普通 resources 文件枚举会漏掉这些链接，不能用于该 runtime。发布应用只从自身资源目录启动 AI Host。缺失或不可用的 AI 不影响 Rust 任务读取，也不会降级为虚构对话。
+普通 Cargo/schema 检查使用基础 Tauri 配置，不依赖运行包；发布构建显式合并 `tauri.bundle.conf.json`。打包脚本先校验固定 Node archive、锁定部署依赖、真实 SDK 生命周期，再将通过的当前候选复制到被忽略的 resources 目录。macOS bundle 通过 `bundle.macOS.files` 整目录复制 runtime，以保留 pnpm 依赖符号链接；普通 resources 文件枚举会漏掉这些链接，不能用于该 runtime。发布应用只从自身资源目录启动 AI Host。缺失或不可用的 AI 不影响 Rust 任务读取，也不会降级为虚构对话。
 
 第一次启动在应用数据目录 `test-users` 创建私有用户注册表、Host 路径配置、AI 库与设备 journal。用户在底部“设置”选择测试名称，再添加个人连接并验证保存；无凭据也能创建空产品会话和读取已有历史。旧 `s1/client.json` 不读取、不迁移。连接来源、版本和认证约束见 [AI Host](../../apps/ai-host/README.md)。
 
@@ -52,13 +52,13 @@ pnpm check:boundaries
 make ci CI_BASE=origin/develop # 按影响范围；ci-full 强制全量，ci-plan 查看计划
 ```
 
-浏览器未在 Tauri 环境运行时只显示明确的静态样本，写入口禁用。静态样本不作为真实桌面/AI 验收。真实模型与原生窗口验收仅覆盖 macOS arm64、固定 Codex 0.155.0；不要求 Windows/Linux 或三个引擎完成同一 E2E。S2 真实平台执行、安装签名、公证、升级及 T3 企业身份仍在本次范围外。
+浏览器未在 Tauri 环境运行时只显示明确的静态样本，写入口禁用。静态样本不作为真实桌面/AI 验收。真实模型与原生窗口验收仅覆盖 macOS arm64、manifest 固定的 Codex；不要求 Windows/Linux 或三个引擎完成同一 E2E。S2 真实平台执行、安装签名、公证、升级及 T3 企业身份仍在本次范围外。
 
 来源：Tauri `crates/tauri/src/app.rs` / `webview/webview_window.rs` @ 2.11.2；runtime-wry `src/lib.rs` @ 2.11.4（最后窗口销毁与 ExitRequested）；rmcp `src/model/meta.rs` @ 3.4.0（request metadata）；MCP TypeScript SDK `client/index.ts` / `shared/stdio.ts` @ 1.30.0。
 
-无凭据发布资源验收使用 `pnpm bundle:ai-host && pnpm check:desktop-bundle`，要求干净、已提交源码。入口构建实际 `.app`，在隔离 HOME 下启动生产 main，禁用 runtime override，核验完整 runtime 树与 Native 输出的 health 握手结果；结果写入 `.local-ci-runs/desktop-bundle.json`。此 smoke 只证明启动与资源定位，使用隔离进程组清理，不作为优雅退出证据。
+无凭据发布资源验收使用 `pnpm bundle:ai-host && pnpm check:desktop-bundle`。入口构建实际 `.app`，在隔离 HOME 下启动生产 main，禁用 runtime override，核验完整 runtime 树与 Native 输出的 health 握手结果；结果写入 `.local-ci-runs/desktop-bundle.json`。此 smoke 只证明启动与资源定位，使用隔离进程组清理，不作为优雅退出证据。
 
-真实 macOS arm64 桌面验收单独运行 `pnpm bundle:ai-host && pnpm check:desktop-native`，消费同一提交的固定 runtime 和现有 Codex 配置。实际 WebView 验收覆盖首次配置、关闭/重开、用户隔离、授权历史、Host-only 重启、设备任务事实保持，以及重启后的真实新对话。结果写入 `.local-ci-runs/desktop-native.json`，绑定源码、lock、配置模式和 runtime manifest；不属于无凭据 CI，不证明真实 OS 效果。
+真实 macOS arm64 桌面验收单独运行 `pnpm bundle:ai-host && pnpm check:desktop-native`，消费构建后的 runtime 和现有 Codex 配置。实际 WebView 验收覆盖首次配置、关闭/重开、用户隔离、授权历史、Host-only 重启、设备任务事实保持，以及重启后的真实新对话。结果写入 `.local-ci-runs/desktop-native.json`，记录配置模式与运行结果；不属于无凭据 CI，不证明真实 OS 效果。
 
 真实验收不指定模型，由官方工具从本机已有配置解析默认模型；复用已有用户登录，不修改用户配置或静默换模型。默认模型仍须通过受控工具探针；需要 code-mode host 的模型不会自动降级为其他模型。回执记录 `official_configuration_default`，不猜测模型名称。
 
@@ -76,6 +76,21 @@ Native 在每次启动前按打包端同一规则重算文件字节、权限和�
 
 诊断只包含闭集阶段/错误码、时间、运行版本和资源来源类别，最多保留 64 条故障记录。通过原生保存对话框导出，不包含凭据、原始错误、端点、个人路径、对话或数据库内容。缺包按开发/发布来源分别提示构建或重装，旧进程回收未确认则保留阻断。
 
-Native/Host 私有协议直接切换为 2，旧候选不能通过就绪校验。Host 启动/清理诊断使用 runtime schema 生成的 `hostProcessDiagnostic` 有界帧，旧 stderr 文本不再识别；Native 控制出站及状态均直接构造生成类型。HTTP 错误证据按 dispatch 归属且只消费一次，重叠 dispatch 或多个 HTTP 请求的归属不明确时保留 adapter 自身的闭集结果，不猜测认证原因。
+私有通信遵循唯一生成契约，无法归属到具体请求的错误不能被猜测为认证失败。
 
 设计参考：Microsoft [设置指南](https://learn.microsoft.com/en-us/windows/apps/design/app-settings/guidelines-for-app-settings) 与 [WinUI Gallery SettingsPage.xaml](https://github.com/microsoft/WinUI-Gallery/blob/main/WinUIGallery/Pages/SettingsPage.xaml)。Vue/Tauri 保持现有技术栈。
+
+## 助手开发
+
+```sh
+pnpm dev:assistant-fixture
+pnpm check:assistant
+```
+
+打开 fixture 打印的 loopback 地址；它加载实际产品 App，使用同进程 FakeHost、实际 Rust/SQLite S1 样本，不连接真实模型或执行 OS 操作。macOS 默认使用系统 Chrome，其它环境通过 `AI_BROWSER_PATH` 指定 Chromium。测试失败不会降级为静态渲染。
+
+导航切换保留会话控制器与草稿；用户工作区销毁才清空缓存和回调。同用户重连保留已加载历史和未知命令身份，清理旧权限回调与订阅，在权威恢复完成前只读，不自动提交。当前会话先恢复，其余按选择恢复。
+
+个人连接从“设置 → AI 连接”验证并保存。AI 页面保留当前会话连接选择、新上下文和明确的历史带入预览。API 密钥通过原生安全输入填写；provider、端点或凭据种类变化必须重新输入。切换会话后丢弃旧历史预览结果，切换连接等待旧队列完成。
+
+AI 文本不能覆盖设备任务事实；执行详情来自 Rust 的授权读取。普通回答与 A2UI 动作均不能签发批准。未知接纳重试保留原命令和期限，回执不等于模型终态。过期、旧 generation 和删除卡片禁止继续提交；渲染失败保留只读内容。

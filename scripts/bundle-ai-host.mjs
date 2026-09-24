@@ -20,11 +20,10 @@ import {
   runtimeArtifact,
   runtimeTreeSha256 as hashRuntimeTree,
 } from "./ai-host-artifacts.mjs";
-import { sourceState, sameCommittedSource } from "./source-state.mjs";
 import { developmentFingerprint } from "./desktop-dev-runtime.mjs";
 const development = process.argv.includes("--development");
 const root = fileURLToPath(new URL("../", import.meta.url)),
-  start = development ? developmentFingerprint(root) : sourceState(root);
+  start = development ? developmentFingerprint(root) : undefined;
 const { version, target, sha256, sqlite } = runtimeArtifact(
   root,
   `${process.platform}-${process.arch}`,
@@ -44,9 +43,7 @@ const directory = join(
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 let stage = "Node archive verification",
   behaviorPassed = false,
-  failure,
-  deploymentLockSha256,
-  artifacts = [];
+  failure;
 try {
   mkdirSync(cache, { recursive: true });
   if (!existsSync(archive) || hash(readFileSync(archive)) !== sha256) {
@@ -65,8 +62,8 @@ try {
   rmSync(directory, { recursive: true, force: true });
   mkdirSync(directory, { recursive: true });
   stage = "AI Host dependency packaging";
-  artifacts = packHost(root, directory, true);
-  deploymentLockSha256 = installArtifacts(root, directory, true);
+  packHost(root, directory);
+  installArtifacts(root, directory);
   stage = "Node runtime extraction";
   run(
     windows
@@ -118,10 +115,8 @@ try {
   process.exitCode = 1;
 } finally {
   rmSync(scratch, { recursive: true, force: true });
-  const end = development ? developmentFingerprint(root) : sourceState(root),
-    sourceUnchanged = development
-      ? start === end
-      : sameCommittedSource(start, end);
+  const end = development ? developmentFingerprint(root) : undefined,
+    sourceUnchanged = !development || start === end;
   let deliverable = behaviorPassed && sourceUnchanged,
     runtimeTreeSha256;
   if (deliverable) {
@@ -149,11 +144,8 @@ try {
         behaviorPassed,
         ...(development
           ? { kind: "development", developmentFingerprint: end }
-          : { kind: "release", source: { start, end } }),
+          : { kind: "release" }),
         node: { version, target, archiveSha256: sha256 },
-        artifacts,
-        lockSha256: hash(readFileSync(join(root, "pnpm-lock.yaml"))),
-        deploymentLockSha256,
         runtimeTreeSha256,
         verification: {
           platform: process.platform,
@@ -170,9 +162,5 @@ try {
   );
   if (failure) console.error(failure);
   if (!sourceUnchanged)
-    console.error(
-      development
-        ? "AI Host source changed during build; rerun pnpm dev"
-        : "Runtime artifact requires clean committed source",
-    );
+    console.error("AI Host source changed during build; rerun pnpm dev");
 }

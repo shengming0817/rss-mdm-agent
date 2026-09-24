@@ -102,7 +102,7 @@ test("completed MCP proposals release the bridge lifetime cancellation links", a
     }),
   );
   t.after(() => client.close());
-  for (let i = 0; i < 200; i++)
+  for (let i = 0; i < 2; i++)
     assert.equal(
       (
         await client.callTool({

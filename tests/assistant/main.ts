@@ -2,6 +2,7 @@
 import { createApp } from "vue";
 import {
   RuntimeClient,
+  ClientError,
   channelStream,
 } from "../../packages/ai-client/dist/index.js";
 import App from "../../apps/desktop/src/App.vue";
@@ -57,3 +58,9 @@ const services: AssistantServices = {
   },
 };
 createApp(App, { assistantServices: services }).mount("#app");
+
+// Browser-only component stimuli share the product test page and workspace modules.
+import { RuntimeSurface } from "../../packages/ai-ui-bridge/dist/index.js";
+Object.assign(window, {
+  surfaceTest: { createApp, RuntimeSurface, ClientError },
+});

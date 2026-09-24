@@ -15,7 +15,7 @@
 
 - ref: Rust Reference [struct patterns](https://doc.rust-lang.org/stable/reference/patterns.html#struct-patterns)：生产入口穷尽解构，字段新增触发编译失败；对真实库做字段突变验证，不新增宏或重复契约。
 - ref: Temporal [mutable_state_impl.go](https://github.com/temporalio/temporal/blob/main/service/history/workflow/mutable_state_impl.go)：借鉴持久结果与命令身份绑定的幂等语义；本交互只保存有界命令与终态，不引入工作流服务或新摘要实现。
-- ref: Kubernetes apimachinery [errors.go](https://github.com/kubernetes/apimachinery/blob/master/pkg/api/errors/errors.go)：借鉴稳定Reason和结构化原因；本地consumer保留低基数code与包名，不转存异常字符串。
+- ref: Kubernetes apimachinery [errors.go](https://github.com/kubernetes/apimachinery/blob/master/pkg/api/errors/errors.go)：借鉴稳定Reason和结构化原因；公开错误保留闭合 code，不转存异常字符串。
 
 ## C08/C09 批准与生命周期
 

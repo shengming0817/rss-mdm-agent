@@ -60,7 +60,7 @@ test("affected Cargo packages replace workspace and JS build includes producer c
     plan.find((s) => s.name === "Claude SDK adapter").selected,
     false,
   );
-  assert.equal(plan.find((s) => s.name === "packed consumer").selected, true);
+  assert.equal(plan.find((s) => s.name === "components").selected, true);
 });
 
 test("full preserves every gate, collection continues after failure and spawn errors", async () => {
@@ -83,13 +83,7 @@ test("plan preserves formal evidence; execution retires gate receipts but retain
   const out = join(root, ".local-ci-runs");
   mkdirSync(out);
   try {
-    for (const name of [
-      "latest.json",
-      "selection.json",
-      "codex-consumer.json",
-      "rust-consumers.json",
-      "desktop-native.json",
-    ])
+    for (const name of ["latest.json", "selection.json", "desktop-native.json"])
       writeFileSync(join(out, name), "old success");
     const plan = planSteps(steps, impact());
     publishPlan(root, { impact: impact(), steps: plan }, true);
@@ -99,12 +93,7 @@ test("plan preserves formal evidence; execution retires gate receipts but retain
       "old success",
     );
     prepareEvidence(root);
-    for (const name of [
-      "latest.json",
-      "selection.json",
-      "codex-consumer.json",
-      "rust-consumers.json",
-    ])
+    for (const name of ["latest.json", "selection.json"])
       assert.equal(existsSync(join(out, name)), false, name);
     assert.equal(existsSync(join(out, "desktop-native.json")), true);
     assert.equal(existsSync(join(out, "plan.json")), true);
@@ -377,4 +366,26 @@ test("real spawn failure is recorded and later gates still run", async () => {
   assert.equal(results[0].outcome, "failed");
   assert.match(results[0].error, /ENOENT/);
   assert.equal(results[1].outcome, "passed");
+});
+
+test("successful gates pass with uncommitted inputs and without a comparison ref", async () => {
+  const f = lifecycleFixture();
+  try {
+    writeFileSync(join(f.root, "README.md"), "uncommitted documentation");
+    execFileSync(
+      "/usr/bin/git",
+      ["update-ref", "-d", "refs/remotes/origin/develop"],
+      { cwd: f.root },
+    );
+    assert.equal(
+      await runCI(f.root, {
+        env: f.env,
+        steps: [["success", process.execPath, ["-e", "process.exit(0)"]]],
+      }),
+      0,
+    );
+    assert.equal(f.read().status, "passed");
+  } finally {
+    f.close();
+  }
 });

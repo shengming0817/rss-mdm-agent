@@ -43,23 +43,26 @@ test("negative result requires matching healthy bookends", () => {
     false,
   );
 });
-test("caller-selected programs cannot pass without protected candidate provenance", () => {
-  const source = { head: "a".repeat(40), clean: true };
-  const fakePolicy = {
+test("candidate programs must match installed paths and digests", () => {
+  const policy = {
     version: 1,
-    sourceSha: source.head,
     client: { path: "/fake/desktop", sha256: "b".repeat(64) },
     probe: { path: "/fake/probe", sha256: "c".repeat(64) },
   };
+  const hash = (path) =>
+    path.endsWith("desktop") ? "b".repeat(64) : "c".repeat(64);
+  assert.deepEqual(verifiedCandidate(policy, hash), {
+    executable: "/fake/desktop",
+    negative: "/fake/probe",
+  });
   assert.equal(
-    verifiedCandidate(fakePolicy, source, () => "d".repeat(64)),
+    verifiedCandidate(policy, () => "d".repeat(64)),
     undefined,
   );
   assert.equal(
     verifiedCandidate(
-      { ...fakePolicy, sourceSha: "e".repeat(40) },
-      source,
-      (path) => (path.endsWith("desktop") ? "b".repeat(64) : "c".repeat(64)),
+      { ...policy, client: { ...policy.client, path: "relative" } },
+      hash,
     ),
     undefined,
   );

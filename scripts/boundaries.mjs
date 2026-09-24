@@ -47,7 +47,6 @@ function files(dir) {
   });
 }
 // Medium: parse UI and desktop source, including Vue template expressions.
-// The packed consumer test also verifies the downstream exported dependency closure.
 export function checkSource(file, source) {
   file = file.replaceAll("\\", "/");
   const errors = [];

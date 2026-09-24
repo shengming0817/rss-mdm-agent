@@ -2,8 +2,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { sameCommittedSource } from "./source-state.mjs";
-import { selectImpact, ciSourceState } from "./ci-impact.mjs";
+import { selectImpact } from "./ci-impact.mjs";
 import { steps as defaultSteps } from "./ci-steps.mjs";
 import {
   planSteps,
@@ -51,11 +50,10 @@ export async function runCI(
   } = {},
 ) {
   const controller = new AbortController();
-  const start = ciSourceState(root);
+  const impact = selectImpact(root);
   const report = {
     status: "running",
-    sha: start.head,
-    source: { start },
+    sha: impact.head,
     platform: process.platform,
     arch: process.arch,
     node: process.version,
@@ -86,18 +84,12 @@ export async function runCI(
       outcome: "passed",
     });
     publish();
-    const impact = selectImpact(root);
     report.impact = impact;
     const plan = {
-      sha: start.head,
+      sha: impact.head,
       impact,
       steps: planSteps(steps, impact),
       toolchain: report.toolchain,
-      provenance: {
-        selected: true,
-        check:
-          "Committed source HEAD, base/baseRef/baseOid and clean worktree must remain unchanged",
-      },
     };
     publishPlan(root, plan, preview);
     console.log(JSON.stringify(plan, null, 2));
@@ -133,22 +125,13 @@ export async function runCI(
     if (preview)
       publishPlan(
         root,
-        { sha: start.head, status: report.status, error: report.error },
+        { sha: impact.head, status: report.status, error: report.error },
         true,
       );
   } finally {
     process.removeListener("SIGINT", interrupt);
     process.removeListener("SIGTERM", terminate);
     if (!preview) {
-      const end = ciSourceState(root);
-      report.source.end = end;
-      const valid = sameCommittedSource(start, end);
-      report.results.push({
-        name: "committed source provenance",
-        status: valid ? 0 : 1,
-        outcome: valid ? "passed" : "failed",
-      });
-      if (!valid && report.status === "passed") report.status = "failed";
       report.finishedAt = new Date().toISOString();
       publish();
       console.table(

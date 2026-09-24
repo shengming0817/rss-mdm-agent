@@ -47,20 +47,16 @@ export function run(command, args, cwd) {
       `${command}: ${result.status ?? result.error?.code ?? result.signal}`,
     );
 }
-export function packHost(root, directory, application = false) {
+export function packHost(root, directory) {
   const names = [
     "ai-contract",
     "ai-store-sqlite",
     "ai-host",
-    ...(application
-      ? [
-          "ai-access",
-          "ai-adapter-claude",
-          "ai-adapter-codex",
-          "ai-adapter-deepseek",
-          "ai-host-app",
-        ]
-      : []),
+    "ai-access",
+    "ai-adapter-claude",
+    "ai-adapter-codex",
+    "ai-adapter-deepseek",
+    "ai-host-app",
   ];
   for (const name of names) {
     const source = sourceDirectory(name);
@@ -82,12 +78,6 @@ export function packHost(root, directory, application = false) {
       return [`@rss-mdm-agent/${name}`, `file:./${archive}`];
     }),
   );
-  const artifacts = archives.map((name) => ({
-    name,
-    sha256: createHash("sha256")
-      .update(readFileSync(join(directory, name)))
-      .digest("hex"),
-  }));
   const versions = JSON.parse(
     readFileSync(join(root, "package.json"), "utf8"),
   ).devDependencies;
@@ -125,11 +115,11 @@ export function packHost(root, directory, application = false) {
       2,
     ),
   );
-  return artifacts;
+  return archives;
 }
 
 /** Materialize a deployment lock, prove every edge against the source lock, then freeze install. */
-export function installArtifacts(root, directory, production = false) {
+export function installArtifacts(root, directory) {
   const source = load(readFileSync(join(root, "pnpm-lock.yaml"), "utf8"));
   // Seed pnpm with the locked external resolutions; only local tarball identities are new.
   writeFileSync(
@@ -195,11 +185,10 @@ export function installArtifacts(root, directory, production = false) {
       "--offline",
       "--frozen-lockfile",
       ...(process.platform === "win32" ? ["--node-linker=hoisted"] : []),
-      ...(production ? ["--prod"] : []),
+      "--prod",
     ],
     directory,
   );
-  return createHash("sha256").update(readFileSync(lockPath)).digest("hex");
 }
 
 function hashRuntimeEntry(hash, root, name) {
@@ -283,7 +272,7 @@ export function runtimeArtifact(root, target) {
   };
 }
 
-/** Stage the fixed native launcher alongside a packaged Host, including isolated consumers. */
+/** Stage the fixed native launcher alongside the application Host. */
 export function stageWorkerRuntime(
   root,
   directory,

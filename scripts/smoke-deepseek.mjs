@@ -16,7 +16,6 @@ import {
   unwrap,
 } from "../packages/ai-contract/dist/testing/index.js";
 import { createHash } from "node:crypto";
-import { sourceState, sameCommittedSource } from "./source-state.mjs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 /** Snapshot the selected endpoint once; a configured endpoint is not backend identity proof. */
@@ -83,21 +82,8 @@ export async function closeAdapters(ports, directory) {
   }
   return { processesStopped, directoryRemoved, attempts };
 }
-export function deliverable(
-  behaviorPassed,
-  cleanup,
-  start,
-  end,
-  lockStart,
-  lockEnd,
-) {
-  return (
-    behaviorPassed &&
-    cleanup.processesStopped &&
-    cleanup.directoryRemoved &&
-    sameCommittedSource(start, end) &&
-    lockStart === lockEnd
-  );
+export function deliverable(behaviorPassed, cleanup) {
+  return behaviorPassed && cleanup.processesStopped && cleanup.directoryRemoved;
 }
 async function main() {
   const selected = smokeConfiguration(process.env);
@@ -110,13 +96,7 @@ async function main() {
     throw Error(
       "Smoke requires DEEPSEEK_API_KEY or RSS_DEEPSEEK_KEY_FILE; no fixture fallback",
     );
-  const root = fileURLToPath(new URL("../", import.meta.url)),
-    start = sourceState(root);
-  const lockHash = async () =>
-    createHash("sha256")
-      .update(await readFile(new URL("../pnpm-lock.yaml", import.meta.url)))
-      .digest("hex");
-  const lockStart = await lockHash();
+  const root = fileURLToPath(new URL("../", import.meta.url));
   const diagnostics = [];
   const diagnose = (value) => {
     if (diagnostics.length < 128) diagnostics.push(value);
@@ -135,7 +115,6 @@ async function main() {
     },
     provider: "deepseek",
     config: { id: "deepseek-smoke", revision: "1" },
-
     workingDirectory: directory,
     permissions: "tools_disabled",
   };
@@ -410,16 +389,7 @@ async function main() {
     failure = { stage };
   } finally {
     const cleanup = await closeAdapters(ports, directory);
-    const end = sourceState(root),
-      lockEnd = await lockHash();
-    const passed = deliverable(
-      behaviorPassed,
-      cleanup,
-      start,
-      end,
-      lockStart,
-      lockEnd,
-    );
+    const passed = deliverable(behaviorPassed, cleanup);
     if (!passed) process.exitCode = 1;
     const evidence = {
       evidence:
@@ -436,8 +406,6 @@ async function main() {
       node: process.version,
       command: "pnpm smoke:deepseek",
       timestamp: new Date().toISOString(),
-      source: { start, end },
-      lockSha256: { start: lockStart, end: lockEnd },
       cleanup,
       failure,
       diagnostics,

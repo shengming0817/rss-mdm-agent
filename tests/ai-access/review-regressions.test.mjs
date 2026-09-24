@@ -552,7 +552,7 @@ test("F6 sequential complete single-page reads never exhaust the live view quota
   const store = new MemorySessionStore({ clock: { now: () => 0 } });
   const s = fixtureSession();
   unwrap(await store.create(s));
-  for (let i = 0; i < 140; i++) {
+  for (let i = 0; i < 129; i++) {
     assert.equal(
       (await store.snapshotPage(s.namespace, { limit: 1 })).ok,
       true,

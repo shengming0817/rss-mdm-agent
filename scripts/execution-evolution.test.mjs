@@ -12,9 +12,9 @@ import {
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { git } from "./source-state.mjs";
+const git = process.platform === "win32" ? "git" : "/usr/bin/git";
 
-// Mutate real public structs and compile the actual consumer libraries. A text-pattern
+// Mutate real public structs and compile the production authorization libraries. A text-pattern
 // assertion or a compile_fail example would not prove that production uses the guard.
 test("new execution fields require an explicit admission/capability decision", () => {
   const root = fileURLToPath(new URL("../", import.meta.url));
@@ -56,7 +56,7 @@ test("new execution fields require an explicit admission/capability decision", (
           maxBuffer: 16 * 1024 * 1024,
           env: {
             ...process.env,
-            CARGO_TARGET_DIR: join(dir, "target"),
+            CARGO_TARGET_DIR: join(root, "target", "execution-evolution"),
             RUSTFLAGS: "",
             CARGO_ENCODED_RUSTFLAGS: "",
             RUSTC_WRAPPER: "",

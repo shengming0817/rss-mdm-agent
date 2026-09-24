@@ -127,34 +127,3 @@ pub fn input(profile: ScriptProfile) -> ScriptPlanInput {
         policy: reference("test-policy"),
     }
 }
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    for profile in [
-        ScriptProfile::PowerShell7,
-        ScriptProfile::PosixSh,
-        ScriptProfile::Bash,
-    ] {
-        let plan = compile(input(profile), &limits())?;
-        assert_eq!(
-            plan.spec()
-                .launch
-                .argv
-                .iter()
-                .filter(|a| matches!(a, LaunchArg::ArtifactPath {}))
-                .count(),
-            1
-        );
-        assert!(matches!(
-            plan.spec().launch.stdin,
-            StandardInput::Controlled { max_bytes: 128, .. }
-        ));
-        let bytes = serde_json::to_vec(plan.spec())?;
-        assert_eq!(
-            FrozenPlan::freeze(decode_plan(&bytes, &limits())?, &limits())?.digest(),
-            plan.digest()
-        );
-    }
-    println!(
-        "script-plan: synthetic authority; pure planning only, no shell or real platform evidence"
-    );
-    Ok(())
-}

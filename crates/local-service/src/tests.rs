@@ -102,3 +102,46 @@ fn concurrent_replays_admit_exactly_once() {
         1
     );
 }
+
+#[cfg(test)]
+#[test]
+fn wire_values_roundtrip_and_reject_unknown_authority() {
+    use crate::*;
+
+    let status = Status {
+        version: 1,
+        installation: "fixture".into(),
+        platform: "fixture".into(),
+        build: "fixture".into(),
+        capability: Capability::StatusOnly,
+    };
+    let bytes = serde_json::to_vec(&status).unwrap();
+    assert_eq!(serde_json::from_slice::<Status>(&bytes).unwrap(), status);
+    assert!(serde_json::from_str::<Capability>(r#""execute""#).is_err());
+    let mut edited = serde_json::to_value(&status).unwrap();
+    edited["credential"] = serde_json::json!("untrusted");
+    assert!(serde_json::from_value::<Status>(edited).is_err());
+    assert_eq!(
+        serde_json::to_value(ServiceView::Rejected).unwrap()["phase"],
+        "rejected"
+    );
+}
+
+#[test]
+fn installed_policy_has_one_strict_format() {
+    let artifact =
+        serde_json::json!({"path": "/fixture/program", "sha256": "a".repeat(64), "cdhash": null});
+    let value = serde_json::json!({
+        "version": 1, "installation": "fixture", "build": "test", "platform": "macos-arm64",
+        "service_subject": "service", "allowed_users": ["501"],
+        "client": artifact, "probe": artifact, "service": artifact
+    });
+    let policy: crate::policy::Policy = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(serde_json::to_value(policy).unwrap(), value);
+    let mut unknown = value.clone();
+    unknown["unexpected"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<crate::policy::Policy>(unknown).is_err());
+    let mut missing = value;
+    missing.as_object_mut().unwrap().remove("allowed_users");
+    assert!(serde_json::from_value::<crate::policy::Policy>(missing).is_err());
+}

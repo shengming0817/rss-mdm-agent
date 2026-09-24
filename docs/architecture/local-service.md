@@ -27,7 +27,7 @@ macOS 以非登录账号运行 LaunchDaemon，NSXPCConnection 对等代码 requi
 
 ## 私有 AI 进程
 
-Native 唯一拥有 Host，Host 唯一拥有逻辑 worker。Native–Host 与 Host–bootstrap 两条 owner 链统一使用私有继承 stdin/stdout，stderr 为诊断；provider SDK/adapter 内部子进程保留其专属协议，不属于此承载。V1 帧是 RSS + 版本字节 1、闭集 lane 字节、四字节 big-endian 长度和有界 payload。Native 固定 native/execution，worker 固定 control/tools/events；各 payload 的声明源不合并。上述两条 owner 链的旧 fd3–5 入口删除。
+Native 唯一拥有 Host，Host 唯一拥有逻辑 worker。Native–Host 与 Host–bootstrap 两条 owner 链统一使用私有继承 stdin/stdout，stderr 为诊断；provider SDK/adapter 内部子进程保留其专属协议，不属于此承载。帧与 lane 由各自代码 owner 声明，不在文档维护另一份二进制格式。
 
 单 reader 只分帧分发，单 writer 优先控制队列，各 lane 独立限额；饱和或非法帧关闭连接。物理管道堵塞由 owner 的 OS 终止预算兜底。控制队列优先不等于任意输出期间都能及时交付。
 
@@ -37,6 +37,6 @@ launch fence 保存 namespace、launchId、provider artifact、runtimeDigest 和
 
 ## 直接替换
 
-Host readiness protocol 3、私有承载 V1、AI SQLite schema 5 协同交付。AI 业务 wire V5 的未变部分保留原语义。旧启动入口、承载及 SQLite 格式拒绝，没有双读、迁移、alias 或自动降级。旧库原样保留，由实验室操作者选择新目录，不能删除旧库来冒充恢复成功。
+不支持的旧启动入口、承载及 SQLite 格式拒绝，没有双读、迁移、alias 或自动降级。旧库原样保留，由实验室操作者选择新目录，不能删除旧库来冒充恢复成功。
 
 macOS 主密钥仍在 Keychain，Windows 采用当前用户 DPAPI 与专属 ACL，输入只返回 Native 保存操作。主密钥不进入 worker/WebView。官方 Codex/Claude 登录仍由官方组件负责。

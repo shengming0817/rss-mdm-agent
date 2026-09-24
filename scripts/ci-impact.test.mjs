@@ -4,12 +4,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  selectImpact,
-  workspaceGraph,
-  parseChanges,
-  ciSourceState,
-} from "./ci-impact.mjs";
+import { selectImpact, workspaceGraph, parseChanges } from "./ci-impact.mjs";
 
 const npm = (name) => `@rss-mdm-agent/${name}`;
 function fixture() {
@@ -81,7 +76,7 @@ test("docs-only and mixed changes use the code reverse closure", () => {
   }
 });
 
-test("global, unknown, dirty, invalid base, develop and explicit full fail full", () => {
+test("global, unknown, invalid base, develop and explicit full fail full", () => {
   for (const path of [
     "Cargo.lock",
     "packages/ui/package.json",
@@ -105,7 +100,7 @@ test("global, unknown, dirty, invalid base, develop and explicit full fail full"
     assert.equal(f.select().reasons[0], "develop");
     f.run("branch", "-m", "topic");
     f.write("untracked");
-    assert.equal(f.select().reasons[0], "dirty-input");
+    assert.equal(f.select().full, true);
   } finally {
     f.close();
   }
@@ -225,10 +220,49 @@ test("detached HEAD is conservative and missing baseline retains the real HEAD",
   try {
     f.run("checkout", "--detach");
     assert.equal(f.select().full, true);
-    const state = ciSourceState(f.root, "missing-ref");
+    f.run("checkout", "topic");
+    const state = f.select({ baseRef: "missing-ref" });
     assert.equal(state.head, f.run("rev-parse", "HEAD"));
     assert.equal(state.baseRef, "missing-ref");
-    assert.equal(state.clean, false);
+    assert.equal(state.full, true);
+  } finally {
+    f.close();
+  }
+});
+
+test("uncommitted tracked, staged, deleted and new owner inputs select their closure", () => {
+  for (const mode of ["tracked", "staged", "deleted", "new", "mixed"]) {
+    const f = fixture();
+    try {
+      if (mode === "deleted") rmSync(join(f.root, "crates/core/src/lib.rs"));
+      else if (mode === "new") f.write("crates/core/src/new.rs");
+      else f.write("crates/core/src/lib.rs", "edited");
+      if (mode === "staged") f.run("add", ".");
+      if (mode === "mixed") {
+        f.run("add", ".");
+        f.run("commit", "-qm", "core change");
+        f.write("packages/ui/src/new.ts");
+      }
+      const result = f.select();
+      assert.equal(result.full, false, mode);
+      assert.deepEqual(result.rustPackages, ["core", "leaf"], mode);
+      if (mode === "mixed") assert.deepEqual(result.nodePackages, [npm("ui")]);
+    } finally {
+      f.close();
+    }
+  }
+});
+test("dirty docs remain docs-only and ignored files do not select tests", () => {
+  const f = fixture();
+  try {
+    f.write("README.md", "edited docs");
+    assert.equal(f.select().reasons[0], "docs-only");
+    f.run("checkout", "--", "README.md");
+    writeFileSync(join(f.root, ".git/info/exclude"), "ignored/\n");
+    f.write("ignored/file");
+    assert.equal(f.select().reasons[0], "no-changes");
+    rmSync(join(f.root, "README.md"));
+    assert.equal(f.select().reasons[0], "docs-only");
   } finally {
     f.close();
   }

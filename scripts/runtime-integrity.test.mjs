@@ -124,14 +124,14 @@ test("AI host build removes orphaned compiler output before packing", (t) => {
   writeFileSync(orphans[1], "export declare const orphaned: true;\n");
 
   run("pnpm", ["build:ai-host"], root);
-  const artifacts = packHost(root, destination, true);
-  const archive = artifacts.find(({ name }) =>
+  const artifacts = packHost(root, destination);
+  const archive = artifacts.find((name) =>
     name.startsWith("rss-mdm-agent-ai-host-app-"),
   );
   assert.ok(archive, "AI host application archive is present");
   const entries = execFileSync(
     "/usr/bin/tar",
-    ["-tzf", join(destination, basename(archive.name))],
+    ["-tzf", join(destination, basename(archive))],
     { encoding: "utf8" },
   );
   assert.doesNotMatch(entries, /package\/dist\/claude-provider\.(?:js|d\.ts)/);

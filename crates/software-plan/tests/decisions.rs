@@ -1,7 +1,7 @@
 use execution_contract::*;
 use software_plan::*;
 #[allow(dead_code)]
-#[path = "../examples/software-plan-consumer.rs"]
+#[path = "support/mod.rs"]
 mod fixture;
 use fixture::*;
 fn outcome(i: &SoftwareIntent, s: &PlanningSnapshot) -> DecisionOutcome {

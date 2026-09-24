@@ -1,5 +1,5 @@
 #[allow(dead_code)]
-#[path = "../examples/script-plan-consumer.rs"]
+#[path = "support/mod.rs"]
 mod scenario;
 use execution_contract::*;
 use scenario::{input, limits};
@@ -39,6 +39,13 @@ fn native_profiles_keep_bytes_arguments_and_entire_execution_context() {
     ] {
         let i = input(profile);
         let p = compile(i.clone(), &limits()).unwrap();
+        let bytes = serde_json::to_vec(p.spec()).unwrap();
+        assert_eq!(
+            FrozenPlan::freeze(decode_plan(&bytes, &limits()).unwrap(), &limits())
+                .unwrap()
+                .digest(),
+            p.digest()
+        );
         let s = p.spec();
         assert_context(s, &i);
         assert!(literals(&p).contains(&"-true ; $(touch forbidden) 'quoted'"));

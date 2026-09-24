@@ -25,7 +25,6 @@ import {
   startSmokeModelGateway,
   continuityChallenge,
 } from "./codex-smoke-model.mjs";
-import { sameCommittedSource, sourceState } from "./source-state.mjs";
 
 const allowedStages = [
   "configuration",
@@ -156,7 +155,7 @@ export async function closeAdapters(adapters, directory) {
 
 async function main() {
   const root = fileURLToPath(new URL("../", import.meta.url));
-  const start = sourceState(root);
+
   let configured = false;
   let behaviorPassed = false;
   let processesStopped = true;
@@ -190,7 +189,6 @@ async function main() {
     const configuration = {
       provider: "codex",
       config: { id: "model-smoke", revision: "1" },
-
       workingDirectory,
       namespace: {
         tenantId: "model-smoke",
@@ -360,22 +358,13 @@ async function main() {
       if (!processesStopped && !failure) failure = describeFailure("cleanup");
     }
     await gateway?.close();
-    const end = sourceState(root);
+
     const deliverable =
       configured &&
       behaviorPassed &&
       (settings.mode === "local_fixture" || backendIdentityVerified) &&
-      processesStopped &&
-      sameCommittedSource(start, end);
+      processesStopped;
     if (!deliverable) process.exitCode = 1;
-    const adapterPackage = join(
-      root,
-      "packages/ai-adapters/codex/package.json",
-    );
-    const protocolManifest = join(
-      root,
-      "packages/ai-adapters/codex/protocol-manifest.json",
-    );
     const evidence = {
       evidence:
         settings?.mode === "local_fixture"
@@ -396,14 +385,6 @@ async function main() {
         : {}),
       backendIdentityVerified,
       backendReceipts: gateway?.receipts ?? [],
-      source: { start, end },
-      lockSha256: createHash("sha256")
-        .update(readFileSync(join(root, "pnpm-lock.yaml")))
-        .digest("hex"),
-      packageIdentitySha256: createHash("sha256")
-        .update(readFileSync(adapterPackage))
-        .update(readFileSync(protocolManifest))
-        .digest("hex"),
       codex: CODEX_VERSION,
       platform: process.platform,
       arch: process.arch,
