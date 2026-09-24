@@ -1,5 +1,5 @@
 #[allow(dead_code)]
-#[path = "../examples/mcp-consumer.rs"]
+#[path = "support/mod.rs"]
 mod fixture;
 
 use execution_mcp::*;

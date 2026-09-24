@@ -436,6 +436,13 @@ fn lost_response_replay_and_reopen_preserve_one_attempt_and_dispatch() {
     let mut app = open(&db, host.clone(), runner.clone(), Startup::CreateTest);
     let accepted = app.submit(&caller(), request, &p).unwrap();
     assert_eq!(accepted.attempts, 1);
+    let (response, disconnected) = std::sync::mpsc::channel();
+    drop(disconnected);
+    assert!(response.send(accepted.clone()).is_err());
+    assert_eq!(
+        app.reconcile(request).unwrap().phase,
+        TaskPhase::TestCompleted
+    );
     drop(app);
     let mut app = open(&db, host.clone(), runner.clone(), Startup::OpenTest);
     assert_eq!(

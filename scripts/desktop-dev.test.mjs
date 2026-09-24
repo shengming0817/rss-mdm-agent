@@ -189,45 +189,17 @@ test("invalid override fails before Tauri starts with actionable stage diagnosti
 
 test("release stage rejects development, absent and unknown manifest kinds", (t) => {
   const { root, write } = fixture(t);
-  for (const name of [
-    "stage-desktop-runtime.mjs",
-    "ai-host-artifacts.mjs",
-    "source-state.mjs",
-  ]) {
+  for (const name of ["stage-desktop-runtime.mjs", "ai-host-artifacts.mjs"]) {
     write(`scripts/${name}`, readFileSync(new URL(name, import.meta.url)));
   }
   symlinkSync(
     fileURLToPath(new URL("../node_modules", import.meta.url)),
     join(root, "node_modules"),
   );
-  execFileSync("/usr/bin/git", ["init", "-b", "develop"], {
-    cwd: root,
-    stdio: "ignore",
-  });
-  write(".gitignore", "node_modules/\n.local-ci-runs/\n");
-  execFileSync("/usr/bin/git", ["add", "."], { cwd: root });
-  execFileSync(
-    "/usr/bin/git",
-    [
-      "-c",
-      "user.name=Test",
-      "-c",
-      "user.email=test@example.invalid",
-      "commit",
-      "--allow-empty",
-      "-m",
-      "fixture",
-    ],
-    { cwd: root, stdio: "ignore" },
-  );
-  const head = execFileSync("/usr/bin/git", ["rev-parse", "HEAD"], {
-    cwd: root,
-    encoding: "utf8",
-  }).trim();
   for (const kind of ["development", undefined, "unknown"]) {
     write(
       ".local-ci-runs/ai-host-runtime/manifest.json",
-      JSON.stringify({ status: "passed", kind, source: { end: { head } } }),
+      JSON.stringify({ status: "passed", kind }),
     );
     const result = spawnSync(
       process.execPath,
@@ -239,7 +211,7 @@ test("release stage rejects development, absent and unknown manifest kinds", (t)
       },
     );
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /verified artifact/);
+    assert.match(result.stderr, /successfully built runtime/);
     assert.doesNotMatch(result.stderr, /TypeError/);
   }
 });

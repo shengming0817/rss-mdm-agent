@@ -3,7 +3,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 const root = fileURLToPath(new URL("../", import.meta.url));
-import { sourceState, git } from "./source-state.mjs";
+const git = process.platform === "win32" ? "git" : "/usr/bin/git";
 const files = [
   ...new Set(
     execFileSync(
@@ -16,7 +16,9 @@ const files = [
   ),
 ];
 const errors = [];
-for (const file of files.filter((f) => f.endsWith(".md"))) {
+for (const file of files.filter(
+  (f) => f.endsWith(".md") && existsSync(resolve(root, f)),
+)) {
   const source = readFileSync(resolve(root, file), "utf8");
   for (const match of source.matchAll(/\]\(([^)]+)\)/g)) {
     const target = match[1].split("#")[0];
@@ -32,11 +34,19 @@ if (
   readFileSync(resolve(root, "packages/ui/LICENSE"), "utf8")
 )
   errors.push("UI MIT license differs from root");
-const { base, head } = sourceState(root);
-execFileSync(git, ["diff", "--check", base, head], {
-  cwd: root,
-  stdio: "inherit",
-});
+// Baseline lookup belongs to impact selection; whitespace checks also work before commit.
+let base;
+try {
+  base = execFileSync(
+    git,
+    ["merge-base", process.env.CI_BASE || "origin/develop", "HEAD"],
+    { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+  ).trim();
+} catch {
+  /* A missing comparison ref does not prevent local documentation checks. */
+}
+if (base)
+  execFileSync(git, ["diff", "--check", base], { cwd: root, stdio: "inherit" });
 execFileSync(git, ["diff", "--cached", "--check"], {
   cwd: root,
   stdio: "inherit",
@@ -47,5 +57,5 @@ if (errors.length) {
   process.exitCode = 1;
 } else
   console.log(
-    `Docs: local links and current paths checked (${files.filter((f) => f.endsWith(".md")).length} files)`,
+    `Docs: local links and current paths checked (${files.filter((f) => f.endsWith(".md") && existsSync(resolve(root, f))).length} files)`,
   );

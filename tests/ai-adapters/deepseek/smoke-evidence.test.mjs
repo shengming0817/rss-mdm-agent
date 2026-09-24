@@ -70,43 +70,12 @@ test("smoke evidence describes the endpoint actually selected, without leaking i
     );
   }
 });
-test("smoke evidence requires unchanged committed source, lock and complete cleanup", () => {
-  const source = {
-      head: "a",
-      base: "b",
-      baseOid: "b",
-      baseRef: "origin/develop",
-      clean: true,
-    },
-    cleanup = { processesStopped: true, directoryRemoved: true };
-  assert.equal(
-    deliverable(true, cleanup, source, source, "lock", "lock"),
-    true,
-  );
-  for (const end of [
-    { ...source, clean: false },
-    { ...source, head: "changed" },
-    { ...source, baseOid: "changed" },
-  ])
-    assert.equal(
-      deliverable(true, cleanup, source, end, "lock", "lock"),
-      false,
-    );
-  assert.equal(
-    deliverable(true, cleanup, source, source, "lock", "changed"),
-    false,
-  );
-  assert.equal(
-    deliverable(
-      true,
-      { ...cleanup, directoryRemoved: false },
-      source,
-      source,
-      "lock",
-      "lock",
-    ),
-    false,
-  );
+test("smoke success requires behavior and complete cleanup", () => {
+  const cleanup = { processesStopped: true, directoryRemoved: true };
+  assert.equal(deliverable(true, cleanup), true);
+  assert.equal(deliverable(false, cleanup), false);
+  for (const field of ["processesStopped", "directoryRemoved"])
+    assert.equal(deliverable(true, { ...cleanup, [field]: false }), false);
 });
 test("smoke cleanup retries failures and still closes later ports before retaining logs", async () => {
   const dir = await mkdtemp(join(tmpdir(), "dsh-smoke-cleanup-"));

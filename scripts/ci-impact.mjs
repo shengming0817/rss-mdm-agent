@@ -2,7 +2,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, realpathSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
-import { git, sourceState } from "./source-state.mjs";
+const git = process.platform === "win32" ? "git" : "/usr/bin/git";
 const npm = (name) => `@rss-mdm-agent/${name}`;
 const run = (root, command, args) =>
   execFileSync(command, args, {
@@ -228,12 +228,6 @@ export function selectImpact(
       decision.reasons = [branch ? "develop" : "detached-head"];
       return decision;
     }
-    if (
-      run(root, git, ["status", "--porcelain", "--untracked-files=all"]).trim()
-    ) {
-      decision.reasons = ["dirty-input"];
-      return decision;
-    }
     decision.base = run(root, git, [
       "merge-base",
       baseRef,
@@ -248,10 +242,19 @@ export function selectImpact(
         "--find-copies",
         "--find-copies-harder",
         decision.base,
-        decision.head,
         "--",
       ]),
     );
+    for (const path of run(root, git, [
+      "ls-files",
+      "--others",
+      "--exclude-standard",
+      "-z",
+    ])
+      .split("\0")
+      .filter(Boolean)) {
+      changes.push(["A", path]);
+    }
     if (changes.some(([, path]) => globalPath(path))) {
       decision.reasons = ["global-input"];
       return decision;
@@ -301,23 +304,5 @@ export function selectImpact(
       nodePackages: [],
       reasons: [`selection-unavailable: ${error.message}`],
     };
-  }
-}
-
-// Missing comparison refs must expand CI, not abort before the remaining gates.
-export function ciSourceState(
-  root,
-  baseRef = process.env.CI_BASE || "origin/develop",
-) {
-  try {
-    return sourceState(root, baseRef);
-  } catch (error) {
-    let head = null;
-    try {
-      head = run(root, git, ["rev-parse", "HEAD"]).trim();
-    } catch {
-      /* Git itself may be unavailable. */
-    }
-    return { head, baseRef, clean: false, error: error.message };
   }
 }

@@ -1,23 +1,12 @@
 # 桌面自助服务与人/AI 统一受控执行客户端 PRD
 
-版本：v0.1 需求基线。日期：2026-09-09 UTC。
-Owner repository：rss-mdm-agent。任务容器：[EPIC #2392](https://dev.azure.com/shengming0923/rss/_workitems/edit/2392)。
-本次文档交付：[D00 #2393](https://dev.azure.com/shengming0923/rss/_workitems/edit/2393)；不关闭功能 PBI。
-
-用户已确定方向：传统桌面自助和 AI 都是一等入口；只从 prmonitor 提取 AI 引擎和 UI；先建设独立能力，再组装实际业务。
-本文件定义目标与验收，不代表已经实现、构建、发布或运行验证。具体接口与平台支持矩阵在对应实现中冻结。
-来源及固定证据见[来源索引](../reference/sources.md)。
-
-C05 经用户扩大范围：提取独立 Vue UI 包和可启动的 Tauri 桌面基础壳，采用根级 `apps/`、`packages/`、`crates/` 组织。
-C20 将 C15/C16 桌面页面通过受限 IPC 接入 Rust SQLite 执行 owner、S1 测试 runner 和独立 AI Host；浏览器继续使用明确的只读样本。UI 与 AI 共用冻结计划、授权、批准和原请求恢复，旧内存生产入口直接替换；具体启动与验证见[桌面指南](../guides/desktop-development.md)。
-
-C16 在同一应用壳直接增加 AI 助手导航，消费公共 ai-client / ai-ui-bridge。固定 Host 测试装配复用同一 App；Tauri 普通启动注入真实本地 AI 服务，不可用时显示未连接。执行详情来自 Rust execution-app 的单次授权记录读取，冻结计划摘要及 TypeScript 类型由 Rust 生成，S1 结果持续标识测试。AI wire V5 与 AI SQLite schema v5 直接替换旧版，不迁移或双读；C20 已接入同一 Rust 持久执行 owner 和独立 Node Host；真实平台执行仍不在 S1 内。页面与故障验收见[助手指南](../guides/assistant-development.md)。
+本文件定义产品目标、用户旅程和安全要求，不作为实现或验证进度表。任务状态与依赖在 [EPIC #2392](https://dev.azure.com/shengming0923/rss/_workitems/edit/2392) 维护；运行操作见[桌面指南](../guides/desktop-development.md)，固定来源见[来源索引](../reference/sources.md)。
 
 ## 1. 产品定位与完成边界
 
 用户可以不使用 AI 完成已授权的软件和工具操作，也可以让 AI 发现同一目录、建议操作并在委托范围内调用。
 客户端使用同一个请求、能力预检、授权、批准、执行与证据链，操作来源不能改变其权限上限。
-最终形态包括普通用户桌面应用、可独立运行的后台服务、用户会话辅助与按需特权 runner；后台能力与发布安装包均属后续阶段。
+最终形态包括普通用户桌面应用、可独立运行的后台服务、用户会话辅助与按需特权 runner；完整生产后台执行与正式发布安装仍需后续阶段。
 
 | 阶段 | 产品结果 | 完成门 |
 | --- | --- | --- |
@@ -29,7 +18,7 @@ C16 在同一应用壳直接增加 AI 助手导航，消费公共 ai-client / ai
 S1 中一个“软件项目”和一个“脚本工具”只是目录与控制流程的测试实例，不表示软件已安装或系统已修复。
 S1 不要求所有 AI 引擎完成才验证首个闭环：C20 选择 Codex；Claude/DeepSeek Harness 各自交付适配能力，不伪称未经验证的引擎具有同等控制能力。
 
-本批不实现：真实 PowerShell/Bash 或包安装、特权后台服务、Agent 远程注册/领取、MDM 变更派发、系统更新、可信升级、后台自动重启部署、真实设备 T3。
+本批不实现：真实 PowerShell/Bash 或包安装、生产特权执行、Agent 远程注册/领取、MDM 变更派发、系统更新、可信升级、后台自动重启部署、真实设备 T3。
 不迁入 PR 监控、仓库扫描、Webhook、review 调度、标签/评论、PR 去重/数据库、PR deep link/CLI、远程终端或消息集成。
 不加入 EDR、驱动、远程桌面、任意权限插件市场、通用 IAM 或通用制品仓库。
 
@@ -202,59 +191,11 @@ AI请求与手动请求都不能自行取得可执行capability。运行模式�
 服务类型与执行器分开：Agent/MDM是产品管理通道，HTTPS等是传输，PowerShell/Bash/安装器是执行器，System/root/用户会话是执行上下文。
 原生MDM报文与用户工具请求不复用同一wire；其组装映射由rss-mdm负责。
 
-## 6. 独立组件与工程落点
+## 6. 组件边界
 
-以下为实施owner和接口边界；仅按对应实现交付实际组件，不预建空crate。根Cargo workspace统一管理宿主和后续 `crates/*` 成员，pnpm workspace 管理 `apps/*`、`packages/*`、`packages/ai-adapters/*`。
-核心不依赖UI、模型SDK、数据库、OS或产品业务。必要基础类型/成熟库依赖允许；不为“零依赖”复制同一任务类型。
+执行核心不依赖 UI、模型 SDK、数据库或平台业务；通过显式可信输入工作。AI Host 持有产品会话与可靠交付，原生引擎持有模型上下文，Rust 服务持有执行权威。TS 不直接写 Rust 批准、intent 或结果表。
 
-| 组件 | 单一责任 | 直接消费 |
-| --- | --- | --- |
-| execution-contract | 执行值类型与规范摘要 | 必要基础库 |
-| packages/ai-contract / ai-session-contract | A01 单一产品 schema、TS ports 与生成 Rust 绑定 | 公共契约，不复制执行权威 |
-| packages/ai-store-sqlite | A02 AI 命令账本、事件/交互、必要 delivery | A01 ports；独立 SQLite schema |
-| packages/ai-host / apps/ai-host | A03 TS 会话协调、运行恢复、Node 生命周期 | A01/A02，不恢复 Rust AI Host |
-| packages/ai-access / ai-client / ai-ui-bridge | A04 ACP–A2UI 接入与 renderer 接缝 | A01、官方协议，不拥有聊天页面 |
-| service-catalog | 目录项目、参数schema、精确资源引用 | execution-contract必要值类型；不链接Resource/Group |
-| execution-interaction | 等待/回答/取消/过期转换 | 必要基础库，不铸造授权 |
-| execution-capability / admission / lifecycle | 能力、裁决、执行转换 | execution-contract；相互不必链接 |
-| execution-approval | 消费完整C07裁决、验证批准适用性、输出消费意图 | execution-admission、execution-contract |
-| script-plan / software-plan | 原生脚本启动与安装决策描述 | execution-contract；不spawn |
-| packages/ai-adapters/{codex,claude,deepseek}（Codex/Claude 已落地，DeepSeek 规划） | Node/TS 原生引擎协议与会话适配，分别拥有 SDK/进程 | A01 ProviderAgentPort（替换历史 C02 契约），无 PR/执行内核/UI 依赖 |
-| execution-mcp | 工具协议到执行服务port | execution-contract、service-catalog、rmcp |
-| execution-sqlite | journal/交互/批准消耗的原子持久化 | contract、interaction、admission（完整裁决审计）、approval、lifecycle |
-| execution-app | 能力/授权/批准/持久化和runner port的产品组装 | C06–C09、C18；不加载AI引擎 |
-| packages/ui | 提取的纯展示组件 | Vue/展示依赖，props/events |
-| apps/desktop | C05桌面基础壳与样本；后续自助UI、AI UI、宿主桥接和共同闭环 | 组件契约与宿主adapter，组合根唯一 |
-
-<a id="provider-baseline"></a>
-
-### 原生引擎基线（ai-runtime-20260918）
-
-经 2026-09-18 授权，当前 provider 规划为 Codex app-server、Claude Agent SDK、DeepSeek Harness，
-由各自 TypeScript adapter 映射原生会话/事件/权限，消费 [A01 #2439](https://dev.azure.com/shengming0923/rss/_workitems/edit/2439) 契约。
-这里记录范围与 owner；DeepSeek Harness 的独立适配边界与组件验证入口见[包说明](../../packages/ai-adapters/deepseek/README.md)，实际证据不替代生产 Host/平台接入验收。
-
-| Provider | 实施 owner | 验证责任 |
-| --- | --- | --- |
-| Codex app-server | [C12 #2405](https://dev.azure.com/shengming0923/rss/_workitems/edit/2405) | 固定原生版本，分别验证协议、真实模型和受控工具边界；C20 首个闭环选择 |
-| Claude Agent SDK | [C13 #2406](https://dev.azure.com/shengming0923/rss/_workitems/edit/2406) | 固定 SDK 版本，独立验证会话、工具与权限接缝 |
-| DeepSeek Harness | [A05 #2443](https://dev.azure.com/shengming0923/rss/_workitems/edit/2443) | 固定 revision/runtime/profile/plugin，独立验证原生接入与旁路封闭 |
-
-历史 [C14 #2407](https://dev.azure.com/shengming0923/rss/_workitems/edit/2407) Cursor 任务已移出当前范围，保留编号作迁移追踪；
-移除不等于完成，不作为新任务前置。DeepSeek 不复用 Cursor 的完成状态、测试证据或来源权利。
-
-C03 的当前实现见[目录核心](../../crates/service-catalog/README.md)与[后端对齐](../guides/202609130000-2396-service-catalog.md)：一个格式与参数规则可显式演进，未知语义拒绝；新增目录内容无需修改核心。选择保留目录/资源摘要、变体、参数和要求；上下架/期限绑定快照，外部展示说明绑定精确选择和目标。核心不计算能力或授权，缺少后续 owner 接线时不能声称执行闭环完成。
-
-C01 执行契约保持自身版本与 Rust owner；A01 将 C02 完整替换为 AI Runtime；当前 wire 为 V5，单一 JSON Schema 生成两端绑定，TS 拥有 Provider/Host/SessionStore ports。契约、安全解码与隔离消费见[契约开发说明](../guides/contracts-development.md)及 [AI Runtime 契约](../../packages/ai-contract/README.md)。数据校验和角色声明不产生可信主体、批准或执行证据。V1–V4 不兼容，无历史命令导入、alias 或双写。历史 C02 交付由 Git/PR 保留。
-
-范围基线 `ai-runtime-20260918`：北向 ACP + A2UI，不使用 AG-UI；原生引擎拥有模型上下文，TS AI Host 拥有产品会话、命令接纳及展示/交互投影，Rust 执行服务拥有业务执行权威。TS 不直接写 Rust 批准、intent 或结果表。A01 提供公共契约、fake Host 和 conformance；A04 提供标准 ACP 接入、统一客户端投影及 Vue/Lit renderer 接缝，开发与独立消费见[ACP–A2UI 开发](../guides/ai-access-development.md)。Codex/Claude 原生适配器已在独立包落地，见 [app-server adapter](../../packages/ai-adapters/codex/README.md) 与 [SDK adapter](../../packages/ai-adapters/claude/README.md)。Codex 固定0.155.0直接接入原生协议，实现基础对话、恢复、steer；显式终态fork通过 A01 受控扩展及 Host 准入接缝提供，子会话持久化与产品接入归 A03。动态工具与子代理不支持。C12/#2405 尚未完成可信真实模型身份与连续性验收，不能由本地替身通过或本 PR 合并推定完成。真实进程/本地模型传输、真实模型端点、平台受控工具和C20装配分别提供证据。A02 的 [AI SQLite adapter](../../packages/ai-store-sqlite/README.md)提供真实事务、独占与恢复存储；A03 的 [AI Host](../../packages/ai-host/README.md)提供持久 FIFO、独立 provider worker、核实恢复及[私有本地运行入口](../../apps/ai-host/README.md)。Host 通过独立 lifecycle fence port 管理 OS 启动记录，所有关闭等待受同一预算约束；恢复失败隔离 runtime，客户端分别显示 attachment 与持久健康状态。Claude 持久目录要求本地私有所有权。运行包由根 manifest 固定 Node 24.14.1 并按版本/平台核对 checksum，实际生命周期验收限定 macOS arm64；Tauri 产品装配与本地配置见[桌面指南](../guides/desktop-development.md)。固定模型 HTTP transport 的真实 SDK 测试与外部模型实测分别记录，不能互相替代。
-
-durable accepted 和稳定 cursor 只能在事务提交后确认；命令账本兼任 inbox 与 provider 派发意图，事件日志用于回放，只有可靠跨服务请求/结果使用 delivery。取消派发不证明终止，未知派发先核实；generation 和 config 版本阻止旧回调更新新运行。ACP prompt 保持最终响应，receipt/cursor/attach 由协商扩展表达。A2UI surface/action 与会话/运行/交互/revision 精确关联，无 A2UI 时降级到标准文本、工具状态和权限交互。能力与 binding 原子建立，受控工具准入必须消费可信 verifier 的当前 incarnation 证据；surface 删除持久化并在回答事务内再校验，终态投影必须有同批匹配事件。Host/Store 提供有界关闭，分页错误遵守统一 Result。同一 turn 可有多个独立 callback，原生 callback ID 与父请求坐标分离；问题内容与 pending 记录原子发布，回答不签发执行批准。客户端保存的选择不能超出 offer；交互展示与 live/snapshot 共用权威期限、callback lifetime 和首答命令身份。到期自动禁用，竞争 loser 不再重试，本地 winner 丢回执仍按原命令恢复。恢复重绑消费重新验证的 provider 证据；原 attempt 与当前 observer 分离，旧回调及 surface 原子失效且留下稳定事件。未知提交只有明确未提交证据才允许原期限内重试，本地失效不伪造模型终态。具体可靠性基线由 A01 公共契约持有。
-
-AI工具参数经过MCP/host映射到执行请求，C02不直接嵌入另一份执行状态；该映射在C20验证。
-`execution-admission`就是C07的唯一actor/action/resource/context授权裁决核心；“admission”是包名，“授权”是职责，不另建平行authorization service。C19消费该裁决并强制持久执行准入。
-C10/C11为后续真实执行器准备计划，不强制进入仅接受冻结测试计划的C19/C20；它们的独立交付不等于端侧执行完成。
-C19不重新做Scope/Group/Resource，C20不复制授权；双方调用公共接缝，不能因组件独立而出现执行旁路。
+北向使用 ACP 与 A2UI；Codex、Claude、DeepSeek 由各自 adapter 接入，具体能力与操作见[本地 Host](../../apps/ai-host/README.md)。动态依赖关系以 workspace manifest 为准，接口与格式由代码和 schema 持有。
 
 ## 7. prmonitor 提取规则
 
@@ -301,58 +242,16 @@ PowerShell/Bash是原生载荷；Rust提供启动、预算、权限、恢复，J
 现有rss-mdm将完整企业自助列为可选深化；用户本次明确提前建设的是本地人/AI共用目录与控制入口。
 本PR不改后端PRD的发布退出条件；企业目录发布、身份/许可、真实软件自助安装和Linux受管能力需在对应后端/平台交付时同步批准范围。
 
-## 10. 任务追踪与并行约束
+## 10. 交付协作
 
-需求追踪见下表。表格只绑定责任，不保存进度或滚动波次；状态、原生Child/Predecessor和最新pm:epic-wave以EPIC为准。
+任务关系与实施顺序由 tracker 持有。共享契约由其 owner 修改，调用方同步切换；同一文件只由一个任务集成。组件测试、产品组装和平台执行分别验证，不把独立组件可用视为整条业务完成。
 
-| 工作项 | owner / 需求覆盖 | 直接前置 |
-| --- | --- | --- |
-| [D00 #2393](https://dev.azure.com/shengming0923/rss/_workitems/edit/2393) | 本PRD及来源/导航 | 无；不人为阻塞C01–C20 |
-| [C01 #2394](https://dev.azure.com/shengming0923/rss/_workitems/edit/2394) | 执行契约：ID01–04、EX03、SEC01 | 无 |
-| [C02 #2395](https://dev.azure.com/shengming0923/rss/_workitems/edit/2395) | AI契约：AI01–02、AI06 | 无 |
-| [C03 #2396](https://dev.azure.com/shengming0923/rss/_workitems/edit/2396) | 目录核心：CAT01–06 | 无 |
-| [C04 #2397](https://dev.azure.com/shengming0923/rss/_workitems/edit/2397) | 交互：INT01–03 | 无 |
-| [C05 #2398](https://dev.azure.com/shengming0923/rss/_workitems/edit/2398) | UI提取与Tauri基础壳：UI04、SEC05 | 无 |
-| [C06 #2399](https://dev.azure.com/shengming0923/rss/_workitems/edit/2399) | 能力：EX02、OS01 | C01 |
-| [C07 #2400](https://dev.azure.com/shengming0923/rss/_workitems/edit/2400) | 授权：ID01–04、CAT04、EX01、SEC01–02 | C01 |
-| [C08 #2401](https://dev.azure.com/shengming0923/rss/_workitems/edit/2401) | 批准：EX03、INT01、REC02/05 | C01/C07 |
-| [C09 #2402](https://dev.azure.com/shengming0923/rss/_workitems/edit/2402) | 生命周期：EX06、REC03–04 | C01 |
-| [C10 #2403](https://dev.azure.com/shengming0923/rss/_workitems/edit/2403) | 脚本计划：EX04–05、SEC04 | C01 |
-| [C11 #2404](https://dev.azure.com/shengming0923/rss/_workitems/edit/2404) | 软件计划：SW01–04 | C01 |
-| [C12 #2405](https://dev.azure.com/shengming0923/rss/_workitems/edit/2405) | Codex app-server TS适配：AI01–06 | A01 |
-| [C13 #2406](https://dev.azure.com/shengming0923/rss/_workitems/edit/2406) | Claude Agent SDK TS适配：AI01–06 | A01 |
-| [C14 #2407](https://dev.azure.com/shengming0923/rss/_workitems/edit/2407) | Cursor 范围已取消；不计完成，不作为前置 | — |
-| [C15 #2408](https://dev.azure.com/shengming0923/rss/_workitems/edit/2408) | 自助UI：UI01–04、CAT03–06、INT01–03 | C03/C04/C05 |
-| [C16 #2409](https://dev.azure.com/shengming0923/rss/_workitems/edit/2409) | AI UI：AI01/03/05/06、UI02/04 | C05/A04 |
-| [C17 #2410](https://dev.azure.com/shengming0923/rss/_workitems/edit/2410) | MCP：AI03、CAT03–04、SEC02 | C01/C03 |
-| [C18 #2411](https://dev.azure.com/shengming0923/rss/_workitems/edit/2411) | SQLite：REC01–06、INT02、SEC04/06的S1测试存储边界 | C04/C08/C09 |
-| [C19 #2412](https://dev.azure.com/shengming0923/rss/_workitems/edit/2412) | 执行组装：ID03、EX01–03/06、SEC01–04/06的S1限制、REC01–06及配置版本接缝 | C06/C07/C08/C09/C18 |
-| [C20 #2413](https://dev.azure.com/shengming0923/rss/_workitems/edit/2413) | 共同闭环：UI/AI/INT、EX01/06、SEC02/05 | C12/C15/C16/C17/C19 |
-| [A01 #2439](https://dev.azure.com/shengming0923/rss/_workitems/edit/2439) | AI Runtime V2、公共 ports/fixtures 与架构基线 | C02 |
-| [A02 #2440](https://dev.azure.com/shengming0923/rss/_workitems/edit/2440) | TS AI SQLite 与可靠交付 | A01 |
-| [A03 #2441](https://dev.azure.com/shengming0923/rss/_workitems/edit/2441) | TS AI Host 与恢复、Node 生命周期 | A01/A02 |
-| [A04 #2442](https://dev.azure.com/shengming0923/rss/_workitems/edit/2442) | ACP–A2UI 接入和客户端基础包 | A01 |
-| [A05 #2443](https://dev.azure.com/shengming0923/rss/_workitems/edit/2443) | DeepSeek Harness TS 原生适配 | A01 |
-| [A06 #2444](https://dev.azure.com/shengming0923/rss/_workitems/edit/2444) | 三引擎公共能力和故障恢复验收 | 各 adapter、Host/Store 与接入实际产物 |
+稳定工作项索引仅用于解析本文和来源文档中的缩写；状态、依赖和实施顺序仍以 tracker 为准。
 
-需求代码缩写均省略共同前缀CLI。OS02–04、ID03本地生产authority、SEC06的平台enforcement、真实执行和企业连接属于后续阶段，不因表内模型任务完成而关闭。
-
-依赖只反映真正的产物消费。能力/授权/批准/计划核心接受显式可信输入，安全强制在C19/C20组合与后续平台adapter完成，不能把所有核心人为串行。
-C02工具提案无需消费执行内核；C17通过port可用测试服务验收；C15人用UI不依赖AI，C20 先以 Codex 完成产品闭环，不等待 Claude/DeepSeek；A06 汇合三引擎。
-AI 产品 schema 变更回 A01 协调；C12/C13/A05 只改各自 provider 目录，A03 持有公共运行支撑，C20 唯一拥有最终桌面装配。公共 workspace/lock/工程入口每个 wave 串行集成，不等待 C20 才建立基础工程。
-
-A06 的[共同验收入口与证据边界](../verification/ai-provider-matrix.md)分别记录公共行为、真实原生恢复、生产受控准入和剩余 unknown；组件工具测试不扩大生产准入，显示历史不能恢复原生回调，取消请求确认不能代替原生或 Rust 业务终态。
-C05组件、C15自助页面、C16对话页面分别独占目录；交互核心不拥有Vue组件，host将C04结果映射到UI。
-C09/C18 分别提供普通命令与可信观察入口，输入类型互斥；普通 Host 无需证据验证器，C19 仅在观察路径装配验证器。两个路径共用幂等、审计和原子提交机制。C18 的当前公共入口与 S1 测试存储证据见 [execution-sqlite](../../crates/execution-sqlite/README.md)。回执兼作可靠结果，由各 consumer 的持久确认推进投递，乱序确认不能跳过未确认结果；失败/陈旧 runner 事件保留提交的 attempt 与裁决原因。受保护 BLOB 在物化前检查大小，错误区分调用输入、配置及操作/确认/初始化恢复。查询/拉取/确认不派发 runner；只提供显式测试 authority 初始化，真实 ACL/可信身份与平台隔离仍归后续交付。
-
-C18 独占 Rust 执行 SQLite migration，A02 独占 TS AI SQLite migration；C19不另建表；Cargo/lock/UI package配置与根入口由单一集成人串行合并。
-
-当前执行存储只接受 C09/C18 的 v2 格式；类型拆分同时提升快照、数据库和指纹域版本。当前无旧数据迁移要求，不提供 v1 reader、升级迁移或升级回归；不支持版本保留原库并拒绝打开。
-
-C19 的当前公共入口与 S1 证据见 [execution-app](../../crates/execution-app/README.md)。应用服务区分原请求重放与显式新尝试，每次新尝试经当前能力/C07/C08及原子提交；仅首次提交释放一次派发。服务 owner 独立于窗口和模型调用，丢失 runner 历史保留 Unknown，不从计划合成成功。配置由可信 host 加载/持久审计，应用验证版本、硬上限、原子替换及 LKG/degraded 接缝；C20 接入实际 UI/AI，生产身份和真实 runner 仍归后续阶段。
-
-组合层按动作定位任务，不给交互、投递、取消或审计附加结果读取权限。普通授权状态保留安全准入结果，首次拒绝、重放和重启分类一致；派发门控与 stop 响应保留闭集诊断，stop 失败不阻断终止/效果观察。更高 schema 只返回版本诊断，不构造可写应用句柄。
-真实开工前复核变更文件、隐式消费和测试数据库/临时目录冲突；无Predecessor不自动代表可同时改同一文件。
+- [C01 · 执行契约](https://dev.azure.com/shengming0923/rss/_workitems/edit/2394)
+- [C10 · 脚本计划](https://dev.azure.com/shengming0923/rss/_workitems/edit/2403)
+- [C20 · 共同闭环](https://dev.azure.com/shengming0923/rss/_workitems/edit/2413)
+- [D00 · 需求与来源](https://dev.azure.com/shengming0923/rss/_workitems/edit/2393)
 
 ## 11. 后续平台能力与客户端发布
 
@@ -386,8 +285,7 @@ prmonitor源码或其跨平台依赖不构成本客户端三平台安装包/更�
 S1未实现的真实进程/文件/网络/IPC隔离风险在平台门验证，不以测试runner的拒绝性样本冒充系统沙箱证明。
 C20必须证明选定AI宿主自身没有不受控原生工具旁路；做不到时停留在普通会话/测试协议能力，不开放受控操作。
 
-每次证据绑定源码SHA、依赖lock、provider版本、配置/运行模式、命令与原始结果及未覆盖项。
-本仓已有本地 make ci、Cargo/pnpm 工程与独立消费验证；各能力 owner 随实施扩展既有入口。完整 make ci 一次收集失败后集中修复，不跑父仓 CI 代替，不新增远端 CI。
+验证操作与记录要求见[验证规则](../rules/verification-scope.md)。
 
 ## AI 测试用户、连接与上下文（AGENT-AI-01）
 
@@ -399,7 +297,7 @@ C20必须证明选定AI宿主自身没有不受控原生工具旁路；做不到
 
 Native 与 Host 使用匿名继承管道及固定 Caller/generation 的 UI 通道；不监听文件系统 socket。worker 启动参数仅通过既有私有管道传递，不存参数快照或来源账号文件；主密钥不进入 worker。保留工具、hooks、plugins 和任意 MCP 的限制，既有配置不得开放旁路。Codex 验证使用 ephemeral 线程，Claude 使用不持久化的验证会话；仅恢复 RSS 记录的原生 ID，不管理用户其它 CLI 会话。
 
-[#2462](https://dev.azure.com/shengming0923/rss/_workitems/edit/2462) 经用户扩大为 macOS arm64 / Windows 11 x64 独立安全状态服务及桌面候选接线：服务仅 GetServiceStatus，采用 OS 双向身份和连接内一次性 challenge；不采用 HMAC、凭据票据或 worker grant，不接收 AI 密钥。该实现不包含真实脚本、软件安装或生产授权签发，双平台真实验证后补且 issue 保持未完成。详见[安全服务架构](../architecture/local-service.md)与[实验室验收](../guides/local-service-lab.md)。AES-GCM 随机 IV 保留。测试注入主密钥 backend，不访问真实用户 Keychain。
+[#2462](https://dev.azure.com/shengming0923/rss/_workitems/edit/2462) 经用户扩大为 macOS arm64 / Windows 11 x64 独立安全状态服务及桌面候选接线：服务仅 GetServiceStatus，采用 OS 双向身份和连接内一次性 challenge；不采用 HMAC、凭据票据或 worker grant，不接收 AI 密钥。该实现不包含真实脚本、软件安装或生产授权签发，双平台真实验证需独立提供证据。详见[安全服务架构](../architecture/local-service.md)与[实验室验收](../guides/local-service-lab.md)。AES-GCM 随机 IV 保留。测试注入主密钥 backend，不访问真实用户 Keychain。
 
 产品 Session 可在无凭据时创建和读取。首条输入懒创建 provider 阶段，后续连接选择先等待已接收队列按原阶段完成；切换等待期间拒绝新的普通输入。每个阶段固定连接及版本，一次仅有一个 live worker。原生 resume 与新上下文意图分别操作，原命令重试优先返回原回执，不触发新阶段。原生恢复失败不静默换上下文。
 

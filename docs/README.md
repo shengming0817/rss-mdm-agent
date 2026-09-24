@@ -5,19 +5,16 @@
 - [Codex工作方式](guides/codex-workflow.md)：项目指令与本地共享技能入口。
 - [桌面开发](guides/desktop-development.md)：启动、构建、组件消费、持久化 S1 装配与本地验收。
 - [UI与桌面壳提取记录](reference/ui-extraction.md)：固定来源、MIT授权和逐文件映射。
-- [目录与后端对齐](guides/202609130000-2396-service-catalog.md)：精确资源绑定、参数演进与执行 owner 边界。
-- [契约开发](guides/contracts-development.md)：执行/AI 契约、schema 与隔离消费验证。
-- [AI Runtime V5](../packages/ai-contract/README.md)：唯一 schema、三个 ports、可靠性和 ACP–A2UI 约定。
-- [AI 助手页面](guides/assistant-development.md)：共享导航、固定 Host 浏览器验收、可信执行详情与版本切换。
-- [ACP–A2UI 开发](guides/ai-access-development.md)：标准协议、公共客户端、Vue/Lit 接缝与真实浏览器独立消费。
+- [契约开发](guides/contracts-development.md)：执行/AI 契约、schema 与生成与验证。
+- [AI Runtime](../packages/ai-contract/README.md)：唯一 schema、三个 ports、可靠性和 ACP–A2UI 约定。
+- [ACP–A2UI 开发](guides/ai-access-development.md)：标准协议、公共客户端、Vue/Lit 接缝与浏览器接入。
 
-- [AI SQLite](../packages/ai-store-sqlite/README.md)与[来源记录](reference/ai-store-sqlite.md)：原子持久化、单 Host 所有权、恢复与独立消费。
-- [DeepSeek Harness adapter](../packages/ai-adapters/deepseek/README.md)与[来源记录](reference/deepseek-harness.md)：静态原生进程、A01 恢复凭证、受控桥与独立消费。
-- [Claude SDK adapter](../packages/ai-adapters/claude/README.md)：原生会话、回调、受控工具与独立消费。
+- [AI SQLite](../packages/ai-store-sqlite/README.md)与[来源记录](reference/ai-store-sqlite.md)：原子持久化、单 Host 所有权、恢复。
+- [DeepSeek Harness adapter](../packages/ai-adapters/deepseek/README.md)与[来源记录](reference/deepseek-harness.md)：静态原生进程、A01 恢复凭证、受控桥。
+- [Claude SDK adapter](../packages/ai-adapters/claude/README.md)：原生会话、回调、受控工具。
 - [AI Host](../packages/ai-host/README.md)、[本地运行入口](../apps/ai-host/README.md)、[状态与进程设计](architecture/ai-host.md)及[来源](reference/ai-host.md)。
-- [Codex app-server adapter](../packages/ai-adapters/codex/README.md)与[来源记录](reference/codex-adapter.md)：固定原生协议、turn/steer/fork、受控 MCP 与独立消费。
+- [Codex app-server adapter](../packages/ai-adapters/codex/README.md)与[来源记录](reference/codex-adapter.md)：固定原生协议、turn/steer/fork、受控 MCP 。
 - [AI Runtime 来源](reference/ai-runtime.md)：固定上游版本、生成链和许可。
-- [三引擎能力与恢复验收](verification/ai-provider-matrix.md)：共同套件、生产准入、原生旁路范围与当前构建回执。
 - [契约来源与改写](reference/contracts-extraction.md)：C01/C02 的固定对标及参考重写边界。
 - [交互核心](../crates/execution-interaction/README.md)：回答、取消、过期与恢复。
 - [能力核心](../crates/execution-capability/README.md)：计划要求与环境快照匹配。
@@ -36,3 +33,4 @@
 
 - [本机安全服务架构](architecture/local-service.md)与[实验室指南](guides/local-service-lab.md)：#2462 双平台候选、一次性查询、私有进程协议与平台验收边界。
 - [本机安全服务来源](reference/local-service.md)：固定上游 revision、公开平台接口和运行包校验来源。
+- [服务目录](../crates/service-catalog/README.md)：参数投影、精确资源绑定与后端边界。

@@ -121,7 +121,7 @@ try {
     if (Test-Path $policyPath) { $installation = (Get-Content $policyPath -Raw | ConvertFrom-Json).installation }
     $serviceHash = (Get-FileHash $stagedService -Algorithm SHA256).Hash.ToLowerInvariant()
     $probeHash = (Get-FileHash $stagedProbe -Algorithm SHA256).Hash.ToLowerInvariant()
-    $policy = @{version=1;sourceSha=$manifest.sourceSha;installation=$installation;build=$serviceHash;platform='windows-x64';service_subject=$serviceSid;allowed_users=$AllowedUserSid;
+    $policy = @{version=1;installation=$installation;build=$serviceHash;platform='windows-x64';service_subject=$serviceSid;allowed_users=$AllowedUserSid;
         client=@{path=$desktop;sha256=$manifest.executableSha256;cdhash=$null};probe=@{path=$probe;sha256=$probeHash;cdhash=$null};service=@{path=$service;sha256=$serviceHash;cdhash=$null}}
     $temporary = Join-Path $root 'policy.new'
     [IO.File]::WriteAllText($temporary, ($policy | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))

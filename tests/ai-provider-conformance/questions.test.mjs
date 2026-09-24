@@ -6,7 +6,7 @@ import {
   until,
   unwrap,
   budget,
-  evidence,
+  assertNativeSession,
 } from "./support.mjs";
 
 for (const provider of ["claude", "deepseek"]) {
@@ -110,15 +110,7 @@ for (const provider of ["claude", "deepseek"]) {
           budget(),
         ),
       );
-      evidence(
-        t,
-        "question-answer-race-lost-callback",
-        session,
-        f.model.requests,
-        {
-          result: "supported",
-        },
-      );
+      assertNativeSession(provider, session, f.model.requests);
     },
   );
 }

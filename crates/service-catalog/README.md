@@ -1,52 +1,30 @@
 # service-catalog
 
-[C03 #2396](https://dev.azure.com/shengming0923/rss/_workitems/edit/2396) 的独立目录核心。目录只拥有不可变内容、精确选择、参数规则与展示解释；没有能力匹配、授权、后端解析、下载或执行接口。
+目录拥有不可变内容、精确选择、参数投影与展示解释；能力、授权、资源解析和执行由调用方的对应 owner 持有。冻结内容不能认证发布者，listed 不能证明可申请或可执行。离线缓存可浏览，接纳新变更仍需当前可信核验。
 
-## 公共入口与信任边界
+人用表单与 AI 输入共用参数声明和运行时校验；JSON Schema 不替代聚合预算、重复键检查和可信身份验证。秘密仅以引用传递。实现与 API 说明见 [src](src/)，schema 由 [examples](examples/) 生成；不要手写第二份格式或摘要定义。
 
-- `decode_catalog(bytes, CatalogLimits)` / `FrozenCatalog::freeze(dto, limits)`：严格有界解析、语义检查、规范排序和摘要绑定。冻结只证明内容一致，不能认证发布者。
-- `snapshot()` / `reference()`：只读内容和 `authority + identity{id,revision} + digest`。一个快照只有一个命名空间；企业 tenant 不可省略，local/test 不伪造企业主体。
-- `projection(item, variant, ParameterLimits)`：同时提供表单字段与 AI Draft 2020-12 `input_schema()`，不维护两份约束。`validate(bytes)` 是共同参数入口，输出 `InputValue`。
-- `select(bytes, CatalogLimits, ParameterLimits)`：接受 `catalog / itemId / variantId / arguments`，返回私有字段的 `SelectedOperation`，保留完整资源绑定、参数声明、要求及规范参数。返回的 SelectionRef 还绑定规范化参数摘要；省略默认值与显式相同默认值等价，修改有效参数使原外部说明不再匹配。没有 `ExecutionRequest` 快捷转换、可信主体或执行 permit。
-- `availability(now_unix_ms)`：解释记录状态；withdrawn 优先，其次 `now >= expiresAt` 为 expired，其余为 listed。listed 仅指这份快照的记录，不表示最新目录、可申请或可执行。到期/下架仍可检查内容。
-- `display_status(target, now, assessment)`：只核对外部展示说明与精确选择、device/platform/user 目标及 UTC 时间窗口的关联。缺失、过期或早于检查时间均为 unknown；关联错误拒绝。`DisplayStatus` 独立表达 visibility/requestability/executability，每轴使用闭合 `DisplayDecision`（unknown、allowed 或阻塞原因）。正向展示由能力/授权 owner 产生，不能从 listed 推导；不重做 C06 能力算法、不验证签发者、不生成授权。宿主须验证来源，执行前重新授权。
 
-C07/execution-app 及后续企业接线负责可信主体、当前资源发布态、能力、政策、批准与执行前复核。模型、OS 登录或合法 DTO 不能授予权限。离线缓存可浏览，但无当前可信核验就不能据此接纳新变更。
+rss-mdm-agent 拥有目录和本地执行契约；rss-mdm 拥有 Resource、Group/Scope/Policy、软件源发布、产品授权与 Agent wire。C03 单向依赖 execution-contract 的 canonical 值类型，不依赖相邻后端仓，不引入第二个 shared-types 包或 facade。
 
-## 字段与版本
+| 目录语义 | 后续 rss-mdm adapter 责任 |
+| --- | --- |
+| authority enterprise{id,tenant} | 按可信接线选择 issuer/tenant；不能由目录或模型自行声明认证成功 |
+| resource.reference.id/revision | 精确映射 Resource Version.resource/label；标识语法不同则显式拒绝，禁止截断、补前缀或模糊查找 |
+| resource.versionDigest | 核对 Resource Version.digest，保留其“整个资源版本定义”的语义；不是下载文件 SHA-256 |
+| selector.platform/architecture/key | 显式映射目标平台、架构和资源变体；x86_64/aarch64 与后端 X86_64/Aarch64 一一对应，禁止架构/变体回退 |
+| action | 由具体执行 owner 验证动作与选中资源声明相容；目录字符串不是执行命令 |
+| SelectedOperation | 后续 host 必须消费完整 pin、selector、参数和要求，解析实际 artifact 后核对字节长度/SHA-256并冻结计划 |
 
-快照包含 schemaVersion、authority、identity、exclusive expiresAtUnixMs 与 items。项目包含名称/说明/分类、software/script/tool 展示类型、aiDiscoverable、required/optional/request 分发提示、listed/withdrawn 状态与非空操作集合。提示不签授权。
+后端 Resource Rust 类型不是共享 wire；目录不复制其 canonical 编码、生命周期和业务枚举。tool 是目录展示分类，不强制等同于后端 Resource kind。实际 wire 由后端 producer 发布后按固定版本/hash消费，本次不预建 adapter/resolver。
 
-操作独立绑定 action、资源 ID/revision/versionDigest、platform/architecture/key、参数与 capability/runAs/interaction/evidence 要求。目录 operation ID、action 与资源 selector key 是不同坐标，不可互相代替。platform 复用 execution-contract；architecture 使用 x86_64/aarch64。Linux 类型不承诺后端 Linux 受管能力。
+目录内没有 actor/device/target/批准字段。执行请求上下文由 host 显式绑定，目标不能从 AI 参数或同名 OS/产品账号推断；外部展示说明中的 Target 只是关联坐标，不构成认证。
 
-V1 SHA-256 输入为域 `rss-mdm-agent/service-catalog/v1\0` 后接 JCS 内容。items/operations 按 ID 排序，capability/evidence 集合排序，JSON 对象使用规范键顺序；显示选择项数组顺序保留。全部内容包括上下架、展示、参数默认值和期限均参与摘要。item ID、operation ID、参数名及要求集合不得重复，空目录允许，空操作集合和空 evidence 要求拒绝。名称、分类和参数 title 不得仅空白。
+## 不兼容与可扩展性
 
-`schemaVersion`、目录 revision、资源 revision、内容摘要各自独立。资源 revision 作为 opaque 精确标签传递，从不解析 `latest` 或其它别名；是否真正不可变由资源 owner 核验，字符串合法本身不是证据。不同内容即使被错误标为同 revision，也有不同摘要并拒绝旧选择。
+新增软件、脚本、动作和枚举选项通过目录数据扩展，生成新目录 revision/digest。新增参数类型/字段语义时更新唯一类型、schema、runtime 和实际消费者；不兼容时提高目录格式版本，旧客户端报告 unsupported，而不是忽略新执行约束。没有旧格式兼容、默认变体或 latest 回退。
 
-首版只接受 schemaVersion 的整数 1；未知字段、类型、版本明确拒绝。扩展新项目/动作/资源/参数枚举是数据变化；新增参数类型或格式语义时更新唯一实现、schema、消费者与测试，不兼容格式升级版本。本次无历史格式迁移，不提供旧格式 alias、shim、双读或回退。未来实际持久消费者的切换须由其 owner 明确处理。
+目录新版本不会替换已冻结计划。是否继续执行旧计划由执行 owner 核验原 pin、当前政策和批准；目录刷新或缓存本身均不能证明批准有效/失效。
 
-## 参数规则与预算
 
-字段 key 使用 execution-contract Id；字段 title/description 为纯文本。规则有 string（字符长度、choices、default）、integer（安全范围、choices、default）、boolean（default）、secretReference（仅 id/revision）。choices 是非空无重复集合，默认值必须合法且只能用于 optional 字段。required 缺值失败，显式 null 不视作缺值。
-
-整数限定 ±(2^53−1)，允许数学等价的 3/3.0/30e-1 并规范为 3，不接受字符串数值。解析前检查原数字 token，拒绝因浮点舍入/下溢才成为整数的数值。字符串长度按 Unicode scalar 计数，UTF-8 字节另受宿主预算限制。secretReference 不允许 default/choices/秘密正文；只映射到 `InputValue::Secret`，不解析秘密。未知参数、重复键和不支持的嵌套业务结构拒绝。错误使用闭合 CatalogError 类别与 Limit/DefinitionRule/ArgumentRule 静态坐标，区分各预算、定义和参数规则，不回显字段名或值。
-
-`CatalogLimits` 的 raw/canonical bytes、depth（1..=64，根为1）、nodes（含容器）、string bytes（含 key）、collection items 均显式正值；解析过程中消耗节点/深度/集合预算，先拒绝超总字节输入。typed freeze 先用有界 writer，再经过同一解析路径。
-
-`ParameterLimits` 的 bytes、string bytes、parameters 均显式正值。参数 bytes 限制紧凑参数 JSON，在默认值展开前后均核验；独立参数字节入口也限制原始输入。声明数量受 parameters 限制。JSON Schema 只描述结构，不表达聚合字节预算、重复键和信任检查；所有入口必须调用共同 runtime。禁止 UI/AI 自行弱化 schema 或自行补默认值。
-
-## 验证
-
-```sh
-cargo test -p service-catalog --locked
-cargo clippy -p service-catalog --all-targets --locked -- -D warnings
-RUSTDOCFLAGS="-D warnings" cargo doc -p service-catalog --no-deps --locked
-node --test scripts/rust-consumers.test.mjs
-node scripts/check-rust-consumers.mjs
-```
-
-`catalog-schema` 输出当前结构 schema；`catalog-golden` 输出目录和 schema 的规范摘要。golden 变更必须有意审阅，不能以重新生成代替漂移调查。独立 consumer 使用真实公共 example 和固定测试目录，不证明后端/OS/模型能力；全量验证按本仓 `make ci`。workspace `clippy.toml` 固定认知复杂度阈值 15，crate 显式启用 `clippy::cognitive_complexity`，由现有 Clippy 检查落实。
-
-ref: rust-clippy [clippy_lints/src/cognitive_complexity.rs](https://github.com/rust-lang/rust-clippy/blob/master/clippy_lints/src/cognitive_complexity.rs)：restriction lint 必须显式启用，并读取配置阈值。
-
-后端边界及固定来源见[对齐说明](../../docs/guides/202609130000-2396-service-catalog.md)。
+来源与后端观察 revision 见[来源索引](../../docs/reference/sources.md#服务目录对齐)。

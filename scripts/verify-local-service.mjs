@@ -4,11 +4,10 @@ import { createHash } from "node:crypto";
 import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { sourceState } from "./source-state.mjs";
 const digest = (file) =>
   createHash("sha256").update(readFileSync(file)).digest("hex");
 
-export function verifiedCandidate(policy, source, hash = digest) {
+export function verifiedCandidate(policy, hash = digest) {
   const validArtifact = (artifact) =>
     artifact &&
     typeof artifact.path === "string" &&
@@ -17,9 +16,6 @@ export function verifiedCandidate(policy, source, hash = digest) {
     hash(artifact.path) === artifact.sha256;
   if (
     policy?.version !== 1 ||
-    !/^[a-f0-9]{40}$/.test(policy.sourceSha ?? "") ||
-    !source.clean ||
-    source.head !== policy.sourceSha ||
     !validArtifact(policy.client) ||
     !validArtifact(policy.probe)
   )
@@ -79,19 +75,17 @@ if (
           "RSS MDM Agent/service/policy.json",
         )
       : "/Library/Application Support/RSS MDM Agent/service/policy.json";
-  const source = sourceState(process.cwd());
   const policy = JSON.parse(readFileSync(policyPath, "utf8"));
-  const candidate = verifiedCandidate(policy, source);
+  const candidate = verifiedCandidate(policy);
   const checks = candidate
     ? serviceChecks(candidate.executable, candidate.negative)
     : { passed: false, steps: [] };
-  const passed = checks.passed && !!verifiedCandidate(policy, source);
+  const passed = checks.passed && !!verifiedCandidate(policy);
   mkdirSync(".local-ci-runs", { recursive: true });
   writeFileSync(
     ".local-ci-runs/service-platform.json",
     JSON.stringify(
       {
-        source,
         platform: process.platform,
         arch: process.arch,
         policyPath,

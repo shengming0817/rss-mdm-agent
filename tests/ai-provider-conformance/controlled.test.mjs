@@ -10,7 +10,6 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { openSqliteStore } from "../../packages/ai-store-sqlite/dist/index.js";
 import { executionServer } from "../ai-host/rust-execution.mjs";
-import { profileDigest } from "../../scripts/check-ai-acceptance.mjs";
 import {
   engines,
   fixture,
@@ -21,7 +20,7 @@ import {
   clientAt,
   nativePeer,
   capabilities,
-  evidence,
+  assertNativeSession,
   executionGeneration,
 } from "./support.mjs";
 
@@ -118,18 +117,18 @@ for (const provider of engines) {
             /unsupported_capability/,
           );
           assert.equal(f.model.requests.length, 0);
-          t.diagnostic(
-            JSON.stringify({
-              a06: 1,
-              profileSourceSha256: profileDigest(provider),
-              scenario: "production-controlled-admission",
-              provider,
-              profile: "controlled_tools",
-              result: "unsupported",
-              proof: "production_admission",
-              modelRequests: 0,
-            }),
+          peer.close();
+          assert.equal(await stop(app), 0, stderr);
+          const store = unwrap(
+            openSqliteStore({ path: f.config.databasePath, mode: "open" }),
           );
+          try {
+            const rejected = unwrap(await store.session(empty.namespace));
+            assert.deepEqual(rejected.stages, []);
+            assert.equal(rejected.currentStageId, undefined);
+          } finally {
+            unwrap(await store.close(budget()));
+          }
           return;
         }
         const view = await peer.client.createSession(),
@@ -202,17 +201,11 @@ for (const provider of engines) {
         try {
           const session = unwrap(await store.session(view.namespace));
           assert.equal(activeStage(session).binding.providerVersion, "0.155.0");
-          evidence(
-            t,
-            "production-controlled-admission",
+          assertNativeSession(
+            provider,
             session,
             f.model.requests,
-            {
-              result: "supported",
-              proof: "real_process_local_model_rust_s1",
-
-              rustCatalog: true,
-            },
+            "host_mediated",
           );
         } finally {
           unwrap(await store.close(budget()));

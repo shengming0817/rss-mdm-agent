@@ -7,7 +7,7 @@ import {
   until,
   unwrap,
   budget,
-  evidence,
+  assertNativeSession,
 } from "./support.mjs";
 
 for (const provider of engines) {
@@ -93,11 +93,7 @@ for (const provider of engines) {
         ).length,
         1,
       );
-      evidence(t, "native-cancel-request-terminal", session, f.model.requests, {
-        result: "supported",
-        confirmation: "request_only",
-        outcome: "cancelled",
-      });
+      assertNativeSession(provider, session, f.model.requests);
     },
   );
 }
@@ -146,10 +142,6 @@ test(
         budget(),
       ),
     );
-    evidence(t, "cancel-without-terminal-recovery", session, f.model.requests, {
-      result: "supported",
-      confirmation: "request_only",
-      outcome: "unknown",
-    });
+    assertNativeSession("deepseek", session, f.model.requests);
   },
 );

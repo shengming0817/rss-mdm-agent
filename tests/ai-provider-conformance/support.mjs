@@ -1,3 +1,7 @@
+import { CODEX_VERSION } from "../../packages/ai-adapters/codex/dist/runtime.js";
+import { PROVIDER_VERSION } from "../../packages/ai-adapters/claude/dist/configuration.js";
+import { HARNESS_VERSION } from "../../packages/ai-adapters/deepseek/dist/configuration.js";
+import { COMPOSITION_ID } from "../../packages/ai-adapters/deepseek/dist/assembly.js";
 import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import { openSqliteStore } from "../../packages/ai-store-sqlite/dist/index.js";
 import { ConnectionSecrets } from "../../apps/ai-host/dist/secrets.js";
@@ -27,11 +31,6 @@ import {
 import { createModelServer } from "../ai-adapters/claude/model-fixture.mjs";
 import { reply } from "../ai-adapters/codex/helpers.mjs";
 import { completion } from "../ai-adapters/deepseek/native-support.mjs";
-import {
-  profileDigest,
-  nativeToolInventory,
-} from "../../scripts/check-ai-acceptance.mjs";
-export { capabilities } from "../../scripts/check-ai-acceptance.mjs";
 
 export const engines = ["codex", "claude", "deepseek"];
 export const budget = (timeoutMs = 15000) => ({
@@ -368,24 +367,102 @@ export async function fixture(t, provider) {
   });
   return f;
 }
-export function evidence(t, scenario, session, requests, extra = {}) {
-  const { workspaceId: _workspace, ...binding } = activeStage(session).binding;
-  t.diagnostic(
-    JSON.stringify({
-      a06: 1,
-      profileSourceSha256: profileDigest(binding.provider),
-      scenario,
-      proof: "real_process_local_model",
-      provider: binding.provider,
-      profile:
-        activeStage(session).capabilities.tools === "disabled"
-          ? "conversation"
-          : "controlled_tools",
-      binding,
-      capabilities: activeStage(session).capabilities,
-      ...extra,
-      modelRequests: requests.length,
-      nativeTools: nativeToolInventory(requests),
-    }),
+export function capabilities(provider, tools = "disabled") {
+  return {
+    continuation: "across_processes",
+    cancellation: "request_only",
+    tools,
+    steer: provider === "codex" ? "supported" : "unsupported",
+    fork: provider === "codex" ? "supported" : "unsupported",
+    subagent: "unsupported",
+    terminal: "unsupported",
+    structuredQuestion: provider === "codex" ? "unsupported" : "supported",
+    multimodal: "unsupported",
+  };
+}
+const id = (value) =>
+  typeof value === "string" && value.length > 0 && value.length <= 512;
+/** Observed request definitions only; never derive this inventory from capability declarations. */
+export function nativeToolInventory(requests) {
+  if (!Array.isArray(requests) || requests.length === 0)
+    throw new Error("No native model request");
+  const names = requests.flatMap((request) => {
+    const tools = request.tools ?? [];
+    if (!Array.isArray(tools)) throw new Error("Invalid native tool inventory");
+    return tools.flatMap((tool) => {
+      if (tool?.type === "namespace") {
+        if (!id(tool.name) || !Array.isArray(tool.tools))
+          throw new Error("Invalid native tool inventory");
+        return tool.tools.map((child) => {
+          if (!id(child?.name))
+            throw new Error("Invalid native tool inventory");
+          return `${tool.name}__${child.name}`;
+        });
+      }
+      const name = tool?.name ?? tool?.function?.name;
+      if (!id(name)) throw new Error("Invalid native tool inventory");
+      return name;
+    });
+  });
+  return [...new Set(names)].sort();
+}
+const providerVersions = {
+  codex: CODEX_VERSION,
+  claude: PROVIDER_VERSION,
+  deepseek: `harness-${HARNESS_VERSION}.${COMPOSITION_ID}`,
+};
+const adapterVersions = Object.fromEntries(
+  await Promise.all(
+    engines.map(async (provider) => [
+      provider,
+      JSON.parse(
+        await readFile(
+          new URL(
+            `../../packages/ai-adapters/${provider}/package.json`,
+            import.meta.url,
+          ),
+          "utf8",
+        ),
+      ).version,
+    ]),
+  ),
+);
+export function assertNativeSession(
+  provider,
+  session,
+  requests,
+  tools = "disabled",
+) {
+  const stage = activeStage(session),
+    binding = stage.binding;
+  assert.equal(binding.provider, provider);
+  assert.equal(binding.providerVersion, providerVersions[binding.provider]);
+  assert.equal(binding.adapterVersion, adapterVersions[binding.provider]);
+  assert.ok(id(binding.generation) && id(binding.nativeSessionId));
+  if (binding.provider === "codex") assert.ok(id(binding.nativeThreadId));
+  for (const key of ["nativeRunId", "nativeRequestId"])
+    assert.ok(binding[key] === undefined || id(binding[key]));
+  assert.deepEqual(binding.config, {
+    id: "local",
+    revision: tools === "disabled" ? "1" : "2",
+  });
+  assert.deepEqual(stage.capabilities, capabilities(binding.provider, tools));
+  assert.ok(requests.length > 0);
+  assert.deepEqual(
+    nativeToolInventory(requests),
+    binding.provider === "codex"
+      ? tools === "disabled"
+        ? []
+        : [
+            "list_mcp_resource_templates",
+            "list_mcp_resources",
+            "mcp__rss_host__propose",
+            "read_mcp_resource",
+          ]
+      : [
+          binding.provider === "claude"
+            ? "AskUserQuestion"
+            : "ask_user_question",
+        ],
   );
 }

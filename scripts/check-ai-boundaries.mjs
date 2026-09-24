@@ -213,5 +213,5 @@ function portable(file) {
 portable(join(root, "packages/ai-contract/src/index.ts"));
 if (errors.length) throw new Error(errors.join("\n"));
 console.log(
-  "PASS AI package boundaries; renderer browser closure is additionally built and executed by the isolated consumer",
+  "PASS AI package boundaries; renderer is exercised by the product browser checks",
 );

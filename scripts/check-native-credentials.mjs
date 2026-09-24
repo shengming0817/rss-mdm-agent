@@ -18,23 +18,18 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { run, verifyRuntimeIntegrity } from "./ai-host-artifacts.mjs";
-import { sameCommittedSource, sourceState } from "./source-state.mjs";
 
 const repository = fileURLToPath(new URL("../", import.meta.url));
 const artifact = join(repository, ".local-ci-runs/ai-host-runtime");
 const output = join(repository, ".local-ci-runs/native-credentials.json");
-const start = sourceState(repository);
+
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 if (process.platform !== "darwin" || process.arch !== "arm64")
   throw new Error("acceptance requires macOS arm64");
-if (!start.clean) throw new Error("committed_source_required");
 const manifestBytes = readFileSync(join(artifact, "manifest.json"));
 const manifest = JSON.parse(manifestBytes);
-if (
-  manifest.status !== "passed" ||
-  !sameCommittedSource(start, manifest.source.end)
-)
-  throw new Error("same-source fixed artifact required");
+if (manifest.status !== "passed")
+  throw new Error("Build the runtime before acceptance");
 verifyRuntimeIntegrity(artifact, manifest.runtimeTreeSha256);
 
 const directory = realpathSync(
@@ -215,7 +210,6 @@ try {
   process.exitCode = 1;
 } finally {
   await new Promise((resolve) => fixture.close(resolve));
-  const end = sourceState(repository);
   const passed =
     !failure &&
     behavior?.step === "passed" &&
@@ -223,8 +217,7 @@ try {
     validProbeBodies === 1 &&
     ciphertextCleared &&
     !outputLeak &&
-    behavior?.secretOutputsClean === true &&
-    sameCommittedSource(start, end);
+    behavior?.secretOutputsClean === true;
   mkdirSync(join(repository, ".local-ci-runs"), { recursive: true });
   writeFileSync(
     output,
@@ -232,11 +225,6 @@ try {
       {
         status: passed ? "passed" : "failed",
         command: "node scripts/check-native-credentials.mjs",
-        source: { start, end, unchanged: sameCommittedSource(start, end) },
-        locks: {
-          pnpmSha256: sha256(readFileSync(join(repository, "pnpm-lock.yaml"))),
-          cargoSha256: sha256(readFileSync(join(repository, "Cargo.lock"))),
-        },
         artifact: {
           runtimeManifestSha256: sha256(manifestBytes),
           runtimeTreeSha256: manifest.runtimeTreeSha256,

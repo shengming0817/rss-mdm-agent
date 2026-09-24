@@ -17,13 +17,9 @@ C01/C02 的实际契约实现及固定来源映射见[契约来源记录](contra
 服务端[工程目标](https://dev.azure.com/shengming0923/rss/_git/rss-mdm?version=GC589211a598d588508375f7e84742cfa0dc7d29ce&path=/docs/product/project-goals.md)、[产品PRD](https://dev.azure.com/shengming0923/rss/_git/rss-mdm?version=GC589211a598d588508375f7e84742cfa0dc7d29ce&path=/docs/product/rss-mdm-prd.md)、[架构ADR](https://dev.azure.com/shengming0923/rss/_git/rss-mdm?version=GC589211a598d588508375f7e84742cfa0dc7d29ce&path=/docs/architecture/adr/202609072231-001-rust-rss-product-foundation.md)。
 本地服务端仓包含WinMDM历史快照，恢复来源由其reference/README.md持有；历史实现不是本客户端交付证明。
 
-## 当前 provider 基线来源
+## Provider 来源
 
-当前矩阵由[PRD 引擎基线](../product/rss-mdm-agent-prd.md#provider-baseline)单源持有。
-2026-09-18 授权记录及原生 adapter 的实现/验证范围见 [C12 #2405](https://dev.azure.com/shengming0923/rss/_workitems/edit/2405)、
-[C13 #2406](https://dev.azure.com/shengming0923/rss/_workitems/edit/2406)、[A05 #2443](https://dev.azure.com/shengming0923/rss/_workitems/edit/2443)。
-DeepSeek Harness 仍是规划；#2443 中固定上游源码只是研究证据，实际消费版本、许可和原生烟测由该 owner 交付。
-历史 Cursor #2407 已移出当前范围；下表保留其固定来源用于迁移追踪，不将旧来源记录视为支持承诺。
+实际提取与改写分别见 [Codex](codex-adapter.md)、[DeepSeek](deepseek-harness.md)与 [AI Runtime](ai-runtime.md)。依赖版本以 manifest 和 lock 为准，来源 revision 仅用于追溯。
 
 ## prmonitor 源码提取清单
 
@@ -70,3 +66,13 @@ DeepSeek Harness 仍是规划；#2443 中固定上游源码只是研究证据，
 这些来源支持设计取舍，不构成Windows/macOS/Linux任何具体版本的本产品支持证明。
 
 AI Runtime `ai-runtime-20260918` 的单一 schema、TS/Rust 职责、固定上游及许可记录见 [A01 来源](ai-runtime.md)。Cursor 历史源码仍是来源记录，#2407 已取消，不构成现行 provider 承诺。
+
+## 服务目录对齐
+
+
+本次为新实现，不提取 prmonitor AI/UI，也不复制历史后端源码；不继承其运行权限或协作规则。
+
+- rss-mdm 对齐观察 revision：`6f3236dfc80cc50f44d5980f4e584e7670374021`。已读取 [Resource 定义与解析](https://dev.azure.com/shengming0923/rss/_git/rss-mdm?path=/crates/resource/src/lib.rs&version=GC6f3236dfc80cc50f44d5980f4e584e7670374021) 的 Artifact（97–127行）、Version（232–301行）与 canonical（303行起）。这些是语义证据，不是已发布跨仓协议。
+- ref: schemars `schemars/src/generate.rs@v1.2.2`，已读取 [Draft 2020-12 与 schema 生成](https://github.com/GREsau/schemars/blob/v1.2.2/schemars/src/generate.rs#L99-L110)。目录文档 schema 从 Rust 声明生成；动态参数由闭合规则同源投影。秘密引用内联其 owner schema，避免嵌套 schema 的根引用错位。
+- ref: jsonschema `src/lib.rs@0.33.0`，已读取 [验证与禁止外部引用解析的 feature 配置](https://docs.rs/jsonschema/0.33.0/src/jsonschema/lib.rs.html#226-262)。只用于测试，关闭默认 features；核心不运行任意外来 schema，也不访问远程引用。
+- [JSON Schema Draft 2020-12 validation](https://json-schema.org/draft/2020-12/json-schema-validation#section-9.2)：default 是注解，目录通过共享 runtime 明确补值；业务整数另受安全范围约束。

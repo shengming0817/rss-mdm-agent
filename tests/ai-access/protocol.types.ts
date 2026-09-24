@@ -2,14 +2,14 @@ import {
   ClientError,
   type ClientErrorCode,
   type InteractionView,
-} from "@rss-mdm-agent/ai-client";
+} from "../../packages/ai-client/dist/index.js";
 import {
   RuntimeSurface,
   type RendererFactory,
   type SurfaceRendererHandle,
   type RendererError,
-} from "@rss-mdm-agent/ai-ui-bridge";
-import type { Receipt } from "@rss-mdm-agent/ai-contract";
+} from "../../packages/ai-ui-bridge/dist/index.js";
+import type { Receipt } from "../../packages/ai-contract/dist/index.js";
 const handle: SurfaceRendererHandle = {
   canRetry: false,
   replace() {},

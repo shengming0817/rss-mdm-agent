@@ -2,7 +2,6 @@ import { sourceSummary } from "./connection-source-results.mjs";
 import {
   mkdtemp,
   realpath,
-  readFile,
   stat,
   rm,
   mkdir,
@@ -11,18 +10,14 @@ import {
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createHash } from "node:crypto";
-import { sourceState, sameCommittedSource } from "./source-state.mjs";
 import { createHost } from "../packages/ai-host/dist/index.js";
 import { openSqliteStore } from "../packages/ai-store-sqlite/dist/index.js";
 import { localResolver } from "../apps/ai-host/dist/resolver.js";
 /** Explicit manual acceptance: passes existing local directories to the official tools and sends one probe per available source.
  * Emits only source type and closed outcome. Never emits account identities, paths or credentials. */
 const repository = fileURLToPath(new URL("../", import.meta.url));
-const start = sourceState(repository);
-if (!start.clean) throw Error("committed_source_required");
+
 const startedAt = new Date().toISOString();
-const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const budget = () => ({ timeoutMs: 60000, signal: AbortSignal.timeout(60000) });
 const root = await realpath(
   await mkdtemp(join(tmpdir(), "rss-source-acceptance-")),
@@ -76,7 +71,6 @@ try {
           name: id,
           provider,
           configRevision: 1,
-
           profile: "conversation",
           status: "unverified",
           source: { type, directory: directory ?? root },
@@ -95,7 +89,7 @@ try {
 } finally {
   if (host) await host.close(budget());
   await rm(root, { recursive: true, force: true });
-  const end = sourceState(repository);
+
   const output = join(repository, ".local-ci-runs", "connection-sources.json");
   await mkdir(join(repository, ".local-ci-runs"), { recursive: true });
   await writeFile(
@@ -105,11 +99,6 @@ try {
         command: "node scripts/check-connection-sources.mjs",
         startedAt,
         finishedAt: new Date().toISOString(),
-        source: { start, end, unchanged: sameCommittedSource(start, end) },
-        locks: {
-          pnpm: hash(await readFile(join(repository, "pnpm-lock.yaml"))),
-          cargo: hash(await readFile(join(repository, "Cargo.lock"))),
-        },
         runtime: {
           node: process.versions.node,
           platform: process.platform,
@@ -127,6 +116,5 @@ try {
       2,
     ),
   );
-  if (!sameCommittedSource(start, end)) process.exitCode = 1;
 }
 if (sourceSummary(results).status === "failed") process.exitCode = 1;

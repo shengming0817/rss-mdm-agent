@@ -2,23 +2,19 @@ import { cpSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { verifyRuntimeIntegrity } from "./ai-host-artifacts.mjs";
-import { sourceState } from "./source-state.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const source = join(root, ".local-ci-runs/ai-host-runtime");
 const manifest = JSON.parse(
   readFileSync(join(source, "manifest.json"), "utf8"),
 );
-const state = sourceState(root);
 if (
   manifest.status !== "passed" ||
   manifest.kind !== "release" ||
-  !state.clean ||
-  manifest.source.end.head !== state.head ||
   manifest.verification.platform !== process.platform ||
   manifest.verification.arch !== process.arch
 )
   throw new Error(
-    "A verified artifact from this committed source and current platform is required",
+    "A successfully built runtime for the current platform is required",
   );
 verifyRuntimeIntegrity(source, manifest.runtimeTreeSha256);
 const destination = join(

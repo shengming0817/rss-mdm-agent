@@ -19,3 +19,19 @@ const handlers: Pick<OperationHandlers, "prompt"> = {
   prompt: async () => ({ status: "unknown" }),
 };
 void handlers;
+
+import type {
+  DeepSeekAdapterOptions,
+  DeepSeekConfiguration,
+} from "../../../packages/ai-adapters/deepseek/dist/index.js";
+declare const options: DeepSeekAdapterOptions;
+declare const config: DeepSeekConfiguration;
+const invalid: DeepSeekAdapterOptions = {
+  ...options,
+  // @ts-expect-error Runtime injection is not a product adapter option.
+  runtimeFactory: () => null,
+};
+// @ts-expect-error The provider discriminator cannot select another adapter.
+const wrongProvider: DeepSeekConfiguration = { ...config, provider: "claude" };
+void invalid;
+void wrongProvider;

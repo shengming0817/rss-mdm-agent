@@ -16,4 +16,4 @@ prmonitor 固定来源及恢复方式由[来源索引](sources.md)持有，前�
 - [SQLite transactions](https://sqlite.org/lang_transaction.html)：同步事务、COMMIT 失败和回滚；短时写锁自身不等于 Host 所有权。
 - [SQLite synchronous](https://sqlite.org/pragma.html#pragma_synchronous)：WAL/FULL 的同步屏障。本次测试使用进程 SIGKILL，不声称已模拟真实断电。
 
-这些链接是机制与版本来源；实际本产品验证结果在 PR 与 `.local-ci-runs` 的可再生、绑定源码 SHA 的记录中，不把上游行为说明冒充本产品验收。
+这些链接是机制与版本来源；实际本产品验证结果在 PR 与 `.local-ci-runs` 的运行记录中，不把上游行为说明冒充本产品验收。

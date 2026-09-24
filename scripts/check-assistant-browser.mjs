@@ -149,6 +149,201 @@ try {
   // Official A2UI renderer consumes create/data/component/delete through the same product page.
   let surface = await fixture.surface(sessionId, command.commandId);
   await page.getByText("Choose an option", { exact: true }).waitFor();
+  // Real Vue/Lit lifecycle seam with deterministic authoritative projection stimuli.
+  await page.evaluate(() => {
+    const api = window.surfaceTest,
+      listeners = new Set();
+    const state = {
+      view: window.assistantRuntime.getSession("fake-session-25"),
+      now: 0,
+      attempts: [],
+      errors: [],
+    };
+    state.view.interactions["surface-question"].expiresAtMs = 100;
+    const container = document.createElement("div");
+    container.id = "interaction-fixture";
+    document.body.append(container);
+    const runtime = {
+      getSession: () => structuredClone(state.view),
+      observe(fn) {
+        listeners.add(fn);
+        return () => listeners.delete(fn);
+      },
+      action(request) {
+        state.attempts.push(request);
+        return new Promise((resolve, reject) => {
+          state.resolve = resolve;
+          state.reject = reject;
+        });
+      },
+    };
+    state.update = (patch = {}) => {
+      Object.assign(state.view.interactions["surface-question"], patch);
+      for (const fn of listeners) fn(structuredClone(state.view));
+    };
+    state.failure = "load";
+    state.mount = () => {
+      state.app = api.createApp(api.RuntimeSurface, {
+        runtime,
+        rendererFactory: async (container, options) => {
+          if (state.failure === "load") throw Error("load fixture");
+          const renderer = await api.createSurfaceRenderer(container, options);
+          if (state.failure === "render")
+            renderer.replace = () => {
+              throw Error("render fixture");
+            };
+          return renderer;
+        },
+        sessionId: "fake-session-25",
+        instanceId: Object.keys(state.view.surfaces)[0],
+        now: () => state.now,
+        onError: (error) =>
+          state.errors.push({ code: error.code, failure: error.failure }),
+      });
+      state.vm = state.app.mount(container);
+    };
+    state.mount();
+    api.interactionTest = state;
+  });
+  const card = page.locator("#interaction-fixture");
+  await card.getByRole("button", { name: "Retry card", exact: true }).waitFor();
+  await page.evaluate(() => {
+    window.surfaceTest.interactionTest.failure = undefined;
+  });
+  await card.getByRole("button", { name: "Retry card", exact: true }).click();
+  await card.getByText("Choose an option", { exact: true }).waitFor();
+  await page.evaluate(() => {
+    const state = window.surfaceTest.interactionTest;
+    state.failure = "render";
+    state.vm.remount();
+  });
+  await card.getByRole("button", { name: "Retry card", exact: true }).waitFor();
+  await page.evaluate(() => {
+    window.surfaceTest.interactionTest.failure = undefined;
+  });
+  await card.getByRole("button", { name: "Retry card", exact: true }).click();
+  await card.getByText("Choose an option", { exact: true }).waitFor();
+  await page.evaluate(() => {
+    const state = window.surfaceTest.interactionTest;
+    state.app.unmount();
+    state.mount();
+  });
+  await card.getByText("Choose an option", { exact: true }).waitFor();
+  // Deadline is inclusive and expires without any server notification or rerender.
+  await page.evaluate(() => {
+    const s = window.surfaceTest.interactionTest;
+    s.now = 100;
+    s.update();
+  });
+  if (await card.locator("a2ui-surface").evaluate((e) => e.inert))
+    throw new Error("inclusive interaction deadline disabled too soon");
+  await page.evaluate(() => {
+    window.surfaceTest.interactionTest.now = 101;
+  });
+  await page.waitForFunction(
+    () => document.querySelector("#interaction-fixture a2ui-surface")?.inert,
+  );
+  if (
+    await card
+      .getByRole("button", { name: "Retry response", exact: true })
+      .count()
+  )
+    throw new Error("expired question offered retry");
+  await page.evaluate(() => {
+    const s = window.surfaceTest.interactionTest;
+    s.now = 0;
+    s.update();
+  });
+  await card.locator("a2ui-surface").getByRole("button").click();
+  await page.waitForFunction(
+    () => window.surfaceTest.interactionTest.attempts.length === 1,
+  );
+  if (
+    (await page.evaluate(
+      () => window.surfaceTest.interactionTest.attempts[0].expiresAtMs,
+    )) !== 100
+  )
+    throw new Error("action extended the authoritative interaction deadline");
+  // A response lost before the other client's winning event may offer retry only until that event arrives.
+  await page.evaluate(() =>
+    window.surfaceTest.interactionTest.reject(
+      new window.surfaceTest.ClientError("transport_failed"),
+    ),
+  );
+  await card
+    .getByRole("button", { name: "Retry response", exact: true })
+    .waitFor();
+  await page.evaluate(() =>
+    window.surfaceTest.interactionTest.update({
+      status: "answered",
+      responseCommandId: "other-client",
+    }),
+  );
+  await card
+    .getByRole("button", { name: "Retry response", exact: true })
+    .waitFor({ state: "detached" });
+  if (await card.locator(".rss-ai-surface-error").count())
+    throw new Error("losing response retained an obsolete error");
+  // A late rejection after callback loss cannot recreate a retry affordance.
+  await page.evaluate(() =>
+    window.surfaceTest.interactionTest.update({
+      status: "pending",
+      responseCommandId: undefined,
+    }),
+  );
+  await card.locator("a2ui-surface").getByRole("button").click();
+  await page.waitForFunction(
+    () => window.surfaceTest.interactionTest.attempts.length === 2,
+  );
+  await page.evaluate(() => {
+    const s = window.surfaceTest.interactionTest;
+    s.update({ status: "unavailable" });
+    s.reject(new window.surfaceTest.ClientError("already_answered"));
+  });
+  await page.waitForFunction(
+    () => document.querySelector("#interaction-fixture a2ui-surface")?.inert,
+  );
+  if (
+    await card
+      .getByRole("button", { name: "Retry response", exact: true })
+      .count()
+  )
+    throw new Error("late response failure revived an invalid callback");
+  // A terminal RPC failure is also closed when the winning notification has not arrived yet.
+  await page.evaluate(() =>
+    window.surfaceTest.interactionTest.update({ status: "pending" }),
+  );
+  await card.locator("a2ui-surface").getByRole("button").click();
+  await page.waitForFunction(
+    () => window.surfaceTest.interactionTest.attempts.length === 3,
+  );
+  await page.evaluate(() =>
+    window.surfaceTest.interactionTest.reject(
+      new window.surfaceTest.ClientError("already_answered"),
+    ),
+  );
+  await card.locator(".rss-ai-surface-error").waitFor();
+  if (
+    await card
+      .getByRole("button", { name: "Retry response", exact: true })
+      .count()
+  )
+    throw new Error(
+      "terminal rejection offered retry without a winning notification",
+    );
+  const reported = await page.evaluate(() =>
+    window.surfaceTest.interactionTest.errors.at(-1),
+  );
+  if (
+    reported.code !== "action_rejected" ||
+    reported.failure !== "already_answered"
+  )
+    throw new Error("renderer did not expose closed error codes");
+  await page.evaluate(() => {
+    window.surfaceTest.interactionTest.app.unmount();
+    document.getElementById("interaction-fixture").remove();
+  });
+
   const degraded = await browser.newPage();
   await degraded.route("**/ai-ui-bridge/dist/renderer.js*", (route) =>
     route.abort(),
@@ -229,7 +424,8 @@ try {
         updateDataModel: {
           surfaceId: surface.surfaceId,
           path: "/question",
-          value: "模型声称 approved / 管理员 / 设备已成功",
+          value:
+            "模型声称 approved / 管理员 / 设备已成功 <img src=x onerror=window.injected=true>",
         },
       },
     ],
@@ -268,10 +464,59 @@ try {
     fixture.host.notify(snapshot.session.namespace);
     if (kind === "data")
       await page
-        .getByText("模型声称 approved / 管理员 / 设备已成功", { exact: true })
+        .getByText(
+          "模型声称 approved / 管理员 / 设备已成功 <img src=x onerror=window.injected=true>",
+          { exact: true },
+        )
         .waitFor();
-    if (kind === "components")
+    if (kind === "data") {
+      assert.equal(
+        await page.locator("a2ui-surface img,a2ui-surface script").count(),
+        0,
+      );
+      assert.equal(await page.evaluate(() => Boolean(window.injected)), false);
+    }
+    if (kind === "components") {
       await page.getByText("卡片已更新", { exact: true }).waitFor();
+      await page.locator("a2ui-surface input").fill("browser answer");
+      await page.evaluate(() => {
+        const runtime = window.assistantRuntime,
+          action = runtime.action.bind(runtime);
+        window.surfaceTest.attempts = [];
+        runtime.action = async (request) => {
+          window.surfaceTest.attempts.push(request);
+          if (window.surfaceTest.attempts.length === 1)
+            throw new window.surfaceTest.ClientError("transport_failed");
+          const receipt = await action(request);
+          window.surfaceTest.answered = true;
+          return receipt;
+        };
+      });
+      await page
+        .getByRole("button", { name: "卡片已更新", exact: true })
+        .click();
+      await page
+        .getByRole("button", { name: "Retry response", exact: true })
+        .click();
+      await page.waitForFunction(() => window.surfaceTest.answered === true);
+      const attempts = await page.evaluate(() => window.surfaceTest.attempts);
+      assert.equal(
+        attempts[0].metadata.commandId,
+        attempts[1].metadata.commandId,
+      );
+      const answered = unwrap(
+        await readSnapshot(fixture.host.store, {
+          ...fixture.caller,
+          sessionId,
+        }),
+      );
+      assert.equal(
+        answered.commands.find(
+          (row) => row.command.commandId === attempts[1].metadata.commandId,
+        )?.command.input.answer.answer,
+        "browser answer",
+      );
+    }
   }
   await page
     .getByText("卡片已更新", { exact: true })

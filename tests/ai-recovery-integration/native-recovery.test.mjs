@@ -13,7 +13,7 @@ import {
   until,
   budget,
   unwrap,
-  evidence,
+  assertNativeSession,
 } from "../ai-provider-conformance/support.mjs";
 
 for (const provider of engines) {
@@ -141,19 +141,7 @@ for (const provider of engines) {
             ),
           );
         }
-        evidence(
-          t,
-          "provider-received-host-fact-lost",
-          session,
-          f.model.requests,
-          {
-            result: "supported",
-            reconciliation: current.state,
-            nativeRecovery: restored ? "restored" : "unavailable",
-            outcome: current.outcome ?? "unknown",
-            attempts: 1,
-          },
-        );
+        assertNativeSession(provider, session, f.model.requests);
       } finally {
         unwrap(await recovered.host.close(budget()));
       }
@@ -249,15 +237,7 @@ for (const provider of engines) {
           activeStage(current).binding.nativeThreadId,
           activeStage(previous).binding.nativeThreadId,
         );
-      evidence(
-        t,
-        "host-restart-display-native-context",
-        current,
-        f.model.requests,
-        {
-          result: "supported",
-        },
-      );
+      assertNativeSession(provider, current, f.model.requests);
     },
   );
 }
