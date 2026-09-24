@@ -246,6 +246,13 @@ PowerShell/Bash是原生载荷；Rust提供启动、预算、权限、恢复，J
 
 任务关系与实施顺序由 tracker 持有。共享契约由其 owner 修改，调用方同步切换；同一文件只由一个任务集成。组件测试、产品组装和平台执行分别验证，不把独立组件可用视为整条业务完成。
 
+稳定工作项索引仅用于解析本文和来源文档中的缩写；状态、依赖和实施顺序仍以 tracker 为准。
+
+- [C01 · 执行契约](https://dev.azure.com/shengming0923/rss/_workitems/edit/2394)
+- [C10 · 脚本计划](https://dev.azure.com/shengming0923/rss/_workitems/edit/2403)
+- [C20 · 共同闭环](https://dev.azure.com/shengming0923/rss/_workitems/edit/2413)
+- [D00 · 需求与来源](https://dev.azure.com/shengming0923/rss/_workitems/edit/2393)
+
 ## 11. 后续平台能力与客户端发布
 
 后续按平台和可验收行为分别登记：本地authority bootstrap/主体绑定/签发与撤销；进程适配；系统服务/IPC/用户上下文；PS/sh/Bash执行器；MSI/WinGet、PKG/Brew、APT/DNF；缓存下载；Agent注册/通信；签名安装/更新/卸载；企业目录/策略接线。

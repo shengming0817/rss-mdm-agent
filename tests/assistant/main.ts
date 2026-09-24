@@ -60,7 +60,15 @@ const services: AssistantServices = {
 createApp(App, { assistantServices: services }).mount("#app");
 
 // Browser-only component stimuli share the product test page and workspace modules.
-import { RuntimeSurface } from "../../packages/ai-ui-bridge/dist/index.js";
+import {
+  RuntimeSurface,
+  createSurfaceRenderer,
+} from "../../packages/ai-ui-bridge/dist/index.js";
 Object.assign(window, {
-  surfaceTest: { createApp, RuntimeSurface, ClientError },
+  surfaceTest: {
+    createApp,
+    RuntimeSurface,
+    createSurfaceRenderer,
+    ClientError,
+  },
 });

@@ -427,9 +427,15 @@ const adapterVersions = Object.fromEntries(
     ]),
   ),
 );
-export function assertNativeSession(session, requests, tools = "disabled") {
+export function assertNativeSession(
+  provider,
+  session,
+  requests,
+  tools = "disabled",
+) {
   const stage = activeStage(session),
     binding = stage.binding;
+  assert.equal(binding.provider, provider);
   assert.equal(binding.providerVersion, providerVersions[binding.provider]);
   assert.equal(binding.adapterVersion, adapterVersions[binding.provider]);
   assert.ok(id(binding.generation) && id(binding.nativeSessionId));

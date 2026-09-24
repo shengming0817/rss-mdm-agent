@@ -117,6 +117,18 @@ for (const provider of engines) {
             /unsupported_capability/,
           );
           assert.equal(f.model.requests.length, 0);
+          peer.close();
+          assert.equal(await stop(app), 0, stderr);
+          const store = unwrap(
+            openSqliteStore({ path: f.config.databasePath, mode: "open" }),
+          );
+          try {
+            const rejected = unwrap(await store.session(empty.namespace));
+            assert.deepEqual(rejected.stages, []);
+            assert.equal(rejected.currentStageId, undefined);
+          } finally {
+            unwrap(await store.close(budget()));
+          }
           return;
         }
         const view = await peer.client.createSession(),
@@ -189,7 +201,12 @@ for (const provider of engines) {
         try {
           const session = unwrap(await store.session(view.namespace));
           assert.equal(activeStage(session).binding.providerVersion, "0.155.0");
-          assertNativeSession(session, f.model.requests, "host_mediated");
+          assertNativeSession(
+            provider,
+            session,
+            f.model.requests,
+            "host_mediated",
+          );
         } finally {
           unwrap(await store.close(budget()));
         }

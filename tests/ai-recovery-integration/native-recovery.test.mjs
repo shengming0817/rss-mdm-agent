@@ -141,7 +141,7 @@ for (const provider of engines) {
             ),
           );
         }
-        assertNativeSession(session, f.model.requests);
+        assertNativeSession(provider, session, f.model.requests);
       } finally {
         unwrap(await recovered.host.close(budget()));
       }
@@ -237,7 +237,7 @@ for (const provider of engines) {
           activeStage(current).binding.nativeThreadId,
           activeStage(previous).binding.nativeThreadId,
         );
-      assertNativeSession(current, f.model.requests);
+      assertNativeSession(provider, current, f.model.requests);
     },
   );
 }

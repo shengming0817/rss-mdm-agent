@@ -24,7 +24,7 @@
     "test:ai-access": "pnpm build:ai-access && tsc --noEmit --strict --skipLibCheck --module NodeNext --target ES2022 tests/ai-access/protocol.types.ts && node --test tests/ai-access/*.test.mjs",
     "check:ai-boundaries": "node --test scripts/ai-boundaries.test.mjs && node scripts/check-ai-boundaries.mjs",
     "build:ai-claude": "pnpm build:ai-contract && pnpm --filter @rss-mdm-agent/ai-adapter-claude build",
-    "test:ai-claude": "pnpm build:ai-claude && node --test tests/ai-adapters/claude/*.test.mjs",
+    "test:ai-claude": "pnpm build:ai-claude && tsc --noEmit --strict --skipLibCheck --module NodeNext --target ES2022 tests/ai-adapters/claude/protocol.types.ts && node --test tests/ai-adapters/claude/*.test.mjs",
     "smoke:claude": "node scripts/smoke-claude.mjs",
     "build:ai-store": "pnpm --filter @rss-mdm-agent/ai-store-sqlite... build",
     "test:ai-store": "pnpm build:ai-store && node --test tests/ai-store-recovery/*.test.mjs",

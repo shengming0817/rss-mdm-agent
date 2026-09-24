@@ -189,7 +189,7 @@ for (const provider of engines) {
         );
       }
       assert.equal(f.model.requests.length, 6);
-      assertNativeSession(session, f.model.requests);
+      assertNativeSession(provider, session, f.model.requests);
     },
   );
 }

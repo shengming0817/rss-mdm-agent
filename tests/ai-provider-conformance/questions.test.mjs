@@ -110,7 +110,7 @@ for (const provider of ["claude", "deepseek"]) {
           budget(),
         ),
       );
-      assertNativeSession(session, f.model.requests);
+      assertNativeSession(provider, session, f.model.requests);
     },
   );
 }

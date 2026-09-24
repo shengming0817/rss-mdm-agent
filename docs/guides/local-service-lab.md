@@ -54,9 +54,9 @@ Windows 管理员 Windows PowerShell 5.1（Desktop edition，使用原子创建�
 | 撤销/重启    | 保持旧连接并运行维护命令或重启，再提交旧请求                         | 旧连接失效，撤销主体不能重连       |
 | Windows 边界 | 远程 pipe、错误 SID/session、同名端点、弱 ACL/reparse                | 拒绝，不降级为匿名或 TCP           |
 | macOS 边界   | 错 cdhash、同 UID 其它映像、错误 audit session、替换路径             | 拒绝，不只依赖 UID                 |
-| 桌面/Codex   | 普通用户窗口、状态查询、固定 Codex 0.155.0 对话、取消/关闭           | UI/进程回执分开，保留 S1 标识      |
+| 桌面/Codex   | 普通用户窗口、状态查询、manifest 固定的 Codex 对话、取消/关闭           | UI/进程回执分开，保留 S1 标识      |
 | OS 生命周期  | 杀 Host/launcher、保留后代、登记失败、关闭超时、旧 scope 不明        | 阻断不确定恢复；终止有范围为空证据 |
 
-cargo test -p local-service、Host/desktop 测试及交叉编译只是前置证据。真实矩阵全部完成前，#2462 不关闭，也不宣称双平台安全验收通过。
+cargo test -p local-service、Host/desktop 测试及交叉编译只是前置证据。真实矩阵未完成时不能宣称双平台安全验收通过。
 
 策略格式直接替换，不读取旧策略或自动迁移。升级实验室候选时先卸载服务注册，由管理员处理旧安装文件，再构建并重新安装；保留原 AI 数据，不通过清库规避格式拒绝。

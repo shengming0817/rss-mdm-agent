@@ -93,7 +93,7 @@ for (const provider of engines) {
         ).length,
         1,
       );
-      assertNativeSession(session, f.model.requests);
+      assertNativeSession(provider, session, f.model.requests);
     },
   );
 }
@@ -142,6 +142,6 @@ test(
         budget(),
       ),
     );
-    assertNativeSession(session, f.model.requests);
+    assertNativeSession("deepseek", session, f.model.requests);
   },
 );

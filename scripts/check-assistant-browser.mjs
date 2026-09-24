@@ -181,19 +181,54 @@ try {
       Object.assign(state.view.interactions["surface-question"], patch);
       for (const fn of listeners) fn(structuredClone(state.view));
     };
-    state.app = api.createApp(api.RuntimeSurface, {
-      runtime,
-      sessionId: "fake-session-25",
-      instanceId: Object.keys(state.view.surfaces)[0],
-      now: () => state.now,
-      onError: (error) =>
-        state.errors.push({ code: error.code, failure: error.failure }),
-    });
-    state.app.mount(container);
+    state.failure = "load";
+    state.mount = () => {
+      state.app = api.createApp(api.RuntimeSurface, {
+        runtime,
+        rendererFactory: async (container, options) => {
+          if (state.failure === "load") throw Error("load fixture");
+          const renderer = await api.createSurfaceRenderer(container, options);
+          if (state.failure === "render")
+            renderer.replace = () => {
+              throw Error("render fixture");
+            };
+          return renderer;
+        },
+        sessionId: "fake-session-25",
+        instanceId: Object.keys(state.view.surfaces)[0],
+        now: () => state.now,
+        onError: (error) =>
+          state.errors.push({ code: error.code, failure: error.failure }),
+      });
+      state.vm = state.app.mount(container);
+    };
+    state.mount();
     api.interactionTest = state;
   });
   const card = page.locator("#interaction-fixture");
-  await card.locator("a2ui-surface").waitFor();
+  await card.getByRole("button", { name: "Retry card", exact: true }).waitFor();
+  await page.evaluate(() => {
+    window.surfaceTest.interactionTest.failure = undefined;
+  });
+  await card.getByRole("button", { name: "Retry card", exact: true }).click();
+  await card.getByText("Choose an option", { exact: true }).waitFor();
+  await page.evaluate(() => {
+    const state = window.surfaceTest.interactionTest;
+    state.failure = "render";
+    state.vm.remount();
+  });
+  await card.getByRole("button", { name: "Retry card", exact: true }).waitFor();
+  await page.evaluate(() => {
+    window.surfaceTest.interactionTest.failure = undefined;
+  });
+  await card.getByRole("button", { name: "Retry card", exact: true }).click();
+  await card.getByText("Choose an option", { exact: true }).waitFor();
+  await page.evaluate(() => {
+    const state = window.surfaceTest.interactionTest;
+    state.app.unmount();
+    state.mount();
+  });
+  await card.getByText("Choose an option", { exact: true }).waitFor();
   // Deadline is inclusive and expires without any server notification or rerender.
   await page.evaluate(() => {
     const s = window.surfaceTest.interactionTest;

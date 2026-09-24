@@ -36,3 +36,33 @@ switch (notification.method) {
     const exhaustive: never = notification;
   }
 }
+
+import {
+  createCodexAdapter,
+  type CodexAdapterOptions,
+  type ResolvedCodexConfiguration,
+} from "../../../packages/ai-adapters/codex/dist/index.js";
+import type {
+  ProviderAgentPort,
+  ProviderDiagnostic,
+} from "../../../packages/ai-contract/dist/index.js";
+declare const options: CodexAdapterOptions;
+const port: ProviderAgentPort = createCodexAdapter(options).agent;
+// @ts-expect-error Native history is not a public provider operation.
+port.readHistory;
+// @ts-expect-error Host admission is not a provider operation.
+port.fork;
+const unsafeDiagnostic: ProviderDiagnostic = {
+  kind: "other",
+  dropped: 0,
+  // @ts-expect-error Diagnostics expose no business payload.
+  message: {},
+};
+// @ts-expect-error A Codex resolver cannot claim another provider.
+const wrongProvider: ResolvedCodexConfiguration["configuration"]["provider"] =
+  "claude";
+createCodexAdapter({
+  resolveConfiguration: options.resolveConfiguration,
+  // @ts-expect-error Native binary and arbitrary app-server options are sealed.
+  binaryPath: "/fixture/codex",
+});
