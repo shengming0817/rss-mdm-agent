@@ -168,32 +168,35 @@ pub fn match_capabilities(
             push(Dimension::UserSession, user_sessions(account))
         }
     }
-    if let IsolationPolicy::Restricted {
-        network,
-        allow_child_processes,
-        require_sandbox,
-        ..
-    } = constraints
-    {
-        let network = match network {
-            NetworkAccess::Denied {} => Isolation::NetworkDenied,
-            NetworkAccess::Allowlist { destinations: _ } => Isolation::NetworkAllowlist,
-        };
-        for (dimension, required) in [
-            (Dimension::Network, network),
-            (Dimension::ReadPaths, Isolation::ReadPaths),
-            (Dimension::WritePaths, Isolation::WritePaths),
-        ] {
-            push(dimension, isolation(&required));
-        }
-        if !*allow_child_processes {
-            push(
-                Dimension::ChildProcesses,
-                isolation(&Isolation::ChildProcessesDenied),
-            );
-        }
-        if *require_sandbox {
-            push(Dimension::Sandbox, isolation(&Isolation::Sandbox));
+    match constraints {
+        IsolationPolicy::OsIdentity {} => {}
+        IsolationPolicy::Restricted {
+            network,
+            allow_child_processes,
+            require_sandbox,
+            read_paths: _,
+            write_paths: _,
+        } => {
+            let network = match network {
+                NetworkAccess::Denied {} => Isolation::NetworkDenied,
+                NetworkAccess::Allowlist { destinations: _ } => Isolation::NetworkAllowlist,
+            };
+            for (dimension, required) in [
+                (Dimension::Network, network),
+                (Dimension::ReadPaths, Isolation::ReadPaths),
+                (Dimension::WritePaths, Isolation::WritePaths),
+            ] {
+                push(dimension, isolation(&required));
+            }
+            if !*allow_child_processes {
+                push(
+                    Dimension::ChildProcesses,
+                    isolation(&Isolation::ChildProcessesDenied),
+                );
+            }
+            if *require_sandbox {
+                push(Dimension::Sandbox, isolation(&Isolation::Sandbox));
+            }
         }
     }
     let status = checks

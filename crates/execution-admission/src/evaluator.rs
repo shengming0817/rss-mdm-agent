@@ -56,6 +56,16 @@ fn scope(spec: &PlanSpec) -> impl PartialEq + '_ {
         target,
         parameters,
     } = request;
+    match constraints {
+        execution_contract::IsolationPolicy::OsIdentity {} => {}
+        execution_contract::IsolationPolicy::Restricted {
+            network: _,
+            read_paths: _,
+            write_paths: _,
+            allow_child_processes: _,
+            require_sandbox: _,
+        } => {}
+    }
     (
         authority,
         actor,

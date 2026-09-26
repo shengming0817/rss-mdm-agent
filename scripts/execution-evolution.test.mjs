@@ -70,7 +70,7 @@ test("new execution fields require an explicit admission/capability decision", (
       for (const type of [
         "PlanSpec",
         "ExecutionRequest",
-        "Constraints",
+        "IsolationPolicy",
         ...(consumer === "execution-capability"
           ? ["EnvironmentSnapshot", "LaunchSpec"]
           : []),
@@ -80,11 +80,19 @@ test("new execution fields require an explicit admission/capability decision", (
         const path = join(dir, "crates", owner, "src/model.rs");
         const original = readFileSync(path, "utf8");
         try {
+          const marker =
+            type === "IsolationPolicy"
+              ? "    Restricted {"
+              : `pub struct ${type} {`;
+          assert.ok(
+            original.includes(marker),
+            `missing mutation target: ${type}`,
+          );
           writeFileSync(
             path,
             original.replace(
-              `pub struct ${type} {`,
-              `pub struct ${type} {\n    /// Mutation probe: a new security requirement.\n    pub evolution_probe: bool,`,
+              marker,
+              `${marker}\n    /// Mutation probe: a new security requirement.\n    ${type === "IsolationPolicy" ? "" : "pub "}evolution_probe: bool,`,
             ),
           );
           const result = check(consumer);
