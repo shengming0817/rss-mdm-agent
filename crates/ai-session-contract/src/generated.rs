@@ -11411,7 +11411,7 @@ pub enum NativeCall {
     #[serde(rename = "matchCredential")]
     MatchCredential {
         #[doc = "`data` member; see its generated type and parent schema."]
-        data: NativeMatchCredentialData,
+        data: ::std::boxed::Box<NativeMatchCredentialData>,
         #[doc = "`id` member; see its generated type and parent schema."]
         id: Counter,
         #[doc = "`kind` member; see its generated type and parent schema."]
