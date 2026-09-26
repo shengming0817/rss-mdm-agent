@@ -185,7 +185,9 @@ impl ExecutionHandle {
                     let status = owner
                         .app
                         .resume_initial(&task.status.operation_request_id)?;
-                    if !status.cancel_requested && status.admission.is_none() {
+                    if !status.cancel_requested
+                        && (status.attempts > 0 || status.phase == TaskPhase::ConfirmationRequired)
+                    {
                         owner
                             .started
                             .insert(task.status.operation_request_id.clone(), now()?);
@@ -1082,6 +1084,54 @@ mod tests {
         assert_eq!(queued.await.unwrap_err(), Error::Denied);
         assert!(!mutated.load(Ordering::SeqCst));
         handle.close().await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[tokio::test]
+    async fn first_intent_resumed_at_startup_reaches_verified_without_another_restart() {
+        let (handle, root) = fixture().await;
+        handle
+            .call(|owner, caller| {
+                add(owner, caller, 0, true, fixtures::human())?;
+                let request = RequestId::new("page-000").unwrap();
+                let input = owner.app.frozen_input(caller, &request)?;
+                let confirmation = execution_sqlite::execution_confirmation(&input);
+                owner.app.respond(
+                    caller,
+                    &request,
+                    &CommandId::new("crash-after-confirmation")?,
+                    &confirmation.id,
+                    &execution_interaction::Command::Answer {
+                        id: execution_interaction::Reference::new("crash-after-confirmation")
+                            .unwrap(),
+                        response: execution_interaction::Response::Confirmation { accepted: true },
+                    },
+                )?;
+                assert_eq!(owner.app.status(caller, &request)?.attempts, 0);
+                owner.started.clear();
+                Ok(())
+            })
+            .await
+            .unwrap();
+        handle.close().await;
+        let restored = ExecutionHandle::start(&root.join("execution.sqlite"))
+            .unwrap()
+            .for_caller("fixture-actor")
+            .unwrap();
+        let request = RequestId::new("page-000").unwrap();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let status = restored.details(request.clone()).await.unwrap().status;
+            assert_eq!(status.attempts, 1);
+            if status.phase == TaskPhase::Verified {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "resumed attempt was not scheduled"
+            );
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        restored.close().await;
         std::fs::remove_dir_all(root).unwrap();
     }
 }

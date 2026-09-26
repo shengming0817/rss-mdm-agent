@@ -130,18 +130,28 @@ function stops(value: StopOutcome): string {
   return exhaustive;
 }
 function softwareDiagnostic(value: SoftwareDiagnostic): string {
-  const labels: Record<SoftwareDiagnostic, string> = {
-    cleanupPending: "临时安装文件尚待安全清理，资源占用保留",
-    cleanupUnverified: "无法确认临时目录归属，需要人工核实",
-    awaitingDetection: "等待独立软件检测",
-    restartPending: "安装器要求重启设备；重启后重新核实",
-    detectionUnavailable: "软件检测不可用，请核对设备与读取权限",
-    unrecognizedVersion: "检测到未知软件内容，需要人工核实",
-    detectionBudgetExceeded: "软件检测预算耗尽，等待下一次有界核实",
-    desiredStateObserved: "已观察到目标软件状态；不代表后台活动已终止",
-    desiredStateMissing: "已检测软件状态，尚未达到目标",
-  };
-  return labels[value];
+  switch (value) {
+    case "cleanupPending":
+      return "临时安装文件尚待安全清理，资源占用保留";
+    case "cleanupUnverified":
+      return "无法确认临时目录归属，需要人工核实";
+    case "awaitingDetection":
+      return "等待独立软件检测";
+    case "restartPending":
+      return "安装器要求重启设备；重启后重新核实";
+    case "detectionUnavailable":
+      return "软件检测不可用，请核对设备与读取权限";
+    case "unrecognizedVersion":
+      return "检测到未知软件内容，需要人工核实";
+    case "detectionBudgetExceeded":
+      return "软件检测预算耗尽，等待下一次有界核实";
+    case "desiredStateObserved":
+      return "已观察到目标软件状态；不代表后台活动已终止";
+    case "desiredStateMissing":
+      return "已检测软件状态，尚未达到目标";
+  }
+  const exhaustive: never = value;
+  return exhaustive;
 }
 function assessments(value: EffectAssessment): string {
   switch (value) {
@@ -208,6 +218,42 @@ function cause(value: DispatchCause | null): string {
       ? limits(value.limit)
       : causes(value);
 }
+type SoftwareAction = Extract<
+  ExecutionTaskDetails["action"]["execution"],
+  { kind: "software" }
+>;
+function adapterLabel(value: SoftwareAction["adapter"]): string {
+  switch (value) {
+    case "msi":
+      return "Windows MSI";
+    case "winget":
+      return "WinGet";
+    case "pkg":
+      return "macOS PKG";
+    case "homebrew":
+      return "Homebrew";
+    case "windowsBundle":
+      return "Windows ZIP Bundle";
+    case "macosBundle":
+      return "macOS ZIP Bundle";
+  }
+  const exhaustive: never = value;
+  return exhaustive;
+}
+function mutationLabel(value: SoftwareAction["mutation"]): string {
+  switch (value) {
+    case "install":
+      return "安装";
+    case "upgrade":
+      return "升级";
+    case "downgrade":
+      return "降级";
+    case "uninstall":
+      return "卸载";
+  }
+  const exhaustive: never = value;
+  return exhaustive;
+}
 const text = (value: unknown) => JSON.stringify(value, null, 2);
 </script>
 <template>
@@ -260,25 +306,9 @@ const text = (value: unknown) => JSON.stringify(value, null, 2);
       <template v-if="details.action.execution.kind === 'software'">
         <dt>软件执行</dt>
         <dd class="software-operation">
-          {{
-            {
-              msi: "Windows MSI",
-              winget: "WinGet",
-              pkg: "macOS PKG",
-              homebrew: "Homebrew",
-              windowsBundle: "Windows ZIP Bundle",
-              macosBundle: "macOS ZIP Bundle",
-            }[details.action.execution.adapter]
-          }}
+          {{ adapterLabel(details.action.execution.adapter) }}
           ·
-          {{
-            {
-              install: "安装",
-              upgrade: "升级",
-              downgrade: "降级",
-              uninstall: "卸载",
-            }[details.action.execution.mutation]
-          }}
+          {{ mutationLabel(details.action.execution.mutation) }}
         </dd>
       </template>
       <dt>当前尝试</dt>

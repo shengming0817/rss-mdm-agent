@@ -486,7 +486,9 @@ fn macos_capture_is_durable_and_reopened_attempt_does_not_launch() {
         AppConfig::test_defaults(1),
     )
     .unwrap();
-    app.request_execution(&caller, &f.plan).unwrap();
+    assert_eq!(app.request_execution(&caller, &f.plan).unwrap().attempts, 0);
+    app.confirm_execution(&caller, request, f.plan.digest(), true)
+        .unwrap();
     let until = Instant::now() + Duration::from_secs(20);
     loop {
         let status = app.reconcile(request).unwrap();
@@ -683,7 +685,10 @@ fn application_cancel_captures_real_process_and_reopen_does_not_dispatch() {
         AppConfig::test_defaults(1),
     )
     .unwrap();
-    let started = app.request_execution(&caller, &f.plan).unwrap();
+    assert_eq!(app.request_execution(&caller, &f.plan).unwrap().attempts, 0);
+    let started = app
+        .confirm_execution(&caller, request, f.plan.digest(), true)
+        .unwrap();
     let attempt = started.attempt_id.unwrap();
     let until = Instant::now() + Duration::from_secs(5);
     loop {

@@ -31,7 +31,7 @@ function parameters(id: string) {
   <section class="task-detail" aria-label="任务详情">
     <h2>{{ task.action.title }}</h2>
     <p class="notice" role="status">{{ task.message }}</p>
-    <ActionSummary :action="task.action" />
+    <ActionSummary :input="task.action" />
     <section
       v-for="interaction in task.interactions"
       :key="interaction.id"
