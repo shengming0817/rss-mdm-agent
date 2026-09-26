@@ -197,7 +197,7 @@ async fn shared_durable_service_distinguishes_preview_submission_approval_and_re
             .unwrap()
             .status
             .phase,
-        execution_app::TaskPhase::TestCompleted
+        execution_app::TaskPhase::Verified
     );
     handle.close().await;
     let (restored, _generation) = started(&path);

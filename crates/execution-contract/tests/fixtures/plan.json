@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "planId": "plan-1",
   "request": {
     "schemaVersion": 1,
@@ -103,7 +103,10 @@
     },
     "output": {
       "stdout": "utf8",
-      "stderr": "utf8"
+      "stderr": "utf8",
+      "format": {
+        "kind": "text"
+      }
     }
   },
   "runAs": {
@@ -122,7 +125,8 @@
     ],
     "writePaths": [],
     "allowChildProcesses": false,
-    "requireSandbox": true
+    "requireSandbox": true,
+    "kind": "restricted"
   },
   "budget": {
     "totalTimeoutMs": 1000,

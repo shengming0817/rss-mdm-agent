@@ -1,0 +1,27 @@
+[package]
+name = "execution-runner"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+execution-contract = { path = "../execution-contract" }
+execution-app = { path = "../execution-app" }
+execution-lifecycle = { path = "../execution-lifecycle" }
+native-process = { path = "../native-process" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["process", "io-util", "rt", "time", "sync", "macros", "net"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "=0.2.189"
+
+[dev-dependencies]
+script-plan = { path = "../script-plan" }
+
+[build-dependencies]
+cc = "=1.4.5"

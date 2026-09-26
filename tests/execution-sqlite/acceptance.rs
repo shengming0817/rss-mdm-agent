@@ -685,7 +685,7 @@ fn newer_schema_is_diagnostics_only_and_corrupt_database_is_never_reinitialized(
         Store::open(&db.path, &plan().spec().request.authority, limits()).unwrap(),
         OpenOutcome::NewerSchema {
             found: 99,
-            supported: 2
+            supported: 3
         }
     ));
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
@@ -2237,4 +2237,90 @@ fn rejected_and_stale_observations_do_not_resolve_evidence_or_mutate_execution()
         store.execution(&host.scope(), &host).unwrap().snapshot(),
         &snapshot
     );
+}
+
+#[test]
+fn process_capture_is_scope_bound_durable_monotonic_and_never_releases_dispatch() {
+    let db = Database::new();
+    let host = TestHost::new(1);
+    let mut store = db.create();
+    host.prepare(&mut store);
+    let attempt = AttemptId::new("attempt-1").unwrap();
+    let mut facts = ProcessEvidence {
+        plan_digest: host.plan.digest().clone(),
+        attempt_id: attempt.clone(),
+        runner: id("test-runner"),
+        scope: ProcessScope::ProcessGroup {
+            owner: 123,
+            group: 124,
+        },
+        finished: false,
+        exit_code: None,
+        end: ProcessEnd::Unknown,
+        quiescent: false,
+        stdout: vec![],
+        stderr: vec![],
+        total_output_bytes: 0,
+        quality: OutputQuality::Partial,
+    };
+    assert!(store.record_process(&host.scope(), &facts, &host).is_err());
+    let result = store
+        .apply_command(
+            &operation("begin"),
+            &host.scope(),
+            &host.begin(),
+            &host.bindings(),
+            &host,
+        )
+        .unwrap();
+    drop(result); // Crash after intent: its only dispatch capability is deliberately lost.
+    store.record_process(&host.scope(), &facts, &host).unwrap();
+    facts.stdout = b"ok".to_vec();
+    facts.total_output_bytes = 2;
+    facts.exit_code = Some(0);
+    facts.finished = true;
+    facts.end = ProcessEnd::Exited;
+    facts.quality = OutputQuality::Complete;
+    store.record_process(&host.scope(), &facts, &host).unwrap();
+    drop(store);
+    let mut store = db.open();
+    assert_eq!(
+        store
+            .process_evidence(&host.scope(), &attempt, &host)
+            .unwrap(),
+        Some(facts.clone())
+    );
+    let result = store
+        .apply_command(
+            &operation("begin"),
+            &host.scope(),
+            &host.begin(),
+            &host.bindings(),
+            &host,
+        )
+        .unwrap();
+    assert!(matches!(result, CommitOutcome::AlreadyCommitted(_)));
+    let state = store
+        .execution_by_request(
+            &host.plan.spec().request.request_id,
+            ExecutionAccess::Result,
+            &host,
+        )
+        .unwrap()
+        .execution;
+    assert!(state
+        .snapshot()
+        .attempt
+        .as_ref()
+        .unwrap()
+        .termination
+        .is_none());
+    facts.total_output_bytes = 3;
+    assert!(store.record_process(&host.scope(), &facts, &host).is_err());
+    let mut denied = host.clone();
+    denied.read = false;
+    assert!(matches!(
+        store.process_evidence(&host.scope(), &attempt, &denied),
+        Err(Error::Denied)
+    ));
 }

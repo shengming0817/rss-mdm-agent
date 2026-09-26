@@ -489,7 +489,7 @@ enum Input<'a> {
     Command(&'a CommandEvent, &'a [ProfileApproval]),
     Observation(&'a ObservationEvent, &'a dyn ObservationVerifier),
 }
-fn load_execution(
+pub(crate) fn load_execution(
     conn: &Connection,
     scope: &Scope,
     limits: Limits,
@@ -642,5 +642,50 @@ fn approval_audit(p: &execution_approval::ApprovalDecision) -> ApprovalAudit {
             })
             .collect(),
         admission_validity: p.admission_validity().map(DecisionValidity::from),
+    }
+}
+
+impl Store {
+    /// Bounded owner scan, authenticating every scope before returning a request identifier.
+    pub fn service_requests(
+        &self,
+        after: Option<&execution_contract::RequestId>,
+        limit: usize,
+        host: &impl Host,
+    ) -> Result<Vec<execution_contract::RequestId>, Error> {
+        if limit == 0 || limit > 128 {
+            return Err(Error::InvalidInput);
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        crate::database::ensure_current(&tx, &self.authority, self.limits)?;
+        let mut statement=tx.prepare("SELECT request_id,scope FROM executions WHERE request_id>?1 ORDER BY request_id LIMIT ?2")?;
+        let rows = statement.query_map(
+            params![after.map_or("", |id| id.as_str()), limit as i64],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+        )?;
+        let mut requests = Vec::new();
+        for row in rows {
+            let (request, key) = row?;
+            // Decode only bounded plans; never treat the serialized scope claim as authorization.
+            let bytes: Vec<u8> = tx.query_row(
+                &format!(
+                    "SELECT {} FROM executions WHERE scope=?1",
+                    bounded_blob("plan", self.limits.plan.max_input_bytes)
+                ),
+                [&key],
+                |r| r.get(0),
+            )?;
+            let spec = execution_contract::decode_plan(&bytes, &self.limits.plan)
+                .map_err(|_| Error::Corrupt)?;
+            let plan = FrozenPlan::freeze(spec, &self.limits.plan).map_err(|_| Error::Corrupt)?;
+            let scope = Scope::from_plan(&plan);
+            self.check_scope(&scope)?;
+            if scope.key() != key {
+                return Err(Error::Corrupt);
+            }
+            authorize(host, Access::RunnerFact, &scope, None)?;
+            requests.push(execution_contract::RequestId::new(request).map_err(|_| Error::Corrupt)?);
+        }
+        Ok(requests)
     }
 }

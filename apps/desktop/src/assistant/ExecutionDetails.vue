@@ -30,8 +30,8 @@ function phase(value: TaskPhase): string {
       return "设备效果未知，需要可信核对";
     case "executionEnded":
       return "执行已结束，等待效果验证";
-    case "testCompleted":
-      return "S1 测试流程完成";
+    case "verified":
+      return "执行结果已核实";
     case "failedBeforeDispatch":
       return "可信证据确认派发前失败";
     case "cancelled":

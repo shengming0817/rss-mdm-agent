@@ -1,6 +1,6 @@
 use crate::{
-    ContractError, ErrorKind, Field, InputValue, NetworkAccess, PlanSpec, Platform, Rule, RunAs,
-    TargetScope,
+    ContractError, ErrorKind, Field, InputValue, IsolationPolicy, NetworkAccess, PlanSpec,
+    Platform, Rule, RunAs, TargetScope,
 };
 use serde::{
     de::{MapAccess, SeqAccess, Visitor},
@@ -309,11 +309,18 @@ pub(crate) fn validate_plan(p: &PlanSpec, l: &PlanLimits) -> Result<(), Contract
         ));
     }
     path(&p.launch.cwd, platform, Field::WorkingDirectory)?;
-    for value in &p.constraints.read_paths {
-        path(value, platform, Field::ReadPaths)?;
-    }
-    for value in &p.constraints.write_paths {
-        path(value, platform, Field::WritePaths)?;
+    if let IsolationPolicy::Restricted {
+        read_paths,
+        write_paths,
+        ..
+    } = &p.constraints
+    {
+        for value in read_paths {
+            path(value, platform, Field::ReadPaths)?;
+        }
+        for value in write_paths {
+            path(value, platform, Field::WritePaths)?;
+        }
     }
     if p.launch
         .argv
@@ -331,7 +338,7 @@ pub(crate) fn validate_plan(p: &PlanSpec, l: &PlanLimits) -> Result<(), Contract
         .iter()
         .filter(|a| matches!(a, crate::LaunchArg::ArtifactPath {}))
         .count()
-        != 1
+        != usize::from(p.launch.interpreter.profile.id.as_str() != "native-osquery-info-v1")
     {
         return Err(ContractError::new(
             ErrorKind::InvalidValue,
@@ -355,8 +362,21 @@ pub(crate) fn validate_plan(p: &PlanSpec, l: &PlanLimits) -> Result<(), Contract
             ));
         }
     }
+    if let crate::OutputFormat::Json { max_rows } = p.launch.output.format {
+        if !(1..=1000).contains(&max_rows) {
+            return Err(ContractError::new(
+                ErrorKind::InvalidBudget,
+                Field::OutputBytes,
+                Rule::BudgetLimit,
+            ));
+        }
+    }
     environment(p)?;
-    if let NetworkAccess::Allowlist { destinations } = &p.constraints.network {
+    if let IsolationPolicy::Restricted {
+        network: NetworkAccess::Allowlist { destinations },
+        ..
+    } = &p.constraints
+    {
         if destinations.is_empty() {
             return Err(ContractError::new(
                 ErrorKind::InvalidValue,

@@ -38,9 +38,9 @@ impl AppConfig {
             || self.max_capability_entries == 0
             || self.max_capability_entries > 4096
             || self.max_timeout_ms == 0
-            || self.max_timeout_ms > 60_000
+            || self.max_timeout_ms > 3_600_000
             || self.max_output_bytes == 0
-            || self.max_output_bytes > 65_536
+            || self.max_output_bytes > 1_048_576
         {
             return Err(Error::Configuration);
         }

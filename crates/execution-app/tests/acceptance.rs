@@ -214,7 +214,7 @@ fn failed_stop_diagnostic_write_still_allows_terminal_fact_writes() {
     assert_eq!(app.reconcile(r).unwrap_err(), Error::Conflict);
     let status = app.status(&caller(), r).unwrap();
     assert!(status.cancel_requested);
-    assert_eq!(status.phase, TaskPhase::TestCompleted);
+    assert_eq!(status.phase, TaskPhase::Verified);
     assert_eq!(status.evidence.len(), 2);
     assert_eq!(status.stop_outcome, None); // failed persistence is reported, never claimed successful
 }
@@ -308,7 +308,7 @@ fn newer_schema_retains_read_only_startup_diagnostic() {
     };
     assert_eq!(
         format!("{error:?}"),
-        "NewerSchema { found: 999, supported: 2 }"
+        "NewerSchema { found: 999, supported: 3 }"
     );
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
     assert_eq!(runner.dispatch_count(), 0);
@@ -326,6 +326,13 @@ fn stop_failure_does_not_prevent_termination_and_effect_observation() {
         }
         fn dispatch(&self, permit: AuthorizedDispatch) -> Result<DispatchOutcome, Error> {
             self.0.dispatch(permit)
+        }
+        fn evidence(
+            &self,
+            _plan: &execution_contract::FrozenPlan,
+            _attempt: &execution_contract::AttemptId,
+        ) -> Result<Option<execution_contract::ProcessEvidence>, execution_app::Error> {
+            Ok(None)
         }
         fn stop(&self, _: &FrozenPlan, _: &AttemptId) -> Result<(), Error> {
             Err(Error::Unavailable)
@@ -357,7 +364,7 @@ fn stop_failure_does_not_prevent_termination_and_effect_observation() {
     app.submit(&caller(), r, &p).unwrap();
     host.state.lock().unwrap().now = 2000;
     let status = app.reconcile(r).unwrap();
-    assert_eq!(status.phase, TaskPhase::TestCompleted);
+    assert_eq!(status.phase, TaskPhase::Verified);
     assert_eq!(status.evidence.len(), 2);
     assert_eq!(
         status.stop_outcome,
@@ -439,10 +446,7 @@ fn lost_response_replay_and_reopen_preserve_one_attempt_and_dispatch() {
     let (response, disconnected) = std::sync::mpsc::channel();
     drop(disconnected);
     assert!(response.send(accepted.clone()).is_err());
-    assert_eq!(
-        app.reconcile(request).unwrap().phase,
-        TaskPhase::TestCompleted
-    );
+    assert_eq!(app.reconcile(request).unwrap().phase, TaskPhase::Verified);
     drop(app);
     let mut app = open(&db, host.clone(), runner.clone(), Startup::OpenTest);
     assert_eq!(
@@ -453,7 +457,7 @@ fn lost_response_replay_and_reopen_preserve_one_attempt_and_dispatch() {
     assert_eq!(db.count("approval_consumptions"), 1);
     assert_eq!(host.state.lock().unwrap().admissions, 1);
     let completed = app.reconcile(request).unwrap();
-    assert_eq!(completed.phase, TaskPhase::TestCompleted);
+    assert_eq!(completed.phase, TaskPhase::Verified);
     assert!(completed
         .evidence
         .iter()
@@ -748,6 +752,13 @@ fn committed_intent_process_exit_is_not_reissued_after_restart() {
         }
         fn dispatch(&self, _: AuthorizedDispatch) -> Result<DispatchOutcome, Error> {
             std::process::exit(72)
+        }
+        fn evidence(
+            &self,
+            _plan: &execution_contract::FrozenPlan,
+            _attempt: &execution_contract::AttemptId,
+        ) -> Result<Option<execution_contract::ProcessEvidence>, execution_app::Error> {
+            Ok(None)
         }
         fn stop(&self, _: &FrozenPlan, _: &AttemptId) -> Result<(), Error> {
             unreachable!()

@@ -258,9 +258,7 @@ export async function connectExecution(
         if (
           name === "execution_cancel" &&
           status.result.cancelRequested !== true &&
-          !["cancelled", "testCompleted", "failed"].includes(
-            status.result.phase,
-          )
+          !["cancelled", "verified", "failed"].includes(status.result.phase)
         )
           return ok({ state: "unknown" });
         return ok({ state: "committed", receipt: receipt(request, status) });

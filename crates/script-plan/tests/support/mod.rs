@@ -101,6 +101,7 @@ pub fn input(profile: ScriptProfile) -> ScriptPlanInput {
             max_bytes: 128,
         },
         output: OutputSpec {
+            format: OutputFormat::Text {},
             stdout: TextEncoding::Utf8,
             stderr: TextEncoding::Utf8,
         },
@@ -108,7 +109,7 @@ pub fn input(profile: ScriptProfile) -> ScriptPlanInput {
             account: account.clone(),
         },
         session_requirement: SessionRequirement::ActiveUser { account },
-        constraints: Constraints {
+        constraints: IsolationPolicy::Restricted {
             network: NetworkAccess::Denied {},
             read_paths: vec!["/workspace".into()],
             write_paths: vec![],

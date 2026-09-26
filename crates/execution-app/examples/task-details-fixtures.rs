@@ -9,7 +9,7 @@ fn main() {
         ("running", TestScenario::Wait, false, false, false),
         ("approvalRequired", TestScenario::Wait, true, false, false),
         ("outcomeUnknown", TestScenario::Unknown, false, true, false),
-        ("testCompleted", TestScenario::Complete, false, true, false),
+        ("verified", TestScenario::Complete, false, true, false),
         ("cancelled", TestScenario::Wait, false, true, true),
     ] {
         let db = Database::new();

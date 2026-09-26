@@ -1,7 +1,6 @@
 use crate::*;
 use execution_contract::{
-    AttemptId, Constraints, ExecutionBudget, ExecutionRequest, FrozenPlan, Initiator, PlanSpec,
-    ValidityWindow,
+    AttemptId, ExecutionBudget, ExecutionRequest, FrozenPlan, Initiator, PlanSpec, ValidityWindow,
 };
 
 // Only this verifier call can create the runtime trusted context. It has no serde/DTO constructor.
@@ -57,13 +56,6 @@ fn scope(spec: &PlanSpec) -> impl PartialEq + '_ {
         target,
         parameters,
     } = request;
-    let Constraints {
-        network,
-        read_paths,
-        write_paths,
-        allow_child_processes,
-        require_sandbox,
-    } = constraints;
     (
         authority,
         actor,
@@ -73,13 +65,7 @@ fn scope(spec: &PlanSpec) -> impl PartialEq + '_ {
         launch,
         run_as,
         session_requirement,
-        (
-            network,
-            read_paths,
-            write_paths,
-            allow_child_processes,
-            require_sandbox,
-        ),
+        constraints,
     )
 }
 fn same_scope(template: &PlanSpec, plan: &PlanSpec) -> bool {

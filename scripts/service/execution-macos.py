@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""Local launchd mechanism setup. Unbound services cannot execute submitted work."""
+import argparse
+import os
+from pathlib import Path
+import plistlib
+import stat
+import subprocess
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('action', choices=['install', 'remove', 'status'])
+    parser.add_argument('--scope', choices=['system', 'user'], required=True)
+    parser.add_argument('--binary', type=Path, required=True)
+    args = parser.parse_args()
+    system = args.scope == 'system'
+    if system and os.geteuid() != 0:
+        raise RuntimeError('system scope requires administrator execution')
+    if not system and os.geteuid() == 0:
+        raise RuntimeError('user helper must be installed by its actual user')
+    binary = args.binary
+    if not binary.is_absolute() or binary.is_symlink() or not binary.is_file():
+        raise RuntimeError('an absolute regular service binary is required')
+    for path in [binary, *binary.parents]:
+        metadata = path.lstat()
+        if stat.S_ISLNK(metadata.st_mode) or metadata.st_mode & 0o022 or metadata.st_uid not in (0, os.geteuid()):
+            raise RuntimeError('unprotected executable path')
+    label = 'com.rss-mdm.agent.execution' + ('' if system else '.user')
+    domain = 'system' if system else f'gui/{os.geteuid()}'
+    folder = Path('/Library/LaunchDaemons') if system else Path.home() / 'Library/LaunchAgents'
+    plist = folder / (label + '.plist')
+    endpoint = domain + '/' + label
+    if args.action == 'status':
+        subprocess.run(['/bin/launchctl', 'print', endpoint], check=True)
+        return
+    if args.action == 'install':
+        if subprocess.run(['/bin/launchctl', 'print', endpoint], capture_output=True).returncode == 0:
+            raise RuntimeError('service already registered')
+        folder.mkdir(parents=True, exist_ok=True)
+        with plist.open('xb') as stream:
+            plistlib.dump({'Label': label, 'ProgramArguments': [str(binary)],
+                          'MachServices': {label: True}, 'RunAtLoad': True,
+                          'KeepAlive': False, 'ExitTimeOut': 5,
+                          'ProcessType': 'Background'}, stream)
+        try:
+            subprocess.run(['/bin/launchctl', 'bootstrap', domain, str(plist)], check=True)
+        except BaseException:
+            plist.unlink()
+            raise
+    else:
+        with plist.open('rb') as stream:
+            current = plistlib.load(stream)
+        if current.get('ProgramArguments') != [str(binary)] or current.get('Label') != label:
+            raise RuntimeError('refusing to remove another installation')
+        subprocess.run(['/bin/launchctl', 'bootout', endpoint], check=True)
+        plist.unlink()
+
+
+if __name__ == '__main__':
+    main()

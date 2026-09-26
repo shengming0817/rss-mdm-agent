@@ -70,3 +70,7 @@ CREATE TABLE confirmations (
     sequence INTEGER NOT NULL REFERENCES receipts(sequence),
     PRIMARY KEY(scope,consumer,sequence)
 );
+
+CREATE TABLE process_evidence (
+    attempt_id TEXT PRIMARY KEY REFERENCES attempts(attempt_id), body BLOB NOT NULL
+);

@@ -83,6 +83,7 @@ export const sourceEdges = [
   [npm("ai-client"), npm("ai-host-app")],
 ];
 export const testOwners = [
+  ["scripts/service/execution-macos.py", "execution-runner"],
   ["apps/ai-host/src/execution-tools.json", "execution-mcp"],
   ["apps/desktop/src/assistant/execution-types.ts", "execution-app"],
   ["tests/assistant/execution-fixtures.json", "execution-app"],

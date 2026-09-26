@@ -102,8 +102,10 @@ fn convention(
     platform: Platform,
     encoding: ArtifactEncoding,
 ) -> Result<(VersionedRef, Vec<LaunchArg>), ScriptPlanError> {
-    if profile != ScriptProfile::PowerShell7
-        && (platform == Platform::Windows || encoding != ArtifactEncoding::Utf8)
+    if !matches!(
+        profile,
+        ScriptProfile::PowerShell7 | ScriptProfile::OsqueryInfoV1
+    ) && (platform == Platform::Windows || encoding != ArtifactEncoding::Utf8)
     {
         return Err(ScriptPlanError::Profile);
     }
@@ -111,6 +113,10 @@ fn convention(
         ScriptProfile::PowerShell7 => (
             "native-pwsh7-file",
             &["-NoLogo", "-NoProfile", "-NonInteractive", "-File"],
+        ),
+        ScriptProfile::OsqueryInfoV1 => (
+            "native-osquery-info-v1",
+            &["--json", "SELECT version FROM osquery_info;"],
         ),
         ScriptProfile::PosixSh => ("native-posix-sh-file", &[]),
         ScriptProfile::Bash => ("native-bash-file", &["--noprofile", "--norc"]),
@@ -120,7 +126,9 @@ fn convention(
         revision: Id::new("1")?,
     };
     let mut argv: Vec<_> = prefix.iter().map(|v| literal(*v)).collect();
-    argv.push(LaunchArg::ArtifactPath {});
+    if profile != ScriptProfile::OsqueryInfoV1 {
+        argv.push(LaunchArg::ArtifactPath {});
+    }
     Ok((reference, argv))
 }
 fn check_environment(
@@ -176,6 +184,17 @@ pub fn compile(input: ScriptPlanInput, limits: &PlanLimits) -> Result<FrozenPlan
     {
         return Err(ScriptPlanError::Limit);
     }
+    if profile == ScriptProfile::OsqueryInfoV1
+        && (!bindings.is_empty()
+            || !request.parameters.is_empty()
+            || !env.is_empty()
+            || !matches!(stdin, StdinBinding::Closed)
+            || !matches!(run_as, RunAs::System { .. })
+            || artifact_encoding != ArtifactEncoding::Utf8
+            || output.format != (OutputFormat::Json { max_rows: 1 }))
+    {
+        return Err(ScriptPlanError::Profile);
+    }
     let (profile_ref, mut argv) = convention(profile, request.target.platform, artifact_encoding)?;
     let mut used = BTreeSet::new();
     let mut names = BTreeSet::new();
@@ -213,7 +232,7 @@ pub fn compile(input: ScriptPlanInput, limits: &PlanLimits) -> Result<FrozenPlan
     check_environment(profile, &env)?;
     Ok(FrozenPlan::freeze(
         PlanSpec {
-            schema_version: V1,
+            schema_version: V2,
             plan_id,
             request,
             launch: LaunchSpec {

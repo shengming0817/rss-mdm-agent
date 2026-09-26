@@ -62,3 +62,15 @@ policy 来源修复以自动化回归和 Windows target 编译检查交付，不
 cargo test -p local-service、Host/desktop 测试及交叉编译只是前置证据。真实矩阵未完成时不能宣称双平台安全验收通过。
 
 策略格式直接替换，不读取旧策略或自动迁移。升级实验室候选时先卸载服务注册，由管理员处理旧安装文件，再构建并重新安装；保留原 AI 数据，不通过清库规避格式拒绝。
+
+## 执行机制候选（#2476）
+
+执行宿主与上述 statusOnly 查询能力独立。构建 `cargo build -p execution-runner --bin rss-execution-service`，然后用
+`python3 scripts/service/execution-macos.py install --scope user --binary <绝对二进制路径>` 注册当前登录用户的 LaunchAgent。
+使用该二进制的 `--probe-user` 发起实际 XPC 查询；当前默认装配必须返回 `{"kind":"rejected"}`。
+结束后运行相同命令并把 `install` 改为 `remove`，移除本次临时安装。已有安装不被覆盖；移除前核对其固定二进制路径。
+系统场景使用 `--scope system` 和 `--probe-system`，需要管理员及 root 拥有的保护安装路径，不复用用户可写的开发目录。
+
+候选执行机制支持固定解释器、受控进程、输出及恢复接缝；生产身份和可信批准由 #2564 接线。
+当前 V2 计划和 SQLite 当前格式直接替换旧格式。旧库保留并拒绝打开；实验室明确选择新的私有目录初始化，不能删除旧库冒充恢复成功。
+机制详情与本机测试入口见 [execution-runner](../../crates/execution-runner/README.md)。没有运行的系统账号、Windows、签名发布或真机矩阵不得记为已通过。

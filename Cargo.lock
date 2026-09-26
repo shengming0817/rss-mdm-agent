@@ -911,6 +911,7 @@ name = "execution-mcp"
 version = "0.1.0"
 dependencies = [
  "execution-contract",
+ "execution-lifecycle",
  "futures-util",
  "jsonschema",
  "rmcp",
@@ -923,6 +924,24 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+]
+
+[[package]]
+name = "execution-runner"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "execution-app",
+ "execution-contract",
+ "execution-lifecycle",
+ "libc",
+ "native-process",
+ "script-plan",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.20",
+ "tokio",
 ]
 
 [[package]]

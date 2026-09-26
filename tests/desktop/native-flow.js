@@ -155,8 +155,7 @@
       await click("批准此测试计划一次");
       await wait(
         async () =>
-          (await details(human.plan.requestId)).status.phase ===
-          "testCompleted",
+          (await details(human.plan.requestId)).status.phase === "verified",
       );
       setStage("ai_connect");
       await click("AI 助手");
@@ -226,10 +225,7 @@
       await click("批准此测试计划一次");
       // The durable runner is now in flight. Switching must not change its frozen origin.
       const started = await details("ai-s1-smoke");
-      if (
-        started.status.attempts !== 1 ||
-        started.status.phase === "testCompleted"
-      )
+      if (started.status.attempts !== 1 || started.status.phase === "verified")
         throw new Error("task did not start before switch");
       setStage("user_b_isolation");
       await selectUser("Native acceptance B");
@@ -283,7 +279,7 @@
       setStage("user_a_task_continued");
       const completed = await wait(async () => {
         const value = await details("ai-s1-smoke");
-        return value.status.phase === "testCompleted" && value;
+        return value.status.phase === "verified" && value;
       });
       if (
         JSON.stringify(completed.plan) !== JSON.stringify(ai.plan) ||
@@ -291,8 +287,7 @@
       )
         throw new Error("original task identity changed");
       await wait(
-        async () =>
-          (await details("ai-s1-tool")).status.phase === "testCompleted",
+        async () => (await details("ai-s1-tool")).status.phase === "verified",
       );
       await click("AI 助手");
       setStage("user_a_history");

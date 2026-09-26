@@ -70,6 +70,25 @@ impl Execution {
             .prior_output_bytes
             .saturating_add(self.snapshot.attempt.as_ref().map_or(0, |a| a.output_bytes))
     }
+    /// Remaining allowance is derived from the committed first-attempt time and all output.
+    pub fn allowance(&self, now: u64) -> Result<crate::DispatchAllowance, LifecycleError> {
+        self.directive(now)?;
+        let plan = self.plan.spec();
+        let start = self.snapshot.first_attempt_at_unix_ms.unwrap_or(now);
+        let deadline = start
+            .saturating_add(plan.budget.total_timeout_ms)
+            .min(plan.validity.expires_at_unix_ms);
+        Ok(crate::DispatchAllowance {
+            remaining_timeout_ms: deadline.saturating_sub(now),
+            deadline_unix_ms: start
+                .saturating_add(plan.budget.total_timeout_ms)
+                .min(plan.validity.expires_at_unix_ms),
+            remaining_output_bytes: plan
+                .budget
+                .total_output_bytes
+                .saturating_sub(self.total_output_bytes()),
+        })
+    }
     fn limit_reason(&self, now: u64) -> Option<LimitReason> {
         let p = self.plan.spec();
         let s = &self.snapshot;

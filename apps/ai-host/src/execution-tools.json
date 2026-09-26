@@ -2348,6 +2348,31 @@
           "pattern": "^[0-9a-f]{64}$",
           "type": "string"
         },
+        "EffectAssessment": {
+          "description": "Verified assessment of the whole controlled attempt, not text from tool output.",
+          "oneOf": [
+            {
+              "const": "noEffect",
+              "description": "Quiescent attempt has no side effects or pending external work.",
+              "type": "string"
+            },
+            {
+              "const": "satisfied",
+              "description": "Independent target verification confirms the desired state.",
+              "type": "string"
+            },
+            {
+              "const": "notSatisfied",
+              "description": "Target is not satisfied; side effects may nevertheless exist.",
+              "type": "string"
+            },
+            {
+              "const": "unknown",
+              "description": "Effect cannot be established.",
+              "type": "string"
+            }
+          ]
+        },
         "ErrorView": {
           "description": "Protocol error payload; optional catalog diagnostic is produced only from static C03 errors.",
           "properties": {
@@ -2361,6 +2386,21 @@
           },
           "required": ["code"],
           "type": "object"
+        },
+        "ExecutionMode": {
+          "description": "Explicit execution provenance; test effects never become real effects.",
+          "oneOf": [
+            {
+              "const": "test",
+              "description": "Explicit fixture runner only.",
+              "type": "string"
+            },
+            {
+              "const": "real",
+              "description": "Real runner, verified by the later production host.",
+              "type": "string"
+            }
+          ]
         },
         "Id": {
           "description": "Opaque local reference identifier; syntax validity is not authenticity.",
@@ -2410,12 +2450,7 @@
             },
             {
               "const": "verified",
-              "description": "The service verified the requested effect.",
-              "type": "string"
-            },
-            {
-              "const": "testCompleted",
-              "description": "Explicit test-only terminal result; not a platform effect.",
+              "description": "An independent assessment was recorded; inspect mode and assessment.",
               "type": "string"
             },
             {
@@ -2433,6 +2468,13 @@
         "OperationStatus": {
           "description": "Authorized execution fact projection; accepted is never rewritten to success.",
           "properties": {
+            "assessment": {
+              "anyOf": [
+                { "$ref": "#/$defs/EffectAssessment" },
+                { "type": "null" }
+              ],
+              "description": "Independent effect assessment, never inferred from process exit."
+            },
             "attemptId": {
               "anyOf": [{ "$ref": "#/$defs/AttemptId" }, { "type": "null" }],
               "description": "Service-owned attempt identity, if an attempt exists."
@@ -2445,6 +2487,10 @@
               "description": "Authorized evidence references only.",
               "items": { "$ref": "#/$defs/Id" },
               "type": "array"
+            },
+            "mode": {
+              "$ref": "#/$defs/ExecutionMode",
+              "description": "Execution provenance; a verified test result is not a real platform effect."
             },
             "operationRequestId": {
               "$ref": "#/$defs/RequestId",
@@ -2464,6 +2510,7 @@
             }
           },
           "required": [
+            "mode",
             "submitted",
             "cancelRequested",
             "operationRequestId",
@@ -2759,6 +2806,31 @@
           "pattern": "^[0-9a-f]{64}$",
           "type": "string"
         },
+        "EffectAssessment": {
+          "description": "Verified assessment of the whole controlled attempt, not text from tool output.",
+          "oneOf": [
+            {
+              "const": "noEffect",
+              "description": "Quiescent attempt has no side effects or pending external work.",
+              "type": "string"
+            },
+            {
+              "const": "satisfied",
+              "description": "Independent target verification confirms the desired state.",
+              "type": "string"
+            },
+            {
+              "const": "notSatisfied",
+              "description": "Target is not satisfied; side effects may nevertheless exist.",
+              "type": "string"
+            },
+            {
+              "const": "unknown",
+              "description": "Effect cannot be established.",
+              "type": "string"
+            }
+          ]
+        },
         "ErrorView": {
           "description": "Protocol error payload; optional catalog diagnostic is produced only from static C03 errors.",
           "properties": {
@@ -2772,6 +2844,21 @@
           },
           "required": ["code"],
           "type": "object"
+        },
+        "ExecutionMode": {
+          "description": "Explicit execution provenance; test effects never become real effects.",
+          "oneOf": [
+            {
+              "const": "test",
+              "description": "Explicit fixture runner only.",
+              "type": "string"
+            },
+            {
+              "const": "real",
+              "description": "Real runner, verified by the later production host.",
+              "type": "string"
+            }
+          ]
         },
         "Id": {
           "description": "Opaque local reference identifier; syntax validity is not authenticity.",
@@ -2821,12 +2908,7 @@
             },
             {
               "const": "verified",
-              "description": "The service verified the requested effect.",
-              "type": "string"
-            },
-            {
-              "const": "testCompleted",
-              "description": "Explicit test-only terminal result; not a platform effect.",
+              "description": "An independent assessment was recorded; inspect mode and assessment.",
               "type": "string"
             },
             {
@@ -2844,6 +2926,13 @@
         "OperationStatus": {
           "description": "Authorized execution fact projection; accepted is never rewritten to success.",
           "properties": {
+            "assessment": {
+              "anyOf": [
+                { "$ref": "#/$defs/EffectAssessment" },
+                { "type": "null" }
+              ],
+              "description": "Independent effect assessment, never inferred from process exit."
+            },
             "attemptId": {
               "anyOf": [{ "$ref": "#/$defs/AttemptId" }, { "type": "null" }],
               "description": "Service-owned attempt identity, if an attempt exists."
@@ -2856,6 +2945,10 @@
               "description": "Authorized evidence references only.",
               "items": { "$ref": "#/$defs/Id" },
               "type": "array"
+            },
+            "mode": {
+              "$ref": "#/$defs/ExecutionMode",
+              "description": "Execution provenance; a verified test result is not a real platform effect."
             },
             "operationRequestId": {
               "$ref": "#/$defs/RequestId",
@@ -2875,6 +2968,7 @@
             }
           },
           "required": [
+            "mode",
             "submitted",
             "cancelRequested",
             "operationRequestId",
@@ -3200,6 +3294,31 @@
           "pattern": "^[0-9a-f]{64}$",
           "type": "string"
         },
+        "EffectAssessment": {
+          "description": "Verified assessment of the whole controlled attempt, not text from tool output.",
+          "oneOf": [
+            {
+              "const": "noEffect",
+              "description": "Quiescent attempt has no side effects or pending external work.",
+              "type": "string"
+            },
+            {
+              "const": "satisfied",
+              "description": "Independent target verification confirms the desired state.",
+              "type": "string"
+            },
+            {
+              "const": "notSatisfied",
+              "description": "Target is not satisfied; side effects may nevertheless exist.",
+              "type": "string"
+            },
+            {
+              "const": "unknown",
+              "description": "Effect cannot be established.",
+              "type": "string"
+            }
+          ]
+        },
         "ErrorView": {
           "description": "Protocol error payload; optional catalog diagnostic is produced only from static C03 errors.",
           "properties": {
@@ -3213,6 +3332,21 @@
           },
           "required": ["code"],
           "type": "object"
+        },
+        "ExecutionMode": {
+          "description": "Explicit execution provenance; test effects never become real effects.",
+          "oneOf": [
+            {
+              "const": "test",
+              "description": "Explicit fixture runner only.",
+              "type": "string"
+            },
+            {
+              "const": "real",
+              "description": "Real runner, verified by the later production host.",
+              "type": "string"
+            }
+          ]
         },
         "Id": {
           "description": "Opaque local reference identifier; syntax validity is not authenticity.",
@@ -3262,12 +3396,7 @@
             },
             {
               "const": "verified",
-              "description": "The service verified the requested effect.",
-              "type": "string"
-            },
-            {
-              "const": "testCompleted",
-              "description": "Explicit test-only terminal result; not a platform effect.",
+              "description": "An independent assessment was recorded; inspect mode and assessment.",
               "type": "string"
             },
             {
@@ -3285,6 +3414,13 @@
         "OperationStatus": {
           "description": "Authorized execution fact projection; accepted is never rewritten to success.",
           "properties": {
+            "assessment": {
+              "anyOf": [
+                { "$ref": "#/$defs/EffectAssessment" },
+                { "type": "null" }
+              ],
+              "description": "Independent effect assessment, never inferred from process exit."
+            },
             "attemptId": {
               "anyOf": [{ "$ref": "#/$defs/AttemptId" }, { "type": "null" }],
               "description": "Service-owned attempt identity, if an attempt exists."
@@ -3297,6 +3433,10 @@
               "description": "Authorized evidence references only.",
               "items": { "$ref": "#/$defs/Id" },
               "type": "array"
+            },
+            "mode": {
+              "$ref": "#/$defs/ExecutionMode",
+              "description": "Execution provenance; a verified test result is not a real platform effect."
             },
             "operationRequestId": {
               "$ref": "#/$defs/RequestId",
@@ -3316,6 +3456,7 @@
             }
           },
           "required": [
+            "mode",
             "submitted",
             "cancelRequested",
             "operationRequestId",

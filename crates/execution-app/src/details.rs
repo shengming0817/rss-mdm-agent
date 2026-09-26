@@ -1,26 +1,35 @@
 use execution_contract::{
     Digest, ExactArtifactRef, ExecutionBudget, FrozenPlan, InterpreterRef, NetworkAccess,
-    Operation, PlanId, RunAs, SessionRequirement, Target, ValidityWindow, VersionedRef, V1,
+    Operation, PlanId, RunAs, SessionRequirement, Target, ValidityWindow, VersionedRef, V2,
 };
 use schemars::JsonSchema;
 use serde::Serialize;
 
 /// Safe counts only; individual paths and network destinations remain protected.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct AccessSummary {
-    /// Whether networking is completely denied.
-    pub network_denied: bool,
-    /// Number of exact allowlisted destinations; never their values.
-    pub network_destination_count: usize,
-    /// Number of declared read paths.
-    pub read_path_count: usize,
-    /// Number of declared write paths.
-    pub write_path_count: usize,
-    /// Required child process allowance.
-    pub allow_child_processes: bool,
-    /// Required isolation; this is not an observation that enforcement succeeded.
-    pub require_sandbox: bool,
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum AccessSummary {
+    /// No additional confinement beyond the selected OS account permissions.
+    OsIdentity {},
+    /// Explicit restrictions, never inferred from absent fields.
+    Restricted {
+        /// Whether networking is completely denied.
+        network_denied: bool,
+        /// Number of exact allowlisted destinations; never their values.
+        network_destination_count: usize,
+        /// Number of declared read paths.
+        read_path_count: usize,
+        /// Number of declared write paths.
+        write_path_count: usize,
+        /// Required child process allowance.
+        allow_child_processes: bool,
+        /// Required isolation; this is not an observation that enforcement succeeded.
+        require_sandbox: bool,
+    },
 }
 
 /// Allowlisted view of the immutable plan; no parameters, launch inputs, secrets or audit.
@@ -34,7 +43,7 @@ pub struct FrozenPlanSummary {
     /// Human or AI origin, without granting execution permission.
     pub initiator: execution_contract::Initiator,
     /// Version of the frozen execution plan, independent of the AI wire version.
-    pub schema_version: V1,
+    pub schema_version: V2,
     /// Exact frozen plan identity.
     pub plan_id: PlanId,
     /// Digest covers the complete original plan, including omitted private values.
@@ -79,16 +88,25 @@ impl FrozenPlanSummary {
             policy: p.policy.clone(),
             validity: p.validity,
             budget: p.budget,
-            access: AccessSummary {
-                network_denied: matches!(p.constraints.network, NetworkAccess::Denied {}),
-                network_destination_count: match &p.constraints.network {
-                    NetworkAccess::Denied {} => 0,
-                    NetworkAccess::Allowlist { destinations } => destinations.len(),
+            access: match &p.constraints {
+                execution_contract::IsolationPolicy::OsIdentity {} => AccessSummary::OsIdentity {},
+                execution_contract::IsolationPolicy::Restricted {
+                    network,
+                    read_paths,
+                    write_paths,
+                    allow_child_processes,
+                    require_sandbox,
+                } => AccessSummary::Restricted {
+                    network_denied: matches!(network, NetworkAccess::Denied {}),
+                    network_destination_count: match network {
+                        NetworkAccess::Denied {} => 0,
+                        NetworkAccess::Allowlist { destinations } => destinations.len(),
+                    },
+                    read_path_count: read_paths.len(),
+                    write_path_count: write_paths.len(),
+                    allow_child_processes: *allow_child_processes,
+                    require_sandbox: *require_sandbox,
                 },
-                read_path_count: p.constraints.read_paths.len(),
-                write_path_count: p.constraints.write_paths.len(),
-                allow_child_processes: p.constraints.allow_child_processes,
-                require_sandbox: p.constraints.require_sandbox,
             },
         }
     }

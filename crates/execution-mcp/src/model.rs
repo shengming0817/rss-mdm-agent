@@ -241,10 +241,8 @@ pub enum OperationPhase {
     ExecutionEnded,
     /// Outcome needs authoritative reconciliation.
     OutcomeUnknown,
-    /// The service verified the requested effect.
+    /// An independent assessment was recorded; inspect mode and assessment.
     Verified,
-    /// Explicit test-only terminal result; not a platform effect.
-    TestCompleted,
     /// Failure known to the execution authority.
     Failed,
     /// Service confirms its business cancellation condition, not rollback.
@@ -254,6 +252,10 @@ pub enum OperationPhase {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct OperationStatus {
+    /// Execution provenance; a verified test result is not a real platform effect.
+    pub mode: execution_lifecycle::ExecutionMode,
+    /// Independent effect assessment, never inferred from process exit.
+    pub assessment: Option<execution_lifecycle::EffectAssessment>,
     /// Durable initial submission receipt; preview alone is false.
     pub submitted: bool,
     /// Durable cancellation request, independent of termination/effect status.

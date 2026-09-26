@@ -289,6 +289,10 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             Some(cause)
         } else {
             match self.runner.dispatch(AuthorizedDispatch {
+                issued: std::time::Instant::now(),
+                allowance: execution
+                    .allowance(self.host.reliable_now()?)
+                    .map_err(|_| Error::Clock)?,
                 action,
                 plan: execution.plan().clone(),
             }) {
@@ -383,6 +387,32 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             let mut execution = self.load(context, request, ExecutionAccess::RunnerFact)?;
             if execution.snapshot().attempt.is_none() {
                 break;
+            }
+            self.authorize_runner(execution.plan(), Access::RunnerFact)?;
+            let active = execution
+                .snapshot()
+                .attempt
+                .as_ref()
+                .ok_or(Error::Conflict)?;
+            if let Some(facts) = self.runner.evidence(execution.plan(), &active.id)? {
+                let host = Host::new(&self.host, &self.binding, &self.config, None)
+                    .with_plan(Some(execution.plan()));
+                self.store
+                    .record_process(&Scope::from_plan(execution.plan()), &facts, &host)?;
+                if facts.total_output_bytes > active.output_bytes {
+                    self.command(
+                        None,
+                        &execution,
+                        "output",
+                        &facts.total_output_bytes.to_string(),
+                        Command::Output {
+                            attempt_id: active.id.clone(),
+                            total_bytes: facts.total_output_bytes,
+                        },
+                        &[],
+                    )?;
+                    execution = self.load(context, request, ExecutionAccess::RunnerFact)?;
+                }
             }
             let directive = execution
                 .directive(self.host.reliable_now()?)
@@ -645,7 +675,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                 {
                     TaskPhase::OutcomeUnknown
                 }
-                Phase::Verified => TaskPhase::TestCompleted,
+                Phase::Verified => TaskPhase::Verified,
                 Phase::FailedBeforeDispatch => TaskPhase::FailedBeforeDispatch,
                 Phase::Cancelled => TaskPhase::Cancelled,
             }
@@ -661,7 +691,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             plan_id: s.plan_id.clone(),
             plan_digest: s.plan_digest.clone(),
             phase,
-            mode: s.attempt.as_ref().map_or(ExecutionMode::Test, |a| a.mode),
+            mode: s.attempt.as_ref().map_or(self.runner.mode(), |a| a.mode),
             attempt_id: s.attempt.as_ref().map(|a| a.id.clone()),
             attempts: s.attempts,
             cancel_requested: s.cancel_requested,
@@ -733,4 +763,44 @@ fn revision_operation(
     let identity = serde_json::to_string(&(identity, execution.snapshot().revision))
         .map_err(|_| Error::InvalidInput)?;
     operation(execution.plan(), stage, &identity)
+}
+
+impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
+    /// Service-owned bounded recovery page; a recovered record never releases a dispatch permit.
+    pub fn reconcile_page(
+        &mut self,
+        after: Option<&RequestId>,
+        limit: usize,
+    ) -> Result<Option<RequestId>, Error> {
+        let requests = self
+            .store
+            .service_requests(after, limit, &self.adapter(None, None))?;
+        for request in &requests {
+            self.reconcile(request)?;
+        }
+        Ok(if requests.len() == limit {
+            requests.last().cloned()
+        } else {
+            None
+        })
+    }
+    /// Stop live runners on service shutdown. Missing proof remains Unknown in the same journal.
+    pub fn stop_active(&mut self, limit: usize) -> Result<(), Error> {
+        let requests = self
+            .store
+            .service_requests(None, limit, &self.adapter(None, None))?;
+        for request in requests {
+            let execution = self.load(None, &request, ExecutionAccess::RunnerFact)?;
+            if execution
+                .snapshot()
+                .attempt
+                .as_ref()
+                .is_some_and(|a| a.termination.is_none())
+            {
+                self.stop_and_record(&execution)?;
+                self.reconcile(&request)?;
+            }
+        }
+        Ok(())
+    }
 }

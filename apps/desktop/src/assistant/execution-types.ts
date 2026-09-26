@@ -66,6 +66,43 @@ export type LimitReason =
  */
 export type StopOutcome = "acknowledged" | "failed";
 /**
+ * Safe counts only; individual paths and network destinations remain protected.
+ *
+ * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
+ * via the `definition` "AccessSummary".
+ */
+export type AccessSummary =
+  | {
+      kind: "osIdentity";
+    }
+  | {
+      /**
+       * Required child process allowance.
+       */
+      allowChildProcesses: boolean;
+      kind: "restricted";
+      /**
+       * Whether networking is completely denied.
+       */
+      networkDenied: boolean;
+      /**
+       * Number of exact allowlisted destinations; never their values.
+       */
+      networkDestinationCount: number;
+      /**
+       * Number of declared read paths.
+       */
+      readPathCount: number;
+      /**
+       * Required isolation; this is not an observation that enforcement succeeded.
+       */
+      requireSandbox: boolean;
+      /**
+       * Number of declared write paths.
+       */
+      writePathCount: number;
+    };
+/**
  * Product actor reference, not an authenticated principal.
  *
  * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
@@ -173,9 +210,9 @@ export type Initiator =
     };
 /**
  * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
- * via the `definition` "LocalContractV1".
+ * via the `definition` "LocalContractV2".
  */
-export type LocalContractV1 = 1;
+export type LocalContractV2 = 2;
 /**
  * Immutable local plan identity.
  *
@@ -257,7 +294,7 @@ export type TaskPhase =
   | "running"
   | "outcomeUnknown"
   | "executionEnded"
-  | "testCompleted"
+  | "verified"
   | "failedBeforeDispatch"
   | "cancelled";
 
@@ -272,7 +309,40 @@ export interface ExecutionTaskDetails {
  * Redacted frozen plan bound to that lifecycle.
  */
 export interface FrozenPlanSummary {
-  access: AccessSummary;
+  /**
+   * Restrictions summarized without individual private values.
+   */
+  access:
+    | {
+        kind: "osIdentity";
+      }
+    | {
+        /**
+         * Required child process allowance.
+         */
+        allowChildProcesses: boolean;
+        kind: "restricted";
+        /**
+         * Whether networking is completely denied.
+         */
+        networkDenied: boolean;
+        /**
+         * Number of exact allowlisted destinations; never their values.
+         */
+        networkDestinationCount: number;
+        /**
+         * Number of declared read paths.
+         */
+        readPathCount: number;
+        /**
+         * Required isolation; this is not an observation that enforcement succeeded.
+         */
+        requireSandbox: boolean;
+        /**
+         * Number of declared write paths.
+         */
+        writePathCount: number;
+      };
   /**
    * Permission-bearing principal; not the model account.
    */
@@ -366,7 +436,7 @@ export interface FrozenPlanSummary {
   /**
    * Version of the frozen execution plan, independent of the AI wire version.
    */
-  schemaVersion: 1;
+  schemaVersion: 2;
   /**
    * Required target user session.
    */
@@ -380,35 +450,6 @@ export interface FrozenPlanSummary {
       };
   target: Target;
   validity: ValidityWindow;
-}
-/**
- * Restrictions summarized without individual private values.
- */
-export interface AccessSummary {
-  /**
-   * Required child process allowance.
-   */
-  allowChildProcesses: boolean;
-  /**
-   * Whether networking is completely denied.
-   */
-  networkDenied: boolean;
-  /**
-   * Number of exact allowlisted destinations; never their values.
-   */
-  networkDestinationCount: number;
-  /**
-   * Number of declared read paths.
-   */
-  readPathCount: number;
-  /**
-   * Required isolation; this is not an observation that enforcement succeeded.
-   */
-  requireSandbox: boolean;
-  /**
-   * Number of declared write paths.
-   */
-  writePathCount: number;
 }
 /**
  * Exact artifact revision and content hash.
@@ -711,7 +752,7 @@ export interface ExecutionStatus {
     | "running"
     | "outcomeUnknown"
     | "executionEnded"
-    | "testCompleted"
+    | "verified"
     | "failedBeforeDispatch"
     | "cancelled";
   /**
@@ -760,38 +801,6 @@ export interface VersionedRef6 {
    * Exact immutable revision reference; does not resolve or follow a moving alias.
    */
   revision: string;
-}
-/**
- * Safe counts only; individual paths and network destinations remain protected.
- *
- * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
- * via the `definition` "AccessSummary".
- */
-export interface AccessSummary1 {
-  /**
-   * Required child process allowance.
-   */
-  allowChildProcesses: boolean;
-  /**
-   * Whether networking is completely denied.
-   */
-  networkDenied: boolean;
-  /**
-   * Number of exact allowlisted destinations; never their values.
-   */
-  networkDestinationCount: number;
-  /**
-   * Number of declared read paths.
-   */
-  readPathCount: number;
-  /**
-   * Required isolation; this is not an observation that enforcement succeeded.
-   */
-  requireSandbox: boolean;
-  /**
-   * Number of declared write paths.
-   */
-  writePathCount: number;
 }
 /**
  * Resource revision and exact SHA-256 content identity; does not itself verify downloaded bytes.
@@ -881,7 +890,7 @@ export interface ExecutionStatus1 {
     | "running"
     | "outcomeUnknown"
     | "executionEnded"
-    | "testCompleted"
+    | "verified"
     | "failedBeforeDispatch"
     | "cancelled";
   /**
@@ -908,7 +917,40 @@ export interface ExecutionStatus1 {
  * via the `definition` "FrozenPlanSummary".
  */
 export interface FrozenPlanSummary1 {
-  access: AccessSummary;
+  /**
+   * Restrictions summarized without individual private values.
+   */
+  access:
+    | {
+        kind: "osIdentity";
+      }
+    | {
+        /**
+         * Required child process allowance.
+         */
+        allowChildProcesses: boolean;
+        kind: "restricted";
+        /**
+         * Whether networking is completely denied.
+         */
+        networkDenied: boolean;
+        /**
+         * Number of exact allowlisted destinations; never their values.
+         */
+        networkDestinationCount: number;
+        /**
+         * Number of declared read paths.
+         */
+        readPathCount: number;
+        /**
+         * Required isolation; this is not an observation that enforcement succeeded.
+         */
+        requireSandbox: boolean;
+        /**
+         * Number of declared write paths.
+         */
+        writePathCount: number;
+      };
   /**
    * Permission-bearing principal; not the model account.
    */
@@ -1002,7 +1044,7 @@ export interface FrozenPlanSummary1 {
   /**
    * Version of the frozen execution plan, independent of the AI wire version.
    */
-  schemaVersion: 1;
+  schemaVersion: 2;
   /**
    * Required target user session.
    */
