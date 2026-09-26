@@ -22,9 +22,6 @@ impl Owner {
     pub(crate) fn prepare(_: &mut tokio::process::Command) -> Result<Self, Error> {
         Err(Error::Unsupported)
     }
-    pub(crate) fn attach(&self, _: u32) -> Result<(), Error> {
-        Err(Error::Unsupported)
-    }
     pub(crate) fn scope(&self) -> ProcessScope {
         unreachable!("unsupported owner cannot be constructed")
     }
@@ -33,9 +30,6 @@ impl Owner {
     pub(crate) fn quiescent(&self) -> bool {
         false
     }
-}
-pub(crate) fn immutable_source(_: &Path) -> Result<(), Error> {
-    Err(Error::Unsupported)
 }
 pub(crate) fn encoding(_: ArtifactEncoding) -> Result<(), Error> {
     Err(Error::Unsupported)
@@ -55,6 +49,20 @@ impl WorkingDirectory {
         Err(Error::Unsupported)
     }
     pub(crate) fn configure(&self, _: &mut std::process::Command, _: &File) -> Result<(), Error> {
+        Err(Error::Unsupported)
+    }
+}
+
+pub(crate) async fn spawn(
+    _: &mut tokio::process::Command,
+    _: &mut Owner,
+) -> std::io::Result<tokio::process::Child> {
+    Err(std::io::Error::other("unsupported platform"))
+}
+
+pub(crate) struct PathLease;
+impl PathLease {
+    pub(crate) fn source(_: &Path, _: bool) -> Result<Self, Error> {
         Err(Error::Unsupported)
     }
 }

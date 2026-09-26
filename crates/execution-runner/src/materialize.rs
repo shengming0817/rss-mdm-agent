@@ -48,11 +48,12 @@ pub struct Artifacts {
 }
 pub(crate) struct Payload {
     pub path: PathBuf,
-    pub file: File,
+    pub file: Option<File>,
     pub directory: Option<PathBuf>,
 }
 impl Drop for Payload {
     fn drop(&mut self) {
+        self.file.take();
         if let Some(root) = &self.directory {
             let _ = std::fs::remove_file(&self.path);
             let _ = std::fs::remove_dir(root);
@@ -67,10 +68,14 @@ pub(crate) struct Materialized {
     payload: Payload,
     cwd: super::platform::WorkingDirectory,
     _interpreter: File,
+    _leases: Vec<super::platform::PathLease>,
 }
 impl Materialized {
     pub(crate) fn configure(&self, command: &mut std::process::Command) -> Result<(), Error> {
-        self.cwd.configure(command, &self.payload.file)
+        self.cwd.configure(
+            command,
+            self.payload.file.as_ref().ok_or(Error::Unavailable)?,
+        )
     }
 }
 fn exact(path: &Path, digest: &Digest, limit: u64) -> Result<(File, Vec<u8>), Error> {
@@ -102,13 +107,14 @@ impl Artifacts {
             return Err(Error::Capability);
         }
         super::platform::profile(&p.launch.interpreter.profile)?;
-        super::platform::immutable_source(&self.interpreter)?;
         #[cfg(not(test))]
-        super::platform::immutable_source(&self.content)?;
+        let content_immutable = true;
         #[cfg(test)]
-        if !self.fixture_owned {
-            super::platform::immutable_source(&self.content)?;
-        }
+        let content_immutable = !self.fixture_owned;
+        let mut leases = vec![
+            super::platform::PathLease::source(&self.interpreter, true)?,
+            super::platform::PathLease::source(&self.content, content_immutable)?,
+        ];
         let (interpreter, _) = exact(
             &self.interpreter,
             &p.launch.interpreter.artifact.sha256,
@@ -140,6 +146,7 @@ impl Artifacts {
             return Err(Error::Denied);
         }
         super::platform::protected_path(&self.work_root, true)?;
+        leases.push(super::platform::PathLease::source(&self.work_root, false)?);
         let cwd = super::platform::WorkingDirectory::open(Path::new(&p.launch.cwd))?;
         let payload = super::platform::payload(
             content_file,
@@ -218,6 +225,7 @@ impl Artifacts {
             payload,
             cwd,
             _interpreter: interpreter,
+            _leases: leases,
         })
     }
 }

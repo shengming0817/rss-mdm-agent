@@ -63,7 +63,7 @@ cargo test -p local-service、Host/desktop 测试及交叉编译只是前置证�
 
 策略格式直接替换，不读取旧策略或自动迁移。升级实验室候选时先卸载服务注册，由管理员处理旧安装文件，再构建并重新安装；保留原 AI 数据，不通过清库规避格式拒绝。
 
-## 执行机制候选（#2476）
+## 执行机制候选（#2476 / #2475）
 
 执行宿主与上述 statusOnly 查询能力独立。构建 `cargo build -p execution-runner --bin rss-execution-service`，然后用
 `python3 scripts/service/execution-macos.py install --scope user --binary <绝对二进制路径>` 注册当前登录用户的 LaunchAgent。
@@ -74,3 +74,8 @@ cargo test -p local-service、Host/desktop 测试及交叉编译只是前置证�
 候选执行机制支持固定解释器、受控进程、输出及恢复接缝；生产身份和可信批准由 #2564 接线。
 当前 V2 计划和 SQLite 当前格式直接替换旧格式。旧库保留并拒绝打开；实验室明确选择新的私有目录初始化，不能删除旧库冒充恢复成功。
 机制详情与本机测试入口见 [execution-runner](../../crates/execution-runner/README.md)。没有运行的系统账号、Windows、签名发布或真机矩阵不得记为已通过。
+
+
+Windows 11 使用 PowerShell 7 运行 `scripts/service/execution-windows.ps1 -Action Install -Scope User -Binary <绝对 exe 路径>`，在当前交互用户会话注册登录 helper。系统候选用 `-Scope System`，需要管理员和受保护安装目录，SCM 以 LocalSystem 启动。两者已有注册均拒绝覆盖。使用二进制 `--probe-user` / `--probe-system` 查询，当前返回 rejected；没有生产执行权限。手动诊断用户 helper 可用 `rss-execution-service.exe --user`，不可用用户进程模拟系统宿主。
+
+`-Action Status` 只读注册状态；卸载使用 `-Action Remove` 并提供原始精确二进制路径，核对服务/任务归属后删除注册，不删除程序、缓存或数据库。用户 helper 是按 SID/session 命名的独立实例，用户注销导致进程退出及 Job 回收。安装器仅用于本地候选，签名安装包及生产可信接线不在此入口实现。

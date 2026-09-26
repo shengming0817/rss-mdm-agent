@@ -2,7 +2,7 @@ use crate::{materialize::Materialized, output, platform, Artifacts};
 use execution_app::{AuthorizedDispatch, DispatchOutcome, Error, ObservationStage, RunnerPort};
 use execution_contract::*;
 use execution_lifecycle::{DispatchAllowance, ExecutionMode, Observation, ObservationFacts};
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
     collections::BTreeMap,
@@ -269,7 +269,7 @@ impl RunnerPort for NativeRunner {
         }))
     }
 }
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 fn now() -> Result<u64, Error> {
     u64::try_from(
         SystemTime::now()
@@ -352,7 +352,7 @@ async fn run(
         );
         return;
     }
-    let Ok(mut child) = command.spawn() else {
+    let Ok(mut child) = platform::spawn(&mut command, &mut owner).await else {
         publish(
             &shared,
             rejected(&plan, &attempt, &id, ProcessEnd::Rejected),
@@ -373,14 +373,6 @@ async fn run(
         total_output_bytes: 0,
         quality: OutputQuality::Partial,
     };
-    if owner.attach(child.id().unwrap_or(0)).is_err() {
-        let _ = child.start_kill();
-        owner.terminate();
-        let _ = tokio::time::timeout(Duration::from_secs(1), child.wait()).await;
-        facts.finished = true;
-        publish(&shared, facts);
-        return;
-    }
     let publish = |facts: &ProcessEvidence| {
         if let Ok(mut slot) = shared.lock() {
             *slot = Some(facts.clone())

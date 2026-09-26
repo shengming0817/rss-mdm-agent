@@ -2,13 +2,14 @@
 use execution_app::{AppHost, ExecutionApp, RequestContext, RunnerPort};
 use execution_contract::{PlanLimits, RequestId};
 use serde::{Deserialize, Serialize};
+#[cfg(target_os = "macos")]
 use std::sync::atomic::AtomicBool;
 
 /// Native connection facts, borrowed while the native transport retains the connection.
 /// Fields are private and no deserializer exists; production verification belongs to #2564.
 pub struct Peer {
     pub(crate) pid: u32,
-    pub(crate) uid: u32,
+    pub(crate) uid: Option<u32>,
     pub(crate) session: u32,
     pub(crate) native: usize,
 }
@@ -20,7 +21,7 @@ impl Peer {
     pub fn pid(&self) -> u32 {
         self.pid
     }
-    pub fn uid(&self) -> u32 {
+    pub fn uid(&self) -> Option<u32> {
         self.uid
     }
     pub fn session(&self) -> u32 {
@@ -190,7 +191,7 @@ mod tests {
     fn malformed_versions_and_unbound_calls_never_execute() {
         let peer = Peer {
             pid: 1,
-            uid: 0,
+            uid: Some(0),
             session: 1,
             native: 0,
         };

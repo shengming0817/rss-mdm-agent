@@ -136,9 +136,6 @@ impl Owner {
         // No shell or inherited terminal; user switching belongs to the launchd user helper.
         Ok(Self { group })
     }
-    pub(crate) fn attach(&self, _pid: u32) -> Result<(), Error> {
-        Ok(())
-    }
     pub(crate) fn scope(&self) -> ProcessScope {
         ProcessScope::ProcessGroup {
             owner: std::process::id(),
@@ -187,7 +184,7 @@ pub(crate) fn payload(
     use std::os::fd::AsRawFd;
     Ok(crate::materialize::Payload {
         path: format!("/dev/fd/{}", file.as_raw_fd()).into(),
-        file,
+        file: Some(file),
         directory: None,
     })
 }
@@ -220,5 +217,24 @@ impl WorkingDirectory {
             });
         }
         Ok(())
+    }
+}
+
+pub(crate) async fn spawn(
+    command: &mut tokio::process::Command,
+    _: &mut Owner,
+) -> std::io::Result<tokio::process::Child> {
+    command.spawn()
+}
+
+pub(crate) struct PathLease;
+impl PathLease {
+    pub(crate) fn source(path: &Path, immutable: bool) -> Result<Self, Error> {
+        if immutable {
+            immutable_source(path)?
+        } else {
+            protected_path(path, path.is_dir())?
+        }
+        Ok(Self)
     }
 }

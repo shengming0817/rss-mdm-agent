@@ -25,7 +25,7 @@ fn ipc_submit_uses_durable_submission_and_duplicate_delivery_never_dispatches() 
     let mut endpoint = Endpoint::new(app, Caller, test_store_limits().plan);
     let peer = Peer {
         pid: 1,
-        uid: 1,
+        uid: Some(1),
         session: 1,
         native: 0,
     };

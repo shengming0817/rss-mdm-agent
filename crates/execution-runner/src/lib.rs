@@ -13,9 +13,20 @@ pub use runner::NativeRunner;
 #[cfg(target_os = "macos")]
 pub mod macos_service;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 #[path = "unsupported.rs"]
 mod platform;
 
 #[cfg(test)]
 mod host_tests;
+
+#[cfg(any(windows, test))]
+mod windows_argv;
+
+#[cfg(windows)]
+mod windows;
+#[cfg(windows)]
+use windows as platform;
+
+#[cfg(windows)]
+pub use windows::service as windows_service;

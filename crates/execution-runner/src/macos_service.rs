@@ -94,7 +94,7 @@ unsafe extern "C" fn rss_execution_call(
     let Some(stop) = STOP.get() else { return -1 };
     let peer = Peer {
         pid,
-        uid,
+        uid: Some(uid),
         session,
         native: connection as usize,
     };
@@ -175,7 +175,7 @@ mod tests {
         let stop = AtomicBool::new(false);
         let peer = Peer {
             pid: 1,
-            uid: 1,
+            uid: Some(1),
             session: 1,
             native: 0,
         };
