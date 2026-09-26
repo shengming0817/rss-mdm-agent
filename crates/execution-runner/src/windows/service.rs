@@ -340,7 +340,7 @@ async fn exchange(
     tokio::pin!(deadline);
     loop {
         tokio::select! {
-            _=&mut request=>return Ok(()),
+            result=&mut request=>return result,
             _=&mut deadline=>return Err(Error::Unavailable),
             _=tokio::time::sleep(Duration::from_millis(100))=>{
                 if stopping(){return Ok(())}
@@ -484,6 +484,22 @@ mod deadline_tests {
             .is_err());
         assert!(before.elapsed() < Duration::from_millis(200));
         pipe.disconnect().unwrap();
+        owner.finish().unwrap();
+    }
+    #[tokio::test]
+    async fn incomplete_frame_disconnect_is_a_terminal_exchange_error() {
+        let (subject, _) = token_identity().unwrap();
+        let name = format!(r"\\.\pipe\rss-disconnect-test-{}", nonce().unwrap());
+        let mut pipe = listener(&name, &format!("D:P(A;;GA;;;{subject})")).unwrap();
+        let mut client = ClientOptions::new().open(&name).unwrap();
+        pipe.connect().await.unwrap();
+        client.write_u32_le(128).await.unwrap();
+        client.write_all(b"partial").await.unwrap();
+        drop(client);
+        let mut owner = OwnerThread::new(Box::new(host::Unbound)).unwrap();
+        assert!(exchange(&mut pipe, &owner, Duration::from_secs(1))
+            .await
+            .is_err());
         owner.finish().unwrap();
     }
     #[test]
