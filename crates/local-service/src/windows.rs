@@ -78,87 +78,168 @@ pub fn policy_path() -> Result<PathBuf, Rejected> {
             .join("policy.json"))
     }
 }
+// ref: rust-lang/rust library/std/src/sys/fs/windows.rs@ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96
+// ref: microsoft/windows-rs crates/libs/sys/src/Windows/Win32/Security/Authorization/mod.rs@32c3144490c016fe496a0aed769bce60987a2e9d
 pub fn protected(path: &Path) -> Result<(), Rejected> {
-    // Administrator-created install root and descendants are immutable to users.
-    // Ancestors are checked for reparse points; common OS roots need not use our ACL.
-    let mut in_product = true;
-    for entry in path.ancestors() {
-        if entry.as_os_str().is_empty() {
-            continue;
-        }
-        let name = wide(entry);
-        unsafe {
-            let attrs = GetFileAttributesW(name.as_ptr());
-            if attrs == INVALID_FILE_ATTRIBUTES || attrs & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-                return Err(Rejected);
-            }
-            if in_product {
-                let mut owner = null_mut();
-                let mut acl = null_mut();
-                let mut descriptor = null_mut();
-                if GetNamedSecurityInfoW(
-                    name.as_ptr(),
-                    SE_FILE_OBJECT,
-                    OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
-                    &mut owner,
-                    null_mut(),
-                    &mut acl,
-                    null_mut(),
-                    &mut descriptor,
-                ) != 0
-                {
-                    return Err(Rejected);
-                }
-                let _descriptor = Local(descriptor);
-                let subject = sid_string(owner)?;
-                if !matches!(subject.as_str(), "S-1-5-18" | "S-1-5-32-544") || acl.is_null() {
-                    return Err(Rejected);
-                }
-                for index in 0..(*acl).AceCount as u32 {
-                    let mut ace = null_mut();
-                    if GetAce(acl, index, &mut ace) == 0 {
-                        return Err(Rejected);
-                    }
-                    let header = &*(ace as *const ACE_HEADER);
-                    if header.AceType == 1 {
-                        continue;
-                    }
-                    if header.AceType != 0 {
-                        return Err(Rejected);
-                    }
-                    let allowed = &*(ace as *const ACCESS_ALLOWED_ACE);
-                    let writer = allowed.Mask
-                        & (FILE_WRITE_DATA
-                            | FILE_APPEND_DATA
-                            | FILE_WRITE_EA
-                            | FILE_WRITE_ATTRIBUTES
-                            | FILE_DELETE_CHILD
-                            | DELETE
-                            | WRITE_DAC
-                            | WRITE_OWNER
-                            | GENERIC_ALL
-                            | GENERIC_WRITE)
-                        != 0;
-                    if writer {
-                        let sid = sid_string((&allowed.SidStart as *const u32).cast_mut().cast())?;
-                        if !matches!(sid.as_str(), "S-1-5-18" | "S-1-5-32-544") {
-                            return Err(Rejected);
-                        }
-                    }
-                }
-            }
-        }
-        if entry
-            .file_name()
-            .is_some_and(|name| name == "RSS MDM Agent")
-        {
-            in_product = false;
-        }
-    }
-    if in_product {
+    open_protected(path, false).map(|_| ())
+}
+
+fn final_path(file: &std::fs::File) -> Result<PathBuf, Rejected> {
+    use std::os::windows::ffi::OsStringExt;
+    let mut buffer = vec![0u16; 32768];
+    // SAFETY: the live file handle and writable buffer are valid for this call.
+    let length = unsafe {
+        GetFinalPathNameByHandleW(
+            file.as_raw_handle(),
+            buffer.as_mut_ptr(),
+            buffer.len() as u32,
+            0,
+        )
+    } as usize;
+    if length == 0 || length >= buffer.len() {
         return Err(Rejected);
     }
+    Ok(PathBuf::from(std::ffi::OsString::from_wide(
+        &buffer[..length],
+    )))
+}
+fn same_path(actual: &Path, expected: &Path) -> bool {
+    fn normalized(path: &Path) -> Option<String> {
+        let value = path.to_str()?;
+        Some(
+            value
+                .strip_prefix(r"\\?\")
+                .unwrap_or(value)
+                .trim_end_matches('\\')
+                .to_ascii_lowercase(),
+        )
+    }
+    match (normalized(actual), normalized(expected)) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    }
+}
+
+fn handle_protected(file: &std::fs::File, product: bool) -> Result<(), Rejected> {
+    use std::os::windows::fs::MetadataExt;
+    let metadata = file.metadata().map_err(|_| Rejected)?;
+    if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return Err(Rejected);
+    }
+    // SAFETY: GetSecurityInfo returns a LocalFree-owned descriptor; ACEs/SIDs
+    // remain borrowed from it until all checks below have completed.
+    unsafe {
+        let mut owner = null_mut();
+        let mut acl = null_mut();
+        let mut descriptor = null_mut();
+        if GetSecurityInfo(
+            file.as_raw_handle(),
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+            &mut owner,
+            null_mut(),
+            &mut acl,
+            null_mut(),
+            &mut descriptor,
+        ) != 0
+        {
+            return Err(Rejected);
+        }
+        let _descriptor = Local(descriptor);
+        if owner.is_null()
+            || acl.is_null()
+            || IsValidSid(owner) == 0
+            || IsValidAcl(acl) == 0
+            || !super::policy_acl::trusted(&sid_string(owner)?, product)
+        {
+            return Err(Rejected);
+        }
+        for index in 0..(*acl).AceCount as u32 {
+            let mut ace = null_mut();
+            if GetAce(acl, index, &mut ace) == 0 {
+                return Err(Rejected);
+            }
+            let header = &*(ace as *const ACE_HEADER);
+            if header.AceType == 1 {
+                continue;
+            } // A deny never widens the accepted policy.
+            if header.AceType != 0 || (header.AceSize as usize) < size_of::<ACCESS_ALLOWED_ACE>() {
+                return Err(Rejected);
+            }
+            let allowed = &*(ace as *const ACCESS_ALLOWED_ACE);
+            let subject = (&allowed.SidStart as *const u32).cast_mut().cast();
+            if IsValidSid(subject) == 0
+                || !super::policy_acl::grant_allowed(
+                    &sid_string(subject)?,
+                    allowed.Mask,
+                    header.AceFlags,
+                    metadata.is_dir(),
+                    product,
+                )
+            {
+                return Err(Rejected);
+            }
+        }
+    }
     Ok(())
+}
+
+/// Keep the complete chain open without write/delete sharing until the read ends.
+/// Product ACLs reject writers; OS ancestors reject replacement of existing children.
+pub(crate) fn open_protected(
+    path: &Path,
+    read: bool,
+) -> Result<(std::fs::File, Vec<std::fs::File>, PathBuf), Rejected> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::path::{Component, Prefix};
+    if !path.is_absolute()
+        || !matches!(path.components().next(),
+        Some(Component::Prefix(prefix)) if matches!(prefix.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_)))
+        || path
+            .components()
+            .any(|part| matches!(part, Component::ParentDir))
+    {
+        return Err(Rejected);
+    }
+    let chain: Vec<_> = path
+        .ancestors()
+        .filter(|p| !p.as_os_str().is_empty())
+        .collect();
+    let product_root = chain
+        .iter()
+        .position(|p| p.file_name().is_some_and(|n| n == "RSS MDM Agent"))
+        .ok_or(Rejected)?;
+    let mut handles = Vec::with_capacity(chain.len());
+    let mut actual = PathBuf::new();
+    for (index, entry) in chain.iter().enumerate().rev() {
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .access_mode(
+                READ_CONTROL
+                    | FILE_READ_ATTRIBUTES
+                    | if index == 0 && read {
+                        FILE_READ_DATA
+                    } else {
+                        0
+                    },
+            )
+            .share_mode(FILE_SHARE_READ)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
+            .open(entry)
+            .map_err(|_| Rejected)?;
+        handle_protected(&file, index <= product_root)?;
+        actual = final_path(&file)?;
+        if !same_path(&actual, entry) {
+            return Err(Rejected);
+        }
+        let metadata = file.metadata().map_err(|_| Rejected)?;
+        if (index == 0 && !metadata.is_file()) || (index != 0 && !metadata.is_dir()) {
+            return Err(Rejected);
+        }
+        handles.push(file);
+    }
+    let file = handles.pop().ok_or(Rejected)?;
+    Ok((file, handles, actual))
 }
 
 fn image_peer(pipe: HANDLE, client: bool, policy: &Policy) -> Result<Handle, Rejected> {
@@ -472,4 +553,99 @@ fn report(handle: SERVICE_STATUS_HANDLE, state: u32, error: u32) -> Result<(), R
         return Err(Rejected);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod storage_tests {
+    use super::*;
+    #[test]
+    fn windows_rights_match_the_installation_policy() {
+        let user = "S-1-5-21-1-2-3-1001";
+        for right in [
+            DELETE,
+            FILE_DELETE_CHILD,
+            WRITE_DAC,
+            WRITE_OWNER,
+            GENERIC_ALL,
+        ] {
+            assert!(!crate::policy_acl::grant_allowed(
+                user, right, 0, true, false
+            ));
+        }
+        assert!(crate::policy_acl::grant_allowed(
+            user,
+            FILE_ADD_FILE | FILE_ADD_SUBDIRECTORY | FILE_WRITE_EA | FILE_WRITE_ATTRIBUTES,
+            0,
+            true,
+            false
+        ));
+        assert!(!crate::policy_acl::grant_allowed(
+            user,
+            FILE_WRITE_DATA,
+            (INHERIT_ONLY_ACE | CONTAINER_INHERIT_ACE) as u8,
+            true,
+            true
+        ));
+    }
+    #[test]
+    fn a_world_writable_file_is_not_an_installation_policy() {
+        let root =
+            std::env::temp_dir().join(format!("rss-policy-untrusted-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("policy.json");
+        use std::os::windows::fs::OpenOptionsExt;
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .access_mode(READ_CONTROL | WRITE_DAC | FILE_WRITE_DATA)
+            .open(&path)
+            .unwrap();
+        // SAFETY: all pointers below refer to owned descriptors or live handles.
+        unsafe {
+            let mut descriptor = null_mut();
+            assert_ne!(
+                ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                    wide("D:P(A;;FA;;;WD)").as_ptr(),
+                    1,
+                    &mut descriptor,
+                    null_mut()
+                ),
+                0
+            );
+            let _descriptor = Local(descriptor);
+            let mut present = 0;
+            let mut defaulted = 0;
+            let mut acl = null_mut();
+            assert_ne!(
+                GetSecurityDescriptorDacl(descriptor, &mut present, &mut acl, &mut defaulted),
+                0
+            );
+            assert_eq!(
+                SetSecurityInfo(
+                    file.as_raw_handle(),
+                    SE_FILE_OBJECT,
+                    DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                    null_mut(),
+                    null_mut(),
+                    acl,
+                    null_mut()
+                ),
+                0
+            );
+        }
+        assert!(handle_protected(&file, true).is_err());
+        drop(file);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn final_paths_compare_verbatim_prefixes_without_accepting_another_chain() {
+        assert!(same_path(
+            Path::new(r"\\?\C:\ProgramData\RSS MDM Agent\service\policy.json"),
+            Path::new(r"C:\ProgramData\RSS MDM Agent\service\policy.json")
+        ));
+        assert!(!same_path(
+            Path::new(r"C:\attacker\policy.json"),
+            Path::new(r"C:\ProgramData\RSS MDM Agent\service\policy.json")
+        ));
+    }
 }
