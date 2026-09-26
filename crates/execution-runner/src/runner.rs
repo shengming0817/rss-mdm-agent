@@ -332,6 +332,18 @@ fn fault(facts: &mut ProcessEvidence, kind: ProcessFailureKind) {
         facts.failure_kind = kind;
     }
 }
+fn fail_running(
+    facts: &mut ProcessEvidence,
+    stop_at: &mut Option<Instant>,
+    kind: ProcessFailureKind,
+    now: Instant,
+) {
+    fault(facts, kind);
+    if stop_at.is_none() {
+        facts.end = ProcessEnd::Unknown;
+    }
+    stop_at.get_or_insert(now); // Neither a later pipe error nor repeated wait errors renew shutdown time.
+}
 fn publish(slot: &Mutex<Option<ProcessEvidence>>, facts: ProcessEvidence) {
     if let Ok(mut slot) = slot.lock() {
         *slot = Some(facts)
@@ -486,9 +498,12 @@ async fn run(
                     killed = true;
                 }
                 Err(_) => {
-                    fault(&mut facts, ProcessFailureKind::Supervision);
-                    facts.end = ProcessEnd::Unknown;
-                    stop_at = Some(clock);
+                    fail_running(
+                        &mut facts,
+                        &mut stop_at,
+                        ProcessFailureKind::Supervision,
+                        clock,
+                    );
                 }
                 Ok(None) => {}
             }
@@ -500,7 +515,7 @@ async fn run(
         tokio::select! {
             result=&mut writer,if !input_done=>{
                 input_done=true;
-                if !matches!(result,Ok(Ok(()))){input_failed=true;fault(&mut facts,ProcessFailureKind::InputDelivery);facts.end=ProcessEnd::Unknown;stop_at.get_or_insert(Instant::now());owner.stop();}
+                if !matches!(result,Ok(Ok(()))){input_failed=true;fail_running(&mut facts,&mut stop_at,ProcessFailureKind::InputDelivery,Instant::now());owner.stop();}
             },
             count=stdout.read(&mut out),if !out_done=>{event=Some((true,count));},
             count=stderr.read(&mut err),if !err_done=>{event=Some((false,count));},
@@ -528,9 +543,12 @@ async fn run(
                     }
                 }
                 Err(_) => {
-                    fault(&mut facts, ProcessFailureKind::Capture);
-                    facts.end = ProcessEnd::Unknown;
-                    stop_at.get_or_insert(Instant::now());
+                    fail_running(
+                        &mut facts,
+                        &mut stop_at,
+                        ProcessFailureKind::Capture,
+                        Instant::now(),
+                    );
                     if is_out {
                         out_done = true
                     } else {
@@ -564,7 +582,11 @@ async fn run(
         OutputQuality::Truncated
     } else if !out_done || !err_done {
         OutputQuality::Partial
-    } else if input_failed || facts.end != ProcessEnd::Exited || facts.exit_code != Some(0) {
+    } else if input_failed
+        || facts.failure_kind != ProcessFailureKind::None
+        || facts.end != ProcessEnd::Exited
+        || facts.exit_code != Some(0)
+    {
         OutputQuality::Failed
     } else {
         output::quality(&facts.stdout, &facts.stderr, plan.spec().launch.output)

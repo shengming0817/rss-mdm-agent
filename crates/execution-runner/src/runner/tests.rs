@@ -724,3 +724,91 @@ fn application_cancel_captures_real_process_and_reopen_does_not_dispatch() {
     );
     assert_eq!(empty.1.load(Ordering::SeqCst), 0);
 }
+
+#[test]
+fn cancellation_remains_the_end_reason_when_blocked_stdin_breaks() {
+    struct Input;
+    impl crate::InputResolver for Input {
+        fn resolve(
+            &self,
+            _: &FrozenPlan,
+            _: &AttemptId,
+            _: &VersionedRef,
+            _: u64,
+        ) -> Result<crate::InputBytes, Error> {
+            Ok(crate::InputBytes::new(vec![b'x'; 1_048_576]))
+        }
+    }
+    let mut f = fixture(
+        "printf ready; exec sleep 30",
+        vec![LaunchArg::ArtifactPath {}],
+        128,
+        5000,
+    );
+    let artifacts = f.runner.artifacts.remove(f.plan.digest().as_str()).unwrap();
+    let mut spec = f.plan.spec().clone();
+    spec.launch.stdin = StandardInput::Controlled {
+        reference: VersionedRef {
+            id: Id::new("input").unwrap(),
+            revision: Id::new("1").unwrap(),
+        },
+        encoding: TextEncoding::Utf8,
+        max_bytes: 1_048_576,
+    };
+    let mut limits = execution_app::test_store_limits().plan;
+    limits.max_stdin_bytes = 1_048_576;
+    f.plan = FrozenPlan::freeze(spec, &limits).unwrap();
+    f.runner
+        .artifacts
+        .insert(f.plan.digest().as_str().into(), artifacts);
+    Arc::get_mut(
+        f.runner
+            .artifacts
+            .get_mut(f.plan.digest().as_str())
+            .unwrap(),
+    )
+    .unwrap()
+    .controlled_input = Some(Arc::new(Input));
+    let id = start(&f, 128, 5000);
+    let until = Instant::now() + Duration::from_secs(2);
+    loop {
+        let facts = f.runner.evidence(&f.plan, &id).unwrap().unwrap();
+        if facts.stdout == b"ready" {
+            break;
+        }
+        assert!(Instant::now() < until);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    f.runner.stop(&f.plan, &id).unwrap();
+    let facts = finish(&f, &id);
+    assert_eq!(facts.end, ProcessEnd::Cancelled);
+    assert_ne!(facts.quality, OutputQuality::Complete);
+}
+
+#[test]
+fn repeated_supervision_errors_do_not_renew_shutdown_time_or_overwrite_first_reason() {
+    let f = fixture("printf ok", vec![LaunchArg::ArtifactPath {}], 128, 1000);
+    let mut facts = rejected(
+        &f.plan,
+        &AttemptId::new("attempt-1").unwrap(),
+        &Id::new("runner").unwrap(),
+        ProcessEnd::Cancelled,
+    );
+    let original = Instant::now();
+    let mut stop = Some(original);
+    fail_running(
+        &mut facts,
+        &mut stop,
+        ProcessFailureKind::Capture,
+        original + Duration::from_secs(1),
+    );
+    fail_running(
+        &mut facts,
+        &mut stop,
+        ProcessFailureKind::Supervision,
+        original + Duration::from_secs(2),
+    );
+    assert_eq!(stop, Some(original));
+    assert_eq!(facts.end, ProcessEnd::Cancelled);
+    assert_eq!(facts.failure_kind, ProcessFailureKind::Capture);
+}
