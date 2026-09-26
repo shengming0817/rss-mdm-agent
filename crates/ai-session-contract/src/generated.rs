@@ -256,85 +256,42 @@ impl<'de> ::serde::Deserialize<'de> for AccessUpdateSchemaVersion {
             .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
     }
 }
-#[doc = "`AccountIdentity`"]
+#[doc = "Native-owned identity projection. Guest identities cannot carry enterprise metadata; enterprise identities require organization and expiry."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
-#[serde(deny_unknown_fields)]
-pub struct AccountIdentity {
-    #[serde(rename = "authorityId")]
-    #[doc = "`authority_id` member; see its generated type and parent schema."]
-    pub authority_id: Id,
-    #[serde(
-        rename = "expiresAtMs",
-        skip_serializing_if = "::std::option::Option::is_none"
-    )]
-    #[doc = "`expires_at_ms` member; see its generated type and parent schema."]
-    pub expires_at_ms: ::std::option::Option<u64>,
-    #[doc = "`mode` member; see its generated type and parent schema."]
-    pub mode: AccountIdentityMode,
-    #[serde(
-        rename = "organizationId",
-        skip_serializing_if = "::std::option::Option::is_none"
-    )]
-    #[doc = "`organization_id` member; see its generated type and parent schema."]
-    pub organization_id: ::std::option::Option<AccountIdentityOrganizationId>,
-    #[serde(rename = "principalId")]
-    #[doc = "`principal_id` member; see its generated type and parent schema."]
-    pub principal_id: Id,
-    #[serde(rename = "tenantId")]
-    #[doc = "`tenant_id` member; see its generated type and parent schema."]
-    pub tenant_id: Id,
-}
-#[doc = "`AccountIdentityMode`"]
-#[derive(
-    :: serde :: Deserialize,
-    :: serde :: Serialize,
-    Clone,
-    Copy,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
-)]
-pub enum AccountIdentityMode {
+#[serde(tag = "mode", deny_unknown_fields)]
+pub enum AccountIdentity {
     #[serde(rename = "guest")]
     #[doc = "`Guest` alternative; see the parent type's schema contract."]
-    Guest,
+    Guest {
+        #[serde(rename = "authorityId")]
+        #[doc = "`authority_id` member; see its generated type and parent schema."]
+        authority_id: Id,
+        #[serde(rename = "principalId")]
+        #[doc = "`principal_id` member; see its generated type and parent schema."]
+        principal_id: Id,
+        #[serde(rename = "tenantId")]
+        #[doc = "`tenant_id` member; see its generated type and parent schema."]
+        tenant_id: Id,
+    },
     #[serde(rename = "enterprise")]
     #[doc = "`Enterprise` alternative; see the parent type's schema contract."]
-    Enterprise,
-}
-impl ::std::fmt::Display for AccountIdentityMode {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        match *self {
-            Self::Guest => f.write_str("guest"),
-            Self::Enterprise => f.write_str("enterprise"),
-        }
-    }
-}
-impl ::std::str::FromStr for AccountIdentityMode {
-    type Err = self::error::ConversionError;
-    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        match value {
-            "guest" => Ok(Self::Guest),
-            "enterprise" => Ok(Self::Enterprise),
-            _ => Err("invalid value".into()),
-        }
-    }
-}
-impl ::std::convert::TryFrom<&str> for AccountIdentityMode {
-    type Error = self::error::ConversionError;
-    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-impl ::std::convert::TryFrom<::std::string::String> for AccountIdentityMode {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: ::std::string::String,
-    ) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
+    Enterprise {
+        #[serde(rename = "authorityId")]
+        #[doc = "`authority_id` member; see its generated type and parent schema."]
+        authority_id: Id,
+        #[serde(rename = "expiresAtMs")]
+        #[doc = "`expires_at_ms` member; see its generated type and parent schema."]
+        expires_at_ms: i64,
+        #[serde(rename = "organizationId")]
+        #[doc = "`organization_id` member; see its generated type and parent schema."]
+        organization_id: AccountIdentityOrganizationId,
+        #[serde(rename = "principalId")]
+        #[doc = "`principal_id` member; see its generated type and parent schema."]
+        principal_id: Id,
+        #[serde(rename = "tenantId")]
+        #[doc = "`tenant_id` member; see its generated type and parent schema."]
+        tenant_id: Id,
+    },
 }
 #[doc = "`AccountIdentityOrganizationId`"]
 #[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -358,6 +315,9 @@ impl ::std::str::FromStr for AccountIdentityOrganizationId {
     fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         if value.chars().count() > 64usize {
             return Err("longer than 64 characters".into());
+        }
+        if value.chars().count() < 1usize {
+            return Err("shorter than 1 characters".into());
         }
         Ok(Self(value.to_string()))
     }
@@ -13554,11 +13514,6 @@ impl std::fmt::Debug for AccessUpdateSchemaVersion {
 impl std::fmt::Debug for AccountIdentity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(stringify!(AccountIdentity), "([redacted])"))
-    }
-}
-impl std::fmt::Debug for AccountIdentityMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(concat!(stringify!(AccountIdentityMode), "([redacted])"))
     }
 }
 impl std::fmt::Debug for AccountIdentityOrganizationId {

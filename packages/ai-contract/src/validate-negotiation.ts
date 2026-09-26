@@ -4304,17 +4304,45 @@ const schema31 = {
       additionalProperties: false,
     },
     AccountIdentity: {
-      type: "object",
-      properties: {
-        mode: { type: "string", enum: ["guest", "enterprise"] },
-        authorityId: { $ref: "#/$defs/Id" },
-        tenantId: { $ref: "#/$defs/Id" },
-        principalId: { $ref: "#/$defs/Id" },
-        organizationId: { type: "string", maxLength: 64 },
-        expiresAtMs: { type: "integer", minimum: 0 },
-      },
-      required: ["mode", "authorityId", "tenantId", "principalId"],
-      additionalProperties: false,
+      oneOf: [
+        {
+          type: "object",
+          properties: {
+            mode: { type: "string", const: "guest" },
+            authorityId: { $ref: "#/$defs/Id" },
+            tenantId: { $ref: "#/$defs/Id" },
+            principalId: { $ref: "#/$defs/Id" },
+          },
+          required: ["mode", "authorityId", "tenantId", "principalId"],
+          additionalProperties: false,
+        },
+        {
+          type: "object",
+          properties: {
+            mode: { type: "string", const: "enterprise" },
+            authorityId: { $ref: "#/$defs/Id" },
+            tenantId: { $ref: "#/$defs/Id" },
+            principalId: { $ref: "#/$defs/Id" },
+            organizationId: { type: "string", maxLength: 64, minLength: 1 },
+            expiresAtMs: {
+              type: "integer",
+              minimum: 0,
+              maximum: 9007199254740991,
+            },
+          },
+          required: [
+            "mode",
+            "authorityId",
+            "tenantId",
+            "principalId",
+            "organizationId",
+            "expiresAtMs",
+          ],
+          additionalProperties: false,
+        },
+      ],
+      description:
+        "Native-owned identity projection. Guest identities cannot carry enterprise metadata; enterprise identities require organization and expiry.",
     },
   },
   $ref: "#/$defs/Negotiation",

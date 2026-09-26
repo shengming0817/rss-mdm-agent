@@ -13,6 +13,7 @@ import {
 } from "../../apps/ai-host/dist/secrets.js";
 import {
   callerFor,
+  callerAvailable,
   requireLocalExecution,
   closeOwners,
   suspendNativeCaller,
@@ -1054,12 +1055,26 @@ test("enterprise and guest callers use native identity, never display name or pr
   });
   const identity = {
     mode: "enterprise",
+    organizationId: "organization-a",
     tenantId: "tenant-a",
     principalId: "subject-a",
     authorityId: "instance-a",
     expiresAtMs: Date.now() + 1000,
   };
   const a = { ...context, identity };
+  assert.equal(
+    callerAvailable(a, callerFor(a), identity.expiresAtMs - 1),
+    true,
+  );
+  assert.equal(callerAvailable(a, callerFor(a), identity.expiresAtMs), false);
+  assert.equal(
+    callerAvailable(
+      { ...a, identity: { ...identity, expiresAtMs: 0 } },
+      callerFor(a),
+      1,
+    ),
+    false,
+  );
   assert.throws(() => requireLocalExecution(a, callerFor(a)), /unbound origin/);
   assert.doesNotThrow(() => requireLocalExecution(context, callerFor(context)));
   const guest = {

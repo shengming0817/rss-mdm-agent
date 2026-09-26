@@ -372,8 +372,8 @@ mod tests {
         s.organization.origin = "https://different-service.example.com".into();
         let other_service = s.context().unwrap();
         assert_ne!(
-            a.identity.as_ref().unwrap().authority_id,
-            other_service.identity.as_ref().unwrap().authority_id
+            serde_json::to_value(&a.identity).unwrap()["authorityId"],
+            serde_json::to_value(&other_service.identity).unwrap()["authorityId"]
         );
         assert_ne!(a.user.user_id, other_service.user.user_id);
         s.organization.origin = "https://example.com".into();

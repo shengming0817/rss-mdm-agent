@@ -244,7 +244,7 @@ impl DesktopRuntime {
         if context
             .identity
             .as_ref()
-            .is_some_and(|i| i.mode == ai_session_contract::AccountIdentityMode::Enterprise)
+            .is_some_and(|i| matches!(i, ai_session_contract::AccountIdentity::Enterprise { .. }))
         {
             return Err(ui::error(
                 "enterprise_execution_unavailable",
@@ -691,8 +691,8 @@ mod tests {
                 let b = b.unwrap();
                 assert_ne!(a.generation, b.generation);
                 assert_ne!(
-                    a.identity.as_ref().unwrap().authority_id,
-                    b.identity.as_ref().unwrap().authority_id
+                    serde_json::to_value(&a.identity).unwrap()["authorityId"],
+                    serde_json::to_value(&b.identity).unwrap()["authorityId"]
                 );
                 runtime.logout().await.unwrap();
                 assert!(runtime.current(b.generation.as_str()).is_err());

@@ -48,16 +48,20 @@ impl AiBinding {
     }
     pub fn for_context(context: &ai_session_contract::UserContext) -> Result<Self, ServiceError> {
         if let Some(identity) = &context.identity {
-            if identity.mode == ai_session_contract::AccountIdentityMode::Enterprise {
+            let ai_session_contract::AccountIdentity::Guest {
+                tenant_id,
+                principal_id,
+                authority_id,
+            } = identity
+            else {
                 return Err(ServiceError::Denied);
-            }
+            };
             return Ok(Self {
                 caller: Caller {
-                    tenant_id: Id::new(identity.tenant_id.as_str())
+                    tenant_id: Id::new(tenant_id.as_str()).map_err(|_| ServiceError::Denied)?,
+                    principal_id: Id::new(principal_id.as_str())
                         .map_err(|_| ServiceError::Denied)?,
-                    principal_id: Id::new(identity.principal_id.as_str())
-                        .map_err(|_| ServiceError::Denied)?,
-                    authority_id: Id::new(identity.authority_id.as_str())
+                    authority_id: Id::new(authority_id.as_str())
                         .map_err(|_| ServiceError::Denied)?,
                 },
             });

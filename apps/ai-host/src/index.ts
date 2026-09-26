@@ -30,6 +30,25 @@ export const callerFor = (context: UserContext): Caller => ({
   principalId: context.identity?.principalId ?? context.user.userId,
   authorityId: context.identity?.authorityId ?? "desktop-fixture",
 });
+/** Exact native caller binding, including an enterprise deadline of zero. */
+export function callerAvailable(
+  context: UserContext | undefined,
+  caller: Caller,
+  now = Date.now(),
+): boolean {
+  if (
+    !context ||
+    (context.identity?.mode === "enterprise" &&
+      now >= context.identity.expiresAtMs)
+  )
+    return false;
+  const expected = callerFor(context);
+  return (
+    expected.tenantId === caller.tenantId &&
+    expected.principalId === caller.principalId &&
+    expected.authorityId === caller.authorityId
+  );
+}
 /** Product login never grants the fixture execution authority. */
 export function requireLocalExecution(
   context: UserContext | undefined,
@@ -110,13 +129,7 @@ export async function startLocalApp(
     );
   const store = opened.value;
   let activeUser: UserContext | undefined;
-  const available = (caller: Caller) =>
-    !!activeUser &&
-    (!activeUser.identity?.expiresAtMs ||
-      Date.now() < activeUser.identity.expiresAtMs) &&
-    caller.principalId === callerFor(activeUser).principalId &&
-    caller.tenantId === callerFor(activeUser).tenantId &&
-    caller.authorityId === callerFor(activeUser).authorityId;
+  const available = (caller: Caller) => callerAvailable(activeUser, caller);
   const link = new PrivateLink(parent.input, parent.output, "native");
   const executionLane = link.lane("execution");
   const execution = await connectExecution(

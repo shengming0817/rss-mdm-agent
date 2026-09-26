@@ -1297,6 +1297,26 @@ export type ConnectionSource =
       apiUrl?: never;
       credentialType?: never;
     };
+/**
+ * Native-owned identity projection. Guest identities cannot carry enterprise metadata; enterprise identities require organization and expiry.
+ */
+export type AccountIdentity =
+  | {
+      mode: "guest";
+      authorityId: Id;
+      tenantId: Id;
+      principalId: Id;
+      organizationId?: never;
+      expiresAtMs?: never;
+    }
+  | {
+      mode: "enterprise";
+      authorityId: Id;
+      tenantId: Id;
+      principalId: Id;
+      organizationId: string;
+      expiresAtMs: number;
+    };
 export type PreferenceChange =
   | {
       set: Id;
@@ -1951,14 +1971,6 @@ export interface UserContext {
   user: TestUser;
   generation: Id;
   identity?: AccountIdentity;
-}
-export interface AccountIdentity {
-  mode: "guest" | "enterprise";
-  authorityId: Id;
-  tenantId: Id;
-  principalId: Id;
-  organizationId?: string;
-  expiresAtMs?: number;
 }
 export interface ConnectionPage {
   schemaVersion: 5;

@@ -206,3 +206,24 @@ fn native_control_and_execution_origin_are_generated_closed_rust_types() {
     let invalid = serde_json::json!({"schemaVersion":5,"kind":"nativeCall","id":1,"method":"masterKey","data":{"create":false,"secret":"forged"}});
     assert!(decode(&serde_json::to_vec(&invalid).unwrap(), &limits()).is_err());
 }
+
+#[test]
+fn account_variants_require_enterprise_metadata_in_the_generated_rust_dto() {
+    let fixtures: Value = serde_json::from_str(FIXTURES).unwrap();
+    for case in fixtures["invalid"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|case| {
+            let name = case["name"].as_str().unwrap();
+            name.starts_with("enterprise requires") || name.starts_with("guest forbids")
+        })
+    {
+        assert!(
+            serde_json::from_str::<ai_session_contract::UserContext>(case["raw"].as_str().unwrap())
+                .is_err(),
+            "{}",
+            case["name"]
+        );
+    }
+}

@@ -115,8 +115,17 @@ impl Users {
         if context
             .identity
             .as_ref()
-            .and_then(|i| i.expires_at_ms)
-            .is_some_and(|end| super::execution::now().map_or(true, |now| now >= end))
+            .and_then(|i| match i {
+                ai_session_contract::AccountIdentity::Enterprise { expires_at_ms, .. } => {
+                    Some(*expires_at_ms)
+                }
+                ai_session_contract::AccountIdentity::Guest { .. } => None,
+            })
+            .is_some_and(|end| {
+                u64::try_from(end).map_or(true, |end| {
+                    super::execution::now().map_or(true, |now| now >= end)
+                })
+            })
         {
             return Err(error("session_expired", "企业会话已过期，请重新登录"));
         }
