@@ -12,7 +12,8 @@ pub(crate) fn capture(
     attempt: &AttemptId,
     limits: Limits,
 ) -> Result<Option<ProcessEvidence>, Error> {
-    let output = usize::try_from(limits.plan.max_output_bytes).map_err(|_| Error::Configuration)?;
+    let output =
+        usize::try_from(limits.input.max_output_bytes).map_err(|_| Error::Configuration)?;
     let sql = format!(
         "SELECT {},{},{} FROM process_evidence WHERE attempt_id=?1",
         bounded_blob("body", limits.max_record_bytes),
@@ -90,10 +91,10 @@ impl Store {
             .checked_add(facts.stderr.len())
             .ok_or(Error::Capacity)? as u64;
         if facts.attempt_id != attempt.id
-            || facts.content_digest != *execution.plan().digest()
+            || facts.content_digest != *execution.input().digest()
             || facts.runner != attempt.runner
             || retained > facts.total_output_bytes
-            || retained > execution.plan().spec().budget.total_output_bytes
+            || retained > execution.input().spec().budget.total_output_bytes
             || (facts.quiescent && !facts.finished)
         {
             return Err(Error::InvalidInput);

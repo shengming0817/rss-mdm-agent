@@ -486,7 +486,7 @@
       },
       "contentDigest": {
         "$ref": "#/$defs/Digest",
-        "description": "Digest of the exact frozen plan observed by this record, not a signature or permit."
+        "description": "Digest of the exact frozen execution input observed by this record, not a signature or permit."
       },
       "decision": {
         "$ref": "#/$defs/Decision",
@@ -531,7 +531,7 @@
       },
       "requestId": {
         "$ref": "#/$defs/RequestId",
-        "description": "Stable local request correlation identity.\nImmutable local plan identity, also bound into its digest."
+        "description": "Stable local request correlation identity."
       },
       "schemaVersion": {
         "$ref": "#/$defs/LocalContractV1",
@@ -560,7 +560,7 @@
     "title": "AuditEvent",
     "type": "object"
   },
-  "plan": {
+  "execution": {
     "$defs": {
       "ActorId": {
         "description": "Product actor reference, not an authenticated principal.",
@@ -2092,7 +2092,7 @@
       },
       "request": {
         "$ref": "#/$defs/ExecutionRequest",
-        "description": "Immutable local plan identity, also bound into its digest.\nOriginal operation intent, retained once as part of the canonical plan."
+        "description": "Original operation intent, retained once as part of the canonical execution input."
       },
       "runAs": {
         "$ref": "#/$defs/RunAs",

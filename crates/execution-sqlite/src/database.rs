@@ -372,7 +372,7 @@ mod tests {
     }
     fn test_limits() -> Limits {
         Limits {
-            plan: execution_contract::ExecutionLimits {
+            input: execution_contract::ExecutionLimits {
                 max_input_bytes: 65_536,
                 max_depth: 32,
                 max_nodes: 4096,

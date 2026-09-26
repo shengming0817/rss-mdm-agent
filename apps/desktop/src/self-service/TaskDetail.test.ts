@@ -92,3 +92,18 @@ test("approval shows the frozen actor, authority and AI account separately from 
   expect(origin.text()).toContain("人工发起");
   expect(origin.text()).not.toContain("ai-account");
 });
+
+test("exact action summary precedes confirmation and only business cancellation is offered", () => {
+  const wrapper = mount(TaskDetail, {
+    props: {
+      task: executionTask(),
+      item: undefined,
+      disabled: false,
+      now: 1000,
+    },
+  });
+  expect(wrapper.html().indexOf("action-summary")).toBeLessThan(
+    wrapper.html().indexOf("确认并执行"),
+  );
+  expect(wrapper.text()).not.toContain("取消此交互");
+});

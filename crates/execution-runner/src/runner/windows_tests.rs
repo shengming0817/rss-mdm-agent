@@ -10,7 +10,7 @@ fn now() -> Result<u64, Error> {
         .as_millis() as u64)
 }
 fn limits() -> ExecutionLimits {
-    execution_app::test_store_limits().plan
+    execution_app::test_store_limits().input
 }
 fn interpreter() -> PathBuf {
     std::env::var_os("RSS_TEST_PWSH7")

@@ -94,9 +94,8 @@ pub struct AuditEvent {
     /// Claimed authority namespace; a deserialized reference is not an authenticated issuer.
     pub authority: Authority,
     /// Stable local request correlation identity.
-    /// Immutable local plan identity, also bound into its digest.
     pub request_id: RequestId,
-    /// Digest of the exact frozen plan observed by this record, not a signature or permit.
+    /// Digest of the exact frozen execution input observed by this record, not a signature or permit.
     pub content_digest: Digest,
     /// Claimed product actor reference; OS/provider login does not establish this identity.
     pub actor: ActorId,

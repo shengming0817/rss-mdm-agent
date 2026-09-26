@@ -173,3 +173,15 @@ describe("single execution request", () => {
     expect(port.respond.mock.calls[0]).toEqual(port.respond.mock.calls[1]);
   });
 });
+
+it("a lost confirmation response followed by Unknown unlocks cancellation of the original request", async () => {
+  const { c, port, snapshot, task } = fixture();
+  await c.refresh();
+  port.confirm.mockRejectedValueOnce(new Error());
+  await c.confirm(task);
+  snapshot.referencedRequests = [{ ...task, status: "unknownEffect" }];
+  await c.refresh();
+  await c.cancel(snapshot.referencedRequests[0]!);
+  expect(port.cancel).toHaveBeenCalledTimes(1);
+  expect(port.execute).not.toHaveBeenCalled();
+});

@@ -201,8 +201,7 @@ export function createController(
         if (
           current &&
           (kind === "confirm"
-            ? current.status !== "confirmation" &&
-              current.status !== "unknownEffect"
+            ? current.status !== "confirmation"
             : ["stopped", "complete", "restartRequired"].includes(
                 current.status,
               ))
@@ -349,7 +348,7 @@ export function createController(
         setError(
           kind === "cancel"
             ? "取消请求未确认；请查询原任务，不能据此认定已停止。"
-            : "批准未确认；请刷新原任务，不创建新执行请求。",
+            : "动作确认结果未收到；请刷新原任务，不创建新执行请求。",
           "action",
         );
     } finally {

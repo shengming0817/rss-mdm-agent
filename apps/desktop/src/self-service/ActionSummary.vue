@@ -9,7 +9,7 @@ defineProps<{ action: Action }>();
       <h2>动作摘要</h2>
       <span class="badge">固定测试动作</span>
     </div>
-    <RequestOrigin :plan="action" />
+    <RequestOrigin :input="action" />
     <dl class="facts">
       <dt>请求 ID</dt>
       <dd class="identifier">{{ action.requestId }}</dd>

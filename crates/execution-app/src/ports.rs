@@ -82,7 +82,7 @@ impl AuthorizedDispatch {
     }
     /// Inspect the authorized immutable plan to select the host's runner implementation.
     /// Reading it cannot clone or reconstruct first-dispatch authority.
-    pub fn plan(&self) -> &FrozenExecution {
+    pub fn input(&self) -> &FrozenExecution {
         &self.plan
     }
     /// Inspect the remaining cumulative allowance; reading does not grant dispatch authority.

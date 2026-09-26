@@ -31,6 +31,7 @@ function parameters(id: string) {
   <section class="task-detail" aria-label="任务详情">
     <h2>{{ task.action.title }}</h2>
     <p class="notice" role="status">{{ task.message }}</p>
+    <ActionSummary :action="task.action" />
     <section
       v-for="interaction in task.interactions"
       :key="interaction.id"
@@ -160,6 +161,7 @@ function parameters(id: string) {
           此处没有管理员批准入口。
         </p>
         <button
+          v-if="interaction.kind.kind !== 'executionAction'"
           class="text-button"
           :disabled="disabled"
           @click="emit('respond', interaction.id, { kind: 'cancel' })"
@@ -168,7 +170,6 @@ function parameters(id: string) {
         </button>
       </template>
     </section>
-    <ActionSummary :action="task.action" />
     <button
       v-if="['waiting', 'confirmation', 'unknownEffect'].includes(task.status)"
       :disabled="disabled"

@@ -425,7 +425,7 @@ fn controlled_input_is_bound_once_and_partial_delivery_is_failed() {
         encoding: TextEncoding::Utf8,
         max_bytes: 1_048_576,
     };
-    let mut limits = execution_app::test_store_limits().plan;
+    let mut limits = execution_app::test_store_limits().input;
     limits.max_stdin_bytes = 1_048_576;
     f.plan = FrozenExecution::freeze(spec, &limits).unwrap();
     f.runner
@@ -440,7 +440,7 @@ fn controlled_input_is_bound_once_and_partial_delivery_is_failed() {
 fn replan(f: &mut Fixture, change: impl FnOnce(&mut ExecutionInput)) {
     let mut spec = f.plan.spec().clone();
     change(&mut spec);
-    let plan = FrozenExecution::freeze(spec, &execution_app::test_store_limits().plan).unwrap();
+    let plan = FrozenExecution::freeze(spec, &execution_app::test_store_limits().input).unwrap();
     let artifacts = f.runner.artifacts.remove(f.plan.digest().as_str()).unwrap();
     f.runner
         .artifacts
@@ -486,7 +486,7 @@ fn macos_capture_is_durable_and_reopened_attempt_does_not_launch() {
         AppConfig::test_defaults(1),
     )
     .unwrap();
-    app.request_execution(&caller, request, &f.plan).unwrap();
+    app.request_execution(&caller, &f.plan).unwrap();
     let until = Instant::now() + Duration::from_secs(20);
     loop {
         let status = app.reconcile(request).unwrap();
@@ -530,7 +530,7 @@ fn macos_capture_is_durable_and_reopened_attempt_does_not_launch() {
         AppConfig::test_defaults(1),
     )
     .unwrap();
-    let recovered = app.request_execution(&caller, request, &f.plan).unwrap();
+    let recovered = app.request_execution(&caller, &f.plan).unwrap();
     assert_eq!(recovered.attempts, 1);
     assert_eq!(
         app.status(&caller, request)
@@ -683,7 +683,7 @@ fn application_cancel_captures_real_process_and_reopen_does_not_dispatch() {
         AppConfig::test_defaults(1),
     )
     .unwrap();
-    let started = app.request_execution(&caller, request, &f.plan).unwrap();
+    let started = app.request_execution(&caller, &f.plan).unwrap();
     let attempt = started.attempt_id.unwrap();
     let until = Instant::now() + Duration::from_secs(5);
     loop {
@@ -727,12 +727,7 @@ fn application_cancel_captures_real_process_and_reopen_does_not_dispatch() {
         AppConfig::test_defaults(1),
     )
     .unwrap();
-    assert_eq!(
-        app.request_execution(&caller, request, &f.plan)
-            .unwrap()
-            .attempts,
-        1
-    );
+    assert_eq!(app.request_execution(&caller, &f.plan).unwrap().attempts, 1);
     assert_eq!(
         app.status(&caller, request).unwrap().process.unwrap().end,
         ProcessEnd::Cancelled
@@ -770,7 +765,7 @@ fn cancellation_remains_the_end_reason_when_blocked_stdin_breaks() {
         encoding: TextEncoding::Utf8,
         max_bytes: 1_048_576,
     };
-    let mut limits = execution_app::test_store_limits().plan;
+    let mut limits = execution_app::test_store_limits().input;
     limits.max_stdin_bytes = 1_048_576;
     f.plan = FrozenExecution::freeze(spec, &limits).unwrap();
     f.runner

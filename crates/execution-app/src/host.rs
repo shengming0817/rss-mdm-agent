@@ -25,7 +25,7 @@ impl<'a, H> Host<'a, H> {
             plan: None,
         }
     }
-    pub(crate) fn with_plan(mut self, plan: Option<&'a FrozenExecution>) -> Self {
+    pub(crate) fn with_input(mut self, plan: Option<&'a FrozenExecution>) -> Self {
         self.plan = plan;
         self
     }
@@ -103,7 +103,7 @@ impl<H: AppHost> db::Host for Host<'_, H> {
     }
     fn trusted_snapshot(&self, scope: &Scope) -> Result<TrustSnapshot, db::Error> {
         let plan = self.plan.ok_or(db::Error::Trust)?;
-        if &Scope::from_plan(plan) != scope {
+        if &Scope::from_input(plan) != scope {
             return Err(db::Error::Trust);
         }
         self.inner.trusted_snapshot(plan)

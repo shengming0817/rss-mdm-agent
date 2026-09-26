@@ -72,7 +72,7 @@ pub struct FrozenExecutionSummary {
     pub access: AccessSummary,
 }
 impl FrozenExecutionSummary {
-    pub(crate) fn from_plan(plan: &FrozenExecution) -> Self {
+    pub(crate) fn from_input(plan: &FrozenExecution) -> Self {
         let p = plan.spec();
         Self {
             authority: p.request.authority.clone(),

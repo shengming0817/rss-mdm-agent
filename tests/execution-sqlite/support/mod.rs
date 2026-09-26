@@ -25,7 +25,7 @@ pub fn operation(s: &str) -> OperationRequestId {
 }
 pub fn limits() -> Limits {
     Limits {
-        plan: ExecutionLimits {
+        input: ExecutionLimits {
             max_input_bytes: 65_536,
             max_depth: 32,
             max_nodes: 4096,
@@ -56,17 +56,17 @@ pub fn plan() -> FrozenExecution {
     let original = FrozenExecution::freeze(
         decode_execution(
             include_bytes!("../../../crates/execution-contract/tests/fixtures/plan.json"),
-            &limits().plan,
+            &limits().input,
         )
         .unwrap(),
-        &limits().plan,
+        &limits().input,
     )
     .unwrap();
     let mut spec = original.spec().clone();
     spec.request.initiator = execution_contract::Initiator::Policy {
         policy: spec.policy.clone(),
     };
-    FrozenExecution::freeze(spec, &limits().plan).unwrap()
+    FrozenExecution::freeze(spec, &limits().input).unwrap()
 }
 pub struct Database {
     pub root: PathBuf,
@@ -175,7 +175,7 @@ impl TestHost {
         }
     }
     pub fn scope(&self) -> Scope {
-        Scope::from_plan(&self.plan)
+        Scope::from_input(&self.plan)
     }
     pub fn bindings(&self) -> Vec<ProfileApproval> {
         self.entries

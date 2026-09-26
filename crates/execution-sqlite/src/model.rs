@@ -99,7 +99,7 @@ pub struct Scope {
 }
 impl Scope {
     /// Derive claims from a frozen plan; Host still authenticates them independently.
-    pub fn from_plan(plan: &FrozenExecution) -> Self {
+    pub fn from_input(plan: &FrozenExecution) -> Self {
         Self {
             authority: plan.spec().request.authority.clone(),
             actor: plan.spec().request.actor.clone(),
@@ -119,7 +119,7 @@ impl Scope {
 #[derive(Debug, Clone, Copy)]
 pub struct Limits {
     /// Frozen plan decoder limits.
-    pub plan: ExecutionLimits,
+    pub input: ExecutionLimits,
     /// Lifecycle snapshot limit, including terminal-state headroom.
     pub lifecycle: execution_lifecycle::Limits,
     /// Interaction bounds.
@@ -157,7 +157,7 @@ impl Limits {
             || self.interaction.max_snapshot_bytes == 0
             || self.interaction.max_snapshot_bytes > self.max_record_bytes
             || self.interaction.max_lifetime_ms == 0
-            || self.plan.max_input_bytes > self.max_record_bytes
+            || self.input.max_input_bytes > self.max_record_bytes
             || self.busy_timeout_ms > 60_000
         {
             return Err(Error::Configuration);
@@ -679,6 +679,7 @@ enum AdmissionReasonWire {
     RuleAllowed,
     NeedsApproval,
     RiskBlocked,
+    ConditionalPermission,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(

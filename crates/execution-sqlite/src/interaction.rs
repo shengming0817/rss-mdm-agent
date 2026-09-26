@@ -5,6 +5,26 @@ use execution_interaction::{self as interaction, Command, Interaction, Reference
 use rusqlite::params;
 
 impl Store {
+    /// Read the execution confirmation under the caller's existing operation access.
+    /// Missing is distinct from corrupt/unavailable storage; this does not grant result access.
+    pub fn execution_confirmation_state(
+        &self,
+        input: &execution_contract::FrozenExecution,
+        access: ExecutionAccess<'_>,
+        host: &impl Host,
+    ) -> Result<Option<Interaction>, Error> {
+        let scope = Scope::from_input(input);
+        let tx = self.conn.unchecked_transaction()?;
+        crate::database::ensure_current(&tx, &self.authority, self.limits)?;
+        self.check_scope(&scope)?;
+        access.authorize(&scope, host)?;
+        match load(&tx, &scope, &execution_confirmation(input).id, self.limits) {
+            Ok(state) => Ok(Some(state)),
+            Err(Error::NotFound) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Open an interaction bound to an existing execution scope. Answers are never approvals.
     pub fn open_interaction(
         &mut self,
@@ -166,7 +186,7 @@ pub(crate) fn load(
 pub fn execution_confirmation(plan: &execution_contract::FrozenExecution) -> Spec {
     Spec {
         id: Reference::new(format!("execute-{}", plan.digest().as_str())).expect("bounded digest"),
-        subject: Scope::from_plan(plan).interaction_subject(),
+        subject: Scope::from_input(plan).interaction_subject(),
         kind: interaction::Kind::ExecutionAction {
             digest: Reference::new(plan.digest().as_str()).expect("digest"),
         },
@@ -185,7 +205,7 @@ pub(crate) fn confirmed(
     now: u64,
 ) -> Result<bool, Error> {
     let expected = execution_confirmation(plan);
-    let state = match load(conn, &Scope::from_plan(plan), &expected.id, limits) {
+    let state = match load(conn, &Scope::from_input(plan), &expected.id, limits) {
         Ok(s) => s,
         Err(Error::NotFound) => return Ok(false),
         Err(e) => return Err(e),

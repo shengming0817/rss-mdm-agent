@@ -59,7 +59,7 @@ fn execution_by_request_restores_exact_plan_and_checks_current_reader() {
         .execution_by_request(request, ExecutionAccess::Result, &host)
         .unwrap()
         .execution;
-    assert_eq!(restored.plan().digest(), host.plan.digest());
+    assert_eq!(restored.input().digest(), host.plan.digest());
     assert_eq!(restored.snapshot().revision, 1);
     assert_eq!(store.trust_revision(&host.scope(), &host).unwrap(), Some(1));
     let mut denied = host.clone();
@@ -84,7 +84,7 @@ fn execution_by_request_restores_exact_plan_and_checks_current_reader() {
     db.sql()
         .execute(
             "UPDATE executions SET plan=zeroblob(?1)",
-            [limits().plan.max_input_bytes + 1],
+            [limits().input.max_input_bytes + 1],
         )
         .unwrap();
     assert!(matches!(
@@ -311,7 +311,7 @@ fn content_and_subject_conflicts_do_not_mutate_and_historical_event_ids_cannot_b
     let mut other = host.clone();
     let mut spec = other.plan.spec().clone();
     spec.request.actor = ActorId::new("another-actor").unwrap();
-    other.plan = FrozenExecution::freeze(spec, &limits().plan).unwrap();
+    other.plan = FrozenExecution::freeze(spec, &limits().input).unwrap();
     assert_eq!(
         store
             .open_execution(&operation("open"), &other.plan, &other)
@@ -1894,7 +1894,7 @@ fn oversized_protected_records_fail_closed_at_every_read_entry() {
         ("metadata", "authority", limits().max_record_bytes),
         ("receipts", "body", limits().max_record_bytes),
         ("audits", "body", limits().max_record_bytes),
-        ("executions", "plan", limits().plan.max_input_bytes),
+        ("executions", "plan", limits().input.max_input_bytes),
         (
             "executions",
             "snapshot",
@@ -2338,7 +2338,7 @@ fn full_output_budget_is_binary_bounded_and_requires_privileged_read() {
     let mut host = TestHost::new(1);
     let mut spec = host.plan.spec().clone();
     spec.budget.total_output_bytes = 65536;
-    host.plan = FrozenExecution::freeze(spec, &limits().plan).unwrap();
+    host.plan = FrozenExecution::freeze(spec, &limits().input).unwrap();
     for approval in &mut host.entries {
         approval.definition.content_digest = host.plan.digest().clone();
     }
@@ -2474,10 +2474,10 @@ fn software_host() -> TestHost {
     host.plan = FrozenExecution::freeze(
         decode_execution(
             include_bytes!("../../crates/execution-contract/tests/fixtures/software.json"),
-            &limits().plan,
+            &limits().input,
         )
         .unwrap(),
-        &limits().plan,
+        &limits().input,
     )
     .unwrap();
     host
@@ -2555,7 +2555,7 @@ fn second_software_request_cannot_steal_unresolved_claim() {
     plan.request.request_id = RequestId::new("plan-2").unwrap();
     plan.request.request_id = RequestId::new("request-2").unwrap();
     plan.request.actor = ActorId::new("actor-2").unwrap();
-    next.plan = FrozenExecution::freeze(plan, &limits().plan).unwrap();
+    next.plan = FrozenExecution::freeze(plan, &limits().input).unwrap();
     other
         .refresh_trust(&operation("trust2"), &next.scope(), None, &next)
         .unwrap();
@@ -2672,7 +2672,7 @@ fn software_ownership_is_atomic_with_verified_effect_and_cannot_be_rewritten() {
         software.resource_binding.parent = id("different-parent");
         software.resource_binding.object = Some(id("physical-installed"));
     }
-    alias.plan = FrozenExecution::freeze(spec, &limits().plan).unwrap();
+    alias.plan = FrozenExecution::freeze(spec, &limits().input).unwrap();
     store
         .refresh_trust(&operation("alias-trust"), &alias.scope(), None, &alias)
         .unwrap();
@@ -2843,7 +2843,7 @@ fn simultaneous_software_requests_have_one_committed_resource_owner() {
     let mut spec = second.plan.spec().clone();
     spec.request.request_id = RequestId::new("other-plan").unwrap();
     spec.request.request_id = RequestId::new("other-request").unwrap();
-    second.plan = FrozenExecution::freeze(spec, &limits().plan).unwrap();
+    second.plan = FrozenExecution::freeze(spec, &limits().input).unwrap();
     store
         .refresh_trust(&operation("other-trust"), &second.scope(), None, &second)
         .unwrap();

@@ -24,17 +24,17 @@ pub fn plan() -> FrozenExecution {
     let original = FrozenExecution::freeze(
         decode_execution(
             include_bytes!("../../../execution-contract/tests/fixtures/plan.json"),
-            &test_store_limits().plan,
+            &test_store_limits().input,
         )
         .unwrap(),
-        &test_store_limits().plan,
+        &test_store_limits().input,
     )
     .unwrap();
     let mut spec = original.spec().clone();
     spec.request.initiator = execution_contract::Initiator::Policy {
         policy: spec.policy.clone(),
     };
-    FrozenExecution::freeze(spec, &test_store_limits().plan).unwrap()
+    FrozenExecution::freeze(spec, &test_store_limits().input).unwrap()
 }
 pub struct Database {
     pub path: std::path::PathBuf,

@@ -155,8 +155,7 @@ impl<H: AppHost + Send, R: RunnerPort + Send, I: Ingress> Handler for Endpoint<H
                             .map_err(|_| execution_app::Error::InvalidInput)?;
                     let plan = execution_contract::FrozenExecution::freeze(spec, &self.limits)
                         .map_err(|_| execution_app::Error::InvalidInput)?;
-                    let request = &plan.spec().request.request_id;
-                    self.app.request_execution(&caller, request, &plan)
+                    self.app.request_execution(&caller, &plan)
                 }
                 Request::Status { request } => self.app.status(&caller, &request),
                 Request::Cancel { request } => self.app.cancel(&caller, &request),

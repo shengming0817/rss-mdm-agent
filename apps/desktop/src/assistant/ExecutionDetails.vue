@@ -16,10 +16,10 @@ import type {
 const props = defineProps<{ details: ExecutionTaskDetails; now: number }>();
 const validity = computed(() =>
   props.now < props.details.action.validity.notBeforeUnixMs
-    ? "计划尚未生效"
+    ? "动作尚未生效"
     : props.now >= props.details.action.validity.expiresAtUnixMs
-      ? "计划已过期"
-      : "计划在有效期内",
+      ? "动作已过期"
+      : "动作在有效期内",
 );
 const instant = (ms: number) =>
   ms >= -8_640_000_000_000_000 && ms <= 8_640_000_000_000_000
@@ -240,8 +240,8 @@ const text = (value: unknown) => JSON.stringify(value, null, 2);
     <p class="plan-validity">
       {{ validity }}（按本机时间判断；实际准入由执行服务核验）。
     </p>
-    <p v-if="validity !== '计划在有效期内'">
-      这是已读取的冻结计划与历史阶段；请重新读取详情，必要时获取新冻结计划。不要据此重复派发。
+    <p v-if="validity !== '动作在有效期内'">
+      这是已读取的冻结动作与历史阶段；请重新读取详情，必要时重新发起新请求。不要据此重复派发。
     </p>
     <p v-if="details.status.mode === 'test'">
       测试结果不代表真实设备变更或生产接线完成。
@@ -249,11 +249,11 @@ const text = (value: unknown) => JSON.stringify(value, null, 2);
     <p v-if="details.status.cancelRequested">
       执行取消已请求；取消意图、停止响应和效果验证分别记录。
     </p>
-    <RequestOrigin :plan="details.action" />
+    <RequestOrigin :input="details.action" />
     <dl>
       <dt>原始执行请求</dt>
       <dd>{{ details.status.operationRequestId }}</dd>
-      <dt>冻结计划 / 摘要</dt>
+      <dt>冻结动作 / 摘要</dt>
       <dd>
         {{ details.action.requestId }}<br />{{ details.action.contentDigest }}
       </dd>

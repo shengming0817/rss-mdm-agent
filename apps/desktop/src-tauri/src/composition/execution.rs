@@ -55,6 +55,7 @@ type Job = Box<dyn FnOnce(&mut Owner) + Send>;
 #[derive(Clone)]
 pub struct ExecutionHandle {
     caller: Option<RequestContext>,
+    caller_generation: Option<String>,
     origin: Option<Initiator>,
     trusted_users: Option<Arc<std::sync::Mutex<super::users::Users>>>,
     sender: mpsc::SyncSender<Job>,
@@ -90,7 +91,7 @@ impl RunnerPort for S1Runner {
         execution_lifecycle::ExecutionMode::Test
     }
     fn dispatch(&self, permit: AuthorizedDispatch) -> Result<DispatchOutcome, Error> {
-        self.select(permit.plan()).dispatch(permit)
+        self.select(permit.input()).dispatch(permit)
     }
     fn evidence(
         &self,
@@ -131,6 +132,19 @@ impl ExecutionHandle {
             actor: ActorId::new(actor).map_err(|_| Error::Denied)?,
         });
         call.origin = None;
+        call.caller_generation = if let Some(users) = &self.trusted_users {
+            let current = users
+                .lock()
+                .map_err(|_| Error::Unavailable)?
+                .current()
+                .map_err(|_| Error::Unbound)?;
+            if current.user.user_id.as_str() != actor {
+                return Err(Error::Denied);
+            }
+            Some(current.generation.to_string())
+        } else {
+            None
+        };
         Ok(call)
     }
 
@@ -164,6 +178,19 @@ impl ExecutionHandle {
         loop {
             let page = owner.app.service_tasks(after.as_ref(), 128)?;
             for task in page.items {
+                if matches!(
+                    task.status.phase,
+                    TaskPhase::Waiting | TaskPhase::ConfirmationRequired
+                ) {
+                    let status = owner
+                        .app
+                        .resume_initial(&task.status.operation_request_id)?;
+                    if !status.cancel_requested && status.admission.is_none() {
+                        owner
+                            .started
+                            .insert(task.status.operation_request_id.clone(), now()?);
+                    }
+                }
                 if matches!(
                     task.status.phase,
                     TaskPhase::Accepted
@@ -207,6 +234,7 @@ impl ExecutionHandle {
             .map_err(|_| Error::Unavailable)?;
         Ok(Self {
             caller: None,
+            caller_generation: None,
             origin: None,
             trusted_users: None,
             sender,
@@ -233,9 +261,28 @@ impl ExecutionHandle {
         }
         let caller = self.caller.clone().ok_or(Error::Unbound)?;
         let (tx, rx) = oneshot::channel();
+        let users = self.trusted_users.clone();
+        let generation = self.caller_generation.clone();
         self.sender
             .try_send(Box::new(move |owner| {
-                let _ = tx.send(action(owner, &caller));
+                let result = (|| {
+                    // Hold the registry lease through synchronous owner authorization/commit.
+                    // Switching users cannot invalidate a generation between this check and intent.
+                    let lease = users
+                        .as_ref()
+                        .map(|u| u.lock().map_err(|_| Error::Unavailable))
+                        .transpose()?;
+                    if let Some(users) = lease.as_ref() {
+                        let current = users.current().map_err(|_| Error::Unbound)?;
+                        if generation.as_deref() != Some(current.generation.as_str())
+                            || caller.actor.as_str() != current.user.user_id.as_str()
+                        {
+                            return Err(Error::Denied);
+                        }
+                    }
+                    action(owner, &caller)
+                })();
+                let _ = tx.send(result);
             }))
             .map_err(|_| Error::Capacity)?;
         tokio::time::timeout(Duration::from_secs(10), rx)
@@ -343,7 +390,13 @@ impl Owner {
             .collect();
         for request in due {
             self.started.remove(&request);
-            if self.app.reconcile(&request).is_err() {
+            let resumed = self.app.resume_initial(&request);
+            if resumed
+                .as_ref()
+                .is_ok_and(|s| s.phase == TaskPhase::ConfirmationRequired)
+                || resumed.is_err()
+                || self.app.reconcile(&request).is_err()
+            {
                 self.started.insert(request, time);
             }
         }
@@ -407,8 +460,8 @@ impl Owner {
         p: &FrozenExecution,
     ) -> Result<ExecutionStatus, Error> {
         let request = &p.spec().request.request_id;
-        let status = self.app.request_execution(caller, request, p)?;
-        if status.attempts > 0 {
+        let status = self.app.request_execution(caller, p)?;
+        if status.attempts > 0 || status.phase == TaskPhase::ConfirmationRequired {
             self.started.entry(request.clone()).or_insert(now()?);
         }
         Ok(status)
@@ -496,7 +549,12 @@ impl Owner {
         };
         let mut interactions = Vec::new();
         let reference = execution_sqlite::execution_confirmation(&p).id;
-        if let Ok(i) = self.app.interaction(caller, request, &reference) {
+        let interaction = match self.app.interaction(caller, request, &reference) {
+            Ok(i) => Some(i),
+            Err(Error::NotFound) => None,
+            Err(e) => return Err(e),
+        };
+        if let Some(i) = interaction {
             let snapshot = i.snapshot();
             interactions.push(ui::InteractionView {
                 id: reference.as_str().into(),
@@ -985,6 +1043,45 @@ mod tests {
             .await
             .unwrap();
         alice.close().await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[tokio::test]
+    async fn generation_lease_rejects_queued_work_after_user_switch() {
+        let (handle, root) = fixture().await;
+        let mut users = super::super::users::Users::open(&root).unwrap();
+        let alice = users.select("Alice").unwrap();
+        let registry = Arc::new(std::sync::Mutex::new(users));
+        let stale = handle
+            .clone()
+            .with_trusted_users(registry.clone())
+            .for_caller(alice.user.user_id.as_str())
+            .unwrap();
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        handle
+            .sender
+            .try_send(Box::new(move |_| {
+                entered_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+            }))
+            .unwrap();
+        entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let mutated = Arc::new(AtomicBool::new(false));
+        let flag = mutated.clone();
+        let mut queued = Box::pin(stale.call(move |_, _| {
+            flag.store(true, Ordering::SeqCst);
+            Ok(())
+        }));
+        std::future::poll_fn(|cx| {
+            assert!(std::future::Future::poll(queued.as_mut(), cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        registry.lock().unwrap().select("Bob").unwrap();
+        release_tx.send(()).unwrap();
+        assert_eq!(queued.await.unwrap_err(), Error::Denied);
+        assert!(!mutated.load(Ordering::SeqCst));
+        handle.close().await;
         std::fs::remove_dir_all(root).unwrap();
     }
 }

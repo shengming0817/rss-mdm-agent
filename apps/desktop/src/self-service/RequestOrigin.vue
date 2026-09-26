@@ -1,58 +1,59 @@
 <script setup lang="ts">
 import type { Action } from "./types";
-defineProps<{ plan: Pick<Action, "actor" | "authority" | "initiator"> }>();
+defineProps<{ input: Pick<Action, "actor" | "authority" | "initiator"> }>();
 </script>
 <template>
   <section class="request-origin" aria-label="冻结的请求来源">
     <h3>请求主体与来源</h3>
     <dl class="facts">
       <dt>请求主体</dt>
-      <dd class="identifier">{{ plan.actor }}</dd>
+      <dd class="identifier">{{ input.actor }}</dd>
       <dt>授权域</dt>
       <dd>
-        {{ plan.authority.kind }} / {{ plan.authority.id
-        }}<template v-if="plan.authority.kind === 'enterprise'">
-          / 租户 {{ plan.authority.tenant }}</template
+        {{ input.authority.kind }} / {{ input.authority.id
+        }}<template v-if="input.authority.kind === 'enterprise'">
+          / 租户 {{ input.authority.tenant }}</template
         >
       </dd>
       <dt>发起来源</dt>
       <dd>
         {{
-          plan.initiator.kind === "human"
+          input.initiator.kind === "human"
             ? "人工发起"
-            : plan.initiator.kind === "ai"
+            : input.initiator.kind === "ai"
               ? "AI 发起"
               : "策略发起"
         }}
       </dd>
-      <template v-if="plan.initiator.kind !== 'policy'">
+      <template v-if="input.initiator.kind !== 'policy'">
         <dt>来源设备</dt>
-        <dd class="identifier">{{ plan.initiator.osSession.device }}</dd>
+        <dd class="identifier">{{ input.initiator.osSession.device }}</dd>
         <dt>来源系统账号</dt>
         <dd>
-          {{ plan.initiator.osSession.account.platform }} /
-          {{ plan.initiator.osSession.account.subject }}
+          {{ input.initiator.osSession.account.platform }} /
+          {{ input.initiator.osSession.account.subject }}
         </dd>
         <dt>来源系统会话</dt>
-        <dd class="identifier">{{ plan.initiator.osSession.session }}</dd>
+        <dd class="identifier">{{ input.initiator.osSession.session }}</dd>
       </template>
-      <template v-if="plan.initiator.kind === 'ai'">
+      <template v-if="input.initiator.kind === 'ai'">
         <dt>AI 引擎</dt>
-        <dd>{{ plan.initiator.provider }}</dd>
+        <dd>{{ input.initiator.provider }}</dd>
         <dt>AI 配置版本</dt>
         <dd>
-          {{ plan.initiator.config.id }} /
-          {{ plan.initiator.config.revision }}
+          {{ input.initiator.config.id }} /
+          {{ input.initiator.config.revision }}
         </dd>
         <dt>AI 会话</dt>
-        <dd class="identifier">{{ plan.initiator.conversation }}</dd>
+        <dd class="identifier">{{ input.initiator.conversation }}</dd>
         <dt>工具调用</dt>
-        <dd class="identifier">{{ plan.initiator.toolCall }}</dd>
+        <dd class="identifier">{{ input.initiator.toolCall }}</dd>
       </template>
-      <template v-if="plan.initiator.kind === 'policy'">
+      <template v-if="input.initiator.kind === 'policy'">
         <dt>来源策略</dt>
         <dd>
-          {{ plan.initiator.policy.id }} / {{ plan.initiator.policy.revision }}
+          {{ input.initiator.policy.id }} /
+          {{ input.initiator.policy.revision }}
         </dd>
       </template>
     </dl>

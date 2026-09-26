@@ -535,3 +535,40 @@ fn trusted_origin_and_numeric_risk_choose_the_confirmation_gate() {
         &DecisionOutcome::Denied
     );
 }
+
+#[test]
+fn user_confirmation_is_never_a_substitute_for_conditional_authorization() {
+    let original = plan();
+    let mut origins = vec![original.spec().request.initiator.clone()];
+    let Initiator::Human { os_session } = origins[0].clone() else {
+        panic!("fixture")
+    };
+    origins.push(Initiator::Ai {
+        os_session,
+        provider: id("ai"),
+        config: VersionedRef {
+            id: id("cfg"),
+            revision: id("1"),
+        },
+        conversation: id("chat"),
+        tool_call: id("tool"),
+    });
+    for origin in origins {
+        for risk in [RiskLevel::Zero, RiskLevel::One, RiskLevel::Two] {
+            let mut spec = original.spec().clone();
+            spec.request.initiator = origin.clone();
+            let p = FrozenExecution::freeze(spec, &limits()).unwrap();
+            let mut a = authority(&p);
+            facts(&mut a).risk = Some(risk);
+            facts(&mut a).rules[0].effect = RuleEffect::ApprovalRequired {
+                profile: VersionedRef {
+                    id: id("conditional"),
+                    revision: id("1"),
+                },
+            };
+            let decision = decide_for(&p, &a);
+            assert_eq!(decision.outcome(), &DecisionOutcome::Denied);
+            assert_eq!(decision.reason(), Reason::ConditionalPermission);
+        }
+    }
+}

@@ -133,7 +133,7 @@ fn software_fixture(script: &str) -> Fixture {
     spec.execution = ExecutionSpec::Software {
         software: Box::new(software),
     };
-    f.plan = FrozenExecution::freeze(spec, &execution_app::test_store_limits().plan).unwrap();
+    f.plan = FrozenExecution::freeze(spec, &execution_app::test_store_limits().input).unwrap();
     source.software = Some(SoftwareArtifacts {
         payload,
         manager: "/bin/sh".into(),
@@ -322,7 +322,7 @@ fn change_bundle(f: &mut Fixture, mutation: MutationKind, script: &str) {
     }
     // Bundle entries are resolved from the exact archive, not this fallback path.
     source.content = f.root.join("unused-entry");
-    f.plan = FrozenExecution::freeze(p, &execution_app::test_store_limits().plan).unwrap();
+    f.plan = FrozenExecution::freeze(p, &execution_app::test_store_limits().input).unwrap();
     f.runner
         .artifacts
         .insert(f.plan.digest().as_str().into(), Arc::new(source));
@@ -772,7 +772,7 @@ fn validation_failure_after_exclusion_acquisition_aborts_before_spawn() {
                 }
             }
         }
-        f.plan = FrozenExecution::freeze(spec, &execution_app::test_store_limits().plan).unwrap();
+        f.plan = FrozenExecution::freeze(spec, &execution_app::test_store_limits().input).unwrap();
         f.runner
             .artifacts
             .insert(f.plan.digest().as_str().into(), artifacts);

@@ -313,7 +313,7 @@ impl ApprovalVerifier for StoredApprovals<'_> {
         if now < self.now {
             return Err(VerificationError::Clock);
         }
-        if Scope::from_plan(plan) != *self.scope
+        if Scope::from_input(plan) != *self.scope
             || refs.len() > self.limits.max_approvals
             || now >= self.head.until
         {

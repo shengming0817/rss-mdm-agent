@@ -334,7 +334,7 @@ fn human_and_ai_share_the_same_approval_outcomes() {
         );
         assert_eq!(
             check(&p, &required(&p), &[], &v).outcome(),
-            &ApprovalOutcome::NotRequired
+            &ApprovalOutcome::Rejected(Reason::AdmissionDenied)
         );
         assert_eq!(
             check(&p, &decision(&p, vec![RuleEffect::Deny]), &bindings(), &v).outcome(),

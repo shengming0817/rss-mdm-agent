@@ -325,7 +325,7 @@ impl Write<'_> {
         if let Some(event) = &mut audit.event {
             event.event_id = event_id;
             event
-                .validate(&self.limits.plan)
+                .validate(&self.limits.input)
                 .map_err(|_| Error::Capacity)?;
         }
         self.tx.execute(
@@ -382,16 +382,16 @@ pub(crate) fn load_plan(
     let (bytes, digest): (Vec<u8>, String) = conn.query_row(
         &format!(
             "SELECT {},digest FROM executions WHERE scope=?1",
-            bounded_blob("plan", limits.plan.max_input_bytes)
+            bounded_blob("plan", limits.input.max_input_bytes)
         ),
         [scope.key()],
         |r| Ok((r.get(0)?, r.get(1)?)),
     )?;
     let spec =
-        execution_contract::decode_execution(&bytes, &limits.plan).map_err(|_| Error::Corrupt)?;
-    let plan = execution_contract::FrozenExecution::freeze(spec, &limits.plan)
+        execution_contract::decode_execution(&bytes, &limits.input).map_err(|_| Error::Corrupt)?;
+    let plan = execution_contract::FrozenExecution::freeze(spec, &limits.input)
         .map_err(|_| Error::Corrupt)?;
-    if hash(plan.digest())? != digest || Scope::from_plan(&plan) != *scope {
+    if hash(plan.digest())? != digest || Scope::from_input(&plan) != *scope {
         return Err(Error::Corrupt);
     }
     Ok(plan)

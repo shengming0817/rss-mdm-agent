@@ -19,10 +19,10 @@ fn main() {
             execution_contract::FrozenExecution::freeze(
                 execution_contract::decode_execution(
                     include_bytes!("../../execution-contract/tests/fixtures/software.json"),
-                    &test_store_limits().plan,
+                    &test_store_limits().input,
                 )
                 .unwrap(),
-                &test_store_limits().plan,
+                &test_store_limits().input,
             )
             .unwrap()
         } else {
@@ -40,7 +40,7 @@ fn main() {
         )
         .unwrap();
         let request = &p.spec().request.request_id;
-        app.request_execution(&caller(), request, &p).unwrap();
+        app.request_execution(&caller(), &p).unwrap();
         if cancel {
             app.cancel(&caller(), request).unwrap();
         }

@@ -192,16 +192,22 @@ pub fn decide(
         (a.id.as_str(), a.revision.as_str()).cmp(&(b.id.as_str(), b.revision.as_str()))
     });
     profiles.dedup();
-    let mut decision =
-        if profiles.is_empty() || !matches!(facts.verified_origin, Initiator::Policy { .. }) {
-            result(DecisionOutcome::Allowed, Reason::RuleAllowed, rule_ids)
-        } else {
-            result(
-                DecisionOutcome::ApprovalRequired { profiles },
-                Reason::NeedsApproval,
-                rule_ids,
-            )
-        };
+    if !profiles.is_empty() && !matches!(facts.verified_origin, Initiator::Policy { .. }) {
+        return result(
+            DecisionOutcome::Denied,
+            Reason::ConditionalPermission,
+            rule_ids,
+        );
+    }
+    let mut decision = if profiles.is_empty() {
+        result(DecisionOutcome::Allowed, Reason::RuleAllowed, rule_ids)
+    } else {
+        result(
+            DecisionOutcome::ApprovalRequired { profiles },
+            Reason::NeedsApproval,
+            rule_ids,
+        )
+    };
     decision.risk = facts.risk;
     decision.execution_gate = match (&facts.verified_origin, facts.risk) {
         (Initiator::Human { .. }, _) => ExecutionGate::Confirmation,

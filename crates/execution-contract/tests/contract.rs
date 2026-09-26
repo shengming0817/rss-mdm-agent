@@ -315,12 +315,12 @@ fn audit_references_are_correlated_without_secret_material_or_real_test_effects(
 }
 #[test]
 fn schema_snapshots_accept_goldens_and_reject_structural_bypasses() {
-    let schemas = serde_json::json!({"plan":execution_contract::execution_schema(),"audit":execution_contract::audit_schema()});
+    let schemas = serde_json::json!({"execution":execution_contract::execution_schema(),"audit":execution_contract::audit_schema()});
     let expected: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/schemas.json")).unwrap();
     assert_eq!(schemas, expected);
     for (schema, mut value) in [
-        ("plan", fixture()),
+        ("execution", fixture()),
         (
             "audit",
             serde_json::from_str(include_str!("fixtures/audit.json")).unwrap(),
@@ -331,7 +331,7 @@ fn schema_snapshots_accept_goldens_and_reject_structural_bypasses() {
         value["authorized"] = true.into();
         assert!(!validator.is_valid(&value));
     }
-    let validator = jsonschema::validator_for(&schemas["plan"]).unwrap();
+    let validator = jsonschema::validator_for(&schemas["execution"]).unwrap();
     let mut bad = fixture();
     bad["request"]["initiator"]["trusted"] = true.into();
     assert!(!validator.is_valid(&bad));
@@ -422,4 +422,13 @@ fn additional_attempts_do_not_multiply_total_plan_budgets() {
         .remove("totalTimeoutMs");
     legacy["budget"]["timeoutMs"] = 1000.into();
     assert!(decode_execution(&serde_json::to_vec(&legacy).unwrap(), &limits()).is_err());
+}
+
+#[test]
+fn original_v3_bytes_are_rejected_without_legacy_identity_aliases() {
+    let bytes = include_bytes!("fixtures/rejected-v3.json");
+    assert!(decode_execution(bytes, &limits()).is_err());
+    let mut current = fixture();
+    current["planId"] = serde_json::json!("old-plan");
+    assert!(decode_execution(&serde_json::to_vec(&current).unwrap(), &limits()).is_err());
 }

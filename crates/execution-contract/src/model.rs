@@ -305,8 +305,7 @@ pub struct ExecutionInput {
     pub schema_version: V4,
     /// Closed execution semantics, included in the sole canonical digest.
     pub execution: crate::ExecutionSpec,
-    /// Immutable local plan identity, also bound into its digest.
-    /// Original operation intent, retained once as part of the canonical plan.
+    /// Original operation intent, retained once as part of the canonical execution input.
     pub request: ExecutionRequest,
     /// Resolved launch description, including exact artifacts and ordered process inputs.
     pub launch: LaunchSpec,

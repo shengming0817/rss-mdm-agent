@@ -64,7 +64,7 @@ impl Execution {
         &self.snapshot
     }
     /// Borrow the exact immutable plan restored with these facts; this grants no dispatch authority.
-    pub fn plan(&self) -> &FrozenExecution {
+    pub fn input(&self) -> &FrozenExecution {
         &self.plan
     }
     /// Cumulative output across attempts, saturating at the integer ceiling.

@@ -22,15 +22,15 @@ impl Store {
         let bytes: Vec<u8> = tx.query_row(
             &format!(
                 "SELECT {} FROM executions WHERE request_id=?1",
-                bounded_blob("plan", self.limits.plan.max_input_bytes)
+                bounded_blob("plan", self.limits.input.max_input_bytes)
             ),
             [request.as_str()],
             |row| row.get(0),
         )?;
-        let spec = execution_contract::decode_execution(&bytes, &self.limits.plan)
+        let spec = execution_contract::decode_execution(&bytes, &self.limits.input)
             .map_err(|_| Error::Corrupt)?;
-        let plan = FrozenExecution::freeze(spec, &self.limits.plan).map_err(|_| Error::Corrupt)?;
-        let scope = Scope::from_plan(&plan);
+        let plan = FrozenExecution::freeze(spec, &self.limits.input).map_err(|_| Error::Corrupt)?;
+        let scope = Scope::from_input(&plan);
         self.check_scope(&scope)?;
         access.authorize(&scope, host)?;
         if &plan.spec().request.request_id != request {
@@ -138,10 +138,10 @@ impl Store {
         plan: &FrozenExecution,
         host: &impl Host,
     ) -> Result<CommitOutcome, Error> {
-        let scope = Scope::from_plan(plan);
+        let scope = Scope::from_input(plan);
         // Revalidate against the store bounds even if another caller froze with looser limits.
-        let bytes = encode(plan.spec(), self.limits.plan.max_input_bytes)?;
-        execution_contract::decode_execution(&bytes, &self.limits.plan)
+        let bytes = encode(plan.spec(), self.limits.input.max_input_bytes)?;
+        execution_contract::decode_execution(&bytes, &self.limits.input)
             .map_err(|_| Error::Capacity)?;
         let w = match self.start(
             op,
@@ -161,7 +161,7 @@ impl Store {
             w.tx.query_row(
                 &format!(
                     "SELECT {},revision FROM executions WHERE request_id=?1",
-                    bounded_blob("plan", w.limits.plan.max_input_bytes)
+                    bounded_blob("plan", w.limits.input.max_input_bytes)
                 ),
                 [plan.spec().request.request_id.as_str()],
                 |row| Ok((row.get(0)?, row.get(1)?)),
@@ -709,16 +709,16 @@ impl Store {
             let bytes: Vec<u8> = tx.query_row(
                 &format!(
                     "SELECT {} FROM executions WHERE scope=?1",
-                    bounded_blob("plan", self.limits.plan.max_input_bytes)
+                    bounded_blob("plan", self.limits.input.max_input_bytes)
                 ),
                 [&key],
                 |r| r.get(0),
             )?;
-            let spec = execution_contract::decode_execution(&bytes, &self.limits.plan)
+            let spec = execution_contract::decode_execution(&bytes, &self.limits.input)
                 .map_err(|_| Error::Corrupt)?;
             let plan =
-                FrozenExecution::freeze(spec, &self.limits.plan).map_err(|_| Error::Corrupt)?;
-            let scope = Scope::from_plan(&plan);
+                FrozenExecution::freeze(spec, &self.limits.input).map_err(|_| Error::Corrupt)?;
+            let scope = Scope::from_input(&plan);
             self.check_scope(&scope)?;
             if scope.key() != key {
                 return Err(Error::Corrupt);

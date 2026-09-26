@@ -43,6 +43,8 @@ pub enum Reason {
     NeedsApproval,
     /// AI risk is prohibited or cannot be classified by trusted policy.
     RiskBlocked,
+    /// Conditional policy approval cannot be replaced by interactive user confirmation.
+    ConditionalPermission,
 }
 /// Immutable decision bound to the evaluated plan, never deserializable as a permission.
 /// ```compile_fail
