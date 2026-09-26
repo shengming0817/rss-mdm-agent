@@ -44,23 +44,27 @@ def main():
         parent = folder.lstat()
         if stat.S_ISLNK(parent.st_mode) or parent.st_uid != os.geteuid() or parent.st_mode & 0o022:
             raise RuntimeError('unprotected launchd directory')
-        descriptor = os.open(plist, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-        with os.fdopen(descriptor, 'wb') as stream:
-            os.fchmod(stream.fileno(), 0o600)
-            plistlib.dump({'Label': label, 'ProgramArguments': [str(binary)],
-                          'MachServices': {label: True}, 'RunAtLoad': True,
-                          'KeepAlive': False, 'ExitTimeOut': 5,
-                          'ProcessType': 'Background'}, stream)
-            stream.flush()
-            os.fsync(stream.fileno())
-        metadata = plist.lstat()
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.geteuid() or metadata.st_mode & 0o077:
-            raise RuntimeError('unprotected launchd configuration')
+        created = False
+        committed = False
         try:
+            descriptor = os.open(plist, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            created = True
+            with os.fdopen(descriptor, 'wb') as stream:
+                os.fchmod(stream.fileno(), 0o600)
+                plistlib.dump({'Label': label, 'ProgramArguments': [str(binary)],
+                              'MachServices': {label: True}, 'RunAtLoad': True,
+                              'KeepAlive': False, 'ExitTimeOut': 5,
+                              'ProcessType': 'Background'}, stream)
+                stream.flush()
+                os.fsync(stream.fileno())
+            metadata = plist.lstat()
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.geteuid() or metadata.st_mode & 0o077:
+                raise RuntimeError('unprotected launchd configuration')
             subprocess.run(['/bin/launchctl', 'bootstrap', domain, str(plist)], check=True)
-        except BaseException:
-            plist.unlink()
-            raise
+            committed = True
+        finally:
+            if created and not committed:
+                plist.unlink(missing_ok=True)
     else:
         with plist.open('rb') as stream:
             current = plistlib.load(stream)

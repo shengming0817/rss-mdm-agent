@@ -37,6 +37,16 @@ class Installation(unittest.TestCase):
             self.assertEqual((home / 'Library').stat().st_mode & 0o777, 0o700)
             self.assertTrue(any(command[1] == 'bootstrap' for command in calls))
 
+    def test_failed_plist_publication_rolls_back_owned_file(self):
+        for target in ['dump', 'fsync']:
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as directory:
+                home = Path(directory)
+                owner = module.plistlib if target == 'dump' else module.os
+                with patch.object(owner, target, side_effect=OSError('injected publication failure')):
+                    with self.assertRaises(OSError):
+                        self.invoke(home, ['install', '--scope', 'user', '--binary', '/bin/sh'], lambda *args, **kwargs: SimpleNamespace(returncode=1))
+                self.assertFalse((home / 'Library/LaunchAgents/com.rss-mdm.agent.execution.user.plist').exists())
+
     def test_remove_handles_missing_binary_and_already_absent_endpoint(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)

@@ -28,7 +28,12 @@ pub(crate) fn run(handler: Box<dyn Handler>, stop: &'static AtomicBool) -> Resul
     let worker = std::thread::spawn(move || {
         let mut previous = None;
         while !stop.load(Ordering::Acquire) {
-            if let Ok(mut h) = HANDLER.get().unwrap().lock() {
+            let mut h = HANDLER.get().unwrap().lock().map_err(|_| {
+                stop.store(true, Ordering::Release);
+                eprintln!("execution handler unavailable");
+                Error::Unavailable
+            })?;
+            {
                 match h.tick() {
                     Ok(()) => previous = None,
                     Err(error) => {
@@ -39,11 +44,15 @@ pub(crate) fn run(handler: Box<dyn Handler>, stop: &'static AtomicBool) -> Resul
                     }
                 }
             }
+            drop(h);
             std::thread::sleep(Duration::from_millis(100));
         }
-        if let Ok(mut h) = HANDLER.get().unwrap().lock() {
-            h.stop()?;
-        }
+        HANDLER
+            .get()
+            .unwrap()
+            .lock()
+            .map_err(|_| Error::Unavailable)?
+            .stop()?;
         Ok::<(), Error>(())
     });
     let result = unsafe { rss_execution_listen() };
@@ -79,29 +88,28 @@ unsafe extern "C" fn rss_execution_call(
     {
         return -1;
     }
-    std::panic::catch_unwind(|| {
-        let Some(handler) = HANDLER.get() else {
-            return -1;
-        };
-        let Ok(mut h) = handler.lock() else { return -1 };
-        let peer = Peer {
-            pid,
-            uid,
-            session,
-            native: connection as usize,
-        };
-        let reply = host::dispatch(h.as_mut(), &peer, unsafe {
-            std::slice::from_raw_parts(data, size)
-        });
-        if reply.len() > capacity {
-            return -1;
+    let Some(handler) = HANDLER.get() else {
+        return -1;
+    };
+    let Some(stop) = STOP.get() else { return -1 };
+    let peer = Peer {
+        pid,
+        uid,
+        session,
+        native: connection as usize,
+    };
+    let reply = handle_call(handler, stop, &peer, unsafe {
+        std::slice::from_raw_parts(data, size)
+    });
+    match reply {
+        Ok(reply) if reply.len() <= capacity => {
+            unsafe {
+                std::ptr::copy_nonoverlapping(reply.as_ptr(), output, reply.len());
+            }
+            reply.len() as isize
         }
-        unsafe {
-            std::ptr::copy_nonoverlapping(reply.as_ptr(), output, reply.len());
-        }
-        reply.len() as isize
-    })
-    .unwrap_or(-1)
+        _ => -1,
+    }
 }
 /// Bounded raw transport for local mechanism verification; replies are not authenticated results.
 pub fn query(bytes: &[u8], system: bool) -> Result<Vec<u8>, Error> {
@@ -125,4 +133,60 @@ pub fn query(bytes: &[u8], system: bool) -> Result<Vec<u8>, Error> {
     }
     output.truncate(size);
     Ok(output)
+}
+
+fn handle_call(
+    handler: &Mutex<Box<dyn Handler>>,
+    stop: &AtomicBool,
+    peer: &Peer,
+    bytes: &[u8],
+) -> Result<Vec<u8>, Error> {
+    if stop.load(Ordering::Acquire) {
+        return Err(Error::Unavailable);
+    }
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut h = handler.lock().map_err(|_| Error::Unavailable)?;
+        Ok(host::dispatch(h.as_mut(), peer, bytes))
+    }))
+    .unwrap_or(Err(Error::Unavailable));
+    if result.is_err() && !stop.swap(true, Ordering::AcqRel) {
+        eprintln!("execution handler unavailable");
+    }
+    result
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    struct Panicking;
+    impl Handler for Panicking {
+        fn handle(&mut self, _: &Peer, _: host::Request) -> host::Reply {
+            panic!("injected handler fault")
+        }
+        fn tick(&mut self) -> Result<(), Error> {
+            Ok(())
+        }
+        fn stop(&mut self) -> Result<(), Error> {
+            Ok(())
+        }
+    }
+    #[test]
+    fn poisoned_handler_stops_the_service_instead_of_silently_skipping_work() {
+        let handler: Mutex<Box<dyn Handler>> = Mutex::new(Box::new(Panicking));
+        let stop = AtomicBool::new(false);
+        let peer = Peer {
+            pid: 1,
+            uid: 1,
+            session: 1,
+            native: 0,
+        };
+        assert!(handle_call(
+            &handler,
+            &stop,
+            &peer,
+            br#"{"version":2,"request":{"method":"status","request":"r"}}"#
+        )
+        .is_err());
+        assert!(stop.load(Ordering::Acquire));
+        assert!(handler.is_poisoned());
+    }
 }
