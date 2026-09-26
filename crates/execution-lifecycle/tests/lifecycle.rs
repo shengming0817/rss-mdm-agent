@@ -3,7 +3,7 @@ use execution_lifecycle::*;
 use std::cell::Cell;
 
 #[test]
-fn event_record_snapshots_require_version_two() {
+fn event_record_snapshots_require_version_three() {
     let limits = Limits {
         max_snapshot_bytes: MIN_SNAPSHOT_BYTES,
     };
@@ -19,7 +19,7 @@ fn event_record_snapshots_require_version_two() {
         Execution::restore(plan(), snapshot, limits).unwrap_err(),
         LifecycleError::Snapshot
     );
-    assert_eq!(state.snapshot().version, 2);
+    assert_eq!(state.snapshot().version, 3);
 }
 
 #[test]
@@ -1368,4 +1368,40 @@ fn dispatch_allowance_never_replenishes_elapsed_time_or_output() {
         remaining.remaining_output_bytes,
         before.remaining_output_bytes - 123
     );
+}
+
+#[test]
+fn recovered_quiescence_does_not_invent_exit_or_refund_unknown_output() {
+    let state = observe(started(), "quiescent", 1200, Observation::Quiescent {});
+    assert_eq!(state.phase(), Phase::ExecutionEnded);
+    let state = observe(
+        state,
+        "no-effect",
+        1300,
+        Observation::Effect {
+            assessment: EffectAssessment::NoEffect,
+        },
+    );
+    assert_eq!(state.directive(1300).unwrap(), Directive::ManualReview);
+    assert!(matches!(
+        state
+            .snapshot()
+            .attempt
+            .as_ref()
+            .unwrap()
+            .termination
+            .as_ref()
+            .unwrap()
+            .observation,
+        Observation::Quiescent {}
+    ));
+    let restored = Execution::decode(
+        plan(),
+        &serde_json::to_vec(state.snapshot()).unwrap(),
+        Limits {
+            max_snapshot_bytes: MIN_SNAPSHOT_BYTES,
+        },
+    )
+    .unwrap();
+    assert_eq!(restored.directive(1300).unwrap(), Directive::ManualReview);
 }

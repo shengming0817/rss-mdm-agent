@@ -93,6 +93,7 @@ fn fixture(script: &str, argv: Vec<LaunchArg>, budget: u64, timeout: u64) -> Fix
         interpreter: interpreter(),
         content,
         work_root: root.clone(),
+        software: None,
         controlled_input: None,
         fixture_owned: true,
     };
@@ -115,7 +116,8 @@ fn start(f: &Fixture, cap: u64, time: u64) -> AttemptId {
                     deadline_unix_ms: now().unwrap() + time,
                     remaining_timeout_ms: time,
                     remaining_output_bytes: cap
-                }
+                },
+                None
             )
             .unwrap(),
         DispatchOutcome::Accepted

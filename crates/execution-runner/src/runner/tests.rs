@@ -68,6 +68,7 @@ fn fixture(script: &str, argv: Vec<LaunchArg>, budget: u64, timeout: u64) -> Fix
         interpreter: "/bin/sh".into(),
         content,
         work_root: root.clone(),
+        software: None,
         controlled_input: None,
         fixture_owned: true,
     };
@@ -90,7 +91,8 @@ fn start(f: &Fixture, cap: u64, time: u64) -> AttemptId {
                     deadline_unix_ms: now().unwrap() + time,
                     remaining_timeout_ms: time,
                     remaining_output_bytes: cap
-                }
+                },
+                None
             )
             .unwrap(),
         DispatchOutcome::Accepted
@@ -144,7 +146,8 @@ fn argv_is_literal_and_exit_is_not_effect_or_tree_proof() {
                 deadline_unix_ms: now().unwrap() + 1000,
                 remaining_timeout_ms: 1000,
                 remaining_output_bytes: 4096
-            }
+            },
+            None
         )
         .is_err());
 }
@@ -321,6 +324,7 @@ fn acknowledged_final_capture_releases_slots_without_evicting_live_owners() {
                     remaining_timeout_ms: 1000,
                     remaining_output_bytes: 128,
                 },
+                None,
             )
             .unwrap();
         assert!(matches!(
@@ -331,7 +335,8 @@ fn acknowledged_final_capture_releases_slots_without_evicting_live_owners() {
                     deadline_unix_ms: now().unwrap() + 1000,
                     remaining_timeout_ms: 1000,
                     remaining_output_bytes: 128
-                }
+                },
+                None
             ),
             Err(Error::Capacity)
         ));
@@ -356,7 +361,12 @@ fn opened_script_and_cwd_survive_path_replacement() {
     );
     let source = f.runner.artifacts.get(f.plan.digest().as_str()).unwrap();
     let materialized = source
-        .prepare(&f.plan, &AttemptId::new("object-binding").unwrap())
+        .prepare(
+            &f.plan,
+            &AttemptId::new("object-binding").unwrap(),
+            None,
+            &crate::software::PreparationControl::test(),
+        )
         .unwrap();
     std::fs::rename(f.root.join("source"), f.root.join("old-source")).unwrap();
     std::fs::write(f.root.join("source"), "printf replaced").unwrap();
@@ -812,3 +822,5 @@ fn repeated_supervision_errors_do_not_renew_shutdown_time_or_overwrite_first_rea
     assert_eq!(facts.end, ProcessEnd::Cancelled);
     assert_eq!(facts.failure_kind, ProcessFailureKind::Capture);
 }
+
+mod software_tests;

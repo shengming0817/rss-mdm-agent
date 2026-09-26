@@ -38,6 +38,7 @@ fn scope(spec: &PlanSpec) -> impl PartialEq + '_ {
         plan_id: _,        // Correlation, not authority.
         request,
         launch,
+        execution,
         run_as,
         session_requirement,
         constraints,
@@ -73,6 +74,7 @@ fn scope(spec: &PlanSpec) -> impl PartialEq + '_ {
         target,
         parameters,
         launch,
+        execution,
         run_as,
         session_requirement,
         constraints,

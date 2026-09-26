@@ -372,6 +372,7 @@ pub(crate) fn validate_plan(p: &PlanSpec, l: &PlanLimits) -> Result<(), Contract
         }
     }
     environment(p)?;
+    software(p)?;
     if let IsolationPolicy::Restricted {
         network: NetworkAccess::Allowlist { destinations },
         ..
@@ -485,4 +486,108 @@ pub(crate) fn typed_value<T: serde::de::DeserializeOwned>(
     value: Value,
 ) -> Result<T, ContractError> {
     serde_json::from_value(value).map_err(ContractError::from_serde)
+}
+
+fn software(p: &PlanSpec) -> Result<(), ContractError> {
+    let invalid =
+        || ContractError::new(ErrorKind::InconsistentContext, Field::Plan, Rule::Mismatch);
+    let action = p.request.operation.action.as_str();
+    let Some(s) = p.execution.software() else {
+        return if action.starts_with("software.") {
+            Err(invalid())
+        } else {
+            Ok(())
+        };
+    };
+    let profile = p.launch.interpreter.profile.id.as_str();
+    let prefix: Vec<crate::LaunchArg> = match (s.adapter.platform(), profile) {
+        (Platform::Windows, "native-pwsh7-file") => {
+            ["-NoLogo", "-NoProfile", "-NonInteractive", "-File"]
+                .into_iter()
+                .map(|s| crate::LaunchArg::Literal { value: s.into() })
+                .chain(std::iter::once(crate::LaunchArg::ArtifactPath {}))
+                .collect()
+        }
+        (Platform::Macos, "native-posix-sh-file") => vec![crate::LaunchArg::ArtifactPath {}],
+        (Platform::Macos, "native-bash-file") => vec![
+            crate::LaunchArg::Literal {
+                value: "--noprofile".into(),
+            },
+            crate::LaunchArg::Literal {
+                value: "--norc".into(),
+            },
+            crate::LaunchArg::ArtifactPath {},
+        ],
+        _ => return Err(invalid()),
+    };
+    if p.launch.argv != prefix {
+        return Err(invalid());
+    }
+    let expected = match s.mutation {
+        crate::MutationKind::Install => "software.install",
+        crate::MutationKind::Upgrade => "software.upgrade",
+        crate::MutationKind::Downgrade => "software.downgrade",
+        crate::MutationKind::Uninstall => "software.uninstall",
+    };
+    if action != expected
+        || !p.request.parameters.is_empty()
+        || s.adapter.platform() != p.request.target.platform
+        || s.bundle.is_some() != s.adapter.is_bundle()
+        || (s.detection.max_bytes == 0 || s.detection.max_bytes > 256 * 1024 * 1024)
+        || s.detection.versions.is_empty()
+        || s.detection.versions.len() > 32
+        || !matches!(p.launch.stdin, crate::StandardInput::Closed {})
+        || !p.launch.env.is_empty()
+        || s.source.as_str().starts_with('-')
+        || s.resource.as_str().starts_with('-')
+        || (matches!(
+            s.adapter,
+            crate::SoftwareKind::Homebrew | crate::SoftwareKind::Winget
+        ) && !matches!(p.run_as, RunAs::User { .. }))
+    {
+        return Err(invalid());
+    }
+    match (&s.desired, s.mutation) {
+        (crate::DesiredState::Absent, crate::MutationKind::Uninstall)
+            if s.uninstall.as_ref() == Some(&p.launch.artifact) =>
+        {
+            ()
+        }
+        (crate::DesiredState::Present { artifact, version }, k)
+            if k != crate::MutationKind::Uninstall
+                && artifact == &s.payload
+                && s.detection.versions.iter().any(|v| &v.version == version) =>
+        {
+            ()
+        }
+        _ => return Err(invalid()),
+    }
+    if s.detection.versions.iter().enumerate().any(|(i, v)| {
+        s.detection.versions[..i]
+            .iter()
+            .any(|x| x.version == v.version || x.sha256 == v.sha256)
+    }) {
+        return Err(invalid());
+    }
+    path(
+        &s.detection.path,
+        p.request.target.platform,
+        Field::ReadPaths,
+    )?;
+    if let Some(b) = s.bundle {
+        if b.archive_bytes > 4 * 1024 * 1024 * 1024
+            || b.file_bytes > 1024 * 1024 * 1024
+            || b.expanded_bytes > 8 * 1024 * 1024 * 1024
+            || b.archive_bytes == 0
+            || b.files == 0
+            || b.files > 100000
+            || b.file_bytes == 0
+            || b.expanded_bytes < b.file_bytes
+            || b.depth == 0
+            || b.depth > 64
+        {
+            return Err(invalid());
+        }
+    }
+    Ok(())
 }

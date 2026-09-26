@@ -18,6 +18,7 @@ struct Record {
     plan: FrozenPlan,
     cancel: Arc<AtomicBool>,
     facts: Arc<Mutex<Option<ProcessEvidence>>>,
+    software: Arc<Mutex<Option<SoftwareEvidence>>>,
 }
 /// One bounded OS runner. Its inventory is supplied by trusted host code, never IPC DTOs.
 pub struct NativeRunner {
@@ -51,6 +52,7 @@ impl NativeRunner {
         plan: &FrozenPlan,
         attempt: &AttemptId,
         allowance: DispatchAllowance,
+        ownership: Option<SoftwareProvenance>,
     ) -> Result<DispatchOutcome, Error> {
         let received = Instant::now();
         let mut records = self.records.lock().map_err(|_| Error::Unavailable)?;
@@ -67,12 +69,14 @@ impl NativeRunner {
         preparing.quiescent = false;
         preparing.quality = OutputQuality::Partial;
         let facts = Arc::new(Mutex::new(Some(preparing)));
+        let software = Arc::new(Mutex::new(None));
         records.insert(
             attempt.clone(),
             Record {
                 plan: plan.clone(),
                 cancel: cancel.clone(),
                 facts: facts.clone(),
+                software: software.clone(),
             },
         );
         drop(records); // Never hold the admission lock during filesystem or input I/O.
@@ -109,13 +113,24 @@ impl NativeRunner {
         let spawned = std::thread::Builder::new()
             .name("rss-execution-owner".into())
             .spawn(move || {
+                let control = crate::software::PreparationControl {
+                    deadline,
+                    cancelled: cancel.clone(),
+                };
                 let prepared = source
                     .ok_or(Error::Unbound)
-                    .and_then(|a| a.prepare(&plan, &attempt));
+                    .and_then(|a| a.prepare(&plan, &attempt, ownership, &control));
                 let materialized = match prepared {
                     Ok(value) => value,
                     Err(error) => {
-                        publish(&facts, failed(&plan, &attempt, &id, classify(error)));
+                        let failure = if cancel.load(Ordering::Acquire) {
+                            rejected(&plan, &attempt, &id, ProcessEnd::Cancelled)
+                        } else if Instant::now() >= deadline {
+                            rejected(&plan, &attempt, &id, ProcessEnd::TimedOut)
+                        } else {
+                            failed(&plan, &attempt, &id, classify(error))
+                        };
+                        publish(&facts, failure);
                         return;
                     }
                 };
@@ -137,6 +152,7 @@ impl NativeRunner {
                     (allowance.remaining_output_bytes, deadline),
                     cancel,
                     facts,
+                    software,
                 ));
             });
         Ok(if spawned.is_ok() {
@@ -157,6 +173,38 @@ impl Drop for NativeRunner {
     }
 }
 impl RunnerPort for NativeRunner {
+    fn software_evidence(
+        &self,
+        plan: &FrozenPlan,
+        attempt: &AttemptId,
+    ) -> Result<Option<SoftwareEvidence>, Error> {
+        let Some(spec) = plan.spec().execution.software() else {
+            return Ok(None);
+        };
+        let records = self.records.lock().map_err(|_| Error::Unavailable)?;
+        if let Some(record) = records.get(attempt) {
+            if record.plan.digest() != plan.digest() {
+                return Err(Error::Denied);
+            }
+            return Ok(record
+                .software
+                .lock()
+                .map_err(|_| Error::Unavailable)?
+                .clone());
+        }
+        if !self.artifacts.contains_key(plan.digest().as_str()) {
+            return Err(Error::Unbound);
+        }
+        Ok(Some(SoftwareEvidence {
+            attempt_id: attempt.clone(),
+            plan_digest: plan.digest().clone(),
+            runner: self.id.clone(),
+            before: None,
+            detected: crate::software::detect(spec),
+            restart_required: false,
+        }))
+    }
+
     fn id(&self) -> Id {
         self.id.clone()
     }
@@ -165,6 +213,7 @@ impl RunnerPort for NativeRunner {
     }
     fn dispatch(&self, permit: AuthorizedDispatch) -> Result<DispatchOutcome, Error> {
         let allowance = permit.allowance();
+        let ownership = permit.software_ownership();
         permit.dispatch(|plan, action| {
             if action.mode() != ExecutionMode::Real
                 || matches!(plan.spec().request.authority, Authority::Test { .. })
@@ -174,7 +223,7 @@ impl RunnerPort for NativeRunner {
             {
                 return Err(Error::Denied);
             }
-            self.launch(plan, action.attempt_id(), allowance)
+            self.launch(plan, action.attempt_id(), allowance, ownership)
         })
     }
     fn acknowledge_capture(&self, plan: &FrozenPlan, facts: &ProcessEvidence) -> Result<(), Error> {
@@ -228,7 +277,31 @@ impl RunnerPort for NativeRunner {
         stage: ObservationStage,
         now: u64,
     ) -> Result<Option<ObservationFacts>, Error> {
-        let Some(facts) = self.evidence(plan, attempt)? else {
+        let capture = self.evidence(plan, attempt)?;
+        if stage == ObservationStage::Termination
+            && capture.as_ref().is_none_or(|f| f.finished && !f.quiescent)
+        {
+            if let Some(source) = self
+                .artifacts
+                .get(plan.digest().as_str())
+                .and_then(|a| a.software.as_ref())
+            {
+                if let Some(evidence) = source.probe.quiescence(plan, attempt)? {
+                    if evidence.runner != self.id || evidence.kind != EvidenceKind::StateObserved {
+                        return Err(Error::Denied);
+                    }
+                    return Ok(Some(ObservationFacts {
+                        plan_id: plan.spec().plan_id.clone(),
+                        plan_digest: plan.digest().clone(),
+                        attempt_id: attempt.clone(),
+                        observed_at_unix_ms: now,
+                        evidence,
+                        observation: Observation::Quiescent {},
+                    }));
+                }
+            }
+        }
+        let Some(facts) = capture else {
             return Ok(None);
         };
         if !facts.finished || !facts.quiescent {
@@ -357,7 +430,20 @@ async fn run(
     (cap, deadline): (u64, Instant),
     cancel: Arc<AtomicBool>,
     shared: Arc<Mutex<Option<ProcessEvidence>>>,
+    software_facts: Arc<Mutex<Option<SoftwareEvidence>>>,
 ) {
+    if let Some(lease) = &materialized.software {
+        if let Ok(mut slot) = software_facts.lock() {
+            *slot = Some(SoftwareEvidence {
+                attempt_id: attempt.clone(),
+                plan_digest: plan.digest().clone(),
+                runner: id.clone(),
+                before: Some(lease.before.clone()),
+                detected: lease.before.clone(),
+                restart_required: false,
+            });
+        }
+    }
     let mut command = tokio::process::Command::new(&materialized.interpreter);
     command
         .args(&materialized.args)
@@ -615,6 +701,15 @@ async fn run(
     {
         fault(&mut facts, ProcessFailureKind::OutputValidation);
     }
+    if let Some(spec) = plan.spec().execution.software() {
+        if let Ok(mut slot) = software_facts.lock() {
+            if let Some(value) = slot.as_mut() {
+                value.detected = crate::software::detect(spec);
+                value.restart_required = matches!(facts.exit_code, Some(3010 | 1641));
+            }
+        }
+    }
+    drop(materialized.software.take());
     publish(&facts);
 }
 #[cfg(test)]

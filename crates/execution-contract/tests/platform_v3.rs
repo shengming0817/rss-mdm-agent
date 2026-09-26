@@ -15,10 +15,10 @@ fn limits() -> PlanLimits {
 }
 
 #[test]
-fn explicit_os_identity_requires_v2_and_changes_the_frozen_digest() {
+fn explicit_os_identity_requires_v3_and_changes_the_frozen_digest() {
     let mut value: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/plan.json")).unwrap();
-    value["schemaVersion"] = 2.into();
+    value["schemaVersion"] = 3.into();
     value["constraints"]["kind"] = "restricted".into();
     value["launch"]["output"]["format"] = serde_json::json!({"kind":"text"});
     let restricted = FrozenPlan::freeze(
@@ -35,7 +35,7 @@ fn explicit_os_identity_requires_v2_and_changes_the_frozen_digest() {
     assert_ne!(restricted.digest(), native.digest());
     value["schemaVersion"] = 1.into();
     assert!(decode_plan(&serde_json::to_vec(&value).unwrap(), &limits()).is_err());
-    value["schemaVersion"] = 2.into();
+    value["schemaVersion"] = 3.into();
     value["constraints"] = serde_json::json!({"kind":"automatic"});
     assert!(decode_plan(&serde_json::to_vec(&value).unwrap(), &limits()).is_err());
 }

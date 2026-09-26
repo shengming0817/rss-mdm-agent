@@ -275,6 +275,10 @@ impl AppHost for TestHost {
                 device: p.request.target.device.clone(),
                 source: reference("fixture-capabilities"),
                 platform: Some(p.request.target.platform),
+                software: execution_capability::Inventory {
+                    complete: true,
+                    entries: vec![],
+                },
                 interpreters: inventory(vec![p.launch.interpreter.clone()], available),
                 launch_io: inventory(
                     vec![

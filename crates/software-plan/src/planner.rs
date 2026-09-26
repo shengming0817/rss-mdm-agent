@@ -1,5 +1,5 @@
 use crate::*;
-use execution_contract::{Authority, EvidenceKind, EvidenceRef, TargetScope};
+use execution_contract::*;
 use std::ops::ControlFlow::{self, Break, Continue};
 
 fn evidence(authority: &Authority, fact: &EvidenceRef, state: bool) -> Result<(), DecisionError> {

@@ -64,6 +64,8 @@ pub struct EnvironmentSnapshot {
     pub platform: Option<Platform>,
     /// Interpreter artifact identities, including exact revision and content digest.
     pub interpreters: Inventory<InterpreterRef>,
+    /// Software adapters explicitly available on this host.
+    pub software: Inventory<execution_contract::SoftwareKind>,
     /// Stream mechanisms/encodings established by the snapshot provider.
     pub launch_io: Inventory<LaunchIoCapability>,
     /// Available target execution identities; independent of the originating login.
@@ -76,6 +78,8 @@ pub struct EnvironmentSnapshot {
 /// Stable check ordering and diagnostic axis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dimension {
+    /// Software adapter execution and independent detection.
+    Software,
     /// Snapshot-to-target device binding.
     Target,
     /// Target OS namespace.

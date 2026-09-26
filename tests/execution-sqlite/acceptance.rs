@@ -685,7 +685,7 @@ fn newer_schema_is_diagnostics_only_and_corrupt_database_is_never_reinitialized(
         Store::open(&db.path, &plan().spec().request.authority, limits()).unwrap(),
         OpenOutcome::NewerSchema {
             found: 99,
-            supported: 3
+            supported: 4
         }
     ));
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
@@ -2467,4 +2467,191 @@ fn process_failure_kind_is_required_durable_and_cannot_be_rewritten() {
         db.open().process_evidence(&host.scope(), &attempt, &host),
         Err(Error::Corrupt)
     ));
+}
+
+fn software_host() -> TestHost {
+    let mut host = TestHost::new(0);
+    host.plan = FrozenPlan::freeze(
+        decode_plan(
+            include_bytes!("../../crates/execution-contract/tests/fixtures/software.json"),
+            &limits().plan,
+        )
+        .unwrap(),
+        &limits().plan,
+    )
+    .unwrap();
+    host
+}
+#[test]
+fn software_claim_and_detection_survive_reopen_without_process_success() {
+    let db = Database::new();
+    let host = software_host();
+    let mut store = db.create();
+    host.prepare(&mut store);
+    let result = store
+        .apply_command(
+            &operation("begin"),
+            &host.scope(),
+            &host.begin(),
+            &[],
+            &host,
+        )
+        .unwrap();
+    assert_eq!(result.receipt().outcome, Outcome::Changed);
+    assert_eq!(db.count("software_claims"), 2);
+    let facts = SoftwareEvidence {
+        attempt_id: AttemptId::new("attempt-1").unwrap(),
+        plan_digest: host.plan.digest().clone(),
+        runner: id("test-runner"),
+        before: Some(SoftwareState::Absent {}),
+        detected: SoftwareState::Present {
+            version: PackageValue::new("1.0").unwrap(),
+        },
+        restart_required: false,
+    };
+    store.record_software(&host.scope(), &facts, &host).unwrap();
+    drop(store);
+    let store = db.open();
+    assert_eq!(
+        store
+            .software_evidence(&host.scope(), &facts.attempt_id, &host)
+            .unwrap(),
+        Some(facts)
+    );
+    assert_eq!(
+        store
+            .software_ownership(&host.scope(), &host)
+            .unwrap()
+            .ownership,
+        Ownership::UserExisting
+    );
+    assert_eq!(db.count("software_claims"), 2);
+    assert_eq!(
+        store.execution(&host.scope(), &host).unwrap().phase(),
+        lifecycle::Phase::Starting
+    );
+}
+#[test]
+fn second_software_request_cannot_steal_unresolved_claim() {
+    let db = Database::new();
+    let host = software_host();
+    let mut store = db.create();
+    host.prepare(&mut store);
+    store
+        .apply_command(
+            &operation("begin"),
+            &host.scope(),
+            &host.begin(),
+            &[],
+            &host,
+        )
+        .unwrap();
+    drop(store);
+    let mut store = db.open();
+    let mut next = software_host();
+    let mut plan = next.plan.spec().clone();
+    plan.plan_id = PlanId::new("plan-2").unwrap();
+    plan.request.request_id = RequestId::new("request-2").unwrap();
+    plan.request.actor = ActorId::new("actor-2").unwrap();
+    next.plan = FrozenPlan::freeze(plan, &limits().plan).unwrap();
+    store
+        .refresh_trust(&operation("trust2"), &next.scope(), None, &next)
+        .unwrap();
+    store
+        .open_execution(&operation("open2"), &next.plan, &next)
+        .unwrap();
+    store
+        .apply_command(
+            &operation("prepare2"),
+            &next.scope(),
+            &event("prepare2", 0, lifecycle::Command::Prepare),
+            &[],
+            &next,
+        )
+        .unwrap();
+    let begin = event(
+        "begin2",
+        1,
+        lifecycle::Command::BeginAttempt {
+            attempt_id: AttemptId::new("attempt-2").unwrap(),
+            runner: id("test-runner"),
+            mode: lifecycle::ExecutionMode::Test,
+        },
+    );
+    assert!(matches!(
+        store.apply_command(&operation("begin2"), &next.scope(), &begin, &[], &next),
+        Err(Error::Busy)
+    ));
+    assert_eq!(db.count("attempts"), 1);
+    assert_eq!(db.count("software_claims"), 2);
+}
+
+#[test]
+fn software_ownership_is_atomic_with_verified_effect_and_cannot_be_rewritten() {
+    let db = Database::new();
+    let host = software_host();
+    let mut store = db.create();
+    host.prepare(&mut store);
+    store
+        .apply_command(
+            &operation("begin"),
+            &host.scope(),
+            &host.begin(),
+            &[],
+            &host,
+        )
+        .unwrap();
+    let attempt = AttemptId::new("attempt-1").unwrap();
+    let mut facts = SoftwareEvidence {
+        attempt_id: attempt.clone(),
+        plan_digest: host.plan.digest().clone(),
+        runner: id("test-runner"),
+        before: Some(SoftwareState::Absent {}),
+        detected: SoftwareState::Present {
+            version: PackageValue::new("1.0").unwrap(),
+        },
+        restart_required: false,
+    };
+    store.record_software(&host.scope(), &facts, &host).unwrap();
+    let reference_for = |name: &str| EvidenceRef {
+        reference: reference(name),
+        kind: EvidenceKind::TestResult,
+        runner: id("test-runner"),
+    };
+    store
+        .apply_observation(
+            &operation("quiet"),
+            &host.scope(),
+            &observation_event("quiet", 2, attempt.clone(), reference_for("quiet")),
+            &host,
+            &TestEvidence::new(lifecycle::Observation::Quiescent {}),
+        )
+        .unwrap();
+    assert_eq!(db.count("software_claims"), 2);
+    assert_eq!(db.count("software_ownership"), 0);
+    store
+        .apply_observation(
+            &operation("effect"),
+            &host.scope(),
+            &observation_event("effect", 3, attempt, reference_for("effect")),
+            &host,
+            &TestEvidence::new(lifecycle::Observation::Effect {
+                assessment: lifecycle::EffectAssessment::Satisfied,
+            }),
+        )
+        .unwrap();
+    assert_eq!(db.count("software_claims"), 0);
+    let owner = store.software_ownership(&host.scope(), &host).unwrap();
+    assert_eq!(owner.ownership, Ownership::OrganizationManaged);
+    assert_eq!(owner.state, Some(facts.detected.clone()));
+    facts.detected = SoftwareState::Absent {};
+    assert_eq!(
+        store.record_software(&host.scope(), &facts, &host),
+        Err(Error::Conflict)
+    );
+    drop(store);
+    assert_eq!(
+        db.open().software_ownership(&host.scope(), &host).unwrap(),
+        owner
+    );
 }

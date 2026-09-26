@@ -71,6 +71,7 @@ pub(crate) fn validate(p: &FrozenPlan, s: &Snapshot, limits: Limits) -> Result<(
                         total_output_bytes, ..
                     }
                     | Observation::NeverDispatched { total_output_bytes } => total_output_bytes,
+                    Observation::Quiescent {} => a.output_bytes,
                     _ => return Err(bad()),
                 };
                 if a.output_bytes != final_output {

@@ -1,55 +1,5 @@
-use execution_contract::{Authority, EvidenceRef, ExactArtifactRef, Target, VersionedRef};
+use execution_contract::*;
 
-/// Exact ecosystem text: no SemVer, case folding, alias lookup or normalization.
-/// Accepts 1..=1024 UTF-8 bytes without control characters, including '+' and '~'.
-#[derive(Clone, PartialEq, Eq)]
-pub struct PackageValue(String);
-impl PackageValue {
-    /// Construct bounded opaque text. Resolution of moving aliases belongs to the source owner.
-    pub fn new(value: impl Into<String>) -> Result<Self, DecisionError> {
-        let value = value.into();
-        if value.is_empty() || value.len() > 1024 || value.chars().any(char::is_control) {
-            return Err(DecisionError::Value);
-        }
-        Ok(Self(value))
-    }
-    /// Exact original text; never normalized or interpreted as a version requirement.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-impl std::fmt::Debug for PackageValue {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("PackageValue([redacted])")
-    }
-}
-/// Exact package coordinates independent of the installed/desired version.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PackageIdentity {
-    /// Package-manager implementation/revision; no implicit manager substitution.
-    pub manager: VersionedRef,
-    /// Exact source configuration/revision; no public same-name fallback.
-    pub source: VersionedRef,
-    /// Ecosystem package identifier.
-    pub package: PackageValue,
-    /// Exact architecture selector, never inferred from the planning host.
-    pub architecture: PackageValue,
-    /// Exact variant/channel selector, never a default/latest fallback.
-    pub variant: PackageValue,
-}
-/// Requested state; descriptive only, never an authorization decision.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DesiredState {
-    /// Exact selected version and immutable install payload, resolved by the source owner.
-    Present {
-        /// Ecosystem version, preserved verbatim.
-        version: PackageValue,
-        /// Exact selected package payload.
-        artifact: ExactArtifactRef,
-    },
-    /// Absence of the exact package identity.
-    Absent,
-}
 /// Incoming desired state and all namespaces needed to correlate the host snapshot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SoftwareIntent {
@@ -63,28 +13,6 @@ pub struct SoftwareIntent {
     pub package: PackageIdentity,
     /// Explicit target state.
     pub desired: DesiredState,
-}
-/// Existing software provenance; decisions never rewrite these observed facts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Ownership {
-    /// Pre-existing user software, protected unless explicitly permitted to modify.
-    UserExisting,
-    /// Organization-managed software.
-    OrganizationManaged,
-    /// Introduced as another package's dependency.
-    DependencyIntroduced,
-    /// Ownership has not been established; mutation is blocked.
-    Unknown,
-}
-/// Whether another installed resource currently relies on this package.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DependencyUse {
-    /// Verified not in use as a dependency.
-    Unused,
-    /// Required by another installed resource.
-    InUse,
-    /// Dependency references have not been established.
-    Unknown,
 }
 /// Reason to obtain new evidence rather than retry an operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,105 +50,6 @@ pub enum Detection {
     },
     /// A completed detection remains ambiguous; repeating blindly is not progress.
     Indeterminate,
-}
-/// Result supplied by the ecosystem's comparator for one exact version pair.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VersionRelation {
-    /// Ecosystem semantics establish equivalence.
-    Equal,
-    /// Installed version precedes the requested version.
-    Older,
-    /// Installed version follows the requested version.
-    Newer,
-    /// Ecosystem semantics do not order these versions.
-    Incomparable,
-}
-/// Comparator identity and exact operands; a result cannot be replayed for another version pair.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VersionComparison {
-    /// Exact comparator implementation/configuration revision.
-    pub comparator: VersionedRef,
-    /// Must equal the snapshot's installed version.
-    pub installed: PackageValue,
-    /// Must equal the intent's desired version.
-    pub desired: PackageValue,
-    /// Ecosystem result; the core performs no parsing.
-    pub relation: VersionRelation,
-}
-/// One possible mutation, not a queued workflow step.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MutationKind {
-    /// Install a known-absent package.
-    Install,
-    /// Upgrade according to the ecosystem's ordering.
-    Upgrade,
-    /// Explicitly permitted downgrade.
-    Downgrade,
-    /// Remove the exact observed package.
-    Uninstall,
-}
-/// Preserve installer upgrade semantics; some upgrades remove the existing installation first.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UpgradeStrategy {
-    /// Does not require removing the old installation first.
-    InPlace,
-    /// Requires uninstall permission and dependency safety as well as upgrade capability.
-    UninstallThenInstall,
-}
-/// Restart behavior of the selected installer configuration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RestartBehavior {
-    /// Restart is not required and cannot be initiated by the selected invocation.
-    Never,
-    /// May request a later restart, without initiating it itself.
-    MayRequire,
-    /// May restart immediately; this planner cannot coordinate such execution.
-    Automatic,
-}
-/// Dependency effects declared by the package ecosystem; no dependency solver is implemented here.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DependencyImpact {
-    /// No dependency changes.
-    None,
-    /// Source/installer has declared dependency changes covered by management policy.
-    Declared,
-    /// Effects are unresolved; mutation is blocked.
-    Unknown,
-}
-/// Installer semantics, not proof that the OS can execute or authorize it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InstallerCapabilities {
-    /// Exact installer/manager binary.
-    pub artifact: ExactArtifactRef,
-    /// Must match PackageIdentity.manager.
-    pub manager: VersionedRef,
-    /// Whether this selected mechanism can independently detect the package state.
-    pub can_detect: bool,
-    /// Unique supported mutation kinds.
-    pub operations: Vec<MutationKind>,
-    /// Upgrade behavior, relevant only for Upgrade/Downgrade.
-    pub upgrade_strategy: UpgradeStrategy,
-    /// Selected configuration's restart semantics.
-    pub restart: RestartBehavior,
-    /// Declared dependency effects of the selected change mechanism.
-    pub dependency_impact: DependencyImpact,
-}
-/// Host-supplied resource-management constraints from the bound policy revision.
-/// These booleans are not actor authentication, C07 authorization or approval.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ManagementConstraints {
-    /// Desired absence conflicts with this constraint even if currently absent.
-    pub required: bool,
-    /// Explicitly permit modifying existing user-owned software; no ownership change is inferred.
-    pub allow_modify_user_owned: bool,
-    /// Permit removal, including uninstall-before-upgrade.
-    pub allow_remove: bool,
-    /// Permit downgrade, independently of installer support.
-    pub allow_downgrade: bool,
-    /// Permit a separately coordinated restart if necessary.
-    pub allow_restart: bool,
-    /// Permit the installer's declared dependency effects.
-    pub allow_dependency_changes: bool,
 }
 /// Temporary prerequisites; real locking and scheduling remain external.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

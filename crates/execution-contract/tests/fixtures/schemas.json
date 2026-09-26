@@ -722,6 +722,107 @@
           }
         ]
       },
+      "BundleLimits": {
+        "additionalProperties": false,
+        "description": "Extraction limits are part of the authorized software description.",
+        "properties": {
+          "archiveBytes": {
+            "description": "Maximum archive bytes.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "depth": {
+            "description": "Maximum path component count.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "expandedBytes": {
+            "description": "Maximum total expanded bytes.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "fileBytes": {
+            "description": "Maximum individual expanded file bytes.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "files": {
+            "description": "Maximum file count.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "archiveBytes",
+          "files",
+          "fileBytes",
+          "expandedBytes",
+          "depth"
+        ],
+        "type": "object"
+      },
+      "DependencyImpact": {
+        "description": "Dependency effects declared by the package ecosystem; no dependency solver is implemented here.",
+        "oneOf": [
+          {
+            "const": "None",
+            "description": "No dependency changes.",
+            "type": "string"
+          },
+          {
+            "const": "Declared",
+            "description": "Source/installer has declared dependency changes covered by management policy.",
+            "type": "string"
+          },
+          {
+            "const": "Unknown",
+            "description": "Effects are unresolved; mutation is blocked.",
+            "type": "string"
+          }
+        ]
+      },
+      "DesiredState": {
+        "description": "Requested state; descriptive only, never an authorization decision.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "Exact selected version and immutable install payload, resolved by the source owner.",
+            "properties": {
+              "Present": {
+                "properties": {
+                  "artifact": {
+                    "$ref": "#/$defs/ExactArtifactRef",
+                    "description": "Exact selected package payload."
+                  },
+                  "version": {
+                    "$ref": "#/$defs/PackageValue",
+                    "description": "Ecosystem version, preserved verbatim."
+                  }
+                },
+                "required": [
+                  "version",
+                  "artifact"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "Present"
+            ],
+            "type": "object"
+          },
+          {
+            "const": "Absent",
+            "description": "Absence of the exact package identity.",
+            "type": "string"
+          }
+        ]
+      },
       "DeviceId": {
         "description": "Device reference, not verified registration evidence.",
         "maxLength": 128,
@@ -847,6 +948,44 @@
           "parameters"
         ],
         "type": "object"
+      },
+      "ExecutionSpec": {
+        "description": "Closed execution semantics, sharing one launch envelope and canonical plan digest.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "Existing bounded script or collection process.",
+            "properties": {
+              "kind": {
+                "const": "process",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "A software mutation with mandatory independent detection.",
+            "properties": {
+              "kind": {
+                "const": "software",
+                "type": "string"
+              },
+              "software": {
+                "$ref": "#/$defs/SoftwareSpec",
+                "description": "Software semantics cannot be lowered to generic process parameters."
+              }
+            },
+            "required": [
+              "kind",
+              "software"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "Id": {
         "description": "Opaque local reference identifier; syntax validity is not authenticity.",
@@ -1162,9 +1301,72 @@
         "const": 1,
         "type": "integer"
       },
-      "LocalContractV2": {
-        "const": 2,
+      "LocalContractV3": {
+        "const": 3,
         "type": "integer"
+      },
+      "ManagementConstraints": {
+        "description": "Host-supplied resource-management constraints from the bound policy revision.\nThese booleans are not actor authentication, C07 authorization or approval.",
+        "properties": {
+          "allow_dependency_changes": {
+            "description": "Permit the installer's declared dependency effects.",
+            "type": "boolean"
+          },
+          "allow_downgrade": {
+            "description": "Permit downgrade, independently of installer support.",
+            "type": "boolean"
+          },
+          "allow_modify_user_owned": {
+            "description": "Explicitly permit modifying existing user-owned software; no ownership change is inferred.",
+            "type": "boolean"
+          },
+          "allow_remove": {
+            "description": "Permit removal, including uninstall-before-upgrade.",
+            "type": "boolean"
+          },
+          "allow_restart": {
+            "description": "Permit a separately coordinated restart if necessary.",
+            "type": "boolean"
+          },
+          "required": {
+            "description": "Desired absence conflicts with this constraint even if currently absent.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "required",
+          "allow_modify_user_owned",
+          "allow_remove",
+          "allow_downgrade",
+          "allow_restart",
+          "allow_dependency_changes"
+        ],
+        "type": "object"
+      },
+      "MutationKind": {
+        "description": "One possible mutation, not a queued workflow step.",
+        "oneOf": [
+          {
+            "const": "Install",
+            "description": "Install a known-absent package.",
+            "type": "string"
+          },
+          {
+            "const": "Upgrade",
+            "description": "Upgrade according to the ecosystem's ordering.",
+            "type": "string"
+          },
+          {
+            "const": "Downgrade",
+            "description": "Explicitly permitted downgrade.",
+            "type": "string"
+          },
+          {
+            "const": "Uninstall",
+            "description": "Remove the exact observed package.",
+            "type": "string"
+          }
+        ]
       },
       "NetworkAccess": {
         "description": "Required network restrictions. Unknown or unenforceable restrictions must be rejected by the runner.",
@@ -1392,6 +1594,43 @@
         ],
         "type": "object"
       },
+      "PackageIdentity": {
+        "description": "Exact package coordinates independent of the installed/desired version.",
+        "properties": {
+          "architecture": {
+            "$ref": "#/$defs/PackageValue",
+            "description": "Exact architecture selector, never inferred from the planning host."
+          },
+          "manager": {
+            "$ref": "#/$defs/VersionedRef",
+            "description": "Package-manager implementation/revision; no implicit manager substitution."
+          },
+          "package": {
+            "$ref": "#/$defs/PackageValue",
+            "description": "Ecosystem package identifier."
+          },
+          "source": {
+            "$ref": "#/$defs/VersionedRef",
+            "description": "Exact source configuration/revision; no public same-name fallback."
+          },
+          "variant": {
+            "$ref": "#/$defs/PackageValue",
+            "description": "Exact variant/channel selector, never a default/latest fallback."
+          }
+        },
+        "required": [
+          "manager",
+          "source",
+          "package",
+          "architecture",
+          "variant"
+        ],
+        "type": "object"
+      },
+      "PackageValue": {
+        "description": "Exact ecosystem text: no SemVer, case folding, alias lookup or normalization.\nAccepts 1..=1024 UTF-8 bytes without control characters, including '+' and '~'.",
+        "type": "string"
+      },
       "PlanId": {
         "description": "Immutable local plan identity.",
         "maxLength": 128,
@@ -1506,6 +1745,191 @@
             "type": "object"
           }
         ]
+      },
+      "SoftwareDetection": {
+        "additionalProperties": false,
+        "description": "Bounded independent detection. Unknown bytes are indeterminate, never absent.",
+        "properties": {
+          "maxBytes": {
+            "description": "Maximum bytes read for one detection.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "path": {
+            "description": "Absolute installed file location; checked against the explicit target platform.",
+            "type": "string"
+          },
+          "versions": {
+            "description": "Exact allowed version proofs, with unique versions and hashes.",
+            "items": {
+              "$ref": "#/$defs/SoftwareVersionProof"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "path",
+          "versions",
+          "maxBytes"
+        ],
+        "type": "object"
+      },
+      "SoftwareKind": {
+        "description": "The supported software adapters. No plugin names or command strings are accepted.",
+        "oneOf": [
+          {
+            "const": "msi",
+            "description": "Windows Installer with a fixed PowerShell entry.",
+            "type": "string"
+          },
+          {
+            "const": "winget",
+            "description": "Exact Windows Package Manager source and coordinate.",
+            "type": "string"
+          },
+          {
+            "const": "pkg",
+            "description": "macOS installer package with a fixed shell entry.",
+            "type": "string"
+          },
+          {
+            "const": "homebrew",
+            "description": "Exact formula from a fixed Homebrew tap.",
+            "type": "string"
+          },
+          {
+            "const": "windowsBundle",
+            "description": "RSS archive with a PowerShell entry.",
+            "type": "string"
+          },
+          {
+            "const": "macosBundle",
+            "description": "RSS archive with an explicit sh/Bash entry.",
+            "type": "string"
+          }
+        ]
+      },
+      "SoftwareSpec": {
+        "additionalProperties": false,
+        "description": "Typed software execution facts. These are declarations, never approval or identity.",
+        "properties": {
+          "adapter": {
+            "$ref": "#/$defs/SoftwareKind",
+            "description": "Closed adapter selection."
+          },
+          "bundle": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BundleLimits"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Exact bundle extraction bounds, required only for bundle adapters."
+          },
+          "comparison": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/VersionComparison"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Exact ecosystem comparison from the planning snapshot; operands rechecked under lock."
+          },
+          "dependencies": {
+            "$ref": "#/$defs/DependencyImpact",
+            "description": "Declared dependency effects; unresolved effects block execution."
+          },
+          "desired": {
+            "$ref": "#/$defs/DesiredState",
+            "description": "Explicit target state."
+          },
+          "detection": {
+            "$ref": "#/$defs/SoftwareDetection",
+            "description": "Absolute installed-state detector."
+          },
+          "management": {
+            "$ref": "#/$defs/ManagementConstraints",
+            "description": "Resource-management constraints, not execution approval."
+          },
+          "manager": {
+            "$ref": "#/$defs/ExactArtifactRef",
+            "description": "Fixed native package-manager binary, separate from the script interpreter."
+          },
+          "mutation": {
+            "$ref": "#/$defs/MutationKind",
+            "description": "One admitted mutation; detection and replanning must agree before launch."
+          },
+          "package": {
+            "$ref": "#/$defs/PackageIdentity",
+            "description": "Exact source, manager, package, architecture and variant."
+          },
+          "payload": {
+            "$ref": "#/$defs/ExactArtifactRef",
+            "description": "Immutable package/archive/formula/manifest, also retained for declared uninstall."
+          },
+          "resource": {
+            "$ref": "#/$defs/PackageValue",
+            "description": "Exact installed resource identity (e.g. MSI product code or fully qualified formula)."
+          },
+          "snapshot": {
+            "$ref": "#/$defs/VersionedRef",
+            "description": "Original planning snapshot reference."
+          },
+          "source": {
+            "$ref": "#/$defs/PackageValue",
+            "description": "Fixed backend source selector; not a URL or a fallback source."
+          },
+          "uninstall": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ExactArtifactRef"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Removal entry, bound by exact content digest; None means unsupported."
+          }
+        },
+        "required": [
+          "adapter",
+          "package",
+          "desired",
+          "mutation",
+          "snapshot",
+          "payload",
+          "manager",
+          "source",
+          "resource",
+          "detection",
+          "management",
+          "dependencies"
+        ],
+        "type": "object"
+      },
+      "SoftwareVersionProof": {
+        "additionalProperties": false,
+        "description": "Independent file state for a declared ecosystem version; not an installer receipt.",
+        "properties": {
+          "sha256": {
+            "$ref": "#/$defs/Digest",
+            "description": "Expected bytes of the independently installed file."
+          },
+          "version": {
+            "$ref": "#/$defs/PackageValue",
+            "description": "Original ecosystem version."
+          }
+        },
+        "required": [
+          "version",
+          "sha256"
+        ],
+        "type": "object"
       },
       "StandardInput": {
         "description": "Noninteractive stdin only: no inherited handle, terminal, literal body or executable text.",
@@ -1657,6 +2081,59 @@
         ],
         "type": "object"
       },
+      "VersionComparison": {
+        "description": "Comparator identity and exact operands; a result cannot be replayed for another version pair.",
+        "properties": {
+          "comparator": {
+            "$ref": "#/$defs/VersionedRef",
+            "description": "Exact comparator implementation/configuration revision."
+          },
+          "desired": {
+            "$ref": "#/$defs/PackageValue",
+            "description": "Must equal the intent's desired version."
+          },
+          "installed": {
+            "$ref": "#/$defs/PackageValue",
+            "description": "Must equal the snapshot's installed version."
+          },
+          "relation": {
+            "$ref": "#/$defs/VersionRelation",
+            "description": "Ecosystem result; the core performs no parsing."
+          }
+        },
+        "required": [
+          "comparator",
+          "installed",
+          "desired",
+          "relation"
+        ],
+        "type": "object"
+      },
+      "VersionRelation": {
+        "description": "Result supplied by the ecosystem's comparator for one exact version pair.",
+        "oneOf": [
+          {
+            "const": "Equal",
+            "description": "Ecosystem semantics establish equivalence.",
+            "type": "string"
+          },
+          {
+            "const": "Older",
+            "description": "Installed version precedes the requested version.",
+            "type": "string"
+          },
+          {
+            "const": "Newer",
+            "description": "Installed version follows the requested version.",
+            "type": "string"
+          },
+          {
+            "const": "Incomparable",
+            "description": "Ecosystem semantics do not order these versions.",
+            "type": "string"
+          }
+        ]
+      },
       "VersionedRef": {
         "additionalProperties": false,
         "description": "Exact resource/configuration reference. Resolution and authenticity belong to the owner.",
@@ -1689,6 +2166,10 @@
         "$ref": "#/$defs/IsolationPolicy",
         "description": "Mandatory execution restrictions bound into the digest."
       },
+      "execution": {
+        "$ref": "#/$defs/ExecutionSpec",
+        "description": "Closed execution semantics, included in the sole canonical digest."
+      },
       "launch": {
         "$ref": "#/$defs/LaunchSpec",
         "description": "Resolved launch description, including exact artifacts and ordered process inputs."
@@ -1710,8 +2191,8 @@
         "description": "Requested target execution identity, separate from actor and originating login."
       },
       "schemaVersion": {
-        "$ref": "#/$defs/LocalContractV2",
-        "description": "Required current V2 discriminator; absent or unsupported versions are rejected."
+        "$ref": "#/$defs/LocalContractV3",
+        "description": "Required current V3 discriminator; absent or unsupported versions are rejected."
       },
       "sessionRequirement": {
         "$ref": "#/$defs/SessionRequirement",
@@ -1724,6 +2205,7 @@
     },
     "required": [
       "schemaVersion",
+      "execution",
       "planId",
       "request",
       "launch",

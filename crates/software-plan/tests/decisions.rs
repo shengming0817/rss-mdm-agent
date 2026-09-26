@@ -272,11 +272,22 @@ fn snapshots_cannot_cross_identity_policy_scope_or_source() {
 #[test]
 fn text_work_bounds_duplicate_capabilities_and_evidence_namespaces() {
     for text in ["", "a\n", "a\0"] {
-        assert_eq!(PackageValue::new(text), Err(DecisionError::Value));
+        assert_eq!(
+            PackageValue::new(text),
+            Err(ContractError::new(
+                ErrorKind::InvalidValue,
+                Field::Document,
+                Rule::Syntax
+            ))
+        );
     }
     assert_eq!(
         PackageValue::new("x".repeat(1025)),
-        Err(DecisionError::Value)
+        Err(ContractError::new(
+            ErrorKind::InvalidValue,
+            Field::Document,
+            Rule::Syntax
+        ))
     );
     let (mut i, mut s) = scenario();
     assert_eq!(

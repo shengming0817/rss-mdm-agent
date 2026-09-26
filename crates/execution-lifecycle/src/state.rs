@@ -183,6 +183,12 @@ impl Execution {
             if assessment == Some(EffectAssessment::Satisfied) || (s.cancel_requested && no_effect)
             {
                 Directive::Done
+            } else if no_effect
+                && a.termination
+                    .as_ref()
+                    .is_some_and(|t| matches!(t.observation, Observation::Quiescent {}))
+            {
+                Directive::ManualReview
             } else if no_effect {
                 if let Some(reason) = self.limit_reason(now) {
                     Directive::BudgetExhausted(reason)
@@ -431,6 +437,12 @@ impl Execution {
                     return Err(LifecycleError::Accounting);
                 }
                 a.output_bytes = *total_output_bytes;
+                a.termination = Some(recorded);
+            }
+            Observation::Quiescent {} => {
+                if a.termination.is_some() {
+                    return Err(LifecycleError::Transition);
+                }
                 a.termination = Some(recorded);
             }
             Observation::Effect { assessment: _ } => {

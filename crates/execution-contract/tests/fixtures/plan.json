@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "planId": "plan-1",
   "request": {
     "schemaVersion": 1,
@@ -143,5 +143,8 @@
   },
   "sessionRequirement": {
     "kind": "notRequired"
+  },
+  "execution": {
+    "kind": "process"
   }
 }

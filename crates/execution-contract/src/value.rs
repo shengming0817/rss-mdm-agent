@@ -35,16 +35,16 @@ impl JsonSchema for V1 {
 
 /// The only accepted execution plan version. This is not the Agent wire version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct V2;
-impl Serialize for V2 {
+pub struct V3;
+impl Serialize for V3 {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_u8(2)
+        s.serialize_u8(3)
     }
 }
-impl<'de> Deserialize<'de> for V2 {
+impl<'de> Deserialize<'de> for V3 {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let version = serde_json::Number::deserialize(d)?;
-        if version.as_u64() == Some(2) {
+        if version.as_u64() == Some(3) {
             Ok(Self)
         } else {
             Err(D::Error::custom(
@@ -54,12 +54,12 @@ impl<'de> Deserialize<'de> for V2 {
         }
     }
 }
-impl JsonSchema for V2 {
+impl JsonSchema for V3 {
     fn schema_name() -> std::borrow::Cow<'static, str> {
-        "LocalContractV2".into()
+        "LocalContractV3".into()
     }
     fn json_schema(_: &mut SchemaGenerator) -> Schema {
-        json_schema!({"type":"integer", "const":2})
+        json_schema!({"type":"integer", "const":3})
     }
 }
 

@@ -31,11 +31,11 @@ impl Peer {
         self.session
     }
 }
-/// Local IPC V2 request. Idempotency and authorization still belong to ExecutionApp.
+/// Local IPC V3 request. Idempotency and authorization still belong to ExecutionApp.
 #[derive(Serialize)]
 #[serde(tag = "method", rename_all = "camelCase")]
 pub enum Request {
-    /// Submit an exact V2 frozen plan through the application admission funnel.
+    /// Submit an exact V3 frozen plan through the application admission funnel.
     Submit {
         /// Raw bounded JSON retained for duplicate-key and canonical contract checks.
         plan: Box<serde_json::value::RawValue>,

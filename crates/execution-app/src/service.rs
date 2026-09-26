@@ -289,6 +289,14 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             Some(cause)
         } else {
             match self.runner.dispatch(AuthorizedDispatch {
+                software_ownership: if execution.plan().spec().execution.software().is_some() {
+                    Some(self.store.software_ownership(
+                        &Scope::from_plan(execution.plan()),
+                        &self.adapter(None, Some(execution.plan())),
+                    )?)
+                } else {
+                    None
+                },
                 issued: std::time::Instant::now(),
                 allowance: execution
                     .allowance(self.host.reliable_now()?)
@@ -389,6 +397,15 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             .attempt
             .as_ref()
             .ok_or(Error::Conflict)?;
+        if let Some(facts) = self
+            .runner
+            .software_evidence(execution.plan(), &active.id)?
+        {
+            let host = Host::new(&self.host, &self.binding, &self.config, None)
+                .with_plan(Some(execution.plan()));
+            self.store
+                .record_software(&Scope::from_plan(execution.plan()), &facts, &host)?;
+        }
         let live = self.runner.evidence(execution.plan(), &active.id)?;
         let had_live = live.is_some();
         let capture = match live {
@@ -425,6 +442,18 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                 *execution = self.load(None, request, ExecutionAccess::RunnerFact)?;
             }
             if facts.finished {
+                if let Some(software) = self
+                    .runner
+                    .software_evidence(execution.plan(), &facts.attempt_id)?
+                {
+                    let host = Host::new(&self.host, &self.binding, &self.config, None)
+                        .with_plan(Some(execution.plan()));
+                    self.store.record_software(
+                        &Scope::from_plan(execution.plan()),
+                        &software,
+                        &host,
+                    )?;
+                }
                 self.runner.acknowledge_capture(execution.plan(), facts)?;
             }
         }
@@ -437,7 +466,20 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         let mut stop_error = None;
         for _ in 0..2 {
             let mut execution = self.load(context, request, ExecutionAccess::RunnerFact)?;
-            if execution.snapshot().attempt.is_none() {
+            if execution.snapshot().attempt.is_none()
+                || execution.snapshot().attempt.as_ref().is_some_and(|a| {
+                    a.assessment.as_ref().is_some_and(|o| {
+                        matches!(
+                            o.observation,
+                            Observation::Effect {
+                                assessment: execution_lifecycle::EffectAssessment::Satisfied
+                                    | execution_lifecycle::EffectAssessment::NoEffect
+                                    | execution_lifecycle::EffectAssessment::NotSatisfied
+                            }
+                        )
+                    })
+                })
+            {
                 break;
             }
             let (capture, had_live) = self.capture_for(request, &mut execution)?;
@@ -477,6 +519,52 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             let observed = self
                 .runner
                 .observe(execution.plan(), &attempt.id, stage, now)?;
+            let software = if stage == ObservationStage::Assessment {
+                self.store
+                    .software_evidence(
+                        &Scope::from_plan(execution.plan()),
+                        &attempt.id,
+                        &self.adapter(None, Some(execution.plan())),
+                    )?
+                    .and_then(|f| {
+                        execution.plan().spec().execution.software().map(|s| {
+                            let assessment = if f.restart_required
+                                || matches!(
+                                    f.detected,
+                                    execution_contract::SoftwareState::Unknown {}
+                                ) {
+                                execution_lifecycle::EffectAssessment::Unknown
+                            } else if s.satisfied(&f.detected) {
+                                execution_lifecycle::EffectAssessment::Satisfied
+                            } else {
+                                execution_lifecycle::EffectAssessment::NotSatisfied
+                            };
+                            ObservationFacts {
+                                plan_id: execution.plan().spec().plan_id.clone(),
+                                plan_digest: execution.plan().digest().clone(),
+                                attempt_id: attempt.id.clone(),
+                                observed_at_unix_ms: now,
+                                evidence: execution_contract::EvidenceRef {
+                                    reference: execution_contract::VersionedRef {
+                                        id: execution_contract::Id::new(attempt.id.as_str())
+                                            .expect("attempt id"),
+                                        revision: execution_contract::Id::new("software-detection")
+                                            .expect("constant"),
+                                    },
+                                    runner: attempt.runner.clone(),
+                                    kind: if attempt.mode == ExecutionMode::Test {
+                                        execution_contract::EvidenceKind::TestResult
+                                    } else {
+                                        execution_contract::EvidenceKind::StateObserved
+                                    },
+                                },
+                                observation: Observation::Effect { assessment },
+                            }
+                        })
+                    })
+            } else {
+                None
+            };
             let stored =
                 if stage == ObservationStage::Termination && attempt.mode == ExecutionMode::Real {
                     capture.as_ref().and_then(|facts| {
@@ -485,7 +573,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                 } else {
                     None
                 };
-            let Some(facts) = observed.or(stored) else {
+            let Some(facts) = observed.or(stored).or(software) else {
                 if attempt.termination.is_none()
                     && (!had_live || capture.as_ref().is_some_and(|f| f.finished))
                     && !matches!(attempt.dispatch, DispatchState::Unknown { .. })
