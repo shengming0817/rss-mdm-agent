@@ -56,6 +56,8 @@ impl WorkingDirectory {
 pub(crate) async fn spawn(
     _: &mut tokio::process::Command,
     _: &mut Owner,
+    _: &std::sync::atomic::AtomicBool,
+    _: std::time::Instant,
 ) -> std::io::Result<tokio::process::Child> {
     Err(std::io::Error::other("unsupported platform"))
 }

@@ -237,6 +237,8 @@ impl Drop for Child {
 pub(crate) async fn spawn(
     command: &mut tokio::process::Command,
     owner: &mut Owner,
+    cancel: &std::sync::atomic::AtomicBool,
+    deadline: Instant,
 ) -> io::Result<Child> {
     let (stdinput, childin) = pipe(true).await?;
     let (stdout, childout) = pipe(false).await?;
@@ -292,6 +294,9 @@ pub(crate) async fn spawn(
     startup.StartupInfo.hStdError = inherited[2];
     startup.lpAttributeList = attributes.pointer();
     let mut information: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
+    if cancel.load(std::sync::atomic::Ordering::Acquire) || Instant::now() >= deadline {
+        return Err(io::ErrorKind::TimedOut.into());
+    }
     // JOB_LIST assigns the exact job before any target thread can run. No attach/reopen fallback.
     if unsafe {
         CreateProcessW(
@@ -318,6 +323,8 @@ pub(crate) async fn spawn(
     let mut member = 0;
     if unsafe { IsProcessInJob(raw(&process), raw(&owner.job), &mut member) } == 0
         || member == 0
+        || cancel.load(std::sync::atomic::Ordering::Acquire)
+        || Instant::now() >= deadline
         || unsafe { ResumeThread(raw(&thread)) } == u32::MAX
     {
         unsafe {
@@ -387,7 +394,14 @@ mod tests {
             .env_clear()
             .current_dir(std::env::current_dir().unwrap());
         let mut owner = Owner::prepare(&mut command).unwrap();
-        let mut child = spawn(&mut command, &mut owner).await.unwrap();
+        let mut child = spawn(
+            &mut command,
+            &mut owner,
+            &std::sync::atomic::AtomicBool::new(false),
+            Instant::now() + Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
         drop(child.stdin.take());
         let status = tokio::time::timeout(Duration::from_secs(10), child.wait())
             .await
@@ -408,6 +422,30 @@ mod tests {
         assert!(String::from_utf8_lossy(&bytes).contains("descendant="));
     }
     #[tokio::test]
+    async fn expired_or_cancelled_allowance_never_starts_a_target() {
+        for cancelled in [false, true] {
+            let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
+            command
+                .env_clear()
+                .current_dir(std::env::current_dir().unwrap());
+            let mut owner = Owner::prepare(&mut command).unwrap();
+            let deadline = if cancelled {
+                Instant::now() + Duration::from_secs(5)
+            } else {
+                Instant::now()
+            };
+            assert!(spawn(
+                &mut command,
+                &mut owner,
+                &std::sync::atomic::AtomicBool::new(cancelled),
+                deadline
+            )
+            .await
+            .is_err());
+            assert!(owner.quiescent());
+        }
+    }
+    #[tokio::test]
     async fn dropping_owner_kills_the_process_without_pid_reopening() {
         let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
         command
@@ -420,7 +458,14 @@ mod tests {
             .env("RSS_JOB_LEAF", "1")
             .current_dir(std::env::current_dir().unwrap());
         let mut owner = Owner::prepare(&mut command).unwrap();
-        let mut child = spawn(&mut command, &mut owner).await.unwrap();
+        let mut child = spawn(
+            &mut command,
+            &mut owner,
+            &std::sync::atomic::AtomicBool::new(false),
+            Instant::now() + Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
         assert!(child.try_wait().unwrap().is_none());
         drop(owner);
         assert!(!tokio::time::timeout(Duration::from_secs(2), child.wait())

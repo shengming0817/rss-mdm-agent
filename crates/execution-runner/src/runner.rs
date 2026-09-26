@@ -352,7 +352,7 @@ async fn run(
         );
         return;
     }
-    let Ok(mut child) = platform::spawn(&mut command, &mut owner).await else {
+    let Ok(mut child) = platform::spawn(&mut command, &mut owner, &cancel, deadline).await else {
         publish(
             &shared,
             rejected(&plan, &attempt, &id, ProcessEnd::Rejected),

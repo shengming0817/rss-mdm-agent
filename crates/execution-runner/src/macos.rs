@@ -223,7 +223,12 @@ impl WorkingDirectory {
 pub(crate) async fn spawn(
     command: &mut tokio::process::Command,
     _: &mut Owner,
+    cancel: &std::sync::atomic::AtomicBool,
+    deadline: std::time::Instant,
 ) -> std::io::Result<tokio::process::Child> {
+    if cancel.load(std::sync::atomic::Ordering::Acquire) || std::time::Instant::now() >= deadline {
+        return Err(std::io::ErrorKind::TimedOut.into());
+    }
     command.spawn()
 }
 
