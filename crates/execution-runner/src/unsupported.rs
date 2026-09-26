@@ -68,3 +68,6 @@ impl PathLease {
         Err(Error::Unsupported)
     }
 }
+pub(crate) fn boot_generation() -> Result<Id, Error> {
+    Err(Error::Unsupported)
+}

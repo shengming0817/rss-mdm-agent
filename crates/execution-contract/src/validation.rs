@@ -523,6 +523,20 @@ fn software(p: &PlanSpec) -> Result<(), ContractError> {
     if p.launch.argv != prefix {
         return Err(invalid());
     }
+    if s.installer.manager != s.package.manager
+        || !s.installer.can_detect
+        || !s.installer.operations.contains(&s.mutation)
+        || s.installer.restart == crate::RestartBehavior::Automatic
+        || (!s.adapter.is_bundle()
+            && s.installer.upgrade_strategy != crate::UpgradeStrategy::InPlace)
+        || s.installer
+            .operations
+            .iter()
+            .enumerate()
+            .any(|(i, v)| s.installer.operations[..i].contains(v))
+    {
+        return Err(invalid());
+    }
     let expected = match s.mutation {
         crate::MutationKind::Install => "software.install",
         crate::MutationKind::Upgrade => "software.upgrade",
@@ -549,17 +563,11 @@ fn software(p: &PlanSpec) -> Result<(), ContractError> {
     }
     match (&s.desired, s.mutation) {
         (crate::DesiredState::Absent, crate::MutationKind::Uninstall)
-            if s.uninstall.as_ref() == Some(&p.launch.artifact) =>
-        {
-            ()
-        }
+            if s.uninstall.as_ref() == Some(&p.launch.artifact) => {}
         (crate::DesiredState::Present { artifact, version }, k)
             if k != crate::MutationKind::Uninstall
                 && artifact == &s.payload
-                && s.detection.versions.iter().any(|v| &v.version == version) =>
-        {
-            ()
-        }
+                && s.detection.versions.iter().any(|v| &v.version == version) => {}
         _ => return Err(invalid()),
     }
     if s.detection.versions.iter().enumerate().any(|(i, v)| {

@@ -443,7 +443,7 @@ mod tests {
         );
         let mut client = ClientOptions::new().open(&name).unwrap();
         pipe.connect().await.unwrap();
-        let frame = br#"{"version":2,"request":{"method":"status","request":"probe"}}"#;
+        let frame = br#"{"version":3,"request":{"method":"status","request":"probe"}}"#;
         client.write_u32_le(frame.len() as u32).await.unwrap();
         client.write_all(frame).await.unwrap();
         let mut owner = OwnerThread::new(Box::new(host::Unbound)).unwrap();
@@ -484,7 +484,7 @@ mod deadline_tests {
         let mut pipe = listener(&name, &format!("D:P(A;;GA;;;{subject})")).unwrap();
         let mut client = ClientOptions::new().open(&name).unwrap();
         pipe.connect().await.unwrap();
-        let bytes = br#"{"version":2,"request":{"method":"status","request":"probe"}}"#;
+        let bytes = br#"{"version":3,"request":{"method":"status","request":"probe"}}"#;
         client.write_u32_le(bytes.len() as u32).await.unwrap();
         client.write_all(bytes).await.unwrap();
         let mut owner = OwnerThread::new(Box::new(Slow(Duration::from_millis(300)))).unwrap();

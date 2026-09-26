@@ -130,14 +130,7 @@ pub(super) fn extract(
     {
         return Err(Error::Denied);
     }
-    std::fs::create_dir(&root).map_err(|_| Error::Conflict)?;
-    #[cfg(target_os = "macos")]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))
-            .map_err(|_| Error::Unavailable)?;
-    }
-    let tree = super::tree::Tree::open(&root)?;
+    let tree = super::tree::Tree::create(&root)?;
     let mut expanded = Expanded {
         root,
         manifest,
@@ -225,12 +218,15 @@ mod archive_tests {
     }
     fn exercise(attack: &str) -> bool {
         let mut s = spec();
-        let base = std::env::temp_dir().join(format!(
-            "rss-zip-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
+        let base = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../.cache")
+            .join(format!(
+                "rss-zip-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
         std::fs::create_dir(&base).unwrap();
+        let base = base.canonicalize().unwrap();
         let archive = base.join("input.zip");
         let data = b"#!/bin/sh\nexit 0\n";
         let mut manifest = BundleManifest {

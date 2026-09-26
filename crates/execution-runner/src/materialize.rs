@@ -119,6 +119,8 @@ impl Artifacts {
             return Err(Error::Capability);
         }
         super::platform::profile(&p.launch.interpreter.profile)?;
+        super::platform::protected_path(&self.work_root, true)?;
+        let work_lease = super::platform::PathLease::source(&self.work_root, false)?;
         let software = match (&p.execution, &self.software) {
             (ExecutionSpec::Process {}, None) => None,
             (ExecutionSpec::Software { .. }, Some(source)) => Some(source.prepare(
@@ -141,6 +143,7 @@ impl Artifacts {
         #[cfg(test)]
         let content_immutable = !self.fixture_owned && entry.is_none();
         let mut leases = vec![
+            work_lease,
             super::platform::PathLease::source(&self.interpreter, true)?,
             super::platform::PathLease::source(content_path, content_immutable)?,
         ];
@@ -165,7 +168,7 @@ impl Artifacts {
             _ => return Err(Error::InvalidInput),
         }
         if let Some(spec) = p.execution.software() {
-            if spec.mutation != MutationKind::Uninstall {
+            if spec.mutation != MutationKind::Uninstall || spec.adapter != SoftwareKind::Pkg {
                 if let Some(expected) = crate::software::install_entry(spec.adapter) {
                     if content != expected {
                         return Err(Error::Denied);

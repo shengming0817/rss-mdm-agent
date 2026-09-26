@@ -7,11 +7,13 @@ use std::{
 #[cfg(target_os = "macos")]
 mod native {
     use super::*;
+    #[cfg(test)]
+    use std::os::unix::fs::OpenOptionsExt;
     use std::{
         ffi::CString,
         os::{
             fd::{AsRawFd, FromRawFd},
-            unix::fs::{MetadataExt, OpenOptionsExt},
+            unix::fs::MetadataExt,
         },
     };
     pub(super) struct Tree {
@@ -19,6 +21,37 @@ mod native {
         root: File,
     }
     impl Tree {
+        pub(super) fn create(path: &Path) -> Result<Self, Error> {
+            let parent = crate::platform::open_directory(path.parent().ok_or(Error::Denied)?)?;
+            let name = CString::new(path.file_name().ok_or(Error::Denied)?.as_encoded_bytes())
+                .map_err(|_| Error::Denied)?;
+            if unsafe { libc::mkdirat(parent.as_raw_fd(), name.as_ptr(), 0o700) } != 0 {
+                return Err(Error::Conflict);
+            }
+            let fd = unsafe {
+                libc::openat(
+                    parent.as_raw_fd(),
+                    name.as_ptr(),
+                    libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                )
+            };
+            if fd < 0 {
+                return Err(Error::Denied);
+            }
+            let root = unsafe { File::from_raw_fd(fd) };
+            if unsafe { libc::fchmod(root.as_raw_fd(), 0o700) } != 0 {
+                return Err(Error::Denied);
+            }
+            let value = Self {
+                path: path.into(),
+                root,
+            };
+            if !value.intact() {
+                return Err(Error::Denied);
+            }
+            Ok(value)
+        }
+        #[cfg(test)]
         pub(super) fn open(path: &Path) -> Result<Self, Error> {
             let root = std::fs::OpenOptions::new()
                 .read(true)
@@ -100,6 +133,24 @@ mod native {
         leases: Vec<crate::platform::PathLease>,
     }
     impl Tree {
+        pub(super) fn create(path: &Path) -> Result<Self, Error> {
+            let _parent =
+                crate::platform::PathLease::source(path.parent().ok_or(Error::Denied)?, false)?;
+            use std::os::windows::ffi::OsStrExt;
+            let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+            // Atomic create-new; inheriting a protected parent never opens an existing staging tree.
+            if unsafe {
+                windows_sys::Win32::Storage::FileSystem::CreateDirectoryW(
+                    wide.as_ptr(),
+                    std::ptr::null(),
+                )
+            } == 0
+            {
+                return Err(Error::Conflict);
+            }
+            native_process::private_storage::directory(path).map_err(|_| Error::Denied)?;
+            Self::open(path)
+        }
         pub(super) fn open(path: &Path) -> Result<Self, Error> {
             Ok(Self {
                 path: path.into(),
@@ -143,6 +194,9 @@ mod native {
     use super::*;
     pub(super) struct Tree;
     impl Tree {
+        pub(super) fn create(_: &Path) -> Result<Self, Error> {
+            Err(Error::Unsupported)
+        }
         pub(super) fn open(_: &Path) -> Result<Self, Error> {
             Err(Error::Unsupported)
         }
@@ -157,6 +211,10 @@ mod native {
 }
 pub(super) struct Tree(native::Tree);
 impl Tree {
+    pub(super) fn create(path: &Path) -> Result<Self, Error> {
+        native::Tree::create(path).map(Self)
+    }
+    #[cfg(all(test, target_os = "macos"))]
     pub(super) fn open(path: &Path) -> Result<Self, Error> {
         native::Tree::open(path).map(Self)
     }

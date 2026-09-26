@@ -397,10 +397,11 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             .attempt
             .as_ref()
             .ok_or(Error::Conflict)?;
-        if let Some(facts) = self
-            .runner
-            .software_evidence(execution.plan(), &active.id)?
-        {
+        if let Some(facts) = self.runner.software_evidence(
+            execution.plan(),
+            &active.id,
+            std::time::Instant::now() + std::time::Duration::from_secs(1),
+        )? {
             let host = Host::new(&self.host, &self.binding, &self.config, None)
                 .with_plan(Some(execution.plan()));
             self.store
@@ -442,10 +443,11 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                 *execution = self.load(None, request, ExecutionAccess::RunnerFact)?;
             }
             if facts.finished {
-                if let Some(software) = self
-                    .runner
-                    .software_evidence(execution.plan(), &facts.attempt_id)?
-                {
+                if let Some(software) = self.runner.software_evidence(
+                    execution.plan(),
+                    &facts.attempt_id,
+                    std::time::Instant::now() + std::time::Duration::from_secs(1),
+                )? {
                     let host = Host::new(&self.host, &self.binding, &self.config, None)
                         .with_plan(Some(execution.plan()));
                     self.store.record_software(
@@ -531,7 +533,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                             let assessment = if f.restart_required
                                 || matches!(
                                     f.detected,
-                                    execution_contract::SoftwareState::Unknown {}
+                                    execution_contract::SoftwareState::Unknown { .. }
                                 ) {
                                 execution_lifecycle::EffectAssessment::Unknown
                             } else if s.satisfied(&f.detected) {
@@ -806,6 +808,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         };
         let status = ExecutionStatus {
             process: record.process,
+            software: record.software,
             submitted: self.store.has_execution_receipt(
                 &Scope::from_plan(execution.plan()),
                 &operation(execution.plan(), "register", "")?,

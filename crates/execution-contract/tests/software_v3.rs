@@ -56,7 +56,7 @@ fn software_semantics_are_typed_bound_and_not_process_parameters() {
         assert_ne!(original.digest(), freeze(&changed).digest());
     }
     let mut changed = value.clone();
-    changed["execution"]["software"]["manager"]["sha256"] = "34".repeat(32).into();
+    changed["execution"]["software"]["installer"]["artifact"]["sha256"] = "34".repeat(32).into();
     assert_ne!(original.digest(), freeze(&changed).digest());
     for (field, replacement) in [
         ("execution", serde_json::json!({"kind":"process"})),
@@ -70,4 +70,32 @@ fn software_semantics_are_typed_bound_and_not_process_parameters() {
     changed["request"]["parameters"] =
         serde_json::json!({"software":{"kind":"literal","value":{}}});
     assert!(decode_plan(&serde_json::to_vec(&changed).unwrap(), &limits()).is_err());
+}
+
+#[test]
+fn installer_capabilities_are_bound_and_unsupported_semantics_fail_closed() {
+    let v: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/software.json")).unwrap();
+    let decode = |v: &serde_json::Value| decode_plan(&serde_json::to_vec(v).unwrap(), &limits());
+    let original = execution_contract::FrozenPlan::freeze(decode(&v).unwrap(), &limits()).unwrap();
+    let mut changed = v.clone();
+    changed["execution"]["software"]["installer"]["restart"] = "Never".into();
+    assert_ne!(
+        original.digest(),
+        execution_contract::FrozenPlan::freeze(decode(&changed).unwrap(), &limits())
+            .unwrap()
+            .digest()
+    );
+    for (field, value) in [
+        ("restart", serde_json::json!("Automatic")),
+        ("operations", serde_json::json!(["Uninstall"])),
+        (
+            "upgrade_strategy",
+            serde_json::json!("UninstallThenInstall"),
+        ),
+    ] {
+        let mut changed = v.clone();
+        changed["execution"]["software"]["installer"][field] = value;
+        assert!(decode(&changed).is_err(), "{field}");
+    }
 }

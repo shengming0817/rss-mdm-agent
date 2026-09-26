@@ -9,6 +9,7 @@ import type {
   OutputQuality,
   StopOutcome,
   EffectAssessment,
+  SoftwareDiagnostic,
   DispatchCause,
   LimitReason,
 } from "./execution-types";
@@ -126,6 +127,18 @@ function stops(value: StopOutcome): string {
   const exhaustive: never = value;
   return exhaustive;
 }
+function softwareDiagnostic(value: SoftwareDiagnostic): string {
+  const labels: Record<SoftwareDiagnostic, string> = {
+    awaitingDetection: "等待独立软件检测",
+    restartPending: "安装器要求重启设备；重启后重新核实",
+    detectionUnavailable: "软件检测不可用，请核对设备与读取权限",
+    unrecognizedVersion: "检测到未知软件内容，需要人工核实",
+    detectionBudgetExceeded: "软件检测预算耗尽，等待下一次有界核实",
+    desiredStateObserved: "已观察到目标软件状态；不代表后台活动已终止",
+    desiredStateMissing: "已检测软件状态，尚未达到目标",
+  };
+  return labels[value];
+}
 function assessments(value: EffectAssessment): string {
   switch (value) {
     case "noEffect":
@@ -200,6 +213,9 @@ const text = (value: unknown) => JSON.stringify(value, null, 2);
       {{ details.status.mode === "test" ? "S1 测试执行器" : "真实执行器" }}
     </h3>
     <p class="execution-phase">{{ phase(details.status.phase) }}</p>
+    <p v-if="details.status.software" class="software-diagnostic">
+      {{ softwareDiagnostic(details.status.software) }}
+    </p>
     <div v-if="details.status.process" class="process-facts">
       <p>
         根进程：{{

@@ -242,11 +242,27 @@ pub enum DecisionOutcome {
 /// Immutable, context-bound planning result, not a permit or canonical execution plan.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SoftwareDecision {
+    pub(crate) installer: InstallerCapabilities,
+    pub(crate) management: ManagementConstraints,
+    pub(crate) comparison: Option<VersionComparison>,
     pub(crate) intent: SoftwareIntent,
     pub(crate) snapshot: VersionedRef,
     pub(crate) outcome: DecisionOutcome,
 }
 impl SoftwareDecision {
+    /// Management constraints actually used by the decision.
+    pub fn management(&self) -> ManagementConstraints {
+        self.management
+    }
+    /// Exact ecosystem comparison used by the decision.
+    pub fn comparison(&self) -> Option<&VersionComparison> {
+        self.comparison.as_ref()
+    }
+
+    /// Exact selected installer semantics used by the decision, not reconstructed by a runner.
+    pub fn installer(&self) -> &InstallerCapabilities {
+        &self.installer
+    }
     /// Exact original intent; scope is never inferred from the planning host.
     pub fn intent(&self) -> &SoftwareIntent {
         &self.intent

@@ -290,8 +290,8 @@ pub struct SoftwareSpec {
     pub snapshot: VersionedRef,
     /// Immutable package/archive/formula/manifest, also retained for declared uninstall.
     pub payload: ExactArtifactRef,
-    /// Fixed native package-manager binary, separate from the script interpreter.
-    pub manager: ExactArtifactRef,
+    /// Selected installer capabilities, preserved exactly from the planning snapshot.
+    pub installer: InstallerCapabilities,
     /// Fixed backend source selector; not a URL or a fallback source.
     pub source: PackageValue,
     /// Exact installed resource identity (e.g. MSI product code or fully qualified formula).
@@ -302,8 +302,6 @@ pub struct SoftwareSpec {
     pub uninstall: Option<ExactArtifactRef>,
     /// Resource-management constraints, not execution approval.
     pub management: ManagementConstraints,
-    /// Declared dependency effects; unresolved effects block execution.
-    pub dependencies: DependencyImpact,
     /// Exact ecosystem comparison from the planning snapshot; operands rechecked under lock.
     pub comparison: Option<VersionComparison>,
     /// Exact bundle extraction bounds, required only for bundle adapters.
@@ -343,7 +341,10 @@ pub enum SoftwareState {
         version: PackageValue,
     },
     /// Target is unreadable, changed concurrently, or contains unknown bytes.
-    Unknown {},
+    Unknown {
+        /// Closed detection failure, without paths or backend text.
+        reason: SoftwareDetectionFailure,
+    },
 }
 /// Software observations bound to the existing attempt, stored in the same journal.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -361,6 +362,8 @@ pub struct SoftwareEvidence {
     pub detected: SoftwareState,
     /// Installer explicitly requested a restart, not an instruction to reboot.
     pub restart_required: bool,
+    /// Kernel boot generation; retained from the pending restart until a different boot is observed.
+    pub boot_generation: Option<Id>,
 }
 impl SoftwareSpec {
     /// OS-wide manager/resource keys, independent of tenant, source and actor.
@@ -418,4 +421,35 @@ pub struct SoftwareProvenance {
     pub ownership: Ownership,
     /// Last verified installed state; mismatches invalidate automatic ownership reuse.
     pub state: Option<SoftwareState>,
+}
+
+/// Closed independent detection failures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum SoftwareDetectionFailure {
+    /// Target or protected ancestor cannot be inspected.
+    Unavailable,
+    /// Installed bytes do not match a declared version.
+    UnrecognizedVersion,
+    /// The independent observation exhausted its time, cancellation or byte bound.
+    BudgetExceeded,
+}
+/// Safe software diagnostic; contains no paths, source coordinates or captured output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum SoftwareDiagnostic {
+    /// No independent observation has been committed.
+    AwaitingDetection,
+    /// A different kernel boot has not yet been observed.
+    RestartPending,
+    /// Installed target cannot be inspected.
+    DetectionUnavailable,
+    /// Installed bytes do not match a declared version.
+    UnrecognizedVersion,
+    /// Detection needs another bounded observation opportunity.
+    DetectionBudgetExceeded,
+    /// Target matches; this is not a quiescence or final-success assertion.
+    DesiredStateObserved,
+    /// Independently observed target does not match the desired state.
+    DesiredStateMissing,
 }

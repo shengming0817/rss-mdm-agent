@@ -147,13 +147,6 @@
         },
         "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
       },
-      "manager": {
-        "resource": {
-          "id": "test-interpreter",
-          "revision": "1"
-        },
-        "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
-      },
       "source": "controlled",
       "resource": "com.rss.test",
       "detection": {
@@ -175,9 +168,30 @@
         "allow_restart": true,
         "allow_dependency_changes": false
       },
-      "dependencies": "None",
       "comparison": null,
-      "bundle": null
+      "bundle": null,
+      "installer": {
+        "artifact": {
+          "resource": {
+            "id": "test-interpreter",
+            "revision": "1"
+          },
+          "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
+        },
+        "manager": {
+          "id": "fixed",
+          "revision": "1"
+        },
+        "can_detect": true,
+        "operations": [
+          "Install",
+          "Upgrade",
+          "Uninstall"
+        ],
+        "upgrade_strategy": "InPlace",
+        "restart": "MayRequire",
+        "dependency_impact": "None"
+      }
     }
   }
 }

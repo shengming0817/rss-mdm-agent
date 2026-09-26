@@ -272,6 +272,9 @@ pub fn decide(
 ) -> Result<SoftwareDecision, DecisionError> {
     validate(intent, snapshot, limits)?;
     Ok(SoftwareDecision {
+        installer: snapshot.installer.clone(),
+        management: snapshot.management,
+        comparison: snapshot.comparison.clone(),
         intent: intent.clone(),
         snapshot: snapshot.revision.clone(),
         outcome: outcome(intent, snapshot),

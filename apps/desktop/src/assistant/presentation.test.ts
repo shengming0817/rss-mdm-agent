@@ -274,3 +274,23 @@ it("keeps stop acknowledgement separate from localized effect assessment", () =>
       wrapper.unmount();
     }
 });
+
+it("shows software recovery diagnostics without treating detection as final success", () => {
+  for (const [diagnostic, label] of Object.entries({
+    restartPending: "重启设备",
+    detectionUnavailable: "读取权限",
+    unrecognizedVersion: "未知软件内容",
+    detectionBudgetExceeded: "预算耗尽",
+    desiredStateObserved: "不代表后台活动已终止",
+  })) {
+    const details = structuredClone(
+      fixtures.outcomeUnknown,
+    ) as ExecutionTaskDetails;
+    details.status.software = diagnostic as NonNullable<
+      ExecutionTaskDetails["status"]["software"]
+    >;
+    const wrapper = mount(ExecutionDetails, { props: { details, now: 1000 } });
+    expect(wrapper.find(".software-diagnostic").text()).toContain(label);
+    wrapper.unmount();
+  }
+});

@@ -47,3 +47,10 @@ V3 与 SQLite schema 4 直接替换旧格式：旧计划/库明确拒绝，文�
 本地软件测试：`cargo test -p execution-runner software --lib`、`cargo test -p execution-sqlite --test acceptance software_`。Windows 静态检查使用 `cargo check -p execution-runner --all-targets --target x86_64-pc-windows-gnu --locked`，不等同于 Windows 真机安装。所有本地 fixtures 与日志位于忽略目录，普通测试不安装生产软件或修改系统信任设置。
 
 实现参考：zip-rs zip2 `src/read.rs@771dfc534d2614158af5497ea3dff4d4208d7db1`（逐项解压；不采用允许覆盖/链接的 extract）；Homebrew `Library/Homebrew/cmd/install.rb` 与 `version.rb@b2cfc03346d482f79886de108fee5dc49a6efc10`（固定 formula、显式升级与生态版本边界）。
+
+
+内置审查修复后，计划保留完整 installer capabilities，执行端不重建 upgrade/restart 语义。进程退出未知但静止已被独立证明时可继续效果核实，输出计数未知则不自动新增 attempt。重启需求绑定 OS kernel boot generation：macOS 使用 `kern.bootsessionuuid`；Windows 使用 `SystemBootEnvironmentInformation.BootIdentifier`。重启服务或无法读取 boot generation 均不能清除 pending。
+
+独立软件检测使用单次一秒的恢复观察预算（不恢复原变更预算），块读取检查截止和取消；未完成检测只输出闭合失败原因。任务详情展示重启待处理、检测不可用、未知版本、检测预算耗尽及目标状态观察，不暴露路径或源。`desiredStateObserved` 不替代静止或最终成功。
+
+补充实现参考：[Apple XNU kern_mib.c](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_mib.c)、[System Informer phnt ntexapi.h](https://github.com/winsiderss/phnt/blob/master/ntexapi.h) 的 boot generation 声明。Windows API 不可用时保留未知，不用墙钟估算启动代际。

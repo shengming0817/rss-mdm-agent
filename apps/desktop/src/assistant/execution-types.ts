@@ -59,6 +59,20 @@ export type LimitReason =
   | "output"
   | "attempts";
 /**
+ * Safe software diagnostic; contains no paths, source coordinates or captured output.
+ *
+ * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
+ * via the `definition` "SoftwareDiagnostic".
+ */
+export type SoftwareDiagnostic =
+  | "awaitingDetection"
+  | "restartPending"
+  | "detectionUnavailable"
+  | "unrecognizedVersion"
+  | "detectionBudgetExceeded"
+  | "desiredStateObserved"
+  | "desiredStateMissing";
+/**
  * Closed stop request diagnostics. Neither variant is a termination/effect observation.
  *
  * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
@@ -881,6 +895,10 @@ export interface ExecutionStatus {
    */
   process: ProcessSummary | null;
   /**
+   * Safe independent software diagnostic; observed state is not final success.
+   */
+  software: SoftwareDiagnostic | null;
+  /**
    * Last stop request response; independent of termination/effect evidence.
    */
   stopOutcome: StopOutcome | null;
@@ -1079,6 +1097,10 @@ export interface ExecutionStatus1 {
    * Redacted process progress, distinct from lifecycle termination and effect proof.
    */
   process: ProcessSummary | null;
+  /**
+   * Safe independent software diagnostic; observed state is not final success.
+   */
+  software: SoftwareDiagnostic | null;
   /**
    * Last stop request response; independent of termination/effect evidence.
    */

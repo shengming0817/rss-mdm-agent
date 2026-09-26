@@ -1118,6 +1118,52 @@
           }
         ]
       },
+      "InstallerCapabilities": {
+        "description": "Installer semantics, not proof that the OS can execute or authorize it.",
+        "properties": {
+          "artifact": {
+            "$ref": "#/$defs/ExactArtifactRef",
+            "description": "Exact installer/manager binary."
+          },
+          "can_detect": {
+            "description": "Whether this selected mechanism can independently detect the package state.",
+            "type": "boolean"
+          },
+          "dependency_impact": {
+            "$ref": "#/$defs/DependencyImpact",
+            "description": "Declared dependency effects of the selected change mechanism."
+          },
+          "manager": {
+            "$ref": "#/$defs/VersionedRef",
+            "description": "Must match PackageIdentity.manager."
+          },
+          "operations": {
+            "description": "Unique supported mutation kinds.",
+            "items": {
+              "$ref": "#/$defs/MutationKind"
+            },
+            "type": "array"
+          },
+          "restart": {
+            "$ref": "#/$defs/RestartBehavior",
+            "description": "Selected configuration's restart semantics."
+          },
+          "upgrade_strategy": {
+            "$ref": "#/$defs/UpgradeStrategy",
+            "description": "Upgrade behavior, relevant only for Upgrade/Downgrade."
+          }
+        },
+        "required": [
+          "artifact",
+          "manager",
+          "can_detect",
+          "operations",
+          "upgrade_strategy",
+          "restart",
+          "dependency_impact"
+        ],
+        "type": "object"
+      },
       "InterpreterRef": {
         "additionalProperties": false,
         "description": "Exact binary and immutable calling convention. Neither reference proves availability.",
@@ -1665,6 +1711,26 @@
         "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
         "type": "string"
       },
+      "RestartBehavior": {
+        "description": "Restart behavior of the selected installer configuration.",
+        "oneOf": [
+          {
+            "const": "Never",
+            "description": "Restart is not required and cannot be initiated by the selected invocation.",
+            "type": "string"
+          },
+          {
+            "const": "MayRequire",
+            "description": "May request a later restart, without initiating it itself.",
+            "type": "string"
+          },
+          {
+            "const": "Automatic",
+            "description": "May restart immediately; this planner cannot coordinate such execution.",
+            "type": "string"
+          }
+        ]
+      },
       "RunAs": {
         "description": "Requested execution identity; authorization and actual identity switching are external.",
         "oneOf": [
@@ -1840,10 +1906,6 @@
             ],
             "description": "Exact ecosystem comparison from the planning snapshot; operands rechecked under lock."
           },
-          "dependencies": {
-            "$ref": "#/$defs/DependencyImpact",
-            "description": "Declared dependency effects; unresolved effects block execution."
-          },
           "desired": {
             "$ref": "#/$defs/DesiredState",
             "description": "Explicit target state."
@@ -1852,13 +1914,13 @@
             "$ref": "#/$defs/SoftwareDetection",
             "description": "Absolute installed-state detector."
           },
+          "installer": {
+            "$ref": "#/$defs/InstallerCapabilities",
+            "description": "Selected installer capabilities, preserved exactly from the planning snapshot."
+          },
           "management": {
             "$ref": "#/$defs/ManagementConstraints",
             "description": "Resource-management constraints, not execution approval."
-          },
-          "manager": {
-            "$ref": "#/$defs/ExactArtifactRef",
-            "description": "Fixed native package-manager binary, separate from the script interpreter."
           },
           "mutation": {
             "$ref": "#/$defs/MutationKind",
@@ -1903,12 +1965,11 @@
           "mutation",
           "snapshot",
           "payload",
-          "manager",
+          "installer",
           "source",
           "resource",
           "detection",
-          "management",
-          "dependencies"
+          "management"
         ],
         "type": "object"
       },
@@ -2054,6 +2115,21 @@
           {
             "const": "utf16Le",
             "description": "UTF-16 little endian text.",
+            "type": "string"
+          }
+        ]
+      },
+      "UpgradeStrategy": {
+        "description": "Preserve installer upgrade semantics; some upgrades remove the existing installation first.",
+        "oneOf": [
+          {
+            "const": "InPlace",
+            "description": "Does not require removing the old installation first.",
+            "type": "string"
+          },
+          {
+            "const": "UninstallThenInstall",
+            "description": "Requires uninstall permission and dependency safety as well as upgrade capability.",
             "type": "string"
           }
         ]

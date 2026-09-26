@@ -121,6 +121,7 @@ pub trait RunnerPort {
         &self,
         plan: &FrozenPlan,
         _attempt: &AttemptId,
+        _deadline: std::time::Instant,
     ) -> Result<Option<execution_contract::SoftwareEvidence>, Error> {
         if plan.spec().execution.software().is_some() {
             Err(Error::Unsupported)

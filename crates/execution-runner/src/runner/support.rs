@@ -212,8 +212,9 @@ impl RunnerPort for TestCarrier {
         &self,
         p: &FrozenPlan,
         a: &AttemptId,
+        deadline: Instant,
     ) -> Result<Option<SoftwareEvidence>, Error> {
-        self.0.software_evidence(p, a)
+        self.0.software_evidence(p, a, deadline)
     }
 
     fn id(&self) -> Id {

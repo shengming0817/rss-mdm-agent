@@ -74,6 +74,7 @@
       "planDigest": "b6a08464a809b906cd4849227cbf4aefc4f092e1d1adb7da2961dbfefe39fcf6",
       "planId": "plan-1",
       "process": null,
+      "software": null,
       "stopOutcome": null,
       "submitted": true
     }
@@ -170,6 +171,7 @@
       "planDigest": "b6a08464a809b906cd4849227cbf4aefc4f092e1d1adb7da2961dbfefe39fcf6",
       "planId": "plan-1",
       "process": null,
+      "software": null,
       "stopOutcome": "acknowledged",
       "submitted": true
     }
@@ -249,6 +251,7 @@
       "planDigest": "b6a08464a809b906cd4849227cbf4aefc4f092e1d1adb7da2961dbfefe39fcf6",
       "planId": "plan-1",
       "process": null,
+      "software": null,
       "stopOutcome": null,
       "submitted": true
     }
@@ -328,6 +331,7 @@
       "planDigest": "b6a08464a809b906cd4849227cbf4aefc4f092e1d1adb7da2961dbfefe39fcf6",
       "planId": "plan-1",
       "process": null,
+      "software": null,
       "stopOutcome": null,
       "submitted": true
     }
@@ -424,6 +428,7 @@
       "planDigest": "b6a08464a809b906cd4849227cbf4aefc4f092e1d1adb7da2961dbfefe39fcf6",
       "planId": "plan-1",
       "process": null,
+      "software": null,
       "stopOutcome": null,
       "submitted": true
     }

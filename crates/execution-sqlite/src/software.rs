@@ -35,7 +35,7 @@ pub(crate) fn claim(
     }
     Ok(())
 }
-fn facts(
+pub(crate) fn facts(
     conn: &Connection,
     attempt: &AttemptId,
     limits: Limits,
@@ -112,7 +112,7 @@ pub(crate) fn settle(
                     conn.execute("INSERT INTO software_ownership VALUES(?1,?2,?3,?4) ON CONFLICT(resource) DO UPDATE SET attempt_id=excluded.attempt_id,authority=excluded.authority,package=excluded.package", params![resource,a.id.as_str(),encode(&plan.spec().request.authority,limits.max_record_bytes)?,encode(&s.package,limits.max_record_bytes)?])?;
                 }
             }
-            SoftwareState::Unknown {} => return Err(Error::Conflict),
+            SoftwareState::Unknown { .. } => return Err(Error::Conflict),
         }
     }
     conn.execute(
@@ -216,7 +216,14 @@ impl Store {
                 return Err(Error::Conflict);
             }
             value.before = old.before.clone().or(value.before);
-            value.restart_required |= old.restart_required;
+            if old.restart_required
+                && !(old.boot_generation.is_some()
+                    && value.boot_generation.is_some()
+                    && old.boot_generation != value.boot_generation)
+            {
+                value.restart_required = true;
+                value.boot_generation = old.boot_generation.clone().or(value.boot_generation);
+            }
             if a.assessment.as_ref().is_some_and(|o| {
                 matches!(
                     o.observation,
@@ -260,4 +267,37 @@ impl Store {
         }
         Ok(value)
     }
+}
+
+pub(crate) fn diagnostic(
+    conn: &Connection,
+    plan: &FrozenPlan,
+    attempt: Option<&AttemptId>,
+    limits: Limits,
+) -> Result<Option<execution_contract::SoftwareDiagnostic>, Error> {
+    use execution_contract::{SoftwareDetectionFailure as F, SoftwareDiagnostic as D};
+    let Some(spec) = plan.spec().execution.software() else {
+        return Ok(None);
+    };
+    let evidence = attempt
+        .map(|a| facts(conn, a, limits))
+        .transpose()?
+        .flatten();
+    Ok(Some(match evidence {
+        None => D::AwaitingDetection,
+        Some(e) if e.restart_required => D::RestartPending,
+        Some(e) => match e.detected {
+            SoftwareState::Unknown {
+                reason: F::Unavailable,
+            } => D::DetectionUnavailable,
+            SoftwareState::Unknown {
+                reason: F::UnrecognizedVersion,
+            } => D::UnrecognizedVersion,
+            SoftwareState::Unknown {
+                reason: F::BudgetExceeded,
+            } => D::DetectionBudgetExceeded,
+            ref state if spec.satisfied(state) => D::DesiredStateObserved,
+            _ => D::DesiredStateMissing,
+        },
+    }))
 }

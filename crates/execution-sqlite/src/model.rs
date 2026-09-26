@@ -241,6 +241,8 @@ pub struct ExecutionRecord {
     pub admission: Option<AdmissionStatus>,
     /// Redacted process facts, present only for authorized result/owner reads.
     pub process: Option<execution_contract::ProcessSummary>,
+    /// Authorized, value-free diagnostic from the software observation journal.
+    pub software: Option<execution_contract::SoftwareDiagnostic>,
 }
 /// Verification input for access checks. Host must not trust claims because they deserialize.
 pub struct AccessRequest<'a> {

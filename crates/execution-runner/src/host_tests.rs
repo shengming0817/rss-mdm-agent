@@ -28,7 +28,7 @@ fn ipc_submit_uses_durable_submission_and_duplicate_delivery_never_dispatches() 
         native: 0,
     };
     let request = serde_json::to_vec(
-        &serde_json::json!({"version":2,"request":{"method":"submit","plan":plan().spec()}}),
+        &serde_json::json!({"version":3,"request":{"method":"submit","plan":plan().spec()}}),
     )
     .unwrap();
     for _ in 0..2 {
@@ -67,4 +67,45 @@ fn windows_installer_stops_uncertain_start_before_removing_registration() {
         .status()
         .unwrap()
         .success());
+}
+
+#[test]
+fn only_v3_envelope_calls_the_handler() {
+    struct Spy(usize);
+    impl Handler for Spy {
+        fn handle(&mut self, _: &Peer, _: Request) -> Reply {
+            self.0 += 1;
+            Reply::Unavailable
+        }
+        fn tick(&mut self) -> Result<(), Error> {
+            Ok(())
+        }
+        fn stop(&mut self) -> Result<(), Error> {
+            Ok(())
+        }
+    }
+    let mut spy = Spy(0);
+    let peer = Peer {
+        pid: 1,
+        uid: Some(1),
+        session: 1,
+        native: 0,
+    };
+    for version in [1, 2, 4] {
+        let bytes = serde_json::to_vec(
+            &serde_json::json!({"version":version,"request":{"method":"status","request":"r"}}),
+        )
+        .unwrap();
+        assert_eq!(dispatch(&mut spy, &peer, &bytes), br#"{"kind":"rejected"}"#);
+        assert_eq!(spy.0, 0);
+    }
+    assert_eq!(
+        dispatch(
+            &mut spy,
+            &peer,
+            br#"{"version":3,"request":{"method":"status","request":"r"}}"#
+        ),
+        br#"{"kind":"unavailable"}"#
+    );
+    assert_eq!(spy.0, 1);
 }

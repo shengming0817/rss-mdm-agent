@@ -46,7 +46,7 @@ fn software_fixture(script: &str) -> Fixture {
     software.detection.path = f.root.join("installed").to_str().unwrap().into();
     software.detection.versions[0].sha256 =
         Digest::new(format!("{:x}", Sha256::digest(b"v1"))).unwrap();
-    software.manager = f.plan.spec().launch.interpreter.artifact.clone();
+    software.installer.artifact = f.plan.spec().launch.interpreter.artifact.clone();
     software.bundle = Some(BundleLimits {
         archive_bytes: 1024 * 1024,
         files: 8,
@@ -128,7 +128,11 @@ fn real_bundle_effect_is_independent_and_not_a_quiescence_claim() {
     let process = finish(&f, &id);
     assert_eq!(process.exit_code, Some(0));
     assert!(!process.quiescent);
-    let detected = f.runner.software_evidence(&f.plan, &id).unwrap().unwrap();
+    let detected = f
+        .runner
+        .software_evidence(&f.plan, &id, Instant::now() + Duration::from_secs(1))
+        .unwrap()
+        .unwrap();
     assert_eq!(detected.before, Some(SoftwareState::Absent {}));
     assert_eq!(
         detected.detected,
@@ -142,7 +146,11 @@ fn real_bundle_effect_is_independent_and_not_a_quiescence_claim() {
         .unwrap()
         .is_none());
     f.runner.acknowledge_capture(&f.plan, &process).unwrap();
-    let recovered = f.runner.software_evidence(&f.plan, &id).unwrap().unwrap();
+    let recovered = f
+        .runner
+        .software_evidence(&f.plan, &id, Instant::now() + Duration::from_secs(1))
+        .unwrap()
+        .unwrap();
     assert_eq!(recovered.before, None);
     assert_eq!(recovered.detected, detected.detected);
 }
@@ -152,7 +160,11 @@ fn zero_exit_without_installed_effect_is_not_satisfied() {
     let id = start_software(&f);
     let process = finish(&f, &id);
     assert_eq!(process.exit_code, Some(0));
-    let facts = f.runner.software_evidence(&f.plan, &id).unwrap().unwrap();
+    let facts = f
+        .runner
+        .software_evidence(&f.plan, &id, Instant::now() + Duration::from_secs(1))
+        .unwrap()
+        .unwrap();
     assert_eq!(facts.detected, SoftwareState::Absent {});
     assert!(!f
         .plan
@@ -295,7 +307,7 @@ fn real_bundle_upgrade_and_declared_uninstall_recheck_owned_version() {
         assert_eq!(facts.exit_code, Some(0), "{:?}", facts.failure_kind);
         assert_eq!(
             f.runner
-                .software_evidence(&f.plan, &attempt)
+                .software_evidence(&f.plan, &attempt, Instant::now() + Duration::from_secs(1))
                 .unwrap()
                 .unwrap()
                 .detected,
@@ -346,10 +358,65 @@ fn manager_lock_blocks_a_second_attempt_and_cancel_keeps_effect_separate() {
     assert!(!stopped.quiescent);
     assert_eq!(
         f.runner
-            .software_evidence(&f.plan, &first)
+            .software_evidence(&f.plan, &first, Instant::now() + Duration::from_secs(1))
             .unwrap()
             .unwrap()
             .detected,
-        SoftwareState::Absent {}
+        SoftwareState::Unknown {
+            reason: SoftwareDetectionFailure::BudgetExceeded
+        }
     );
+}
+
+#[test]
+fn expired_detection_budget_does_not_read_or_report_absence() {
+    let f = software_fixture("exit 0\n");
+    let control = crate::software::PreparationControl {
+        deadline: Instant::now(),
+        cancelled: Arc::new(AtomicBool::new(false)),
+    };
+    assert_eq!(
+        crate::software::detect(f.plan.spec().execution.software().unwrap(), &control),
+        SoftwareState::Unknown {
+            reason: SoftwareDetectionFailure::BudgetExceeded
+        }
+    );
+}
+
+#[test]
+fn native_uninstall_does_not_accept_an_arbitrary_declared_script() {
+    let mut f = software_fixture("rm -f installed\n");
+    std::fs::write(f.root.join("installed"), b"v1").unwrap();
+    replan(&mut f, |p| {
+        let ExecutionSpec::Software { software: s } = &mut p.execution else {
+            panic!("software")
+        };
+        s.adapter = SoftwareKind::Homebrew;
+        s.bundle = None;
+        s.mutation = MutationKind::Uninstall;
+        s.desired = DesiredState::Absent;
+        s.uninstall = Some(p.launch.artifact.clone());
+        p.request.operation.action = Id::new("software.uninstall").unwrap();
+    });
+    let attempt = AttemptId::new("uninstall-rejected").unwrap();
+    f.runner
+        .launch(
+            &f.plan,
+            &attempt,
+            DispatchAllowance {
+                deadline_unix_ms: now().unwrap() + 10000,
+                remaining_timeout_ms: 10000,
+                remaining_output_bytes: 4096,
+            },
+            Some(SoftwareProvenance {
+                ownership: Ownership::OrganizationManaged,
+                state: Some(SoftwareState::Present {
+                    version: PackageValue::new("1.0").unwrap(),
+                }),
+            }),
+        )
+        .unwrap();
+    let result = finish(&f, &attempt);
+    assert_eq!(result.failure_kind, ProcessFailureKind::Denied);
+    assert_eq!(std::fs::read(f.root.join("installed")).unwrap(), b"v1");
 }

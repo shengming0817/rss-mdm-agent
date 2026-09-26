@@ -151,8 +151,10 @@ impl NativeRunner {
                     id,
                     (allowance.remaining_output_bytes, deadline),
                     cancel,
-                    facts,
-                    software,
+                    Captures {
+                        process: facts,
+                        software,
+                    },
                 ));
             });
         Ok(if spawned.is_ok() {
@@ -177,6 +179,7 @@ impl RunnerPort for NativeRunner {
         &self,
         plan: &FrozenPlan,
         attempt: &AttemptId,
+        deadline: Instant,
     ) -> Result<Option<SoftwareEvidence>, Error> {
         let Some(spec) = plan.spec().execution.software() else {
             return Ok(None);
@@ -200,8 +203,15 @@ impl RunnerPort for NativeRunner {
             plan_digest: plan.digest().clone(),
             runner: self.id.clone(),
             before: None,
-            detected: crate::software::detect(spec),
+            detected: crate::software::detect(
+                spec,
+                &crate::software::PreparationControl {
+                    deadline,
+                    cancelled: Arc::new(AtomicBool::new(false)),
+                },
+            ),
             restart_required: false,
+            boot_generation: crate::platform::boot_generation().ok(),
         }))
     }
 
@@ -422,6 +432,10 @@ fn publish(slot: &Mutex<Option<ProcessEvidence>>, facts: ProcessEvidence) {
         *slot = Some(facts)
     }
 }
+struct Captures {
+    process: Arc<Mutex<Option<ProcessEvidence>>>,
+    software: Arc<Mutex<Option<SoftwareEvidence>>>,
+}
 async fn run(
     mut materialized: Materialized,
     plan: FrozenPlan,
@@ -429,9 +443,12 @@ async fn run(
     id: Id,
     (cap, deadline): (u64, Instant),
     cancel: Arc<AtomicBool>,
-    shared: Arc<Mutex<Option<ProcessEvidence>>>,
-    software_facts: Arc<Mutex<Option<SoftwareEvidence>>>,
+    captures: Captures,
 ) {
+    let Captures {
+        process: shared,
+        software: software_facts,
+    } = captures;
     if let Some(lease) = &materialized.software {
         if let Ok(mut slot) = software_facts.lock() {
             *slot = Some(SoftwareEvidence {
@@ -441,6 +458,7 @@ async fn run(
                 before: Some(lease.before.clone()),
                 detected: lease.before.clone(),
                 restart_required: false,
+                boot_generation: crate::platform::boot_generation().ok(),
             });
         }
     }
@@ -704,7 +722,13 @@ async fn run(
     if let Some(spec) = plan.spec().execution.software() {
         if let Ok(mut slot) = software_facts.lock() {
             if let Some(value) = slot.as_mut() {
-                value.detected = crate::software::detect(spec);
+                value.detected = crate::software::detect(
+                    spec,
+                    &crate::software::PreparationControl {
+                        deadline: Instant::now() + Duration::from_secs(1),
+                        cancelled: cancel.clone(),
+                    },
+                );
                 value.restart_required = matches!(facts.exit_code, Some(3010 | 1641));
             }
         }

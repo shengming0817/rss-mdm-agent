@@ -2508,6 +2508,7 @@ fn software_claim_and_detection_survive_reopen_without_process_success() {
             version: PackageValue::new("1.0").unwrap(),
         },
         restart_required: false,
+        boot_generation: None,
     };
     store.record_software(&host.scope(), &facts, &host).unwrap();
     drop(store);
@@ -2611,6 +2612,7 @@ fn software_ownership_is_atomic_with_verified_effect_and_cannot_be_rewritten() {
             version: PackageValue::new("1.0").unwrap(),
         },
         restart_required: false,
+        boot_generation: None,
     };
     store.record_software(&host.scope(), &facts, &host).unwrap();
     let reference_for = |name: &str| EvidenceRef {
@@ -2653,5 +2655,69 @@ fn software_ownership_is_atomic_with_verified_effect_and_cannot_be_rewritten() {
     assert_eq!(
         db.open().software_ownership(&host.scope(), &host).unwrap(),
         owner
+    );
+}
+
+#[test]
+fn restart_pending_survives_service_restart_but_clears_on_new_kernel_boot() {
+    let db = Database::new();
+    let host = software_host();
+    let mut store = db.create();
+    host.prepare(&mut store);
+    store
+        .apply_command(
+            &operation("begin"),
+            &host.scope(),
+            &host.begin(),
+            &[],
+            &host,
+        )
+        .unwrap();
+    let mut facts = SoftwareEvidence {
+        attempt_id: AttemptId::new("attempt-1").unwrap(),
+        plan_digest: host.plan.digest().clone(),
+        runner: id("test-runner"),
+        before: Some(SoftwareState::Absent {}),
+        detected: SoftwareState::Present {
+            version: PackageValue::new("1.0").unwrap(),
+        },
+        restart_required: true,
+        boot_generation: Some(id("boot-a")),
+    };
+    store.record_software(&host.scope(), &facts, &host).unwrap();
+    drop(store);
+    let mut store = db.open();
+    facts.before = None;
+    facts.restart_required = false;
+    store.record_software(&host.scope(), &facts, &host).unwrap();
+    assert!(
+        store
+            .software_evidence(&host.scope(), &facts.attempt_id, &host)
+            .unwrap()
+            .unwrap()
+            .restart_required
+    );
+    facts.boot_generation = None;
+    store.record_software(&host.scope(), &facts, &host).unwrap();
+    assert!(
+        store
+            .software_evidence(&host.scope(), &facts.attempt_id, &host)
+            .unwrap()
+            .unwrap()
+            .restart_required
+    );
+    facts.boot_generation = Some(id("boot-b"));
+    store.record_software(&host.scope(), &facts, &host).unwrap();
+    assert!(
+        !store
+            .software_evidence(&host.scope(), &facts.attempt_id, &host)
+            .unwrap()
+            .unwrap()
+            .restart_required
+    );
+    assert_eq!(
+        db.count("software_claims"),
+        2,
+        "new boot is not by itself a quiescence/effect proof"
     );
 }

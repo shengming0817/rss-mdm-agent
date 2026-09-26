@@ -59,7 +59,21 @@ impl Store {
         } else {
             None
         };
+        let software = if matches!(
+            access,
+            ExecutionAccess::Result | ExecutionAccess::Audit | ExecutionAccess::RunnerFact
+        ) {
+            crate::software::diagnostic(
+                &tx,
+                &plan,
+                execution.snapshot().attempt.as_ref().map(|a| &a.id),
+                self.limits,
+            )?
+        } else {
+            None
+        };
         Ok(ExecutionRecord {
+            software,
             execution,
             admission,
             process,

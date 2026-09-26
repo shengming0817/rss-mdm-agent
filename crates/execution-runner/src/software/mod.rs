@@ -75,11 +75,7 @@ pub(crate) struct Lease {
     pub args: Vec<String>,
     pub before: SoftwareState,
 }
-fn hash_file(
-    file: &mut File,
-    max: u64,
-    control: Option<&PreparationControl>,
-) -> Result<String, Error> {
+fn hash_file(file: &mut File, max: u64, control: &PreparationControl) -> Result<String, Error> {
     if max == 0 || file.metadata().map_err(|_| Error::Unavailable)?.len() > max {
         return Err(Error::Capacity);
     }
@@ -87,9 +83,7 @@ fn hash_file(
     let mut bytes = 0u64;
     let mut buffer = [0u8; 65536];
     loop {
-        if let Some(control) = control {
-            control.check()?;
-        }
+        control.check()?;
         let n = file.read(&mut buffer).map_err(|_| Error::Unavailable)?;
         if n == 0 {
             break;
@@ -104,36 +98,47 @@ fn hash_file(
     Ok(format!("{:x}", hash.finalize()))
 }
 /// Independently inspect installed bytes. Permission errors, links and unknown bytes remain unknown.
-pub(crate) fn detect(spec: &SoftwareSpec) -> SoftwareState {
+pub(crate) fn detect(spec: &SoftwareSpec, control: &PreparationControl) -> SoftwareState {
+    let unknown = |reason| SoftwareState::Unknown { reason };
+    if control.check().is_err() {
+        return unknown(SoftwareDetectionFailure::BudgetExceeded);
+    }
     let path = std::path::Path::new(&spec.detection.path);
     match std::fs::symlink_metadata(path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            // Absence only under an existing, protected parent; no missing/redirected ancestor inference.
             if path
                 .parent()
                 .is_some_and(|p| crate::platform::protected_path(p, true).is_ok())
+                && control.check().is_ok()
             {
                 SoftwareState::Absent {}
             } else {
-                SoftwareState::Unknown {}
+                unknown(SoftwareDetectionFailure::Unavailable)
             }
         }
         Ok(meta) if meta.is_file() => {
-            let result = crate::platform::open_file(path)
-                .and_then(|mut f| hash_file(&mut f, spec.detection.max_bytes, None));
-            match result.ok().and_then(|h| {
-                spec.detection
+            match crate::platform::open_file(path)
+                .and_then(|mut f| hash_file(&mut f, spec.detection.max_bytes, control))
+            {
+                Ok(hash) => match spec
+                    .detection
                     .versions
                     .iter()
-                    .find(|v| v.sha256.as_str() == h)
-            }) {
-                Some(v) => SoftwareState::Present {
-                    version: v.version.clone(),
+                    .find(|v| v.sha256.as_str() == hash)
+                {
+                    Some(v) => SoftwareState::Present {
+                        version: v.version.clone(),
+                    },
+                    None => unknown(SoftwareDetectionFailure::UnrecognizedVersion),
                 },
-                None => SoftwareState::Unknown {},
+                Err(Error::Capacity) => unknown(SoftwareDetectionFailure::BudgetExceeded),
+                Err(_) if control.check().is_err() => {
+                    unknown(SoftwareDetectionFailure::BudgetExceeded)
+                }
+                Err(_) => unknown(SoftwareDetectionFailure::Unavailable),
             }
         }
-        _ => SoftwareState::Unknown {},
+        _ => unknown(SoftwareDetectionFailure::Unavailable),
     }
 }
 impl SoftwareArtifacts {
@@ -173,7 +178,7 @@ impl SoftwareArtifacts {
             file.try_lock().map_err(|_| Error::Conflict)?;
             locks.push(file);
         }
-        let before = detect(s);
+        let before = detect(s, control);
         let owner = if provenance.ownership == Ownership::OrganizationManaged
             && provenance.state.as_ref() == Some(&before)
         {
@@ -200,7 +205,7 @@ impl SoftwareArtifacts {
                 dependencies: self.probe.dependency_use(plan)?,
                 evidence,
             },
-            SoftwareState::Unknown {} => return Err(Error::Unavailable),
+            SoftwareState::Unknown { .. } => return Err(Error::Unavailable),
         };
         let comparison = match &before {
             SoftwareState::Present { version } => self.probe.comparison(plan, version)?,
@@ -224,24 +229,7 @@ impl SoftwareArtifacts {
             package: s.package.clone(),
             detection: detected,
             comparison,
-            installer: InstallerCapabilities {
-                artifact: s.manager.clone(),
-                manager: s.package.manager.clone(),
-                can_detect: true,
-                operations: if s.uninstall.is_some() {
-                    vec![
-                        MutationKind::Install,
-                        MutationKind::Upgrade,
-                        MutationKind::Downgrade,
-                        MutationKind::Uninstall,
-                    ]
-                } else {
-                    vec![MutationKind::Install, MutationKind::Upgrade]
-                },
-                upgrade_strategy: UpgradeStrategy::InPlace,
-                restart: RestartBehavior::MayRequire,
-                dependency_impact: s.dependencies,
-            },
+            installer: s.installer.clone(),
             management: s.management,
             readiness: software_plan::Readiness::Ready,
         };
@@ -260,7 +248,7 @@ impl SoftwareArtifacts {
         }
         let mut payload = crate::platform::open_file(&self.payload)?;
         let limit = s.bundle.map_or(4 * 1024 * 1024 * 1024, |b| b.archive_bytes);
-        if hash_file(&mut payload, limit, Some(control))? != s.payload.sha256.as_str() {
+        if hash_file(&mut payload, limit, control)? != s.payload.sha256.as_str() {
             return Err(Error::Denied);
         }
         if s.adapter == SoftwareKind::Winget {
@@ -298,7 +286,9 @@ impl SoftwareArtifacts {
             payload.rewind().map_err(|_| Error::Unavailable)?;
         }
         let mut manager = crate::platform::open_file(&self.manager)?;
-        if hash_file(&mut manager, 256 * 1024 * 1024, Some(control))? != s.manager.sha256.as_str() {
+        if hash_file(&mut manager, 256 * 1024 * 1024, control)?
+            != s.installer.artifact.sha256.as_str()
+        {
             return Err(Error::Denied);
         }
         let expanded = if s.adapter.is_bundle() {

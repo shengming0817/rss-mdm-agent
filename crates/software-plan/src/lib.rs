@@ -27,7 +27,9 @@ pub fn bind(
         || intent.desired != software.desired
         || mutation.kind() != software.mutation
         || decision.snapshot() != &software.snapshot
-        || mutation.installer() != &software.manager
+        || decision.installer() != &software.installer
+        || decision.management() != software.management
+        || decision.comparison() != software.comparison.as_ref()
     {
         return Err(invalid());
     }

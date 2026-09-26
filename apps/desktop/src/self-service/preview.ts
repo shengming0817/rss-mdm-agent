@@ -666,7 +666,7 @@ const snapshot: Snapshot = {
         revision: 1,
         planId: "plan-browser-preview-1",
         digest:
-          "24494752696f8e64b6ad997eb4768750f262d717b8333d2cb14b02a11fc0f980",
+          "3a93f033866cb3e768e4c6e3437b49eeb9f3e599e5decebe061b551c865e7cff",
         itemId: "diagnostics",
         title: "网络诊断",
         action: "diagnose",
@@ -746,7 +746,7 @@ const snapshot: Snapshot = {
         revision: 1,
         planId: "plan-browser-preview-2",
         digest:
-          "bd0d0f6a128c2ba36e5a14d122e25f7d0eac3c86e56215715e63296244fd15dc",
+          "f3f070eed1ee4e5052393235c4903facba789ab38f2c8bb2cb9308ffb842495b",
         itemId: "office",
         title: "办公套件",
         action: "install",
@@ -815,7 +815,7 @@ const snapshot: Snapshot = {
         revision: 1,
         planId: "plan-browser-preview-3",
         digest:
-          "7398b0804794b384c25ca9b390e258fd014d31da6a21c426343eb51b7f0cb596",
+          "47a78f357157d91df274cd8eeb76e57837644371b4ecd384afb61b9841f9508a",
         itemId: "restart",
         title: "重启提示",
         action: "diagnose",
@@ -887,7 +887,7 @@ const snapshot: Snapshot = {
         revision: 1,
         planId: "plan-browser-preview-4",
         digest:
-          "e7f0e89ea7c3975031ebe3ae7023d769c2e095b71a574f3824cc7f54d8048ea2",
+          "145d30355e76757b3b5e7ed80d63ee15828afe98f507c4c1a2c7b33363b13bef",
         itemId: "unknown",
         title: "未知效果示例",
         action: "diagnose",
