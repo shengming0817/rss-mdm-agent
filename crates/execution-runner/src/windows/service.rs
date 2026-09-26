@@ -327,30 +327,51 @@ async fn call(pipe: &mut NamedPipeServer, owner: &OwnerThread) -> Result<(), Err
         .map_err(|_| Error::Unavailable)?;
     Ok(())
 }
+// A timeout is a terminal host outcome, not permission to reuse a pipe whose old
+// handler may still hold its duplicate. Normal completion proves the callback returned.
+async fn exchange(
+    pipe: &mut NamedPipeServer,
+    owner: &OwnerThread,
+    limit: Duration,
+) -> Result<(), Error> {
+    let request = call(pipe, owner);
+    tokio::pin!(request);
+    let deadline = tokio::time::sleep(limit);
+    tokio::pin!(deadline);
+    loop {
+        tokio::select! {
+            _=&mut request=>return Ok(()),
+            _=&mut deadline=>return Err(Error::Unavailable),
+            _=tokio::time::sleep(Duration::from_millis(100))=>{
+                if stopping(){return Ok(())}
+                if !owner.healthy(){return Err(Error::Unavailable)}
+            }
+        }
+    }
+}
 fn drive(handler: Box<dyn Handler>, system: bool) -> Result<(), Error> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|_| Error::Unavailable)?;
     let mut owner = OwnerThread::new(handler)?;
-    let outcome=runtime.block_on(async{
-        let(name,sddl)=endpoint(system)?;
-        let mut pipe=listener(&name,&sddl)?;
-        if system {status(SERVICE_RUNNING,0)}
-        while !stopping(){
-            if !owner.healthy(){return Err(Error::Unavailable)}
-            tokio::select!{
+    let outcome = runtime.block_on(async {
+        let (name, sddl) = endpoint(system)?;
+        let mut pipe = listener(&name, &sddl)?;
+        if system {
+            status(SERVICE_RUNNING, 0)
+        }
+        while !stopping() {
+            if !owner.healthy() {
+                return Err(Error::Unavailable);
+            }
+            tokio::select! {
                 connected=pipe.connect()=>{
                     connected.map_err(|_|Error::Unavailable)?;
-                    let mut request=Box::pin(call(&mut pipe,&owner));
-                    let deadline=tokio::time::sleep(Duration::from_secs(5));tokio::pin!(deadline);
-                    loop {tokio::select!{
-                        _=&mut request=>break,
-                        _=&mut deadline=>break,
-                        _=tokio::time::sleep(Duration::from_millis(100))=>{if stopping() || !owner.healthy(){break}}
-                    }}
-                    drop(request);
+                    let result=exchange(&mut pipe,&owner,Duration::from_secs(5)).await;
                     pipe.disconnect().map_err(|_|Error::Unavailable)?;
+                    // Sticky failure: never reconnect this instance after its callback timed out.
+                    result?;
                 },
                 _=tokio::time::sleep(Duration::from_millis(100))=>{}
             }
@@ -458,11 +479,9 @@ mod deadline_tests {
         client.write_all(bytes).await.unwrap();
         let mut owner = OwnerThread::new(Box::new(Slow(Duration::from_millis(300)))).unwrap();
         let before = std::time::Instant::now();
-        assert!(
-            tokio::time::timeout(Duration::from_millis(30), call(&mut pipe, &owner))
-                .await
-                .is_err()
-        );
+        assert!(exchange(&mut pipe, &owner, Duration::from_millis(30))
+            .await
+            .is_err());
         assert!(before.elapsed() < Duration::from_millis(200));
         pipe.disconnect().unwrap();
         owner.finish().unwrap();

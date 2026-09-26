@@ -7,7 +7,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
-zeroize = "=1.9.0"
+zeroize = "=1.8.2"
 execution-contract = { path = "../execution-contract" }
 execution-app = { path = "../execution-app" }
 execution-lifecycle = { path = "../execution-lifecycle" }
