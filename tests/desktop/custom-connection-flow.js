@@ -78,7 +78,9 @@
     set(panel, "模型", window.__RSS_CUSTOM_CONNECTION__.model);
 
     progress("form_entry");
-    const password = panel.querySelector('input[type="password"]');
+    const password = await wait(() =>
+      panel.querySelector('input[type="password"]'),
+    );
     if (!password || password.disabled)
       throw new Error("credential field missing");
     set(panel, "API Key", secret);
