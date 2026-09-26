@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, nextTick } from "vue";
+import { onBeforeUnmount, onMounted, ref, nextTick, watch } from "vue";
 import { AppShell, NavigationList } from "@rss-mdm-agent/ui";
 import Workspace from "./Workspace.vue";
 import type { AssistantServices } from "./assistant/controller";
 import {
   currentUser,
   accountNotice,
+  accountErrorMessage,
   nativeTestMode,
   loadTestUsers,
   selectTestUser,
@@ -35,6 +36,7 @@ let polling: ReturnType<typeof setInterval> | undefined;
 async function refresh() {
   try {
     users.value = (await loadTestUsers()).users;
+    await refreshAccount();
   } catch {
     message.value = "无法读取测试用户记录";
   } finally {
@@ -56,6 +58,7 @@ async function select(name: string) {
     message.value = selectionMessage(error);
   } finally {
     loading.value = false;
+    await focusSettings();
   }
 }
 async function accountAction(action: () => Promise<unknown>) {
@@ -68,23 +71,26 @@ async function accountAction(action: () => Promise<unknown>) {
     attention.value = 0;
     page.value = "settings";
   } catch (error) {
-    const code = (error as { code?: string })?.code;
-    accountMessage.value =
-      code === "logout_unconfirmed"
-        ? "本机会话已退出，服务端注销未确认；请在企业账户中撤销会话"
-        : code === "cancelled"
-          ? "已取消登录"
-          : "无法完成账户操作，请核对组织、账号和业务授权后重试";
+    accountMessage.value = accountErrorMessage(error);
   } finally {
     loading.value = false;
+    await focusSettings();
   }
+}
+async function focusSettings() {
+  await nextTick();
+  content.value?.querySelector<HTMLElement>(".settings h1")?.focus();
 }
 async function navigate(id: string) {
   page.value = nativeTestMode && !currentUser.value ? "settings" : id;
-  await nextTick();
-  if (page.value === "settings")
-    content.value?.querySelector<HTMLElement>(".settings h1")?.focus();
+  if (page.value === "settings") await focusSettings();
 }
+watch(currentUser, (next, previous) => {
+  if (nativeTestMode && previous && !next) {
+    page.value = "settings";
+    void focusSettings();
+  }
+});
 onMounted(() => {
   if (nativeTestMode) void refresh();
   if (host.available) {

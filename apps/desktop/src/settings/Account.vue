@@ -66,7 +66,9 @@ onMounted(load);
       使用组织的本地账号登录。切换组织需重新登录；密码在系统原生输入框填写。
     </p>
     <form @submit.prevent="emit('login', selected, login)">
+      <label for="account-organization">组织连接</label>
       <select
+        id="account-organization"
         v-model="selected"
         aria-label="组织连接"
         :disabled="loading || !nativeTestMode"
@@ -80,7 +82,9 @@ onMounted(load);
           {{ organization.label }} — {{ organization.origin }}
         </option>
       </select>
+      <label for="account-login">企业账号</label>
       <input
+        id="account-login"
         v-model="login"
         aria-label="企业账号"
         autocomplete="username"
@@ -95,19 +99,30 @@ onMounted(load);
     </form>
     <details>
       <summary>添加组织连接</summary>
+      <p id="organization-help">
+        服务地址只填写 HTTPS origin，不含路径或查询；租户填写管理员提供的 UUID。
+      </p>
       <form @submit.prevent="save">
+        <label for="organization-label">组织名称</label>
         <input
+          id="organization-label"
           v-model="label"
           aria-label="组织名称"
           placeholder="组织名称"
           maxlength="64"
         />
+        <label for="organization-origin">组织服务地址</label>
         <input
+          id="organization-origin"
+          aria-describedby="organization-help"
           v-model="origin"
           aria-label="组织服务地址"
           placeholder="https://mdm.example.com"
         />
+        <label for="organization-tenant">租户 UUID</label>
         <input
+          id="organization-tenant"
+          aria-describedby="organization-help"
           v-model="tenantId"
           aria-label="租户 UUID"
           placeholder="租户 UUID"

@@ -77,7 +77,7 @@ function keys(event: KeyboardEvent) {
       <LocalService />
       <section class="settings-card">
         <h2>账户入口</h2>
-        <p>本地测试模式 · 非登录 · 不代表企业身份认证。</p>
+        <p>选择企业登录、测试用户或不登录使用。各入口的数据独立保存。</p>
         <slot name="user" />
       </section>
       <section class="settings-card">

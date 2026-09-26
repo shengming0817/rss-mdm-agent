@@ -4344,6 +4344,69 @@ const schema31 = {
       description:
         "Native-owned identity projection. Guest identities cannot carry enterprise metadata; enterprise identities require organization and expiry.",
     },
+    AccountOrganization: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        label: { type: "string" },
+        origin: { type: "string" },
+        tenantId: { type: "string" },
+      },
+      required: ["id", "label", "origin", "tenantId"],
+      additionalProperties: false,
+      description:
+        "Native-normalized organization configuration; canonical HTTPS origin and tenant validation belong to the native account adapter.",
+    },
+    AccountFailureStage: {
+      type: "string",
+      enum: ["configuration", "login", "session", "authorization", "logout"],
+    },
+    AccountFailureKind: {
+      type: "string",
+      enum: [
+        "configuration",
+        "denied",
+        "unavailable",
+        "rate_limited",
+        "contract",
+      ],
+    },
+    AccountFailure: {
+      type: "object",
+      properties: {
+        stage: { $ref: "#/$defs/AccountFailureStage" },
+        reason: { $ref: "#/$defs/AccountFailureKind" },
+        observedAtMs: { $ref: "#/$defs/Counter" },
+      },
+      required: ["stage", "reason", "observedAtMs"],
+      additionalProperties: false,
+    },
+    AccountSettings: {
+      type: "object",
+      properties: {
+        schemaVersion: { type: "integer", const: 5 },
+        kind: { type: "string", const: "accountSettings" },
+        organizations: {
+          type: "array",
+          items: { $ref: "#/$defs/AccountOrganization" },
+          maxItems: 32,
+        },
+        selected: { type: "string" },
+      },
+      required: ["schemaVersion", "kind", "organizations"],
+      additionalProperties: false,
+    },
+    AccountStatus: {
+      type: "object",
+      properties: {
+        schemaVersion: { type: "integer", const: 5 },
+        kind: { type: "string", const: "accountStatus" },
+        current: { $ref: "#/$defs/UserContext" },
+        failure: { $ref: "#/$defs/AccountFailure" },
+      },
+      required: ["schemaVersion", "kind"],
+      additionalProperties: false,
+    },
   },
   $ref: "#/$defs/Negotiation",
 };

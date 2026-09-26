@@ -39,7 +39,9 @@ export type WireRecord =
   | ExecutionOrigin
   | HostStatus
   | HostHealth
-  | HostProcessDiagnostic;
+  | HostProcessDiagnostic
+  | AccountSettings
+  | AccountStatus;
 /**
  * Opaque ASCII correlation identifier (1–128 characters); never an authentication credential.
  */
@@ -1338,6 +1340,18 @@ export type NativeCall =
   | NativeCallMasterKey
   | NativeCallHealth;
 export type NativeReply = NativeReplySuccess | NativeReplyFailure;
+export type AccountFailureStage =
+  | "configuration"
+  | "login"
+  | "session"
+  | "authorization"
+  | "logout";
+export type AccountFailureKind =
+  | "configuration"
+  | "denied"
+  | "unavailable"
+  | "rate_limited"
+  | "contract";
 
 /**
  * Client command identity and complete canonical input; trusted namespace is supplied separately.
@@ -2180,6 +2194,35 @@ export interface HostProcessDiagnostic {
     | "unsupported_version"
     | "host_start_failed"
     | "cleanup_incomplete";
+}
+export interface AccountSettings {
+  schemaVersion: 5;
+  kind: "accountSettings";
+  /**
+   * @maxItems 32
+   */
+  organizations: AccountOrganization[];
+  selected?: string;
+}
+/**
+ * Native-normalized organization configuration; canonical HTTPS origin and tenant validation belong to the native account adapter.
+ */
+export interface AccountOrganization {
+  id: string;
+  label: string;
+  origin: string;
+  tenantId: string;
+}
+export interface AccountStatus {
+  schemaVersion: 5;
+  kind: "accountStatus";
+  current?: UserContext;
+  failure?: AccountFailure;
+}
+export interface AccountFailure {
+  stage: AccountFailureStage;
+  reason: AccountFailureKind;
+  observedAtMs: Counter;
 }
 
 /**

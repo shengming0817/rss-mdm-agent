@@ -3,8 +3,11 @@
 //! rss-mdm 533b4c3df7d7e8ef3cd599becdaeec4db41d854f (authorization/http).
 //! ref: reqwest src/async_impl/{client,response}.rs@v0.13.5.
 use crate::self_service::{error, Result};
+pub use ai_session_contract::AccountOrganization as Organization;
+use ai_session_contract::{
+    AccountFailure, AccountFailureKind as Reason, AccountFailureStage as Stage, Counter,
+};
 use reqwest::{header, Client, Method};
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
@@ -14,58 +17,88 @@ use std::{
 };
 use uuid::Uuid;
 
+fn failure(stage: Stage, reason: Reason) -> crate::self_service::ServiceError {
+    macro_rules! code {
+        ($stage:literal) => {
+            match reason {
+                Reason::Configuration => concat!("account/", $stage, "/configuration"),
+                Reason::Denied => concat!("account/", $stage, "/denied"),
+                Reason::Unavailable => concat!("account/", $stage, "/unavailable"),
+                Reason::RateLimited => concat!("account/", $stage, "/rate_limited"),
+                Reason::Contract => concat!("account/", $stage, "/contract"),
+            }
+        };
+    }
+    let code = match stage {
+        Stage::Configuration => code!("configuration"),
+        Stage::Login => code!("login"),
+        Stage::Session => code!("session"),
+        Stage::Authorization => code!("authorization"),
+        Stage::Logout => code!("logout"),
+    };
+    error(code, "账户操作未完成")
+}
 fn unavailable() -> crate::self_service::ServiceError {
-    error(
-        "identity_unavailable",
-        "无法核验企业会话，请检查组织连接后重新登录",
-    )
+    failure(Stage::Configuration, Reason::Unavailable)
 }
 fn invalid() -> crate::self_service::ServiceError {
-    error(
-        "invalid_organization",
-        "请输入有效的 HTTPS 服务地址与租户 UUID",
+    failure(Stage::Configuration, Reason::Configuration)
+}
+fn status_error(stage: Stage, status: u16) -> crate::self_service::ServiceError {
+    failure(
+        stage,
+        match status {
+            401 | 403 => Reason::Denied,
+            429 => Reason::RateLimited,
+            408 | 500..=599 => Reason::Unavailable,
+            _ => Reason::Contract,
+        },
     )
 }
-fn denied() -> crate::self_service::ServiceError {
-    error(
-        "identity_denied",
-        "账号、组织或业务授权无效，请联系组织管理员",
-    )
-}
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Organization {
-    pub id: String,
-    pub label: String,
-    pub origin: String,
-    pub tenant_id: String,
-}
-impl Organization {
-    pub fn validate(&mut self) -> Result<()> {
-        let url = url::Url::parse(&self.origin).map_err(|_| invalid())?;
-        if url.scheme() != "https"
-            || url.host_str().is_none()
-            || !url.username().is_empty()
-            || url.password().is_some()
-            || url.query().is_some()
-            || url.fragment().is_some()
-            || url.path() != "/"
-        {
-            return Err(invalid());
+pub fn failure_snapshot(error: &crate::self_service::ServiceError) -> Option<AccountFailure> {
+    let (stage, reason) = if let Some(code) = error.code.strip_prefix("account/") {
+        let (stage, reason) = code.split_once('/')?;
+        (stage.parse().ok()?, reason.parse().ok()?)
+    } else {
+        match error.code {
+            "logout_unconfirmed" => (Stage::Logout, Reason::Unavailable),
+            "users_unavailable" => (Stage::Configuration, Reason::Unavailable),
+            "ai_unavailable" => (Stage::Session, Reason::Unavailable),
+            _ => return None,
         }
-        self.origin = url.origin().ascii_serialization();
-        self.tenant_id = uuid(&self.tenant_id)?;
-        self.label = self.label.trim().to_owned();
-        if self.label.is_empty()
-            || self.label.chars().count() > 64
-            || self.label.chars().any(char::is_control)
-        {
-            return Err(invalid());
-        }
-        let digest = Sha256::digest(format!("{}\n{}", self.origin, self.tenant_id));
-        self.id = format!("{digest:x}");
-        Ok(())
+    };
+    Some(AccountFailure {
+        stage,
+        reason,
+        observed_at_ms: Counter(super::execution::now().unwrap_or(0) as i64),
+    })
+}
+fn normalize_organization(value: &mut Organization) -> Result<()> {
+    let url = url::Url::parse(&value.origin).map_err(|_| invalid())?;
+    if url.scheme() != "https"
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || url.path() != "/"
+    {
+        return Err(invalid());
     }
+    value.origin = url.origin().ascii_serialization();
+    value.tenant_id = uuid(&value.tenant_id)?;
+    value.label = value.label.trim().to_owned();
+    if value.label.is_empty()
+        || value.label.chars().count() > 64
+        || value.label.chars().any(char::is_control)
+    {
+        return Err(invalid());
+    }
+    value.id = format!(
+        "{:x}",
+        Sha256::digest(format!("{}\n{}", value.origin, value.tenant_id))
+    );
+    Ok(())
 }
 fn uuid(value: &str) -> Result<String> {
     let id = Uuid::parse_str(value).map_err(|_| invalid())?;
@@ -93,7 +126,7 @@ impl Organizations {
             return Err(invalid());
         }
         for v in &mut values {
-            v.validate()?;
+            normalize_organization(v)?;
         }
         Ok(Self { path, values })
     }
@@ -108,7 +141,7 @@ impl Organizations {
             .ok_or_else(invalid)
     }
     pub fn save(&mut self, mut value: Organization) -> Result<Organization> {
-        value.validate()?;
+        normalize_organization(&mut value)?;
         let saved = value.clone();
         let mut next = self.values.clone();
         if let Some(old) = next.iter_mut().find(|v| v.id == value.id) {
@@ -119,10 +152,14 @@ impl Organizations {
             }
             next.push(value);
         }
+        let bytes = serde_json::to_vec(&next).map_err(|_| unavailable())?;
+        if bytes.len() > 65536 {
+            return Err(invalid());
+        }
         let temporary = self.path.with_extension(format!("{}.tmp", Uuid::new_v4()));
         let result = (|| {
             let mut file = native_process::private_storage::create_new(&temporary)?;
-            file.write_all(&serde_json::to_vec(&next)?)?;
+            file.write_all(&bytes)?;
             file.sync_all()?;
             drop(file);
             native_process::private_storage::replace(&temporary, &self.path)?;
@@ -147,27 +184,27 @@ pub struct Session {
     session: String,
     expires: u64,
 }
-async fn body(mut response: reqwest::Response) -> Result<Value> {
+async fn body(mut response: reqwest::Response, stage: Stage) -> Result<Value> {
     if !response.status().is_success() {
-        return Err(if response.status().is_client_error() {
-            denied()
-        } else {
-            unavailable()
-        });
+        return Err(status_error(stage, response.status().as_u16()));
     }
     let mut data = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|_| unavailable())? {
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| failure(stage, Reason::Unavailable))?
+    {
         if data.len() + chunk.len() > 262144 {
-            return Err(unavailable());
+            return Err(failure(stage, Reason::Contract));
         }
         data.extend_from_slice(&chunk);
     }
-    serde_json::from_slice(&data).map_err(|_| unavailable())
+    serde_json::from_slice(&data).map_err(|_| failure(stage, Reason::Contract))
 }
 impl Session {
     pub async fn login(organization: Organization, login: &str, password: String) -> Result<Self> {
         if login.is_empty() || login.len() > 256 || password.is_empty() || password.len() > 16384 {
-            return Err(denied());
+            return Err(failure(Stage::Login, Reason::Denied));
         }
         let client = Client::builder()
             .https_only(true)
@@ -175,7 +212,7 @@ impl Session {
             .timeout(Duration::from_secs(8))
             .connect_timeout(Duration::from_secs(4))
             .build()
-            .map_err(|_| unavailable())?;
+            .map_err(|_| failure(Stage::Login, Reason::Unavailable))?;
         Self::login_with_client(client, organization, login, password).await
     }
     pub(super) async fn login_with_client(
@@ -194,7 +231,7 @@ impl Session {
             .json(&json!({"login":login,"password":password}))
             .send()
             .await
-            .map_err(|_| unavailable())?;
+            .map_err(|_| failure(Stage::Login, Reason::Unavailable))?;
         let cookies: Vec<_> = response
             .headers()
             .get_all(header::SET_COOKIE)
@@ -207,9 +244,9 @@ impl Session {
         } else {
             String::new()
         };
-        let value = body(response).await?;
+        let value = body(response, Stage::Login).await?;
         if cookie.is_empty() || cookie.len() > 4096 {
-            return Err(unavailable());
+            return Err(failure(Stage::Login, Reason::Contract));
         }
         let mut session = Self {
             client,
@@ -229,36 +266,48 @@ impl Session {
         Ok(session)
     }
     fn accept_identity(&mut self, value: &Value, existing: bool) -> Result<()> {
+        let stage = if existing {
+            Stage::Session
+        } else {
+            Stage::Login
+        };
+        let contract = || failure(stage, Reason::Contract);
         let principal = uuid(
             value["identity"]["principalId"]
                 .as_str()
-                .ok_or_else(denied)?,
-        )?;
-        let session = uuid(value["session"]["id"].as_str().ok_or_else(denied)?)?;
+                .ok_or_else(contract)?,
+        )
+        .map_err(|_| contract())?;
+        let session =
+            uuid(value["session"]["id"].as_str().ok_or_else(contract)?).map_err(|_| contract())?;
         if existing && (self.principal != principal || self.session != session) {
-            return Err(denied());
+            return Err(failure(stage, Reason::Denied));
         }
         let idle = value["session"]["idleExpiresAt"]
             .as_u64()
-            .ok_or_else(denied)?;
+            .ok_or_else(contract)?;
         let absolute = value["session"]["absoluteExpiresAt"]
             .as_u64()
-            .ok_or_else(denied)?;
-        let expires = idle.min(absolute).checked_mul(1000).ok_or_else(denied)?;
-        if expires <= super::execution::now().map_err(|_| unavailable())? {
-            return Err(denied());
+            .ok_or_else(contract)?;
+        let expires = idle
+            .min(absolute)
+            .checked_mul(1000)
+            .filter(|n| *n <= 9007199254740991)
+            .ok_or_else(contract)?;
+        if expires <= super::execution::now().map_err(|_| failure(stage, Reason::Unavailable))? {
+            return Err(failure(stage, Reason::Denied));
         }
         let csrf = value["csrfToken"]
             .as_str()
             .filter(|v| !v.is_empty() && v.len() <= 4096)
-            .ok_or_else(denied)?;
+            .ok_or_else(contract)?;
         self.principal = principal;
         self.session = session;
         self.expires = expires;
         self.csrf = csrf.into();
         Ok(())
     }
-    async fn request(&self, method: Method, path: &str) -> Result<reqwest::Response> {
+    async fn request(&self, stage: Stage, method: Method, path: &str) -> Result<reqwest::Response> {
         self.client
             .request(method, format!("{}{path}", self.organization.origin))
             .header(header::COOKIE, &self.cookie)
@@ -267,29 +316,43 @@ impl Session {
             .header("x-csrf-token", &self.csrf)
             .send()
             .await
-            .map_err(|_| unavailable())
+            .map_err(|_| failure(stage, Reason::Unavailable))
     }
     pub async fn verify(&mut self) -> Result<()> {
         let value = body(
             self.request(
+                Stage::Session,
                 Method::GET,
                 &format!("/api/v2/tenants/{}/session", self.organization.tenant_id),
             )
             .await?,
+            Stage::Session,
         )
         .await?;
         self.accept_identity(&value, true)?;
-        let access = body(self.request(Method::GET, "/api/v1/authorization").await?).await?;
-        let instance = uuid(access["instanceId"].as_str().ok_or_else(denied)?)?;
+        let access = body(
+            self.request(Stage::Authorization, Method::GET, "/api/v1/authorization")
+                .await?,
+            Stage::Authorization,
+        )
+        .await?;
+        let instance = uuid(
+            access["instanceId"]
+                .as_str()
+                .ok_or_else(|| failure(Stage::Authorization, Reason::Contract))?,
+        )
+        .map_err(|_| failure(Stage::Authorization, Reason::Contract))?;
         if access["tenantId"].as_str() != Some(&self.organization.tenant_id)
             || access["principalId"].as_str() != Some(&self.principal)
             || (!self.instance.is_empty() && self.instance != instance)
         {
-            return Err(denied());
+            return Err(failure(Stage::Authorization, Reason::Denied));
         }
-        // A successful AuthN response is insufficient: the product must return at least one effective grant.
-        if access["grants"].as_array().is_none_or(|g| g.is_empty()) {
-            return Err(denied());
+        let grants = access["grants"]
+            .as_array()
+            .ok_or_else(|| failure(Stage::Authorization, Reason::Contract))?;
+        if grants.is_empty() {
+            return Err(failure(Stage::Authorization, Reason::Denied));
         }
         self.instance = instance;
         Ok(())
@@ -297,6 +360,7 @@ impl Session {
     pub async fn logout(&self) -> Result<()> {
         let response = self
             .request(
+                Stage::Logout,
                 Method::POST,
                 &format!(
                     "/api/v2/tenants/{}/session/logout",
@@ -307,7 +371,7 @@ impl Session {
         if response.status().is_success() || response.status().as_u16() == 401 {
             Ok(())
         } else {
-            Err(unavailable())
+            Err(status_error(Stage::Logout, response.status().as_u16()))
         }
     }
     pub fn context(&self) -> Result<ai_session_contract::UserContext> {
@@ -327,12 +391,79 @@ impl Session {
         );
         serde_json::from_value(json!({"schemaVersion":5,"kind":"userContext","generation":Uuid::new_v4().to_string(),
             "user":{"schemaVersion":5,"kind":"testUser","userId":actor,"displayName":self.organization.label,"nameKey":"enterprise"},
-            "identity":{"mode":"enterprise","authorityId":authority,"tenantId":self.organization.tenant_id,"principalId":self.principal,"organizationId":self.organization.id,"expiresAtMs":self.expires}})).map_err(|_| unavailable())
+            "identity":{"mode":"enterprise","authorityId":authority,"tenantId":self.organization.tenant_id,"principalId":self.principal,"organizationId":self.organization.id,"expiresAtMs":self.expires}})).map_err(|_| failure(Stage::Session, Reason::Contract))
     }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn status_classification_keeps_stage_and_distinguishes_retry_from_denial() {
+        for (status, reason) in [
+            (401, Reason::Denied),
+            (403, Reason::Denied),
+            (408, Reason::Unavailable),
+            (429, Reason::RateLimited),
+            (503, Reason::Unavailable),
+            (302, Reason::Contract),
+        ] {
+            let error = status_error(Stage::Authorization, status);
+            let snapshot = failure_snapshot(&error).unwrap();
+            assert_eq!(snapshot.stage, Stage::Authorization);
+            assert_eq!(snapshot.reason, reason);
+        }
+    }
+    fn organization() -> Organization {
+        Organization {
+            id: String::new(),
+            label: " Example ".into(),
+            origin: "https://EXAMPLE.com/".into(),
+            tenant_id: "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA".into(),
+        }
+    }
+    #[test]
+    fn organizations_reopen_normalized_records_and_refuse_corrupt_or_oversized_storage() {
+        let root = std::env::temp_dir().join(format!("rss-organizations-{}", Uuid::new_v4()));
+        native_process::private_storage::directory(&root).unwrap();
+        let mut store = Organizations::open(&root).unwrap();
+        let saved = store.save(organization()).unwrap();
+        let reopened = Organizations::open(&root).unwrap().get(&saved.id).unwrap();
+        assert_eq!(reopened.label, "Example");
+        assert_eq!(reopened.origin, "https://example.com");
+        assert_eq!(reopened.tenant_id, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+        for bytes in [
+            b"{not-json".to_vec(),
+            serde_json::to_vec(&vec![organization(); 33]).unwrap(),
+            vec![b' '; 65537],
+        ] {
+            std::fs::write(root.join("organizations.json"), bytes).unwrap();
+            assert!(Organizations::open(&root).is_err());
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn failed_destination_replacement_preserves_live_and_previous_persisted_configuration() {
+        let root =
+            std::env::temp_dir().join(format!("rss-organization-replace-{}", Uuid::new_v4()));
+        native_process::private_storage::directory(&root).unwrap();
+        let mut store = Organizations::open(&root).unwrap();
+        let saved = store.save(organization()).unwrap();
+        let original = std::fs::read(root.join("organizations.json")).unwrap();
+        let blocked = root.join("blocked.json");
+        std::fs::create_dir(&blocked).unwrap();
+        std::fs::write(blocked.join("marker"), "keep").unwrap();
+        store.path = blocked;
+        let mut changed = organization();
+        changed.label = "Changed".into();
+        assert!(store.save(changed).is_err());
+        assert_eq!(store.get(&saved.id).unwrap().label, "Example");
+        assert_eq!(
+            std::fs::read(root.join("organizations.json")).unwrap(),
+            original
+        );
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 2);
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn organization_requires_an_exact_https_origin_and_non_nil_tenant() {
         for origin in [
@@ -348,7 +479,10 @@ mod tests {
                 origin: origin.into(),
                 tenant_id: Uuid::new_v4().to_string(),
             };
-            assert!(organization.validate().is_err(), "{origin}");
+            assert!(
+                normalize_organization(&mut organization).is_err(),
+                "{origin}"
+            );
         }
     }
     #[test]

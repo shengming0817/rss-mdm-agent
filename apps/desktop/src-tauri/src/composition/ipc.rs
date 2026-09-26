@@ -128,34 +128,40 @@ pub async fn account_logout(state: State<'_, DesktopRuntime>) -> Result<()> {
 #[tauri::command]
 pub fn account_status(
     state: State<'_, DesktopRuntime>,
-) -> Result<Option<ai_session_contract::UserContext>> {
-    Ok(state
-        .users
-        .lock()
-        .map_err(|_| error("users_unavailable", "账户不可用"))?
-        .page()
-        .current)
+) -> Result<ai_session_contract::AccountStatus> {
+    state.account_status()
 }
 #[tauri::command]
 pub fn account_organizations(
     state: State<'_, DesktopRuntime>,
-) -> Result<Vec<super::account::Organization>> {
-    Ok(state
-        .organizations
-        .lock()
-        .map_err(|_| error("users_unavailable", "组织配置不可用"))?
-        .list())
+) -> Result<ai_session_contract::AccountSettings> {
+    Ok(ai_session_contract::AccountSettings {
+        kind: ai_session_contract::AccountSettingsKind::AccountSettings,
+        schema_version: ai_session_contract::AccountSettingsSchemaVersion::VALUE,
+        organizations: state
+            .organizations
+            .lock()
+            .map_err(|_| error("users_unavailable", "组织配置不可用"))?
+            .list(),
+        selected: None,
+    })
 }
 #[tauri::command]
 pub fn account_save_organization(
     state: State<'_, DesktopRuntime>,
     input: serde_json::Value,
-) -> Result<super::account::Organization> {
-    state
+) -> Result<ai_session_contract::AccountSettings> {
+    let mut settings = state
         .organizations
         .lock()
-        .map_err(|_| error("users_unavailable", "组织配置不可用"))?
-        .save(decode(input)?)
+        .map_err(|_| error("users_unavailable", "组织配置不可用"))?;
+    let saved = settings.save(decode(input)?)?;
+    Ok(ai_session_contract::AccountSettings {
+        kind: ai_session_contract::AccountSettingsKind::AccountSettings,
+        schema_version: ai_session_contract::AccountSettingsSchemaVersion::VALUE,
+        organizations: settings.list(),
+        selected: Some(saved.id),
+    })
 }
 #[tauri::command]
 pub async fn account_login<R: tauri::Runtime>(
