@@ -91,11 +91,7 @@ unsafe extern "system" fn service_main(_: u32, _: *mut *mut u16) {
     FAILED.store(failed, Ordering::Release);
     status(
         SERVICE_STOPPED,
-        if failed {
-            ERROR_SERVICE_SPECIFIC_ERROR
-        } else {
-            0
-        },
+        if failed { ERROR_PROCESS_ABORTED } else { 0 },
     );
 }
 /// Run a LocalSystem SCM host or the explicitly selected current interactive-session helper.
@@ -172,7 +168,109 @@ fn listener(name: &str, sddl: &str) -> Result<NamedPipeServer, Error> {
     unsafe { NamedPipeServer::from_raw_handle(handle.into_raw_handle()) }
         .map_err(|_| Error::Unavailable)
 }
-async fn call(pipe: &mut NamedPipeServer, handler: &mut dyn Handler) -> Result<(), Error> {
+struct Call {
+    pid: u32,
+    session: u32,
+    connection: OwnedHandle,
+    _process: OwnedHandle,
+    bytes: Vec<u8>,
+    reply: tokio::sync::oneshot::Sender<Vec<u8>>,
+}
+struct OwnerThread {
+    sender: std::sync::mpsc::SyncSender<Call>,
+    stopping: std::sync::Arc<AtomicBool>,
+    progress: std::sync::Arc<Mutex<std::time::Instant>>,
+    thread: Option<std::thread::JoinHandle<Result<(), Error>>>,
+}
+impl OwnerThread {
+    fn new(mut handler: Box<dyn Handler>) -> Result<Self, Error> {
+        let (sender, receiver) = std::sync::mpsc::sync_channel::<Call>(1);
+        let stopping = std::sync::Arc::new(AtomicBool::new(false));
+        let stopped = stopping.clone();
+        let progress = std::sync::Arc::new(Mutex::new(std::time::Instant::now()));
+        let clock = progress.clone();
+        let thread = std::thread::Builder::new()
+            .name("execution-owner".into())
+            .spawn(move || {
+                let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let mut previous_error = None;
+                    while !stopped.load(Ordering::Acquire) {
+                        match receiver.recv_timeout(Duration::from_millis(100)) {
+                            Ok(call) => {
+                                // If the connection expired before dequeue, no mutation starts.
+                                if !call.reply.is_closed() {
+                                    let peer = Peer {
+                                        pid: call.pid,
+                                        session: call.session,
+                                        uid: None,
+                                        native: raw(&call.connection) as usize,
+                                    };
+                                    let _ = call.reply.send(host::dispatch(
+                                        handler.as_mut(),
+                                        &peer,
+                                        &call.bytes,
+                                    ));
+                                }
+                            }
+                            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                        }
+                        let error = handler.tick().err().map(|e| e.to_string());
+                        if error != previous_error {
+                            if let Some(ref error) = error {
+                                eprintln!("execution reconcile: {error}")
+                            }
+                            previous_error = error;
+                        }
+                        *clock.lock().map_err(|_| Error::Unavailable)? = std::time::Instant::now();
+                    }
+                    Ok(())
+                }))
+                .unwrap_or(Err(Error::Unavailable));
+                let stopped =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handler.stop()))
+                        .unwrap_or(Err(Error::Unavailable));
+                outcome.and(stopped)
+            })
+            .map_err(|_| Error::Unavailable)?;
+        Ok(Self {
+            sender,
+            stopping,
+            progress,
+            thread: Some(thread),
+        })
+    }
+    fn healthy(&self) -> bool {
+        !self.thread.as_ref().is_none_or(|t| t.is_finished())
+            && self
+                .progress
+                .lock()
+                .is_ok_and(|p| p.elapsed() < Duration::from_secs(5))
+    }
+    fn finish(&mut self) -> Result<(), Error> {
+        self.stopping.store(true, Ordering::Release);
+        let Some(thread) = self.thread.take() else {
+            return Ok(());
+        };
+        let until = std::time::Instant::now() + Duration::from_secs(3);
+        while !thread.is_finished() && std::time::Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        if !thread.is_finished() {
+            // Do not detach an owner which may still mutate/hold jobs. End this dedicated host;
+            // the kernel closes all job handles and durable intents recover as Unknown.
+            status(SERVICE_STOPPED, ERROR_TIMEOUT);
+            std::process::exit(ERROR_TIMEOUT as i32);
+        }
+        thread.join().unwrap_or(Err(Error::Unavailable))
+    }
+}
+impl Drop for OwnerThread {
+    fn drop(&mut self) {
+        let _ = self.finish();
+    }
+}
+async fn call(pipe: &mut NamedPipeServer, owner: &OwnerThread) -> Result<(), Error> {
     let mut pid = 0;
     let mut session = 0;
     if unsafe { GetNamedPipeClientProcessId(pipe.as_raw_handle(), &mut pid) } == 0
@@ -180,14 +278,23 @@ async fn call(pipe: &mut NamedPipeServer, handler: &mut dyn Handler) -> Result<(
     {
         return Err(Error::Denied);
     }
-    // Keep the peer process alive as an identity object throughout the callback; no DTO PID trust.
-    let _process = own(unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) })?;
-    let peer = Peer {
-        pid,
-        uid: None,
-        session,
-        native: pipe.as_raw_handle() as usize,
-    };
+    let process = own(unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) })?;
+    let mut connection = null_mut();
+    if unsafe {
+        DuplicateHandle(
+            GetCurrentProcess(),
+            pipe.as_raw_handle(),
+            GetCurrentProcess(),
+            &mut connection,
+            0,
+            0,
+            DUPLICATE_SAME_ACCESS,
+        )
+    } == 0
+    {
+        return Err(Error::Unavailable);
+    }
+    let connection = own(connection)?;
     let size = pipe.read_u32_le().await.map_err(|_| Error::Unavailable)? as usize;
     if size == 0 || size > 65536 {
         return Err(Error::InvalidInput);
@@ -196,7 +303,19 @@ async fn call(pipe: &mut NamedPipeServer, handler: &mut dyn Handler) -> Result<(
     pipe.read_exact(&mut bytes)
         .await
         .map_err(|_| Error::Unavailable)?;
-    let reply = host::dispatch(handler, &peer, &bytes);
+    let (reply, received) = tokio::sync::oneshot::channel();
+    owner
+        .sender
+        .try_send(Call {
+            pid,
+            session,
+            connection,
+            _process: process,
+            bytes,
+            reply,
+        })
+        .map_err(|_| Error::Capacity)?;
+    let reply = received.await.map_err(|_| Error::Unavailable)?;
     if reply.len() > 65536 {
         return Err(Error::Unavailable);
     }
@@ -208,47 +327,37 @@ async fn call(pipe: &mut NamedPipeServer, handler: &mut dyn Handler) -> Result<(
         .map_err(|_| Error::Unavailable)?;
     Ok(())
 }
-fn drive(mut handler: Box<dyn Handler>, system: bool) -> Result<(), Error> {
+fn drive(handler: Box<dyn Handler>, system: bool) -> Result<(), Error> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|_| Error::Unavailable)?;
-    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        runtime.block_on(async {
+    let mut owner = OwnerThread::new(handler)?;
+    let outcome=runtime.block_on(async{
         let(name,sddl)=endpoint(system)?;
         let mut pipe=listener(&name,&sddl)?;
-        if system{status(SERVICE_RUNNING,0)}
-        let mut previous_error=None;
+        if system {status(SERVICE_RUNNING,0)}
         while !stopping(){
+            if !owner.healthy(){return Err(Error::Unavailable)}
             tokio::select!{
                 connected=pipe.connect()=>{
                     connected.map_err(|_|Error::Unavailable)?;
-                    let mut request=Box::pin(call(&mut pipe,handler.as_mut()));
-                    // Bounded connection lifetime; cancellation closes a pending read/write.
+                    let mut request=Box::pin(call(&mut pipe,&owner));
                     let deadline=tokio::time::sleep(Duration::from_secs(5));tokio::pin!(deadline);
-                    loop{tokio::select!{_=&mut request=>break,_=&mut deadline=>break,_=tokio::time::sleep(Duration::from_millis(100))=>{if stopping(){break}}}}
+                    loop {tokio::select!{
+                        _=&mut request=>break,
+                        _=&mut deadline=>break,
+                        _=tokio::time::sleep(Duration::from_millis(100))=>{if stopping() || !owner.healthy(){break}}
+                    }}
                     drop(request);
                     pipe.disconnect().map_err(|_|Error::Unavailable)?;
                 },
                 _=tokio::time::sleep(Duration::from_millis(100))=>{}
             }
-            let error=handler.tick().err().map(|e|e.to_string());
-            if error!=previous_error{if let Some(ref error)=error{eprintln!("execution reconcile: {error}")}previous_error=error;}
         }
         Ok(())
-    })
-    }));
-    // A panicking handler fails the host closed. Never continue accepting requests after panic.
-    let result = match outcome {
-        Ok(value) => value,
-        Err(_) => {
-            stop();
-            Err(Error::Unavailable)
-        }
-    };
-    let stopped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handler.stop()))
-        .unwrap_or(Err(Error::Unavailable));
-    result.and(stopped)
+    });
+    outcome.and(owner.finish())
 }
 /// Read-only mechanism probe. No production admission context is constructed.
 pub fn query(bytes: &[u8], system: bool) -> Result<Vec<u8>, Error> {
@@ -306,15 +415,92 @@ mod tests {
         let frame = br#"{"version":2,"request":{"method":"status","request":"probe"}}"#;
         client.write_u32_le(frame.len() as u32).await.unwrap();
         client.write_all(frame).await.unwrap();
-        call(&mut pipe, &mut host::Unbound).await.unwrap();
+        let mut owner = OwnerThread::new(Box::new(host::Unbound)).unwrap();
+        call(&mut pipe, &owner).await.unwrap();
         let size = client.read_u32_le().await.unwrap();
         let mut reply = vec![0; size as usize];
         client.read_exact(&mut reply).await.unwrap();
         assert_eq!(reply, br#"{"kind":"rejected"}"#);
         client.write_u32_le(65537).await.unwrap();
         assert!(matches!(
-            call(&mut pipe, &mut host::Unbound).await,
+            call(&mut pipe, &owner).await,
             Err(Error::InvalidInput)
         ));
+        owner.finish().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod deadline_tests {
+    use super::*;
+    struct Slow(Duration);
+    impl Handler for Slow {
+        fn handle(&mut self, _: &Peer, _: host::Request) -> host::Reply {
+            std::thread::sleep(self.0);
+            host::Reply::Rejected
+        }
+        fn tick(&mut self) -> Result<(), Error> {
+            Ok(())
+        }
+        fn stop(&mut self) -> Result<(), Error> {
+            Ok(())
+        }
+    }
+    #[tokio::test]
+    async fn synchronous_handler_cannot_block_connection_deadline() {
+        let (subject, _) = token_identity().unwrap();
+        let name = format!(r"\\.\pipe\rss-deadline-test-{}", nonce().unwrap());
+        let mut pipe = listener(&name, &format!("D:P(A;;GA;;;{subject})")).unwrap();
+        let mut client = ClientOptions::new().open(&name).unwrap();
+        pipe.connect().await.unwrap();
+        let bytes = br#"{"version":2,"request":{"method":"status","request":"probe"}}"#;
+        client.write_u32_le(bytes.len() as u32).await.unwrap();
+        client.write_all(bytes).await.unwrap();
+        let mut owner = OwnerThread::new(Box::new(Slow(Duration::from_millis(300)))).unwrap();
+        let before = std::time::Instant::now();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), call(&mut pipe, &owner))
+                .await
+                .is_err()
+        );
+        assert!(before.elapsed() < Duration::from_millis(200));
+        pipe.disconnect().unwrap();
+        owner.finish().unwrap();
+    }
+    #[test]
+    #[ignore = "subprocess-only blocked shutdown fixture"]
+    fn blocked_owner_fixture() {
+        struct Blocked;
+        impl Handler for Blocked {
+            fn handle(&mut self, _: &Peer, _: host::Request) -> host::Reply {
+                host::Reply::Rejected
+            }
+            fn tick(&mut self) -> Result<(), Error> {
+                Ok(())
+            }
+            fn stop(&mut self) -> Result<(), Error> {
+                std::thread::sleep(Duration::from_secs(30));
+                Ok(())
+            }
+        }
+        OwnerThread::new(Box::new(Blocked))
+            .unwrap()
+            .finish()
+            .unwrap();
+        panic!("blocked owner must terminate the dedicated host instead of detaching");
+    }
+    #[test]
+    fn blocked_owner_ends_the_host_with_a_bounded_error() {
+        let start = std::time::Instant::now();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "windows::service::deadline_tests::blocked_owner_fixture",
+                "--ignored",
+            ])
+            .status()
+            .unwrap();
+        assert_eq!(status.code(), Some(ERROR_TIMEOUT as i32));
+        assert!(start.elapsed() < Duration::from_secs(6));
     }
 }

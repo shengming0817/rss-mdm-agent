@@ -22,3 +22,8 @@ PowerShell 7 固定 file profile 和 OsqueryInfoV1 共用物化与输出链。�
 Windows 以挂起状态创建目标，PROC_THREAD_ATTRIBUTE_JOB_LIST 在创建时原子绑定禁止 breakaway、kill-on-close 的 Job；确认成员关系后恢复 CreateProcess 返回的原始线程。HANDLE_LIST 仅允许继承三条标准流。结束后核实 Job 活动进程数为零，查询失败保持 Unknown；恢复不按持久化 PID/Job 名称重新获得终止权限。退出零仍不是效果成功。
 
 Windows 测试命令为 `cargo test -p execution-runner`；包含真实 Job 后代、breakaway、owner 丢失和 Named Pipe 机制测试，不要求生产可信入口。PowerShell/管理员安装与真实用户会话需要另行在目标环境验证；交叉编译不能替代这些结果。
+
+
+Windows transport 与串行 application owner 分线程：连接最多等待 5 秒；排队请求在调用前发现响应端已关闭则不启动 mutation。已经进入 application 的请求失去响应不能解释为未提交，仍以原 request/attempt 查询恢复。owner 5 秒无进展则停止接入，关闭等待最多 3 秒；若 handler 无法收尾，专用宿主以 ERROR_TIMEOUT 退出，禁止 detach 仍持有 Job/SQLite 的 owner。系统失败用 ERROR_PROCESS_ABORTED 上报，日志不含执行 payload。
+
+Windows runner 测试需要受保护安装的 `C:\Program Files\PowerShell\7\pwsh.exe`，可仅在测试进程以 `RSS_TEST_PWSH7` 指定受保护的同版本绝对路径；缺失时测试明确失败，不跳过伪报通过。测试通过 Test carrier 装配实际 NativeRunner，再验证 Job capture 的 SQLite 持久化/ack/重开不重派；该 carrier 只编译进测试二进制。

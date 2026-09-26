@@ -246,3 +246,23 @@ pub(crate) fn payload(
     }
     created
 }
+
+pub(crate) fn executable(path: &Path) -> Result<(), Error> {
+    local_path(path)?;
+    if !path
+        .extension()
+        .and_then(|s| s.to_str())
+        .is_some_and(|s| s.eq_ignore_ascii_case("exe"))
+    {
+        return Err(Error::Denied);
+    }
+    Ok(())
+}
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn extensionless_executable_cannot_select_an_unhashed_exe() {
+        assert!(super::executable(std::path::Path::new(r"C:\trusted\pwsh")).is_err());
+        assert!(super::executable(std::path::Path::new(r"C:\trusted\pwsh.EXE")).is_ok());
+    }
+}

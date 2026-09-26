@@ -45,9 +45,14 @@ if ($Scope -eq 'System') {
     $Path = Assert-Binary
     New-Service -Name $Name -BinaryPathName ('"' + $Path + '"') -StartupType Manual -DisplayName 'RSS execution candidate' | Out-Null
     try { Start-Service -Name $Name } catch {
-        & sc.exe delete $Name | Out-Null
-        if ($LASTEXITCODE -ne 0) { Write-Warning 'Rollback failed; inspect the candidate service' }
-        throw
+        $StartError = $_
+        try {
+            Stop-Service -Name $Name -ErrorAction Stop
+            (Get-Service -Name $Name).WaitForStatus('Stopped', [TimeSpan]::FromSeconds(10))
+            & sc.exe delete $Name | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'SCM rollback deletion failed' }
+        } catch { Write-Warning "Rollback failed; registration retained for inspection: $_" }
+        throw $StartError
     }
 } else {
     $Task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
@@ -66,5 +71,17 @@ if ($Scope -eq 'System') {
     $TaskAction = New-ScheduledTaskAction -Execute $Path -Argument '--user'
     $Settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances Parallel
     Register-ScheduledTask -TaskName $TaskName -Principal $Principal -Trigger $Trigger -Action $TaskAction -Settings $Settings | Out-Null
-    try { Start-ScheduledTask -TaskName $TaskName } catch { Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false; throw }
+    try { Start-ScheduledTask -TaskName $TaskName } catch {
+        $StartError = $_
+        try {
+            Stop-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+            $Deadline = [DateTime]::UtcNow.AddSeconds(10)
+            while ((Get-ScheduledTask -TaskName $TaskName).State -eq 'Running') {
+                if ([DateTime]::UtcNow -ge $Deadline) { throw 'User helper stop timed out' }
+                Start-Sleep -Milliseconds 100
+            }
+            Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+        } catch { Write-Warning "Rollback failed; registration retained for inspection: $_" }
+        throw $StartError
+    }
 }

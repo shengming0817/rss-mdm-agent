@@ -244,6 +244,8 @@ pub(crate) async fn spawn(
     let (stdout, childout) = pipe(false).await?;
     let (stderr, childerr) = pipe(false).await?;
     let command = command.as_std();
+    super::files::executable(std::path::Path::new(command.get_program()))
+        .map_err(io::Error::other)?;
     let application = wide(command.get_program());
     let program = command
         .get_program()
@@ -473,5 +475,83 @@ mod tests {
             .unwrap()
             .unwrap()
             .success());
+    }
+}
+
+#[cfg(test)]
+mod crash_tests {
+    use super::*;
+    #[test]
+    #[ignore = "subprocess-only crash owner"]
+    fn crash_owner_fixture() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "windows::process::tests::child_fixture",
+                    "--ignored",
+                ])
+                .env_clear()
+                .env("RSS_JOB_LEAF", "1")
+                .current_dir(std::env::current_dir().unwrap());
+            let mut owner = Owner::prepare(&mut command).unwrap();
+            let child = spawn(
+                &mut command,
+                &mut owner,
+                &std::sync::atomic::AtomicBool::new(false),
+                Instant::now() + Duration::from_secs(5),
+            )
+            .await
+            .unwrap();
+            let pid = unsafe { GetProcessId(raw(&child.process)) };
+            std::fs::write(
+                std::env::var_os("RSS_JOB_PID_FILE").unwrap(),
+                pid.to_string(),
+            )
+            .unwrap();
+            std::thread::sleep(Duration::from_secs(30));
+            // The parent must kill this fixture without running Rust destructors.
+        });
+    }
+    #[test]
+    fn kernel_closes_job_when_owner_process_is_killed() {
+        let path = std::env::temp_dir().join(format!("rss-job-{}.txt", nonce().unwrap()));
+        let mut owner = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "windows::process::crash_tests::crash_owner_fixture",
+                "--ignored",
+            ])
+            .env("RSS_JOB_PID_FILE", &path)
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let until = Instant::now() + Duration::from_secs(10);
+        let pid = loop {
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                if let Ok(pid) = text.parse::<u32>() {
+                    break pid;
+                }
+            }
+            if Instant::now() >= until {
+                let _ = owner.kill();
+                let _ = owner.wait();
+                panic!("owner did not publish child")
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        let process = own(unsafe { OpenProcess(SYNCHRONIZE, 0, pid) }).unwrap();
+        owner.kill().unwrap();
+        owner.wait().unwrap();
+        assert_eq!(
+            unsafe { WaitForSingleObject(raw(&process), 3000) },
+            WAIT_OBJECT_0
+        );
+        std::fs::remove_file(path).unwrap();
     }
 }

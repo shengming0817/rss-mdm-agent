@@ -355,7 +355,18 @@ async fn run(
     let Ok(mut child) = platform::spawn(&mut command, &mut owner, &cancel, deadline).await else {
         publish(
             &shared,
-            rejected(&plan, &attempt, &id, ProcessEnd::Rejected),
+            rejected(
+                &plan,
+                &attempt,
+                &id,
+                if cancel.load(Ordering::Acquire) {
+                    ProcessEnd::Cancelled
+                } else if Instant::now() >= deadline {
+                    ProcessEnd::TimedOut
+                } else {
+                    ProcessEnd::Rejected
+                },
+            ),
         );
         return;
     };
@@ -539,3 +550,6 @@ async fn run(
 }
 #[cfg(test)]
 mod tests;
+
+#[cfg(all(test, windows))]
+mod windows_tests;
