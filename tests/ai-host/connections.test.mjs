@@ -1,3 +1,4 @@
+import { fixturePersistence } from "./harness.mjs";
 import { workerRuntime } from "./worker-runtime.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -67,6 +68,7 @@ test("real Host lazily opens phases, drains accepted work before switching, and 
     disposed = 0;
   const host = unwrap(
     await createHost({
+      credentialPersistence: fixturePersistence(store),
       workerRuntime,
       store,
       launchFences: store,
@@ -319,6 +321,7 @@ test("switching test users cancels queued model work and keeps the old user's re
   );
   const host = unwrap(
     await createHost({
+      credentialPersistence: fixturePersistence(store),
       workerRuntime,
       store,
       launchFences: store,
@@ -439,6 +442,7 @@ test("ordinary runtime snapshot cleanup is retained and retried after a failure"
   let attempts = 0;
   const host = unwrap(
     await createHost({
+      credentialPersistence: fixturePersistence(store),
       workerRuntime,
       store,
       launchFences: store,
@@ -501,6 +505,7 @@ test("saving is independent; explicit testing records success and preserves inpu
   const diagnostics = [];
   const host = unwrap(
     await createHost({
+      credentialPersistence: fixturePersistence(store),
       workerRuntime,
       store,
       launchFences: store,
@@ -587,6 +592,7 @@ test("failed probe disposal leaves worker capacity available and retries cleanup
   let disposals = 0;
   const host = unwrap(
     await createHost({
+      credentialPersistence: fixturePersistence(store),
       workerRuntime,
       store,
       launchFences: store,
@@ -648,7 +654,7 @@ test("typed resolver and persistence failures keep closed codes and credential d
       launchFences: store,
       delivery: null,
       onDiagnostic: (value) => diagnostics.push(value),
-      persistConnection: async () => {
+      credentialPersistence: async () => {
         throw new HostFailure({
           code: "authentication_required",
           retry: "never",
@@ -722,7 +728,11 @@ test("application persistence retains ciphertext without decrypting and lets onl
       launchFences: store,
       delivery: null,
       callerAvailable: () => available,
-      persistConnection: connectionPersistence(store, () => available),
+      credentialPersistence: connectionPersistence(
+        store,
+        () => available,
+        async () => true,
+      ),
       resolve: async (_caller, options, namespace) => ({
         configuration: {
           namespace,
@@ -745,7 +755,7 @@ test("application persistence retains ciphertext without decrypting and lets onl
     await rm(root, { recursive: true, force: true });
   });
   const first = unwrap(
-    await host.saveConnection(
+    await host.saveNativeConnection(
       caller,
       draftOf(connection("one")),
       null,
@@ -864,6 +874,7 @@ test("user fence settles persistent offline queues across pages and propagates d
   };
   const host = unwrap(
     await createHost({
+      credentialPersistence: fixturePersistence(store),
       workerRuntime,
       store,
       launchFences: store,
@@ -948,6 +959,7 @@ test("verification preserves definite failures and never calls unknown acceptanc
     );
     const host = unwrap(
       await createHost({
+        credentialPersistence: fixturePersistence(store),
         workerRuntime,
         store,
         launchFences: store,
@@ -1001,6 +1013,7 @@ test("controlled connection verification requires the dedicated harmless tool ca
     );
     const host = unwrap(
       await createHost({
+        credentialPersistence: fixturePersistence(store),
         workerRuntime,
         store,
         launchFences: store,

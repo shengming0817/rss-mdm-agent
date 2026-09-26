@@ -4047,6 +4047,20 @@ impl ::std::convert::TryFrom<String> for Counter {
         value.parse()
     }
 }
+#[doc = "Authenticated native caller forwarded unchanged for Rust-owned credential projection."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct CredentialCaller {
+    #[serde(rename = "authorityId")]
+    #[doc = "`authority_id` member; see its generated type and parent schema."]
+    pub authority_id: Id,
+    #[serde(rename = "principalId")]
+    #[doc = "`principal_id` member; see its generated type and parent schema."]
+    pub principal_id: Id,
+    #[serde(rename = "tenantId")]
+    #[doc = "`tenant_id` member; see its generated type and parent schema."]
+    pub tenant_id: Id,
+}
 #[doc = "`CredentialOwner`"]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
@@ -11393,6 +11407,19 @@ pub enum NativeCall {
         #[doc = "`schema_version` member; see its generated type and parent schema."]
         schema_version: NativeCallSchemaVersion,
     },
+    #[doc = "NativeCallMatchCredential"]
+    #[serde(rename = "matchCredential")]
+    MatchCredential {
+        #[doc = "`data` member; see its generated type and parent schema."]
+        data: NativeMatchCredentialData,
+        #[doc = "`id` member; see its generated type and parent schema."]
+        id: Counter,
+        #[doc = "`kind` member; see its generated type and parent schema."]
+        kind: NativeCallKind,
+        #[serde(rename = "schemaVersion")]
+        #[doc = "`schema_version` member; see its generated type and parent schema."]
+        schema_version: NativeCallSchemaVersion,
+    },
     #[doc = "NativeCallCredentialContext"]
     #[serde(rename = "credentialContext")]
     CredentialContext {
@@ -11631,14 +11658,27 @@ impl<'de> ::serde::Deserialize<'de> for NativeEventSchemaVersion {
             .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
     }
 }
+#[doc = "`NativeMatchCredentialData`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct NativeMatchCredentialData {
+    #[doc = "`caller` member; see its generated type and parent schema."]
+    pub caller: CredentialCaller,
+    #[doc = "`connection` member; see its generated type and parent schema."]
+    pub connection: ConnectionDraft,
+    #[doc = "`previous` member; see its generated type and parent schema."]
+    pub previous: ConnectionDraft,
+}
 #[doc = "`NativeOpenCredentialData`"]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct NativeOpenCredentialData {
+    #[doc = "`caller` member; see its generated type and parent schema."]
+    pub caller: CredentialCaller,
+    #[doc = "`connection` member; see its generated type and parent schema."]
+    pub connection: ConnectionDraft,
     #[doc = "`encrypted` member; see its generated type and parent schema."]
     pub encrypted: EncryptedCredential,
-    #[doc = "`owner` member; see its generated type and parent schema."]
-    pub owner: CredentialOwner,
 }
 #[doc = "`NativeReply`"]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
@@ -15134,6 +15174,11 @@ impl std::fmt::Debug for Counter {
         f.write_str(concat!(stringify!(Counter), "([redacted])"))
     }
 }
+impl std::fmt::Debug for CredentialCaller {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(CredentialCaller), "([redacted])"))
+    }
+}
 impl std::fmt::Debug for CredentialOwner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(stringify!(CredentialOwner), "([redacted])"))
@@ -16281,6 +16326,14 @@ impl std::fmt::Debug for NativeEventSchemaVersion {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(
             stringify!(NativeEventSchemaVersion),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for NativeMatchCredentialData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(NativeMatchCredentialData),
             "([redacted])"
         ))
     }

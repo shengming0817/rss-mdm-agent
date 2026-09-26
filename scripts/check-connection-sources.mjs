@@ -1,3 +1,4 @@
+import { connectionPersistence } from "../apps/ai-host/dist/secrets.js";
 import { sourceSummary } from "./connection-source-results.mjs";
 import {
   mkdtemp,
@@ -40,6 +41,11 @@ try {
   if (!opened.ok) throw Error(opened.error.code);
   const store = opened.value;
   const created = await createHost({
+    credentialPersistence: connectionPersistence(
+      store,
+      () => true,
+      async () => false,
+    ),
     store,
     launchFences: store,
     delivery: null,

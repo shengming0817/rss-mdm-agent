@@ -482,7 +482,10 @@ impl DesktopRuntime {
             .ok_or_else(unavailable)?;
         let encrypted = if let Some(secret) = secret {
             let context = self.current(generation)?;
-            let owner = super::credentials::credential_owner(&context, &connection)?;
+            let owner = super::credentials::credential_owner(
+                &super::credentials::credential_caller(&context),
+                &connection,
+            )?;
             let has_secrets = process.control.credential_context(generation).await?;
             self.current(generation)?;
             let master = self.master.clone();

@@ -1,3 +1,4 @@
+import { fixturePersistence } from "./harness.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -33,6 +34,7 @@ test("save persists without resolving a provider; failed testing cannot block su
   let resolutions = 0;
   const host = unwrap(
     await createHost({
+      credentialPersistence: fixturePersistence(store),
       store,
       launchFences: store,
       workerRuntime,
@@ -86,6 +88,7 @@ test("testing never locks editing and a delayed result cannot overwrite an edit 
   let started, release;
   const host = unwrap(
     await createHost({
+      credentialPersistence: fixturePersistence(store),
       store,
       launchFences: store,
       workerRuntime,
@@ -140,4 +143,20 @@ test("testing never locks editing and a delayed result cannot overwrite an edit 
       saved.value,
     );
   }
+});
+
+test("Host rejects a missing credential persistence dependency before opening its store", async () => {
+  const created = await createHost({
+    store: {},
+    launchFences: {},
+    workerRuntime,
+    delivery: null,
+    resolve: async () => {
+      throw new Error("unused");
+    },
+  });
+  assert.deepEqual(created, {
+    ok: false,
+    error: { code: "invalid_input", retry: "never" },
+  });
 });

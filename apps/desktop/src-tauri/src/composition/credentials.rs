@@ -82,29 +82,87 @@ impl MasterKey {
         Ok(key)
     }
 }
-/// Bind encryption to the exact native product caller and provider target.
-pub fn credential_owner(
+/// Project the native product identity, never a display name or provider identity.
+pub fn credential_caller(
     context: &ai_session_contract::UserContext,
+) -> ai_session_contract::CredentialCaller {
+    use ai_session_contract::{AccountIdentity, CredentialCaller};
+    match &context.identity {
+        Some(AccountIdentity::Guest {
+            tenant_id,
+            principal_id,
+            authority_id,
+        })
+        | Some(AccountIdentity::Enterprise {
+            tenant_id,
+            principal_id,
+            authority_id,
+            ..
+        }) => CredentialCaller {
+            tenant_id: tenant_id.clone(),
+            principal_id: principal_id.clone(),
+            authority_id: authority_id.clone(),
+        },
+        None => CredentialCaller {
+            tenant_id: "test-users".parse().expect("valid native tenant"),
+            principal_id: context.user.user_id.clone(),
+            authority_id: "desktop-fixture".parse().expect("valid native authority"),
+        },
+    }
+}
+/// Single typed projection used by seal, open and ciphertext retention.
+pub fn credential_owner(
+    caller: &ai_session_contract::CredentialCaller,
     connection: &ai_session_contract::ConnectionDraft,
 ) -> Result<ai_session_contract::CredentialOwner> {
-    let value = serde_json::to_value(connection).map_err(|_| error("input", "无效连接"))?;
-    if value["source"]["type"] != "custom_api" {
+    use ai_session_contract::{
+        ConnectionDraftProvider, ConnectionSource, ConnectionSourceCredentialType, CredentialOwner,
+        CredentialOwnerCredentialType, CredentialOwnerProvider,
+    };
+    let ConnectionSource::CustomApi {
+        api_url,
+        credential_type,
+        ..
+    } = &connection.source
+    else {
         return Err(error("input", "该连接不接受凭据"));
-    }
-    let endpoint = url::Url::parse(value["source"]["apiUrl"].as_str().ok_or_else(unavailable)?)
+    };
+    let endpoint = url::Url::parse(api_url)
         .map_err(|_| error("input", "API 地址无效"))?
-        .to_string();
-    let identity = serde_json::to_value(&context.identity).map_err(|_| unavailable())?;
-    serde_json::from_value(serde_json::json!({
-        "tenantId": identity["tenantId"].as_str().unwrap_or("test-users"),
-        "principalId": identity["principalId"].as_str().unwrap_or(context.user.user_id.as_str()),
-        "authorityId": identity["authorityId"].as_str().unwrap_or("desktop-fixture"),
-        "connectionId": connection.connection_id,
-        "provider": value["provider"],
-        "endpoint": endpoint,
-        "credentialType": value["source"]["credentialType"].as_str().unwrap_or("api_key"),
-    }))
-    .map_err(|_| error("input", "凭据目标无效"))
+        .to_string()
+        .parse()
+        .map_err(|_| error("input", "凭据目标无效"))?;
+    Ok(CredentialOwner {
+        tenant_id: caller.tenant_id.clone(),
+        principal_id: caller.principal_id.clone(),
+        authority_id: caller.authority_id.clone(),
+        connection_id: connection.connection_id.clone(),
+        endpoint,
+        provider: match connection.provider {
+            ConnectionDraftProvider::Codex => CredentialOwnerProvider::Codex,
+            ConnectionDraftProvider::Claude => CredentialOwnerProvider::Claude,
+            ConnectionDraftProvider::Deepseek => CredentialOwnerProvider::Deepseek,
+        },
+        credential_type: match credential_type {
+            None | Some(ConnectionSourceCredentialType::ApiKey) => {
+                CredentialOwnerCredentialType::ApiKey
+            }
+            Some(ConnectionSourceCredentialType::AuthToken) => {
+                CredentialOwnerCredentialType::AuthToken
+            }
+        },
+    })
+}
+pub fn credentials_match(
+    caller: &ai_session_contract::CredentialCaller,
+    previous: &ai_session_contract::ConnectionDraft,
+    connection: &ai_session_contract::ConnectionDraft,
+) -> Result<bool> {
+    let previous =
+        serde_json::to_vec(&credential_owner(caller, previous)?).map_err(|_| unavailable())?;
+    let current =
+        serde_json::to_vec(&credential_owner(caller, connection)?).map_err(|_| unavailable())?;
+    Ok(previous == current)
 }
 
 /// ref: RustCrypto AEADs aes-gcm/src/lib.rs@aes-gcm-v0.10.3
@@ -293,7 +351,10 @@ mod tests {
             serde_json::json!({"mode":"enterprise","tenantId":"tenant","principalId":"principal","authorityId":"authority","organizationId":"org","expiresAtMs":1000}),
         ] {
             let context = serde_json::from_value(serde_json::json!({"schemaVersion":6,"kind":"userContext","generation":"generation","user":{"schemaVersion":6,"kind":"testUser","userId":"profile","nameKey":"name","displayName":"Name"},"identity":identity})).unwrap();
-            let owner = serde_json::to_value(credential_owner(&context, &draft).unwrap()).unwrap();
+            let owner = serde_json::to_value(
+                credential_owner(&credential_caller(&context), &draft).unwrap(),
+            )
+            .unwrap();
             assert_eq!(
                 owner["principalId"],
                 identity["principalId"].as_str().unwrap_or("profile")
@@ -310,6 +371,51 @@ mod tests {
             );
             assert_eq!(owner["endpoint"], "https://example.invalid/");
         }
+    }
+    #[test]
+    fn seal_open_and_retention_use_the_same_typed_target_projection() {
+        let caller = serde_json::from_value(
+            serde_json::json!({"tenantId":"t","principalId":"p","authorityId":"a"}),
+        )
+        .unwrap();
+        let original = serde_json::json!({"connectionId":"c","name":"Connection","provider":"codex","profile":"conversation","source":{"type":"custom_api","apiUrl":"https://EXAMPLE.invalid:443","model":"chosen"}});
+        let draft = serde_json::from_value(original.clone()).unwrap();
+        let keys = MasterKey::new(Fake {
+            stored: Mutex::new(Some(vec![7; 32])),
+            writes: Arc::new(AtomicUsize::new(0)),
+        });
+        let owner = credential_owner(&caller, &draft).unwrap();
+        let encrypted = keys.seal(&owner, "fixture-secret", false).unwrap();
+        let mut metadata = original.clone();
+        metadata["name"] = "Renamed".into();
+        metadata["source"]["model"] = "other".into();
+        metadata["source"]["apiUrl"] = "https://example.invalid/".into();
+        metadata["source"]["credentialType"] = "api_key".into();
+        let equivalent = serde_json::from_value(metadata).unwrap();
+        assert!(credentials_match(&caller, &draft, &equivalent).unwrap());
+        assert_eq!(
+            keys.open(&credential_owner(&caller, &equivalent).unwrap(), &encrypted)
+                .unwrap(),
+            "fixture-secret"
+        );
+        for (pointer, value) in [
+            ("/connectionId", "other"),
+            ("/provider", "claude"),
+            ("/source/apiUrl", "https://other.invalid/"),
+        ] {
+            let mut changed = original.clone();
+            *changed.pointer_mut(pointer).unwrap() = value.into();
+            let changed = serde_json::from_value(changed).unwrap();
+            assert!(!credentials_match(&caller, &draft, &changed).unwrap());
+            assert!(keys
+                .open(&credential_owner(&caller, &changed).unwrap(), &encrypted)
+                .is_err());
+        }
+        let mut changed = original;
+        changed["source"]["credentialType"] = "auth_token".into();
+        assert!(
+            !credentials_match(&caller, &draft, &serde_json::from_value(changed).unwrap()).unwrap()
+        );
     }
     #[test]
     fn credentials_use_random_nonces_bind_the_target_and_preserve_secret_bytes() {

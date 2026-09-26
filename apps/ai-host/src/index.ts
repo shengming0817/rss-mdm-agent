@@ -158,12 +158,15 @@ export async function startLocalApp(
     throw error;
   });
   let control: NativeControl;
-  const secrets = new ConnectionSecrets(store, (owner, encrypted) =>
-    control.call("openCredential", {
-      owner,
-      encrypted:
-        encrypted as import("@rss-mdm-agent/ai-contract").EncryptedCredential,
-    }),
+  const secrets = new ConnectionSecrets(
+    store,
+    (caller, connection, encrypted) =>
+      control.call("openCredential", {
+        caller,
+        connection,
+        encrypted:
+          encrypted as import("@rss-mdm-agent/ai-contract").EncryptedCredential,
+      }),
   );
   const runtimeRoot = dirname(dirname(process.execPath));
   const created = await createHost({
@@ -184,7 +187,16 @@ export async function startLocalApp(
       process.stderr.write(`AI Host ${diagnostic.stage}: ${diagnostic.code}\n`),
     resolve: localResolver(local, store, secrets),
     callerAvailable: available,
-    persistConnection: connectionPersistence(store, available),
+    credentialPersistence: connectionPersistence(
+      store,
+      available,
+      async (caller, previous, connection) =>
+        (await control.call("matchCredential", {
+          caller,
+          previous,
+          connection,
+        })) === true,
+    ),
   });
   if (!created.ok) {
     await execution?.close();
@@ -304,13 +316,17 @@ export async function startLocalApp(
         const current = activeUser;
         if (!current || current.generation !== data.generation)
           return fail("unavailable");
-        return host.saveConnection(
-          callerFor(current),
-          data.connection,
-          data.expected,
-          { timeoutMs: 10000, signal: AbortSignal.timeout(10000) },
-          data.encrypted === null ? undefined : Uint8Array.from(data.encrypted),
-        );
+        const caller = callerFor(current);
+        const budget = { timeoutMs: 10000, signal: AbortSignal.timeout(10000) };
+        return data.encrypted === null
+          ? host.saveConnection(caller, data.connection, data.expected, budget)
+          : host.saveNativeConnection(
+              caller,
+              data.connection,
+              data.expected,
+              budget,
+              Uint8Array.from(data.encrypted),
+            );
       }
       throw new Error("unknown native method");
     },

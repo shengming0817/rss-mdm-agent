@@ -4081,12 +4081,36 @@ const schema31 = {
             data: {
               type: "object",
               properties: {
-                owner: { $ref: "#/$defs/CredentialOwner" },
                 encrypted: { $ref: "#/$defs/EncryptedCredential" },
+                caller: { $ref: "#/$defs/CredentialCaller" },
+                connection: { $ref: "#/$defs/ConnectionDraft" },
               },
-              required: ["owner", "encrypted"],
+              required: ["caller", "connection", "encrypted"],
               additionalProperties: false,
               title: "NativeOpenCredentialData",
+            },
+          },
+          required: ["schemaVersion", "kind", "id", "method", "data"],
+          additionalProperties: false,
+        },
+        {
+          title: "NativeCallMatchCredential",
+          type: "object",
+          properties: {
+            schemaVersion: { type: "integer", const: 6 },
+            kind: { type: "string", const: "nativeCall" },
+            id: { $ref: "#/$defs/Counter" },
+            method: { type: "string", const: "matchCredential" },
+            data: {
+              type: "object",
+              title: "NativeMatchCredentialData",
+              properties: {
+                caller: { $ref: "#/$defs/CredentialCaller" },
+                previous: { $ref: "#/$defs/ConnectionDraft" },
+                connection: { $ref: "#/$defs/ConnectionDraft" },
+              },
+              required: ["caller", "previous", "connection"],
+              additionalProperties: false,
             },
           },
           required: ["schemaVersion", "kind", "id", "method", "data"],
@@ -4519,6 +4543,18 @@ const schema31 = {
         failure: { $ref: "#/$defs/AccountFailure" },
       },
       required: ["schemaVersion", "kind"],
+      additionalProperties: false,
+    },
+    CredentialCaller: {
+      type: "object",
+      description:
+        "Authenticated native caller forwarded unchanged for Rust-owned credential projection.",
+      properties: {
+        tenantId: { $ref: "#/$defs/Id" },
+        principalId: { $ref: "#/$defs/Id" },
+        authorityId: { $ref: "#/$defs/Id" },
+      },
+      required: ["tenantId", "principalId", "authorityId"],
       additionalProperties: false,
     },
   },

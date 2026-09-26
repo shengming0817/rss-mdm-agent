@@ -1362,6 +1362,7 @@ export type NativeCall =
   | NativeCallSaveConnection
   | NativeCallHealth
   | NativeCallOpenCredential
+  | NativeCallMatchCredential
   | NativeCallCredentialContext;
 /**
  * @minItems 29
@@ -2162,17 +2163,29 @@ export interface NativeCallOpenCredential {
   data: NativeOpenCredentialData;
 }
 export interface NativeOpenCredentialData {
-  owner: CredentialOwner;
   encrypted: EncryptedCredential;
+  caller: CredentialCaller;
+  connection: ConnectionDraft;
 }
-export interface CredentialOwner {
+/**
+ * Authenticated native caller forwarded unchanged for Rust-owned credential projection.
+ */
+export interface CredentialCaller {
   tenantId: Id;
   principalId: Id;
   authorityId: Id;
-  connectionId: Id;
-  provider: "codex" | "claude" | "deepseek";
-  endpoint: string;
-  credentialType: "api_key" | "auth_token";
+}
+export interface NativeCallMatchCredential {
+  schemaVersion: 6;
+  kind: "nativeCall";
+  id: Counter;
+  method: "matchCredential";
+  data: NativeMatchCredentialData;
+}
+export interface NativeMatchCredentialData {
+  caller: CredentialCaller;
+  previous: ConnectionDraft;
+  connection: ConnectionDraft;
 }
 export interface NativeCallCredentialContext {
   schemaVersion: 6;

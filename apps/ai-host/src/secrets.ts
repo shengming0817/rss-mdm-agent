@@ -1,39 +1,34 @@
 import type {
-  Budget,
   Caller,
   Connection,
   ConnectionDraft,
-  CredentialOwner,
-  Result,
   SessionStore,
 } from "@rss-mdm-agent/ai-contract";
+import type { CredentialPersistence } from "@rss-mdm-agent/ai-host";
 import { fail } from "@rss-mdm-agent/ai-contract/transitions";
 import type { ConnectionSecretStore } from "@rss-mdm-agent/ai-store-sqlite";
 import { ConfigurationError } from "./configuration.js";
 
-/** Stable target binding: configuration-only revisions retain the exact ciphertext. */
-export function credentialOwner(
-  caller: Caller,
-  connection: Connection | ConnectionDraft,
-): CredentialOwner {
-  if (connection.source.type !== "custom_api")
-    throw new ConfigurationError("configuration_invalid");
-  return {
-    tenantId: caller.tenantId,
-    principalId: caller.principalId,
-    authorityId: caller.authorityId,
-    connectionId: connection.connectionId,
-    provider: connection.provider,
-    endpoint: new URL(connection.source.apiUrl).href,
-    credentialType: connection.source.credentialType ?? "api_key",
-  };
+/** Strip session-only fields without deriving or defaulting identity. */
+function credentialCaller({
+  tenantId,
+  principalId,
+  authorityId,
+}: Caller): Caller {
+  return { tenantId, principalId, authorityId };
+}
+/** Project editable fields only; native code owns all credential binding semantics. */
+function credentialDraft(connection: Connection): ConnectionDraft {
+  const { connectionId, name, provider, profile, source } = connection;
+  return { connectionId, name, provider, profile, source };
 }
 /** Rust owns the key and cryptography. Only activation consumes decrypted material. */
 export class ConnectionSecrets {
   constructor(
     private readonly store: ConnectionSecretStore,
     private readonly open: (
-      owner: CredentialOwner,
+      caller: Caller,
+      connection: ConnectionDraft,
       encrypted: number[],
     ) => Promise<unknown>,
   ) {}
@@ -47,9 +42,11 @@ export class ConnectionSecrets {
       throw new ConfigurationError("authentication_required");
     let secret: unknown;
     try {
-      secret = await this.open(credentialOwner(caller, connection), [
-        ...stored.value,
-      ]);
+      secret = await this.open(
+        credentialCaller(caller),
+        credentialDraft(connection),
+        [...stored.value],
+      );
     } catch {
       throw new ConfigurationError("authentication_required");
     }
@@ -67,14 +64,15 @@ export class ConnectionSecrets {
 export function connectionPersistence(
   store: ConnectionSecretStore & Pick<SessionStore, "connection">,
   available: (caller: Caller) => boolean,
-) {
-  return async (
+  matches: (
     caller: Caller,
-    connection: Connection,
-    expected: number | null,
-    encrypted: Uint8Array | undefined,
-    budget: Budget,
-  ): Promise<Result<Connection>> => {
+    previous: ConnectionDraft,
+    connection: ConnectionDraft,
+  ) => Promise<boolean>,
+): CredentialPersistence {
+  return async (caller, connection, expected, credential, budget) => {
+    let encrypted =
+      credential.type === "replace" ? credential.encrypted : undefined;
     if (
       connection.status !== "deleted" &&
       connection.source.type === "custom_api"
@@ -89,8 +87,11 @@ export function connectionPersistence(
         if (!previous.ok) return previous;
         if (
           previous.value.source.type !== "custom_api" ||
-          JSON.stringify(credentialOwner(caller, previous.value)) !==
-            JSON.stringify(credentialOwner(caller, connection))
+          !(await matches(
+            credentialCaller(caller),
+            credentialDraft(previous.value),
+            credentialDraft(connection),
+          ))
         )
           return fail("authentication_required");
         const stored = await store.encryptedSecret(

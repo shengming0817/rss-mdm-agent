@@ -78,16 +78,22 @@ export interface HostDiagnostic {
     | "close";
   readonly code: import("@rss-mdm-agent/ai-contract").Failure["code"];
 }
+/** Private native save intent, distinct from the public HostPort metadata operation. */
+export type CredentialUpdate =
+  | { readonly type: "retain" }
+  | { readonly type: "replace"; readonly encrypted: Uint8Array };
+export type CredentialPersistence = (
+  caller: Caller,
+  connection: Connection,
+  expected: number | null,
+  credential: CredentialUpdate,
+  budget: Budget,
+) => Promise<Result<Connection>>;
+
 export interface HostOptions {
   readonly workerRuntime: WorkerRuntime;
-  /** Trusted persistence composition; secrets never enter public wire records. */
-  readonly persistConnection?: (
-    caller: Caller,
-    connection: Connection,
-    expected: number | null,
-    encrypted: Uint8Array | undefined,
-    budget: Budget,
-  ) => Promise<Result<Connection>>;
+  /** Required private persistence owner; secrets never enter public wire records. */
+  readonly credentialPersistence: CredentialPersistence;
   readonly callerAvailable?: (caller: Caller) => boolean;
   readonly onDiagnostic?: (diagnostic: HostDiagnostic) => void;
   readonly store: SessionStore;
@@ -171,20 +177,18 @@ export class SessionHost implements HostPort {
     connection: Connection,
     expected: number | null,
     b: Budget,
-    encrypted?: Uint8Array,
+    credential: CredentialUpdate = { type: "retain" },
   ): Promise<Result<Connection>> {
     if (!this.callerAvailable(caller) || b.signal.aborted)
       return Promise.resolve(fail("unavailable"));
     try {
-      const result = this.options.persistConnection
-        ? await this.options.persistConnection(
-            caller,
-            connection,
-            expected,
-            encrypted,
-            b,
-          )
-        : await this.store.saveConnection(caller, connection, expected);
+      const result = await this.options.credentialPersistence(
+        caller,
+        connection,
+        expected,
+        credential,
+        b,
+      );
       if (!result.ok)
         this.diagnose("credential", new HostFailure(result.error));
       return result;
@@ -235,6 +239,8 @@ export class SessionHost implements HostPort {
       );
   }
   static async create(options: HostOptions): Promise<Result<SessionHost>> {
+    if (typeof options.credentialPersistence !== "function")
+      return fail("invalid_input");
     if (
       [
         options.queueLimit ?? 64,
@@ -658,7 +664,30 @@ export class SessionHost implements HostPort {
     draft: ConnectionDraft,
     expected: number | null,
     b: Budget,
-    encrypted?: Uint8Array,
+  ): Promise<Result<Connection>> {
+    return this.saveConnectionDraft(caller, draft, expected, b, {
+      type: "retain",
+    });
+  }
+  /** Trusted native composition only; never exposed on the public HostPort. */
+  saveNativeConnection(
+    caller: Caller,
+    draft: ConnectionDraft,
+    expected: number | null,
+    b: Budget,
+    encrypted: Uint8Array,
+  ): Promise<Result<Connection>> {
+    return this.saveConnectionDraft(caller, draft, expected, b, {
+      type: "replace",
+      encrypted,
+    });
+  }
+  private saveConnectionDraft(
+    caller: Caller,
+    draft: ConnectionDraft,
+    expected: number | null,
+    b: Budget,
+    credential: CredentialUpdate,
   ): Promise<Result<Connection>> {
     return this.result(() =>
       this.admit(
@@ -672,7 +701,7 @@ export class SessionHost implements HostPort {
             candidate.value,
             expected,
             b,
-            encrypted,
+            credential,
           );
         },
       ),

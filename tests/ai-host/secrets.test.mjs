@@ -37,11 +37,31 @@ test("native ciphertext persists atomically, is retained without decryption and 
     await rm(root, { recursive: true, force: true });
   });
   const ciphertext = new Uint8Array(32).fill(9);
-  const persist = connectionPersistence(store, () => true);
-  const first = unwrap(await persist(caller, row(), null, ciphertext, budget));
+  let matches = true;
+  const persist = connectionPersistence(
+    store,
+    () => true,
+    async () => matches,
+  );
+  const first = unwrap(
+    await persist(
+      caller,
+      row(),
+      null,
+      { type: "replace", encrypted: ciphertext },
+      budget,
+    ),
+  );
   assert.equal(
-    (await persist(caller, row(2), 99, new Uint8Array(32).fill(8), budget))
-      .error.code,
+    (
+      await persist(
+        caller,
+        row(2),
+        99,
+        { type: "replace", encrypted: new Uint8Array(32).fill(8) },
+        budget,
+      )
+    ).error.code,
     "revision_conflict",
   );
   assert.deepEqual(
@@ -57,7 +77,7 @@ test("native ciphertext persists atomically, is retained without decryption and 
         source: { ...row().source, model: "other" },
       },
       1,
-      undefined,
+      { type: "retain" },
       budget,
     ),
   );
@@ -65,6 +85,7 @@ test("native ciphertext persists atomically, is retained without decryption and 
     unwrap(await store.encryptedSecret(caller, "one", 2)),
     ciphertext,
   );
+  matches = false;
   for (const change of [
     { provider: "claude" },
     { source: { ...second.source, apiUrl: "https://other.example" } },
@@ -76,7 +97,7 @@ test("native ciphertext persists atomically, is retained without decryption and 
           caller,
           { ...second, ...change, configRevision: 3 },
           2,
-          undefined,
+          { type: "retain" },
           budget,
         )
       ).error.code,
@@ -88,14 +109,17 @@ test("native ciphertext persists atomically, is retained without decryption and 
     false,
   );
   let decrypts = 0;
-  const secrets = new ConnectionSecrets(store, async (owner, bytes) => {
-    decrypts++;
-    assert.equal(owner.principalId, "alice");
-    assert.equal(owner.endpoint, "https://example.invalid/");
-    assert.equal("configRevision" in owner, false);
-    assert.equal(Buffer.from(bytes).equals(ciphertext), true);
-    return "synthetic-activation-only";
-  });
+  const secrets = new ConnectionSecrets(
+    store,
+    async (actualCaller, draft, bytes) => {
+      decrypts++;
+      assert.deepEqual(actualCaller, caller);
+      assert.equal(draft.source.apiUrl, "https://example.invalid");
+      assert.equal("configRevision" in draft, false);
+      assert.equal(Buffer.from(bytes).equals(ciphertext), true);
+      return "synthetic-activation-only";
+    },
+  );
   assert.equal(decrypts, 0);
   assert.equal((await secrets.read(caller, second)).length > 0, true);
   assert.equal(decrypts, 1);
@@ -116,13 +140,17 @@ test("native ciphertext persists atomically, is retained without decryption and 
     unwrap(await store.encryptedSecret(caller, "one", 2)),
     ciphertext,
   );
-  const currentPersistence = connectionPersistence(store, () => true);
+  const currentPersistence = connectionPersistence(
+    store,
+    () => true,
+    async () => true,
+  );
   unwrap(
     await currentPersistence(
       caller,
       { ...second, configRevision: 3, status: "ready" },
       2,
-      undefined,
+      { type: "retain" },
       budget,
     ),
   );
@@ -135,7 +163,7 @@ test("native ciphertext persists atomically, is retained without decryption and 
       caller,
       { ...second, configRevision: 4 },
       3,
-      undefined,
+      { type: "retain" },
       budget,
     ),
   );
@@ -148,7 +176,7 @@ test("native ciphertext persists atomically, is retained without decryption and 
       caller,
       { ...second, configRevision: 5, status: "deleted" },
       4,
-      undefined,
+      { type: "retain" },
       budget,
     ),
   );
@@ -165,4 +193,30 @@ test("native ciphertext persists atomically, is retained without decryption and 
     0,
   );
   db.close();
+});
+
+test("credential activation passes the raw caller and draft to the native owner", async () => {
+  const connection = row();
+  const encrypted = new Uint8Array(32).fill(7);
+  const secrets = new ConnectionSecrets(
+    {
+      encryptedSecret: async () => ({ ok: true, value: encrypted }),
+    },
+    async (actualCaller, draft, bytes) => {
+      assert.deepEqual(actualCaller, caller);
+      assert.deepEqual(draft, {
+        connectionId: connection.connectionId,
+        name: connection.name,
+        provider: connection.provider,
+        profile: connection.profile,
+        source: connection.source,
+      });
+      assert.deepEqual(bytes, [...encrypted]);
+      return "fixture-secret";
+    },
+  );
+  assert.equal(
+    await secrets.read({ ...caller, sessionId: "session-only" }, connection),
+    "fixture-secret",
+  );
 });

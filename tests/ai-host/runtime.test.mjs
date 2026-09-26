@@ -1,3 +1,4 @@
+import { fixturePersistence } from "./harness.mjs";
 import { workerRuntime } from "./worker-runtime.mjs";
 import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import { openFixture, fixtureArtifact } from "./harness.mjs";
@@ -88,6 +89,7 @@ async function setup(t, revision = "1", extras = {}) {
   };
   host = unwrap(
     await createHost({
+      credentialPersistence: fixturePersistence(store),
       workerRuntime,
       delivery: extras.admission
         ? {
@@ -654,6 +656,7 @@ for (const option of ["queueLimit", "workerLimit", "operationTimeoutMs"])
   test(`Host factory returns invalid_input for invalid ${option}`, async () => {
     for (const value of [0, -1, NaN, Infinity, 1.5]) {
       const result = await createHost({
+        credentialPersistence: fixturePersistence({}),
         workerRuntime,
         delivery: null,
         store: {},
