@@ -47,6 +47,18 @@ const text = (value: unknown) => JSON.stringify(value, null, 2);
       {{ details.status.mode === "test" ? "S1 测试执行器" : "真实执行器" }}
     </h3>
     <p class="execution-phase">{{ phase(details.status.phase) }}</p>
+    <div v-if="details.status.process" class="process-facts">
+      <p>
+        根进程：{{
+          details.status.process.finished ? "已结束采集" : "运行或准备中"
+        }}；退出码：{{ details.status.process.exitCode ?? "未知" }}
+      </p>
+      <p>
+        执行范围静止：{{
+          details.status.process.quiescent ? "已确认" : "未确认"
+        }}；输出质量：{{ details.status.process.quality }}
+      </p>
+    </div>
     <p class="plan-validity">
       {{ validity }}（按本机时间判断；实际准入由执行服务核验）。
     </p>

@@ -2318,9 +2318,76 @@ fn process_capture_is_scope_bound_durable_monotonic_and_never_releases_dispatch(
     facts.total_output_bytes = 3;
     assert!(store.record_process(&host.scope(), &facts, &host).is_err());
     let mut denied = host.clone();
-    denied.read = false;
+    denied.audit = false;
     assert!(matches!(
         store.process_evidence(&host.scope(), &attempt, &denied),
         Err(Error::Denied)
     ));
+}
+
+#[test]
+fn full_output_budget_is_binary_bounded_and_requires_privileged_read() {
+    let db = Database::new();
+    let mut host = TestHost::new(1);
+    let mut spec = host.plan.spec().clone();
+    spec.budget.total_output_bytes = 65536;
+    host.plan = FrozenPlan::freeze(spec, &limits().plan).unwrap();
+    for approval in &mut host.entries {
+        approval.definition.plan_digest = host.plan.digest().clone();
+    }
+    let mut store = db.create();
+    host.prepare(&mut store);
+    store
+        .apply_command(
+            &operation("begin"),
+            &host.scope(),
+            &host.begin(),
+            &host.bindings(),
+            &host,
+        )
+        .unwrap();
+    let facts = ProcessEvidence {
+        plan_digest: host.plan.digest().clone(),
+        attempt_id: AttemptId::new("attempt-1").unwrap(),
+        runner: id("test-runner"),
+        scope: ProcessScope::ProcessGroup { owner: 1, group: 2 },
+        finished: true,
+        exit_code: Some(0),
+        end: ProcessEnd::Exited,
+        quiescent: false,
+        stdout: vec![b'X'; 32768],
+        stderr: vec![b'Y'; 32768],
+        total_output_bytes: 65536,
+        quality: OutputQuality::Complete,
+    };
+    store.record_process(&host.scope(), &facts, &host).unwrap();
+    drop(store);
+    let store = db.open();
+    assert_eq!(
+        store
+            .process_evidence(&host.scope(), &facts.attempt_id, &host)
+            .unwrap(),
+        Some(facts.clone())
+    );
+    assert!(!format!("{facts:?}").contains(&format!("{:?}", facts.stdout)));
+    host.audit = false;
+    assert!(matches!(
+        store.process_evidence(&host.scope(), &facts.attempt_id, &host),
+        Err(Error::Denied)
+    ));
+    let ordinary = store
+        .execution_by_request(
+            &host.plan.spec().request.request_id,
+            ExecutionAccess::Result,
+            &host,
+        )
+        .unwrap();
+    assert_eq!(ordinary.process.unwrap().total_output_bytes, 65536);
+    let body: u64 = db
+        .sql()
+        .query_row("SELECT length(body) FROM process_evidence", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert!(body < 4096);
 }

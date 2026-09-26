@@ -99,6 +99,13 @@ impl RunnerPort for S1Runner {
     ) -> Result<Option<execution_contract::ProcessEvidence>, execution_app::Error> {
         Ok(None)
     }
+    fn acknowledge_capture(
+        &self,
+        _: &execution_contract::FrozenPlan,
+        _: &execution_contract::ProcessEvidence,
+    ) -> Result<(), execution_app::Error> {
+        Ok(())
+    }
     fn stop(&self, p: &FrozenPlan, a: &AttemptId) -> Result<(), Error> {
         self.select(p).stop(p, a)
     }
@@ -641,6 +648,7 @@ impl Owner {
 fn operation(s: ExecutionStatus) -> mcp::OperationStatus {
     mcp::OperationStatus {
         mode: s.mode,
+        process: s.process,
         assessment: s.assessment,
         submitted: s.submitted,
         cancel_requested: s.cancel_requested,

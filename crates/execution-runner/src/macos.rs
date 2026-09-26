@@ -2,7 +2,7 @@ use execution_app::Error;
 use execution_contract::*;
 use std::{
     fs::{File, OpenOptions},
-    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+    os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::Path,
 };
 pub(crate) fn protected_path(path: &Path, directory: bool) -> Result<(), Error> {
@@ -45,17 +45,6 @@ pub(crate) fn open_file(path: &Path) -> Result<File, Error> {
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
         .open(path)
-        .map_err(|_| Error::Unavailable)
-}
-pub(crate) fn create_private_directory(path: &Path) -> Result<(), Error> {
-    use std::os::unix::fs::DirBuilderExt;
-    std::fs::DirBuilder::new()
-        .mode(0o700)
-        .create(path)
-        .map_err(|_| Error::Conflict)
-}
-pub(crate) fn restrict_file(file: &File) -> Result<(), Error> {
-    file.set_permissions(std::fs::Permissions::from_mode(0o400))
         .map_err(|_| Error::Unavailable)
 }
 pub(crate) fn identity(run_as: &RunAs, session: &SessionRequirement) -> Result<(), Error> {
@@ -164,5 +153,72 @@ impl Owner {
     }
     pub(crate) fn quiescent(&self) -> bool {
         false
+    }
+}
+
+/// Interpret executable/cache content only from administrator-owned immutable installation paths.
+pub(crate) fn immutable_source(path: &Path) -> Result<(), Error> {
+    protected_path(path, false)?;
+    for part in path.ancestors() {
+        if std::fs::symlink_metadata(part)
+            .map_err(|_| Error::Unavailable)?
+            .uid()
+            != 0
+        {
+            return Err(Error::Denied);
+        }
+    }
+    Ok(())
+}
+pub(crate) fn encoding(encoding: ArtifactEncoding) -> Result<(), Error> {
+    if encoding == ArtifactEncoding::Utf8 {
+        Ok(())
+    } else {
+        Err(Error::Unsupported)
+    }
+}
+pub(crate) fn payload(
+    file: File,
+    _: &[u8],
+    _: &Path,
+    _: &AttemptId,
+    _: &VersionedRef,
+) -> Result<crate::materialize::Payload, Error> {
+    use std::os::fd::AsRawFd;
+    Ok(crate::materialize::Payload {
+        path: format!("/dev/fd/{}", file.as_raw_fd()).into(),
+        file,
+        directory: None,
+    })
+}
+pub(crate) struct WorkingDirectory(File);
+impl WorkingDirectory {
+    pub(crate) fn open(path: &Path) -> Result<Self, Error> {
+        protected_path(path, true)?;
+        OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(path)
+            .map(Self)
+            .map_err(|_| Error::Unavailable)
+    }
+    pub(crate) fn configure(
+        &self,
+        command: &mut std::process::Command,
+        script: &File,
+    ) -> Result<(), Error> {
+        use std::os::{fd::AsRawFd, unix::process::CommandExt};
+        let cwd = self.0.as_raw_fd();
+        let script = script.as_raw_fd();
+        // SAFETY: pre_exec performs only async-signal-safe syscalls on retained open descriptors.
+        unsafe {
+            command.pre_exec(move || {
+                if libc::fchdir(cwd) != 0 || libc::fcntl(script, libc::F_SETFD, 0) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        Ok(())
     }
 }

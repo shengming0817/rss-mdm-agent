@@ -72,5 +72,6 @@ CREATE TABLE confirmations (
 );
 
 CREATE TABLE process_evidence (
-    attempt_id TEXT PRIMARY KEY REFERENCES attempts(attempt_id), body BLOB NOT NULL
+    attempt_id TEXT PRIMARY KEY REFERENCES attempts(attempt_id), body BLOB NOT NULL,
+    stdout BLOB NOT NULL, stderr BLOB NOT NULL
 );

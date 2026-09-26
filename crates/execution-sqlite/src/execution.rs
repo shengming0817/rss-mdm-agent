@@ -44,9 +44,25 @@ impl Store {
             .map(|b| decode::<Receipt>(&b, self.limits.max_record_bytes))
             .transpose()?
             .and_then(|r| r.admission);
+        let execution = load_execution(&tx, &scope, self.limits)?.1;
+        let process = if matches!(
+            access,
+            ExecutionAccess::Result | ExecutionAccess::Audit | ExecutionAccess::RunnerFact
+        ) {
+            execution
+                .snapshot()
+                .attempt
+                .as_ref()
+                .map(|a| crate::process::summary(&tx, &a.id, self.limits))
+                .transpose()?
+                .flatten()
+        } else {
+            None
+        };
         Ok(ExecutionRecord {
-            execution: load_execution(&tx, &scope, self.limits)?.1,
+            execution,
             admission,
+            process,
         })
     }
 

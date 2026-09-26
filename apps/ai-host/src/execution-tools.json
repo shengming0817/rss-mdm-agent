@@ -2504,6 +2504,13 @@
               "$ref": "#/$defs/PlanRef",
               "description": "Original frozen plan."
             },
+            "process": {
+              "anyOf": [
+                { "$ref": "#/$defs/ProcessSummary" },
+                { "type": "null" }
+              ],
+              "description": "Redacted root process progress; not full-scope termination or effect proof."
+            },
             "submitted": {
               "description": "Durable initial submission receipt; preview alone is false.",
               "type": "boolean"
@@ -2519,6 +2526,31 @@
             "evidence"
           ],
           "type": "object"
+        },
+        "OutputQuality": {
+          "description": "Quality of the captured result, independent from the exit code.",
+          "oneOf": [
+            {
+              "const": "complete",
+              "description": "All required output was decoded and structurally valid.",
+              "type": "string"
+            },
+            {
+              "const": "truncated",
+              "description": "Capture was truncated by the output budget.",
+              "type": "string"
+            },
+            {
+              "const": "failed",
+              "description": "Encoding, JSON shape, row bound or process outcome failed.",
+              "type": "string"
+            },
+            {
+              "const": "partial",
+              "description": "A process or pipe is still unaccounted for.",
+              "type": "string"
+            }
+          ]
         },
         "PlanId": {
           "description": "Immutable local plan identity.",
@@ -2541,6 +2573,82 @@
             }
           },
           "required": ["planId", "digest"],
+          "type": "object"
+        },
+        "ProcessEnd": {
+          "description": "Why a bounded process owner stopped collecting output.",
+          "oneOf": [
+            {
+              "const": "rejected",
+              "description": "Preparation was rejected before any target process started.",
+              "type": "string"
+            },
+            {
+              "const": "exited",
+              "description": "Root process exited; this is not an effect observation.",
+              "type": "string"
+            },
+            {
+              "const": "cancelled",
+              "description": "Explicit cancellation requested.",
+              "type": "string"
+            },
+            {
+              "const": "timedOut",
+              "description": "Remaining wall time exhausted.",
+              "type": "string"
+            },
+            {
+              "const": "outputLimit",
+              "description": "Combined output allowance exhausted.",
+              "type": "string"
+            },
+            {
+              "const": "unknown",
+              "description": "Read, supervision or termination failure.",
+              "type": "string"
+            }
+          ]
+        },
+        "ProcessSummary": {
+          "additionalProperties": false,
+          "description": "Ordinary result projection. No raw output, paths, process identifiers or secrets.",
+          "properties": {
+            "end": {
+              "$ref": "#/$defs/ProcessEnd",
+              "description": "Stop/failure classification."
+            },
+            "exitCode": {
+              "description": "Root exit code, independently from effect or scope quiescence.",
+              "format": "int32",
+              "type": ["integer", "null"]
+            },
+            "finished": {
+              "description": "Root capture completed; not proof of all descendants terminating.",
+              "type": "boolean"
+            },
+            "quality": {
+              "$ref": "#/$defs/OutputQuality",
+              "description": "Capture/decoding quality, not a business success bit."
+            },
+            "quiescent": {
+              "description": "Explicit full-scope proof; false means unproven.",
+              "type": "boolean"
+            },
+            "totalOutputBytes": {
+              "description": "Bytes observed including discarded bytes.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "finished",
+            "end",
+            "quiescent",
+            "totalOutputBytes",
+            "quality"
+          ],
           "type": "object"
         },
         "RequestId": {
@@ -2962,6 +3070,13 @@
               "$ref": "#/$defs/PlanRef",
               "description": "Original frozen plan."
             },
+            "process": {
+              "anyOf": [
+                { "$ref": "#/$defs/ProcessSummary" },
+                { "type": "null" }
+              ],
+              "description": "Redacted root process progress; not full-scope termination or effect proof."
+            },
             "submitted": {
               "description": "Durable initial submission receipt; preview alone is false.",
               "type": "boolean"
@@ -2977,6 +3092,31 @@
             "evidence"
           ],
           "type": "object"
+        },
+        "OutputQuality": {
+          "description": "Quality of the captured result, independent from the exit code.",
+          "oneOf": [
+            {
+              "const": "complete",
+              "description": "All required output was decoded and structurally valid.",
+              "type": "string"
+            },
+            {
+              "const": "truncated",
+              "description": "Capture was truncated by the output budget.",
+              "type": "string"
+            },
+            {
+              "const": "failed",
+              "description": "Encoding, JSON shape, row bound or process outcome failed.",
+              "type": "string"
+            },
+            {
+              "const": "partial",
+              "description": "A process or pipe is still unaccounted for.",
+              "type": "string"
+            }
+          ]
         },
         "PlanId": {
           "description": "Immutable local plan identity.",
@@ -2999,6 +3139,82 @@
             }
           },
           "required": ["planId", "digest"],
+          "type": "object"
+        },
+        "ProcessEnd": {
+          "description": "Why a bounded process owner stopped collecting output.",
+          "oneOf": [
+            {
+              "const": "rejected",
+              "description": "Preparation was rejected before any target process started.",
+              "type": "string"
+            },
+            {
+              "const": "exited",
+              "description": "Root process exited; this is not an effect observation.",
+              "type": "string"
+            },
+            {
+              "const": "cancelled",
+              "description": "Explicit cancellation requested.",
+              "type": "string"
+            },
+            {
+              "const": "timedOut",
+              "description": "Remaining wall time exhausted.",
+              "type": "string"
+            },
+            {
+              "const": "outputLimit",
+              "description": "Combined output allowance exhausted.",
+              "type": "string"
+            },
+            {
+              "const": "unknown",
+              "description": "Read, supervision or termination failure.",
+              "type": "string"
+            }
+          ]
+        },
+        "ProcessSummary": {
+          "additionalProperties": false,
+          "description": "Ordinary result projection. No raw output, paths, process identifiers or secrets.",
+          "properties": {
+            "end": {
+              "$ref": "#/$defs/ProcessEnd",
+              "description": "Stop/failure classification."
+            },
+            "exitCode": {
+              "description": "Root exit code, independently from effect or scope quiescence.",
+              "format": "int32",
+              "type": ["integer", "null"]
+            },
+            "finished": {
+              "description": "Root capture completed; not proof of all descendants terminating.",
+              "type": "boolean"
+            },
+            "quality": {
+              "$ref": "#/$defs/OutputQuality",
+              "description": "Capture/decoding quality, not a business success bit."
+            },
+            "quiescent": {
+              "description": "Explicit full-scope proof; false means unproven.",
+              "type": "boolean"
+            },
+            "totalOutputBytes": {
+              "description": "Bytes observed including discarded bytes.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "finished",
+            "end",
+            "quiescent",
+            "totalOutputBytes",
+            "quality"
+          ],
           "type": "object"
         },
         "RequestId": {
@@ -3450,6 +3666,13 @@
               "$ref": "#/$defs/PlanRef",
               "description": "Original frozen plan."
             },
+            "process": {
+              "anyOf": [
+                { "$ref": "#/$defs/ProcessSummary" },
+                { "type": "null" }
+              ],
+              "description": "Redacted root process progress; not full-scope termination or effect proof."
+            },
             "submitted": {
               "description": "Durable initial submission receipt; preview alone is false.",
               "type": "boolean"
@@ -3465,6 +3688,31 @@
             "evidence"
           ],
           "type": "object"
+        },
+        "OutputQuality": {
+          "description": "Quality of the captured result, independent from the exit code.",
+          "oneOf": [
+            {
+              "const": "complete",
+              "description": "All required output was decoded and structurally valid.",
+              "type": "string"
+            },
+            {
+              "const": "truncated",
+              "description": "Capture was truncated by the output budget.",
+              "type": "string"
+            },
+            {
+              "const": "failed",
+              "description": "Encoding, JSON shape, row bound or process outcome failed.",
+              "type": "string"
+            },
+            {
+              "const": "partial",
+              "description": "A process or pipe is still unaccounted for.",
+              "type": "string"
+            }
+          ]
         },
         "PlanId": {
           "description": "Immutable local plan identity.",
@@ -3487,6 +3735,82 @@
             }
           },
           "required": ["planId", "digest"],
+          "type": "object"
+        },
+        "ProcessEnd": {
+          "description": "Why a bounded process owner stopped collecting output.",
+          "oneOf": [
+            {
+              "const": "rejected",
+              "description": "Preparation was rejected before any target process started.",
+              "type": "string"
+            },
+            {
+              "const": "exited",
+              "description": "Root process exited; this is not an effect observation.",
+              "type": "string"
+            },
+            {
+              "const": "cancelled",
+              "description": "Explicit cancellation requested.",
+              "type": "string"
+            },
+            {
+              "const": "timedOut",
+              "description": "Remaining wall time exhausted.",
+              "type": "string"
+            },
+            {
+              "const": "outputLimit",
+              "description": "Combined output allowance exhausted.",
+              "type": "string"
+            },
+            {
+              "const": "unknown",
+              "description": "Read, supervision or termination failure.",
+              "type": "string"
+            }
+          ]
+        },
+        "ProcessSummary": {
+          "additionalProperties": false,
+          "description": "Ordinary result projection. No raw output, paths, process identifiers or secrets.",
+          "properties": {
+            "end": {
+              "$ref": "#/$defs/ProcessEnd",
+              "description": "Stop/failure classification."
+            },
+            "exitCode": {
+              "description": "Root exit code, independently from effect or scope quiescence.",
+              "format": "int32",
+              "type": ["integer", "null"]
+            },
+            "finished": {
+              "description": "Root capture completed; not proof of all descendants terminating.",
+              "type": "boolean"
+            },
+            "quality": {
+              "$ref": "#/$defs/OutputQuality",
+              "description": "Capture/decoding quality, not a business success bit."
+            },
+            "quiescent": {
+              "description": "Explicit full-scope proof; false means unproven.",
+              "type": "boolean"
+            },
+            "totalOutputBytes": {
+              "description": "Bytes observed including discarded bytes.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "finished",
+            "end",
+            "quiescent",
+            "totalOutputBytes",
+            "quality"
+          ],
           "type": "object"
         },
         "RequestId": {

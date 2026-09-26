@@ -69,6 +69,7 @@ fn fixture(script: &str, argv: Vec<LaunchArg>, budget: u64, timeout: u64) -> Fix
         content,
         work_root: root.clone(),
         controlled_input: None,
+        fixture_owned: true,
     };
     let runner = NativeRunner::new(
         Id::new("mechanism-runner").unwrap(),
@@ -190,18 +191,18 @@ fn cancel_and_materialized_content_mismatch_fail_closed() {
     assert_eq!(finish(&f, &id).end, ProcessEnd::Cancelled);
     let f = fixture("printf ok\n", vec![LaunchArg::ArtifactPath {}], 128, 1000);
     std::fs::write(f.root.join("source"), "printf replaced").unwrap();
-    assert!(f
-        .runner
-        .launch(
-            &f.plan,
-            &AttemptId::new("attempt-1").unwrap(),
-            DispatchAllowance {
-                deadline_unix_ms: now().unwrap() + 1000,
-                remaining_timeout_ms: 1000,
-                remaining_output_bytes: 128
-            }
-        )
-        .is_err());
+    let id = start(&f, 128, 1000);
+    let facts = finish(&f, &id);
+    assert_eq!(facts.scope, ProcessScope::NotStarted {});
+    assert_eq!(facts.end, ProcessEnd::Rejected);
+    assert!(matches!(
+        f.runner
+            .observe(&f.plan, &id, ObservationStage::Termination, now().unwrap())
+            .unwrap()
+            .unwrap()
+            .observation,
+        Observation::NeverDispatched { .. }
+    ));
 }
 #[test]
 fn strict_output_cannot_promote_invalid_or_over_row_json() {
@@ -231,7 +232,12 @@ fn owner_death_child() {
     let id = start(&f, 128, 30000);
     let until = Instant::now() + Duration::from_secs(2);
     loop {
-        if let Some(facts) = f.runner.evidence(&f.plan, &id).unwrap() {
+        if let Some(facts) = f
+            .runner
+            .evidence(&f.plan, &id)
+            .unwrap()
+            .filter(|f| matches!(f.scope, ProcessScope::ProcessGroup { .. }))
+        {
             std::fs::write(
                 std::env::var_os("RSS_MECHANISM_MARKER").unwrap(),
                 serde_json::to_vec(&(facts.scope, &f.root)).unwrap(),
@@ -274,4 +280,125 @@ fn host_death_closes_owner_pipe_and_reaps_cooperative_group() {
     }
     std::fs::remove_file(marker).unwrap();
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn acknowledged_final_capture_releases_slots_without_evicting_live_owners() {
+    let mut f = fixture("printf ok\n", vec![LaunchArg::ArtifactPath {}], 128, 1000);
+    f.runner.capacity = 1;
+    for n in 0..4 {
+        let id = AttemptId::new(format!("serial-{n}")).unwrap();
+        f.runner
+            .launch(
+                &f.plan,
+                &id,
+                DispatchAllowance {
+                    deadline_unix_ms: now().unwrap() + 1000,
+                    remaining_timeout_ms: 1000,
+                    remaining_output_bytes: 128,
+                },
+            )
+            .unwrap();
+        assert!(matches!(
+            f.runner.launch(
+                &f.plan,
+                &AttemptId::new("extra").unwrap(),
+                DispatchAllowance {
+                    deadline_unix_ms: now().unwrap() + 1000,
+                    remaining_timeout_ms: 1000,
+                    remaining_output_bytes: 128
+                }
+            ),
+            Err(Error::Capacity)
+        ));
+        let facts = finish(&f, &id);
+        f.runner.acknowledge_capture(&f.plan, &facts).unwrap();
+        assert!(f.runner.evidence(&f.plan, &id).unwrap().is_none());
+    }
+}
+
+#[test]
+fn opened_script_and_cwd_survive_path_replacement() {
+    let f = fixture(
+        "printf '%s' \"$1\"\n",
+        vec![
+            LaunchArg::ArtifactPath {},
+            LaunchArg::Literal {
+                value: "original".into(),
+            },
+        ],
+        128,
+        1000,
+    );
+    let source = f.runner.artifacts.get(f.plan.digest().as_str()).unwrap();
+    let materialized = source
+        .prepare(&f.plan, &AttemptId::new("object-binding").unwrap())
+        .unwrap();
+    std::fs::rename(f.root.join("source"), f.root.join("old-source")).unwrap();
+    std::fs::write(f.root.join("source"), "printf replaced").unwrap();
+    let original = f.root.with_extension("original");
+    std::fs::rename(&f.root, &original).unwrap();
+    std::fs::create_dir(&f.root).unwrap();
+    let mut command = std::process::Command::new(&materialized.interpreter);
+    command.args(&materialized.args).env_clear();
+    materialized.configure(&mut command).unwrap();
+    let output = command.output().unwrap();
+    assert_eq!(output.stdout, b"original");
+    assert!(output.status.success());
+    drop(materialized);
+    std::fs::remove_dir_all(original).unwrap();
+}
+
+#[test]
+fn controlled_input_is_bound_once_and_partial_delivery_is_failed() {
+    use crate::{InputBytes, InputResolver};
+    struct Input {
+        calls: AtomicU64,
+    }
+    impl InputResolver for Input {
+        fn resolve(
+            &self,
+            _: &FrozenPlan,
+            attempt: &AttemptId,
+            reference: &VersionedRef,
+            max: u64,
+        ) -> Result<InputBytes, Error> {
+            assert_eq!(attempt.as_str(), "attempt-1");
+            assert_eq!(reference.id.as_str(), "secret-input");
+            assert_eq!(max, 1_048_576);
+            assert_eq!(self.calls.fetch_add(1, Ordering::Relaxed), 0);
+            Ok(InputBytes::new(vec![b's'; 1_048_576]))
+        }
+    }
+    let mut f = fixture(
+        "exec 0<&-; printf ok\n",
+        vec![LaunchArg::ArtifactPath {}],
+        128,
+        2000,
+    );
+    let old = f.plan.digest().as_str().to_owned();
+    let source = f.runner.artifacts.remove(&old).unwrap();
+    let mut source = Arc::try_unwrap(source).ok().unwrap();
+    source.controlled_input = Some(Arc::new(Input {
+        calls: AtomicU64::new(0),
+    }));
+    let mut spec = f.plan.spec().clone();
+    spec.launch.stdin = StandardInput::Controlled {
+        reference: VersionedRef {
+            id: Id::new("secret-input").unwrap(),
+            revision: Id::new("1").unwrap(),
+        },
+        encoding: TextEncoding::Utf8,
+        max_bytes: 1_048_576,
+    };
+    let mut limits = execution_app::test_store_limits().plan;
+    limits.max_stdin_bytes = 1_048_576;
+    f.plan = FrozenPlan::freeze(spec, &limits).unwrap();
+    f.runner
+        .artifacts
+        .insert(f.plan.digest().as_str().into(), Arc::new(source));
+    let id = start(&f, 128, 2000);
+    let facts = finish(&f, &id);
+    assert_ne!(facts.quality, OutputQuality::Complete);
+    assert!(facts.stdout.len() + facts.stderr.len() <= 128);
 }

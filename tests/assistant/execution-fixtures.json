@@ -72,6 +72,7 @@
       "phase": "approvalRequired",
       "planDigest": "5385597b2aa9946c02861e657735d36b915d2e4ef5a711071678d8791a688e7a",
       "planId": "plan-1",
+      "process": null,
       "stopOutcome": null,
       "submitted": true
     }
@@ -166,6 +167,7 @@
       "phase": "cancelled",
       "planDigest": "5385597b2aa9946c02861e657735d36b915d2e4ef5a711071678d8791a688e7a",
       "planId": "plan-1",
+      "process": null,
       "stopOutcome": "acknowledged",
       "submitted": true
     }
@@ -243,6 +245,7 @@
       "phase": "outcomeUnknown",
       "planDigest": "5385597b2aa9946c02861e657735d36b915d2e4ef5a711071678d8791a688e7a",
       "planId": "plan-1",
+      "process": null,
       "stopOutcome": null,
       "submitted": true
     }
@@ -320,6 +323,7 @@
       "phase": "running",
       "planDigest": "5385597b2aa9946c02861e657735d36b915d2e4ef5a711071678d8791a688e7a",
       "planId": "plan-1",
+      "process": null,
       "stopOutcome": null,
       "submitted": true
     }
@@ -414,6 +418,7 @@
       "phase": "verified",
       "planDigest": "5385597b2aa9946c02861e657735d36b915d2e4ef5a711071678d8791a688e7a",
       "planId": "plan-1",
+      "process": null,
       "stopOutcome": null,
       "submitted": true
     }

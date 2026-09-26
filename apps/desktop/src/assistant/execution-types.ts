@@ -214,6 +214,13 @@ export type Initiator =
  */
 export type LocalContractV2 = 2;
 /**
+ * Quality of the captured result, independent from the exit code.
+ *
+ * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
+ * via the `definition` "OutputQuality".
+ */
+export type OutputQuality = "complete" | "truncated" | "failed" | "partial";
+/**
  * Immutable local plan identity.
  *
  * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
@@ -227,6 +234,19 @@ export type PlanId = string;
  * via the `definition` "Platform".
  */
 export type Platform = "windows" | "macos" | "linux";
+/**
+ * Why a bounded process owner stopped collecting output.
+ *
+ * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
+ * via the `definition` "ProcessEnd".
+ */
+export type ProcessEnd =
+  | "rejected"
+  | "exited"
+  | "cancelled"
+  | "timedOut"
+  | "outputLimit"
+  | "unknown";
 /**
  * Local execution request identity.
  *
@@ -764,6 +784,10 @@ export interface ExecutionStatus {
    */
   planId: string;
   /**
+   * Redacted process progress, distinct from lifecycle termination and effect proof.
+   */
+  process: ProcessSummary | null;
+  /**
    * Last stop request response; independent of termination/effect evidence.
    */
   stopOutcome: StopOutcome | null;
@@ -801,6 +825,44 @@ export interface VersionedRef6 {
    * Exact immutable revision reference; does not resolve or follow a moving alias.
    */
   revision: string;
+}
+/**
+ * Ordinary result projection. No raw output, paths, process identifiers or secrets.
+ *
+ * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
+ * via the `definition` "ProcessSummary".
+ */
+export interface ProcessSummary {
+  /**
+   * Stop/failure classification.
+   */
+  end:
+    | "rejected"
+    | "exited"
+    | "cancelled"
+    | "timedOut"
+    | "outputLimit"
+    | "unknown";
+  /**
+   * Root exit code, independently from effect or scope quiescence.
+   */
+  exitCode: number | null;
+  /**
+   * Root capture completed; not proof of all descendants terminating.
+   */
+  finished: boolean;
+  /**
+   * Capture/decoding quality, not a business success bit.
+   */
+  quality: "complete" | "truncated" | "failed" | "partial";
+  /**
+   * Explicit full-scope proof; false means unproven.
+   */
+  quiescent: boolean;
+  /**
+   * Bytes observed including discarded bytes.
+   */
+  totalOutputBytes: number;
 }
 /**
  * Resource revision and exact SHA-256 content identity; does not itself verify downloaded bytes.
@@ -901,6 +963,10 @@ export interface ExecutionStatus1 {
    * Exact frozen plan identity.
    */
   planId: string;
+  /**
+   * Redacted process progress, distinct from lifecycle termination and effect proof.
+   */
+  process: ProcessSummary | null;
   /**
    * Last stop request response; independent of termination/effect evidence.
    */

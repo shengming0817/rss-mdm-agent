@@ -378,6 +378,58 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             &ObservationEvidence(facts),
         )?)
     }
+    fn capture_for(
+        &mut self,
+        request: &RequestId,
+        execution: &mut Execution,
+    ) -> Result<(Option<execution_contract::ProcessEvidence>, bool), Error> {
+        self.authorize_runner(execution.plan(), Access::RunnerFact)?;
+        let active = execution
+            .snapshot()
+            .attempt
+            .as_ref()
+            .ok_or(Error::Conflict)?;
+        let live = self.runner.evidence(execution.plan(), &active.id)?;
+        let had_live = live.is_some();
+        let capture = match live {
+            Some(facts) => Some(facts),
+            None => self.store.runner_evidence(
+                &Scope::from_plan(execution.plan()),
+                &active.id,
+                &self.adapter(None, Some(execution.plan())),
+            )?,
+        };
+        if let Some(facts) = &capture {
+            let host = Host::new(&self.host, &self.binding, &self.config, None)
+                .with_plan(Some(execution.plan()));
+            self.store
+                .record_process(&Scope::from_plan(execution.plan()), facts, &host)?;
+            if facts.total_output_bytes > active.output_bytes {
+                let result = self.command(
+                    None,
+                    execution,
+                    "output",
+                    &facts.total_output_bytes.to_string(),
+                    Command::Output {
+                        attempt_id: active.id.clone(),
+                        total_bytes: facts.total_output_bytes,
+                    },
+                    &[],
+                )?;
+                if !matches!(
+                    result.receipt().outcome,
+                    Outcome::Changed | Outcome::Duplicate
+                ) {
+                    return Err(Error::Conflict);
+                }
+                *execution = self.load(None, request, ExecutionAccess::RunnerFact)?;
+            }
+            if facts.finished {
+                self.runner.acknowledge_capture(execution.plan(), facts)?;
+            }
+        }
+        Ok((capture, had_live))
+    }
     /// Reconcile facts only, at most termination plus assessment. Missing runner memory stays
     /// uncertain and never produces a new attempt or a synthetic successful observation.
     pub fn reconcile(&mut self, request: &RequestId) -> Result<ExecutionStatus, Error> {
@@ -388,36 +440,13 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             if execution.snapshot().attempt.is_none() {
                 break;
             }
-            self.authorize_runner(execution.plan(), Access::RunnerFact)?;
-            let active = execution
-                .snapshot()
-                .attempt
-                .as_ref()
-                .ok_or(Error::Conflict)?;
-            if let Some(facts) = self.runner.evidence(execution.plan(), &active.id)? {
-                let host = Host::new(&self.host, &self.binding, &self.config, None)
-                    .with_plan(Some(execution.plan()));
-                self.store
-                    .record_process(&Scope::from_plan(execution.plan()), &facts, &host)?;
-                if facts.total_output_bytes > active.output_bytes {
-                    self.command(
-                        None,
-                        &execution,
-                        "output",
-                        &facts.total_output_bytes.to_string(),
-                        Command::Output {
-                            attempt_id: active.id.clone(),
-                            total_bytes: facts.total_output_bytes,
-                        },
-                        &[],
-                    )?;
-                    execution = self.load(context, request, ExecutionAccess::RunnerFact)?;
-                }
-            }
+            let (capture, had_live) = self.capture_for(request, &mut execution)?;
             let directive = execution
                 .directive(self.host.reliable_now()?)
                 .map_err(|_| Error::Clock)?;
-            if matches!(directive, Directive::StopRunner(_)) {
+            if matches!(directive, Directive::StopRunner(_))
+                && !capture.as_ref().is_some_and(|f| f.finished)
+            {
                 // A stop response is not a termination fact. Even persistence failure must not
                 // hide trusted observations that can release the reserved terminal capacity.
                 if let Err(error) = self.stop_and_record(&execution) {
@@ -444,14 +473,21 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                 ObservationStage::Termination
             };
             self.authorize_runner(execution.plan(), Access::RunnerFact)?;
-            let Some(facts) = self.runner.observe(
-                execution.plan(),
-                &attempt.id,
-                stage,
-                self.host.reliable_now()?,
-            )?
-            else {
+            let now = self.host.reliable_now()?;
+            let observed = self
+                .runner
+                .observe(execution.plan(), &attempt.id, stage, now)?;
+            let stored =
+                if stage == ObservationStage::Termination && attempt.mode == ExecutionMode::Real {
+                    capture.as_ref().and_then(|facts| {
+                        crate::host::process_observation(execution.plan(), facts, now)
+                    })
+                } else {
+                    None
+                };
+            let Some(facts) = observed.or(stored) else {
                 if attempt.termination.is_none()
+                    && (!had_live || capture.as_ref().is_some_and(|f| f.finished))
                     && !matches!(attempt.dispatch, DispatchState::Unknown { .. })
                 {
                     self.command(
@@ -681,6 +717,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             }
         };
         let status = ExecutionStatus {
+            process: record.process,
             submitted: self.store.has_execution_receipt(
                 &Scope::from_plan(execution.plan()),
                 &operation(execution.plan(), "register", "")?,
@@ -786,21 +823,38 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
     }
     /// Stop live runners on service shutdown. Missing proof remains Unknown in the same journal.
     pub fn stop_active(&mut self, limit: usize) -> Result<(), Error> {
-        let requests = self
-            .store
-            .service_requests(None, limit, &self.adapter(None, None))?;
-        for request in requests {
-            let execution = self.load(None, &request, ExecutionAccess::RunnerFact)?;
-            if execution
-                .snapshot()
-                .attempt
-                .as_ref()
-                .is_some_and(|a| a.termination.is_none())
-            {
-                self.stop_and_record(&execution)?;
-                self.reconcile(&request)?;
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        let mut after = None;
+        loop {
+            let requests =
+                self.store
+                    .service_requests(after.as_ref(), limit, &self.adapter(None, None))?;
+            for request in &requests {
+                if std::time::Instant::now() >= until {
+                    return Err(Error::Unavailable);
+                }
+                let execution = self.load(None, request, ExecutionAccess::RunnerFact)?;
+                if let Some(attempt) = execution
+                    .snapshot()
+                    .attempt
+                    .as_ref()
+                    .filter(|a| a.termination.is_none())
+                {
+                    let facts = self.store.runner_evidence(
+                        &Scope::from_plan(execution.plan()),
+                        &attempt.id,
+                        &self.adapter(None, Some(execution.plan())),
+                    )?;
+                    if !facts.is_some_and(|f| f.finished) {
+                        self.stop_and_record(&execution)?;
+                    }
+                    self.reconcile(request)?;
+                }
             }
+            if requests.len() < limit {
+                return Ok(());
+            }
+            after = requests.last().cloned();
         }
-        Ok(())
     }
 }

@@ -7,7 +7,7 @@ mod output;
 mod runner;
 #[cfg(target_os = "macos")]
 use macos as platform;
-pub use materialize::Artifacts;
+pub use materialize::{Artifacts, InputBytes, InputResolver};
 pub use runner::NativeRunner;
 
 #[cfg(target_os = "macos")]
@@ -16,3 +16,6 @@ pub mod macos_service;
 #[cfg(not(target_os = "macos"))]
 #[path = "unsupported.rs"]
 mod platform;
+
+#[cfg(test)]
+mod host_tests;

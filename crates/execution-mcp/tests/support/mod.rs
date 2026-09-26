@@ -318,6 +318,7 @@ impl ExecutionServicePort for TestService {
                 let status = OperationStatus {
                     mode: execution_lifecycle::ExecutionMode::Test,
                     assessment: None,
+                    process: None,
                     submitted: true,
                     cancel_requested: false,
                     operation_request_id: request.operation_request_id,

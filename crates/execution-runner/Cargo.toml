@@ -7,12 +7,13 @@ license.workspace = true
 publish = false
 
 [dependencies]
+zeroize = "=1.9.0"
 execution-contract = { path = "../execution-contract" }
 execution-app = { path = "../execution-app" }
 execution-lifecycle = { path = "../execution-lifecycle" }
 native-process = { path = "../native-process" }
 serde.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
 sha2.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["process", "io-util", "rt", "time", "sync", "macros", "net"] }
@@ -21,6 +22,11 @@ tokio = { workspace = true, features = ["process", "io-util", "rt", "time", "syn
 libc = "=0.2.189"
 
 [dev-dependencies]
+execution-admission = { path = "../execution-admission" }
+execution-approval = { path = "../execution-approval" }
+execution-capability = { path = "../execution-capability" }
+execution-sqlite = { path = "../execution-sqlite" }
+rusqlite.workspace = true
 script-plan = { path = "../script-plan" }
 
 [build-dependencies]

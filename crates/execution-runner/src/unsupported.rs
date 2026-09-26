@@ -8,12 +8,6 @@ pub(crate) fn protected_path(_: &Path, _: bool) -> Result<(), Error> {
 pub(crate) fn open_file(_: &Path) -> Result<File, Error> {
     Err(Error::Unsupported)
 }
-pub(crate) fn create_private_directory(_: &Path) -> Result<(), Error> {
-    Err(Error::Unsupported)
-}
-pub(crate) fn restrict_file(_: &File) -> Result<(), Error> {
-    Err(Error::Unsupported)
-}
 pub(crate) fn identity(_: &RunAs, _: &SessionRequirement) -> Result<(), Error> {
     Err(Error::Unsupported)
 }
@@ -38,5 +32,29 @@ impl Owner {
     pub(crate) fn terminate(&mut self) {}
     pub(crate) fn quiescent(&self) -> bool {
         false
+    }
+}
+pub(crate) fn immutable_source(_: &Path) -> Result<(), Error> {
+    Err(Error::Unsupported)
+}
+pub(crate) fn encoding(_: ArtifactEncoding) -> Result<(), Error> {
+    Err(Error::Unsupported)
+}
+pub(crate) fn payload(
+    _: File,
+    _: &[u8],
+    _: &Path,
+    _: &AttemptId,
+    _: &VersionedRef,
+) -> Result<crate::materialize::Payload, Error> {
+    Err(Error::Unsupported)
+}
+pub(crate) struct WorkingDirectory;
+impl WorkingDirectory {
+    pub(crate) fn open(_: &Path) -> Result<Self, Error> {
+        Err(Error::Unsupported)
+    }
+    pub(crate) fn configure(&self, _: &mut std::process::Command, _: &File) -> Result<(), Error> {
+        Err(Error::Unsupported)
     }
 }

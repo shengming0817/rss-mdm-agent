@@ -22,7 +22,7 @@ struct Record {
 /// One bounded OS runner. Its inventory is supplied by trusted host code, never IPC DTOs.
 pub struct NativeRunner {
     id: Id,
-    artifacts: BTreeMap<String, Artifacts>,
+    artifacts: BTreeMap<String, Arc<Artifacts>>,
     records: Mutex<BTreeMap<AttemptId, Record>>,
     capacity: usize,
 }
@@ -38,7 +38,10 @@ impl NativeRunner {
         }
         Ok(Self {
             id,
-            artifacts,
+            artifacts: artifacts
+                .into_iter()
+                .map(|(k, v)| (k, Arc::new(v)))
+                .collect(),
             records: Mutex::new(BTreeMap::new()),
             capacity,
         })
@@ -57,26 +60,13 @@ impl NativeRunner {
         if records.len() >= self.capacity {
             return Err(Error::Capacity);
         }
-        let materialized = self
-            .artifacts
-            .get(plan.digest().as_str())
-            .ok_or(Error::Unbound)?
-            .prepare(plan, attempt)?;
-        let remaining = allowance
-            .remaining_timeout_ms
-            .saturating_sub(received.elapsed().as_millis().min(u128::from(u64::MAX)) as u64);
-        if remaining == 0 {
-            return Err(Error::Conflict);
-        }
-        if allowance.remaining_output_bytes == 0
-            || allowance.remaining_output_bytes > plan.spec().budget.total_output_bytes
-        {
-            return Err(Error::Conflict);
-        }
-        let deadline = Instant::now() + Duration::from_millis(remaining);
         let cancel = Arc::new(AtomicBool::new(false));
-        let facts = Arc::new(Mutex::new(None));
-        // Reserve before thread creation. Once delivery becomes uncertain the attempt is never reused.
+        let mut preparing = rejected(plan, attempt, &self.id, ProcessEnd::Unknown);
+        preparing.scope = ProcessScope::Preparing {};
+        preparing.finished = false;
+        preparing.quiescent = false;
+        preparing.quality = OutputQuality::Partial;
+        let facts = Arc::new(Mutex::new(Some(preparing)));
         records.insert(
             attempt.clone(),
             Record {
@@ -85,16 +75,55 @@ impl NativeRunner {
                 facts: facts.clone(),
             },
         );
+        drop(records); // Never hold the admission lock during filesystem or input I/O.
+        let source = self.artifacts.get(plan.digest().as_str()).cloned();
+        let remaining = allowance
+            .remaining_timeout_ms
+            .saturating_sub(received.elapsed().as_millis().min(u128::from(u64::MAX)) as u64);
+        if remaining == 0
+            || allowance.remaining_output_bytes == 0
+            || allowance.remaining_output_bytes > plan.spec().budget.total_output_bytes
+            || cancel.load(Ordering::Acquire)
+        {
+            publish(
+                &facts,
+                rejected(
+                    plan,
+                    attempt,
+                    &self.id,
+                    if cancel.load(Ordering::Acquire) {
+                        ProcessEnd::Cancelled
+                    } else {
+                        ProcessEnd::TimedOut
+                    },
+                ),
+            );
+            return Ok(DispatchOutcome::NeverDispatched);
+        }
+        let deadline = Instant::now() + Duration::from_millis(remaining);
+        let failed_spawn = rejected(plan, attempt, &self.id, ProcessEnd::Rejected);
+        let failure_slot = facts.clone();
         let attempt = attempt.clone();
         let plan = plan.clone();
         let id = self.id.clone();
         let spawned = std::thread::Builder::new()
             .name("rss-execution-owner".into())
             .spawn(move || {
+                let prepared = source
+                    .ok_or(Error::Unbound)
+                    .and_then(|a| a.prepare(&plan, &attempt));
+                let materialized = match prepared {
+                    Ok(value) => value,
+                    Err(_) => {
+                        publish(&facts, rejected(&plan, &attempt, &id, ProcessEnd::Rejected));
+                        return;
+                    }
+                };
                 let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
                 else {
+                    publish(&facts, rejected(&plan, &attempt, &id, ProcessEnd::Rejected));
                     return;
                 };
                 runtime.block_on(run(
@@ -110,7 +139,8 @@ impl NativeRunner {
         Ok(if spawned.is_ok() {
             DispatchOutcome::Accepted
         } else {
-            DispatchOutcome::OutcomeUnknown
+            publish(&failure_slot, failed_spawn);
+            DispatchOutcome::NeverDispatched
         })
     }
 }
@@ -141,39 +171,28 @@ impl RunnerPort for NativeRunner {
             {
                 return Err(Error::Denied);
             }
-            match self.launch(plan, action.attempt_id(), allowance) {
-                Err(error) if !matches!(error, Error::Conflict | Error::Capacity) => {
-                    let facts = ProcessEvidence {
-                        plan_digest: plan.digest().clone(),
-                        attempt_id: action.attempt_id().clone(),
-                        runner: self.id.clone(),
-                        scope: ProcessScope::NotStarted {},
-                        finished: true,
-                        exit_code: None,
-                        end: ProcessEnd::Rejected,
-                        quiescent: true,
-                        stdout: vec![],
-                        stderr: vec![],
-                        total_output_bytes: 0,
-                        quality: OutputQuality::Failed,
-                    };
-                    let mut records = self.records.lock().map_err(|_| Error::Unavailable)?;
-                    if records.len() >= self.capacity || records.contains_key(action.attempt_id()) {
-                        return Err(Error::Conflict);
-                    }
-                    records.insert(
-                        action.attempt_id().clone(),
-                        Record {
-                            plan: plan.clone(),
-                            cancel: Arc::new(AtomicBool::new(false)),
-                            facts: Arc::new(Mutex::new(Some(facts))),
-                        },
-                    );
-                    Ok(DispatchOutcome::NeverDispatched)
-                }
-                result => result,
-            }
+            self.launch(plan, action.attempt_id(), allowance)
         })
+    }
+    fn acknowledge_capture(&self, plan: &FrozenPlan, facts: &ProcessEvidence) -> Result<(), Error> {
+        if !facts.finished || facts.plan_digest != *plan.digest() {
+            return Err(Error::Denied);
+        }
+        let mut records = self.records.lock().map_err(|_| Error::Unavailable)?;
+        if let Some(record) = records.get(&facts.attempt_id) {
+            if record.plan.digest() != plan.digest()
+                || record
+                    .facts
+                    .lock()
+                    .map_err(|_| Error::Unavailable)?
+                    .as_ref()
+                    != Some(facts)
+            {
+                return Err(Error::Conflict);
+            }
+            records.remove(&facts.attempt_id);
+        }
+        Ok(())
     }
     fn stop(&self, plan: &FrozenPlan, attempt: &AttemptId) -> Result<(), Error> {
         let records = self.records.lock().map_err(|_| Error::Unavailable)?;
@@ -260,8 +279,29 @@ fn now() -> Result<u64, Error> {
     )
     .map_err(|_| Error::Clock)
 }
+fn rejected(plan: &FrozenPlan, attempt: &AttemptId, id: &Id, end: ProcessEnd) -> ProcessEvidence {
+    ProcessEvidence {
+        plan_digest: plan.digest().clone(),
+        attempt_id: attempt.clone(),
+        runner: id.clone(),
+        scope: ProcessScope::NotStarted {},
+        finished: true,
+        exit_code: None,
+        end,
+        quiescent: true,
+        stdout: vec![],
+        stderr: vec![],
+        total_output_bytes: 0,
+        quality: OutputQuality::Failed,
+    }
+}
+fn publish(slot: &Mutex<Option<ProcessEvidence>>, facts: ProcessEvidence) {
+    if let Ok(mut slot) = slot.lock() {
+        *slot = Some(facts)
+    }
+}
 async fn run(
-    materialized: Materialized,
+    mut materialized: Materialized,
     plan: FrozenPlan,
     attempt: AttemptId,
     id: Id,
@@ -274,7 +314,6 @@ async fn run(
         .args(&materialized.args)
         .env_clear()
         .envs(&materialized.env)
-        .current_dir(&materialized.cwd)
         .stdin(if materialized.stdin.is_some() {
             std::process::Stdio::piped()
         } else {
@@ -283,20 +322,43 @@ async fn run(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
+    if materialized.configure(command.as_std_mut()).is_err() {
+        publish(
+            &shared,
+            rejected(&plan, &attempt, &id, ProcessEnd::Rejected),
+        );
+        return;
+    }
     let Ok(mut owner) = platform::Owner::prepare(&mut command) else {
+        publish(
+            &shared,
+            rejected(&plan, &attempt, &id, ProcessEnd::Rejected),
+        );
         return;
     };
     if cancel.load(Ordering::Acquire) || Instant::now() >= deadline {
+        publish(
+            &shared,
+            rejected(
+                &plan,
+                &attempt,
+                &id,
+                if cancel.load(Ordering::Acquire) {
+                    ProcessEnd::Cancelled
+                } else {
+                    ProcessEnd::TimedOut
+                },
+            ),
+        );
         return;
     }
     let Ok(mut child) = command.spawn() else {
+        publish(
+            &shared,
+            rejected(&plan, &attempt, &id, ProcessEnd::Rejected),
+        );
         return;
     };
-    if owner.attach(child.id().unwrap_or(0)).is_err() {
-        let _ = child.start_kill();
-        owner.terminate();
-        return;
-    }
     let mut facts = ProcessEvidence {
         plan_digest: plan.digest().clone(),
         attempt_id: attempt,
@@ -311,6 +373,14 @@ async fn run(
         total_output_bytes: 0,
         quality: OutputQuality::Partial,
     };
+    if owner.attach(child.id().unwrap_or(0)).is_err() {
+        let _ = child.start_kill();
+        owner.terminate();
+        let _ = tokio::time::timeout(Duration::from_secs(1), child.wait()).await;
+        facts.finished = true;
+        publish(&shared, facts);
+        return;
+    }
     let publish = |facts: &ProcessEvidence| {
         if let Ok(mut slot) = shared.lock() {
             *slot = Some(facts.clone())
@@ -319,15 +389,17 @@ async fn run(
     publish(&facts);
     let mut stdout = child.stdout.take().unwrap();
     let mut stderr = child.stderr.take().unwrap();
-    let input = materialized.stdin.clone();
+    let input = materialized.stdin.take();
     let stdin = child.stdin.take();
-    let writer = tokio::spawn(async move {
+    let mut writer = tokio::spawn(async move {
         if let (Some(mut pipe), Some(bytes)) = (stdin, input) {
-            pipe.write_all(&bytes).await?;
+            pipe.write_all(bytes.bytes()).await?;
             pipe.shutdown().await?;
         }
         Ok::<(), std::io::Error>(())
     });
+    let mut input_done = false;
+    let mut input_failed = false;
     let mut out = [0u8; 8192];
     let mut err = [0u8; 8192];
     let mut out_done = false;
@@ -382,11 +454,15 @@ async fn run(
                 Ok(None) => {}
             }
         }
-        if exited && out_done && err_done {
+        if exited && out_done && err_done && input_done {
             break;
         }
         let mut event = None;
         tokio::select! {
+            result=&mut writer,if !input_done=>{
+                input_done=true;
+                if !matches!(result,Ok(Ok(()))){input_failed=true;facts.end=ProcessEnd::Unknown;stop_at.get_or_insert(Instant::now());owner.stop();}
+            },
             count=stdout.read(&mut out),if !out_done=>{event=Some((true,count));},
             count=stderr.read(&mut err),if !err_done=>{event=Some((false,count));},
             _=tokio::time::sleep(Duration::from_millis(10))=>{},
@@ -425,7 +501,11 @@ async fn run(
             publish(&facts);
         }
     }
-    writer.abort();
+    if !input_done {
+        writer.abort();
+        let _ = writer.await;
+        input_failed = true;
+    }
     owner.terminate();
     let _ = child.start_kill();
     if !exited {
@@ -440,7 +520,7 @@ async fn run(
         OutputQuality::Truncated
     } else if !out_done || !err_done {
         OutputQuality::Partial
-    } else if facts.end != ProcessEnd::Exited || facts.exit_code != Some(0) {
+    } else if input_failed || facts.end != ProcessEnd::Exited || facts.exit_code != Some(0) {
         OutputQuality::Failed
     } else {
         output::quality(&facts.stdout, &facts.stderr, plan.spec().launch.output)

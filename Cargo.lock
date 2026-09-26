@@ -931,17 +931,23 @@ name = "execution-runner"
 version = "0.1.0"
 dependencies = [
  "cc",
+ "execution-admission",
  "execution-app",
+ "execution-approval",
+ "execution-capability",
  "execution-contract",
  "execution-lifecycle",
+ "execution-sqlite",
  "libc",
  "native-process",
+ "rusqlite",
  "script-plan",
  "serde",
  "serde_json",
  "sha2",
  "thiserror 2.0.20",
  "tokio",
+ "zeroize",
 ]
 
 [[package]]

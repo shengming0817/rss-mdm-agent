@@ -12,7 +12,10 @@ fn main() {
             let system = match argument.as_str() {
                 "--probe-user" => false,
                 "--probe-system" => true,
-                _ => std::process::exit(2),
+                _ => {
+                    eprintln!("usage: rss-execution-service [--probe-user|--probe-system]");
+                    std::process::exit(2)
+                }
             };
             let response = execution_runner::macos_service::query(
                 br#"{"version":2,"request":{"method":"status","request":"mechanism-probe"}}"#,
@@ -23,14 +26,20 @@ fn main() {
                     println!("{}", String::from_utf8_lossy(&bytes));
                     return;
                 }
-                Err(_) => std::process::exit(1),
+                Err(error) => {
+                    eprintln!("execution probe: {error}");
+                    std::process::exit(1)
+                }
             }
         }
         unsafe {
             libc::signal(libc::SIGTERM, stopped as *const () as usize);
             libc::signal(libc::SIGINT, stopped as *const () as usize);
         }
-        if execution_runner::host::run(Box::new(execution_runner::host::Unbound), &STOP).is_err() {
+        if let Err(error) =
+            execution_runner::host::run(Box::new(execution_runner::host::Unbound), &STOP)
+        {
+            eprintln!("execution service: {error}");
             std::process::exit(1)
         }
     }

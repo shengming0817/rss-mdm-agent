@@ -4,12 +4,68 @@ use crate::{
     journal::{authorize, decode, encode},
     *,
 };
-use execution_contract::{AttemptId, ProcessEvidence};
-use rusqlite::{params, OptionalExtension, TransactionBehavior};
+use execution_contract::{AttemptId, ProcessEvidence, ProcessSummary};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 
+pub(crate) fn capture(
+    conn: &Connection,
+    attempt: &AttemptId,
+    limits: Limits,
+) -> Result<Option<ProcessEvidence>, Error> {
+    let output = usize::try_from(limits.plan.max_output_bytes).map_err(|_| Error::Configuration)?;
+    let sql = format!(
+        "SELECT {},{},{} FROM process_evidence WHERE attempt_id=?1",
+        bounded_blob("body", limits.max_record_bytes),
+        bounded_blob("stdout", output),
+        bounded_blob("stderr", output)
+    );
+    let row: Option<(Vec<u8>, Vec<u8>, Vec<u8>)> = conn
+        .query_row(&sql, [attempt.as_str()], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })
+        .optional()?;
+    row.map(|(body, stdout, stderr)| {
+        let mut facts: ProcessEvidence = decode(&body, limits.max_record_bytes)?;
+        if facts.attempt_id != *attempt
+            || !facts.stdout.is_empty()
+            || !facts.stderr.is_empty()
+            || stdout.len().saturating_add(stderr.len()) > output
+            || ((stdout.len() + stderr.len()) as u64) > facts.total_output_bytes
+        {
+            return Err(Error::Corrupt);
+        }
+        facts.stdout = stdout;
+        facts.stderr = stderr;
+        Ok(facts)
+    })
+    .transpose()
+}
+pub(crate) fn summary(
+    conn: &Connection,
+    attempt: &AttemptId,
+    limits: Limits,
+) -> Result<Option<ProcessSummary>, Error> {
+    let body: Option<Vec<u8>> = conn
+        .query_row(
+            &format!(
+                "SELECT {} FROM process_evidence WHERE attempt_id=?1",
+                bounded_blob("body", limits.max_record_bytes)
+            ),
+            [attempt.as_str()],
+            |r| r.get(0),
+        )
+        .optional()?;
+    body.map(|bytes| {
+        let facts: ProcessEvidence = decode(&bytes, limits.max_record_bytes)?;
+        if facts.attempt_id != *attempt || !facts.stdout.is_empty() || !facts.stderr.is_empty() {
+            return Err(Error::Corrupt);
+        }
+        Ok(facts.summary())
+    })
+    .transpose()
+}
 impl Store {
-    /// Persist bounded runner evidence in the existing journal. It cannot create an attempt,
-    /// change authority, or manufacture lifecycle termination/effect observations.
+    /// Save process facts and raw byte BLOBs atomically in the existing attempt namespace.
     pub fn record_process(
         &mut self,
         scope: &Scope,
@@ -42,25 +98,17 @@ impl Store {
         {
             return Err(Error::InvalidInput);
         }
-        let bytes = encode(facts, self.limits.max_record_bytes)?;
-        let old: Option<Vec<u8>> = tx
-            .query_row(
-                &format!(
-                    "SELECT {} FROM process_evidence WHERE attempt_id=?1",
-                    bounded_blob("body", self.limits.max_record_bytes)
-                ),
-                [facts.attempt_id.as_str()],
-                |r| r.get(0),
-            )
-            .optional()?;
-        if let Some(old) = old {
-            let previous: ProcessEvidence = decode(&old, self.limits.max_record_bytes)?;
+        if let Some(previous) = capture(&tx, &facts.attempt_id, self.limits)? {
             if previous == *facts {
                 return Ok(());
             }
             if previous.finished
                 || previous.plan_digest != facts.plan_digest
-                || previous.scope != facts.scope
+                || (previous.scope != facts.scope
+                    && !matches!(
+                        previous.scope,
+                        execution_contract::ProcessScope::Preparing {}
+                    ))
                 || previous.runner != facts.runner
                 || previous.total_output_bytes > facts.total_output_bytes
                 || !facts.stdout.starts_with(&previous.stdout)
@@ -69,20 +117,55 @@ impl Store {
                 return Err(Error::Conflict);
             }
         }
-        tx.execute("INSERT INTO process_evidence(attempt_id,body) VALUES(?1,?2) ON CONFLICT(attempt_id) DO UPDATE SET body=excluded.body", params![facts.attempt_id.as_str(), bytes])?;
+        let mut metadata = facts.clone();
+        metadata.stdout.clear();
+        metadata.stderr.clear();
+        let body = encode(&metadata, self.limits.max_record_bytes)?;
+        tx.execute("INSERT INTO process_evidence(attempt_id,body,stdout,stderr) VALUES(?1,?2,?3,?4) ON CONFLICT(attempt_id) DO UPDATE SET body=excluded.body,stdout=excluded.stdout,stderr=excluded.stderr",params![facts.attempt_id.as_str(),body,&facts.stdout,&facts.stderr])?;
         tx.commit().map_err(|_| Error::OperationCommitUnknown)
     }
-    /// Read evidence only under current result permission and the exact plan scope.
+    /// Raw capture requires privileged audit access, never ordinary result permission.
     pub fn process_evidence(
         &self,
         scope: &Scope,
         attempt: &AttemptId,
         host: &impl Host,
     ) -> Result<Option<ProcessEvidence>, Error> {
-        let tx = self.read(scope, Access::ReadResult, None, host)?;
-        let bytes: Option<Vec<u8>> = tx.query_row(&format!("SELECT {} FROM process_evidence p JOIN attempts a ON a.attempt_id=p.attempt_id WHERE a.scope=?1 AND p.attempt_id=?2", bounded_blob("body", self.limits.max_record_bytes)), params![scope.key(), attempt.as_str()], |r| r.get(0)).optional()?;
-        bytes
-            .map(|b| decode(&b, self.limits.max_record_bytes))
-            .transpose()
+        self.read_process(scope, attempt, Access::ReadAudit, host)
+    }
+    /// Internal owner reconciliation reads its previously committed facts, never creating a permit.
+    pub fn runner_evidence(
+        &self,
+        scope: &Scope,
+        attempt: &AttemptId,
+        host: &impl Host,
+    ) -> Result<Option<ProcessEvidence>, Error> {
+        self.read_process(scope, attempt, Access::RunnerFact, host)
+    }
+    fn read_process(
+        &self,
+        scope: &Scope,
+        attempt: &AttemptId,
+        access: Access,
+        host: &impl Host,
+    ) -> Result<Option<ProcessEvidence>, Error> {
+        let tx = self.read(scope, access, None, host)?;
+        let belongs: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM attempts WHERE scope=?1 AND attempt_id=?2)",
+            params![scope.key(), attempt.as_str()],
+            |r| r.get(0),
+        )?;
+        if !belongs {
+            return Ok(None);
+        }
+        let facts = capture(&tx, attempt, self.limits)?;
+        let (plan, _, _) = load_execution(&tx, scope, self.limits)?;
+        if facts
+            .as_ref()
+            .is_some_and(|f| &f.plan_digest != plan.digest())
+        {
+            return Err(Error::Corrupt);
+        }
+        Ok(facts)
     }
 }

@@ -26,19 +26,29 @@ pub(crate) fn run(handler: Box<dyn Handler>, stop: &'static AtomicBool) -> Resul
         .map_err(|_| Error::Conflict)?;
     STOP.set(stop).map_err(|_| Error::Conflict)?;
     let worker = std::thread::spawn(move || {
+        let mut previous = None;
         while !stop.load(Ordering::Acquire) {
             if let Ok(mut h) = HANDLER.get().unwrap().lock() {
-                h.tick();
+                match h.tick() {
+                    Ok(()) => previous = None,
+                    Err(error) => {
+                        if previous != Some(error) {
+                            eprintln!("execution reconcile: {error}");
+                            previous = Some(error);
+                        }
+                    }
+                }
             }
             std::thread::sleep(Duration::from_millis(100));
         }
         if let Ok(mut h) = HANDLER.get().unwrap().lock() {
-            h.stop();
+            h.stop()?;
         }
+        Ok::<(), Error>(())
     });
     let result = unsafe { rss_execution_listen() };
     stop.store(true, Ordering::Release);
-    let _ = worker.join();
+    worker.join().map_err(|_| Error::Unavailable)??;
     if result == 0 {
         Ok(())
     } else {

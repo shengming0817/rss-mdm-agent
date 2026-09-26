@@ -1,6 +1,6 @@
 //! One bounded IPC owner driving the existing application. Peer identity is never a wire field.
 use execution_app::{AppHost, ExecutionApp, RequestContext, RunnerPort};
-use execution_contract::{Id, PlanLimits, RequestId};
+use execution_contract::{PlanLimits, RequestId};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::AtomicBool;
 
@@ -28,12 +28,11 @@ impl Peer {
     }
 }
 /// Local IPC V2 request. Idempotency and authorization still belong to ExecutionApp.
-#[derive(Deserialize, Serialize)]
-#[serde(tag = "method", rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Serialize)]
+#[serde(tag = "method", rename_all = "camelCase")]
 pub enum Request {
     Submit {
-        command: Id,
-        plan: serde_json::Value,
+        plan: Box<serde_json::value::RawValue>,
     },
     Status {
         request: RequestId,
@@ -46,7 +45,31 @@ pub enum Request {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct Envelope {
     version: u8,
-    request: Request,
+    request: RawRequest,
+}
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum Method {
+    Submit,
+    Status,
+    Cancel,
+}
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawRequest {
+    method: Method,
+    plan: Option<Box<serde_json::value::RawValue>>,
+    request: Option<RequestId>,
+}
+impl RawRequest {
+    fn into_request(self) -> Option<Request> {
+        match (self.method, self.plan, self.request) {
+            (Method::Submit, Some(plan), None) => Some(Request::Submit { plan }),
+            (Method::Status, None, Some(request)) => Some(Request::Status { request }),
+            (Method::Cancel, None, Some(request)) => Some(Request::Cancel { request }),
+            _ => None,
+        }
+    }
 }
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -64,8 +87,8 @@ pub trait Ingress: Send {
 /// The native OS service owns one handler; ticks and calls are serialized by the owner loop.
 pub trait Handler: Send {
     fn handle(&mut self, peer: &Peer, request: Request) -> Reply;
-    fn tick(&mut self);
-    fn stop(&mut self);
+    fn tick(&mut self) -> Result<(), execution_app::Error>;
+    fn stop(&mut self) -> Result<(), execution_app::Error>;
 }
 /// Executable's default assembly: there is deliberately no environment/test authority fallback.
 pub struct Unbound;
@@ -73,8 +96,12 @@ impl Handler for Unbound {
     fn handle(&mut self, _: &Peer, _: Request) -> Reply {
         Reply::Rejected
     }
-    fn tick(&mut self) {}
-    fn stop(&mut self) {}
+    fn tick(&mut self) -> Result<(), execution_app::Error> {
+        Ok(())
+    }
+    fn stop(&mut self) -> Result<(), execution_app::Error> {
+        Ok(())
+    }
 }
 /// Adapter around the sole execution application; no duplicate admission or execution state.
 pub struct Endpoint<H, R, I> {
@@ -98,21 +125,13 @@ impl<H: AppHost + Send, R: RunnerPort + Send, I: Ingress> Handler for Endpoint<H
         let result = (|| {
             let caller = self.ingress.authenticate(peer)?;
             match request {
-                Request::Submit { command, plan } => {
-                    let bytes = serde_json::to_vec(&plan)
-                        .map_err(|_| execution_app::Error::InvalidInput)?;
-                    let spec = execution_contract::decode_plan(&bytes, &self.limits)
+                Request::Submit { plan } => {
+                    let spec = execution_contract::decode_plan(plan.get().as_bytes(), &self.limits)
                         .map_err(|_| execution_app::Error::InvalidInput)?;
                     let plan = execution_contract::FrozenPlan::freeze(spec, &self.limits)
                         .map_err(|_| execution_app::Error::InvalidInput)?;
                     let request = &plan.spec().request.request_id;
-                    self.app.register_plan(&caller, request, &plan)?;
-                    self.app.advance(
-                        &caller,
-                        request,
-                        &execution_app::CommandId::new(command.as_str())
-                            .map_err(|_| execution_app::Error::InvalidInput)?,
-                    )
+                    self.app.submit(&caller, request, &plan)
                 }
                 Request::Status { request } => self.app.status(&caller, &request),
                 Request::Cancel { request } => self.app.cancel(&caller, &request),
@@ -120,16 +139,24 @@ impl<H: AppHost + Send, R: RunnerPort + Send, I: Ingress> Handler for Endpoint<H
         })();
         match result {
             Ok(value) => Reply::Status { value },
-            Err(_) => Reply::Rejected,
+            Err(
+                execution_app::Error::Denied
+                | execution_app::Error::Unbound
+                | execution_app::Error::NotFound
+                | execution_app::Error::InvalidInput
+                | execution_app::Error::Conflict
+                | execution_app::Error::Capability
+                | execution_app::Error::Unsupported,
+            ) => Reply::Rejected,
+            Err(_) => Reply::Unavailable,
         }
     }
-    fn tick(&mut self) {
-        if let Ok(next) = self.app.reconcile_page(self.cursor.as_ref(), 32) {
-            self.cursor = next
-        }
+    fn tick(&mut self) -> Result<(), execution_app::Error> {
+        self.cursor = self.app.reconcile_page(self.cursor.as_ref(), 32)?;
+        Ok(())
     }
-    fn stop(&mut self) {
-        let _ = self.app.stop_active(128);
+    fn stop(&mut self) -> Result<(), execution_app::Error> {
+        self.app.stop_active(128)
     }
 }
 /// Decode only bounded, current envelopes; malformed input never invokes a handler.
@@ -138,7 +165,10 @@ pub fn dispatch(handler: &mut dyn Handler, peer: &Peer, bytes: &[u8]) -> Vec<u8>
         Reply::Rejected
     } else {
         match serde_json::from_slice::<Envelope>(bytes) {
-            Ok(e) if e.version == 2 => handler.handle(peer, e.request),
+            Ok(e) if e.version == 2 => match e.request.into_request() {
+                Some(request) => handler.handle(peer, request),
+                None => Reply::Rejected,
+            },
             _ => Reply::Rejected,
         }
     };

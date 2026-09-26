@@ -154,6 +154,8 @@ pub struct ExecutionStatus {
     pub phase: TaskPhase,
     /// Explicit fixture provenance, also present before the first attempt.
     pub mode: ExecutionMode,
+    /// Redacted process progress, distinct from lifecycle termination and effect proof.
+    pub process: Option<execution_contract::ProcessSummary>,
     /// Current admitted attempt, absent before admission.
     pub attempt_id: Option<AttemptId>,
     /// Total admitted attempts; retries never reset it.

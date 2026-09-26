@@ -34,3 +34,18 @@ pub(crate) fn quality(stdout: &[u8], stderr: &[u8], spec: OutputSpec) -> OutputQ
         },
     }
 }
+
+pub(crate) fn valid_encoding(bytes: &[u8], encoding: TextEncoding) -> bool {
+    match encoding {
+        TextEncoding::Utf8 => std::str::from_utf8(bytes).is_ok(),
+        TextEncoding::Utf16Le => {
+            bytes.len().is_multiple_of(2)
+                && char::decode_utf16(
+                    bytes
+                        .chunks_exact(2)
+                        .map(|b| u16::from_le_bytes([b[0], b[1]])),
+                )
+                .all(|c| c.is_ok())
+        }
+    }
+}

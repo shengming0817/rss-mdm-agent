@@ -254,6 +254,8 @@ pub enum OperationPhase {
 pub struct OperationStatus {
     /// Execution provenance; a verified test result is not a real platform effect.
     pub mode: execution_lifecycle::ExecutionMode,
+    /// Redacted root process progress; not full-scope termination or effect proof.
+    pub process: Option<execution_contract::ProcessSummary>,
     /// Independent effect assessment, never inferred from process exit.
     pub assessment: Option<execution_lifecycle::EffectAssessment>,
     /// Durable initial submission receipt; preview alone is false.

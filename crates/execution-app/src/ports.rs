@@ -123,6 +123,13 @@ pub trait RunnerPort {
         plan: &FrozenPlan,
         attempt: &AttemptId,
     ) -> Result<Option<execution_contract::ProcessEvidence>, Error>;
+    /// The owner has committed this final capture and its cumulative accounting. Release only
+    /// the matching finished record; acknowledgements never grant a new dispatch permission.
+    fn acknowledge_capture(
+        &self,
+        plan: &FrozenPlan,
+        facts: &execution_contract::ProcessEvidence,
+    ) -> Result<(), Error>;
     /// Request bounded stopping. Success only acknowledges the request, not termination.
     fn stop(&self, plan: &FrozenPlan, attempt: &AttemptId) -> Result<(), Error>;
     /// Return independently verified facts if available. Lost records return None, never fabricated

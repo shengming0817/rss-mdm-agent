@@ -1,5 +1,6 @@
 //! Bounded process facts. These DTOs carry evidence, never dispatch authority.
 use crate::{AttemptId, Digest, Id};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// OS scope correlation only; a restored identifier never grants termination rights.
@@ -11,6 +12,8 @@ use serde::{Deserialize, Serialize};
     deny_unknown_fields
 )]
 pub enum ProcessScope {
+    /// The live owner is preparing the admitted attempt; no termination fact is implied.
+    Preparing {},
     /// The runner rejected preparation before any process could be created.
     NotStarted {},
     /// Cooperative process group. Group absence does not prove escaped descendants are gone.
@@ -29,7 +32,7 @@ pub enum ProcessScope {
     },
 }
 /// Why a bounded process owner stopped collecting output.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum ProcessEnd {
     /// Preparation was rejected before any target process started.
@@ -46,7 +49,7 @@ pub enum ProcessEnd {
     Unknown,
 }
 /// Quality of the captured result, independent from the exit code.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum OutputQuality {
     /// All required output was decoded and structurally valid.
@@ -59,7 +62,7 @@ pub enum OutputQuality {
     Partial,
 }
 /// Immutable terminal capture persisted beside the existing execution attempt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProcessEvidence {
     /// Exact immutable plan, not a bare task identifier.
@@ -86,4 +89,44 @@ pub struct ProcessEvidence {
     pub total_output_bytes: u64,
     /// Encoding and structure quality, not authorization to publish fields.
     pub quality: OutputQuality,
+}
+
+impl std::fmt::Debug for ProcessEvidence {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProcessEvidence")
+            .field("attempt", &self.attempt_id)
+            .field("finished", &self.finished)
+            .field("quality", &self.quality)
+            .finish_non_exhaustive()
+    }
+}
+/// Ordinary result projection. No raw output, paths, process identifiers or secrets.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProcessSummary {
+    /// Root capture completed; not proof of all descendants terminating.
+    pub finished: bool,
+    /// Root exit code, independently from effect or scope quiescence.
+    pub exit_code: Option<i32>,
+    /// Stop/failure classification.
+    pub end: ProcessEnd,
+    /// Explicit full-scope proof; false means unproven.
+    pub quiescent: bool,
+    /// Bytes observed including discarded bytes.
+    pub total_output_bytes: u64,
+    /// Capture/decoding quality, not a business success bit.
+    pub quality: OutputQuality,
+}
+impl ProcessEvidence {
+    /// Project only ordinary result fields, without raw diagnostics.
+    pub fn summary(&self) -> ProcessSummary {
+        ProcessSummary {
+            finished: self.finished,
+            exit_code: self.exit_code,
+            end: self.end,
+            quiescent: self.quiescent,
+            total_output_bytes: self.total_output_bytes,
+            quality: self.quality,
+        }
+    }
 }

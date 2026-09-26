@@ -109,6 +109,13 @@ impl RunnerPort for DeterministicTestRunner {
     ) -> Result<Option<execution_contract::ProcessEvidence>, Error> {
         Ok(None)
     }
+    fn acknowledge_capture(
+        &self,
+        _: &execution_contract::FrozenPlan,
+        _: &execution_contract::ProcessEvidence,
+    ) -> Result<(), Error> {
+        Ok(())
+    }
     fn stop(&self, plan: &FrozenPlan, attempt: &AttemptId) -> Result<(), Error> {
         let mut records = self.records.lock().map_err(|_| Error::Unavailable)?;
         if let Some(record) = records.get_mut(attempt) {
