@@ -29,18 +29,32 @@ async function setup() {
     initialize: async () => ({}),
     connections: async () => ({
       connections: rows,
-      preferences: { schemaVersion: 5, kind: "userPreferences" },
+      preferences: { schemaVersion: 6, kind: "userPreferences" },
     }),
     listSessions: async () => ({ items: [] }),
     observe: () => () => {},
     close: vi.fn(),
     connection: { closed: new Promise(() => {}) },
     savePreferences: vi.fn(),
-    createSession: vi.fn().mockResolvedValue(view),
-    saveConnection: vi.fn(async (row: Connection) => {
-      rows = [{ ...row, status: "ready" }];
+    testConnection: vi.fn(async () => {
+      rows = [{ ...rows[0], configRevision: 2, status: "ready" }];
       return rows[0];
     }),
+    createSession: vi.fn().mockResolvedValue(view),
+    saveConnection: vi.fn(
+      async (row: import("@rss-mdm-agent/ai-contract").ConnectionDraft) => {
+        rows = [
+          {
+            ...row,
+            schemaVersion: 6,
+            kind: "connection",
+            configRevision: 1,
+            status: "unverified",
+          },
+        ];
+        return rows[0];
+      },
+    ),
   } as unknown as RuntimeClient;
   const c = createAssistant(
     { connect: async () => ({ runtime: client, mode: "s1" }) },
@@ -48,7 +62,7 @@ async function setup() {
   );
   await c.connect();
   const status: HostStatus = {
-    schemaVersion: 5,
+    schemaVersion: 6,
     kind: "hostStatus",
     generation: 1,
     phase: "ready",
@@ -99,6 +113,9 @@ it("first use may defer or validate then create exactly one pending conversation
     expect(t.client.createSession).not.toHaveBeenCalled();
     await t.fill();
     expect(t.client.saveConnection).toHaveBeenCalledTimes(1);
+    expect(t.button("新建对话并前往 AI").attributes("disabled")).toBeDefined();
+    await t.button("测试连接").trigger("click");
+    await flushPromises();
     expect(
       t.button("新建对话并前往 AI").attributes("disabled"),
     ).toBeUndefined();
@@ -130,7 +147,7 @@ it("keeps the connection draft editable while the AI Host is disconnected", asyn
     );
     await name.setValue("Offline draft");
     expect((name.element as HTMLInputElement).value).toBe("Offline draft");
-    expect(t.button("验证并保存").attributes("disabled")).toBeDefined();
+    expect(t.button("保存配置").attributes("disabled")).toBeDefined();
   } finally {
     t.close();
   }

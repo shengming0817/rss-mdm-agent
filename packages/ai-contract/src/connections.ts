@@ -4,7 +4,7 @@ import { boundedJson, decode } from "./codec.js";
 import { defaultLimits, fail, ok } from "./results.js";
 
 export const emptyPreferences = (): UserPreferences => ({
-  schemaVersion: 5,
+  schemaVersion: 6,
   kind: "userPreferences",
 });
 /** Append-only revisions keep accepted phases reproducible without retaining secrets. */
@@ -58,7 +58,7 @@ export function mergePreferences(
   try {
     decode(
       boundedJson(
-        { schemaVersion: 5, kind: "preferencesRequest", patch },
+        { schemaVersion: 6, kind: "preferencesRequest", patch },
         defaultLimits,
       ),
       defaultLimits,
@@ -71,6 +71,37 @@ export function mergePreferences(
       else delete next[key];
     }
     return ok(next);
+  } catch {
+    return fail("invalid_input");
+  }
+}
+
+/** Only editable fields cross the save boundary; Host assigns all state. */
+export function savedDraft(
+  draft: import("./wire.js").ConnectionDraft,
+  expected: number | null,
+): Result<Connection> {
+  try {
+    decode(
+      boundedJson(
+        {
+          schemaVersion: 6,
+          kind: "saveConnectionRequest",
+          connection: draft,
+          expectedRevision: expected,
+        },
+        defaultLimits,
+      ),
+      defaultLimits,
+    );
+    return ok({
+      ...draft,
+      schemaVersion: 6,
+      kind: "connection",
+      configRevision: (expected ?? 0) + 1,
+      status: "unverified",
+      lastTest: null,
+    });
   } catch {
     return fail("invalid_input");
   }

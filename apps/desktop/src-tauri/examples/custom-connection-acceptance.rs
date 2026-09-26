@@ -1,4 +1,4 @@
-//! Real WebView -> AppKit secure entry -> private Host channel -> encrypted SQLite.
+//! Real WebView credential form -> Rust encryption -> private Host channel -> encrypted SQLite.
 //! The master-key backend is injected; this test never accesses the user Keychain.
 //! The supplied credential is synthetic and is never written to the report or stdout.
 use rss_mdm_desktop::composition::{ipc, lifecycle::Lifecycle, runtime::DesktopRuntime};
@@ -29,82 +29,6 @@ struct Evidence {
     finished: AtomicBool,
     source: serde_json::Value,
     secret: String,
-}
-
-#[cfg(target_os = "macos")]
-fn fill_secure_field(view: &objc2_app_kit::NSView, value: &str) -> bool {
-    use objc2::runtime::AnyObject;
-    use objc2_app_kit::NSSecureTextField;
-    use objc2_foundation::NSString;
-    if let Some(field) = (view as &AnyObject).downcast_ref::<NSSecureTextField>() {
-        field.setStringValue(&NSString::from_str(value));
-        return true;
-    }
-    view.subviews()
-        .iter()
-        .any(|child| fill_secure_field(&child, value))
-}
-
-#[cfg(target_os = "macos")]
-struct SecureEntryAttempt {
-    secret: Arc<String>,
-    entered: Arc<AtomicBool>,
-}
-
-#[cfg(target_os = "macos")]
-unsafe extern "C" fn attempt_secure_entry(context: *mut std::ffi::c_void) {
-    let attempt = unsafe { Box::from_raw(context.cast::<SecureEntryAttempt>()) };
-    if attempt.entered.load(Ordering::Acquire) {
-        return;
-    }
-    use objc2::MainThreadMarker;
-    use objc2_app_kit::{NSAlertFirstButtonReturn, NSApplication};
-    let Some(mtm) = MainThreadMarker::new() else {
-        return;
-    };
-    let application = NSApplication::sharedApplication(mtm);
-    let Some(window) = application.modalWindow() else {
-        return;
-    };
-    let Some(content) = window.contentView() else {
-        return;
-    };
-    if fill_secure_field(&content, &attempt.secret) {
-        attempt.entered.store(true, Ordering::Release);
-        application.stopModalWithCode(NSAlertFirstButtonReturn);
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn automate_secure_entry(secret: String, evidence: Arc<Evidence>) {
-    unsafe extern "C" {
-        static _dispatch_main_q: u8;
-        fn dispatch_async_f(
-            queue: *mut std::ffi::c_void,
-            context: *mut std::ffi::c_void,
-            work: unsafe extern "C" fn(*mut std::ffi::c_void),
-        );
-    }
-    std::thread::spawn(move || {
-        let entered = Arc::new(AtomicBool::new(false));
-        let secret = Arc::new(secret);
-        while !evidence.finished.load(Ordering::Acquire) && !entered.load(Ordering::Acquire) {
-            let attempt = Box::new(SecureEntryAttempt {
-                secret: Arc::clone(&secret),
-                entered: Arc::clone(&entered),
-            });
-            unsafe {
-                dispatch_async_f(
-                    std::ptr::addr_of!(_dispatch_main_q)
-                        .cast_mut()
-                        .cast::<std::ffi::c_void>(),
-                    Box::into_raw(attempt).cast(),
-                    attempt_secure_entry,
-                );
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-    });
 }
 
 fn finish(
@@ -158,7 +82,10 @@ fn window(app: &tauri::AppHandle, evidence: Arc<Evidence>) -> tauri::Result<()> 
                 let script = format!(
                     "window.__RSS_CUSTOM_CONNECTION__={};\n{}",
                     evidence.source,
-                    include_str!("../../../../tests/desktop/custom-connection-flow.js")
+                    include_str!("../../../../tests/desktop/custom-connection-flow.js").replace(
+                        "__RSS_FIXTURE_SECRET__",
+                        &serde_json::to_string(&evidence.secret).unwrap()
+                    )
                 );
                 let _ = window.eval(&script);
             }
@@ -239,7 +166,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ),
             )?);
             window(app.handle(), setup.clone())?;
-            automate_secure_entry(secret.clone(), setup.clone());
             let handle = app.handle().clone();
             let timeout = setup.clone();
             tauri::async_runtime::spawn(async move {

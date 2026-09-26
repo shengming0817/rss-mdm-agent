@@ -36,12 +36,12 @@ function setup(now = () => 100) {
   view.connection = "attached";
   const submit = vi.fn().mockResolvedValue({ kind: "receipt" });
   const client = {
-    initialize: vi.fn().mockResolvedValue({ contractVersion: 5, acp: 1 }),
+    initialize: vi.fn().mockResolvedValue({ contractVersion: 6, acp: 1 }),
     connections: vi.fn().mockResolvedValue({
-      preferences: { schemaVersion: 5, kind: "userPreferences" },
+      preferences: { schemaVersion: 6, kind: "userPreferences" },
       connections: [
         {
-          schemaVersion: 5,
+          schemaVersion: 6,
           kind: "connection",
           connectionId: "config-1",
           name: "Fixture",
@@ -56,7 +56,7 @@ function setup(now = () => 100) {
     }),
     savePreferences: vi
       .fn()
-      .mockResolvedValue({ schemaVersion: 5, kind: "userPreferences" }),
+      .mockResolvedValue({ schemaVersion: 6, kind: "userPreferences" }),
     listSessions: vi.fn().mockResolvedValue({ items: [session] }),
     restore: vi.fn().mockResolvedValue(view),
     createSession: vi.fn().mockResolvedValue(view),
@@ -100,7 +100,7 @@ describe("assistant application ownership", () => {
     await t.c.select("session-1");
     t.view.commands.p = {
       command: {
-        schemaVersion: 5,
+        schemaVersion: 6,
         kind: "command",
         sessionId: "session-1",
         commandId: "p",
@@ -505,7 +505,7 @@ it("aborts an in-flight connection on disposal and suppresses its late permissio
 it("connection panel sends exactly the confirmed preview once and never includes unconfirmed history", async () => {
   const t = setup();
   const preview = {
-    schemaVersion: 5 as const,
+    schemaVersion: 6 as const,
     kind: "historyPreview" as const,
     sessionId: "session-1",
     connectionId: "config-1",
@@ -587,7 +587,7 @@ it("drops a history preview that completes after the selected session changed", 
   t.c.state.selected = "session-2";
   await wrapper.vm.$nextTick();
   finish({
-    schemaVersion: 5,
+    schemaVersion: 6,
     kind: "historyPreview",
     sessionId: "session-1",
     connectionId: "config-1",
@@ -615,8 +615,8 @@ it("deleting the selected connection preserves history and immediately disables 
   await t.c.select("session-1");
   t.c.draft.value = "keep draft";
   const before = t.c.view.value;
-  const saveConnection = vi.fn().mockResolvedValue({});
-  Object.assign(t.client, { saveConnection });
+  const deleteConnection = vi.fn().mockResolvedValue({});
+  Object.assign(t.client, { deleteConnection });
   const wrapper = mount(ConnectionSettings, {
     props: { controller: t.c },
     attachTo: document.body,
@@ -630,14 +630,14 @@ it("deleting the selected connection preserves history and immediately disables 
       wrapper.get('button[aria-label="将连接 Fixture 设为默认"]'),
     ).toBeTruthy();
     vi.mocked(t.client.connections).mockResolvedValue({
-      schemaVersion: 5,
+      schemaVersion: 6,
       kind: "connectionPage",
-      preferences: { schemaVersion: 5, kind: "userPreferences" },
+      preferences: { schemaVersion: 6, kind: "userPreferences" },
       connections: [],
     });
     await deleteButton.trigger("click");
     await flushPromises();
-    expect(saveConnection).not.toHaveBeenCalled();
+    expect(deleteConnection).not.toHaveBeenCalled();
     const dialog = wrapper.get('[role="alertdialog"]');
     expect(dialog.attributes("aria-modal")).toBe("true");
     expect(dialog.text()).toContain("Fixture");
@@ -648,7 +648,7 @@ it("deleting the selected connection preserves history and immediately disables 
       .trigger("click");
     await flushPromises();
     expect(document.activeElement).toBe(deleteButton.element);
-    expect(saveConnection).not.toHaveBeenCalled();
+    expect(deleteConnection).not.toHaveBeenCalled();
     await wrapper
       .findAll("button")
       .find((b) => b.text() === "删除")!
@@ -658,7 +658,7 @@ it("deleting the selected connection preserves history and immediately disables 
       .find((b) => b.text() === "确认删除")!
       .trigger("click");
     await flushPromises();
-    expect(saveConnection.mock.calls[0][0].status).toBe("deleted");
+    expect(deleteConnection.mock.calls[0][0]).toBe("config-1");
     expect(t.c.view.value).toEqual(before);
     expect(t.c.canSend.value).toBe(false);
     expect(t.c.connectionReady.value).toBe(false);
@@ -676,15 +676,15 @@ it("connection revision conflicts invalidate stale edit and delete actions", asy
   const saveConnection = vi
     .fn()
     .mockRejectedValue(new ClientError("revision_conflict"));
-  Object.assign(t.client, { saveConnection });
+  Object.assign(t.client, { saveConnection, deleteConnection: saveConnection });
   const wrapper = mount(ConnectionSettings, { props: { controller: t.c } });
   try {
     await flushPromises();
     await wrapper.get('button[aria-label="编辑连接 Fixture"]').trigger("click");
     await wrapper.get("form").trigger("submit");
     await flushPromises();
-    expect(wrapper.get("form h3").text()).toBe("添加连接");
-    expect(wrapper.text()).toContain("目录已刷新，请重新打开连接");
+    expect(wrapper.get("form h3").text()).toBe("编辑连接");
+    expect(wrapper.text()).toContain("当前草稿保留");
     await wrapper.get('button[aria-label="删除连接 Fixture"]').trigger("click");
     await wrapper
       .findAll("button")
@@ -719,7 +719,7 @@ it("existing configuration cannot become a custom API key and Claude supports co
     expect(
       wrapper
         .findAll("button")
-        .find((b) => b.text() === "验证并保存")!
+        .find((b) => b.text() === "保存配置")!
         .attributes("disabled"),
     ).toBeDefined();
     await field("认证来源").setValue("existing_config");

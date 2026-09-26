@@ -28,7 +28,7 @@ async function persistIntent(store, session, command, attempt) {
     await store.command(session.namespace, command.commandId),
   );
   const record = {
-    schemaVersion: 5,
+    schemaVersion: 6,
     kind: "commandRecord",
     command: accepted.command,
     receipt: accepted.receipt,
@@ -177,7 +177,7 @@ test(
     );
     const session = startStage(
       {
-        schemaVersion: 5,
+        schemaVersion: 6,
         kind: "session",
         namespace: fixture.configuration.namespace,
         revision: 0,
@@ -399,7 +399,7 @@ test(
       );
     const failure = { code: "stale_binding", retry: "never" };
     const invalidated = {
-      schemaVersion: 5,
+      schemaVersion: 6,
       kind: "commandRecord",
       command: durable.record.command,
       receipt: durable.record.receipt,
@@ -468,7 +468,7 @@ test(
     const persisted = await conversation(firstPort, admitted, "persisted");
     const previous = startStage(
       {
-        schemaVersion: 5,
+        schemaVersion: 6,
         kind: "session",
         namespace: fixture.configuration.namespace,
         revision: 0,

@@ -47,7 +47,7 @@ fn main() {
     if let Some(code) = mode.strip_prefix("diagnostic_") {
         eprintln!(
             "{}",
-            serde_json::json!({"schemaVersion":5,"kind":"hostProcessDiagnostic","code":code})
+            serde_json::json!({"schemaVersion":6,"kind":"hostProcessDiagnostic","code":code})
         );
         std::process::exit(1);
     }
@@ -121,13 +121,13 @@ fn main() {
                 std::thread::sleep(Duration::from_millis(400));
             }
             let reply = if health {
-                serde_json::json!({"schemaVersion":5,"kind":"hostHealth","ready":true,"protocol":if mode=="bad_health"{0}else{3}})
+                serde_json::json!({"schemaVersion":6,"kind":"hostHealth","ready":true,"protocol":if mode=="bad_health"{0}else{3}})
             } else {
                 serde_json::json!(true)
             };
             send(
                 0,
-                serde_json::json!({"schemaVersion":5,"kind":"nativeReply","id":value["id"],"ok":true,"value":reply}),
+                serde_json::json!({"schemaVersion":6,"kind":"nativeReply","id":value["id"],"ok":true,"value":reply}),
             );
         }
     }

@@ -703,7 +703,7 @@ class SqliteSessionStore implements SessionStore, WorkerLaunchFenceStore {
       )
         prefs.defaultConnectionId = next.connectionId;
       if (
-        next.status === "deleted" &&
+        next.status !== "ready" &&
         prefs.defaultConnectionId === next.connectionId
       )
         delete prefs.defaultConnectionId;
@@ -726,6 +726,35 @@ class SqliteSessionStore implements SessionStore, WorkerLaunchFenceStore {
           .run(...this.#caller(caller), next.connectionId);
       this.#savePreferences(caller, prefs);
       return checked;
+    });
+  }
+  async recordConnectionTest(
+    caller: Caller,
+    id: string,
+    expected: number,
+    result: import("@rss-mdm-agent/ai-contract").ConnectionTest,
+  ): Promise<Result<Connection>> {
+    return this.#transaction(() => {
+      const current = this.#connection(caller, id);
+      if (
+        !current ||
+        current.configRevision !== expected ||
+        current.status === "deleted"
+      )
+        return fail("revision_conflict");
+      const next = { ...current, lastTest: result };
+      const json = boundedJson(next, defaultLimits);
+      if (
+        decode(json, defaultLimits).kind !== "connection" ||
+        result.testedRevision !== expected
+      )
+        return fail("invalid_input");
+      this.#db
+        .prepare(
+          "UPDATE connections SET json=? WHERE tenant_id=? AND principal_id=? AND authority_id=? AND id=? AND revision=?",
+        )
+        .run(json, ...this.#caller(caller), id, expected);
+      return ok(next);
     });
   }
   async selectConnection(

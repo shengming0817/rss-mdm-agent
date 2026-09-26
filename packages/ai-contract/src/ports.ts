@@ -207,8 +207,20 @@ export interface HostPort extends Closeable {
   connections(caller: Caller, budget: Budget): Promise<Result<ConnectionPage>>;
   saveConnection(
     caller: Caller,
-    connection: Connection,
+    connection: import("./wire.js").ConnectionDraft,
     expectedRevision: Counter | null,
+    budget: Budget,
+  ): Promise<Result<Connection>>;
+  testConnection(
+    caller: Caller,
+    connectionId: Id,
+    expectedRevision: Counter,
+    budget: Budget,
+  ): Promise<Result<Connection>>;
+  deleteConnection(
+    caller: Caller,
+    connectionId: Id,
+    expectedRevision: Counter,
     budget: Budget,
   ): Promise<Result<Connection>>;
   savePreferences(
@@ -323,6 +335,12 @@ export interface SessionStore extends Closeable {
     caller: Caller,
     connection: Connection,
     expectedRevision: Counter | null,
+  ): Promise<Result<Connection>>;
+  recordConnectionTest(
+    caller: Caller,
+    id: Id,
+    expectedRevision: Counter,
+    result: import("./wire.js").ConnectionTest,
   ): Promise<Result<Connection>>;
   preferences(caller: Caller): Promise<Result<UserPreferences>>;
   savePreferences(

@@ -140,7 +140,7 @@ try {
             "utf8",
           ),
         ).$defs.HostHealth.properties.protocol.const,
-        contractVersion: 5,
+        contractVersion: 6,
         behaviorPassed,
         ...(development
           ? { kind: "development", developmentFingerprint: end }

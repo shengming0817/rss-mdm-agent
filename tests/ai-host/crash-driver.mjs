@@ -59,7 +59,7 @@ unwrap(
   await host.submit(
     caller,
     {
-      schemaVersion: 5,
+      schemaVersion: 6,
       kind: "command",
       sessionId: session.namespace.sessionId,
       commandId: "uncertain",

@@ -30,7 +30,7 @@ export async function openHost(path, mode, beforeCommit) {
       resolve: localResolver(
         local,
         store,
-        new ConnectionSecrets(store, async () => Buffer.alloc(32, 7)),
+        new ConnectionSecrets(store, async () => "fixture-only-key"),
       ),
     }),
   );

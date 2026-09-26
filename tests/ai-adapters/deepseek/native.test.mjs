@@ -96,11 +96,11 @@ test("real Harness process: true deltas, durable terminal, cold read and native 
   );
   assert.equal(env.requests.length, 1, "restore must not request a model");
   const record = {
-    schemaVersion: 5,
+    schemaVersion: 6,
     kind: "commandRecord",
     command: c,
     receipt: {
-      schemaVersion: 5,
+      schemaVersion: 6,
       kind: "receipt",
       stageId: previous.currentStageId,
       namespace: env.config.namespace,
@@ -415,11 +415,11 @@ test("request checkpoint precedes HTTP dispatch; crash and synthetic interrupted
       ),
     );
   const record = {
-    schemaVersion: 5,
+    schemaVersion: 6,
     kind: "commandRecord",
     command: c,
     receipt: {
-      schemaVersion: 5,
+      schemaVersion: 6,
       kind: "receipt",
       stageId: previous.currentStageId,
       namespace: env.config.namespace,

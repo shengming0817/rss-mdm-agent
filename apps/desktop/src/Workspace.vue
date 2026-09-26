@@ -75,6 +75,7 @@ onBeforeUnmount(assistant.dispose);
   <Settings
     v-show="page === 'settings'"
     :host="host"
+    :active="page === 'settings'"
     :assistant="assistant"
     @assistant="emit('navigate', 'assistant')"
     ><template #user><slot name="user" /></template

@@ -203,7 +203,7 @@ fn preflight(artifact: &Path, trusted_digest: Option<&str>) -> Result<(), Fault>
     let manifest: Value = serde_json::from_slice(&bytes).map_err(|_| Fault::Invalid)?;
     if manifest["status"] != "passed"
         || manifest["desktopProtocol"] != i64::from(ai_session_contract::HostHealthProtocol::VALUE)
-        || manifest["contractVersion"] != 5
+        || manifest["contractVersion"] != 6
     {
         return Err(Fault::Version);
     }
@@ -513,13 +513,13 @@ mod tests {
             ("cleanup_incomplete", Fault::Cleanup),
         ] {
             let frame =
-                json!({"schemaVersion":5,"kind":"hostProcessDiagnostic","code":code}).to_string();
+                json!({"schemaVersion":6,"kind":"hostProcessDiagnostic","code":code}).to_string();
             assert_eq!(startup_fault(&frame), Some(fault));
         }
         for raw in [
             "AI Host could not start: storage_corrupt".to_owned(),
-            json!({"schemaVersion":5,"kind":"hostProcessDiagnostic","code":"CANARY"}).to_string(),
-            json!({"schemaVersion":5,"kind":"hostProcessDiagnostic","code":"storage_corrupt","detail":"CANARY"}).to_string(),
+            json!({"schemaVersion":6,"kind":"hostProcessDiagnostic","code":"CANARY"}).to_string(),
+            json!({"schemaVersion":6,"kind":"hostProcessDiagnostic","code":"storage_corrupt","detail":"CANARY"}).to_string(),
             "x".repeat(1024),
         ] { assert_eq!(startup_fault(&raw), None); }
     }

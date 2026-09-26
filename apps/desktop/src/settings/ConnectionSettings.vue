@@ -1,12 +1,19 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from "vue";
-import type { Connection, ConnectionSource } from "@rss-mdm-agent/ai-contract";
+import { computed, nextTick, ref, watch, onBeforeUnmount } from "vue";
+import type {
+  Connection,
+  ConnectionSource,
+  ConnectionDraft,
+} from "@rss-mdm-agent/ai-contract";
 import {
   operationMessage,
   type AssistantController,
 } from "../assistant/controller";
 import { saveNativeConnection, nativeTestMode } from "../test-users";
-const props = defineProps<{ controller: AssistantController }>();
+const props = defineProps<{
+  controller: AssistantController;
+  active?: boolean;
+}>();
 const c = props.controller;
 const rows = computed(() => c.state.connections),
   prefs = computed(() => c.state.preferences);
@@ -24,21 +31,88 @@ const directory = ref(""),
   apiUrl = ref(""),
   model = ref(""),
   profile = ref<Connection["profile"]>("conversation");
-const replaceKey = ref(false);
 const credentialType = ref<"api_key" | "auth_token">("api_key");
+const replaceKey = ref(false),
+  secret = ref(""),
+  revealSecret = ref(false);
+const testing = ref(new Set<string>());
+const secretField = ref<HTMLInputElement>();
+let disposed = false;
+function clearSecret() {
+  secret.value = "";
+  revealSecret.value = false;
+  if (secretField.value) secretField.value.value = "";
+}
+onBeforeUnmount(() => {
+  disposed = true;
+  clearSecret();
+});
+watch(
+  () => props.active,
+  (active) => {
+    if (active === false) clearSecret();
+  },
+);
+const needsSecret = computed(
+  () =>
+    sourceType.value === "custom_api" &&
+    (replaceKey.value ||
+      editing.value?.source.type !== "custom_api" ||
+      editing.value.provider !== provider.value ||
+      editing.value.source.apiUrl !== apiUrl.value.trim() ||
+      (editing.value.source.credentialType ?? "api_key") !==
+        (provider.value === "claude" ? credentialType.value : "api_key")),
+);
+watch([provider, sourceType, apiUrl, credentialType], clearSecret);
 const labels = new Map([
   ["codex", "Codex"],
   ["claude", "Claude"],
   ["deepseek", "DeepSeek"],
 ]);
+const testMessages = {
+  host: "AI Host 或模型进程不可用，请检查 Host 状态后重试。",
+  configuration: "配置无法解析，请检查地址、模型及本机配置。",
+  authentication: "认证失败，请检查或更换凭据后保存，再重新测试。",
+  provider: "网络或模型服务不可用，请检查网络及服务状态后重试。",
+  capability: "模型不支持当前用途，请修改模型或用途后保存。",
+  quota: "服务限额或额度不足，请检查额度后重试。",
+  timeout: "测试超时，请检查网络与服务状态后重试。",
+  cleanup: "测试进程未确认完成清理，请检查 Host 状态后重试。",
+};
 function connectionMessage(code: string) {
-  if (code === "limit_exceeded")
-    return "连接验证达到服务限额，请稍后重新验证；原连接未更改。";
-  if (code === "unsupported_capability")
-    return "所选模型不支持当前连接用途，或实际模型与配置不一致。请明确选择兼容模型后重新验证；不会自动换模型。";
-  if (code === "unavailable")
-    return "模型验证结果未确认，请检查服务后重新验证；原连接未更改。";
+  if (code === "revision_conflict")
+    return "已保存版本已变化，请核对最新记录后重新编辑或测试；当前草稿保留。";
+  if (code === "authentication_required")
+    return "请填写凭据；若已填写，请检查应用密钥存储是否可用。";
+  if (code === "ai_unavailable")
+    return "AI Host 不可用，配置尚未保存；恢复连接后重试。";
   return operationMessage(code);
+}
+async function testConnection(row: Connection) {
+  const runtime = c.runtime.value;
+  if (!runtime || testing.value.has(row.connectionId)) return;
+  testing.value.add(row.connectionId);
+  error.value = "";
+  try {
+    const result = await runtime.testConnection(
+      row.connectionId,
+      row.configRevision,
+    );
+    if (disposed) return;
+    if (result.lastTest?.outcome === "failed")
+      error.value = testMessages[result.lastTest.stage];
+    await load();
+  } catch (e) {
+    if (!disposed) {
+      error.value =
+        e && typeof e === "object" && "code" in e
+          ? connectionMessage(String(e.code))
+          : "测试结果未确认，请重试。";
+      await load().catch(() => {});
+    }
+  } finally {
+    testing.value.delete(row.connectionId);
+  }
 }
 async function load() {
   await c.refreshConnections();
@@ -63,6 +137,7 @@ watch(provider, (value) => {
   if (value !== "codex") profile.value = "conversation";
 });
 function edit(row?: Connection) {
+  clearSecret();
   replaceKey.value = false;
   draftId.value = row?.connectionId ?? crypto.randomUUID();
   editing.value = row;
@@ -101,43 +176,29 @@ async function save() {
             ...(model.value.trim() ? { model: model.value.trim() } : {}),
           };
     try {
-      const candidate: Connection = {
-        schemaVersion: 5,
-        kind: "connection",
+      const candidate: ConnectionDraft = {
         connectionId: draftId.value,
         name: name.value.trim(),
         provider: provider.value,
-        configRevision: (old?.configRevision ?? 0) + 1,
         profile: profile.value,
-        status: "unverified",
         source,
       };
       const expected = old?.configRevision ?? null;
-      const targetChanged =
-        old?.source.type === "custom_api" &&
-        source.type === "custom_api" &&
-        (old.provider !== candidate.provider ||
-          old.source.apiUrl !== source.apiUrl ||
-          (old.source.credentialType ?? "api_key") !==
-            (source.credentialType ?? "api_key"));
-      if (nativeTestMode)
-        await saveNativeConnection(
+      if (nativeTestMode) {
+        if (needsSecret.value && !secret.value) {
+          error.value = "请输入凭据后保存。";
+          return;
+        }
+        const pending = saveNativeConnection(
           candidate,
           expected,
-          replaceKey.value ||
-            targetChanged ||
-            old?.source.type !== "custom_api",
+          needsSecret.value ? secret.value : undefined,
         );
-      else await runtime.saveConnection(candidate, expected);
+        clearSecret();
+        await pending;
+      } else await runtime.saveConnection(candidate, expected);
     } catch (failure) {
       await load().catch(() => {});
-      if (
-        failure &&
-        typeof failure === "object" &&
-        "code" in failure &&
-        failure.code === "revision_conflict"
-      )
-        edit();
       throw failure;
     }
     edit();
@@ -157,8 +218,8 @@ async function remove(row: Connection) {
   await run(async () => {
     if (!c.runtime.value) return;
     try {
-      await c.runtime.value.saveConnection(
-        { ...row, configRevision: row.configRevision + 1, status: "deleted" },
+      await c.runtime.value.deleteConnection(
+        row.connectionId,
         row.configRevision,
       );
       closeRemoval();
@@ -215,21 +276,21 @@ function containRemovalFocus(event: KeyboardEvent) {
     <div>
       <h3>个人 AI 连接（{{ rows.length }}）</h3>
       <p v-if="c.state.connection !== 'connected'" role="status">
-        AI Host 未连接；可先编辑配置，恢复连接后再验证并保存。
+        AI Host 未连接；可先编辑配置，恢复连接后再保存；当前草稿尚未持久化。
       </p>
       <fieldset :disabled="busy">
         <p>
-          连接修改仅影响后续上下文；已接收请求保持原绑定。验证会产生新修订，失败不改变原配置。
+          保存只更新配置；测试针对已保存版本。连接修改仅影响后续上下文，已接收请求保持原绑定。
         </p>
         <p>
           连接与默认选择仅属于当前测试用户。API
-          密钥在原生安全输入框中填写。验证会发送一条简短测试请求，可能产生服务费用。
+          密钥在下方密码框填写并加密保存。保存不发送模型请求；测试会发送简短请求，可能产生服务费用。
         </p>
         <div :inert="pendingRemoval ? true : undefined">
           <ul>
             <li v-for="row in rows" :key="row.connectionId">
               <strong>{{ row.name }}</strong> · {{ labels.get(row.provider) }} ·
-              {{ row.status === "ready" ? "可用" : "需要更新认证" }}
+              {{ row.status === "ready" ? "可用" : "未验证" }}
               <span>
                 ·
                 {{
@@ -242,6 +303,20 @@ function containRemovalFocus(event: KeyboardEvent) {
                 · {{ row.source.model || "官方配置决定模型" }} · 修订
                 {{ row.configRevision }}</span
               >
+              <span v-if="row.lastTest?.outcome === 'failed'" role="status">
+                · 最近测试失败：{{ testMessages[row.lastTest.stage] }}</span
+              >
+              <button
+                type="button"
+                :disabled="
+                  testing.has(row.connectionId) ||
+                  c.state.connection !== 'connected'
+                "
+                :aria-label="`测试连接 ${row.name}`"
+                @click="testConnection(row)"
+              >
+                {{ testing.has(row.connectionId) ? "正在测试…" : "测试连接" }}
+              </button>
               <span v-if="prefs.defaultConnectionId === row.connectionId">
                 · 默认</span
               >
@@ -301,16 +376,42 @@ function containRemovalFocus(event: KeyboardEvent) {
                   required
                   placeholder="HTTPS API 地址"
               /></label>
-              <label v-if="editing?.source.type === 'custom_api'">
-                <input v-model="replaceKey" type="checkbox" />更换 API 密钥
-              </label>
-              <p>
+              <p role="status">
                 {{
-                  editing?.source.type === "custom_api" && !replaceKey
-                    ? "保存时保留原密钥。"
-                    : "点击验证并保存后，在原生输入框填写 API 密钥。"
+                  editing?.source.type === "custom_api" && !needsSecret
+                    ? "已安全保存"
+                    : "未设置"
                 }}
               </p>
+              <button
+                v-if="editing?.source.type === 'custom_api' && !needsSecret"
+                type="button"
+                @click="replaceKey = true"
+              >
+                更换凭据
+              </button>
+              <label
+                >API Key / Auth Token<input
+                  ref="secretField"
+                  v-model="secret"
+                  :type="revealSecret ? 'text' : 'password'"
+                  :disabled="!needsSecret"
+                  :required="needsSecret"
+                  autocomplete="off"
+                  autocapitalize="none"
+                  :spellcheck="false"
+                  :placeholder="
+                    needsSecret ? '输入凭据' : '已安全保存，不回填原值'
+                  "
+              /></label>
+              <button
+                type="button"
+                :disabled="!needsSecret"
+                :aria-pressed="revealSecret"
+                @click="revealSecret = !revealSecret"
+              >
+                {{ revealSecret ? "隐藏凭据" : "显示凭据" }}
+              </button>
             </template>
             <label
               >模型<input
@@ -342,7 +443,7 @@ function containRemovalFocus(event: KeyboardEvent) {
                   (sourceType === 'custom_api' && !nativeTestMode)
                 "
               >
-                验证并保存</button
+                保存配置</button
               ><button type="button" :disabled="busy" @click="edit()">
                 清空表单
               </button>

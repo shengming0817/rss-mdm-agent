@@ -1,5 +1,5 @@
 // Injected only by custom-connection-acceptance into the real bundled WebView.
-(async () => {
+(async (secret) => {
   let stage = "load";
   const ipcOutputs = [];
   const originalInvoke = window.__TAURI_INTERNALS__.invoke;
@@ -77,13 +77,45 @@
     set(panel, "API 地址", window.__RSS_CUSTOM_CONNECTION__.apiUrl);
     set(panel, "模型", window.__RSS_CUSTOM_CONNECTION__.model);
 
-    progress("secure_entry");
-    await click("验证并保存", panel);
+    progress("form_entry");
+    const password = panel.querySelector('input[type="password"]');
+    if (!password || password.disabled)
+      throw new Error("credential field missing");
+    set(panel, "API Key", secret);
+    secret = "";
+    await click("保存配置", panel);
+    const savedRow = await wait(() =>
+      [...panel.querySelectorAll("li")].find(
+        (element) =>
+          element.textContent.includes("Local DeepSeek protocol fixture") &&
+          element.textContent.includes("未验证"),
+      ),
+    );
+    if (password.value !== "") throw new Error("credential not cleared");
+    progress("test_failure");
+    await click("测试连接", savedRow);
+    await wait(() => savedRow.textContent.includes("最近测试失败"));
+    progress("test_retry");
+    await click("测试连接", savedRow);
+    await wait(
+      () =>
+        savedRow.textContent.includes("可用") &&
+        !savedRow.textContent.includes("最近测试失败"),
+    );
+    progress("restart");
+    const before = await originalInvoke("ai_host_status");
+    await click("重启 AI Host");
+    await click("确认重启");
+    await wait(async () => {
+      const next = await originalInvoke("ai_host_status");
+      return next.generation > before.generation && next.phase === "ready";
+    });
     const row = await wait(() =>
       [...panel.querySelectorAll("li")].find(
         (element) =>
           element.textContent.includes("Local DeepSeek protocol fixture") &&
-          element.textContent.includes("可用"),
+          element.textContent.includes("可用") &&
+          button("删除", element),
       ),
     );
     progress("delete");
@@ -109,18 +141,21 @@
         (value) =>
           value?.ok === true &&
           value.value?.kind === "connection" &&
-          value.value.status === "ready" &&
+          value.value.status === "unverified" &&
           value.value.name === "Local DeepSeek protocol fixture",
       )
     )
       throw new Error("save IPC output not observed");
     report({
       step: "passed",
-      secureEntry: true,
+      formEntry: true,
+      savedBeforeTest: true,
+      failedRetry: true,
+      restartRecovered: true,
       modelProbe: "local_openai_compatible_protocol",
       deleted: true,
     });
   } catch (error) {
     report({ step: "failed", stage, reason: "acceptance_flow_failed" });
   }
-})();
+})(__RSS_FIXTURE_SECRET__);

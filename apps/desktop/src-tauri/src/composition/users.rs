@@ -61,7 +61,7 @@ impl Users {
                 _ => return Err(storage()),
             }
         } else {
-            from_value(json!({"schemaVersion":5,"kind":"testUserPage","users":[]}))?
+            from_value(json!({"schemaVersion":6,"kind":"testUserPage","users":[]}))?
         };
         let mut this = Self { path, page };
         let mut keys = std::collections::BTreeSet::new();
@@ -91,7 +91,7 @@ impl Users {
     }
     fn context(user: TestUser) -> Result<UserContext> {
         from_value(
-            json!({"schemaVersion":5,"kind":"userContext","user":user,"generation":Uuid::new_v4().to_string()}),
+            json!({"schemaVersion":6,"kind":"userContext","user":user,"generation":Uuid::new_v4().to_string()}),
         )
     }
     pub fn page(&self) -> TestUserPage {
@@ -120,7 +120,7 @@ impl Users {
                     return Err(error("limit", "测试用户数量已达上限"));
                 }
                 let user: TestUser = from_value(
-                    json!({"schemaVersion":5,"kind":"testUser","userId":Uuid::new_v4().to_string(),"displayName":display,"nameKey":key}),
+                    json!({"schemaVersion":6,"kind":"testUser","userId":Uuid::new_v4().to_string(),"displayName":display,"nameKey":key}),
                 )?;
                 page.users.push(user.clone());
                 user

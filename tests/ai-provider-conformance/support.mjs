@@ -4,7 +4,6 @@ import { HARNESS_VERSION } from "../../packages/ai-adapters/deepseek/dist/config
 import { COMPOSITION_ID } from "../../packages/ai-adapters/deepseek/dist/assembly.js";
 import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import { openSqliteStore } from "../../packages/ai-store-sqlite/dist/index.js";
-import { ConnectionSecrets } from "../../apps/ai-host/dist/secrets.js";
 import { NativeControl } from "../../apps/ai-host/dist/native.js";
 import { PrivateLink } from "../../packages/ai-host/dist/private-link.js";
 import { spawn } from "node:child_process";
@@ -52,7 +51,7 @@ export async function until(check, label = "condition", timeoutMs = 15000) {
 }
 export function command(sessionId, commandId, text = "hello") {
   return {
-    schemaVersion: 5,
+    schemaVersion: 6,
     kind: "command",
     sessionId,
     commandId,
@@ -195,7 +194,7 @@ export async function configuration(
       profile,
     },
     connection: {
-      schemaVersion: 5,
+      schemaVersion: 6,
       kind: "connection",
       connectionId: "local",
       name: "Native fixture",
@@ -215,13 +214,12 @@ export async function configuration(
   const store = unwrap(
     openSqliteStore({ path: config.databasePath, mode: "create" }),
   );
-  const secrets = new ConnectionSecrets(store, async () => Buffer.alloc(32, 7));
   unwrap(
     await store.saveConnection(
       config.caller,
       config.connection,
       null,
-      await secrets.seal(config.caller, config.connection, "fixture-only-key"),
+      new Uint8Array(32).fill(7),
     ),
   );
   await store.close(budget());
@@ -237,8 +235,10 @@ export function nativePeer(socket) {
   const inputs = new Map();
   const control = new NativeControl(
     async (call) => {
-      if (call.method !== "masterKey") throw Error("unexpected parent request");
-      return [...Buffer.alloc(32, 7)];
+      if (call.method !== "openCredential")
+        throw Error("unexpected parent request");
+      assert.deepEqual(call.data.encrypted, [...new Uint8Array(32).fill(7)]);
+      return "fixture-only-key";
     },
     ({ channel, message }) => inputs.get(channel)?.enqueue(message),
     socket,
@@ -275,11 +275,11 @@ export async function clientAt(parent, generation = "fixture-generation") {
   await parent.control.call("attach", {
     channel,
     context: {
-      schemaVersion: 5,
+      schemaVersion: 6,
       kind: "userContext",
       generation,
       user: {
-        schemaVersion: 5,
+        schemaVersion: 6,
         kind: "testUser",
         userId: "fixture-actor",
         displayName: "Fixture",

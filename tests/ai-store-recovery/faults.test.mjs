@@ -72,7 +72,7 @@ test("delivery is atomically tied to the event, content and stable operation ide
   const head = unwrap(await store.session(initial.namespace)),
     event = unwrap(await store.events(initial.namespace, 0, 1))[0];
   const delivery = {
-    schemaVersion: 5,
+    schemaVersion: 6,
     kind: "delivery",
     namespace: initial.namespace,
     operationId: "operation-1",
@@ -195,12 +195,16 @@ test("schema creation is transactional and partial/newer/foreign files are not r
   const bytes = readFileSync(newer);
   assert.equal(h.open(newer, "open").error.code, "unsupported_version");
   assert.deepEqual(readFileSync(newer), bytes);
-  const legacy = new DatabaseSync(newer);
-  legacy.exec("PRAGMA user_version=4; UPDATE schema_meta SET version=4");
-  legacy.close();
-  const legacyBytes = readFileSync(newer);
-  assert.equal(h.open(newer, "open").error.code, "unsupported_version");
-  assert.deepEqual(readFileSync(newer), legacyBytes);
+  for (const version of [4, 5]) {
+    const legacy = new DatabaseSync(newer);
+    legacy.exec(
+      `PRAGMA user_version=${version}; UPDATE schema_meta SET version=${version}`,
+    );
+    legacy.close();
+    const legacyBytes = readFileSync(newer);
+    assert.equal(h.open(newer, "open").error.code, "unsupported_version");
+    assert.deepEqual(readFileSync(newer), legacyBytes);
+  }
   const foreign = join(h.directory, "foreign.sqlite");
   writeFileSync(foreign, "not a database", { mode: 0o600 });
   assert.equal(h.open(foreign, "open").ok, false);

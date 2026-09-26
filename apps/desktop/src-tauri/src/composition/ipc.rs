@@ -12,20 +12,23 @@ fn decode<T: serde::de::DeserializeOwned>(input: serde_json::Value) -> Result<T>
     }
     serde_json::from_value(input).map_err(|_| error("input", "请求结构无效"))
 }
-fn decode_connection(input: serde_json::Value) -> Result<ai_session_contract::Connection> {
-    let bytes = serde_json::to_vec(&input).map_err(|_| error("input", "无效连接"))?;
+fn decode_connection(
+    input: serde_json::Value,
+    expected: Option<u64>,
+) -> Result<ai_session_contract::ConnectionDraft> {
+    let bytes = serde_json::to_vec(&serde_json::json!({"schemaVersion":6,"kind":"saveConnectionRequest","connection":input,"expectedRevision":expected})).map_err(|_| error("input", "无效连接"))?;
     let record = ai_session_contract::decode(
         &bytes,
         &ai_session_contract::Limits {
-            max_bytes: 16384,
-            max_text_bytes: 8192,
+            max_bytes: 65536,
+            max_text_bytes: 32768,
             max_depth: 16,
             max_nodes: 4096,
         },
     )
     .map_err(|_| error("input", "连接结构无效"))?;
     match record {
-        ai_session_contract::WireRecord::Connection(connection) => Ok(connection),
+        ai_session_contract::WireRecord::SaveConnectionRequest(request) => Ok(request.connection),
         _ => Err(error("input", "连接结构无效")),
     }
 }
@@ -116,30 +119,16 @@ pub async fn select_test_user(
 }
 
 #[tauri::command]
-pub async fn save_connection<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
+pub async fn save_connection(
     state: State<'_, DesktopRuntime>,
     generation: String,
     input: serde_json::Value,
     expected: Option<u64>,
-    replace_key: bool,
+    secret: Option<String>,
 ) -> Result<serde_json::Value> {
+    let secret = secret.map(zeroize::Zeroizing::new);
     state.current(&generation)?;
-    let epoch = state.status().generation.0;
-    let connection = decode_connection(input)?;
-    let data = serde_json::to_value(&connection).map_err(|_| error("input", "无效连接"))?;
-    let secret = if data["source"]["type"] == "custom_api"
-        && data["status"] != "deleted"
-        && (expected.is_none() || replace_key)
-    {
-        Some(super::credentials::enter(app).await?)
-    } else {
-        None
-    };
-    state.current(&generation)?;
-    if epoch != state.status().generation.0 {
-        return Err(error("ai_unavailable", "Host 已重启，请重新验证连接"));
-    }
+    let connection = decode_connection(input, expected)?;
     state
         .save_connection(&generation, connection, expected, secret)
         .await

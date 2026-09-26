@@ -119,7 +119,7 @@ export function createAssistant(
     opening: false,
     connections: [] as Connection[],
     preferences: {
-      schemaVersion: 5,
+      schemaVersion: 6,
       kind: "userPreferences",
     } as import("@rss-mdm-agent/ai-contract").UserPreferences,
     sessions: new Map<string, SessionItem>(),
@@ -579,7 +579,7 @@ export function createAssistant(
       return;
     state.pending.set(id, {
       command: {
-        schemaVersion: 5,
+        schemaVersion: 6,
         kind: "command",
         sessionId: id,
         commandId: identity(),
@@ -713,7 +713,7 @@ export function createAssistant(
     state.taskLoading = false;
     state.task = undefined;
     state.connections = [];
-    state.preferences = { schemaVersion: 5, kind: "userPreferences" };
+    state.preferences = { schemaVersion: 6, kind: "userPreferences" };
     state.sessions.clear();
     state.views.clear();
     state.drafts.clear();

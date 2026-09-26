@@ -9,10 +9,10 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
 }));
 const current = {
-  schemaVersion: 5 as const,
+  schemaVersion: 6 as const,
   kind: "userContext" as const,
   user: {
-    schemaVersion: 5 as const,
+    schemaVersion: 6 as const,
     kind: "testUser" as const,
     userId: "a",
     displayName: "Alice",
@@ -27,7 +27,7 @@ beforeEach(() => {
 it("keeps settings selected when navigation needs an unselected user", async () => {
   vi.mocked(invoke).mockImplementation(async (command) => {
     if (command === "test_users")
-      return { schemaVersion: 5, kind: "testUserPage", users: [] };
+      return { schemaVersion: 6, kind: "testUserPage", users: [] };
     throw { code: "ai_unavailable" };
   });
   const wrapper = mount(App);
@@ -55,7 +55,7 @@ it.each([
     vi.mocked(invoke).mockImplementation(async (command) => {
       if (command === "test_users")
         return {
-          schemaVersion: 5,
+          schemaVersion: 6,
           kind: "testUserPage",
           users: [current.user],
           current,
@@ -94,7 +94,7 @@ it("keeps the current workspace mounted and inert while a switch is pending", as
   vi.mocked(invoke).mockImplementation(async (command) => {
     if (command === "test_users")
       return {
-        schemaVersion: 5,
+        schemaVersion: 6,
         kind: "testUserPage",
         users: [current.user],
         current,

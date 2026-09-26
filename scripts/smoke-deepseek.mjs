@@ -140,7 +140,7 @@ async function main() {
     return p;
   };
   const prompt = (id, text) => ({
-    schemaVersion: 5,
+    schemaVersion: 6,
     kind: "command",
     sessionId: config.namespace.sessionId,
     commandId: id,
@@ -189,7 +189,7 @@ async function main() {
     stage = "restore";
     const previous = startStage(
       {
-        schemaVersion: 5,
+        schemaVersion: 6,
         kind: "session",
         namespace: config.namespace,
         revision: 0,
@@ -209,11 +209,11 @@ async function main() {
         ),
       );
     const record = {
-      schemaVersion: 5,
+      schemaVersion: 6,
       kind: "commandRecord",
       command,
       receipt: {
-        schemaVersion: 5,
+        schemaVersion: 6,
         kind: "receipt",
         namespace: config.namespace,
         commandId: command.commandId,

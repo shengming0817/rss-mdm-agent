@@ -1,4 +1,4 @@
-//! Native API-key input and one app master key. Official CLI credentials are never inspected.
+//! Rust-owned credential cryptography and one application master key.
 use crate::self_service::{error, Result};
 #[cfg(target_os = "macos")]
 use security_framework::passwords::{get_generic_password, set_generic_password};
@@ -53,7 +53,7 @@ impl MasterKey {
             key: Mutex::new(None),
         }
     }
-    pub fn get(&self, create: bool) -> Result<Vec<u8>> {
+    fn get(&self, create: bool) -> Result<Vec<u8>> {
         let mut cached = self.key.lock().map_err(|_| unavailable())?;
         if let Some(key) = &*cached {
             return Ok(key.clone());
@@ -82,44 +82,67 @@ impl MasterKey {
         Ok(key)
     }
 }
-/// Returns input only to the native save operation, never to the WebView.
-#[cfg(target_os = "macos")]
-pub async fn enter<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<String> {
-    let (sender, receiver) = tokio::sync::oneshot::channel();
-    app.run_on_main_thread(move || {
-        use objc2::MainThreadMarker;
-        use objc2_app_kit::{NSAlert, NSAlertFirstButtonReturn, NSSecureTextField};
-        use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
-        let result = (|| {
-            let mtm = MainThreadMarker::new().ok_or_else(unavailable)?;
-            let alert = NSAlert::new(mtm);
-            alert.setMessageText(&NSString::from_str("输入 API 密钥"));
-            alert.setInformativeText(&NSString::from_str(
-                "验证成功后与连接一起保存。取消或验证失败不会保存密钥。",
-            ));
-            alert.addButtonWithTitle(&NSString::from_str("验证并保存"));
-            alert.addButtonWithTitle(&NSString::from_str("取消"));
-            let field = NSSecureTextField::new(mtm);
-            field.setFrame(NSRect::new(NSPoint::new(0., 0.), NSSize::new(360., 24.)));
-            alert.setAccessoryView(Some(&field));
-            if alert.runModal() != NSAlertFirstButtonReturn {
-                return Err(error("cancelled", "未保存连接"));
-            }
-            let secret = field.stringValue().to_string();
-            field.setStringValue(&NSString::from_str(""));
-            if secret.trim().is_empty()
-                || secret.len() > 16384
-                || secret.chars().any(char::is_control)
-            {
-                return Err(unavailable());
-            }
-            Ok(secret)
-        })();
-        let _ = sender.send(result);
-    })
-    .map_err(|_| unavailable())?;
-    receiver.await.map_err(|_| unavailable())?
+/// ref: RustCrypto AEADs aes-gcm/src/lib.rs@aes-gcm-v0.10.3
+impl MasterKey {
+    pub fn seal(
+        &self,
+        owner: &ai_session_contract::CredentialOwner,
+        secret: &str,
+        create: bool,
+    ) -> Result<Vec<u8>> {
+        use aes_gcm::{
+            aead::{Aead, AeadCore, KeyInit, OsRng, Payload},
+            Aes256Gcm,
+        };
+        if secret.is_empty() || secret.len() > 16384 || secret.chars().any(char::is_control) {
+            return Err(error("input", "凭据格式无效"));
+        }
+        let key = zeroize::Zeroizing::new(self.get(create)?);
+        let cipher = Aes256Gcm::new_from_slice(&key).map_err(|_| unavailable())?;
+        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+        let aad = serde_json::to_vec(owner).map_err(|_| unavailable())?;
+        let mut output = nonce.to_vec();
+        output.extend(
+            cipher
+                .encrypt(
+                    &nonce,
+                    Payload {
+                        msg: secret.as_bytes(),
+                        aad: &aad,
+                    },
+                )
+                .map_err(|_| unavailable())?,
+        );
+        Ok(output)
+    }
+    pub fn open(
+        &self,
+        owner: &ai_session_contract::CredentialOwner,
+        encrypted: &[u8],
+    ) -> Result<String> {
+        use aes_gcm::{
+            aead::{Aead, KeyInit, Payload},
+            Aes256Gcm, Nonce,
+        };
+        if !(29..=16412).contains(&encrypted.len()) {
+            return Err(unavailable());
+        }
+        let key = zeroize::Zeroizing::new(self.get(false)?);
+        let cipher = Aes256Gcm::new_from_slice(&key).map_err(|_| unavailable())?;
+        let aad = serde_json::to_vec(owner).map_err(|_| unavailable())?;
+        let plaintext = cipher
+            .decrypt(
+                Nonce::from_slice(&encrypted[..12]),
+                Payload {
+                    msg: &encrypted[12..],
+                    aad: &aad,
+                },
+            )
+            .map_err(|_| unavailable())?;
+        String::from_utf8(plaintext).map_err(|_| unavailable())
+    }
 }
+
 #[cfg(windows)]
 pub struct Dpapi;
 #[cfg(windows)]
@@ -151,26 +174,6 @@ pub fn platform_backend() -> impl KeyBackend {
         Dpapi
     }
 }
-#[cfg(windows)]
-pub async fn enter<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<String> {
-    let (sender, receiver) = tokio::sync::oneshot::channel();
-    app.run_on_main_thread(move || {
-        let result = native_process::private_storage::enter_secret()
-            .map_err(|_| unavailable())
-            .and_then(|value| value.ok_or_else(|| error("cancelled", "未保存连接")))
-            .and_then(|value| {
-                if value.trim().is_empty() || value.chars().any(char::is_control) {
-                    Err(unavailable())
-                } else {
-                    Ok(value)
-                }
-            });
-        let _ = sender.send(result);
-    })
-    .map_err(|_| unavailable())?;
-    receiver.await.map_err(|_| unavailable())?
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,6 +194,40 @@ mod tests {
             self.writes.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
+    }
+    fn owner() -> ai_session_contract::CredentialOwner {
+        serde_json::from_value(serde_json::json!({"tenantId":"t","principalId":"p","authorityId":"a","connectionId":"c","provider":"codex","endpoint":"https://example.invalid/","credentialType":"api_key"})).unwrap()
+    }
+    #[test]
+    fn credentials_use_random_nonces_bind_the_target_and_preserve_secret_bytes() {
+        let keys = MasterKey::new(Fake {
+            stored: Mutex::new(Some(vec![7; 32])),
+            writes: Arc::new(AtomicUsize::new(0)),
+        });
+        let target = owner();
+        let secret = "  synthetic-secret  ";
+        let encrypted = keys.seal(&target, secret, false).unwrap();
+        assert_ne!(encrypted, keys.seal(&target, secret, false).unwrap());
+        assert!(keys.open(&target, &encrypted).unwrap() == secret);
+        for (field, value) in [
+            ("tenantId", "other"),
+            ("principalId", "other"),
+            ("authorityId", "other"),
+            ("connectionId", "other"),
+            ("provider", "claude"),
+            ("endpoint", "https://other.invalid/"),
+            ("credentialType", "auth_token"),
+        ] {
+            let mut changed = serde_json::to_value(&target).unwrap();
+            changed[field] = serde_json::Value::String(value.into());
+            assert!(keys
+                .open(&serde_json::from_value(changed).unwrap(), &encrypted)
+                .is_err());
+        }
+        let mut altered = encrypted;
+        altered[12] ^= 1;
+        assert!(keys.open(&target, &altered).is_err());
+        assert!(keys.seal(&target, "", false).is_err());
     }
     #[test]
     fn missing_master_with_ciphertext_never_creates_a_replacement() {

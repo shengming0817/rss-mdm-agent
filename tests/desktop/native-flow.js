@@ -75,7 +75,9 @@
         }),
       );
     }
-    await click("验证并保存");
+    await click("保存配置");
+    await wait(() => panel.querySelector("li")?.textContent.includes("未验证"));
+    await click("测试连接");
     await wait(() => panel.querySelector("li")?.textContent.includes("可用"));
   };
   const snapshot = () =>

@@ -7,10 +7,7 @@ import { join } from "node:path";
 import { createHost, HostFailure } from "../../packages/ai-host/dist/index.js";
 import { openSqliteStore } from "../../packages/ai-store-sqlite/dist/index.js";
 import { activeStage } from "../../packages/ai-contract/dist/index.js";
-import {
-  connectionPersistence,
-  ConnectionSecrets,
-} from "../../apps/ai-host/dist/secrets.js";
+import { connectionPersistence } from "../../apps/ai-host/dist/secrets.js";
 import {
   closeOwners,
   suspendNativeCaller,
@@ -29,7 +26,7 @@ const unwrap = (result) => {
   return result.value;
 };
 const connection = (id) => ({
-  schemaVersion: 5,
+  schemaVersion: 6,
   kind: "connection",
   connectionId: id,
   name: id,
@@ -43,6 +40,13 @@ const connection = (id) => ({
     apiUrl: "https://example.invalid/v1",
     model: "test",
   },
+});
+const draftOf = ({ connectionId, name, provider, profile, source }) => ({
+  connectionId,
+  name,
+  provider,
+  profile,
+  source,
 });
 const until = async (action) => {
   for (let i = 0; i < 200; i++) {
@@ -91,7 +95,7 @@ test("real Host lazily opens phases, drains accepted work before switching, and 
   assert.equal(opened, 0);
   assert.deepEqual(empty.stages, []);
   const command = (id, text = "quick") => ({
-    schemaVersion: 5,
+    schemaVersion: 6,
     kind: "command",
     sessionId: empty.namespace.sessionId,
     commandId: id,
@@ -244,14 +248,7 @@ test("real Host lazily opens phases, drains accepted work before switching, and 
       budget(),
     ),
   );
-  unwrap(
-    await host.saveConnection(
-      caller,
-      { ...connection("two"), configRevision: 2, status: "deleted" },
-      1,
-      budget(),
-    ),
-  );
+  unwrap(await host.deleteConnection(caller, "two", 1, budget()));
   const afterDelete = unwrap(
     await host.snapshotPage(
       caller,
@@ -290,10 +287,10 @@ test("real Host lazily opens phases, drains accepted work before switching, and 
     beforeDelete,
   );
   await suspendNativeCaller(host, {
-    schemaVersion: 5,
+    schemaVersion: 6,
     kind: "userContext",
     user: {
-      schemaVersion: 5,
+      schemaVersion: 6,
       kind: "testUser",
       userId: "alice",
       displayName: "Alice",
@@ -343,7 +340,7 @@ test("switching test users cancels queued model work and keeps the old user's re
   unwrap(await store.saveConnection(caller, connection("one"), null));
   const session = unwrap(await host.createSession(caller, {}, budget()));
   const command = (commandId, text) => ({
-    schemaVersion: 5,
+    schemaVersion: 6,
     kind: "command",
     sessionId: session.namespace.sessionId,
     commandId,
@@ -470,7 +467,7 @@ test("ordinary runtime snapshot cleanup is retained and retried after a failure"
     await host.submit(
       caller,
       {
-        schemaVersion: 5,
+        schemaVersion: 6,
         kind: "command",
         sessionId: session.namespace.sessionId,
         commandId: "quick",
@@ -491,7 +488,7 @@ test("ordinary runtime snapshot cleanup is retained and retried after a failure"
   assert.equal(attempts, 2);
 });
 
-test("saving a connection requires a completed model probe and preserves the previous revision on rejection", async (t) => {
+test("saving is independent; explicit testing records success and preserves inputs on rejection", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "rss-connection-probe-"));
   const store = unwrap(
     openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
@@ -534,17 +531,17 @@ test("saving a connection requires a completed model probe and preserves the pre
   const first = unwrap(
     await host.saveConnection(
       caller,
-      { ...connection("one"), status: "unverified" },
+      draftOf(connection("one")),
       null,
       budget(),
     ),
   );
-  assert.equal(first.status, "ready");
-  assert.equal(
-    disposed,
-    1,
-    "probe artifacts are disposed only after the worker stopped",
-  );
+  assert.equal(first.status, "unverified");
+  assert.equal(disposed, 0);
+  const ready = unwrap(await host.testConnection(caller, "one", 1, budget()));
+  assert.equal(ready.status, "ready");
+  assert.equal(ready.configRevision, 2);
+  assert.equal(disposed, 1);
   const { readFile } = await import("node:fs/promises");
   const trace = (await readFile(join(root, "trace.ndjson"), "utf8"))
     .trim()
@@ -556,41 +553,26 @@ test("saving a connection requires a completed model probe and preserves the pre
     unwrap(await host.listSessions(caller, { limit: 256 }, budget())).items,
     [],
   );
-  const deleted = unwrap(
-    await host.saveConnection(
-      caller,
-      { ...first, configRevision: 2, status: "deleted" },
-      1,
-      budget(),
-    ),
+  assert.equal(
+    unwrap(await host.deleteConnection(caller, "one", 2, budget())).status,
+    "deleted",
   );
-  assert.equal(deleted.status, "deleted");
-  // Use a separate ready connection to verify a failed probe retains the previous revision.
   const second = unwrap(
     await host.saveConnection(
       caller,
-      { ...connection("two"), status: "unverified" },
+      draftOf(connection("two")),
       null,
       budget(),
     ),
   );
   reject = true;
-  assert.equal(
-    (
-      await host.saveConnection(
-        caller,
-        { ...second, name: "rejected", configRevision: 2 },
-        1,
-        budget(),
-      )
-    ).ok,
-    false,
-  );
-  assert.deepEqual(unwrap(await store.connection(caller, "two")), second);
+  const failed = unwrap(await host.testConnection(caller, "two", 1, budget()));
+  assert.equal(failed.lastTest.outcome, "failed");
+  assert.deepEqual({ ...failed, lastTest: null }, second);
   assert.equal(
     unwrap(await host.connections(caller, budget())).preferences
       .defaultConnectionId,
-    "two",
+    undefined,
   );
 });
 
@@ -622,20 +604,28 @@ test("failed probe disposal leaves worker capacity available and retries cleanup
       }),
     }),
   );
-  const first = await host.saveConnection(
-    caller,
-    { ...connection("first"), status: "unverified" },
-    null,
-    budget(),
+  unwrap(
+    await host.saveConnection(
+      caller,
+      draftOf(connection("first")),
+      null,
+      budget(),
+    ),
   );
-  assert.equal(first.ok, true);
-  const second = await host.saveConnection(
-    caller,
-    { ...connection("second"), status: "unverified" },
-    null,
-    budget(),
+  const first = unwrap(await host.testConnection(caller, "first", 1, budget()));
+  assert.equal(first.lastTest.stage, "cleanup");
+  unwrap(
+    await host.saveConnection(
+      caller,
+      draftOf(connection("second")),
+      null,
+      budget(),
+    ),
   );
-  assert.equal(second.ok, true, JSON.stringify(second));
+  const second = unwrap(
+    await host.testConnection(caller, "second", 1, budget()),
+  );
+  assert.equal(second.status, "ready");
   unwrap(await host.close(budget()));
   assert.ok(disposals >= 3);
   await rm(root, { recursive: true, force: true });
@@ -677,16 +667,17 @@ test("typed resolver and persistence failures keep closed codes and credential d
       },
     }),
   );
-  const candidate = { ...connection("typed"), status: "unverified" };
-  assert.equal(
-    (await host.saveConnection(caller, candidate, null, budget())).error.code,
-    "invalid_input",
-  );
-  resolverFailure = false;
+  const candidate = draftOf(connection("typed"));
   assert.equal(
     (await host.saveConnection(caller, candidate, null, budget())).error.code,
     "authentication_required",
   );
+  unwrap(await store.saveConnection(caller, connection("typed"), null));
+  const tested = unwrap(
+    await host.testConnection(caller, "typed", 1, budget()),
+  );
+  assert.equal(tested.lastTest.failure.code, "invalid_input");
+  assert.equal(tested.lastTest.stage, "configuration");
   assert.deepEqual(diagnostics.at(-1), {
     stage: "credential",
     code: "authentication_required",
@@ -713,12 +704,12 @@ test("top-level close attempts every independent owner and is retryable by its c
   assert.deepEqual(calls, ["service", "execution", "host", "control"]);
 });
 
-test("application persistence reencrypts retained secrets and lets only one competing revision commit", async (t) => {
+test("application persistence retains ciphertext without decrypting and lets only one competing revision commit", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "rss-connection-persistence-"));
   const store = unwrap(
     openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
   );
-  const secrets = new ConnectionSecrets(store, async () => Buffer.alloc(32, 9));
+  const encrypted = new Uint8Array(32).fill(9);
   let available = true;
   const host = unwrap(
     await createHost({
@@ -727,7 +718,7 @@ test("application persistence reencrypts retained secrets and lets only one comp
       launchFences: store,
       delivery: null,
       callerAvailable: () => available,
-      persistConnection: connectionPersistence(store, secrets, () => available),
+      persistConnection: connectionPersistence(store, () => available),
       resolve: async (_caller, options, namespace) => ({
         configuration: {
           namespace,
@@ -747,31 +738,34 @@ test("application persistence reencrypts retained secrets and lets only one comp
   const first = unwrap(
     await host.saveConnection(
       caller,
-      { ...connection("one"), status: "unverified" },
+      draftOf(connection("one")),
       null,
       budget(),
-      "retained-secret",
+      encrypted,
     ),
   );
   const second = unwrap(
     await host.saveConnection(
       caller,
-      { ...first, name: "edited", configRevision: 2, status: "unverified" },
+      { ...draftOf(first), name: "edited" },
       1,
       budget(),
     ),
   );
-  assert.equal(await secrets.read(caller, second), "retained-secret");
+  assert.deepEqual(
+    unwrap(await store.encryptedSecret(caller, "one", second.configRevision)),
+    encrypted,
+  );
   const candidates = await Promise.all([
     host.saveConnection(
       caller,
-      { ...second, name: "winner-a", configRevision: 3, status: "unverified" },
+      { ...draftOf(second), name: "winner-a" },
       2,
       budget(),
     ),
     host.saveConnection(
       caller,
-      { ...second, name: "winner-b", configRevision: 3, status: "unverified" },
+      { ...draftOf(second), name: "winner-b" },
       2,
       budget(),
     ),
@@ -783,17 +777,14 @@ test("application persistence reencrypts retained secrets and lets only one comp
   );
   const current = unwrap(await store.connection(caller, "one"));
   assert.equal(current.configRevision, 3);
-  assert.equal(await secrets.read(caller, current), "retained-secret");
+  assert.deepEqual(
+    unwrap(await store.encryptedSecret(caller, "one", current.configRevision)),
+    encrypted,
+  );
   available = false;
   assert.equal(
-    (
-      await host.saveConnection(
-        caller,
-        { ...current, configRevision: 4, status: "unverified" },
-        3,
-        budget(),
-      )
-    ).error.code,
+    (await host.saveConnection(caller, draftOf(current), 3, budget())).error
+      .code,
     "unavailable",
   );
   assert.equal(unwrap(await store.connection(caller, "one")).configRevision, 3);
@@ -813,7 +804,7 @@ test("user fence settles persistent offline queues across pages and propagates d
   for (const session of sessions) {
     unwrap(await store.create(session));
     const command = {
-      schemaVersion: 5,
+      schemaVersion: 6,
       kind: "command",
       sessionId: session.namespace.sessionId,
       commandId: "queued",
@@ -877,10 +868,10 @@ test("user fence settles persistent offline queues across pages and propagates d
   );
   store.suspend = suspend;
   await suspendNativeCaller(host, {
-    schemaVersion: 5,
+    schemaVersion: 6,
     kind: "userContext",
     user: {
-      schemaVersion: 5,
+      schemaVersion: 6,
       kind: "testUser",
       userId: "alice",
       displayName: "Alice",
@@ -952,15 +943,20 @@ test("verification preserves definite failures and never calls unknown acceptanc
       }),
     );
     try {
-      const result = await host.saveConnection(
-        caller,
-        connection("test"),
-        null,
-        budget(),
+      unwrap(
+        await host.saveConnection(
+          caller,
+          draftOf(connection("test")),
+          null,
+          budget(),
+        ),
       );
-      assert.equal(result.ok, false);
-      assert.equal(result.error.code, expected);
-      assert.equal((await store.connection(caller, "test")).ok, false);
+      const result = unwrap(
+        await host.testConnection(caller, "test", 1, budget()),
+      );
+      assert.equal(result.lastTest.outcome, "failed");
+      assert.equal(result.lastTest.failure.code, expected);
+      assert.equal((await store.connection(caller, "test")).ok, true);
     } finally {
       await host.close(budget());
       await rm(root, { recursive: true, force: true });
@@ -1008,22 +1004,24 @@ test("controlled connection verification requires the dedicated harmless tool ca
       }),
     );
     try {
-      const result = await host.saveConnection(
-        caller,
-        { ...connection("probe"), profile: "controlled_tools" },
-        null,
-        budget(),
+      unwrap(
+        await host.saveConnection(
+          caller,
+          { ...draftOf(connection("probe")), profile: "controlled_tools" },
+          null,
+          budget(),
+        ),
       );
-      assert.equal(result.ok, toolWorks && !empty);
-      if (!result.ok)
+      const result = unwrap(
+        await host.testConnection(caller, "probe", 1, budget()),
+      );
+      assert.equal(result.status === "ready", toolWorks && !empty);
+      if (result.lastTest.outcome === "failed")
         assert.equal(
-          result.error.code,
+          result.lastTest.failure.code,
           empty ? "unavailable" : "unsupported_capability",
         );
-      assert.equal(
-        (await store.connection(caller, "probe")).ok,
-        toolWorks && !empty,
-      );
+      assert.equal((await store.connection(caller, "probe")).ok, true);
     } finally {
       await host.close(budget());
       await rm(root, { recursive: true, force: true });

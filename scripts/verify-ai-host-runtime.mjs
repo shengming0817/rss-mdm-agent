@@ -110,7 +110,7 @@ for (const signal of ["SIGTERM", "SIGINT"]) {
     client = view.client;
     const session = await client.createSession();
     await client.submit({
-      schemaVersion: 5,
+      schemaVersion: 6,
       kind: "command",
       commandId: "bundled",
       sessionId: session.namespace.sessionId,

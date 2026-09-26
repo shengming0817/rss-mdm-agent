@@ -322,9 +322,9 @@ impl DesktopRuntime {
     pub async fn save_connection(
         &self,
         generation: &str,
-        connection: ai_session_contract::Connection,
+        connection: ai_session_contract::ConnectionDraft,
         expected: Option<u64>,
-        secret: Option<String>,
+        secret: Option<zeroize::Zeroizing<String>>,
     ) -> ui::Result<Value> {
         self.current(generation)?;
         let epoch = self.epoch();
@@ -332,14 +332,54 @@ impl DesktopRuntime {
             .process()
             .filter(|p| p.ready())
             .ok_or_else(unavailable)?;
+        let encrypted = if let Some(secret) = secret {
+            let context = self.current(generation)?;
+            let value =
+                serde_json::to_value(&connection).map_err(|_| ui::error("input", "无效连接"))?;
+            if value["source"]["type"] != "custom_api" {
+                return Err(ui::error("input", "该连接不接受凭据"));
+            }
+            let endpoint =
+                url::Url::parse(value["source"]["apiUrl"].as_str().ok_or_else(unavailable)?)
+                    .map_err(|_| ui::error("input", "API 地址无效"))?
+                    .to_string();
+            let owner: ai_session_contract::CredentialOwner = serde_json::from_value(json!({"tenantId":"test-users","principalId":context.user.user_id,"authorityId":"desktop-fixture","connectionId":connection.connection_id,"provider":value["provider"],"endpoint":endpoint,"credentialType":value["source"]["credentialType"].as_str().unwrap_or("api_key")})).map_err(|_| ui::error("input", "凭据目标无效"))?;
+            let has_secrets = process.control.credential_context(generation).await?;
+            self.current(generation)?;
+            let master = self.master.clone();
+            let permit = tokio::time::timeout(
+                Duration::from_secs(5),
+                master.permit.clone().acquire_owned(),
+            )
+            .await
+            .map_err(|_| unavailable())?
+            .map_err(|_| unavailable())?;
+            let encrypted = tokio::time::timeout(
+                Duration::from_secs(10),
+                tokio::task::spawn_blocking(move || {
+                    let _permit = permit;
+                    master.seal(&owner, &secret, !has_secrets)
+                }),
+            )
+            .await
+            .map_err(|_| unavailable())?
+            .map_err(|_| unavailable())??;
+            self.current(generation)?;
+            if epoch != self.epoch() {
+                return Err(unavailable());
+            }
+            Some(encrypted)
+        } else {
+            None
+        };
         let result = process
             .control
             .save_connection(
                 generation,
                 connection,
                 expected,
-                secret,
-                Duration::from_secs(100),
+                encrypted,
+                Duration::from_secs(10),
             )
             .await?;
         self.current(generation)?;
@@ -505,7 +545,7 @@ mod tests {
         let script = artifact.join("node_modules/@rss-mdm-agent/ai-host-app/dist/cli.js");
         std::fs::create_dir_all(script.parent().unwrap()).unwrap();
         std::fs::write(script, mode).unwrap();
-        let manifest = json!({"status":"passed","desktopProtocol":3,"contractVersion":5,
+        let manifest = json!({"status":"passed","desktopProtocol":3,"contractVersion":6,
             "verification":{"platform":if cfg!(windows){"win32"}else{"darwin"},"arch":if cfg!(windows){"x64"}else{"arm64"}},
             "runtimeTreeSha256":super::super::runtime_package::digest(&artifact).unwrap()});
         std::fs::write(

@@ -1,4 +1,4 @@
-/** V5 product reliability contracts. Data never grants execution authority. */
+/** V6 product reliability contracts. Data never grants execution authority. */
 export type * from "./wire.js";
 export type * from "./ports.js";
 export {
@@ -47,6 +47,7 @@ export {
 export {
   emptyPreferences,
   connectionRevision,
+  savedDraft,
   mergePreferences,
 } from "./connections.js";
 

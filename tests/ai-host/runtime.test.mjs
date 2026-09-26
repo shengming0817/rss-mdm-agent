@@ -143,7 +143,7 @@ async function setup(t, revision = "1", extras = {}) {
     await openFixture(host, store, caller, options, budget()),
   );
   const command = (id, text = "hold") => ({
-    schemaVersion: 5,
+    schemaVersion: 6,
     kind: "command",
     sessionId: session.namespace.sessionId,
     commandId: id,
@@ -336,7 +336,7 @@ test("standard ACP queued input outlives the request budget and executes in FIFO
     await f.host.cancel(
       caller,
       {
-        schemaVersion: 5,
+        schemaVersion: 6,
         kind: "command",
         sessionId: session.namespace.sessionId,
         commandId: "release-long-run",
