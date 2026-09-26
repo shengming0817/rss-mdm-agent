@@ -147,3 +147,43 @@ test("native exceptions overwrite old pass and cannot escape receipt failure han
   assert.equal(receipt.status, "failed");
   assert.equal(receipts.at(-1).status, "failed");
 });
+
+test("process failures retain closed diagnostics and the failing stage", () => {
+  for (const failure of [
+    { status: null, error: { code: "ENOENT", message: "secret" } },
+    { status: null, signal: "SIGTERM", error: { code: "ETIMEDOUT" } },
+    { status: null, signal: "SIGKILL" },
+    { status: 17 },
+    { status: null, error: { code: "secret", message: "secret" } },
+  ]) {
+    const { receipt } = verify({ ...output(candidate), ...failure });
+    assert.equal(receipt.reason, "helperProcess");
+    assert.equal(receipt.helper.exitCode, failure.status);
+    assert.equal(receipt.helper.signal, failure.signal ?? null);
+    assert.equal(
+      receipt.helper.errorCode,
+      failure.error
+        ? ["ENOENT", "ETIMEDOUT"].includes(failure.error.code)
+          ? failure.error.code
+          : "OTHER"
+        : null,
+    );
+    assert.equal(JSON.stringify(receipt).includes("secret"), false);
+    for (const stage of [0, 1, 2]) {
+      let index = 0;
+      const checks = serviceChecks("desktop", "probe", () => {
+        const current = index++;
+        return current === stage
+          ? failure
+          : output(current === 1 ? { admitted: false } : healthy);
+      });
+      assert.equal(checks.passed, false);
+      assert.equal(
+        checks.reason,
+        ["trusted-before", "untrusted-process", "trusted-after"][stage],
+      );
+      assert.equal(checks.steps[stage].signal, failure.signal ?? null);
+      assert.equal(JSON.stringify(checks).includes("secret"), false);
+    }
+  }
+});

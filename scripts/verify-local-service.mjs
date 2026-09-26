@@ -1,13 +1,46 @@
 // The checkout-built native loader owns installed policy and artifact authorization.
+import { constants } from "node:os";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve, posix, win32 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+function executeProcess(execute, program, args, options) {
+  try {
+    return execute(program, args, options);
+  } catch (error) {
+    return { status: null, error };
+  }
+}
+
+function processResult(name, result) {
+  const codes = [
+    "ENOENT",
+    "EACCES",
+    "EPERM",
+    "ETIMEDOUT",
+    "ENOBUFS",
+    "ENOMEM",
+    "E2BIG",
+  ];
+  return {
+    name,
+    exitCode: Number.isInteger(result.status) ? result.status : null,
+    signal: Object.hasOwn(constants.signals, result.signal)
+      ? result.signal
+      : null,
+    errorCode: result.error
+      ? codes.includes(result.error.code)
+        ? result.error.code
+        : "OTHER"
+      : null,
+  };
+}
+
 export function serviceChecks(executable, negative, execute = spawnSync) {
   const steps = [];
   const call = (name, program, args) => {
-    const result = execute(program, args, {
+    const result = executeProcess(execute, program, args, {
       encoding: "utf8",
       timeout: 10000,
       windowsHide: true,
@@ -17,8 +50,7 @@ export function serviceChecks(executable, negative, execute = spawnSync) {
       response = JSON.parse(result.stdout);
     } catch {}
     steps.push({
-      name,
-      exitCode: result.status,
+      ...processResult(name, result),
       pid: result.pid,
       stdout: result.stdout,
       stderr: result.stderr,
@@ -35,16 +67,18 @@ export function serviceChecks(executable, negative, execute = spawnSync) {
     typeof view.status.installation === "string" &&
     typeof view.status.build === "string";
   const before = call("trusted-before", executable, ["--service-probe"]);
-  if (!connected(before)) return { passed: false, steps };
+  if (!connected(before))
+    return { passed: false, reason: "trusted-before", steps };
   const denied = call("untrusted-process", negative, []);
   const after = call("trusted-after", executable, ["--service-probe"]);
-  return {
-    passed:
-      denied?.admitted === false &&
-      connected(after) &&
-      JSON.stringify(before.status) === JSON.stringify(after.status),
-    steps,
-  };
+  const reason =
+    denied?.admitted !== false
+      ? "untrusted-process"
+      : !connected(after) ||
+          JSON.stringify(before.status) !== JSON.stringify(after.status)
+        ? "trusted-after"
+        : null;
+  return { passed: reason === null, reason, steps };
 }
 
 function writeReceipt(receipt) {
@@ -69,7 +103,8 @@ export function verifyLocalService({
     policyVersion: null,
     helperVersion: null,
     permissionCheck: "unavailable",
-    reason: "helperUnavailable",
+    reason: "helperProcess",
+    helper: null,
     steps: [],
     notCovered: [
       "cross-user",
@@ -93,12 +128,18 @@ export function verifyLocalService({
         import.meta.url,
       ),
     );
-    const result = execute(helper, ["--verification-candidate"], {
-      encoding: "utf8",
-      timeout: 10000,
-      maxBuffer: 65536,
-      windowsHide: true,
-    });
+    const result = executeProcess(
+      execute,
+      helper,
+      ["--verification-candidate"],
+      {
+        encoding: "utf8",
+        timeout: 10000,
+        maxBuffer: 65536,
+        windowsHide: true,
+      },
+    );
+    receipt.helper = processResult("native-helper", result);
     if (result.error || result.signal || result.status === null)
       throw Error("native helper failed");
     receipt.reason = "helperOutput";
@@ -137,7 +178,12 @@ export function verifyLocalService({
           "negative" in value))
     )
       throw Error("invalid native projection");
-    receipt.reason = value.phase === "rejected" ? value.reason : "helperOutput";
+    receipt.reason =
+      value.phase === "rejected"
+        ? value.reason
+        : result.status !== 0
+          ? "helperProcess"
+          : "helperOutput";
     receipt.policyPath = value.policyPath;
     receipt.helperVersion = value.helperVersion;
     receipt.policyVersion = value.policyVersion;
@@ -158,6 +204,7 @@ export function verifyLocalService({
     receipt.reason = "serviceChecks";
     const checks = serviceChecks(value.executable, value.negative, execute);
     receipt.steps = checks.steps;
+    receipt.reason = checks.reason;
     if (checks.passed) {
       receipt.status = "passed-controlled-query-and-negative-fixture";
       receipt.reason = null;
