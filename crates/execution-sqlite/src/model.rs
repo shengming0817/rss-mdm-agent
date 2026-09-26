@@ -239,6 +239,8 @@ pub struct ExecutionRecord {
     pub execution: execution_lifecycle::Execution,
     /// Latest non-stale admission result, excluding all sensitive audit fields.
     pub admission: Option<AdmissionStatus>,
+    /// Redacted process facts, present only for authorized result/owner reads.
+    pub process: Option<execution_contract::ProcessSummary>,
 }
 /// Verification input for access checks. Host must not trust claims because they deserialize.
 pub struct AccessRequest<'a> {

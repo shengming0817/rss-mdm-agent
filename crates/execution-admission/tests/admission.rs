@@ -262,9 +262,33 @@ fn no_launch_parameter_identity_or_constraint_substitution_is_allowed() {
             6 => {
                 s.request.parameters.clear();
             }
-            7 => s.constraints.require_sandbox = false,
-            8 => s.constraints.allow_child_processes = true,
-            9 => s.constraints.write_paths.push("/other".into()),
+            7 => {
+                let execution_contract::IsolationPolicy::Restricted {
+                    require_sandbox, ..
+                } = &mut s.constraints
+                else {
+                    panic!("restricted fixture")
+                };
+                *require_sandbox = false;
+            }
+            8 => {
+                let execution_contract::IsolationPolicy::Restricted {
+                    allow_child_processes,
+                    ..
+                } = &mut s.constraints
+                else {
+                    panic!("restricted fixture")
+                };
+                *allow_child_processes = true;
+            }
+            9 => {
+                let execution_contract::IsolationPolicy::Restricted { write_paths, .. } =
+                    &mut s.constraints
+                else {
+                    panic!("restricted fixture")
+                };
+                write_paths.push("/other".into());
+            }
             10 => s.request.operation.action = id("other"),
             11 => s.request.operation.resource.revision = id("other"),
             12 => s.request.target.device = DeviceId::new("other").unwrap(),
@@ -282,7 +306,14 @@ fn no_launch_parameter_identity_or_constraint_substitution_is_allowed() {
                     },
                 }
             }
-            16 => s.constraints.read_paths.clear(),
+            16 => {
+                let execution_contract::IsolationPolicy::Restricted { read_paths, .. } =
+                    &mut s.constraints
+                else {
+                    panic!("restricted fixture")
+                };
+                read_paths.clear();
+            }
             17 => s.launch.interpreter.profile.revision = id("2"),
             18 => s.launch.output.stdout = TextEncoding::Utf16Le,
             19 => s.launch.artifact_encoding = ArtifactEncoding::Utf8Bom,

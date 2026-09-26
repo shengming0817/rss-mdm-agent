@@ -89,8 +89,28 @@ impl fmt::Debug for StandardInput {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct OutputSpec {
+    /// Required structured interpretation, bound into the plan digest.
+    pub format: OutputFormat,
     /// Required stdout interpretation; preserve raw bytes on failure.
     pub stdout: TextEncoding,
     /// Required stderr interpretation; preserve raw bytes on failure.
     pub stderr: TextEncoding,
+}
+
+/// Bounded result interpretation; schema and field publication remain product-owned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum OutputFormat {
+    /// Strictly decoded text streams without a structured result.
+    Text {},
+    /// A JSON object (one row) or array with at most the specified number of rows.
+    Json {
+        /// Positive limit, at most 1000.
+        max_rows: u16,
+    },
 }

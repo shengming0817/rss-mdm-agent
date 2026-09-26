@@ -683,7 +683,7 @@ async fn stale_catalog_and_terminal_test_evidence_remain_distinct() {
         )
         .await;
     assert_eq!(value(&result)["disposition"], "alreadyTerminal");
-    assert_eq!(value(&result)["operation"]["phase"], "testCompleted");
+    assert_eq!(value(&result)["operation"]["phase"], "verified");
     assert_eq!(value(&result)["operation"]["evidence"][0], "test-result");
     w.close().await;
 }

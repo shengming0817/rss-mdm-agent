@@ -92,6 +92,20 @@ impl RunnerPort for S1Runner {
     fn dispatch(&self, permit: AuthorizedDispatch) -> Result<DispatchOutcome, Error> {
         self.select(permit.plan()).dispatch(permit)
     }
+    fn evidence(
+        &self,
+        _plan: &execution_contract::FrozenPlan,
+        _attempt: &execution_contract::AttemptId,
+    ) -> Result<Option<execution_contract::ProcessEvidence>, execution_app::Error> {
+        Ok(None)
+    }
+    fn acknowledge_capture(
+        &self,
+        _: &execution_contract::FrozenPlan,
+        _: &execution_contract::ProcessEvidence,
+    ) -> Result<(), execution_app::Error> {
+        Ok(())
+    }
     fn stop(&self, p: &FrozenPlan, a: &AttemptId) -> Result<(), Error> {
         self.select(p).stop(p, a)
     }
@@ -501,7 +515,7 @@ impl Owner {
             )
         } else {
             match s.phase {
-                TaskPhase::TestCompleted => (
+                TaskPhase::Verified => (
                     ui::RequestStatus::Complete,
                     "S1 测试执行完成；没有安装软件或修改设备",
                 ),
@@ -633,6 +647,9 @@ impl Owner {
 }
 fn operation(s: ExecutionStatus) -> mcp::OperationStatus {
     mcp::OperationStatus {
+        mode: s.mode,
+        process: s.process,
+        assessment: s.assessment,
         submitted: s.submitted,
         cancel_requested: s.cancel_requested,
         operation_request_id: s.operation_request_id,
@@ -649,7 +666,7 @@ fn operation(s: ExecutionStatus) -> mcp::OperationStatus {
                 TaskPhase::Running => mcp::OperationPhase::Running,
                 TaskPhase::OutcomeUnknown => mcp::OperationPhase::OutcomeUnknown,
                 TaskPhase::ExecutionEnded => mcp::OperationPhase::ExecutionEnded,
-                TaskPhase::TestCompleted => mcp::OperationPhase::TestCompleted,
+                TaskPhase::Verified => mcp::OperationPhase::Verified,
                 TaskPhase::AdmissionDenied | TaskPhase::FailedBeforeDispatch => {
                     mcp::OperationPhase::Failed
                 }

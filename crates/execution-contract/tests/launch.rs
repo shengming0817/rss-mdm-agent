@@ -22,7 +22,7 @@ fn complete() -> Value {
     v["launch"]["argv"] = json!([{"kind":"artifactPath"}, {"kind":"literal","value":"--host"}, {"kind":"literal","value":"example.invalid"}]);
     v["launch"]["artifactEncoding"] = json!("utf8");
     v["launch"]["stdin"] = json!({"kind":"controlled","reference":{"id":"input-1","revision":"1"},"encoding":"utf8","maxBytes":64});
-    v["launch"]["output"] = json!({"stdout":"utf8","stderr":"utf8"});
+    v["launch"]["output"] = json!({"stdout":"utf8","stderr":"utf8","format":{"kind":"text"}});
     v
 }
 fn freeze(v: &Value) -> FrozenPlan {
@@ -33,9 +33,9 @@ fn freeze(v: &Value) -> FrozenPlan {
     .unwrap()
 }
 #[test]
-fn complete_launch_keeps_v1_and_binds_every_new_requirement() {
+fn complete_launch_requires_v2_and_binds_every_new_requirement() {
     let v = complete();
-    assert_eq!(v["schemaVersion"], 1);
+    assert_eq!(v["schemaVersion"], 2);
     let original = freeze(&v);
     for (pointer, value) in [
         ("/launch/interpreter/profile/revision", json!("2")),

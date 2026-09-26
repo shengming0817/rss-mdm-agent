@@ -1,6 +1,6 @@
 use crate::*;
 use execution_contract::{
-    Constraints, ExecutionRequest, FrozenPlan, LaunchSpec, NetworkAccess, OutputSpec, PlanSpec,
+    ExecutionRequest, FrozenPlan, IsolationPolicy, LaunchSpec, NetworkAccess, OutputSpec, PlanSpec,
     SessionRequirement, StandardInput, Target,
 };
 
@@ -107,14 +107,6 @@ pub fn match_capabilities(
         output,
     } = launch;
     // Artifact and process inputs are enforced by the runner, not inventory facts.
-    let Constraints {
-        network,
-        read_paths: _,
-        write_paths: _,
-        allow_child_processes,
-        require_sandbox,
-    } = constraints;
-    // Path contents are enforced by the runner; both confinement mechanisms are mandatory.
     let mut remaining = limits.max_entries;
     let interpreters = checked_inventory(interpreters, Dimension::Interpreter, &mut remaining)?;
     let launch_io = checked_inventory(launch_io, Dimension::LaunchIo, &mut remaining)?;
@@ -156,7 +148,11 @@ pub fn match_capabilities(
             );
         }
     }
-    let OutputSpec { stdout, stderr } = output;
+    let OutputSpec {
+        stdout,
+        stderr,
+        format: _,
+    } = output;
     push(
         Dimension::StandardOutput,
         launch_io(&LaunchIoCapability::CapturedText(*stdout)),
@@ -172,25 +168,36 @@ pub fn match_capabilities(
             push(Dimension::UserSession, user_sessions(account))
         }
     }
-    let network = match network {
-        NetworkAccess::Denied {} => Isolation::NetworkDenied,
-        NetworkAccess::Allowlist { destinations: _ } => Isolation::NetworkAllowlist,
-    };
-    for (dimension, required) in [
-        (Dimension::Network, network),
-        (Dimension::ReadPaths, Isolation::ReadPaths),
-        (Dimension::WritePaths, Isolation::WritePaths),
-    ] {
-        push(dimension, isolation(&required));
-    }
-    if !*allow_child_processes {
-        push(
-            Dimension::ChildProcesses,
-            isolation(&Isolation::ChildProcessesDenied),
-        );
-    }
-    if *require_sandbox {
-        push(Dimension::Sandbox, isolation(&Isolation::Sandbox));
+    match constraints {
+        IsolationPolicy::OsIdentity {} => {}
+        IsolationPolicy::Restricted {
+            network,
+            allow_child_processes,
+            require_sandbox,
+            read_paths: _,
+            write_paths: _,
+        } => {
+            let network = match network {
+                NetworkAccess::Denied {} => Isolation::NetworkDenied,
+                NetworkAccess::Allowlist { destinations: _ } => Isolation::NetworkAllowlist,
+            };
+            for (dimension, required) in [
+                (Dimension::Network, network),
+                (Dimension::ReadPaths, Isolation::ReadPaths),
+                (Dimension::WritePaths, Isolation::WritePaths),
+            ] {
+                push(dimension, isolation(&required));
+            }
+            if !*allow_child_processes {
+                push(
+                    Dimension::ChildProcesses,
+                    isolation(&Isolation::ChildProcessesDenied),
+                );
+            }
+            if *require_sandbox {
+                push(Dimension::Sandbox, isolation(&Isolation::Sandbox));
+            }
+        }
     }
     let status = checks
         .iter()

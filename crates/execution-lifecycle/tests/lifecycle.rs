@@ -1342,3 +1342,30 @@ fn observation_guards_and_roundtrip_preserve_verification_order() {
     );
     assert_eq!(verifier.calls.get(), 1);
 }
+
+#[test]
+fn dispatch_allowance_never_replenishes_elapsed_time_or_output() {
+    let state = started();
+    let before = state.allowance(1100).unwrap();
+    let event = CommandEvent {
+        id: EventId::new("output-allowance").unwrap(),
+        expected_revision: state.snapshot().revision,
+        command: Command::Output {
+            attempt_id: state.snapshot().attempt.as_ref().unwrap().id.clone(),
+            total_bytes: 123,
+        },
+    };
+    let after = state
+        .evaluate(event, 1200)
+        .unwrap()
+        .transition
+        .unwrap()
+        .next()
+        .clone();
+    let remaining = after.allowance(1200).unwrap();
+    assert_eq!(before.deadline_unix_ms, remaining.deadline_unix_ms);
+    assert_eq!(
+        remaining.remaining_output_bytes,
+        before.remaining_output_bytes - 123
+    );
+}

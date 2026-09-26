@@ -62,3 +62,23 @@ policy 来源修复以自动化回归和 Windows target 编译检查交付，不
 cargo test -p local-service、Host/desktop 测试及交叉编译只是前置证据。真实矩阵未完成时不能宣称双平台安全验收通过。
 
 策略格式直接替换，不读取旧策略或自动迁移。升级实验室候选时先卸载服务注册，由管理员处理旧安装文件，再构建并重新安装；保留原 AI 数据，不通过清库规避格式拒绝。
+
+## 执行机制候选（#2476 / #2475）
+
+执行宿主与上述 statusOnly 查询能力独立。构建 `cargo build -p execution-runner --bin rss-execution-service`，然后用
+`python3 scripts/service/execution-macos.py install --scope user --binary <绝对二进制路径>` 注册当前登录用户的 LaunchAgent。
+使用该二进制的 `--probe-user` 发起实际 XPC 查询；当前默认装配必须返回 `{"kind":"rejected"}`。
+结束后运行相同命令并把 `install` 改为 `remove`，移除本次临时安装。已有安装不被覆盖；移除前核对其固定二进制路径。
+系统场景使用 `--scope system` 和 `--probe-system`，需要管理员及 root 拥有的保护安装路径，不复用用户可写的开发目录。
+
+候选执行机制支持固定解释器、受控进程、输出及恢复接缝；生产身份和可信批准由 #2564 接线。
+当前 V2 计划和 SQLite 当前格式直接替换旧格式。旧库保留并拒绝打开；实验室明确选择新的私有目录初始化，不能删除旧库冒充恢复成功。
+机制详情与本机测试入口见 [execution-runner](../../crates/execution-runner/README.md)。没有运行的系统账号、Windows、签名发布或真机矩阵不得记为已通过。
+
+
+Windows 11 使用 PowerShell 7 运行 `scripts/service/execution-windows.ps1 -Action Install -Scope User -Binary <绝对 exe 路径>`，在当前交互用户会话注册登录 helper。系统候选用 `-Scope System`，需要管理员和受保护安装目录，SCM 以 LocalSystem 启动。两者已有注册均拒绝覆盖。使用二进制 `--probe-user` / `--probe-system` 查询，当前返回 rejected；没有生产执行权限。手动诊断用户 helper 可用 `rss-execution-service.exe --user`，不可用用户进程模拟系统宿主。
+
+`-Action Status` 只读注册状态；卸载使用 `-Action Remove` 并提供原始精确二进制路径，核对服务/任务归属后删除注册，不删除程序、缓存或数据库。用户 helper 是按 SID/session 命名的独立实例，用户注销导致进程退出及 Job 回收。安装器仅用于本地候选，签名安装包及生产可信接线不在此入口实现。
+
+
+执行宿主机制诊断：macOS 可用 `log show --last 10m --predicate 'subsystem == "com.rss-mdm.agent.execution"'` 查看闭合的阶段/失败分类；Windows 在 Application Event Log 查看 source 为 `RSS Execution` 的事件数据（不要求自定义消息资源安装）。日志由 OS 留存，卸载不删除历史。launchd 初始化结果不确定会尝试 bootout；补偿失败保留 plist，需核对 endpoint 后重试 Remove，不直接删配置冒充回收完成。

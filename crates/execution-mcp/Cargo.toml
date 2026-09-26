@@ -8,6 +8,7 @@ publish = false
 description = "Bounded MCP tools over a host-bound execution service"
 
 [dependencies]
+execution-lifecycle = { path = "../execution-lifecycle" }
 execution-contract = { path = "../execution-contract" }
 service-catalog = { path = "../service-catalog" }
 serde.workspace = true

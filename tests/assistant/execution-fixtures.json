@@ -3,6 +3,7 @@
     "plan": {
       "access": {
         "allowChildProcesses": false,
+        "kind": "restricted",
         "networkDenied": true,
         "networkDestinationCount": 0,
         "readPathCount": 1,
@@ -39,14 +40,14 @@
         "action": "diagnose",
         "resource": { "id": "network-tool", "revision": "1" }
       },
-      "planDigest": "b3e4d8b7e04694d4a2401818b1bd36790b154932ebf2ecc855ed596766d84537",
+      "planDigest": "5385597b2aa9946c02861e657735d36b915d2e4ef5a711071678d8791a688e7a",
       "planId": "plan-1",
       "policy": { "id": "policy-1", "revision": "1" },
       "runAs": {
         "account": { "platform": "linux", "subject": "uid:1000" },
         "kind": "user"
       },
-      "schemaVersion": 1,
+      "schemaVersion": 2,
       "sessionRequirement": { "kind": "notRequired" },
       "target": {
         "device": "device-1",
@@ -69,8 +70,9 @@
       "mode": "test",
       "operationRequestId": "request-1",
       "phase": "approvalRequired",
-      "planDigest": "b3e4d8b7e04694d4a2401818b1bd36790b154932ebf2ecc855ed596766d84537",
+      "planDigest": "5385597b2aa9946c02861e657735d36b915d2e4ef5a711071678d8791a688e7a",
       "planId": "plan-1",
+      "process": null,
       "stopOutcome": null,
       "submitted": true
     }
@@ -79,6 +81,7 @@
     "plan": {
       "access": {
         "allowChildProcesses": false,
+        "kind": "restricted",
         "networkDenied": true,
         "networkDestinationCount": 0,
         "readPathCount": 1,
@@ -115,14 +118,14 @@
         "action": "diagnose",
         "resource": { "id": "network-tool", "revision": "1" }
       },
-      "planDigest": "b3e4d8b7e04694d4a2401818b1bd36790b154932ebf2ecc855ed596766d84537",
+      "planDigest": "5385597b2aa9946c02861e657735d36b915d2e4ef5a711071678d8791a688e7a",
       "planId": "plan-1",
       "policy": { "id": "policy-1", "revision": "1" },
       "runAs": {
         "account": { "platform": "linux", "subject": "uid:1000" },
         "kind": "user"
       },
-      "schemaVersion": 1,
+      "schemaVersion": 2,
       "sessionRequirement": { "kind": "notRequired" },
       "target": {
         "device": "device-1",
@@ -162,8 +165,9 @@
       "mode": "test",
       "operationRequestId": "request-1",
       "phase": "cancelled",
-      "planDigest": "b3e4d8b7e04694d4a2401818b1bd36790b154932ebf2ecc855ed596766d84537",
+      "planDigest": "5385597b2aa9946c02861e657735d36b915d2e4ef5a711071678d8791a688e7a",
       "planId": "plan-1",
+      "process": null,
       "stopOutcome": "acknowledged",
       "submitted": true
     }
@@ -172,6 +176,7 @@
     "plan": {
       "access": {
         "allowChildProcesses": false,
+        "kind": "restricted",
         "networkDenied": true,
         "networkDestinationCount": 0,
         "readPathCount": 1,
@@ -208,14 +213,14 @@
         "action": "diagnose",
         "resource": { "id": "network-tool", "revision": "1" }
       },
-      "planDigest": "b3e4d8b7e04694d4a2401818b1bd36790b154932ebf2ecc855ed596766d84537",
+      "planDigest": "5385597b2aa9946c02861e657735d36b915d2e4ef5a711071678d8791a688e7a",
       "planId": "plan-1",
       "policy": { "id": "policy-1", "revision": "1" },
       "runAs": {
         "account": { "platform": "linux", "subject": "uid:1000" },
         "kind": "user"
       },
-      "schemaVersion": 1,
+      "schemaVersion": 2,
       "sessionRequirement": { "kind": "notRequired" },
       "target": {
         "device": "device-1",
@@ -238,8 +243,9 @@
       "mode": "test",
       "operationRequestId": "request-1",
       "phase": "outcomeUnknown",
-      "planDigest": "b3e4d8b7e04694d4a2401818b1bd36790b154932ebf2ecc855ed596766d84537",
+      "planDigest": "5385597b2aa9946c02861e657735d36b915d2e4ef5a711071678d8791a688e7a",
       "planId": "plan-1",
+      "process": null,
       "stopOutcome": null,
       "submitted": true
     }
@@ -248,6 +254,7 @@
     "plan": {
       "access": {
         "allowChildProcesses": false,
+        "kind": "restricted",
         "networkDenied": true,
         "networkDestinationCount": 0,
         "readPathCount": 1,
@@ -284,14 +291,14 @@
         "action": "diagnose",
         "resource": { "id": "network-tool", "revision": "1" }
       },
-      "planDigest": "b3e4d8b7e04694d4a2401818b1bd36790b154932ebf2ecc855ed596766d84537",
+      "planDigest": "5385597b2aa9946c02861e657735d36b915d2e4ef5a711071678d8791a688e7a",
       "planId": "plan-1",
       "policy": { "id": "policy-1", "revision": "1" },
       "runAs": {
         "account": { "platform": "linux", "subject": "uid:1000" },
         "kind": "user"
       },
-      "schemaVersion": 1,
+      "schemaVersion": 2,
       "sessionRequirement": { "kind": "notRequired" },
       "target": {
         "device": "device-1",
@@ -314,16 +321,18 @@
       "mode": "test",
       "operationRequestId": "request-1",
       "phase": "running",
-      "planDigest": "b3e4d8b7e04694d4a2401818b1bd36790b154932ebf2ecc855ed596766d84537",
+      "planDigest": "5385597b2aa9946c02861e657735d36b915d2e4ef5a711071678d8791a688e7a",
       "planId": "plan-1",
+      "process": null,
       "stopOutcome": null,
       "submitted": true
     }
   },
-  "testCompleted": {
+  "verified": {
     "plan": {
       "access": {
         "allowChildProcesses": false,
+        "kind": "restricted",
         "networkDenied": true,
         "networkDestinationCount": 0,
         "readPathCount": 1,
@@ -360,14 +369,14 @@
         "action": "diagnose",
         "resource": { "id": "network-tool", "revision": "1" }
       },
-      "planDigest": "b3e4d8b7e04694d4a2401818b1bd36790b154932ebf2ecc855ed596766d84537",
+      "planDigest": "5385597b2aa9946c02861e657735d36b915d2e4ef5a711071678d8791a688e7a",
       "planId": "plan-1",
       "policy": { "id": "policy-1", "revision": "1" },
       "runAs": {
         "account": { "platform": "linux", "subject": "uid:1000" },
         "kind": "user"
       },
-      "schemaVersion": 1,
+      "schemaVersion": 2,
       "sessionRequirement": { "kind": "notRequired" },
       "target": {
         "device": "device-1",
@@ -406,9 +415,10 @@
       ],
       "mode": "test",
       "operationRequestId": "request-1",
-      "phase": "testCompleted",
-      "planDigest": "b3e4d8b7e04694d4a2401818b1bd36790b154932ebf2ecc855ed596766d84537",
+      "phase": "verified",
+      "planDigest": "5385597b2aa9946c02861e657735d36b915d2e4ef5a711071678d8791a688e7a",
       "planId": "plan-1",
+      "process": null,
       "stopOutcome": null,
       "submitted": true
     }

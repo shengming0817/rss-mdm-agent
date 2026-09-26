@@ -1,5 +1,5 @@
 use crate::{
-    ActorId, DeviceId, Digest, EnvironmentKey, Id, NetworkDestination, PlanId, RequestId, V1,
+    ActorId, DeviceId, Digest, EnvironmentKey, Id, NetworkDestination, PlanId, RequestId, V1, V2,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -241,18 +241,28 @@ pub enum NetworkAccess {
 }
 /// Required restrictions are declarations; platform enforcement is owned by the runner.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Constraints {
-    /// Required network destinations/protocol restrictions, not proof that isolation is available.
-    pub network: NetworkAccess,
-    /// Absolute read-access declarations; actual resolution/enforcement belongs to the runner.
-    pub read_paths: Vec<String>,
-    /// Absolute write-access declarations; no filesystem access is performed during validation.
-    pub write_paths: Vec<String>,
-    /// Whether child processes are permitted by the plan; the runner must enforce this value.
-    pub allow_child_processes: bool,
-    /// Whether sandbox enforcement is mandatory; missing support must not silently downgrade it.
-    pub require_sandbox: bool,
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum IsolationPolicy {
+    /// Execute with the selected OS identity permissions, without additional confinement.
+    OsIdentity {},
+    /// Every declared restriction must be enforced or the plan rejected.
+    Restricted {
+        /// Required network destinations/protocol restrictions, not proof that isolation is available.
+        network: NetworkAccess,
+        /// Absolute read-access declarations; actual resolution/enforcement belongs to the runner.
+        read_paths: Vec<String>,
+        /// Absolute write-access declarations; no filesystem access is performed during validation.
+        write_paths: Vec<String>,
+        /// Whether child processes are permitted by the plan; the runner must enforce this value.
+        allow_child_processes: bool,
+        /// Whether sandbox enforcement is mandatory; missing support must not silently downgrade it.
+        require_sandbox: bool,
+    },
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -293,8 +303,8 @@ pub enum SessionRequirement {
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PlanSpec {
-    /// Required current V1 discriminator; absent or unsupported versions are rejected.
-    pub schema_version: V1,
+    /// Required current V2 discriminator; absent or unsupported versions are rejected.
+    pub schema_version: V2,
     /// Immutable local plan identity, also bound into its digest.
     pub plan_id: PlanId,
     /// Original operation intent, retained once as part of the canonical plan.
@@ -306,7 +316,7 @@ pub struct PlanSpec {
     /// Mandatory session requirement bound into the plan digest; never inferred or defaulted.
     pub session_requirement: SessionRequirement,
     /// Mandatory execution restrictions bound into the digest.
-    pub constraints: Constraints,
+    pub constraints: IsolationPolicy,
     /// Plan-wide resource allowances checked against separately supplied host limits.
     pub budget: ExecutionBudget,
     /// Bounded validity window; current time and revocation freshness are checked externally.

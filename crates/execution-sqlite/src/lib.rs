@@ -6,6 +6,7 @@ mod execution;
 mod interaction;
 mod journal;
 mod model;
+mod process;
 mod trust;
 pub use database::{OpenOutcome, Store};
 pub use model::*;

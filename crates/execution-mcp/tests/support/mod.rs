@@ -129,7 +129,8 @@ impl TestService {
         let key = self.key(&RequestId::new(id).unwrap());
         let mut db = self.store.lock().unwrap();
         let operation = db.accepted.get_mut(&key).unwrap();
-        operation.phase = OperationPhase::TestCompleted;
+        operation.phase = OperationPhase::Verified;
+        operation.assessment = Some(execution_lifecycle::EffectAssessment::Satisfied);
         operation.evidence = vec![Id::new("test-result").unwrap()];
     }
     fn capability() -> CapabilityView {
@@ -315,6 +316,9 @@ impl ExecutionServicePort for TestService {
                 }
                 self.attempts.fetch_add(1, Ordering::SeqCst);
                 let status = OperationStatus {
+                    mode: execution_lifecycle::ExecutionMode::Test,
+                    assessment: None,
+                    process: None,
                     submitted: true,
                     cancel_requested: false,
                     operation_request_id: request.operation_request_id,
@@ -361,7 +365,7 @@ impl ExecutionServicePort for TestService {
     ) -> Result<CancelResult, ServiceError> {
         let id = request.operation_request_id.clone();
         let operation = self.status(request, CancellationToken::new()).await?;
-        let disposition = if operation.phase == OperationPhase::TestCompleted {
+        let disposition = if operation.phase == OperationPhase::Verified {
             CancelDisposition::AlreadyTerminal
         } else {
             self.store

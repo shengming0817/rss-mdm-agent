@@ -2348,6 +2348,31 @@
           "pattern": "^[0-9a-f]{64}$",
           "type": "string"
         },
+        "EffectAssessment": {
+          "description": "Verified assessment of the whole controlled attempt, not text from tool output.",
+          "oneOf": [
+            {
+              "const": "noEffect",
+              "description": "Quiescent attempt has no side effects or pending external work.",
+              "type": "string"
+            },
+            {
+              "const": "satisfied",
+              "description": "Independent target verification confirms the desired state.",
+              "type": "string"
+            },
+            {
+              "const": "notSatisfied",
+              "description": "Target is not satisfied; side effects may nevertheless exist.",
+              "type": "string"
+            },
+            {
+              "const": "unknown",
+              "description": "Effect cannot be established.",
+              "type": "string"
+            }
+          ]
+        },
         "ErrorView": {
           "description": "Protocol error payload; optional catalog diagnostic is produced only from static C03 errors.",
           "properties": {
@@ -2361,6 +2386,21 @@
           },
           "required": ["code"],
           "type": "object"
+        },
+        "ExecutionMode": {
+          "description": "Explicit execution provenance; test effects never become real effects.",
+          "oneOf": [
+            {
+              "const": "test",
+              "description": "Explicit fixture runner only.",
+              "type": "string"
+            },
+            {
+              "const": "real",
+              "description": "Real runner, verified by the later production host.",
+              "type": "string"
+            }
+          ]
         },
         "Id": {
           "description": "Opaque local reference identifier; syntax validity is not authenticity.",
@@ -2410,12 +2450,7 @@
             },
             {
               "const": "verified",
-              "description": "The service verified the requested effect.",
-              "type": "string"
-            },
-            {
-              "const": "testCompleted",
-              "description": "Explicit test-only terminal result; not a platform effect.",
+              "description": "An independent assessment was recorded; inspect mode and assessment.",
               "type": "string"
             },
             {
@@ -2433,6 +2468,13 @@
         "OperationStatus": {
           "description": "Authorized execution fact projection; accepted is never rewritten to success.",
           "properties": {
+            "assessment": {
+              "anyOf": [
+                { "$ref": "#/$defs/EffectAssessment" },
+                { "type": "null" }
+              ],
+              "description": "Independent effect assessment, never inferred from process exit."
+            },
             "attemptId": {
               "anyOf": [{ "$ref": "#/$defs/AttemptId" }, { "type": "null" }],
               "description": "Service-owned attempt identity, if an attempt exists."
@@ -2446,6 +2488,10 @@
               "items": { "$ref": "#/$defs/Id" },
               "type": "array"
             },
+            "mode": {
+              "$ref": "#/$defs/ExecutionMode",
+              "description": "Execution provenance; a verified test result is not a real platform effect."
+            },
             "operationRequestId": {
               "$ref": "#/$defs/RequestId",
               "description": "Original business identity."
@@ -2458,12 +2504,20 @@
               "$ref": "#/$defs/PlanRef",
               "description": "Original frozen plan."
             },
+            "process": {
+              "anyOf": [
+                { "$ref": "#/$defs/ProcessSummary" },
+                { "type": "null" }
+              ],
+              "description": "Redacted root process progress; not full-scope termination or effect proof."
+            },
             "submitted": {
               "description": "Durable initial submission receipt; preview alone is false.",
               "type": "boolean"
             }
           },
           "required": [
+            "mode",
             "submitted",
             "cancelRequested",
             "operationRequestId",
@@ -2472,6 +2526,31 @@
             "evidence"
           ],
           "type": "object"
+        },
+        "OutputQuality": {
+          "description": "Quality of the captured result, independent from the exit code.",
+          "oneOf": [
+            {
+              "const": "complete",
+              "description": "All required output was decoded and structurally valid.",
+              "type": "string"
+            },
+            {
+              "const": "truncated",
+              "description": "Capture was truncated by the output budget.",
+              "type": "string"
+            },
+            {
+              "const": "failed",
+              "description": "Encoding, JSON shape, row bound or process outcome failed.",
+              "type": "string"
+            },
+            {
+              "const": "partial",
+              "description": "A process or pipe is still unaccounted for.",
+              "type": "string"
+            }
+          ]
         },
         "PlanId": {
           "description": "Immutable local plan identity.",
@@ -2494,6 +2573,167 @@
             }
           },
           "required": ["planId", "digest"],
+          "type": "object"
+        },
+        "ProcessEnd": {
+          "description": "Why a bounded process owner stopped collecting output.",
+          "oneOf": [
+            {
+              "const": "rejected",
+              "description": "Preparation was rejected before any target process started.",
+              "type": "string"
+            },
+            {
+              "const": "exited",
+              "description": "Root process exited; this is not an effect observation.",
+              "type": "string"
+            },
+            {
+              "const": "cancelled",
+              "description": "Explicit cancellation requested.",
+              "type": "string"
+            },
+            {
+              "const": "timedOut",
+              "description": "Remaining wall time exhausted.",
+              "type": "string"
+            },
+            {
+              "const": "outputLimit",
+              "description": "Combined output allowance exhausted.",
+              "type": "string"
+            },
+            {
+              "const": "unknown",
+              "description": "Read, supervision or termination failure.",
+              "type": "string"
+            }
+          ]
+        },
+        "ProcessFailureKind": {
+          "description": "Closed, value-free mechanism diagnosis, independent of cancellation, exit and effect.",
+          "oneOf": [
+            {
+              "const": "none",
+              "description": "No mechanism failure was observed; not a statement of business success.",
+              "type": "string"
+            },
+            {
+              "const": "denied",
+              "description": "An immutable input or artifact did not satisfy access/integrity requirements.",
+              "type": "string"
+            },
+            {
+              "const": "unbound",
+              "description": "The requested OS identity or controlled input binding is absent.",
+              "type": "string"
+            },
+            {
+              "const": "capability",
+              "description": "The declared restriction cannot be enforced.",
+              "type": "string"
+            },
+            {
+              "const": "unsupported",
+              "description": "A profile or encoding is not supported on this platform.",
+              "type": "string"
+            },
+            {
+              "const": "invalidInput",
+              "description": "Supplied input, encoding or configuration is malformed.",
+              "type": "string"
+            },
+            {
+              "const": "capacity",
+              "description": "A materialization, input or owner capacity limit was exceeded.",
+              "type": "string"
+            },
+            {
+              "const": "conflict",
+              "description": "An attempt or immutable resource already has a conflicting owner.",
+              "type": "string"
+            },
+            {
+              "const": "unavailable",
+              "description": "A required platform resource could not be acquired.",
+              "type": "string"
+            },
+            {
+              "const": "runtime",
+              "description": "The owner thread/runtime could not be initialized.",
+              "type": "string"
+            },
+            {
+              "const": "spawn",
+              "description": "The target could not be created or its initial thread resumed.",
+              "type": "string"
+            },
+            {
+              "const": "inputDelivery",
+              "description": "Controlled stdin could not be delivered completely.",
+              "type": "string"
+            },
+            {
+              "const": "capture",
+              "description": "A standard output/error stream could not be read completely.",
+              "type": "string"
+            },
+            {
+              "const": "supervision",
+              "description": "Root process status could not be observed reliably.",
+              "type": "string"
+            },
+            {
+              "const": "outputValidation",
+              "description": "Captured output did not meet its declared encoding or structure.",
+              "type": "string"
+            }
+          ]
+        },
+        "ProcessSummary": {
+          "additionalProperties": false,
+          "description": "Ordinary result projection. No raw output, paths, process identifiers or secrets.",
+          "properties": {
+            "end": {
+              "$ref": "#/$defs/ProcessEnd",
+              "description": "Stop/failure classification."
+            },
+            "exitCode": {
+              "description": "Root exit code, independently from effect or scope quiescence.",
+              "format": "int32",
+              "type": ["integer", "null"]
+            },
+            "failureKind": {
+              "$ref": "#/$defs/ProcessFailureKind",
+              "description": "First mechanism failure. Required even when no failure has occurred."
+            },
+            "finished": {
+              "description": "Root capture completed; not proof of all descendants terminating.",
+              "type": "boolean"
+            },
+            "quality": {
+              "$ref": "#/$defs/OutputQuality",
+              "description": "Capture/decoding quality, not a business success bit."
+            },
+            "quiescent": {
+              "description": "Explicit full-scope proof; false means unproven.",
+              "type": "boolean"
+            },
+            "totalOutputBytes": {
+              "description": "Bytes observed including discarded bytes.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "finished",
+            "end",
+            "failureKind",
+            "quiescent",
+            "totalOutputBytes",
+            "quality"
+          ],
           "type": "object"
         },
         "RequestId": {
@@ -2759,6 +2999,31 @@
           "pattern": "^[0-9a-f]{64}$",
           "type": "string"
         },
+        "EffectAssessment": {
+          "description": "Verified assessment of the whole controlled attempt, not text from tool output.",
+          "oneOf": [
+            {
+              "const": "noEffect",
+              "description": "Quiescent attempt has no side effects or pending external work.",
+              "type": "string"
+            },
+            {
+              "const": "satisfied",
+              "description": "Independent target verification confirms the desired state.",
+              "type": "string"
+            },
+            {
+              "const": "notSatisfied",
+              "description": "Target is not satisfied; side effects may nevertheless exist.",
+              "type": "string"
+            },
+            {
+              "const": "unknown",
+              "description": "Effect cannot be established.",
+              "type": "string"
+            }
+          ]
+        },
         "ErrorView": {
           "description": "Protocol error payload; optional catalog diagnostic is produced only from static C03 errors.",
           "properties": {
@@ -2772,6 +3037,21 @@
           },
           "required": ["code"],
           "type": "object"
+        },
+        "ExecutionMode": {
+          "description": "Explicit execution provenance; test effects never become real effects.",
+          "oneOf": [
+            {
+              "const": "test",
+              "description": "Explicit fixture runner only.",
+              "type": "string"
+            },
+            {
+              "const": "real",
+              "description": "Real runner, verified by the later production host.",
+              "type": "string"
+            }
+          ]
         },
         "Id": {
           "description": "Opaque local reference identifier; syntax validity is not authenticity.",
@@ -2821,12 +3101,7 @@
             },
             {
               "const": "verified",
-              "description": "The service verified the requested effect.",
-              "type": "string"
-            },
-            {
-              "const": "testCompleted",
-              "description": "Explicit test-only terminal result; not a platform effect.",
+              "description": "An independent assessment was recorded; inspect mode and assessment.",
               "type": "string"
             },
             {
@@ -2844,6 +3119,13 @@
         "OperationStatus": {
           "description": "Authorized execution fact projection; accepted is never rewritten to success.",
           "properties": {
+            "assessment": {
+              "anyOf": [
+                { "$ref": "#/$defs/EffectAssessment" },
+                { "type": "null" }
+              ],
+              "description": "Independent effect assessment, never inferred from process exit."
+            },
             "attemptId": {
               "anyOf": [{ "$ref": "#/$defs/AttemptId" }, { "type": "null" }],
               "description": "Service-owned attempt identity, if an attempt exists."
@@ -2857,6 +3139,10 @@
               "items": { "$ref": "#/$defs/Id" },
               "type": "array"
             },
+            "mode": {
+              "$ref": "#/$defs/ExecutionMode",
+              "description": "Execution provenance; a verified test result is not a real platform effect."
+            },
             "operationRequestId": {
               "$ref": "#/$defs/RequestId",
               "description": "Original business identity."
@@ -2869,12 +3155,20 @@
               "$ref": "#/$defs/PlanRef",
               "description": "Original frozen plan."
             },
+            "process": {
+              "anyOf": [
+                { "$ref": "#/$defs/ProcessSummary" },
+                { "type": "null" }
+              ],
+              "description": "Redacted root process progress; not full-scope termination or effect proof."
+            },
             "submitted": {
               "description": "Durable initial submission receipt; preview alone is false.",
               "type": "boolean"
             }
           },
           "required": [
+            "mode",
             "submitted",
             "cancelRequested",
             "operationRequestId",
@@ -2883,6 +3177,31 @@
             "evidence"
           ],
           "type": "object"
+        },
+        "OutputQuality": {
+          "description": "Quality of the captured result, independent from the exit code.",
+          "oneOf": [
+            {
+              "const": "complete",
+              "description": "All required output was decoded and structurally valid.",
+              "type": "string"
+            },
+            {
+              "const": "truncated",
+              "description": "Capture was truncated by the output budget.",
+              "type": "string"
+            },
+            {
+              "const": "failed",
+              "description": "Encoding, JSON shape, row bound or process outcome failed.",
+              "type": "string"
+            },
+            {
+              "const": "partial",
+              "description": "A process or pipe is still unaccounted for.",
+              "type": "string"
+            }
+          ]
         },
         "PlanId": {
           "description": "Immutable local plan identity.",
@@ -2905,6 +3224,167 @@
             }
           },
           "required": ["planId", "digest"],
+          "type": "object"
+        },
+        "ProcessEnd": {
+          "description": "Why a bounded process owner stopped collecting output.",
+          "oneOf": [
+            {
+              "const": "rejected",
+              "description": "Preparation was rejected before any target process started.",
+              "type": "string"
+            },
+            {
+              "const": "exited",
+              "description": "Root process exited; this is not an effect observation.",
+              "type": "string"
+            },
+            {
+              "const": "cancelled",
+              "description": "Explicit cancellation requested.",
+              "type": "string"
+            },
+            {
+              "const": "timedOut",
+              "description": "Remaining wall time exhausted.",
+              "type": "string"
+            },
+            {
+              "const": "outputLimit",
+              "description": "Combined output allowance exhausted.",
+              "type": "string"
+            },
+            {
+              "const": "unknown",
+              "description": "Read, supervision or termination failure.",
+              "type": "string"
+            }
+          ]
+        },
+        "ProcessFailureKind": {
+          "description": "Closed, value-free mechanism diagnosis, independent of cancellation, exit and effect.",
+          "oneOf": [
+            {
+              "const": "none",
+              "description": "No mechanism failure was observed; not a statement of business success.",
+              "type": "string"
+            },
+            {
+              "const": "denied",
+              "description": "An immutable input or artifact did not satisfy access/integrity requirements.",
+              "type": "string"
+            },
+            {
+              "const": "unbound",
+              "description": "The requested OS identity or controlled input binding is absent.",
+              "type": "string"
+            },
+            {
+              "const": "capability",
+              "description": "The declared restriction cannot be enforced.",
+              "type": "string"
+            },
+            {
+              "const": "unsupported",
+              "description": "A profile or encoding is not supported on this platform.",
+              "type": "string"
+            },
+            {
+              "const": "invalidInput",
+              "description": "Supplied input, encoding or configuration is malformed.",
+              "type": "string"
+            },
+            {
+              "const": "capacity",
+              "description": "A materialization, input or owner capacity limit was exceeded.",
+              "type": "string"
+            },
+            {
+              "const": "conflict",
+              "description": "An attempt or immutable resource already has a conflicting owner.",
+              "type": "string"
+            },
+            {
+              "const": "unavailable",
+              "description": "A required platform resource could not be acquired.",
+              "type": "string"
+            },
+            {
+              "const": "runtime",
+              "description": "The owner thread/runtime could not be initialized.",
+              "type": "string"
+            },
+            {
+              "const": "spawn",
+              "description": "The target could not be created or its initial thread resumed.",
+              "type": "string"
+            },
+            {
+              "const": "inputDelivery",
+              "description": "Controlled stdin could not be delivered completely.",
+              "type": "string"
+            },
+            {
+              "const": "capture",
+              "description": "A standard output/error stream could not be read completely.",
+              "type": "string"
+            },
+            {
+              "const": "supervision",
+              "description": "Root process status could not be observed reliably.",
+              "type": "string"
+            },
+            {
+              "const": "outputValidation",
+              "description": "Captured output did not meet its declared encoding or structure.",
+              "type": "string"
+            }
+          ]
+        },
+        "ProcessSummary": {
+          "additionalProperties": false,
+          "description": "Ordinary result projection. No raw output, paths, process identifiers or secrets.",
+          "properties": {
+            "end": {
+              "$ref": "#/$defs/ProcessEnd",
+              "description": "Stop/failure classification."
+            },
+            "exitCode": {
+              "description": "Root exit code, independently from effect or scope quiescence.",
+              "format": "int32",
+              "type": ["integer", "null"]
+            },
+            "failureKind": {
+              "$ref": "#/$defs/ProcessFailureKind",
+              "description": "First mechanism failure. Required even when no failure has occurred."
+            },
+            "finished": {
+              "description": "Root capture completed; not proof of all descendants terminating.",
+              "type": "boolean"
+            },
+            "quality": {
+              "$ref": "#/$defs/OutputQuality",
+              "description": "Capture/decoding quality, not a business success bit."
+            },
+            "quiescent": {
+              "description": "Explicit full-scope proof; false means unproven.",
+              "type": "boolean"
+            },
+            "totalOutputBytes": {
+              "description": "Bytes observed including discarded bytes.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "finished",
+            "end",
+            "failureKind",
+            "quiescent",
+            "totalOutputBytes",
+            "quality"
+          ],
           "type": "object"
         },
         "RequestId": {
@@ -3200,6 +3680,31 @@
           "pattern": "^[0-9a-f]{64}$",
           "type": "string"
         },
+        "EffectAssessment": {
+          "description": "Verified assessment of the whole controlled attempt, not text from tool output.",
+          "oneOf": [
+            {
+              "const": "noEffect",
+              "description": "Quiescent attempt has no side effects or pending external work.",
+              "type": "string"
+            },
+            {
+              "const": "satisfied",
+              "description": "Independent target verification confirms the desired state.",
+              "type": "string"
+            },
+            {
+              "const": "notSatisfied",
+              "description": "Target is not satisfied; side effects may nevertheless exist.",
+              "type": "string"
+            },
+            {
+              "const": "unknown",
+              "description": "Effect cannot be established.",
+              "type": "string"
+            }
+          ]
+        },
         "ErrorView": {
           "description": "Protocol error payload; optional catalog diagnostic is produced only from static C03 errors.",
           "properties": {
@@ -3213,6 +3718,21 @@
           },
           "required": ["code"],
           "type": "object"
+        },
+        "ExecutionMode": {
+          "description": "Explicit execution provenance; test effects never become real effects.",
+          "oneOf": [
+            {
+              "const": "test",
+              "description": "Explicit fixture runner only.",
+              "type": "string"
+            },
+            {
+              "const": "real",
+              "description": "Real runner, verified by the later production host.",
+              "type": "string"
+            }
+          ]
         },
         "Id": {
           "description": "Opaque local reference identifier; syntax validity is not authenticity.",
@@ -3262,12 +3782,7 @@
             },
             {
               "const": "verified",
-              "description": "The service verified the requested effect.",
-              "type": "string"
-            },
-            {
-              "const": "testCompleted",
-              "description": "Explicit test-only terminal result; not a platform effect.",
+              "description": "An independent assessment was recorded; inspect mode and assessment.",
               "type": "string"
             },
             {
@@ -3285,6 +3800,13 @@
         "OperationStatus": {
           "description": "Authorized execution fact projection; accepted is never rewritten to success.",
           "properties": {
+            "assessment": {
+              "anyOf": [
+                { "$ref": "#/$defs/EffectAssessment" },
+                { "type": "null" }
+              ],
+              "description": "Independent effect assessment, never inferred from process exit."
+            },
             "attemptId": {
               "anyOf": [{ "$ref": "#/$defs/AttemptId" }, { "type": "null" }],
               "description": "Service-owned attempt identity, if an attempt exists."
@@ -3298,6 +3820,10 @@
               "items": { "$ref": "#/$defs/Id" },
               "type": "array"
             },
+            "mode": {
+              "$ref": "#/$defs/ExecutionMode",
+              "description": "Execution provenance; a verified test result is not a real platform effect."
+            },
             "operationRequestId": {
               "$ref": "#/$defs/RequestId",
               "description": "Original business identity."
@@ -3310,12 +3836,20 @@
               "$ref": "#/$defs/PlanRef",
               "description": "Original frozen plan."
             },
+            "process": {
+              "anyOf": [
+                { "$ref": "#/$defs/ProcessSummary" },
+                { "type": "null" }
+              ],
+              "description": "Redacted root process progress; not full-scope termination or effect proof."
+            },
             "submitted": {
               "description": "Durable initial submission receipt; preview alone is false.",
               "type": "boolean"
             }
           },
           "required": [
+            "mode",
             "submitted",
             "cancelRequested",
             "operationRequestId",
@@ -3324,6 +3858,31 @@
             "evidence"
           ],
           "type": "object"
+        },
+        "OutputQuality": {
+          "description": "Quality of the captured result, independent from the exit code.",
+          "oneOf": [
+            {
+              "const": "complete",
+              "description": "All required output was decoded and structurally valid.",
+              "type": "string"
+            },
+            {
+              "const": "truncated",
+              "description": "Capture was truncated by the output budget.",
+              "type": "string"
+            },
+            {
+              "const": "failed",
+              "description": "Encoding, JSON shape, row bound or process outcome failed.",
+              "type": "string"
+            },
+            {
+              "const": "partial",
+              "description": "A process or pipe is still unaccounted for.",
+              "type": "string"
+            }
+          ]
         },
         "PlanId": {
           "description": "Immutable local plan identity.",
@@ -3346,6 +3905,167 @@
             }
           },
           "required": ["planId", "digest"],
+          "type": "object"
+        },
+        "ProcessEnd": {
+          "description": "Why a bounded process owner stopped collecting output.",
+          "oneOf": [
+            {
+              "const": "rejected",
+              "description": "Preparation was rejected before any target process started.",
+              "type": "string"
+            },
+            {
+              "const": "exited",
+              "description": "Root process exited; this is not an effect observation.",
+              "type": "string"
+            },
+            {
+              "const": "cancelled",
+              "description": "Explicit cancellation requested.",
+              "type": "string"
+            },
+            {
+              "const": "timedOut",
+              "description": "Remaining wall time exhausted.",
+              "type": "string"
+            },
+            {
+              "const": "outputLimit",
+              "description": "Combined output allowance exhausted.",
+              "type": "string"
+            },
+            {
+              "const": "unknown",
+              "description": "Read, supervision or termination failure.",
+              "type": "string"
+            }
+          ]
+        },
+        "ProcessFailureKind": {
+          "description": "Closed, value-free mechanism diagnosis, independent of cancellation, exit and effect.",
+          "oneOf": [
+            {
+              "const": "none",
+              "description": "No mechanism failure was observed; not a statement of business success.",
+              "type": "string"
+            },
+            {
+              "const": "denied",
+              "description": "An immutable input or artifact did not satisfy access/integrity requirements.",
+              "type": "string"
+            },
+            {
+              "const": "unbound",
+              "description": "The requested OS identity or controlled input binding is absent.",
+              "type": "string"
+            },
+            {
+              "const": "capability",
+              "description": "The declared restriction cannot be enforced.",
+              "type": "string"
+            },
+            {
+              "const": "unsupported",
+              "description": "A profile or encoding is not supported on this platform.",
+              "type": "string"
+            },
+            {
+              "const": "invalidInput",
+              "description": "Supplied input, encoding or configuration is malformed.",
+              "type": "string"
+            },
+            {
+              "const": "capacity",
+              "description": "A materialization, input or owner capacity limit was exceeded.",
+              "type": "string"
+            },
+            {
+              "const": "conflict",
+              "description": "An attempt or immutable resource already has a conflicting owner.",
+              "type": "string"
+            },
+            {
+              "const": "unavailable",
+              "description": "A required platform resource could not be acquired.",
+              "type": "string"
+            },
+            {
+              "const": "runtime",
+              "description": "The owner thread/runtime could not be initialized.",
+              "type": "string"
+            },
+            {
+              "const": "spawn",
+              "description": "The target could not be created or its initial thread resumed.",
+              "type": "string"
+            },
+            {
+              "const": "inputDelivery",
+              "description": "Controlled stdin could not be delivered completely.",
+              "type": "string"
+            },
+            {
+              "const": "capture",
+              "description": "A standard output/error stream could not be read completely.",
+              "type": "string"
+            },
+            {
+              "const": "supervision",
+              "description": "Root process status could not be observed reliably.",
+              "type": "string"
+            },
+            {
+              "const": "outputValidation",
+              "description": "Captured output did not meet its declared encoding or structure.",
+              "type": "string"
+            }
+          ]
+        },
+        "ProcessSummary": {
+          "additionalProperties": false,
+          "description": "Ordinary result projection. No raw output, paths, process identifiers or secrets.",
+          "properties": {
+            "end": {
+              "$ref": "#/$defs/ProcessEnd",
+              "description": "Stop/failure classification."
+            },
+            "exitCode": {
+              "description": "Root exit code, independently from effect or scope quiescence.",
+              "format": "int32",
+              "type": ["integer", "null"]
+            },
+            "failureKind": {
+              "$ref": "#/$defs/ProcessFailureKind",
+              "description": "First mechanism failure. Required even when no failure has occurred."
+            },
+            "finished": {
+              "description": "Root capture completed; not proof of all descendants terminating.",
+              "type": "boolean"
+            },
+            "quality": {
+              "$ref": "#/$defs/OutputQuality",
+              "description": "Capture/decoding quality, not a business success bit."
+            },
+            "quiescent": {
+              "description": "Explicit full-scope proof; false means unproven.",
+              "type": "boolean"
+            },
+            "totalOutputBytes": {
+              "description": "Bytes observed including discarded bytes.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "finished",
+            "end",
+            "failureKind",
+            "quiescent",
+            "totalOutputBytes",
+            "quality"
+          ],
           "type": "object"
         },
         "RequestId": {

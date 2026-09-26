@@ -1,0 +1,36 @@
+[package]
+name = "execution-runner"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+zeroize = "=1.8.2"
+execution-contract = { path = "../execution-contract" }
+execution-app = { path = "../execution-app" }
+execution-lifecycle = { path = "../execution-lifecycle" }
+native-process = { path = "../native-process" }
+serde.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
+sha2.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["process", "io-util", "rt", "time", "sync", "macros", "net"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "=0.2.189"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Services", "Win32_System_RemoteDesktop", "Win32_System_Environment", "Win32_System_Console", "Win32_System_EventLog"] }
+
+[dev-dependencies]
+execution-admission = { path = "../execution-admission" }
+execution-approval = { path = "../execution-approval" }
+execution-capability = { path = "../execution-capability" }
+execution-sqlite = { path = "../execution-sqlite" }
+rusqlite.workspace = true
+script-plan = { path = "../script-plan" }
+
+[build-dependencies]
+cc = "=1.4.5"

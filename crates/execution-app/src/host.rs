@@ -142,3 +142,46 @@ impl<H: AppHost> db::Host for Host<'_, H> {
         })
     }
 }
+
+/// A capture written by the authenticated runner remains readable after its in-memory ack.
+pub(crate) fn process_observation(
+    plan: &FrozenPlan,
+    facts: &execution_contract::ProcessEvidence,
+    now: u64,
+) -> Option<ObservationFacts> {
+    use execution_contract::{EvidenceKind, EvidenceRef, Id, ProcessScope, VersionedRef};
+    use execution_lifecycle::Observation;
+    if !facts.finished || !facts.quiescent || &facts.plan_digest != plan.digest() {
+        return None;
+    }
+    let never = matches!(facts.scope, ProcessScope::NotStarted {});
+    let observation = if never {
+        Observation::NeverDispatched {
+            total_output_bytes: facts.total_output_bytes,
+        }
+    } else {
+        Observation::Exited {
+            exit_code: facts.exit_code?,
+            total_output_bytes: facts.total_output_bytes,
+        }
+    };
+    Some(ObservationFacts {
+        plan_id: plan.spec().plan_id.clone(),
+        plan_digest: plan.digest().clone(),
+        attempt_id: facts.attempt_id.clone(),
+        observed_at_unix_ms: now,
+        evidence: EvidenceRef {
+            reference: VersionedRef {
+                id: Id::new(facts.attempt_id.as_str()).ok()?,
+                revision: Id::new("process-final").ok()?,
+            },
+            kind: if never {
+                EvidenceKind::StateObserved
+            } else {
+                EvidenceKind::ProcessExited
+            },
+            runner: facts.runner.clone(),
+        },
+        observation,
+    })
+}

@@ -37,7 +37,13 @@ fn plan(platform: Platform) -> FrozenPlan {
         "/workspace"
     }
     .into();
-    p.constraints.read_paths = vec![p.launch.cwd.clone()];
+    {
+        let execution_contract::IsolationPolicy::Restricted { read_paths, .. } = &mut p.constraints
+        else {
+            panic!("restricted fixture")
+        };
+        *read_paths = vec![p.launch.cwd.clone()];
+    }
     FrozenPlan::freeze(p, &limits()).unwrap()
 }
 fn inventory<T>(values: Vec<T>) -> Inventory<T> {
@@ -116,8 +122,25 @@ fn every_platform_and_required_dimension_is_explicit() {
 fn disabling_sandbox_does_not_disable_other_constraints() {
     let p = plan(Platform::Linux);
     let mut spec = p.spec().clone();
-    spec.constraints.require_sandbox = false;
-    spec.constraints.allow_child_processes = true;
+    {
+        let execution_contract::IsolationPolicy::Restricted {
+            require_sandbox, ..
+        } = &mut spec.constraints
+        else {
+            panic!("restricted fixture")
+        };
+        *require_sandbox = false;
+    }
+    {
+        let execution_contract::IsolationPolicy::Restricted {
+            allow_child_processes,
+            ..
+        } = &mut spec.constraints
+        else {
+            panic!("restricted fixture")
+        };
+        *allow_child_processes = true;
+    }
     spec.session_requirement = SessionRequirement::NotRequired {};
     let p = FrozenPlan::freeze(spec, &limits()).unwrap();
     let mut s = snapshot(&p);
@@ -219,13 +242,19 @@ fn exact_identity_and_every_inventory_fail_closed() {
     };
     assert_eq!(check(&p, &s).status, MatchStatus::Unsupported);
     let mut spec = p.spec().clone();
-    spec.constraints.network = NetworkAccess::Allowlist {
-        destinations: vec![NetworkDestination {
-            scheme: NetworkScheme::Https,
-            host: NetworkHost::new("example.invalid").unwrap(),
-            port: std::num::NonZeroU16::new(443).unwrap(),
-        }],
-    };
+    {
+        let execution_contract::IsolationPolicy::Restricted { network, .. } = &mut spec.constraints
+        else {
+            panic!("restricted fixture")
+        };
+        *network = NetworkAccess::Allowlist {
+            destinations: vec![NetworkDestination {
+                scheme: NetworkScheme::Https,
+                host: NetworkHost::new("example.invalid").unwrap(),
+                port: std::num::NonZeroU16::new(443).unwrap(),
+            }],
+        };
+    }
     let p = FrozenPlan::freeze(spec, &limits()).unwrap();
     let mut s = snapshot(&p);
     assert_eq!(check(&p, &s).status, MatchStatus::Supported);

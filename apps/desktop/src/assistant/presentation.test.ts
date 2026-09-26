@@ -188,3 +188,89 @@ it.each(["prompt", "cancel", "respond"] as const)(
     c.dispose();
   },
 );
+
+it("renders closed process reasons and quality as actionable Chinese text", () => {
+  const groups = {
+    end: {
+      rejected: "派发前已拒绝",
+      exited: "根进程退出",
+      cancelled: "已请求取消",
+      timedOut: "执行时间额度已耗尽",
+      outputLimit: "累计输出额度已耗尽",
+      unknown: "结束原因未确认",
+    },
+    quality: {
+      complete: "完整且符合输出契约",
+      truncated: "输出已截断",
+      failed: "不符合契约",
+      partial: "采集尚不完整",
+    },
+    failureKind: {
+      none: "未观察到机制故障",
+      denied: "权限或制品校验拒绝",
+      unbound: "身份或受控输入未绑定",
+      capability: "无法强制所需约束",
+      unsupported: "平台不支持所需调用",
+      invalidInput: "输入或配置格式无效",
+      capacity: "执行资源额度不足",
+      conflict: "执行关联发生冲突",
+      unavailable: "平台资源不可用",
+      runtime: "执行宿主初始化失败",
+      spawn: "目标进程启动失败",
+      inputDelivery: "受控输入未完整投递",
+      capture: "输出读取失败",
+      supervision: "进程状态无法可靠核实",
+      outputValidation: "输出编码或结构校验失败",
+    },
+  };
+  for (const [field, values] of Object.entries(groups))
+    for (const [value, label] of Object.entries(values)) {
+      const details = structuredClone(
+        fixtures.outcomeUnknown,
+      ) as ExecutionTaskDetails;
+      details.status.process = {
+        finished: true,
+        exitCode: 0,
+        end: "exited",
+        quality: "complete",
+        quiescent: false,
+        totalOutputBytes: 0,
+        failureKind: "none",
+        [field]: value,
+      };
+      const wrapper = mount(ExecutionDetails, {
+        props: { details, now: 1000 },
+      });
+      expect(wrapper.find(".process-facts").text()).toContain(label);
+      expect(wrapper.find(".process-facts").text()).not.toContain(value);
+      wrapper.unmount();
+    }
+});
+it("keeps stop acknowledgement separate from localized effect assessment", () => {
+  for (const [assessment, label] of Object.entries({
+    noEffect: "已核实未产生效果",
+    satisfied: "已核实效果符合预期",
+    notSatisfied: "已核实效果不符合预期",
+    unknown: "效果未知，需可信核对",
+  }))
+    for (const [stop, stopLabel] of Object.entries({
+      acknowledged: "停止请求已接收（未确认终止）",
+      failed: "停止请求未确认",
+    })) {
+      const details = structuredClone(
+        fixtures.outcomeUnknown,
+      ) as ExecutionTaskDetails;
+      details.status.assessment = assessment as NonNullable<
+        ExecutionTaskDetails["status"]["assessment"]
+      >;
+      details.status.stopOutcome = stop as NonNullable<
+        ExecutionTaskDetails["status"]["stopOutcome"]
+      >;
+      const wrapper = mount(ExecutionDetails, {
+        props: { details, now: 1000 },
+      });
+      expect(wrapper.text()).toContain(label);
+      expect(wrapper.text()).toContain(stopLabel);
+      wrapper.unmount();
+    }
+});

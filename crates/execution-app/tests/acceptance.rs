@@ -214,7 +214,7 @@ fn failed_stop_diagnostic_write_still_allows_terminal_fact_writes() {
     assert_eq!(app.reconcile(r).unwrap_err(), Error::Conflict);
     let status = app.status(&caller(), r).unwrap();
     assert!(status.cancel_requested);
-    assert_eq!(status.phase, TaskPhase::TestCompleted);
+    assert_eq!(status.phase, TaskPhase::Verified);
     assert_eq!(status.evidence.len(), 2);
     assert_eq!(status.stop_outcome, None); // failed persistence is reported, never claimed successful
 }
@@ -308,7 +308,7 @@ fn newer_schema_retains_read_only_startup_diagnostic() {
     };
     assert_eq!(
         format!("{error:?}"),
-        "NewerSchema { found: 999, supported: 2 }"
+        "NewerSchema { found: 999, supported: 3 }"
     );
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
     assert_eq!(runner.dispatch_count(), 0);
@@ -326,6 +326,20 @@ fn stop_failure_does_not_prevent_termination_and_effect_observation() {
         }
         fn dispatch(&self, permit: AuthorizedDispatch) -> Result<DispatchOutcome, Error> {
             self.0.dispatch(permit)
+        }
+        fn evidence(
+            &self,
+            _plan: &execution_contract::FrozenPlan,
+            _attempt: &execution_contract::AttemptId,
+        ) -> Result<Option<execution_contract::ProcessEvidence>, execution_app::Error> {
+            Ok(None)
+        }
+        fn acknowledge_capture(
+            &self,
+            _: &execution_contract::FrozenPlan,
+            _: &execution_contract::ProcessEvidence,
+        ) -> Result<(), execution_app::Error> {
+            Ok(())
         }
         fn stop(&self, _: &FrozenPlan, _: &AttemptId) -> Result<(), Error> {
             Err(Error::Unavailable)
@@ -357,7 +371,7 @@ fn stop_failure_does_not_prevent_termination_and_effect_observation() {
     app.submit(&caller(), r, &p).unwrap();
     host.state.lock().unwrap().now = 2000;
     let status = app.reconcile(r).unwrap();
-    assert_eq!(status.phase, TaskPhase::TestCompleted);
+    assert_eq!(status.phase, TaskPhase::Verified);
     assert_eq!(status.evidence.len(), 2);
     assert_eq!(
         status.stop_outcome,
@@ -439,10 +453,7 @@ fn lost_response_replay_and_reopen_preserve_one_attempt_and_dispatch() {
     let (response, disconnected) = std::sync::mpsc::channel();
     drop(disconnected);
     assert!(response.send(accepted.clone()).is_err());
-    assert_eq!(
-        app.reconcile(request).unwrap().phase,
-        TaskPhase::TestCompleted
-    );
+    assert_eq!(app.reconcile(request).unwrap().phase, TaskPhase::Verified);
     drop(app);
     let mut app = open(&db, host.clone(), runner.clone(), Startup::OpenTest);
     assert_eq!(
@@ -453,7 +464,7 @@ fn lost_response_replay_and_reopen_preserve_one_attempt_and_dispatch() {
     assert_eq!(db.count("approval_consumptions"), 1);
     assert_eq!(host.state.lock().unwrap().admissions, 1);
     let completed = app.reconcile(request).unwrap();
-    assert_eq!(completed.phase, TaskPhase::TestCompleted);
+    assert_eq!(completed.phase, TaskPhase::Verified);
     assert!(completed
         .evidence
         .iter()
@@ -748,6 +759,20 @@ fn committed_intent_process_exit_is_not_reissued_after_restart() {
         }
         fn dispatch(&self, _: AuthorizedDispatch) -> Result<DispatchOutcome, Error> {
             std::process::exit(72)
+        }
+        fn evidence(
+            &self,
+            _plan: &execution_contract::FrozenPlan,
+            _attempt: &execution_contract::AttemptId,
+        ) -> Result<Option<execution_contract::ProcessEvidence>, execution_app::Error> {
+            Ok(None)
+        }
+        fn acknowledge_capture(
+            &self,
+            _: &execution_contract::FrozenPlan,
+            _: &execution_contract::ProcessEvidence,
+        ) -> Result<(), execution_app::Error> {
+            Ok(())
         }
         fn stop(&self, _: &FrozenPlan, _: &AttemptId) -> Result<(), Error> {
             unreachable!()
@@ -1154,4 +1179,116 @@ fn one_device_service_accepts_distinct_callers_without_reopening_storage() {
         Error::Denied
     );
     assert_eq!(app.tasks(&caller(), None, 128).unwrap().items.len(), 1);
+}
+
+#[test]
+fn live_capture_stays_running_and_retired_capture_survives_reopen() {
+    use std::sync::{Arc, Mutex};
+    #[derive(Clone)]
+    struct Capturing {
+        inner: DeterministicTestRunner,
+        facts: Arc<Mutex<Option<ProcessEvidence>>>,
+    }
+    impl RunnerPort for Capturing {
+        fn id(&self) -> Id {
+            self.inner.id()
+        }
+        fn mode(&self) -> execution_lifecycle::ExecutionMode {
+            self.inner.mode()
+        }
+        fn dispatch(&self, p: AuthorizedDispatch) -> Result<DispatchOutcome, Error> {
+            self.inner.dispatch(p)
+        }
+        fn stop(&self, p: &FrozenPlan, a: &AttemptId) -> Result<(), Error> {
+            self.inner.stop(p, a)
+        }
+        fn observe(
+            &self,
+            _: &FrozenPlan,
+            _: &AttemptId,
+            _: ObservationStage,
+            _: u64,
+        ) -> Result<Option<execution_lifecycle::ObservationFacts>, Error> {
+            Ok(None)
+        }
+        fn evidence(
+            &self,
+            _: &FrozenPlan,
+            _: &AttemptId,
+        ) -> Result<Option<ProcessEvidence>, Error> {
+            Ok(self.facts.lock().unwrap().clone())
+        }
+        fn acknowledge_capture(
+            &self,
+            _: &FrozenPlan,
+            facts: &ProcessEvidence,
+        ) -> Result<(), Error> {
+            assert!(facts.finished);
+            self.facts.lock().unwrap().take();
+            Ok(())
+        }
+    }
+    let db = Database::new();
+    let host = TestHost::new();
+    let runner = Capturing {
+        inner: DeterministicTestRunner::new(id("test-runner"), TestScenario::Wait, 8).unwrap(),
+        facts: Arc::new(Mutex::new(None)),
+    };
+    let p = plan();
+    let request = &p.spec().request.request_id;
+    let mut app = ExecutionApp::start(
+        &db.path,
+        Startup::CreateTest,
+        host.clone(),
+        runner.clone(),
+        AppConfig::test_defaults(1),
+    )
+    .unwrap();
+    let status = app.submit(&caller(), request, &p).unwrap();
+    let attempt = status.attempt_id.unwrap();
+    *runner.facts.lock().unwrap() = Some(ProcessEvidence {
+        plan_digest: p.digest().clone(),
+        attempt_id: attempt,
+        runner: id("test-runner"),
+        scope: ProcessScope::Preparing {},
+        finished: false,
+        exit_code: None,
+        end: ProcessEnd::Unknown,
+        failure_kind: ProcessFailureKind::None,
+        quiescent: false,
+        stdout: vec![],
+        stderr: vec![],
+        total_output_bytes: 0,
+        quality: OutputQuality::Partial,
+    });
+    for _ in 0..3 {
+        assert_eq!(app.reconcile(request).unwrap().phase, TaskPhase::Running);
+    }
+    {
+        let mut guard = runner.facts.lock().unwrap();
+        let f = guard.as_mut().unwrap();
+        f.finished = true;
+        f.exit_code = Some(0);
+        f.end = ProcessEnd::Exited;
+        f.quality = OutputQuality::Complete;
+        f.stdout = b"secret-canary".to_vec();
+        f.total_output_bytes = 13;
+    }
+    let status = app.reconcile(request).unwrap();
+    assert_eq!(status.phase, TaskPhase::OutcomeUnknown);
+    assert!(runner.facts.lock().unwrap().is_none());
+    drop(app);
+    let app = ExecutionApp::start(
+        &db.path,
+        Startup::OpenTest,
+        host,
+        runner,
+        AppConfig::test_defaults(1),
+    )
+    .unwrap();
+    let details = app.task_details(&caller(), request).unwrap();
+    assert_eq!(details.status.process.as_ref().unwrap().exit_code, Some(0));
+    assert!(!serde_json::to_string(&details)
+        .unwrap()
+        .contains("secret-canary"));
 }

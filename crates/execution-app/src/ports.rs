@@ -69,12 +69,22 @@ pub trait AppHost: AuthorityVerifier {
 pub struct AuthorizedDispatch {
     pub(crate) action: DispatchAction,
     pub(crate) plan: FrozenPlan,
+    pub(crate) allowance: execution_lifecycle::DispatchAllowance,
+    pub(crate) issued: std::time::Instant,
 }
 impl AuthorizedDispatch {
     /// Inspect the authorized immutable plan to select the host's runner implementation.
     /// Reading it cannot clone or reconstruct first-dispatch authority.
     pub fn plan(&self) -> &FrozenPlan {
         &self.plan
+    }
+    /// Inspect the remaining cumulative allowance; reading does not grant dispatch authority.
+    pub fn allowance(&self) -> execution_lifecycle::DispatchAllowance {
+        let mut allowance = self.allowance;
+        allowance.remaining_timeout_ms = allowance
+            .remaining_timeout_ms
+            .saturating_sub(self.issued.elapsed().as_millis().min(u128::from(u64::MAX)) as u64);
+        allowance
     }
     /// Consume first-dispatch authority. Runner implementations must perform no action beforehand.
     pub fn dispatch<T>(self, run: impl FnOnce(&FrozenPlan, &DispatchAction) -> T) -> T {
@@ -107,6 +117,19 @@ pub trait RunnerPort {
     fn mode(&self) -> ExecutionMode;
     /// Consume the only first-delivery permission; failure or unknown must be reconciled.
     fn dispatch(&self, permit: AuthorizedDispatch) -> Result<DispatchOutcome, Error>;
+    /// Latest completed capture, never a reason to redispatch. Missing capture remains unknown.
+    fn evidence(
+        &self,
+        plan: &FrozenPlan,
+        attempt: &AttemptId,
+    ) -> Result<Option<execution_contract::ProcessEvidence>, Error>;
+    /// The owner has committed this final capture and its cumulative accounting. Release only
+    /// the matching finished record; acknowledgements never grant a new dispatch permission.
+    fn acknowledge_capture(
+        &self,
+        plan: &FrozenPlan,
+        facts: &execution_contract::ProcessEvidence,
+    ) -> Result<(), Error>;
     /// Request bounded stopping. Success only acknowledges the request, not termination.
     fn stop(&self, plan: &FrozenPlan, attempt: &AttemptId) -> Result<(), Error>;
     /// Return independently verified facts if available. Lost records return None, never fabricated

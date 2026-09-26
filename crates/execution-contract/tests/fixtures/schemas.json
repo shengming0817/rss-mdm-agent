@@ -722,46 +722,6 @@
           }
         ]
       },
-      "Constraints": {
-        "additionalProperties": false,
-        "description": "Required restrictions are declarations; platform enforcement is owned by the runner.",
-        "properties": {
-          "allowChildProcesses": {
-            "description": "Whether child processes are permitted by the plan; the runner must enforce this value.",
-            "type": "boolean"
-          },
-          "network": {
-            "$ref": "#/$defs/NetworkAccess",
-            "description": "Required network destinations/protocol restrictions, not proof that isolation is available."
-          },
-          "readPaths": {
-            "description": "Absolute read-access declarations; actual resolution/enforcement belongs to the runner.",
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "requireSandbox": {
-            "description": "Whether sandbox enforcement is mandatory; missing support must not silently downgrade it.",
-            "type": "boolean"
-          },
-          "writePaths": {
-            "description": "Absolute write-access declarations; no filesystem access is performed during validation.",
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "network",
-          "readPaths",
-          "writePaths",
-          "allowChildProcesses",
-          "requireSandbox"
-        ],
-        "type": "object"
-      },
       "DeviceId": {
         "description": "Device reference, not verified registration evidence.",
         "maxLength": 128,
@@ -1038,6 +998,70 @@
         ],
         "type": "object"
       },
+      "IsolationPolicy": {
+        "description": "Required restrictions are declarations; platform enforcement is owned by the runner.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "Execute with the selected OS identity permissions, without additional confinement.",
+            "properties": {
+              "kind": {
+                "const": "osIdentity",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Every declared restriction must be enforced or the plan rejected.",
+            "properties": {
+              "allowChildProcesses": {
+                "description": "Whether child processes are permitted by the plan; the runner must enforce this value.",
+                "type": "boolean"
+              },
+              "kind": {
+                "const": "restricted",
+                "type": "string"
+              },
+              "network": {
+                "$ref": "#/$defs/NetworkAccess",
+                "description": "Required network destinations/protocol restrictions, not proof that isolation is available."
+              },
+              "readPaths": {
+                "description": "Absolute read-access declarations; actual resolution/enforcement belongs to the runner.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "requireSandbox": {
+                "description": "Whether sandbox enforcement is mandatory; missing support must not silently downgrade it.",
+                "type": "boolean"
+              },
+              "writePaths": {
+                "description": "Absolute write-access declarations; no filesystem access is performed during validation.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "kind",
+              "network",
+              "readPaths",
+              "writePaths",
+              "allowChildProcesses",
+              "requireSandbox"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "LaunchArg": {
         "description": "One argument; artifact materialization is a typed slot, never a magic literal.",
         "oneOf": [
@@ -1136,6 +1160,10 @@
       },
       "LocalContractV1": {
         "const": 1,
+        "type": "integer"
+      },
+      "LocalContractV2": {
+        "const": 2,
         "type": "integer"
       },
       "NetworkAccess": {
@@ -1299,10 +1327,55 @@
         ],
         "type": "object"
       },
+      "OutputFormat": {
+        "description": "Bounded result interpretation; schema and field publication remain product-owned.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "Strictly decoded text streams without a structured result.",
+            "properties": {
+              "kind": {
+                "const": "text",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "A JSON object (one row) or array with at most the specified number of rows.",
+            "properties": {
+              "kind": {
+                "const": "json",
+                "type": "string"
+              },
+              "maxRows": {
+                "description": "Positive limit, at most 1000.",
+                "format": "uint16",
+                "maximum": 65535,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind",
+              "maxRows"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "OutputSpec": {
         "additionalProperties": false,
         "description": "Capture both streams as bytes; no inherited stdout/stderr or terminal.\nAll bytes, including undecodable and discarded bytes, consume the plan's output budget.",
         "properties": {
+          "format": {
+            "$ref": "#/$defs/OutputFormat",
+            "description": "Required structured interpretation, bound into the plan digest."
+          },
           "stderr": {
             "$ref": "#/$defs/TextEncoding",
             "description": "Required stderr interpretation; preserve raw bytes on failure."
@@ -1313,6 +1386,7 @@
           }
         },
         "required": [
+          "format",
           "stdout",
           "stderr"
         ],
@@ -1612,7 +1686,7 @@
         "description": "Plan-wide resource allowances checked against separately supplied host limits."
       },
       "constraints": {
-        "$ref": "#/$defs/Constraints",
+        "$ref": "#/$defs/IsolationPolicy",
         "description": "Mandatory execution restrictions bound into the digest."
       },
       "launch": {
@@ -1636,8 +1710,8 @@
         "description": "Requested target execution identity, separate from actor and originating login."
       },
       "schemaVersion": {
-        "$ref": "#/$defs/LocalContractV1",
-        "description": "Required current V1 discriminator; absent or unsupported versions are rejected."
+        "$ref": "#/$defs/LocalContractV2",
+        "description": "Required current V2 discriminator; absent or unsupported versions are rejected."
       },
       "sessionRequirement": {
         "$ref": "#/$defs/SessionRequirement",

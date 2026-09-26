@@ -478,3 +478,14 @@ pub enum LifecycleError {
     #[error("invalid lifecycle accounting")]
     Accounting,
 }
+
+/// Remaining cumulative plan allowance passed with a first-dispatch permit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DispatchAllowance {
+    /// Absolute exclusive deadline, capped by plan validity.
+    pub deadline_unix_ms: u64,
+    /// Wall time remaining at the trusted dispatch clock.
+    pub remaining_timeout_ms: u64,
+    /// Output left across every attempt, including discarded bytes.
+    pub remaining_output_bytes: u64,
+}

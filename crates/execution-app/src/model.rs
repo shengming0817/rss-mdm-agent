@@ -130,8 +130,8 @@ pub enum TaskPhase {
     OutcomeUnknown,
     /// Runner is quiescent; assessment is still pending.
     ExecutionEnded,
-    /// Explicit fixture assessment only; inspect assessment for success, failure or unknown.
-    TestCompleted,
+    /// Independent assessment; inspect mode and assessment, never infer success from exit zero.
+    Verified,
     /// Trusted evidence establishes failure before dispatch.
     FailedBeforeDispatch,
     /// Cancellation plus confirmed quiescence/no effect, or cancellation before an attempt.
@@ -154,6 +154,8 @@ pub struct ExecutionStatus {
     pub phase: TaskPhase,
     /// Explicit fixture provenance, also present before the first attempt.
     pub mode: ExecutionMode,
+    /// Redacted process progress, distinct from lifecycle termination and effect proof.
+    pub process: Option<execution_contract::ProcessSummary>,
     /// Current admitted attempt, absent before admission.
     pub attempt_id: Option<AttemptId>,
     /// Total admitted attempts; retries never reset it.

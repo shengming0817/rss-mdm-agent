@@ -11,6 +11,7 @@ mod launch;
 mod model;
 mod network;
 mod plan;
+mod process;
 mod validation;
 mod value;
 pub use audit::*;
@@ -20,6 +21,7 @@ pub use launch::*;
 pub use model::*;
 pub use network::*;
 pub use plan::{decode_plan, FrozenPlan};
+pub use process::*;
 pub use validation::PlanLimits;
 pub use value::*;
 
