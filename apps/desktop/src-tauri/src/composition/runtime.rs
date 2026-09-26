@@ -469,9 +469,9 @@ impl DesktopRuntime {
     pub async fn save_connection(
         &self,
         generation: &str,
-        connection: ai_session_contract::Connection,
+        connection: ai_session_contract::ConnectionDraft,
         expected: Option<u64>,
-        secret: Option<String>,
+        secret: Option<zeroize::Zeroizing<String>>,
     ) -> ui::Result<Value> {
         self.verify_account().await?;
         self.current(generation)?;
@@ -480,14 +480,48 @@ impl DesktopRuntime {
             .process()
             .filter(|p| p.ready())
             .ok_or_else(unavailable)?;
+        let encrypted = if let Some(secret) = secret {
+            let context = self.current(generation)?;
+            let owner = super::credentials::credential_owner(
+                &super::credentials::credential_caller(&context),
+                &connection,
+            )?;
+            let has_secrets = process.control.credential_context(generation).await?;
+            self.current(generation)?;
+            let master = self.master.clone();
+            let permit = tokio::time::timeout(
+                Duration::from_secs(5),
+                master.permit.clone().acquire_owned(),
+            )
+            .await
+            .map_err(|_| unavailable())?
+            .map_err(|_| unavailable())?;
+            let encrypted = tokio::time::timeout(
+                Duration::from_secs(10),
+                tokio::task::spawn_blocking(move || {
+                    let _permit = permit;
+                    master.seal(&owner, &secret, !has_secrets)
+                }),
+            )
+            .await
+            .map_err(|_| unavailable())?
+            .map_err(|_| unavailable())??;
+            self.current(generation)?;
+            if epoch != self.epoch() {
+                return Err(unavailable());
+            }
+            Some(encrypted)
+        } else {
+            None
+        };
         let result = process
             .control
             .save_connection(
                 generation,
                 connection,
                 expected,
-                secret,
-                Duration::from_secs(100),
+                encrypted,
+                Duration::from_secs(10),
             )
             .await?;
         self.current(generation)?;
@@ -934,7 +968,7 @@ mod tests {
         let script = artifact.join("node_modules/@rss-mdm-agent/ai-host-app/dist/cli.js");
         std::fs::create_dir_all(script.parent().unwrap()).unwrap();
         std::fs::write(script, mode).unwrap();
-        let manifest = json!({"status":"passed","desktopProtocol":4,"contractVersion":5,
+        let manifest = json!({"status":"passed","desktopProtocol":4,"contractVersion":6,
             "verification":{"platform":if cfg!(windows){"win32"}else{"darwin"},"arch":if cfg!(windows){"x64"}else{"arm64"}},
             "runtimeTreeSha256":super::super::runtime_package::digest(&artifact).unwrap()});
         std::fs::write(

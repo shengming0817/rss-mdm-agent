@@ -128,5 +128,5 @@ pub fn write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
 }
 #[cfg(windows)]
 pub use win::{
-    enter_secret, enter_secret_for, key_path, protect_key, random_key, save_dialog, unprotect_key,
+    enter_enterprise_password, key_path, protect_key, random_key, save_dialog, unprotect_key,
 };

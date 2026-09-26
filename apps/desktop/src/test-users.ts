@@ -6,6 +6,7 @@ import {
   accessLimits,
   type TestUserPage,
   type Connection,
+  type ConnectionDraft,
   type Result,
   type UserContext,
   type AccountSettings,
@@ -58,19 +59,21 @@ export function userGeneration(): string {
   if (!currentUser.value) throw new Error("user_required");
   return currentUser.value.generation;
 }
-/** Native input stays inside the native save operation; only public metadata returns. */
+/** A secret crosses one native invocation and is never returned in connection metadata. */
 export async function saveNativeConnection(
-  connection: Connection,
+  connection: ConnectionDraft,
   expected: number | null,
-  replaceKey: boolean,
+  secret?: string,
 ): Promise<Connection> {
   const generation = userGeneration();
-  const result = await invoke<Result<Connection>>("save_connection", {
+  const pending = invoke<Result<Connection>>("save_connection", {
     generation,
     input: connection,
     expected,
-    replaceKey,
+    secret: secret ?? null,
   });
+  secret = undefined;
+  const result = await pending;
   if (generation !== userGeneration()) throw new Error("user_changed");
   if (!result.ok) throw result.error;
   const record = decode(boundedJson(result.value, accessLimits), accessLimits);
@@ -208,7 +211,7 @@ export function accountErrorMessage(error: unknown): string {
     try {
       const status = parsed(
         {
-          schemaVersion: 5,
+          schemaVersion: 6,
           kind: "accountStatus",
           failure: { stage, reason, observedAtMs: 0 },
         },

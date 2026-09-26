@@ -37,20 +37,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .open(&users_path)?
             .write_all(
                 serde_json::to_vec(&json!({
-                "schemaVersion": 5,
+                "schemaVersion": 6,
                 "kind": "testUserPage",
                 "users": [{
-                    "schemaVersion": 5,
+                    "schemaVersion": 6,
                     "kind": "testUser",
                     "userId": "fixture-actor",
                     "displayName": "Fixture",
                     "nameKey": "fixture"
                 }],
                 "current": {
-                    "schemaVersion": 5,
+                    "schemaVersion": 6,
                     "kind": "userContext",
                     "user": {
-                        "schemaVersion": 5,
+                        "schemaVersion": 6,
                         "kind": "testUser",
                         "userId": "fixture-actor",
                         "displayName": "Fixture",
@@ -97,7 +97,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let metadata = json!({
         "com.rss-mdm/ai-origin": {
-            "schemaVersion": 5,
+            "schemaVersion": 6,
             "kind": "executionOrigin",
             "userGeneration": generation,
             "namespace": {

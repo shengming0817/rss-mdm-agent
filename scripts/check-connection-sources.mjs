@@ -1,3 +1,4 @@
+import { connectionPersistence } from "../apps/ai-host/dist/secrets.js";
 import { sourceSummary } from "./connection-source-results.mjs";
 import {
   mkdtemp,
@@ -40,6 +41,11 @@ try {
   if (!opened.ok) throw Error(opened.error.code);
   const store = opened.value;
   const created = await createHost({
+    credentialPersistence: connectionPersistence(
+      store,
+      () => true,
+      async () => false,
+    ),
     store,
     launchFences: store,
     delivery: null,
@@ -65,23 +71,31 @@ try {
       const saved = await host.saveConnection(
         caller,
         {
-          schemaVersion: 5,
-          kind: "connection",
           connectionId: id,
           name: id,
           provider,
-          configRevision: 1,
           profile: "conversation",
-          status: "unverified",
           source: { type, directory: directory ?? root },
         },
         null,
         budget(),
       );
+      const tested = saved.ok
+        ? await host.testConnection(
+            caller,
+            id,
+            saved.value.configRevision,
+            budget(),
+          )
+        : saved;
       const row = {
         provider,
         source: type,
-        result: saved.ok ? "model_probe_completed" : saved.error.code,
+        result: !tested.ok
+          ? tested.error.code
+          : tested.value.lastTest?.outcome === "passed"
+            ? "model_probe_completed"
+            : (tested.value.lastTest?.failure.code ?? "unavailable"),
       };
       results.push(row);
       process.stdout.write(JSON.stringify(row) + "\n");

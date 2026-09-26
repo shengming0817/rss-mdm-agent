@@ -14,7 +14,7 @@ const session = fixtureSession();
 const event = (sequence, body) => ({
   type: "event",
   event: {
-    schemaVersion: 5,
+    schemaVersion: 6,
     kind: "event",
     namespace: session.namespace,
     eventId: `e-${sequence}`,
@@ -166,7 +166,7 @@ test("slash-bearing command/block identities cannot collide in messages, tools o
     applyUpdate(view, {
       type: "event",
       event: {
-        schemaVersion: 5,
+        schemaVersion: 6,
         kind: "event",
         namespace: session.namespace,
         eventId: `e-${++sequence}`,

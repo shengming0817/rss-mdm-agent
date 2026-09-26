@@ -12,19 +12,20 @@ const limits = {
   maxNodes: 4096,
 };
 const command = {
-  schemaVersion: 5,
+  schemaVersion: 6,
   kind: "command",
   sessionId: "s1",
   commandId: "c1",
   expiresAtMs: 1000,
   input: { type: "prompt", text: "hello", policy: "queue_next" },
 };
-test("V3 command round trips without a Rust, UI or provider runtime", () => {
+test("V6 command round trips without a Rust, UI or provider runtime", () => {
   assert.deepEqual(decode(JSON.stringify(command), limits), command);
 });
 test("old formats, duplicate keys and excess authority fields fail closed", () => {
   for (const raw of [
     JSON.stringify({ ...command, schemaVersion: 1 }),
+    JSON.stringify({ ...command, schemaVersion: 5 }),
     JSON.stringify({ ...command, approved: true }),
     JSON.stringify(command).replace('"c1"', '"c1","commandId":"c2"'),
   ])
@@ -32,10 +33,10 @@ test("old formats, duplicate keys and excess authority fields fail closed", () =
 });
 test("private control and execution provenance use the same closed generated schema", () => {
   const context = {
-    schemaVersion: 5,
+    schemaVersion: 6,
     kind: "userContext",
     user: {
-      schemaVersion: 5,
+      schemaVersion: 6,
       kind: "testUser",
       userId: "alice",
       displayName: "Alice",
@@ -44,7 +45,7 @@ test("private control and execution provenance use the same closed generated sch
     generation: "generation-1",
   };
   const suspend = {
-    schemaVersion: 5,
+    schemaVersion: 6,
     kind: "nativeCall",
     id: 1,
     method: "suspend",
@@ -52,7 +53,7 @@ test("private control and execution provenance use the same closed generated sch
   };
   assert.deepEqual(decode(JSON.stringify(suspend), limits), suspend);
   const origin = {
-    schemaVersion: 5,
+    schemaVersion: 6,
     kind: "executionOrigin",
     userGeneration: "generation-a",
     namespace: {
@@ -106,4 +107,41 @@ test("shared golden covers every record and identical rejection diagnostics", ()
     fingerprint(fixtures.valid[0], fixtureLimits),
     fixtures.commandHash,
   );
+});
+
+test("connection saves reject client-owned state and accept only editable drafts", () => {
+  const request = {
+    schemaVersion: 6,
+    kind: "saveConnectionRequest",
+    expectedRevision: null,
+    connection: {
+      connectionId: "one",
+      name: "Custom",
+      provider: "deepseek",
+      profile: "conversation",
+      source: {
+        type: "custom_api",
+        apiUrl: "https://example.invalid",
+        model: "chosen",
+      },
+    },
+  };
+  assert.deepEqual(decode(JSON.stringify(request), limits), request);
+  for (const field of [
+    { status: "ready" },
+    { configRevision: 99 },
+    { lastTest: { outcome: "passed", testedRevision: 1 } },
+  ]) {
+    assert.throws(
+      () =>
+        decode(
+          JSON.stringify({
+            ...request,
+            connection: { ...request.connection, ...field },
+          }),
+          limits,
+        ),
+      ContractError,
+    );
+  }
 });

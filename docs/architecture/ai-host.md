@@ -22,7 +22,7 @@ Host 独立 `WorkerLaunchFenceStore` 持有进程 fence 类型与校验，SQLite
 
 Host 先检查原 commandId 回执，后核对已确认历史，再等待旧队列全部结算并打开新阶段。连接修订与偏好按 Caller 的 tenant/principal/authority 存储，revision 只追加。自定义 API 密钥的加密 AAD 绑定 provider、规范化 endpoint 与 credential type；任一目标变化都要求重新输入。HTTPS 字面私网地址在解析前拒绝，worker 激活还要求 DNS 的全部地址均为公网。原生 caller 由本地 ingress 根据用户 registry 与 generation 注入。一个 Host 承接所有用户；用户切换取消模型工作及验证 worker，Rust 设备任务继续持有冻结原 actor，不重绑定执行 app。
 
-provider activation 通过既有 worker 私有管道传递，不写快照或来源账号文件。配置声明与内部密文由同一 SQLite 事务持有；Host 组合根解密，只把当次所需秘密交给 worker。主密钥由 Native 延迟提供，worker 不持有主密钥。已有配置直接交由官方 CLI/SDK 解析及认证，RSS 不处理外部 token、账户身份或刷新。临时验证 namespace 不生成产品 Session，探针完成且进程停止后才保存；编辑保留或替换密钥，删除清除全部密文并阻止新 worker。恢复只读取 RSS 自有 native context 索引。历史预览仍是普通新输入的一部分。
+provider activation 通过既有 worker 私有管道传递，不写快照或来源账号文件。配置声明与内部密文由同一 SQLite 事务持有；Rust 持有主密钥与加解密，Host 只在 worker 激活时通过私有通道请求解密；主密钥不离开 Rust。AAD 绑定用户、连接和凭据目标，不绑定配置修订，同目标新修订直接保留密文。已有配置直接交由官方 CLI/SDK 解析及认证，RSS 不处理外部 token、账户身份或刷新。保存只做本地结构校验，原子提交 unverified 配置与密文。独立测试使用已保存修订，临时验证 namespace 不生成产品 Session；探针完成且进程停止后才追加 ready 修订，失败只更新安全测试结果，不影响编辑保存。测试提交重新比较当前修订，不能覆盖并发编辑或删除；编辑保留或替换密钥，删除清除全部密文并阻止新 worker。恢复只读取 RSS 自有 native context 索引。历史预览仍是普通新输入的一部分。
 
 Native–Host 使用私有继承 stdin/stdout 的有界承载，native/execution 两条逻辑通道共用同一 owner；Native 用户注册表产生可信 Caller/generation，UI 只能在绑定逻辑通道内通信。Host 只从当前 Native 上下文生成 execution-origin，Rust MCP 逐调用核对 principal 与 generation，协议 metadata 不能自证身份。设备执行服务按 authority/device 绑定，用户操作显式携带 RequestContext，内部核对以任务冻结 actor 授权。仅一个队列、SQLite owner 和执行线程，无按用户服务池；无任务时阻塞等待。
 

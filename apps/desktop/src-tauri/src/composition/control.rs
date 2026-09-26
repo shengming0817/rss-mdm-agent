@@ -66,7 +66,7 @@ impl Control {
                             max_bytes: 524288,
                             max_text_bytes: 262144,
                             max_depth: 32,
-                            max_nodes: 16384,
+                            max_nodes: 32768,
                         },
                     )
                 else {
@@ -99,10 +99,35 @@ impl Control {
                         }
                     }
                     ai_session_contract::NativeControlFrame::Call(
-                        ai_session_contract::NativeCall::MasterKey { id, data, .. },
+                        ai_session_contract::NativeCall::MatchCredential { id, data, .. },
+                    ) => {
+                        let reply = match super::credentials::credentials_match(
+                            &data.caller,
+                            &data.previous,
+                            &data.connection,
+                        ) {
+                            Ok(matches) => NativeReply::Success {
+                                id,
+                                kind: NativeReplySuccessKind::NativeReply,
+                                schema_version: NativeReplySuccessSchemaVersion::VALUE,
+                                ok: true,
+                                value: Value::Bool(matches),
+                            },
+                            Err(_) => NativeReply::Failure {
+                                id,
+                                kind: NativeReplyFailureKind::NativeReply,
+                                schema_version: NativeReplyFailureSchemaVersion::VALUE,
+                                ok: false,
+                            },
+                        };
+                        if task.write(NativeControlFrame::Reply(reply)).await.is_err() {
+                            break;
+                        }
+                    }
+                    ai_session_contract::NativeControlFrame::Call(
+                        ai_session_contract::NativeCall::OpenCredential { id, data, .. },
                     ) => {
                         let Ok(id) = u64::try_from(id.0) else { break };
-                        let create = data.create;
                         let response = task.clone();
                         let master = master.clone();
                         let credential = credential.clone();
@@ -122,7 +147,13 @@ impl Control {
                             // owns the sole permit until it really returns; the control reader stays live.
                             std::thread::spawn(move || {
                                 let _permit = permit;
-                                let _ = sender.send(master.get(create));
+                                let _ = sender.send(
+                                    super::credentials::credential_owner(
+                                        &data.caller,
+                                        &data.connection,
+                                    )
+                                    .and_then(|owner| master.open(&owner, &data.encrypted)),
+                                );
                             });
                             let value = tokio::select! {
                                 _ = response.stop.cancelled() => return,
@@ -134,9 +165,7 @@ impl Control {
                                     kind: NativeReplySuccessKind::NativeReply,
                                     schema_version: NativeReplySuccessSchemaVersion::VALUE,
                                     ok: true,
-                                    value: Value::Array(
-                                        value.into_iter().map(Value::from).collect(),
-                                    ),
+                                    value: Value::String(value),
                                 },
                                 _ => NativeReply::Failure {
                                     id: Counter(id as i64),
@@ -171,7 +200,7 @@ impl Control {
                     max_bytes: 524288,
                     max_text_bytes: 262144,
                     max_depth: 32,
-                    max_nodes: 16384,
+                    max_nodes: 32768,
                 },
             )
             .map_err(|_| unavailable())?,
@@ -301,12 +330,32 @@ impl Control {
         )
         .await
     }
+    pub async fn credential_context(&self, generation: &str) -> Result<bool> {
+        let data = ai_session_contract::NativeCredentialContextData {
+            generation: generation.try_into().map_err(|_| unavailable())?,
+        };
+        let value = self
+            .call(
+                |id| NativeCall::CredentialContext {
+                    id,
+                    data,
+                    kind: NativeCallKind::NativeCall,
+                    schema_version: NativeCallSchemaVersion::VALUE,
+                },
+                Duration::from_secs(10),
+            )
+            .await?;
+        value
+            .get("hasSecrets")
+            .and_then(Value::as_bool)
+            .ok_or_else(unavailable)
+    }
     pub async fn save_connection(
         &self,
         generation: &str,
-        connection: ai_session_contract::Connection,
+        connection: ai_session_contract::ConnectionDraft,
         expected: Option<u64>,
-        secret: Option<String>,
+        encrypted: Option<Vec<u8>>,
         timeout: Duration,
     ) -> Result<Value> {
         let data = NativeSaveConnectionData {
@@ -316,10 +365,7 @@ impl Control {
                 .map(|value| i64::try_from(value).map(Counter))
                 .transpose()
                 .map_err(|_| unavailable())?,
-            secret: secret
-                .map(TryInto::try_into)
-                .transpose()
-                .map_err(|_| unavailable())?,
+            encrypted: encrypted.map(Into::into),
         };
         self.call(
             |id| NativeCall::SaveConnection {
@@ -400,17 +446,59 @@ mod tests {
         }
     }
     #[tokio::test]
+    async fn native_binding_comparison_uses_raw_targets_without_keychain_access() {
+        struct NoKey;
+        impl KeyBackend for NoKey {
+            fn read(
+                &self,
+            ) -> std::result::Result<Option<Vec<u8>>, super::super::credentials::KeyUnavailable>
+            {
+                panic!("retention must not read the key");
+            }
+            fn create(
+                &self,
+                _: &[u8],
+            ) -> std::result::Result<(), super::super::credentials::KeyUnavailable> {
+                panic!("retention must not create a key");
+            }
+        }
+        let (native, peer) = tokio::io::duplex(1048576);
+        let control = Control::start(native, Arc::new(MasterKey::new(NoKey)));
+        let (reader, writer) = tokio::io::split(peer);
+        let mut reader = FramedRead::new(reader, LinesCodec::new());
+        let mut writer = FramedWrite::new(writer, LinesCodec::new());
+        let previous = json!({"connectionId":"c","name":"Fixture","provider":"codex","profile":"conversation","source":{"type":"custom_api","apiUrl":"https://EXAMPLE.invalid:443","model":"old"}});
+        for (id, endpoint, expected) in [
+            (1, "https://example.invalid/", true),
+            (2, "https://other.invalid/", false),
+        ] {
+            let mut connection = previous.clone();
+            connection["source"]["apiUrl"] = endpoint.into();
+            connection["source"]["model"] = "new".into();
+            writer.send(json!({"schemaVersion":6,"kind":"nativeCall","id":id,"method":"matchCredential","data":{"caller":{"tenantId":"t","principalId":"p","authorityId":"a"},"previous":previous,"connection":connection}}).to_string()).await.unwrap();
+            let line = tokio::time::timeout(Duration::from_secs(2), reader.next())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            let reply: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(reply["ok"], true);
+            assert_eq!(reply["value"], expected);
+        }
+        control.shutdown().await;
+    }
+    #[tokio::test]
     async fn blocking_keychain_does_not_block_events_or_control_shutdown() {
         let (native, peer) = tokio::io::duplex(1048576);
         let control = Control::start(native, Arc::new(MasterKey::new(SlowKey)));
         let mut view = control.view("view".into()).unwrap();
         let mut writer = FramedWrite::new(peer, LinesCodec::new_with_max_length(524288));
         writer
-            .send(json!({"schemaVersion":5,"kind":"nativeCall","id":1,"method":"masterKey","data":{"create":false}}).to_string())
+            .send(json!({"schemaVersion":6,"kind":"nativeCall","id":1,"method":"openCredential","data":{"caller":{"tenantId":"t","principalId":"p","authorityId":"a"},"connection":{"connectionId":"c","name":"Fixture","provider":"codex","profile":"conversation","source":{"type":"custom_api","apiUrl":"https://example.invalid/","model":"fixture"}},"encrypted":vec![0u8;29]}}).to_string())
             .await
             .unwrap();
         writer
-            .send(json!({"schemaVersion":5,"kind":"nativeEvent","channel":"view","message":{"ready":true}}).to_string())
+            .send(json!({"schemaVersion":6,"kind":"nativeEvent","channel":"view","message":{"ready":true}}).to_string())
             .await
             .unwrap();
         let event = tokio::time::timeout(Duration::from_millis(100), view.recv())
@@ -446,7 +534,7 @@ mod tests {
         let mut reader = FramedRead::new(reader, LinesCodec::new_with_max_length(524288));
         let mut writer = FramedWrite::new(writer, LinesCodec::new_with_max_length(524288));
         writer
-            .send(json!({"schemaVersion":5,"kind":"nativeCall","id":1,"method":"masterKey","data":{"create":true}}).to_string())
+            .send(json!({"schemaVersion":6,"kind":"nativeCall","id":1,"method":"openCredential","data":{"caller":{"tenantId":"t","principalId":"p","authorityId":"a"},"connection":{"connectionId":"c","name":"Fixture","provider":"codex","profile":"conversation","source":{"type":"custom_api","apiUrl":"https://example.invalid/","model":"fixture"}},"encrypted":vec![0u8;29]}}).to_string())
             .await
             .unwrap();
         let reply = tokio::time::timeout(Duration::from_secs(2), reader.next())
@@ -456,11 +544,11 @@ mod tests {
             .unwrap();
         assert_eq!(
             serde_json::from_str::<Value>(&reply).unwrap(),
-            json!({"schemaVersion":5,"kind":"nativeReply","id":1,"ok":false})
+            json!({"schemaVersion":6,"kind":"nativeReply","id":1,"ok":false})
         );
         assert!(!reply.contains("key"));
         writer
-            .send(json!({"schemaVersion":5,"kind":"nativeEvent","channel":"view","message":{"ready":true}}).to_string())
+            .send(json!({"schemaVersion":6,"kind":"nativeEvent","channel":"view","message":{"ready":true}}).to_string())
             .await
             .unwrap();
         assert_eq!(view.recv().await.unwrap()["ready"], true);
@@ -474,7 +562,7 @@ mod tests {
         let mut writer = FramedWrite::new(peer, LinesCodec::new_with_max_length(524288));
         writer
             .send(String::from(
-                r#"{"schemaVersion":5,"schemaVersion":5,"kind":"nativeEvent","channel":"view","message":{}}"#,
+                r#"{"schemaVersion":6,"schemaVersion":6,"kind":"nativeEvent","channel":"view","message":{}}"#,
             ))
             .await
             .unwrap();
@@ -511,7 +599,7 @@ mod incarnation_tests {
         let (a, pa) = tokio::io::duplex(1048576);
         let first = Control::start(a, master.clone());
         let mut wa = FramedWrite::new(pa, LinesCodec::new());
-        wa.send(json!({"schemaVersion":5,"kind":"nativeCall","id":1,"method":"masterKey","data":{"create":false}}).to_string()).await.unwrap();
+        wa.send(json!({"schemaVersion":6,"kind":"nativeCall","id":1,"method":"openCredential","data":{"caller":{"tenantId":"t","principalId":"p","authorityId":"a"},"connection":{"connectionId":"c","name":"Fixture","provider":"codex","profile":"conversation","source":{"type":"custom_api","apiUrl":"https://example.invalid/","model":"fixture"}},"encrypted":vec![0u8;29]}}).to_string()).await.unwrap();
         for _ in 0..100 {
             if calls.load(Ordering::SeqCst) == 1 {
                 break;
@@ -522,7 +610,7 @@ mod incarnation_tests {
         let (b, pb) = tokio::io::duplex(1048576);
         let second = Control::start(b, master.clone());
         let mut wb = FramedWrite::new(pb, LinesCodec::new());
-        wb.send(json!({"schemaVersion":5,"kind":"nativeCall","id":2,"method":"masterKey","data":{"create":false}}).to_string()).await.unwrap();
+        wb.send(json!({"schemaVersion":6,"kind":"nativeCall","id":2,"method":"openCredential","data":{"caller":{"tenantId":"t","principalId":"p","authorityId":"a"},"connection":{"connectionId":"c","name":"Fixture","provider":"codex","profile":"conversation","source":{"type":"custom_api","apiUrl":"https://example.invalid/","model":"fixture"}},"encrypted":vec![0u8;29]}}).to_string()).await.unwrap();
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert_eq!(master.permit.available_permits(), 0);
         assert_eq!(calls.load(Ordering::SeqCst), 1);

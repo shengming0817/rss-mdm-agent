@@ -20,8 +20,7 @@ export function localResolver(
     namespace,
     _budget,
     _previous,
-    candidate,
-    secret,
+    verification,
   ) => {
     try {
       if (
@@ -30,13 +29,11 @@ export function localResolver(
         caller.authorityId !== namespace.authorityId
       )
         throw new HostFailure({ code: "permission_denied", retry: "never" });
-      const resolved = candidate
-        ? { ok: true as const, value: candidate }
-        : await store.connection(
-            caller,
-            options.config.id,
-            Number(options.config.revision),
-          );
+      const resolved = await store.connection(
+        caller,
+        options.config.id,
+        Number(options.config.revision),
+      );
       if (!resolved.ok) throw new HostFailure(resolved.error);
       const connection = resolved.value;
       if (
@@ -46,7 +43,7 @@ export function localResolver(
         connection.status === "deleted"
       )
         throw new HostFailure({ code: "invalid_input", retry: "never" });
-      if (!candidate) {
+      if (!verification) {
         const current = await store.connection(caller, connection.connectionId);
         if (!current.ok || current.value.status === "deleted")
           throw new HostFailure({
@@ -61,24 +58,17 @@ export function localResolver(
         },
         connection,
         namespace,
-        ...(candidate ? { verification: true } : {}),
+        ...(verification ? { verification: true } : {}),
         ...(connection.source.type === "custom_api"
           ? {
-              secret: await secrets.read(
-                caller,
-                connection,
-                secret,
-                candidate
-                  ? connection.configRevision - 1
-                  : connection.configRevision,
-              ),
+              secret: await secrets.read(caller, connection),
             }
           : {}),
       };
       const artifact = new URL("./provider.js", import.meta.url);
       return {
         dispose: async () => {
-          if (candidate) {
+          if (verification) {
             const owner = createHash("sha256")
               .update(JSON.stringify(namespace))
               .digest("hex");

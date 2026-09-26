@@ -34,14 +34,12 @@ export async function startFixture() {
     await host.store.saveConnection(
       fixtureCaller,
       {
-        schemaVersion: 5,
+        schemaVersion: 6,
         kind: "connection",
         connectionId: "cfg",
         name: "Browser fixture",
         provider: "codex",
         configRevision: 1,
-
-
 
         status: "ready",
         profile: "conversation",

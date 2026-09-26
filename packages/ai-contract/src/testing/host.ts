@@ -6,6 +6,7 @@ import type {
   UserPreferences,
   HistoryPreview,
 } from "../wire.js";
+import { savedDraft } from "../connections.js";
 import { productSession } from "../contexts.js";
 import { activeStage } from "../contexts.js";
 import { verifiedReconciliation } from "./recovery.js";
@@ -61,7 +62,7 @@ export class FakeHost implements HostPort {
   ) {}
   negotiate(offered: Negotiation): Result<Negotiation> {
     if (this.closed) return fail("unavailable");
-    if (offered.contractVersion !== 5 || offered.acp !== 1)
+    if (offered.contractVersion !== 6 || offered.acp !== 1)
       return fail("unsupported_version");
     if (
       offered.a2ui &&
@@ -80,7 +81,7 @@ export class FakeHost implements HostPort {
       prefs = await this.store.preferences(caller);
     return rows.ok && prefs.ok
       ? ok({
-          schemaVersion: 5,
+          schemaVersion: 6,
           kind: "connectionPage",
           connections: [...rows.value],
           preferences: prefs.value,
@@ -89,11 +90,52 @@ export class FakeHost implements HostPort {
   }
   saveConnection(
     caller: Caller,
-    connection: Connection,
+    connection: import("../wire.js").ConnectionDraft,
     expected: number | null,
     _budget: Budget,
   ) {
-    return this.store.saveConnection(caller, connection, expected);
+    const candidate = savedDraft(connection, expected);
+    return candidate.ok
+      ? this.store.saveConnection(caller, candidate.value, expected)
+      : Promise.resolve(candidate);
+  }
+  async testConnection(
+    caller: Caller,
+    id: string,
+    expected: number,
+    _budget: Budget,
+  ): Promise<Result<Connection>> {
+    const current = await this.store.connection(caller, id);
+    if (!current.ok) return current;
+    return this.store.saveConnection(
+      caller,
+      {
+        ...current.value,
+        configRevision: expected + 1,
+        status: "ready",
+        lastTest: { outcome: "passed", testedRevision: expected },
+      },
+      expected,
+    );
+  }
+  async deleteConnection(
+    caller: Caller,
+    id: string,
+    expected: number,
+    _budget: Budget,
+  ): Promise<Result<Connection>> {
+    const current = await this.store.connection(caller, id);
+    if (!current.ok) return current;
+    return this.store.saveConnection(
+      caller,
+      {
+        ...current.value,
+        configRevision: expected + 1,
+        status: "deleted",
+        lastTest: null,
+      },
+      expected,
+    );
   }
   savePreferences(caller: Caller, prefs: PreferencesPatch, _budget: Budget) {
     return this.store.savePreferences(caller, prefs);
@@ -419,7 +461,7 @@ export class FakeHost implements HostPort {
     const events: Event[] = bodies.map(
       (body, index) =>
         ({
-          schemaVersion: 5,
+          schemaVersion: 6,
           kind: "event",
           namespace,
           eventId: `script-${s.lastSequence + index + 1}`,
@@ -439,7 +481,7 @@ export class FakeHost implements HostPort {
         if (row.commandId === commandId && row.status === "pending") {
           interactions.push({ ...row, status: "unavailable" });
           events.push({
-            schemaVersion: 5,
+            schemaVersion: 6,
             kind: "event",
             namespace,
             eventId: `script-${s.lastSequence + events.length + 1}`,
@@ -470,7 +512,7 @@ export class FakeHost implements HostPort {
           };
           surfaces.push(surface);
           events.push({
-            schemaVersion: 5,
+            schemaVersion: 6,
             kind: "event",
             namespace,
             eventId: `script-${s.lastSequence + events.length + 1}`,
@@ -487,7 +529,7 @@ export class FakeHost implements HostPort {
       : [];
     if (terminal)
       events.push({
-        schemaVersion: 5,
+        schemaVersion: 6,
         kind: "event",
         namespace,
         eventId: `script-proof-${s.revision}`,
@@ -512,7 +554,7 @@ export class FakeHost implements HostPort {
       commands: terminal
         ? [
             {
-              schemaVersion: 5,
+              schemaVersion: 6,
               kind: "commandRecord",
               command: record.command,
               receipt: record.receipt,
@@ -543,7 +585,7 @@ export class FakeHost implements HostPort {
     if (!found.ok) return found;
     let s = found.value;
     const interaction: Interaction = {
-      schemaVersion: 5,
+      schemaVersion: 6,
       kind: "interaction",
       category: "question",
       namespace,
@@ -567,7 +609,7 @@ export class FakeHost implements HostPort {
       interactions: [interaction],
       events: [
         {
-          schemaVersion: 5,
+          schemaVersion: 6,
           kind: "event",
           namespace,
           eventId: `question-${interactionId}`,

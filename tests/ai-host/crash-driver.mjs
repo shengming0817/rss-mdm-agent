@@ -1,3 +1,4 @@
+import { fixturePersistence } from "./harness.mjs";
 import { workerRuntime } from "./worker-runtime.mjs";
 import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import { openFixture, fixtureArtifact } from "./harness.mjs";
@@ -36,6 +37,7 @@ const options = {
 };
 const host = unwrap(
   await createHost({
+    credentialPersistence: fixturePersistence(store),
     workerRuntime,
     delivery: null,
     store,
@@ -59,7 +61,7 @@ unwrap(
   await host.submit(
     caller,
     {
-      schemaVersion: 5,
+      schemaVersion: 6,
       kind: "command",
       sessionId: session.namespace.sessionId,
       commandId: "uncertain",

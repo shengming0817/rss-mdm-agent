@@ -113,7 +113,7 @@ export class Deliveries {
           return existing;
         }
         const event: DeliveryRequest = {
-          schemaVersion: 5,
+          schemaVersion: 6,
           kind: "event",
           namespace,
           eventId: randomUUID(),
@@ -128,7 +128,7 @@ export class Deliveries {
           },
         };
         const delivery: Delivery = {
-          schemaVersion: 5,
+          schemaVersion: 6,
           kind: "delivery",
           namespace,
           operationId,
@@ -258,7 +258,7 @@ export class Deliveries {
         return;
       const session = value(await this.store.session(namespace));
       const event: Event = {
-        schemaVersion: 5,
+        schemaVersion: 6,
         kind: "event",
         namespace,
         eventId: randomUUID(),

@@ -394,7 +394,7 @@ export function createAccessService(options: AccessOptions) {
               continue;
             if (pump.attachmentId) {
               const update: AccessUpdate = {
-                schemaVersion: 5,
+                schemaVersion: 6,
                 kind: "accessUpdate",
                 sessionId: id,
                 attachmentId: pump.attachmentId,
@@ -423,7 +423,7 @@ export function createAccessService(options: AccessOptions) {
             if (pump.attachmentId) {
               try {
                 await peer.connection.client.notify(extension.update, {
-                  schemaVersion: 5,
+                  schemaVersion: 6,
                   kind: "accessUpdate",
                   sessionId: id,
                   attachmentId: pump.attachmentId,
@@ -464,7 +464,7 @@ export function createAccessService(options: AccessOptions) {
         return fail("unavailable");
       if (previous?.attachmentId)
         await peer.connection.client.notify(extension.update, {
-          schemaVersion: 5,
+          schemaVersion: 6,
           kind: "accessUpdate",
           sessionId: id,
           attachmentId: previous.attachmentId,
@@ -521,7 +521,7 @@ export function createAccessService(options: AccessOptions) {
         }
         if (
           !n ||
-          n.contractVersion !== 5 ||
+          n.contractVersion !== 6 ||
           n.acp !== 1 ||
           typeof n.cursorAttach !== "boolean" ||
           typeof n.durableReceipts !== "boolean"
@@ -643,7 +643,7 @@ export function createAccessService(options: AccessOptions) {
         })
         .join("\n");
       const command = parse("command").parse({
-        schemaVersion: 5,
+        schemaVersion: 6,
         kind: "command",
         sessionId: params.sessionId,
         commandId: crypto.randomUUID(),
@@ -739,7 +739,7 @@ export function createAccessService(options: AccessOptions) {
         await submit(
           peer,
           {
-            schemaVersion: 5,
+            schemaVersion: 6,
             kind: "command",
             sessionId: params.sessionId,
             commandId: crypto.randomUUID(),
@@ -781,6 +781,40 @@ export function createAccessService(options: AccessOptions) {
               params.connection,
               params.expectedRevision,
               budget,
+            ),
+          ),
+        );
+      },
+    );
+    app.onRequest(
+      extension.testConnection,
+      parse("testConnectionRequest"),
+      async ({ params, signal }) => {
+        ready(peer, true);
+        return value(
+          await budget(signal, (b) =>
+            host.testConnection(
+              peer.caller,
+              params.connectionId,
+              params.expectedRevision,
+              b,
+            ),
+          ),
+        );
+      },
+    );
+    app.onRequest(
+      extension.deleteConnection,
+      parse("deleteConnectionRequest"),
+      async ({ params, signal }) => {
+        ready(peer, true);
+        return value(
+          await budget(signal, (b) =>
+            host.deleteConnection(
+              peer.caller,
+              params.connectionId,
+              params.expectedRevision,
+              b,
             ),
           ),
         );
@@ -930,7 +964,7 @@ export function createAccessService(options: AccessOptions) {
         return submit(
           peer,
           {
-            schemaVersion: 5,
+            schemaVersion: 6,
             kind: "command",
             sessionId: metadata.sessionId,
             commandId: metadata.commandId,

@@ -74,6 +74,11 @@ const fixture = createServer((request, response) => {
     }
     authenticatedRequests += 1;
     validProbeBodies += 1;
+    if (requests === 1) {
+      response.writeHead(401, { "content-type": "application/json" });
+      response.end('{"error":{"type":"authentication_error"}}');
+      return;
+    }
     response.writeHead(200, {
       "content-type": "text/event-stream",
       "cache-control": "no-cache",
@@ -160,7 +165,7 @@ try {
   if (exit.code !== 0 || exit.signal !== null)
     throw new Error(`native_process_failed_at_${behavior.stage ?? "unknown"}`);
   assert.equal(behavior.step, "passed");
-  assert.equal(behavior.secureEntry, true);
+  assert.equal(behavior.formEntry, true);
   assert.equal(behavior.secretOutputsClean, true);
   assert.equal(outputLeak, false);
   for (const file of [resultPath, join(directory, "diagnostics.json")])
@@ -170,9 +175,9 @@ try {
     );
   assert.equal(behavior.deleted, true);
   assert.equal(behavior.modelProbe, "local_openai_compatible_protocol");
-  assert.equal(requests, 1);
-  assert.equal(authenticatedRequests, 1);
-  assert.equal(validProbeBodies, 1);
+  assert.equal(requests, 2);
+  assert.equal(authenticatedRequests, 2);
+  assert.equal(validProbeBodies, 2);
 
   const database = new DatabaseSync(join(directory, "ai.sqlite"), {
     readOnly: true,
@@ -192,11 +197,14 @@ try {
   } finally {
     database.close();
   }
-  assert.equal(revisions.length, 2);
+  assert.equal(revisions.length, 3);
   assert.equal(revisions[0].value.provider, "deepseek");
   assert.equal(revisions[0].value.source.type, "custom_api");
-  assert.equal(revisions[0].value.status, "ready");
-  assert.equal(revisions[1].value.status, "deleted");
+  assert.equal(revisions[0].value.status, "unverified");
+  assert.equal(revisions[1].value.status, "ready");
+  assert.equal(revisions[0].value.lastTest.outcome, "failed");
+  assert.equal(revisions[2].value.status, "deleted");
+  assert.equal(behavior.restartRecovered, true);
   ciphertextCleared = revisions.every((row) => row.encrypted === null);
   assert.equal(ciphertextCleared, true);
   assert.equal(
@@ -213,8 +221,8 @@ try {
   const passed =
     !failure &&
     behavior?.step === "passed" &&
-    authenticatedRequests === 1 &&
-    validProbeBodies === 1 &&
+    authenticatedRequests === 2 &&
+    validProbeBodies === 2 &&
     ciphertextCleared &&
     !outputLeak &&
     behavior?.secretOutputsClean === true;
@@ -235,7 +243,7 @@ try {
           platform: process.platform,
           arch: process.arch,
         },
-        mode: "production AppKit secure entry/private channel/Host/encrypted SQLite; injected test master key; local OpenAI-compatible protocol",
+        mode: "production WebView form/Rust encryption/private channel/Host/SQLite; injected test master key; local OpenAI-compatible protocol",
         cloudAuthentication: false,
         syntheticCredential: true,
         secretOutputsClean:

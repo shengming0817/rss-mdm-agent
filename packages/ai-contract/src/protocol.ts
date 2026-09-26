@@ -42,6 +42,8 @@ export const extension = {
   capability: "rss-mdm-agent.ai-runtime",
   connections: "_rss-mdm-agent/connections",
   saveConnection: "_rss-mdm-agent/save-connection",
+  testConnection: "_rss-mdm-agent/test-connection",
+  deleteConnection: "_rss-mdm-agent/delete-connection",
   preferences: "_rss-mdm-agent/preferences",
   selectConnection: "_rss-mdm-agent/select-connection",
   history: "_rss-mdm-agent/history",
@@ -133,7 +135,7 @@ export async function resolveSurfaceAction(
     decode(
       boundedJson(
         {
-          schemaVersion: 5,
+          schemaVersion: 6,
           kind: "command",
           sessionId: metadata.sessionId,
           commandId: metadata.commandId,

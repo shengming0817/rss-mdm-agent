@@ -29,18 +29,32 @@ async function setup() {
     initialize: async () => ({}),
     connections: async () => ({
       connections: rows,
-      preferences: { schemaVersion: 5, kind: "userPreferences" },
+      preferences: { schemaVersion: 6, kind: "userPreferences" },
     }),
     listSessions: async () => ({ items: [] }),
     observe: () => () => {},
     close: vi.fn(),
     connection: { closed: new Promise(() => {}) },
     savePreferences: vi.fn(),
-    createSession: vi.fn().mockResolvedValue(view),
-    saveConnection: vi.fn(async (row: Connection) => {
-      rows = [{ ...row, status: "ready" }];
+    testConnection: vi.fn(async () => {
+      rows = [{ ...rows[0], configRevision: 2, status: "ready" }];
       return rows[0];
     }),
+    createSession: vi.fn().mockResolvedValue(view),
+    saveConnection: vi.fn(
+      async (row: import("@rss-mdm-agent/ai-contract").ConnectionDraft) => {
+        rows = [
+          {
+            ...row,
+            schemaVersion: 6,
+            kind: "connection",
+            configRevision: 1,
+            status: "unverified",
+          },
+        ];
+        return rows[0];
+      },
+    ),
   } as unknown as RuntimeClient;
   const c = createAssistant(
     { connect: async () => ({ runtime: client, mode: "s1" }) },
@@ -48,7 +62,7 @@ async function setup() {
   );
   await c.connect();
   const status: HostStatus = {
-    schemaVersion: 5,
+    schemaVersion: 6,
     kind: "hostStatus",
     generation: 1,
     phase: "ready",
@@ -99,6 +113,9 @@ it("first use may defer or validate then create exactly one pending conversation
     expect(t.client.createSession).not.toHaveBeenCalled();
     await t.fill();
     expect(t.client.saveConnection).toHaveBeenCalledTimes(1);
+    expect(t.button("新建对话并前往 AI").attributes("disabled")).toBeDefined();
+    await t.button("测试连接").trigger("click");
+    await flushPromises();
     expect(
       t.button("新建对话并前往 AI").attributes("disabled"),
     ).toBeUndefined();
@@ -130,7 +147,7 @@ it("keeps the connection draft editable while the AI Host is disconnected", asyn
     );
     await name.setValue("Offline draft");
     expect((name.element as HTMLInputElement).value).toBe("Offline draft");
-    expect(t.button("验证并保存").attributes("disabled")).toBeDefined();
+    expect(t.button("保存配置").attributes("disabled")).toBeDefined();
   } finally {
     t.close();
   }
@@ -160,6 +177,47 @@ it("restart and connection deletion dialogs trap both tab directions, escape and
       expect(t.wrapper.find('[role="alertdialog"]').exists()).toBe(false);
       expect(document.activeElement).toBe(trigger.element);
     }
+  } finally {
+    t.close();
+  }
+});
+
+it("projects connection requirements into visible labels and associated help", async () => {
+  const t = await setup();
+  try {
+    const label = (prefix: string) =>
+      t.wrapper.findAll("label").find((l) => l.text().startsWith(prefix))!;
+    expect(label("名称").text()).toContain("必填");
+    expect(label("模型").text()).toContain("可选");
+    await label("认证来源").get("select").setValue("custom_api");
+    for (const prefix of ["API 地址", "API Key / Auth Token", "模型"]) {
+      const field = label(prefix);
+      expect(field.text()).toContain("必填");
+      const input = field.get("input");
+      const helpId = input.attributes("aria-describedby");
+      expect(helpId).toBeTruthy();
+      expect(t.wrapper.get(`#${helpId}`).text()).toContain("必填");
+    }
+    expect(label("模型").get("input").attributes("placeholder")).not.toContain(
+      "留空",
+    );
+    await label("认证来源").get("select").setValue("existing_config");
+    expect(label("模型").text()).toContain("可选");
+    expect(label("模型").get("input").attributes("required")).toBeUndefined();
+  } finally {
+    t.close();
+  }
+});
+it("explains connection capacity failures without the history size message", async () => {
+  const t = await setup();
+  try {
+    vi.mocked(t.client.saveConnection).mockRejectedValueOnce({
+      code: "limit_exceeded",
+    });
+    await t.fill();
+    expect(t.wrapper.text()).toContain("连接数量已达上限");
+    expect(t.wrapper.text()).toContain("删除不用的连接");
+    expect(t.wrapper.text()).not.toContain("64 KiB");
   } finally {
     t.close();
   }

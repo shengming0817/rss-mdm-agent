@@ -1,5 +1,4 @@
 import { PrivateLink } from "../../packages/ai-host/dist/private-link.js";
-import { ConnectionSecrets } from "../../apps/ai-host/dist/secrets.js";
 import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -47,14 +46,6 @@ for (const provider of engines) {
       const catalogStore = unwrap(
         openSqliteStore({ path: f.config.databasePath, mode: "open" }),
       );
-      const candidate = {
-        ...f.config.connection,
-        profile: "controlled_tools",
-        configRevision: 2,
-      };
-      const secrets = new ConnectionSecrets(catalogStore, async () =>
-        Buffer.alloc(32, 7),
-      );
       unwrap(
         await catalogStore.saveConnection(
           f.config.caller,
@@ -64,7 +55,7 @@ for (const provider of engines) {
             configRevision: 2,
           },
           1,
-          await secrets.seal(f.config.caller, candidate, "fixture-only-key"),
+          new Uint8Array(32).fill(7),
         ),
       );
       await catalogStore.close(budget());

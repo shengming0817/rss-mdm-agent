@@ -8,7 +8,7 @@ export async function openFixture(host, store, caller, options, budget) {
       await store.saveConnection(
         caller,
         {
-          schemaVersion: 5,
+          schemaVersion: 6,
           kind: "connection",
           connectionId,
           name: connectionId,
@@ -46,3 +46,11 @@ export async function fixtureArtifact(store, namespace, options) {
   if (row.ok) artifact.searchParams.set("scenario", row.value.source.model);
   return artifact.href;
 }
+
+/** Scripted metadata-only persistence for worker tests, never product credentials. */
+export const fixturePersistence =
+  (store) => async (caller, connection, expected, credential) => {
+    if (credential.type !== "retain")
+      return { ok: false, error: { code: "invalid_input", retry: "never" } };
+    return store.saveConnection(caller, connection, expected);
+  };

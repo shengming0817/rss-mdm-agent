@@ -1,3 +1,4 @@
+import { fixturePersistence } from "../ai-host/harness.mjs";
 import { workerRuntime } from "../ai-host/worker-runtime.mjs";
 import { ConnectionSecrets } from "../../apps/ai-host/dist/secrets.js";
 import { createHost } from "../../packages/ai-host/dist/index.js";
@@ -22,6 +23,7 @@ export async function openHost(path, mode, beforeCommit) {
   const diagnostics = [];
   const host = unwrap(
     await createHost({
+      credentialPersistence: fixturePersistence(store),
       workerRuntime,
       store,
       launchFences: store,
@@ -30,7 +32,7 @@ export async function openHost(path, mode, beforeCommit) {
       resolve: localResolver(
         local,
         store,
-        new ConnectionSecrets(store, async () => Buffer.alloc(32, 7)),
+        new ConnectionSecrets(store, async () => "fixture-only-key"),
       ),
     }),
   );

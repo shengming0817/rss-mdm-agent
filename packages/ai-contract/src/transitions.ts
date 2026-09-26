@@ -153,7 +153,7 @@ function reduceAcceptance(
   );
   if (!check.ok) return check;
   const receipt: import("./wire.js").Receipt = {
-    schemaVersion: 5,
+    schemaVersion: 6,
     kind: "receipt",
     namespace: clone(input.namespace),
     commandId: input.command.commandId,
@@ -168,7 +168,7 @@ function reduceAcceptance(
     acceptedRevision: state.session.revision + 1,
   };
   const record: CommandRecord = {
-    schemaVersion: 5,
+    schemaVersion: 6,
     kind: "commandRecord",
     command: clone(input.command),
     receipt,
@@ -226,7 +226,7 @@ function reduceAcceptance(
       commands: [record],
       events: [
         {
-          schemaVersion: 5,
+          schemaVersion: 6,
           kind: "event",
           namespace: clone(input.namespace),
           eventId: input.eventId,
@@ -236,7 +236,7 @@ function reduceAcceptance(
           body: { type: "command_accepted", command: clone(input.command) },
         },
         ...interactions.map((row, i) => ({
-          schemaVersion: 5 as const,
+          schemaVersion: 6 as const,
           kind: "event" as const,
           namespace: input.namespace,
           eventId: eventId(input.eventId, `answer-${i}`),
@@ -1221,7 +1221,7 @@ function reduceHandoff(
     label: string,
   ) => {
     const event = {
-      schemaVersion: 5,
+      schemaVersion: 6,
       kind: "event",
       namespace: input.namespace,
       eventId: eventId(input.eventId, label),
@@ -1253,7 +1253,7 @@ function reduceHandoff(
         observerGeneration: binding.generation,
       };
       copy.commands.set(id, {
-        schemaVersion: 5,
+        schemaVersion: 6,
         kind: "commandRecord",
         command: c.command,
         receipt: c.receipt,
@@ -1277,7 +1277,7 @@ function reduceHandoff(
         retry: "never" as const,
       };
       copy.commands.set(id, {
-        schemaVersion: 5,
+        schemaVersion: 6,
         kind: "commandRecord",
         command: c.command,
         receipt: c.receipt,
@@ -1363,7 +1363,7 @@ function reduceRetirement(
     lastSequence: copy.session.lastSequence + 1,
   };
   const event: Event = {
-    schemaVersion: 5,
+    schemaVersion: 6,
     kind: "event",
     namespace: copy.session.namespace,
     eventId: eventId(
@@ -1483,7 +1483,7 @@ export function suspendSession(
           retention: input.retention,
           eventId: eventId(commandId, "accepted"),
           command: {
-            schemaVersion: 5,
+            schemaVersion: 6,
             kind: "command",
             sessionId: input.namespace.sessionId,
             commandId,
@@ -1526,7 +1526,7 @@ export function suspendSession(
           },
           commands: [
             {
-              schemaVersion: 5,
+              schemaVersion: 6,
               kind: "commandRecord",
               command: cancel.command,
               receipt: cancel.receipt,
@@ -1534,7 +1534,7 @@ export function suspendSession(
               acknowledgement,
             },
             {
-              schemaVersion: 5,
+              schemaVersion: 6,
               kind: "commandRecord",
               command: target.command,
               receipt: target.receipt,
@@ -1545,7 +1545,7 @@ export function suspendSession(
           events: bodies.map(
             ([id, body], index) =>
               ({
-                schemaVersion: 5,
+                schemaVersion: 6,
                 kind: "event",
                 namespace: input.namespace,
                 generation,

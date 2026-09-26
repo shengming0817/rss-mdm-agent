@@ -5,13 +5,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { openSqliteStore } from "../../packages/ai-store-sqlite/dist/index.js";
-import { ConnectionSecrets } from "../../apps/ai-host/dist/secrets.js";
-import { connectionPersistence } from "../../apps/ai-host/dist/secrets.js";
+import {
+  ConnectionSecrets,
+  connectionPersistence,
+} from "../../apps/ai-host/dist/secrets.js";
 import { unwrap } from "../../packages/ai-contract/dist/testing/index.js";
-const alice = { tenantId: "t", principalId: "alice", authorityId: "a" },
-  bob = { ...alice, principalId: "bob" };
+const caller = { tenantId: "t", principalId: "alice", authorityId: "a" };
+const budget = { timeoutMs: 1000, signal: new AbortController().signal };
 const row = (revision = 1) => ({
-  schemaVersion: 5,
+  schemaVersion: 6,
   kind: "connection",
   connectionId: "one",
   configRevision: revision,
@@ -22,107 +24,199 @@ const row = (revision = 1) => ({
     apiUrl: "https://example.invalid",
     model: "chosen",
   },
-  status: "ready",
+  status: "unverified",
   profile: "conversation",
+  lastTest: null,
 });
-const budget = { timeoutMs: 1000, signal: new AbortController().signal };
-test("ciphertext is scoped by user/connection/revision and config/default/cipher delete atomically", async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "rss-encrypted-store-")),
+test("native ciphertext persists atomically, is retained without decryption and is cleared from every deleted revision", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "rss-ciphertext-")),
     path = join(root, "ai.sqlite");
-  const store = unwrap(openSqliteStore({ path, mode: "create" }));
+  let store = unwrap(openSqliteStore({ path, mode: "create" }));
   t.after(async () => {
     await store.close(budget);
     await rm(root, { recursive: true, force: true });
   });
-  let calls = 0;
-  const key = Buffer.alloc(32, 7);
-  const secrets = new ConnectionSecrets(store, async (create) => {
-    calls++;
-    assert.equal(create, true);
-    return key;
-  });
-  assert.equal(calls, 0); // Existing-config-only operation never calls the backend.
-  const first = row(),
-    plain = "sensitive-test-only-key",
-    encrypted = await secrets.seal(alice, first, plain);
-  assert.notDeepEqual(encrypted, await secrets.seal(alice, first, plain));
-  unwrap(await store.saveConnection(alice, first, null, encrypted));
-  assert.equal(await secrets.read(alice, first), plain);
-  assert.equal(
-    unwrap(await store.preferences(alice)).defaultConnectionId,
-    "one",
+  const ciphertext = new Uint8Array(32).fill(9);
+  let matches = true;
+  const persist = connectionPersistence(
+    store,
+    () => true,
+    async () => matches,
   );
-  assert.equal(
-    JSON.stringify(unwrap(await store.connections(alice))).includes(plain),
-    false,
+  const first = unwrap(
+    await persist(
+      caller,
+      row(),
+      null,
+      { type: "replace", encrypted: ciphertext },
+      budget,
+    ),
   );
-  assert.equal((await readFile(path)).includes(Buffer.from(plain)), false);
-  unwrap(await store.saveConnection(bob, first, null, encrypted));
-  await assert.rejects(secrets.read(bob, first));
-  const second = row(2),
-    sealed = await secrets.seal(
-      alice,
-      second,
-      await secrets.read(alice, second, undefined, 1),
-    );
-  assert.equal(
-    (await store.saveConnection(alice, second, 99, sealed)).error.code,
-    "revision_conflict",
-  );
-  assert.deepEqual(unwrap(await store.connection(alice, "one")), first);
-  unwrap(await store.saveConnection(alice, second, 1, sealed));
-  assert.equal(await secrets.read(alice, second), plain);
-  const redirected = {
-    ...row(3),
-    source: { ...row(3).source, apiUrl: "https://other.example" },
-  };
   assert.equal(
     (
-      await connectionPersistence(store, secrets, () => true)(
-        alice,
-        redirected,
-        2,
-        undefined,
+      await persist(
+        caller,
+        row(2),
+        99,
+        { type: "replace", encrypted: new Uint8Array(32).fill(8) },
         budget,
       )
     ).error.code,
-    "authentication_required",
-  );
-  const tampered = row(3);
-  unwrap(await store.saveConnection(alice, tampered, 2, encrypted));
-  await assert.rejects(secrets.read(alice, tampered));
-  const missing = new ConnectionSecrets(store, async (create) => {
-    assert.equal(create, false);
-    throw Error("missing key");
-  });
-  await assert.rejects(missing.read(alice, first));
-  const deleted = { ...row(4), status: "deleted" };
-  assert.equal(
-    (await store.saveConnection(alice, deleted, 1)).error.code,
     "revision_conflict",
   );
-  assert.equal(unwrap(await store.hasSecrets()), true);
-  unwrap(await store.saveConnection(alice, deleted, 3));
+  assert.deepEqual(
+    unwrap(await store.encryptedSecret(caller, "one", 1)),
+    ciphertext,
+  );
+  const second = unwrap(
+    await persist(
+      caller,
+      {
+        ...row(2),
+        name: "Edited",
+        source: { ...row().source, model: "other" },
+      },
+      1,
+      { type: "retain" },
+      budget,
+    ),
+  );
+  assert.deepEqual(
+    unwrap(await store.encryptedSecret(caller, "one", 2)),
+    ciphertext,
+  );
+  matches = false;
+  for (const change of [
+    { provider: "claude" },
+    { source: { ...second.source, apiUrl: "https://other.example" } },
+    { source: { ...second.source, credentialType: "auth_token" } },
+  ]) {
+    assert.equal(
+      (
+        await persist(
+          caller,
+          { ...second, ...change, configRevision: 3 },
+          2,
+          { type: "retain" },
+          budget,
+        )
+      ).error.code,
+      "authentication_required",
+    );
+  }
   assert.equal(
-    unwrap(await store.preferences(alice)).defaultConnectionId,
+    (await store.connection({ ...caller, principalId: "bob" }, "one")).ok,
+    false,
+  );
+  let decrypts = 0;
+  const secrets = new ConnectionSecrets(
+    store,
+    async (actualCaller, draft, bytes) => {
+      decrypts++;
+      assert.deepEqual(actualCaller, caller);
+      assert.equal(draft.source.apiUrl, "https://example.invalid");
+      assert.equal("configRevision" in draft, false);
+      assert.equal(Buffer.from(bytes).equals(ciphertext), true);
+      return "synthetic-activation-only";
+    },
+  );
+  assert.equal(decrypts, 0);
+  assert.equal((await secrets.read(caller, second)).length > 0, true);
+  assert.equal(decrypts, 1);
+  assert.equal(
+    JSON.stringify(unwrap(await store.connections(caller))).includes(
+      "synthetic-activation-only",
+    ),
+    false,
+  );
+  assert.equal(
+    (await readFile(path)).includes(Buffer.from("synthetic-activation-only")),
+    false,
+  );
+  unwrap(await store.close(budget));
+  store = unwrap(openSqliteStore({ path, mode: "open" }));
+  assert.deepEqual(unwrap(await store.connection(caller, "one")), second);
+  assert.deepEqual(
+    unwrap(await store.encryptedSecret(caller, "one", 2)),
+    ciphertext,
+  );
+  const currentPersistence = connectionPersistence(
+    store,
+    () => true,
+    async () => true,
+  );
+  unwrap(
+    await currentPersistence(
+      caller,
+      { ...second, configRevision: 3, status: "ready" },
+      2,
+      { type: "retain" },
+      budget,
+    ),
+  );
+  assert.equal(
+    unwrap(await store.preferences(caller)).defaultConnectionId,
+    "one",
+  );
+  unwrap(
+    await currentPersistence(
+      caller,
+      { ...second, configRevision: 4 },
+      3,
+      { type: "retain" },
+      budget,
+    ),
+  );
+  assert.equal(
+    unwrap(await store.preferences(caller)).defaultConnectionId,
     undefined,
   );
-
-  assert.equal(
-    unwrap(await store.connection(alice, "one", 1)).configRevision,
-    1,
+  unwrap(
+    await currentPersistence(
+      caller,
+      { ...second, configRevision: 5, status: "deleted" },
+      4,
+      { type: "retain" },
+      budget,
+    ),
   );
-  await assert.rejects(secrets.read(alice, first));
-  assert.equal(calls, 1);
+  assert.equal(unwrap(await store.hasSecrets()), false);
+  assert.equal((await store.encryptedSecret(caller, "one", 1)).ok, false);
   unwrap(await store.close(budget));
   const db = new DatabaseSync(path);
   assert.equal(
     db
       .prepare(
-        "SELECT count(*) n FROM connections WHERE principal_id='alice' AND encrypted_secret IS NOT NULL",
+        "SELECT count(*) n FROM connections WHERE encrypted_secret IS NOT NULL",
       )
       .get().n,
     0,
   );
   db.close();
+});
+
+test("credential activation passes the raw caller and draft to the native owner", async () => {
+  const connection = row();
+  const encrypted = new Uint8Array(32).fill(7);
+  const secrets = new ConnectionSecrets(
+    {
+      encryptedSecret: async () => ({ ok: true, value: encrypted }),
+    },
+    async (actualCaller, draft, bytes) => {
+      assert.deepEqual(actualCaller, caller);
+      assert.deepEqual(draft, {
+        connectionId: connection.connectionId,
+        name: connection.name,
+        provider: connection.provider,
+        profile: connection.profile,
+        source: connection.source,
+      });
+      assert.deepEqual(bytes, [...encrypted]);
+      return "fixture-secret";
+    },
+  );
+  assert.equal(
+    await secrets.read({ ...caller, sessionId: "session-only" }, connection),
+    "fixture-secret",
+  );
 });
