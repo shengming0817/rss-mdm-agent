@@ -8,9 +8,11 @@ const DEADLINE: Duration = Duration::from_secs(5);
 #[cfg(target_os = "macos")]
 mod macos;
 mod policy;
+#[cfg(any(windows, test))]
+mod policy_acl;
 #[cfg(windows)]
 mod windows;
-pub use policy::{Artifact, Policy};
+pub use policy::{write_verification_candidate, Artifact, Policy};
 
 /// Query the installed service. There is no unauthenticated or fixture fallback.
 pub fn query() -> Result<Status, Rejected> {
