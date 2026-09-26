@@ -107,8 +107,9 @@ impl Organizations {
             .cloned()
             .ok_or_else(invalid)
     }
-    pub fn save(&mut self, mut value: Organization) -> Result<Vec<Organization>> {
+    pub fn save(&mut self, mut value: Organization) -> Result<Organization> {
         value.validate()?;
+        let saved = value.clone();
         let mut next = self.values.clone();
         if let Some(old) = next.iter_mut().find(|v| v.id == value.id) {
             *old = value;
@@ -132,7 +133,7 @@ impl Organizations {
             return Err(unavailable());
         }
         self.values = next;
-        Ok(self.list())
+        Ok(saved)
     }
 }
 // Never Serialize or Debug: cookie/CSRF cannot cross IPC or enter diagnostics.
@@ -177,7 +178,7 @@ impl Session {
             .map_err(|_| unavailable())?;
         Self::login_with_client(client, organization, login, password).await
     }
-    async fn login_with_client(
+    pub(super) async fn login_with_client(
         client: Client,
         organization: Organization,
         login: &str,
@@ -310,17 +311,23 @@ impl Session {
         }
     }
     pub fn context(&self) -> Result<ai_session_contract::UserContext> {
-        // Local actor keys cannot collide across instances or tenants or claim an old random test actor.
+        // UUID claims from different HTTPS services are not the same authority.
+        // Bind the configured TLS origin as well as the server's instance ID.
+        let authority = format!(
+            "mdm-{:x}",
+            Sha256::digest(format!("{}\n{}", self.organization.origin, self.instance))
+        );
+        // Local actor keys cannot collide across issuers or tenants or claim an old random test actor.
         let actor = format!(
             "enterprise-{:x}",
             Sha256::digest(format!(
                 "{}\n{}\n{}",
-                self.instance, self.organization.tenant_id, self.principal
+                authority, self.organization.tenant_id, self.principal
             ))
         );
         serde_json::from_value(json!({"schemaVersion":5,"kind":"userContext","generation":Uuid::new_v4().to_string(),
             "user":{"schemaVersion":5,"kind":"testUser","userId":actor,"displayName":self.organization.label,"nameKey":"enterprise"},
-            "identity":{"mode":"enterprise","authorityId":self.instance,"tenantId":self.organization.tenant_id,"principalId":self.principal,"organizationId":self.organization.id,"expiresAtMs":self.expires}})).map_err(|_| unavailable())
+            "identity":{"mode":"enterprise","authorityId":authority,"tenantId":self.organization.tenant_id,"principalId":self.principal,"organizationId":self.organization.id,"expiresAtMs":self.expires}})).map_err(|_| unavailable())
     }
 }
 #[cfg(test)]
@@ -362,6 +369,14 @@ mod tests {
             expires: 9999999999999,
         };
         let a = s.context().unwrap();
+        s.organization.origin = "https://different-service.example.com".into();
+        let other_service = s.context().unwrap();
+        assert_ne!(
+            a.identity.as_ref().unwrap().authority_id,
+            other_service.identity.as_ref().unwrap().authority_id
+        );
+        assert_ne!(a.user.user_id, other_service.user.user_id);
+        s.organization.origin = "https://example.com".into();
         s.organization.tenant_id = Uuid::new_v4().to_string();
         let b = s.context().unwrap();
         assert_ne!(a.user.user_id, b.user.user_id);
@@ -373,18 +388,18 @@ mod tests {
 }
 
 #[cfg(test)]
-mod http_tests {
+pub(super) mod http_tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     const TENANT: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const PRINCIPAL: &str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
-    fn identity() -> Value {
+    pub(crate) fn identity() -> Value {
         json!({"identity":{"principalId":PRINCIPAL,"hasLocalPassword":true},"session":{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","idleExpiresAt":9999999999u64,"absoluteExpiresAt":9999999999u64},"csrfToken":"csrf-canary"})
     }
-    fn access() -> Value {
+    pub(crate) fn access() -> Value {
         json!({"instanceId":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","tenantId":TENANT,"principalId":PRINCIPAL,"grants":[{"grant":{"operation":"inventory_read","scope":{"kind":"all_devices"}}}]})
     }
-    async fn server(
+    pub(crate) async fn server(
         responses: Vec<(u16, Value)>,
     ) -> (Organization, tokio::task::JoinHandle<Vec<String>>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

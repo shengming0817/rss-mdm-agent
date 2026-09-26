@@ -8,7 +8,7 @@ import {
   saveOrganization,
   type Organization,
 } from "../test-users";
-const props = defineProps<{ loading: boolean }>();
+const props = defineProps<{ loading: boolean; message?: string }>();
 const emit = defineEmits<{
   guest: [];
   logout: [];
@@ -33,16 +33,17 @@ async function load() {
 async function save() {
   if (props.loading) return;
   try {
-    organizations.value = await saveOrganization({
+    const saved = await saveOrganization({
       id: "",
       label: label.value,
       origin: origin.value,
       tenantId: tenantId.value,
     });
-    selected.value =
-      organizations.value.find(
-        (o) => o.tenantId === tenantId.value && o.label === label.value,
-      )?.id ?? "";
+    organizations.value = [
+      ...organizations.value.filter((o) => o.id !== saved.id),
+      saved,
+    ];
+    selected.value = saved.id;
     message.value = "组织连接已保存";
   } catch {
     message.value = "无法保存组织连接，请检查 HTTPS 地址、租户 UUID 和本地存储";
@@ -53,6 +54,7 @@ onMounted(load);
 <template>
   <section aria-label="企业账户" class="account">
     <h3>企业登录</h3>
+    <p v-if="props.message" role="alert">{{ props.message }}</p>
     <p v-if="currentUser?.identity?.mode === 'enterprise'">
       当前组织：{{ currentUser.user.displayName }} ·
       {{ currentUser.identity.principalId }}

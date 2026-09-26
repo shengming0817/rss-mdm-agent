@@ -10,6 +10,7 @@ import {
   type UserContext,
 } from "@rss-mdm-agent/ai-contract";
 export const currentUser = shallowRef<UserContext>();
+export const accountNotice = shallowRef("");
 export const nativeTestMode = isTauri();
 function parsed<T extends "testUserPage" | "userContext">(
   input: unknown,
@@ -25,12 +26,18 @@ export async function loadTestUsers(): Promise<TestUserPage> {
   return page;
 }
 export async function selectTestUser(name: string): Promise<UserContext> {
-  const context = parsed(
-    await invoke("select_test_user", { name }),
-    "userContext",
-  );
-  currentUser.value = context;
-  return context;
+  try {
+    const context = parsed(
+      await invoke("select_test_user", { name }),
+      "userContext",
+    );
+    currentUser.value = context;
+    return context;
+  } catch (error) {
+    if ((error as { code?: string })?.code === "logout_unconfirmed")
+      await refreshAccount();
+    throw error;
+  }
 }
 export function userGeneration(): string {
   if (!currentUser.value) throw new Error("user_required");
@@ -62,6 +69,8 @@ export function selectionMessage(error: unknown): string {
       ? error.code
       : undefined;
   switch (code) {
+    case "logout_unconfirmed":
+      return "本机会话已退出，服务端注销未确认。请在企业账户中撤销会话，然后重试切换。";
     case "invalid_name":
       return "用户名需为 1–64 个字符，不能含控制字符；请修改后重试。";
     case "limit":
@@ -76,9 +85,14 @@ export function selectionMessage(error: unknown): string {
 }
 
 export async function enterGuest(): Promise<UserContext> {
-  const context = parsed(await invoke("select_guest"), "userContext");
-  currentUser.value = context;
-  return context;
+  try {
+    const context = parsed(await invoke("select_guest"), "userContext");
+    currentUser.value = context;
+    return context;
+  } catch (error) {
+    await refreshAccount();
+    throw error;
+  }
 }
 export async function loginEnterprise(
   organizationId: string,
@@ -109,13 +123,19 @@ export async function refreshAccount(): Promise<void> {
   try {
     const value = await invoke("account_status");
     if (currentUser.value?.generation !== expected) return;
+    if (!value && currentUser.value?.identity?.mode === "enterprise")
+      accountNotice.value =
+        "企业会话已失效或无法完成在线核验。旧视图已关闭，请检查网络并重新登录。";
     currentUser.value = value ? parsed(value, "userContext") : undefined;
   } catch {
     if (
       currentUser.value?.generation === expected &&
       currentUser.value?.identity?.mode === "enterprise"
-    )
+    ) {
       currentUser.value = undefined;
+      accountNotice.value =
+        "无法核验企业会话，旧视图已关闭。请检查网络、组织权限并重新登录。";
+    }
   }
 }
 
@@ -130,6 +150,6 @@ export async function loadOrganizations(): Promise<Organization[]> {
 }
 export async function saveOrganization(
   input: Organization,
-): Promise<Organization[]> {
-  return invoke<Organization[]>("account_save_organization", { input });
+): Promise<Organization> {
+  return invoke<Organization>("account_save_organization", { input });
 }

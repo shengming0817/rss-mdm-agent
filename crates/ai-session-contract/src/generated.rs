@@ -10412,7 +10412,7 @@ pub enum NativeCall {
     #[serde(rename = "attach")]
     Attach {
         #[doc = "`data` member; see its generated type and parent schema."]
-        data: NativeAttachData,
+        data: ::std::boxed::Box<NativeAttachData>,
         #[doc = "`id` member; see its generated type and parent schema."]
         id: Counter,
         #[doc = "`kind` member; see its generated type and parent schema."]
@@ -10425,7 +10425,7 @@ pub enum NativeCall {
     #[serde(rename = "suspend")]
     Suspend {
         #[doc = "`data` member; see its generated type and parent schema."]
-        data: NativeSuspendData,
+        data: ::std::boxed::Box<NativeSuspendData>,
         #[doc = "`id` member; see its generated type and parent schema."]
         id: Counter,
         #[doc = "`kind` member; see its generated type and parent schema."]

@@ -13,6 +13,7 @@ import {
 } from "../../apps/ai-host/dist/secrets.js";
 import {
   callerFor,
+  requireLocalExecution,
   closeOwners,
   suspendNativeCaller,
 } from "../../apps/ai-host/dist/index.js";
@@ -1059,6 +1060,22 @@ test("enterprise and guest callers use native identity, never display name or pr
     expiresAtMs: Date.now() + 1000,
   };
   const a = { ...context, identity };
+  assert.throws(() => requireLocalExecution(a, callerFor(a)), /unbound origin/);
+  assert.doesNotThrow(() => requireLocalExecution(context, callerFor(context)));
+  const guest = {
+    ...context,
+    identity: {
+      mode: "guest",
+      authorityId: "desktop-guest",
+      tenantId: "local-guest",
+      principalId: "guest",
+    },
+  };
+  assert.doesNotThrow(() => requireLocalExecution(guest, callerFor(guest)));
+  assert.throws(
+    () => requireLocalExecution(guest, callerFor(context)),
+    /unbound origin/,
+  );
   assert.deepEqual(callerFor(a), {
     tenantId: "tenant-a",
     principalId: "subject-a",

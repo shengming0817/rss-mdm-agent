@@ -11,7 +11,7 @@ use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
     },
     time::Duration,
@@ -44,6 +44,7 @@ pub struct DesktopRuntime {
     switching: Mutex<()>,
     pub organizations: std::sync::Mutex<super::account::Organizations>,
     account: Mutex<Option<super::account::Session>>,
+    cleanup_pending: AtomicBool,
     host: std::sync::Mutex<HostState>,
     root: PathBuf,
     artifact: PathBuf,
@@ -106,6 +107,7 @@ impl DesktopRuntime {
                     .map_err(|_| "organization settings unavailable")?,
             ),
             account: Mutex::new(None),
+            cleanup_pending: AtomicBool::new(false),
             host: std::sync::Mutex::new(HostState {
                 generation: 0,
                 owner: Host::Stopped,
@@ -191,6 +193,7 @@ impl DesktopRuntime {
                 return self.status();
             }
         }
+        self.cleanup_pending.store(false, Ordering::Release);
         {
             let mut state = self.host.lock().unwrap();
             state.generation += 1;
@@ -228,6 +231,9 @@ impl DesktopRuntime {
     }
     pub fn current(&self, generation: &str) -> ui::Result<ai_session_contract::UserContext> {
         let _switch = self.switching.try_lock().map_err(|_| unavailable())?;
+        if self.cleanup_pending.load(Ordering::Acquire) {
+            return Err(unavailable());
+        }
         self.users
             .lock()
             .map_err(|_| unavailable())?
@@ -251,6 +257,7 @@ impl DesktopRuntime {
     }
     pub async fn select_user(&self, name: &str) -> ui::Result<ai_session_contract::UserContext> {
         let _switch = self.switching.lock().await;
+        self.retry_cleanup().await?;
         let (page, previous) = {
             let users = self.users.lock().map_err(|_| unavailable())?;
             (users.prepare(name)?, users.page().current)
@@ -272,26 +279,38 @@ impl DesktopRuntime {
                 }
             }
         }
-        if let Some(account) = self.account.lock().await.take() {
-            let _ = account.logout().await;
+        if self.account.lock().await.is_some() {
+            self.users.lock().map_err(|_| unavailable())?.clear()?;
+            self.logout_remote().await?;
         }
         self.users.lock().map_err(|_| unavailable())?.commit(page)
     }
+    async fn retry_cleanup(&self) -> ui::Result<()> {
+        if self.cleanup_pending.load(Ordering::Acquire) {
+            if let Some(process) = self.process() {
+                if !process.close().await {
+                    return Err(unavailable());
+                }
+            }
+            self.cleanup_pending.store(false, Ordering::Release);
+        }
+        Ok(())
+    }
     async fn revoke_locked(&self) -> ui::Result<()> {
+        self.retry_cleanup().await?;
         let previous = self.users.lock().map_err(|_| unavailable())?.page().current;
         let cleared = self.users.lock().map_err(|_| unavailable())?.clear();
         self.detach_views().await;
         if let (Some(previous), Some(process)) = (previous, self.process()) {
-            if !process.ready()
+            let suspend_failed = !process.ready()
                 || process
                     .control
                     .suspend(&previous, Duration::from_secs(15))
                     .await
-                    .is_err()
-            {
-                if !process.close().await {
-                    return Err(unavailable());
-                }
+                    .is_err();
+            if suspend_failed && !process.close().await {
+                self.cleanup_pending.store(true, Ordering::Release);
+                return Err(unavailable());
             }
         }
         cleared
@@ -299,25 +318,26 @@ impl DesktopRuntime {
     pub async fn logout(&self) -> ui::Result<()> {
         let _switch = self.switching.lock().await;
         let revoke = self.revoke_locked().await;
-        let remote = match self.account.lock().await.take() {
-            Some(account) => account.logout().await,
-            None => Ok(()),
-        };
+        let remote = self.logout_remote().await;
         revoke?;
-        remote.map_err(|_| {
-            ui::error(
-                "logout_unconfirmed",
-                "本机会话已退出，服务端注销未确认；请在企业账户中撤销会话",
-            )
-        })
+        remote
+    }
+    async fn logout_remote(&self) -> ui::Result<()> {
+        match self.account.lock().await.take() {
+            Some(account) => account.logout().await.map_err(|_| {
+                ui::error(
+                    "logout_unconfirmed",
+                    "本机会话已退出，服务端注销未确认；请在企业账户中撤销会话，然后重试切换",
+                )
+            }),
+            None => Ok(()),
+        }
     }
     pub async fn select_guest(&self) -> ui::Result<ai_session_contract::UserContext> {
         let _switch = self.switching.lock().await;
         let next = self.users.lock().map_err(|_| unavailable())?.guest()?;
         self.revoke_locked().await?;
-        if let Some(account) = self.account.lock().await.take() {
-            let _ = account.logout().await;
-        }
+        self.logout_remote().await?;
         self.users.lock().map_err(|_| unavailable())?.activate(next)
     }
     pub async fn login(
@@ -326,13 +346,22 @@ impl DesktopRuntime {
         login: &str,
         password: String,
     ) -> ui::Result<ai_session_contract::UserContext> {
+        self.login_with(|| super::account::Session::login(organization, login, password))
+            .await
+    }
+    async fn login_with<F, Fut>(
+        &self,
+        authenticate: F,
+    ) -> ui::Result<ai_session_contract::UserContext>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = ui::Result<super::account::Session>>,
+    {
         let _switch = self.switching.lock().await;
         // Revoke before authenticating another organization: a failed login cannot retain the old grant.
         self.revoke_locked().await?;
-        if let Some(account) = self.account.lock().await.take() {
-            let _ = account.logout().await;
-        }
-        let account = super::account::Session::login(organization, login, password).await?;
+        self.logout_remote().await?;
+        let account = authenticate().await?;
         let next = account.context()?;
         let result = self.users.lock().map_err(|_| unavailable())?.activate(next);
         if result.is_err() {
@@ -345,15 +374,17 @@ impl DesktopRuntime {
     /// Passive checks never refresh idle or persist an enterprise bearer.
     pub async fn verify_account(&self) -> ui::Result<()> {
         let _switch = self.switching.lock().await;
+        self.retry_cleanup().await?;
         let verified = match self.account.lock().await.as_mut() {
             Some(account) => account.verify().await,
             None => Ok(()),
         };
         if let Err(error) = verified {
-            let _ = self.revoke_locked().await;
+            let isolation = self.revoke_locked().await;
             if let Some(account) = self.account.lock().await.take() {
                 let _ = account.logout().await;
             }
+            isolation?;
             return Err(error);
         }
         Ok(())
@@ -581,6 +612,144 @@ mod tests {
             test.user.user_id
         );
         std::fs::remove_dir_all(root).unwrap();
+    }
+    #[tokio::test]
+    async fn organization_switch_revokes_a_before_authenticating_b_even_when_b_fails() {
+        use super::super::account::{
+            http_tests::{access, identity, server},
+            Session,
+        };
+        for fail_b in [false, true] {
+            let root =
+                std::env::temp_dir().join(format!("rss-organizations-{}", uuid::Uuid::new_v4()));
+            private_directory(&root).unwrap();
+            let root = root.canonicalize().unwrap();
+            let runtime = DesktopRuntime::start_with_key_backend(
+                &root,
+                &root.join("missing"),
+                ai_session_contract::HostStatusSource::DevelopmentOverride,
+                NoKey,
+            )
+            .await
+            .unwrap();
+            let (a_org, a_server) = server(vec![
+                (200, identity()),
+                (200, identity()),
+                (200, access()),
+                (200, json!({})),
+            ])
+            .await;
+            let a = runtime
+                .login_with(|| {
+                    Session::login_with_client(
+                        reqwest::Client::new(),
+                        a_org,
+                        "Alice",
+                        "password".into(),
+                    )
+                })
+                .await
+                .unwrap();
+            assert_eq!(
+                runtime
+                    .execution_for(a.generation.as_str())
+                    .err()
+                    .unwrap()
+                    .code,
+                "enterprise_execution_unavailable"
+            );
+            let responses = if fail_b {
+                vec![(401, json!({"code":"invalid_credential"}))]
+            } else {
+                vec![
+                    (200, identity()),
+                    (200, identity()),
+                    (200, access()),
+                    (200, json!({})),
+                ]
+            };
+            let (b_org, b_server) = server(responses).await;
+            let b = runtime
+                .login_with(|| async {
+                    assert!(runtime.users.lock().unwrap().current().is_err());
+                    let requests = a_server.await.unwrap();
+                    assert!(requests.last().unwrap().contains("/session/logout"));
+                    Session::login_with_client(
+                        reqwest::Client::new(),
+                        b_org,
+                        "Alice",
+                        "password".into(),
+                    )
+                    .await
+                })
+                .await;
+            assert!(runtime.current(a.generation.as_str()).is_err());
+            if fail_b {
+                assert!(b.is_err());
+                assert!(runtime.users.lock().unwrap().current().is_err());
+            } else {
+                let b = b.unwrap();
+                assert_ne!(a.generation, b.generation);
+                assert_ne!(
+                    a.identity.as_ref().unwrap().authority_id,
+                    b.identity.as_ref().unwrap().authority_id
+                );
+                runtime.logout().await.unwrap();
+                assert!(runtime.current(b.generation.as_str()).is_err());
+            }
+            b_server.await.unwrap();
+            runtime.shutdown().await;
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+    #[tokio::test]
+    async fn every_switch_reports_failed_remote_logout_after_revoking_local_access() {
+        use super::super::account::{
+            http_tests::{access, identity, server},
+            Session,
+        };
+        for mode in ["test", "guest", "enterprise"] {
+            let root = std::env::temp_dir().join(format!("rss-logout-{}", uuid::Uuid::new_v4()));
+            private_directory(&root).unwrap();
+            let root = root.canonicalize().unwrap();
+            let runtime = DesktopRuntime::start_with_key_backend(
+                &root,
+                &root.join("missing"),
+                ai_session_contract::HostStatusSource::DevelopmentOverride,
+                NoKey,
+            )
+            .await
+            .unwrap();
+            let (org, server) = server(vec![
+                (200, identity()),
+                (200, identity()),
+                (200, access()),
+                (503, json!({})),
+            ])
+            .await;
+            let a = runtime
+                .login_with(|| {
+                    Session::login_with_client(
+                        reqwest::Client::new(),
+                        org,
+                        "Alice",
+                        "password".into(),
+                    )
+                })
+                .await
+                .unwrap();
+            let result = match mode {
+                "test" => runtime.select_user("Alice").await,
+                "guest" => runtime.select_guest().await,
+                _ => runtime.login_with(|| async { panic!("must not authenticate a new organization before reporting unconfirmed logout") }).await,
+            };
+            assert_eq!(result.err().unwrap().code, "logout_unconfirmed");
+            assert!(runtime.current(a.generation.as_str()).is_err());
+            assert!(runtime.users.lock().unwrap().current().is_err());
+            server.await.unwrap();
+            runtime.shutdown().await;
+            std::fs::remove_dir_all(root).unwrap();
+        }
     }
     fn fixture_binary() -> &'static Path {
         static BINARY: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
@@ -903,6 +1072,42 @@ mod tests {
         let ready = runtime.restart(generation).await;
         assert_eq!(ready.generation.0 as u64, generation + 1);
         assert_eq!(ready.phase, ai_session_contract::HostStatusPhase::Ready);
+        runtime.shutdown().await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn revoked_account_retries_the_same_incomplete_host_cleanup() {
+        let root =
+            std::env::temp_dir().join(format!("rss-revoke-cleanup-{}", uuid::Uuid::new_v4()));
+        private_directory(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        let artifact = fixture(&root, "leak");
+        let runtime = DesktopRuntime::start_with_key_backend(
+            &root,
+            &artifact,
+            ai_session_contract::HostStatusSource::DevelopmentOverride,
+            NoKey,
+        )
+        .await
+        .unwrap();
+        let context = runtime.select_user("Alice").await.unwrap();
+        let process = runtime.process().unwrap();
+        process.control.close();
+        assert!(runtime.logout().await.is_err());
+        assert!(runtime.cleanup_pending.load(Ordering::Acquire));
+        assert!(runtime.current(context.generation.as_str()).is_err());
+        // No account remains. The background verifier must still retry the same Host scope.
+        assert!(runtime.account.lock().await.is_none());
+        for _ in 0..100 {
+            if runtime.verify_account().await.is_ok() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(!runtime.cleanup_pending.load(Ordering::Acquire));
+        assert!(Arc::ptr_eq(&process, &runtime.process().unwrap()));
+        assert!(runtime.users.lock().unwrap().current().is_err());
         runtime.shutdown().await;
         std::fs::remove_dir_all(root).unwrap();
     }

@@ -126,10 +126,9 @@ pub async fn account_logout(state: State<'_, DesktopRuntime>) -> Result<()> {
     state.logout().await
 }
 #[tauri::command]
-pub async fn account_status(
+pub fn account_status(
     state: State<'_, DesktopRuntime>,
 ) -> Result<Option<ai_session_contract::UserContext>> {
-    state.verify_account().await?;
     Ok(state
         .users
         .lock()
@@ -151,7 +150,7 @@ pub fn account_organizations(
 pub fn account_save_organization(
     state: State<'_, DesktopRuntime>,
     input: serde_json::Value,
-) -> Result<Vec<super::account::Organization>> {
+) -> Result<super::account::Organization> {
     state
         .organizations
         .lock()

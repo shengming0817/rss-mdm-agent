@@ -2,7 +2,8 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { invoke } from "@tauri-apps/api/core";
 import App from "./App.vue";
-import { currentUser } from "./test-users";
+import { currentUser, accountNotice, refreshAccount } from "./test-users";
+import Account from "./settings/Account.vue";
 
 vi.mock("@tauri-apps/api/core", () => ({
   isTauri: () => true,
@@ -22,6 +23,7 @@ const current = {
 };
 beforeEach(() => {
   currentUser.value = undefined;
+  accountNotice.value = "";
   vi.mocked(invoke).mockReset();
 });
 it("keeps settings selected when navigation needs an unselected user", async () => {
@@ -149,4 +151,76 @@ it("keeps enterprise, test and guest entries visible before selecting a user", a
   } finally {
     wrapper.unmount();
   }
+});
+
+it("selects the normalized saved organization and emits the selected server login", async () => {
+  const normalized = {
+    id: "org",
+    label: "Example",
+    origin: "https://mdm.example.com",
+    tenantId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  };
+  vi.mocked(invoke).mockImplementation(async (command) =>
+    command === "account_organizations" ? [] : normalized,
+  );
+  const wrapper = mount(Account, { props: { loading: false } });
+  await flushPromises();
+  await wrapper.get('[aria-label="组织名称"]').setValue(" Example ");
+  await wrapper
+    .get('[aria-label="组织服务地址"]')
+    .setValue("https://mdm.example.com/");
+  await wrapper
+    .get('[aria-label="租户 UUID"]')
+    .setValue(normalized.tenantId.toUpperCase());
+  await wrapper.findAll("form")[1]!.trigger("submit");
+  await flushPromises();
+  await wrapper.get('[aria-label="企业账号"]').setValue("Alice");
+  await wrapper.findAll("form")[0]!.trigger("submit");
+  expect(wrapper.emitted("login")).toEqual([["org", "Alice"]]);
+  expect(wrapper.find('input[type="password"]').exists()).toBe(false);
+  wrapper.unmount();
+});
+
+it("explains enterprise execution limits without invoking a fixture snapshot and reports revoked access", async () => {
+  const enterprise = {
+    ...current,
+    identity: {
+      mode: "enterprise" as const,
+      authorityId: "mdm-instance",
+      tenantId: "tenant",
+      principalId: "subject",
+      organizationId: "org",
+      expiresAtMs: Date.now() + 100000,
+    },
+  };
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "test_users")
+      return {
+        schemaVersion: 5,
+        kind: "testUserPage",
+        users: [],
+        current: enterprise,
+      };
+    if (command === "account_organizations") return [];
+    if (command === "account_status") return null;
+    throw { code: "ai_unavailable" };
+  });
+  const wrapper = mount(App);
+  await flushPromises();
+  await wrapper
+    .findAll("button")
+    .find((b) => b.text() === "软件中心")!
+    .trigger("click");
+  await flushPromises();
+  expect(wrapper.text()).toContain("企业设备执行与批准尚未接线");
+  expect(
+    vi.mocked(invoke).mock.calls.some(([c]) => c === "self_service_snapshot"),
+  ).toBe(false);
+  await refreshAccount();
+  await flushPromises();
+  expect(currentUser.value).toBeUndefined();
+  expect(
+    wrapper.find('[aria-label="企业账户"] [role="alert"]').text(),
+  ).toContain("重新登录");
+  wrapper.unmount();
 });

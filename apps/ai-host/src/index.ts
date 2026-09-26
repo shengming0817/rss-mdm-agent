@@ -30,6 +30,21 @@ export const callerFor = (context: UserContext): Caller => ({
   principalId: context.identity?.principalId ?? context.user.userId,
   authorityId: context.identity?.authorityId ?? "desktop-fixture",
 });
+/** Product login never grants the fixture execution authority. */
+export function requireLocalExecution(
+  context: UserContext | undefined,
+  caller: Caller,
+): void {
+  if (!context || context.identity?.mode === "enterprise")
+    throw new Error("unbound origin");
+  const expected = callerFor(context);
+  if (
+    expected.tenantId !== caller.tenantId ||
+    expected.principalId !== caller.principalId ||
+    expected.authorityId !== caller.authorityId
+  )
+    throw new Error("unbound origin");
+}
 /** Restart-safe user fence used by the private Native control handler. */
 export async function suspendNativeCaller(
   host: {
@@ -109,11 +124,8 @@ export async function startLocalApp(
     executionLane,
     async (request) => {
       const current = activeUser;
-      if (
-        !current ||
-        current.identity?.mode === "enterprise" ||
-        !available(request.namespace)
-      )
+      requireLocalExecution(current, request.namespace);
+      if (!current || !available(request.namespace))
         throw new Error("unbound origin");
       if (!request.commandId) throw new Error("unbound origin");
       const command = await store.command(request.namespace, request.commandId),

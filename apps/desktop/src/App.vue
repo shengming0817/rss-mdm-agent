@@ -5,6 +5,7 @@ import Workspace from "./Workspace.vue";
 import type { AssistantServices } from "./assistant/controller";
 import {
   currentUser,
+  accountNotice,
   nativeTestMode,
   loadTestUsers,
   selectTestUser,
@@ -23,7 +24,8 @@ import { createHostSettings } from "./settings/controller";
 defineProps<{ assistantServices?: AssistantServices }>();
 const users = ref<TestUser[]>([]),
   loading = ref(nativeTestMode),
-  message = ref("");
+  message = ref(""),
+  accountMessage = ref("");
 const page = ref(nativeTestMode ? "settings" : "home"),
   attention = ref(0),
   mode = ref(nativeTestMode ? "本地测试模式" : "浏览器只读预览");
@@ -45,6 +47,8 @@ async function select(name: string) {
   message.value = "";
   try {
     await selectTestUser(name);
+    accountNotice.value = "";
+    accountMessage.value = "";
     attention.value = 0;
     page.value = "settings";
     await refresh();
@@ -57,14 +61,15 @@ async function select(name: string) {
 async function accountAction(action: () => Promise<unknown>) {
   if (loading.value) return;
   loading.value = true;
-  message.value = "";
+  accountMessage.value = "";
+  accountNotice.value = "";
   try {
     await action();
     attention.value = 0;
     page.value = "settings";
   } catch (error) {
     const code = (error as { code?: string })?.code;
-    message.value =
+    accountMessage.value =
       code === "logout_unconfirmed"
         ? "本机会话已退出，服务端注销未确认；请在企业账户中撤销会话"
         : code === "cancelled"
@@ -155,6 +160,7 @@ onBeforeUnmount(() => {
             :message="message"
             @select="select" /><Account
             :loading="loading"
+            :message="accountMessage || accountNotice"
             @guest="accountAction(enterGuest)"
             @logout="accountAction(logoutAccount)"
             @login="
@@ -172,6 +178,7 @@ onBeforeUnmount(() => {
             :message="message"
             @select="select" /><Account
             :loading="loading"
+            :message="accountMessage || accountNotice"
             @guest="accountAction(enterGuest)"
             @logout="accountAction(logoutAccount)"
             @login="
