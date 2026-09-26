@@ -2257,12 +2257,19 @@ fn process_capture_is_scope_bound_durable_monotonic_and_never_releases_dispatch(
         finished: false,
         exit_code: None,
         end: ProcessEnd::Unknown,
+        failure_kind: ProcessFailureKind::None,
         quiescent: false,
         stdout: vec![],
         stderr: vec![],
         total_output_bytes: 0,
         quality: OutputQuality::Partial,
     };
+    let mut legacy = serde_json::to_value(&facts).unwrap();
+    legacy.as_object_mut().unwrap().remove("failureKind");
+    assert!(
+        serde_json::from_value::<ProcessEvidence>(legacy).is_err(),
+        "old capture must not gain a default failure classification"
+    );
     assert!(store.record_process(&host.scope(), &facts, &host).is_err());
     let result = store
         .apply_command(
@@ -2354,6 +2361,7 @@ fn full_output_budget_is_binary_bounded_and_requires_privileged_read() {
         finished: true,
         exit_code: Some(0),
         end: ProcessEnd::Exited,
+        failure_kind: ProcessFailureKind::None,
         quiescent: false,
         stdout: vec![b'X'; 32768],
         stderr: vec![b'Y'; 32768],
@@ -2390,4 +2398,73 @@ fn full_output_budget_is_binary_bounded_and_requires_privileged_read() {
         })
         .unwrap();
     assert!(body < 4096);
+}
+
+#[test]
+fn process_failure_kind_is_required_durable_and_cannot_be_rewritten() {
+    let db = Database::new();
+    let host = TestHost::new(1);
+    let mut store = db.create();
+    host.prepare(&mut store);
+    drop(
+        store
+            .apply_command(
+                &operation("begin"),
+                &host.scope(),
+                &host.begin(),
+                &host.bindings(),
+                &host,
+            )
+            .unwrap(),
+    );
+    let attempt = AttemptId::new("attempt-1").unwrap();
+    let mut facts = ProcessEvidence {
+        plan_digest: host.plan.digest().clone(),
+        attempt_id: attempt.clone(),
+        runner: id("test-runner"),
+        scope: ProcessScope::ProcessGroup { owner: 1, group: 2 },
+        finished: false,
+        exit_code: None,
+        end: ProcessEnd::Unknown,
+        failure_kind: ProcessFailureKind::InputDelivery,
+        quiescent: false,
+        stdout: vec![],
+        stderr: vec![],
+        total_output_bytes: 0,
+        quality: OutputQuality::Partial,
+    };
+    store.record_process(&host.scope(), &facts, &host).unwrap();
+    for kind in [ProcessFailureKind::None, ProcessFailureKind::Capture] {
+        facts.failure_kind = kind;
+        assert_eq!(
+            store.record_process(&host.scope(), &facts, &host),
+            Err(Error::Conflict)
+        );
+    }
+    assert_eq!(
+        store
+            .process_evidence(&host.scope(), &attempt, &host)
+            .unwrap()
+            .unwrap()
+            .summary()
+            .failure_kind,
+        ProcessFailureKind::InputDelivery
+    );
+    drop(store);
+    let sql = db.sql();
+    let body: Vec<u8> = sql
+        .query_row("SELECT body FROM process_evidence", [], |r| r.get(0))
+        .unwrap();
+    let mut value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    value.as_object_mut().unwrap().remove("failureKind");
+    sql.execute(
+        "UPDATE process_evidence SET body=?1",
+        [serde_json::to_vec(&value).unwrap()],
+    )
+    .unwrap();
+    drop(sql);
+    assert!(matches!(
+        db.open().process_evidence(&host.scope(), &attempt, &host),
+        Err(Error::Corrupt)
+    ));
 }

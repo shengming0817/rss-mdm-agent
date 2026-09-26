@@ -1254,6 +1254,7 @@ fn live_capture_stays_running_and_retired_capture_survives_reopen() {
         finished: false,
         exit_code: None,
         end: ProcessEnd::Unknown,
+        failure_kind: ProcessFailureKind::None,
         quiescent: false,
         stdout: vec![],
         stderr: vec![],

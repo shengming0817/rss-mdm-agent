@@ -79,3 +79,6 @@ cargo test -p local-service、Host/desktop 测试及交叉编译只是前置证�
 Windows 11 使用 PowerShell 7 运行 `scripts/service/execution-windows.ps1 -Action Install -Scope User -Binary <绝对 exe 路径>`，在当前交互用户会话注册登录 helper。系统候选用 `-Scope System`，需要管理员和受保护安装目录，SCM 以 LocalSystem 启动。两者已有注册均拒绝覆盖。使用二进制 `--probe-user` / `--probe-system` 查询，当前返回 rejected；没有生产执行权限。手动诊断用户 helper 可用 `rss-execution-service.exe --user`，不可用用户进程模拟系统宿主。
 
 `-Action Status` 只读注册状态；卸载使用 `-Action Remove` 并提供原始精确二进制路径，核对服务/任务归属后删除注册，不删除程序、缓存或数据库。用户 helper 是按 SID/session 命名的独立实例，用户注销导致进程退出及 Job 回收。安装器仅用于本地候选，签名安装包及生产可信接线不在此入口实现。
+
+
+执行宿主机制诊断：macOS 可用 `log show --last 10m --predicate 'subsystem == "com.rss-mdm.agent.execution"'` 查看闭合的阶段/失败分类；Windows 在 Application Event Log 查看 source 为 `RSS Execution` 的事件数据（不要求自定义消息资源安装）。日志由 OS 留存，卸载不删除历史。launchd 初始化结果不确定会尝试 bootout；补偿失败保留 plist，需核对 endpoint 后重试 Remove，不直接删配置冒充回收完成。

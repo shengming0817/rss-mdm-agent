@@ -248,6 +248,28 @@ export type ProcessEnd =
   | "outputLimit"
   | "unknown";
 /**
+ * Closed, value-free mechanism diagnosis, independent of cancellation, exit and effect.
+ *
+ * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
+ * via the `definition` "ProcessFailureKind".
+ */
+export type ProcessFailureKind =
+  | "none"
+  | "denied"
+  | "unbound"
+  | "capability"
+  | "unsupported"
+  | "invalidInput"
+  | "capacity"
+  | "conflict"
+  | "unavailable"
+  | "runtime"
+  | "spawn"
+  | "inputDelivery"
+  | "capture"
+  | "supervision"
+  | "outputValidation";
+/**
  * Local execution request identity.
  *
  * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
@@ -847,6 +869,25 @@ export interface ProcessSummary {
    * Root exit code, independently from effect or scope quiescence.
    */
   exitCode: number | null;
+  /**
+   * First mechanism failure. Required even when no failure has occurred.
+   */
+  failureKind:
+    | "none"
+    | "denied"
+    | "unbound"
+    | "capability"
+    | "unsupported"
+    | "invalidInput"
+    | "capacity"
+    | "conflict"
+    | "unavailable"
+    | "runtime"
+    | "spawn"
+    | "inputDelivery"
+    | "capture"
+    | "supervision"
+    | "outputValidation";
   /**
    * Root capture completed; not proof of all descendants terminating.
    */

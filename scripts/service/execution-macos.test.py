@@ -24,7 +24,7 @@ class Installation(unittest.TestCase):
             calls = []
             def run(args, **kwargs):
                 calls.append(args)
-                return SimpleNamespace(returncode=1 if args[1] == 'print' else 0)
+                return SimpleNamespace(returncode=113 if args[1] == 'print' else 0)
             previous = os.umask(0)
             try:
                 self.invoke(home, ['install', '--scope', 'user', '--binary', '/bin/sh'], run)
@@ -44,7 +44,7 @@ class Installation(unittest.TestCase):
                 owner = module.plistlib if target == 'dump' else module.os
                 with patch.object(owner, target, side_effect=OSError('injected publication failure')):
                     with self.assertRaises(OSError):
-                        self.invoke(home, ['install', '--scope', 'user', '--binary', '/bin/sh'], lambda *args, **kwargs: SimpleNamespace(returncode=1))
+                        self.invoke(home, ['install', '--scope', 'user', '--binary', '/bin/sh'], lambda *args, **kwargs: SimpleNamespace(returncode=113))
                 self.assertFalse((home / 'Library/LaunchAgents/com.rss-mdm.agent.execution.user.plist').exists())
 
     def test_remove_handles_missing_binary_and_already_absent_endpoint(self):
@@ -56,12 +56,48 @@ class Installation(unittest.TestCase):
             plist = folder / (label + '.plist')
             with plist.open('wb') as stream:
                 plistlib.dump({'Label': label, 'ProgramArguments': ['/missing/rss-execution-service']}, stream)
-            self.invoke(home, ['remove', '--scope', 'user', '--binary', '/missing/rss-execution-service'], lambda *args, **kwargs: SimpleNamespace(returncode=1))
+            self.invoke(home, ['remove', '--scope', 'user', '--binary', '/missing/rss-execution-service'], lambda *args, **kwargs: SimpleNamespace(returncode=113))
             self.assertFalse(plist.exists())
+
+    def test_uncertain_bootstrap_compensates_before_deleting_configuration(self):
+        for rollback_fails in [False, True]:
+            with self.subTest(rollback_fails=rollback_fails), tempfile.TemporaryDirectory() as directory:
+                home = Path(directory)
+                calls = []
+                def run(args, **kwargs):
+                    calls.append((args, kwargs))
+                    if args[1] == 'print':
+                        return SimpleNamespace(returncode=113)
+                    self.assertTrue(kwargs.get('check'))
+                    if args[1] == 'bootstrap' or rollback_fails:
+                        raise module.subprocess.CalledProcessError(5, args)
+                    return SimpleNamespace(returncode=0)
+                with self.assertRaises(module.subprocess.CalledProcessError):
+                    self.invoke(home, ['install', '--scope', 'user', '--binary', '/bin/sh'], run)
+                endpoint = f'gui/{os.geteuid()}/com.rss-mdm.agent.execution.user'
+                self.assertEqual(calls[0], (['/bin/launchctl', 'print', endpoint], {'capture_output': True}))
+                self.assertEqual(calls[1], (['/bin/launchctl', 'bootstrap', f'gui/{os.geteuid()}', str(home / 'Library/LaunchAgents/com.rss-mdm.agent.execution.user.plist')], {'check': True}))
+                self.assertEqual(calls[-1], (['/bin/launchctl', 'bootout', endpoint], {'check': True}))
+                self.assertEqual((home / 'Library/LaunchAgents/com.rss-mdm.agent.execution.user.plist').exists(), rollback_fails)
+
+    def test_unknown_lookup_result_cannot_remove_configuration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home=Path(directory)
+            folder=home / 'Library/LaunchAgents'; folder.mkdir(parents=True)
+            plist=folder / 'com.rss-mdm.agent.execution.user.plist'
+            with plist.open('wb') as stream:
+                plistlib.dump({'Label':'com.rss-mdm.agent.execution.user','ProgramArguments':['/missing/service']},stream)
+            with self.assertRaises(module.subprocess.CalledProcessError):
+                self.invoke(home,['remove','--scope','user','--binary','/missing/service'],lambda *args,**kwargs:SimpleNamespace(returncode=5))
+            self.assertTrue(plist.exists())
 
     def test_status_does_not_require_binary(self):
         with tempfile.TemporaryDirectory() as directory:
-            self.invoke(Path(directory), ['status', '--scope', 'user'], lambda *args, **kwargs: SimpleNamespace(returncode=0))
+            def run(args, **kwargs):
+                self.assertEqual(args, ['/bin/launchctl', 'print', f'gui/{os.geteuid()}/com.rss-mdm.agent.execution.user'])
+                self.assertEqual(kwargs, {'check': True})
+                return SimpleNamespace(returncode=0)
+            self.invoke(Path(directory), ['status', '--scope', 'user'], run)
 
 
 if __name__ == '__main__':

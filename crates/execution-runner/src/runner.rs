@@ -101,7 +101,7 @@ impl NativeRunner {
             return Ok(DispatchOutcome::NeverDispatched);
         }
         let deadline = Instant::now() + Duration::from_millis(remaining);
-        let failed_spawn = rejected(plan, attempt, &self.id, ProcessEnd::Rejected);
+        let failed_spawn = failed(plan, attempt, &self.id, ProcessFailureKind::Runtime);
         let failure_slot = facts.clone();
         let attempt = attempt.clone();
         let plan = plan.clone();
@@ -114,8 +114,8 @@ impl NativeRunner {
                     .and_then(|a| a.prepare(&plan, &attempt));
                 let materialized = match prepared {
                     Ok(value) => value,
-                    Err(_) => {
-                        publish(&facts, rejected(&plan, &attempt, &id, ProcessEnd::Rejected));
+                    Err(error) => {
+                        publish(&facts, failed(&plan, &attempt, &id, classify(error)));
                         return;
                     }
                 };
@@ -123,7 +123,10 @@ impl NativeRunner {
                     .enable_all()
                     .build()
                 else {
-                    publish(&facts, rejected(&plan, &attempt, &id, ProcessEnd::Rejected));
+                    publish(
+                        &facts,
+                        failed(&plan, &attempt, &id, ProcessFailureKind::Runtime),
+                    );
                     return;
                 };
                 runtime.block_on(run(
@@ -288,11 +291,45 @@ fn rejected(plan: &FrozenPlan, attempt: &AttemptId, id: &Id, end: ProcessEnd) ->
         finished: true,
         exit_code: None,
         end,
+        failure_kind: ProcessFailureKind::None,
         quiescent: true,
         stdout: vec![],
         stderr: vec![],
         total_output_bytes: 0,
         quality: OutputQuality::Failed,
+    }
+}
+pub(crate) fn classify(error: Error) -> ProcessFailureKind {
+    match error {
+        Error::Denied => ProcessFailureKind::Denied,
+        Error::Unbound => ProcessFailureKind::Unbound,
+        Error::Capability | Error::Degraded => ProcessFailureKind::Capability,
+        Error::Unsupported => ProcessFailureKind::Unsupported,
+        Error::InvalidInput | Error::Configuration => ProcessFailureKind::InvalidInput,
+        Error::Capacity => ProcessFailureKind::Capacity,
+        Error::Conflict => ProcessFailureKind::Conflict,
+        Error::NotFound
+        | Error::Clock
+        | Error::Unavailable
+        | Error::Storage
+        | Error::NewerSchema { .. }
+        | Error::OutcomeUnknown
+        | Error::ConfirmationUnknown => ProcessFailureKind::Unavailable,
+    }
+}
+fn failed(
+    plan: &FrozenPlan,
+    attempt: &AttemptId,
+    id: &Id,
+    kind: ProcessFailureKind,
+) -> ProcessEvidence {
+    let mut facts = rejected(plan, attempt, id, ProcessEnd::Rejected);
+    facts.failure_kind = kind;
+    facts
+}
+fn fault(facts: &mut ProcessEvidence, kind: ProcessFailureKind) {
+    if facts.failure_kind == ProcessFailureKind::None {
+        facts.failure_kind = kind;
     }
 }
 fn publish(slot: &Mutex<Option<ProcessEvidence>>, facts: ProcessEvidence) {
@@ -322,19 +359,16 @@ async fn run(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
-    if materialized.configure(command.as_std_mut()).is_err() {
-        publish(
-            &shared,
-            rejected(&plan, &attempt, &id, ProcessEnd::Rejected),
-        );
+    if let Err(error) = materialized.configure(command.as_std_mut()) {
+        publish(&shared, failed(&plan, &attempt, &id, classify(error)));
         return;
     }
-    let Ok(mut owner) = platform::Owner::prepare(&mut command) else {
-        publish(
-            &shared,
-            rejected(&plan, &attempt, &id, ProcessEnd::Rejected),
-        );
-        return;
+    let mut owner = match platform::Owner::prepare(&mut command) {
+        Ok(owner) => owner,
+        Err(error) => {
+            publish(&shared, failed(&plan, &attempt, &id, classify(error)));
+            return;
+        }
     };
     if cancel.load(Ordering::Acquire) || Instant::now() >= deadline {
         publish(
@@ -352,23 +386,23 @@ async fn run(
         );
         return;
     }
-    let Ok(mut child) = platform::spawn(&mut command, &mut owner, &cancel, deadline).await else {
-        publish(
-            &shared,
-            rejected(
-                &plan,
-                &attempt,
-                &id,
-                if cancel.load(Ordering::Acquire) {
-                    ProcessEnd::Cancelled
-                } else if Instant::now() >= deadline {
-                    ProcessEnd::TimedOut
-                } else {
-                    ProcessEnd::Rejected
-                },
-            ),
-        );
-        return;
+    let mut child = match platform::spawn(&mut command, &mut owner, &cancel, deadline).await {
+        Ok(child) => child,
+        Err(_) => {
+            let end = if cancel.load(Ordering::Acquire) {
+                ProcessEnd::Cancelled
+            } else if Instant::now() >= deadline {
+                ProcessEnd::TimedOut
+            } else {
+                ProcessEnd::Rejected
+            };
+            let mut facts = rejected(&plan, &attempt, &id, end);
+            if end == ProcessEnd::Rejected {
+                facts.failure_kind = ProcessFailureKind::Spawn;
+            }
+            publish(&shared, facts);
+            return;
+        }
     };
     let mut facts = ProcessEvidence {
         plan_digest: plan.digest().clone(),
@@ -378,6 +412,7 @@ async fn run(
         finished: false,
         exit_code: None,
         end: ProcessEnd::Unknown,
+        failure_kind: ProcessFailureKind::None,
         quiescent: false,
         stdout: vec![],
         stderr: vec![],
@@ -451,6 +486,7 @@ async fn run(
                     killed = true;
                 }
                 Err(_) => {
+                    fault(&mut facts, ProcessFailureKind::Supervision);
                     facts.end = ProcessEnd::Unknown;
                     stop_at = Some(clock);
                 }
@@ -464,7 +500,7 @@ async fn run(
         tokio::select! {
             result=&mut writer,if !input_done=>{
                 input_done=true;
-                if !matches!(result,Ok(Ok(()))){input_failed=true;facts.end=ProcessEnd::Unknown;stop_at.get_or_insert(Instant::now());owner.stop();}
+                if !matches!(result,Ok(Ok(()))){input_failed=true;fault(&mut facts,ProcessFailureKind::InputDelivery);facts.end=ProcessEnd::Unknown;stop_at.get_or_insert(Instant::now());owner.stop();}
             },
             count=stdout.read(&mut out),if !out_done=>{event=Some((true,count));},
             count=stderr.read(&mut err),if !err_done=>{event=Some((false,count));},
@@ -492,6 +528,7 @@ async fn run(
                     }
                 }
                 Err(_) => {
+                    fault(&mut facts, ProcessFailureKind::Capture);
                     facts.end = ProcessEnd::Unknown;
                     stop_at.get_or_insert(Instant::now());
                     if is_out {
@@ -508,6 +545,7 @@ async fn run(
         writer.abort();
         let _ = writer.await;
         input_failed = true;
+        fault(&mut facts, ProcessFailureKind::InputDelivery);
     }
     owner.terminate();
     let _ = child.start_kill();
@@ -516,6 +554,9 @@ async fn run(
             facts.exit_code = status.code();
             exited = true
         }
+    }
+    if !exited {
+        fault(&mut facts, ProcessFailureKind::Supervision);
     }
     facts.finished = true;
     facts.quiescent = exited && out_done && err_done && owner.quiescent();
@@ -546,6 +587,12 @@ async fn run(
             facts.quality = OutputQuality::Failed;
         }
     }
+    if facts.quality == OutputQuality::Failed
+        && facts.end == ProcessEnd::Exited
+        && facts.exit_code == Some(0)
+    {
+        fault(&mut facts, ProcessFailureKind::OutputValidation);
+    }
     publish(&facts);
 }
 #[cfg(test)]
@@ -553,3 +600,6 @@ mod tests;
 
 #[cfg(all(test, windows))]
 mod windows_tests;
+
+#[cfg(test)]
+pub(crate) mod support;

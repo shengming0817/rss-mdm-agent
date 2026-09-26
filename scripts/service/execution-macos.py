@@ -8,6 +8,16 @@ import stat
 import subprocess
 
 
+def registered(endpoint):
+    command = ['/bin/launchctl', 'print', endpoint]
+    result = subprocess.run(command, capture_output=True)
+    if result.returncode == 0:
+        return True
+    if result.returncode == 113:  # launchctl service lookup: no such service in this domain.
+        return False
+    raise subprocess.CalledProcessError(result.returncode, command)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=['install', 'remove', 'status'])
@@ -37,7 +47,7 @@ def main():
             metadata = path.lstat()
             if stat.S_ISLNK(metadata.st_mode) or metadata.st_mode & 0o022 or metadata.st_uid not in (0, os.geteuid()):
                 raise RuntimeError('unprotected executable path')
-        if subprocess.run(['/bin/launchctl', 'print', endpoint], capture_output=True).returncode == 0:
+        if registered(endpoint):
             raise RuntimeError('service already registered')
         folder.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         folder.mkdir(mode=0o700, exist_ok=True)
@@ -46,6 +56,7 @@ def main():
             raise RuntimeError('unprotected launchd directory')
         created = False
         committed = False
+        bootstrap_attempted = False
         try:
             descriptor = os.open(plist, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
             created = True
@@ -60,17 +71,22 @@ def main():
             metadata = plist.lstat()
             if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.geteuid() or metadata.st_mode & 0o077:
                 raise RuntimeError('unprotected launchd configuration')
+            bootstrap_attempted = True
             subprocess.run(['/bin/launchctl', 'bootstrap', domain, str(plist)], check=True)
             committed = True
         finally:
             if created and not committed:
+                # A lost/failed bootstrap receipt does not prove the job was never loaded.
+                # If compensation fails, keep the plist so the operator can retry removal.
+                if bootstrap_attempted:
+                    subprocess.run(['/bin/launchctl', 'bootout', endpoint], check=True)
                 plist.unlink(missing_ok=True)
     else:
         with plist.open('rb') as stream:
             current = plistlib.load(stream)
         if current.get('ProgramArguments') != [str(binary)] or current.get('Label') != label:
             raise RuntimeError('refusing to remove another installation')
-        if subprocess.run(['/bin/launchctl', 'print', endpoint], capture_output=True).returncode == 0:
+        if registered(endpoint):
             subprocess.run(['/bin/launchctl', 'bootout', endpoint], check=True)
         plist.unlink()
 

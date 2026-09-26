@@ -72,9 +72,9 @@ int rss_execution_query(const uint8_t *request,size_t length,int system,uint8_t 
 #include <sys/stat.h>
 #include <errno.h>
 // Reject granting extended ACLs; deny-only ACLs cannot enlarge POSIX write access.
-int rss_execution_acl_restrictive(const char *path){
-    acl_t acl=acl_get_file(path,ACL_TYPE_EXTENDED);
-    if(!acl){struct stat st;return errno==ENOENT&&lstat(path,&st)==0;}
+int rss_execution_fd_acl_restrictive(int fd){
+    acl_t acl=acl_get_fd_np(fd,ACL_TYPE_EXTENDED);
+    if(!acl){struct stat st;return errno==ENOENT&&fstat(fd,&st)==0;}
     acl_entry_t entry;int selector=ACL_FIRST_ENTRY;int valid=1;
     for(;;){
         errno=0;int rc=acl_get_entry(acl,selector,&entry);
@@ -84,4 +84,13 @@ int rss_execution_acl_restrictive(const char *path){
         selector=ACL_NEXT_ENTRY;
     }
     acl_free(acl);return valid;
+}
+
+// ref: Apple os/log.h; error-level unified logging is retained by the system log store.
+#include <os/log.h>
+void rss_execution_log(const char *message){
+    static os_log_t log;
+    static dispatch_once_t once;
+    dispatch_once(&once,^{log=os_log_create("com.rss-mdm.agent.execution","mechanism");});
+    os_log_error(log,"%{public}s",message);
 }

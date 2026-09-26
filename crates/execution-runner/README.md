@@ -27,3 +27,10 @@ Windows 测试命令为 `cargo test -p execution-runner`；包含真实 Job 后�
 Windows transport 与串行 application owner 分线程：连接最多等待 5 秒，超时即停止整个宿主接入并收尾，不重连仍被旧 callback 持有的 pipe instance；排队请求在调用前发现响应端已关闭则不启动 mutation。已经进入 application 的请求失去响应不能解释为未提交，仍以原 request/attempt 查询恢复。owner 5 秒无进展则停止接入，关闭等待最多 3 秒；若 handler 无法收尾，专用宿主以 ERROR_TIMEOUT 退出，禁止 detach 仍持有 Job/SQLite 的 owner。系统失败用 ERROR_PROCESS_ABORTED 上报，日志不含执行 payload。
 
 Windows runner 测试需要受保护安装的 `C:\Program Files\PowerShell\7\pwsh.exe`，可仅在测试进程以 `RSS_TEST_PWSH7` 指定受保护的同版本绝对路径；缺失时测试明确失败，不跳过伪报通过。测试通过 Test carrier 装配实际 NativeRunner，再验证 Job capture 的 SQLite 持久化/ack/重开不重派；该 carrier 只编译进测试二进制。
+
+
+机制失败通过必填 `ProcessFailureKind` 保存，区分身份/输入绑定、权限或制品拒绝、能力、格式、资源、启动、输入投递、输出读取及监督失败；它不替代 end、quality 或效果观察。首个非空故障只能保留，不能被后续 capture 擦除。缺失此字段的 capture 拒绝读取，不补默认值。桌面将这些闭集及停止/效果状态映射为中文提示。
+
+macOS 工作目录从 `/` 开始逐级 `openat(O_DIRECTORY|O_NOFOLLOW)`，以 fd 校验 owner/mode/ACL，最终 fd 交给 fchdir；目录祖先被替换不会改变已绑定对象。launchd bootstrap 回执失败后先 bootout 补偿；撤销不确定时保留 plist 供操作员重试，不把配置删除当成停止证明。
+
+宿主诊断仅记录闭合 stage、failure 和 system/user 模式：macOS 使用 Unified Logging 子系统 `com.rss-mdm.agent.execution`，Windows 使用 Application Event Log 的 `RSS Execution` source（事件数据含结构化文本，不依赖自定义 message DLL）。两者使用 OS 管理的日志，不创建应用日志文件或安装注册项，卸载保留 OS 历史记录。Windows [RegisterEventSourceW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-registereventsourcew) 的未注册 source 按官方语义写入 Application；macOS 使用 SDK `os/log.h` 的 error 级日志。不记录参数、路径、PID、输出或凭据。

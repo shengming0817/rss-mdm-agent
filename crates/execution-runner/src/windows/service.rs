@@ -1,5 +1,6 @@
 //! SCM and per-session helper transport. The transport supplies native facts, never authority.
 use super::*;
+use crate::diagnostics::{record, Stage};
 use crate::host::{self, Handler, Peer};
 use std::os::windows::io::IntoRawHandle;
 use std::{
@@ -89,6 +90,9 @@ unsafe extern "system" fn service_main(_: u32, _: *mut *mut u16) {
     });
     let failed = !matches!(result, Ok(Ok(())));
     FAILED.store(failed, Ordering::Release);
+    if failed {
+        record(Stage::Startup, Error::Unavailable);
+    }
     status(
         SERVICE_STOPPED,
         if failed { ERROR_PROCESS_ABORTED } else { 0 },
@@ -215,10 +219,10 @@ impl OwnerThread {
                             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
                         }
-                        let error = handler.tick().err().map(|e| e.to_string());
+                        let error = handler.tick().err();
                         if error != previous_error {
-                            if let Some(ref error) = error {
-                                eprintln!("execution reconcile: {error}")
+                            if let Some(error) = error {
+                                record(Stage::Reconcile, error)
                             }
                             previous_error = error;
                         }
@@ -230,6 +234,9 @@ impl OwnerThread {
                 let stopped =
                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handler.stop()))
                         .unwrap_or(Err(Error::Unavailable));
+                if let Err(error) = stopped {
+                    record(Stage::Shutdown, error);
+                }
                 outcome.and(stopped)
             })
             .map_err(|_| Error::Unavailable)?;
@@ -378,6 +385,9 @@ fn drive(handler: Box<dyn Handler>, system: bool) -> Result<(), Error> {
         }
         Ok(())
     });
+    if let Err(error) = outcome {
+        record(Stage::Ingress, error);
+    }
     outcome.and(owner.finish())
 }
 /// Read-only mechanism probe. No production admission context is constructed.

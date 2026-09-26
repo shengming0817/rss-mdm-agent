@@ -331,51 +331,8 @@ fn windows_profiles_identity_and_content_fail_closed() {
     assert_eq!(finish(&f, &id).end, ProcessEnd::Rejected);
 }
 
-use crate::host_tests::support as app_support;
-// Only this test carrier supplies Test mode; no production configuration can choose it.
-#[derive(Clone)]
-struct TestCarrier(Arc<NativeRunner>, Arc<std::sync::atomic::AtomicUsize>);
-impl RunnerPort for TestCarrier {
-    fn id(&self) -> Id {
-        self.0.id()
-    }
-    fn mode(&self) -> ExecutionMode {
-        ExecutionMode::Test
-    }
-    fn dispatch(&self, p: AuthorizedDispatch) -> Result<DispatchOutcome, Error> {
-        let allowance = p.allowance();
-        p.dispatch(|plan, action| {
-            if action.mode() != ExecutionMode::Test
-                || !matches!(plan.spec().request.authority, Authority::Test { .. })
-                || action.runner() != &self.0.id
-                || action.plan_digest() != plan.digest()
-                || action.plan_id() != &plan.spec().plan_id
-            {
-                return Err(Error::Denied);
-            }
-            self.1.fetch_add(1, Ordering::SeqCst);
-            self.0.launch(plan, action.attempt_id(), allowance)
-        })
-    }
-    fn stop(&self, p: &FrozenPlan, a: &AttemptId) -> Result<(), Error> {
-        self.0.stop(p, a)
-    }
-    fn evidence(&self, p: &FrozenPlan, a: &AttemptId) -> Result<Option<ProcessEvidence>, Error> {
-        self.0.evidence(p, a)
-    }
-    fn acknowledge_capture(&self, p: &FrozenPlan, f: &ProcessEvidence) -> Result<(), Error> {
-        self.0.acknowledge_capture(p, f)
-    }
-    fn observe(
-        &self,
-        p: &FrozenPlan,
-        a: &AttemptId,
-        s: ObservationStage,
-        n: u64,
-    ) -> Result<Option<ObservationFacts>, Error> {
-        self.0.observe(p, a, s, n)
-    }
-}
+use super::support as app_support;
+use super::support::TestCarrier;
 #[test]
 fn windows_capture_is_durable_and_reopened_attempt_does_not_launch() {
     use execution_app::{AppConfig, ExecutionApp, RequestContext, Startup};
@@ -458,6 +415,13 @@ fn windows_capture_is_durable_and_reopened_attempt_does_not_launch() {
     .unwrap();
     let recovered = app.submit(&caller, request, &f.plan).unwrap();
     assert_eq!(recovered.attempts, 1);
-    assert_eq!(recovered.process.unwrap().exit_code, Some(0));
+    assert_eq!(
+        app.status(&caller, request)
+            .unwrap()
+            .process
+            .unwrap()
+            .exit_code,
+        Some(0)
+    );
     assert_eq!(empty.1.load(Ordering::SeqCst), 0);
 }

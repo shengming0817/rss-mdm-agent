@@ -102,7 +102,9 @@ impl Store {
             if previous == *facts {
                 return Ok(());
             }
-            if previous.finished
+            if (previous.failure_kind != execution_contract::ProcessFailureKind::None
+                && previous.failure_kind != facts.failure_kind)
+                || previous.finished
                 || previous.plan_digest != facts.plan_digest
                 || (previous.scope != facts.scope
                     && !matches!(

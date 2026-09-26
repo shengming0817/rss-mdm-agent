@@ -5,47 +5,95 @@ use std::{
     os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::Path,
 };
-pub(crate) fn protected_path(path: &Path, directory: bool) -> Result<(), Error> {
-    if !path.is_absolute()
-        || path.components().any(|p| {
-            matches!(
-                p,
-                std::path::Component::ParentDir | std::path::Component::CurDir
-            )
-        })
+// ref: Darwin openat(2), fstat(2), acl_get_fd_np(3). Never validate a pathname
+// and subsequently resolve it again for cwd: every component is relative to its retained parent.
+fn check_fd(file: &File, immutable: bool, directory: Option<bool>) -> Result<(), Error> {
+    use std::os::fd::AsRawFd;
+    extern "C" {
+        fn rss_execution_fd_acl_restrictive(fd: i32) -> i32;
+    }
+    let meta = file.metadata().map_err(|_| Error::Unavailable)?;
+    if unsafe { rss_execution_fd_acl_restrictive(file.as_raw_fd()) } != 1
+        || meta.mode() & 0o022 != 0
+        || (meta.uid() != 0 && (immutable || meta.uid() != unsafe { libc::geteuid() }))
+        || (!meta.is_dir() && !meta.is_file())
+        || directory.is_some_and(|dir| if dir { !meta.is_dir() } else { !meta.is_file() })
     {
-        return Err(Error::Denied);
-    }
-    for component in path.ancestors() {
-        use std::os::unix::ffi::OsStrExt;
-        extern "C" {
-            fn rss_execution_acl_restrictive(path: *const std::ffi::c_char) -> i32;
-        }
-        let name =
-            std::ffi::CString::new(component.as_os_str().as_bytes()).map_err(|_| Error::Denied)?;
-        if unsafe { rss_execution_acl_restrictive(name.as_ptr()) } != 1 {
-            return Err(Error::Denied);
-        }
-        let meta = std::fs::symlink_metadata(component).map_err(|_| Error::Unavailable)?;
-        if meta.file_type().is_symlink()
-            || meta.mode() & 0o022 != 0
-            || (meta.uid() != 0 && meta.uid() != unsafe { libc::geteuid() })
-        {
-            return Err(Error::Denied);
-        }
-    }
-    let m = std::fs::symlink_metadata(path).map_err(|_| Error::Unavailable)?;
-    if (directory && !m.is_dir()) || (!directory && !m.is_file()) {
         return Err(Error::Denied);
     }
     Ok(())
 }
-pub(crate) fn open_file(path: &Path) -> Result<File, Error> {
-    OpenOptions::new()
+fn walk(
+    path: &Path,
+    directory: Option<bool>,
+    immutable: bool,
+    mut opened: impl FnMut(&Path),
+) -> Result<Vec<File>, Error> {
+    use std::{
+        ffi::CString,
+        os::{
+            fd::{AsRawFd, FromRawFd},
+            unix::ffi::OsStrExt,
+        },
+        path::Component,
+    };
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|c| !matches!(c, Component::RootDir | Component::Normal(_)))
+    {
+        return Err(Error::Denied);
+    }
+    let root = OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-        .open(path)
-        .map_err(|_| Error::Unavailable)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open("/")
+        .map_err(|_| Error::Unavailable)?;
+    check_fd(&root, true, Some(true))?;
+    let mut files = vec![root];
+    let mut prefix = std::path::PathBuf::from("/");
+    let parts: Vec<_> = path
+        .components()
+        .filter_map(|c| {
+            if let Component::Normal(c) = c {
+                Some(c)
+            } else {
+                None
+            }
+        })
+        .collect();
+    for (i, part) in parts.iter().enumerate() {
+        let last = i + 1 == parts.len();
+        let name = CString::new(part.as_bytes()).map_err(|_| Error::Denied)?;
+        let flags = libc::O_RDONLY
+            | libc::O_NOFOLLOW
+            | libc::O_CLOEXEC
+            | if !last || directory == Some(true) {
+                libc::O_DIRECTORY
+            } else {
+                0
+            };
+        let fd = unsafe { libc::openat(files.last().unwrap().as_raw_fd(), name.as_ptr(), flags) };
+        if fd < 0 {
+            return Err(Error::Denied);
+        }
+        let file = unsafe { File::from_raw_fd(fd) };
+        check_fd(&file, immutable, if last { directory } else { Some(true) })?;
+        files.push(file);
+        prefix.push(part);
+        opened(&prefix);
+    }
+    check_fd(files.last().unwrap(), immutable, directory)?;
+    Ok(files)
+}
+fn bound_file(path: &Path, directory: bool, immutable: bool) -> Result<File, Error> {
+    walk(path, Some(directory), immutable, |_| {}).map(|mut files| files.pop().unwrap())
+}
+pub(crate) fn protected_path(path: &Path, directory: bool) -> Result<(), Error> {
+    bound_file(path, directory, false).map(|_| ())
+}
+pub(crate) fn open_file(path: &Path) -> Result<File, Error> {
+    bound_file(path, false, false)
 }
 pub(crate) fn identity(run_as: &RunAs, session: &SessionRequirement) -> Result<(), Error> {
     let uid = unsafe { libc::geteuid() };
@@ -153,20 +201,6 @@ impl Owner {
     }
 }
 
-/// Interpret executable/cache content only from administrator-owned immutable installation paths.
-pub(crate) fn immutable_source(path: &Path) -> Result<(), Error> {
-    protected_path(path, false)?;
-    for part in path.ancestors() {
-        if std::fs::symlink_metadata(part)
-            .map_err(|_| Error::Unavailable)?
-            .uid()
-            != 0
-        {
-            return Err(Error::Denied);
-        }
-    }
-    Ok(())
-}
 pub(crate) fn encoding(encoding: ArtifactEncoding) -> Result<(), Error> {
     if encoding == ArtifactEncoding::Utf8 {
         Ok(())
@@ -191,13 +225,7 @@ pub(crate) fn payload(
 pub(crate) struct WorkingDirectory(File);
 impl WorkingDirectory {
     pub(crate) fn open(path: &Path) -> Result<Self, Error> {
-        protected_path(path, true)?;
-        OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
-            .open(path)
-            .map(Self)
-            .map_err(|_| Error::Unavailable)
+        bound_file(path, true, false).map(Self)
     }
     pub(crate) fn configure(
         &self,
@@ -232,14 +260,40 @@ pub(crate) async fn spawn(
     command.spawn()
 }
 
-pub(crate) struct PathLease;
+pub(crate) struct PathLease {
+    _handles: Vec<File>,
+}
 impl PathLease {
     pub(crate) fn source(path: &Path, immutable: bool) -> Result<Self, Error> {
-        if immutable {
-            immutable_source(path)?
-        } else {
-            protected_path(path, path.is_dir())?
-        }
-        Ok(Self)
+        Ok(Self {
+            _handles: walk(path, None, immutable, |_| {})?,
+        })
+    }
+}
+#[cfg(test)]
+mod path_tests {
+    use super::*;
+    #[test]
+    fn replacing_an_ancestor_with_a_symlink_does_not_redirect_the_opened_cwd() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("../../.cache/fd-walk-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("ancestor/child")).unwrap();
+        std::fs::create_dir_all(root.join("other/child")).unwrap();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let root = root.canonicalize().unwrap();
+        let expected = std::fs::metadata(root.join("ancestor/child"))
+            .unwrap()
+            .ino();
+        let files = walk(&root.join("ancestor/child"), Some(true), false, |prefix| {
+            if prefix == root.join("ancestor") {
+                std::fs::rename(prefix, root.join("saved")).unwrap();
+                symlink(root.join("other"), prefix).unwrap();
+            }
+        })
+        .unwrap();
+        assert_eq!(files.last().unwrap().metadata().unwrap().ino(), expected);
+        assert!(WorkingDirectory::open(&root.join("ancestor/child")).is_err());
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

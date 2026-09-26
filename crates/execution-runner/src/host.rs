@@ -18,12 +18,15 @@ impl Peer {
     pub fn native_handle(&self) -> usize {
         self.native
     }
+    /// Kernel peer process identity, never accepted from request bytes.
     pub fn pid(&self) -> u32 {
         self.pid
     }
+    /// Unix peer UID; absent on Windows, where native token verification is required.
     pub fn uid(&self) -> Option<u32> {
         self.uid
     }
+    /// Native peer session identifier, not product authentication.
     pub fn session(&self) -> u32 {
         self.session
     }
@@ -32,13 +35,19 @@ impl Peer {
 #[derive(Serialize)]
 #[serde(tag = "method", rename_all = "camelCase")]
 pub enum Request {
+    /// Submit an exact V2 frozen plan through the application admission funnel.
     Submit {
+        /// Raw bounded JSON retained for duplicate-key and canonical contract checks.
         plan: Box<serde_json::value::RawValue>,
     },
+    /// Read an authorized existing request without execution authority.
     Status {
+        /// Original durable business request identity.
         request: RequestId,
     },
+    /// Record cancellation against the original request; not a termination proof.
     Cancel {
+        /// Original durable business request identity.
         request: RequestId,
     },
 }
@@ -74,32 +83,44 @@ impl RawRequest {
 }
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
+/// Closed transport reply; no backend details or raw capture are exposed.
 pub enum Reply {
+    /// Read an authorized existing request without execution authority.
     Status {
+        /// Permission-filtered application projection.
         value: execution_app::ExecutionStatus,
     },
+    /// Invalid or unauthorized request.
     Rejected,
+    /// Processing could not be confirmed; recover by original request identity.
     Unavailable,
 }
 /// #2564 verifies current caller/registration/policy. The transport cannot create RequestContext.
 pub trait Ingress: Send {
+    /// Verify current native peer trust; transport facts alone cannot authorize execution.
     fn authenticate(&self, peer: &Peer) -> Result<RequestContext, execution_app::Error>;
 }
 /// The native OS service owns one handler; ticks and calls are serialized by the owner loop.
 pub trait Handler: Send {
+    /// Process one bounded request serially; a lost reply does not prove no mutation.
     fn handle(&mut self, peer: &Peer, request: Request) -> Reply;
+    /// Reconcile existing attempts without obtaining replacement dispatch authority.
     fn tick(&mut self) -> Result<(), execution_app::Error>;
+    /// Stop owned work and persist available facts before returning.
     fn stop(&mut self) -> Result<(), execution_app::Error>;
 }
 /// Executable's default assembly: there is deliberately no environment/test authority fallback.
 pub struct Unbound;
 impl Handler for Unbound {
+    /// Process one bounded request serially; a lost reply does not prove no mutation.
     fn handle(&mut self, _: &Peer, _: Request) -> Reply {
         Reply::Rejected
     }
+    /// Reconcile existing attempts without obtaining replacement dispatch authority.
     fn tick(&mut self) -> Result<(), execution_app::Error> {
         Ok(())
     }
+    /// Stop owned work and persist available facts before returning.
     fn stop(&mut self) -> Result<(), execution_app::Error> {
         Ok(())
     }
@@ -112,6 +133,7 @@ pub struct Endpoint<H, R, I> {
     cursor: Option<RequestId>,
 }
 impl<H: AppHost, R: RunnerPort, I: Ingress> Endpoint<H, R, I> {
+    /// Bind the existing application and trusted ingress; creates no credentials or authority.
     pub fn new(app: ExecutionApp<H, R>, ingress: I, limits: PlanLimits) -> Self {
         Self {
             app,
@@ -122,6 +144,7 @@ impl<H: AppHost, R: RunnerPort, I: Ingress> Endpoint<H, R, I> {
     }
 }
 impl<H: AppHost + Send, R: RunnerPort + Send, I: Ingress> Handler for Endpoint<H, R, I> {
+    /// Process one bounded request serially; a lost reply does not prove no mutation.
     fn handle(&mut self, peer: &Peer, request: Request) -> Reply {
         let result = (|| {
             let caller = self.ingress.authenticate(peer)?;
@@ -152,10 +175,12 @@ impl<H: AppHost + Send, R: RunnerPort + Send, I: Ingress> Handler for Endpoint<H
             Err(_) => Reply::Unavailable,
         }
     }
+    /// Reconcile existing attempts without obtaining replacement dispatch authority.
     fn tick(&mut self) -> Result<(), execution_app::Error> {
         self.cursor = self.app.reconcile_page(self.cursor.as_ref(), 32)?;
         Ok(())
     }
+    /// Stop owned work and persist available facts before returning.
     fn stop(&mut self) -> Result<(), execution_app::Error> {
         self.app.stop_active(128)
     }

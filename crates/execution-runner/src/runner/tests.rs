@@ -183,12 +183,36 @@ fn cancel_and_materialized_content_mismatch_fail_closed() {
     );
     let id = start(&f, 128, 3000);
     let until = Instant::now() + Duration::from_secs(2);
-    while f.runner.evidence(&f.plan, &id).unwrap().is_none() {
+    while !f
+        .runner
+        .evidence(&f.plan, &id)
+        .unwrap()
+        .is_some_and(|facts| {
+            matches!(facts.scope, ProcessScope::ProcessGroup { .. }) && !facts.finished
+        })
+    {
         assert!(Instant::now() < until);
         std::thread::sleep(Duration::from_millis(5));
     }
     f.runner.stop(&f.plan, &id).unwrap();
-    assert_eq!(finish(&f, &id).end, ProcessEnd::Cancelled);
+    let cancelled = finish(&f, &id);
+    assert_eq!(cancelled.end, ProcessEnd::Cancelled);
+    assert_ne!(cancelled.quality, OutputQuality::Complete);
+    let ProcessScope::ProcessGroup { group, .. } = cancelled.scope else {
+        panic!("must cancel an actually running group")
+    };
+    let cleanup = Instant::now() + Duration::from_secs(1);
+    while unsafe { libc::kill(-(group as i32), 0) } == 0 {
+        assert!(
+            Instant::now() < cleanup,
+            "cooperative test group was not reclaimed"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        !cancelled.quiescent,
+        "empty group does not prove escaped descendants stopped"
+    );
     let f = fixture("printf ok\n", vec![LaunchArg::ArtifactPath {}], 128, 1000);
     std::fs::write(f.root.join("source"), "printf replaced").unwrap();
     let id = start(&f, 128, 1000);
@@ -401,4 +425,302 @@ fn controlled_input_is_bound_once_and_partial_delivery_is_failed() {
     let facts = finish(&f, &id);
     assert_ne!(facts.quality, OutputQuality::Complete);
     assert!(facts.stdout.len() + facts.stderr.len() <= 128);
+}
+
+fn replan(f: &mut Fixture, change: impl FnOnce(&mut PlanSpec)) {
+    let mut spec = f.plan.spec().clone();
+    change(&mut spec);
+    let plan = FrozenPlan::freeze(spec, &execution_app::test_store_limits().plan).unwrap();
+    let artifacts = f.runner.artifacts.remove(f.plan.digest().as_str()).unwrap();
+    f.runner
+        .artifacts
+        .insert(plan.digest().as_str().into(), artifacts);
+    f.plan = plan;
+}
+use super::support::{self as app_support, TestCarrier};
+#[test]
+fn macos_capture_is_durable_and_reopened_attempt_does_not_launch() {
+    use execution_app::{AppConfig, ExecutionApp, RequestContext, Startup};
+    let mut f = fixture(
+        "printf durable",
+        vec![LaunchArg::ArtifactPath {}],
+        4096,
+        15000,
+    );
+    replan(&mut f, |s| {
+        s.validity = ValidityWindow {
+            not_before_unix_ms: 999,
+            expires_at_unix_ms: 60000,
+        }
+    });
+    let native = std::mem::replace(
+        &mut f.runner,
+        NativeRunner::new(Id::new("mechanism-runner").unwrap(), BTreeMap::new(), 8).unwrap(),
+    );
+    let carrier = TestCarrier(
+        Arc::new(native),
+        Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+    );
+    let mut host = app_support::TestHost::new();
+    host.template = f.plan.clone();
+    let caller = RequestContext {
+        actor: f.plan.spec().request.actor.clone(),
+    };
+    let request = &f.plan.spec().request.request_id;
+    let database = f.root.join("execution.sqlite");
+    let mut app = ExecutionApp::start(
+        &database,
+        Startup::CreateTest,
+        host.clone(),
+        carrier.clone(),
+        AppConfig::test_defaults(1),
+    )
+    .unwrap();
+    app.submit(&caller, request, &f.plan).unwrap();
+    let until = Instant::now() + Duration::from_secs(20);
+    loop {
+        let status = app.reconcile(request).unwrap();
+        if status.process.as_ref().is_some_and(|p| p.finished) {
+            assert_eq!(status.process.unwrap().exit_code, Some(0));
+            break;
+        }
+        assert!(Instant::now() < until);
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        carrier.0.records.lock().unwrap().is_empty(),
+        "capture acknowledgement retires process owner"
+    );
+    assert_eq!(carrier.1.load(Ordering::SeqCst), 1);
+    drop(app);
+    {
+        let sql = rusqlite::Connection::open(&database).unwrap();
+        let (body, output): (Vec<u8>, Vec<u8>) = sql
+            .query_row("SELECT body,stdout FROM process_evidence", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        let facts: ProcessEvidence = serde_json::from_slice(&body).unwrap();
+        assert!(matches!(facts.scope, ProcessScope::ProcessGroup { .. }));
+        assert!(!facts.quiescent);
+        assert_eq!(output, b"durable");
+    }
+    drop(carrier);
+    let empty = TestCarrier(
+        Arc::new(
+            NativeRunner::new(Id::new("mechanism-runner").unwrap(), BTreeMap::new(), 8).unwrap(),
+        ),
+        Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+    );
+    let mut app = ExecutionApp::start(
+        &database,
+        Startup::OpenTest,
+        host,
+        empty.clone(),
+        AppConfig::test_defaults(1),
+    )
+    .unwrap();
+    let recovered = app.submit(&caller, request, &f.plan).unwrap();
+    assert_eq!(recovered.attempts, 1);
+    assert_eq!(
+        app.status(&caller, request)
+            .unwrap()
+            .process
+            .unwrap()
+            .exit_code,
+        Some(0)
+    );
+    assert_eq!(empty.1.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn input_binding_limit_encoding_and_platform_guards_refuse_before_spawn() {
+    struct ValueInput(Vec<u8>);
+    impl crate::InputResolver for ValueInput {
+        fn resolve(
+            &self,
+            _: &FrozenPlan,
+            _: &AttemptId,
+            _: &VersionedRef,
+            _: u64,
+        ) -> Result<crate::InputBytes, Error> {
+            Ok(crate::InputBytes::new(self.0.clone()))
+        }
+    }
+    for (bytes, expected) in [
+        (None, ProcessFailureKind::Unbound),
+        (Some(vec![b'x'; 17]), ProcessFailureKind::Capacity),
+        (Some(vec![0xff]), ProcessFailureKind::InvalidInput),
+    ] {
+        let mut f = fixture(
+            "printf forbidden",
+            vec![LaunchArg::ArtifactPath {}],
+            128,
+            1000,
+        );
+        replan(&mut f, |s| {
+            s.launch.stdin = StandardInput::Controlled {
+                reference: VersionedRef {
+                    id: Id::new("input").unwrap(),
+                    revision: Id::new("1").unwrap(),
+                },
+                encoding: TextEncoding::Utf8,
+                max_bytes: 16,
+            }
+        });
+        Arc::get_mut(
+            f.runner
+                .artifacts
+                .get_mut(f.plan.digest().as_str())
+                .unwrap(),
+        )
+        .unwrap()
+        .controlled_input =
+            bytes.map(|bytes| Arc::new(ValueInput(bytes)) as Arc<dyn crate::InputResolver>);
+        let id = start(&f, 128, 1000);
+        let facts = finish(&f, &id);
+        assert_eq!(facts.scope, ProcessScope::NotStarted {});
+        assert_eq!(facts.failure_kind, expected);
+        assert!(facts.stdout.is_empty());
+    }
+    for case in 0..8 {
+        let mut f = fixture(
+            "printf forbidden",
+            vec![LaunchArg::ArtifactPath {}],
+            128,
+            1000,
+        );
+        match case {
+            0 => replan(&mut f, |s| {
+                if let RunAs::User { account } = &mut s.run_as {
+                    account.subject = Id::new("4294967294").unwrap()
+                }
+            }),
+            1 => replan(&mut f, |s| {
+                s.run_as = RunAs::System {
+                    platform: Platform::Windows,
+                };
+                s.request.target.platform = Platform::Windows;
+                s.launch.cwd = r"C:\not-used".into();
+            }),
+            2 => replan(&mut f, |s| {
+                s.session_requirement = SessionRequirement::ActiveUser {
+                    account: OsAccountRef {
+                        platform: Platform::Macos,
+                        subject: Id::new("4294967294").unwrap(),
+                    },
+                }
+            }),
+            3 => replan(&mut f, |s| {
+                s.launch.interpreter.profile.id = Id::new("unknown").unwrap()
+            }),
+            4 => replan(&mut f, |s| {
+                s.launch.interpreter.profile.revision = Id::new("99").unwrap()
+            }),
+            5 => replan(&mut f, |s| {
+                s.launch
+                    .argv
+                    .insert(0, LaunchArg::Literal { value: "-c".into() })
+            }),
+            6 => {
+                std::fs::rename(f.root.join("source"), f.root.join("saved")).unwrap();
+                std::os::unix::fs::symlink(f.root.join("saved"), f.root.join("source")).unwrap();
+            }
+            7 => std::fs::set_permissions(
+                f.root.join("source"),
+                std::fs::Permissions::from_mode(0o666),
+            )
+            .unwrap(),
+            _ => unreachable!(),
+        }
+        let id = start(&f, 128, 1000);
+        let facts = finish(&f, &id);
+        assert_eq!(facts.scope, ProcessScope::NotStarted {}, "case {case}");
+        assert_eq!(facts.end, ProcessEnd::Rejected, "case {case}");
+        assert_ne!(facts.failure_kind, ProcessFailureKind::None);
+    }
+}
+#[test]
+fn application_cancel_captures_real_process_and_reopen_does_not_dispatch() {
+    use execution_app::{AppConfig, ExecutionApp, RequestContext, Startup};
+    let mut f = fixture(
+        "printf started; exec sleep 30",
+        vec![LaunchArg::ArtifactPath {}],
+        4096,
+        10000,
+    );
+    let native = std::mem::replace(
+        &mut f.runner,
+        NativeRunner::new(Id::new("mechanism-runner").unwrap(), BTreeMap::new(), 8).unwrap(),
+    );
+    let carrier = TestCarrier(
+        Arc::new(native),
+        Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+    );
+    let host = app_support::TestHost {
+        template: f.plan.clone(),
+    };
+    let caller = RequestContext {
+        actor: f.plan.spec().request.actor.clone(),
+    };
+    let request = &f.plan.spec().request.request_id;
+    let database = f.root.join("cancel.sqlite");
+    let mut app = ExecutionApp::start(
+        &database,
+        Startup::CreateTest,
+        host.clone(),
+        carrier.clone(),
+        AppConfig::test_defaults(1),
+    )
+    .unwrap();
+    let started = app.submit(&caller, request, &f.plan).unwrap();
+    let attempt = started.attempt_id.unwrap();
+    let until = Instant::now() + Duration::from_secs(5);
+    loop {
+        let facts = carrier.0.evidence(&f.plan, &attempt).unwrap().unwrap();
+        if !facts.finished
+            && facts.stdout == b"started"
+            && matches!(facts.scope, ProcessScope::ProcessGroup { .. })
+        {
+            break;
+        }
+        assert!(Instant::now() < until);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    app.cancel(&caller, request).unwrap();
+    loop {
+        let status = app.reconcile(request).unwrap();
+        if status.process.as_ref().is_some_and(|p| p.finished) {
+            let facts = status.process.unwrap();
+            assert_eq!(facts.end, ProcessEnd::Cancelled);
+            assert!(!facts.quiescent);
+            assert_ne!(facts.quality, OutputQuality::Complete);
+            break;
+        }
+        assert!(Instant::now() < until);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(carrier.0.records.lock().unwrap().is_empty());
+    drop(app);
+    drop(carrier);
+    let empty = TestCarrier(
+        Arc::new(
+            NativeRunner::new(Id::new("mechanism-runner").unwrap(), BTreeMap::new(), 8).unwrap(),
+        ),
+        Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+    );
+    let mut app = ExecutionApp::start(
+        &database,
+        Startup::OpenTest,
+        host,
+        empty.clone(),
+        AppConfig::test_defaults(1),
+    )
+    .unwrap();
+    assert_eq!(app.submit(&caller, request, &f.plan).unwrap().attempts, 1);
+    assert_eq!(
+        app.status(&caller, request).unwrap().process.unwrap().end,
+        ProcessEnd::Cancelled
+    );
+    assert_eq!(empty.1.load(Ordering::SeqCst), 0);
 }

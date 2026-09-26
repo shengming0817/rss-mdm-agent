@@ -1,7 +1,17 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import RequestOrigin from "../self-service/RequestOrigin.vue";
-import type { ExecutionTaskDetails, TaskPhase } from "./execution-types";
+import type {
+  ExecutionTaskDetails,
+  TaskPhase,
+  ProcessEnd,
+  ProcessFailureKind,
+  OutputQuality,
+  StopOutcome,
+  EffectAssessment,
+  DispatchCause,
+  LimitReason,
+} from "./execution-types";
 const props = defineProps<{ details: ExecutionTaskDetails; now: number }>();
 const validity = computed(() =>
   props.now < props.details.plan.validity.notBeforeUnixMs
@@ -38,6 +48,74 @@ function phase(value: TaskPhase): string {
       return "可信证据确认取消且无效果";
   }
 }
+const ends = {
+  rejected: "派发前已拒绝",
+  exited: "根进程退出（不代表效果成功）",
+  cancelled: "已请求取消",
+  timedOut: "执行时间额度已耗尽",
+  outputLimit: "累计输出额度已耗尽",
+  unknown: "结束原因未确认",
+} satisfies Record<ProcessEnd, string>;
+const qualities = {
+  complete: "完整且符合输出契约",
+  truncated: "输出已截断",
+  failed: "输出或进程结果不符合契约",
+  partial: "采集尚不完整",
+} satisfies Record<OutputQuality, string>;
+const failures = {
+  none: "未观察到机制故障",
+  denied: "权限或制品校验拒绝",
+  unbound: "身份或受控输入未绑定",
+  capability: "无法强制所需约束",
+  unsupported: "平台不支持所需调用",
+  invalidInput: "输入或配置格式无效",
+  capacity: "执行资源额度不足",
+  conflict: "执行关联发生冲突",
+  unavailable: "平台资源不可用",
+  runtime: "执行宿主初始化失败",
+  spawn: "目标进程启动失败",
+  inputDelivery: "受控输入未完整投递",
+  capture: "输出读取失败",
+  supervision: "进程状态无法可靠核实",
+  outputValidation: "输出编码或结构校验失败",
+} satisfies Record<ProcessFailureKind, string>;
+const stops = {
+  acknowledged: "停止请求已接收（未确认终止）",
+  failed: "停止请求未确认",
+} satisfies Record<StopOutcome, string>;
+const assessments = {
+  noEffect: "已核实未产生效果",
+  satisfied: "已核实效果符合预期",
+  notSatisfied: "已核实效果不符合预期",
+  unknown: "效果未知，需可信核对",
+} satisfies Record<EffectAssessment, string>;
+const limits = {
+  notYetValid: "尚未生效",
+  expired: "已过期",
+  timeout: "累计时间额度耗尽",
+  output: "累计输出额度耗尽",
+  attempts: "尝试次数已用尽",
+} satisfies Record<LimitReason, string>;
+const causes = {
+  capabilityUnavailable: "能力不可用",
+  clockUnavailable: "可信时间不可用",
+  cancelled: "请求已取消",
+  staleRevision: "可信快照已过期",
+  runnerMismatch: "执行器不匹配",
+  configurationUnavailable: "执行配置不可用",
+  authorityUnavailable: "执行授权不可用",
+  lifecycleChanged: "执行阶段已变化",
+  runnerRejected: "执行器拒绝派发",
+  deliveryUnknown: "派发结果未知，请核对原请求",
+  runnerError: "执行器发生错误",
+} satisfies Record<Exclude<DispatchCause, object>, string>;
+function cause(value: DispatchCause | null): string {
+  return value === null
+    ? "无"
+    : typeof value === "object"
+      ? limits[value.limit]
+      : causes[value];
+}
 const text = (value: unknown) => JSON.stringify(value, null, 2);
 </script>
 <template>
@@ -56,7 +134,12 @@ const text = (value: unknown) => JSON.stringify(value, null, 2);
       <p>
         执行范围静止：{{
           details.status.process.quiescent ? "已确认" : "未确认"
-        }}；输出质量：{{ details.status.process.quality }}
+        }}；输出质量：{{ qualities[details.status.process.quality] }}
+      </p>
+      <p>结束原因：{{ ends[details.status.process.end] }}</p>
+      <p>机制诊断：{{ failures[details.status.process.failureKind] }}</p>
+      <p v-if="details.status.process.failureKind !== 'none'">
+        请核对原请求与宿主诊断；不要因未收到完整结果而重复派发。
       </p>
     </div>
     <p class="plan-validity">
@@ -125,11 +208,21 @@ const text = (value: unknown) => JSON.stringify(value, null, 2);
       </dd>
       <dt>派发诊断 / 停止响应</dt>
       <dd>
-        {{ text(details.status.dispatchCause) }} /
-        {{ details.status.stopOutcome ?? "无" }}
+        {{ cause(details.status.dispatchCause) }} /
+        {{
+          details.status.stopOutcome === null
+            ? "无"
+            : stops[details.status.stopOutcome]
+        }}
       </dd>
       <dt>效果验证</dt>
-      <dd>{{ details.status.assessment ?? "尚未验证" }}</dd>
+      <dd>
+        {{
+          details.status.assessment === null
+            ? "尚未验证"
+            : assessments[details.status.assessment]
+        }}
+      </dd>
       <dt>终止/效果核验证据引用（仅授权可见）</dt>
       <dd>
         <pre>{{ text(details.status.evidence) }}</pre>

@@ -2610,6 +2610,86 @@
             }
           ]
         },
+        "ProcessFailureKind": {
+          "description": "Closed, value-free mechanism diagnosis, independent of cancellation, exit and effect.",
+          "oneOf": [
+            {
+              "const": "none",
+              "description": "No mechanism failure was observed; not a statement of business success.",
+              "type": "string"
+            },
+            {
+              "const": "denied",
+              "description": "An immutable input or artifact did not satisfy access/integrity requirements.",
+              "type": "string"
+            },
+            {
+              "const": "unbound",
+              "description": "The requested OS identity or controlled input binding is absent.",
+              "type": "string"
+            },
+            {
+              "const": "capability",
+              "description": "The declared restriction cannot be enforced.",
+              "type": "string"
+            },
+            {
+              "const": "unsupported",
+              "description": "A profile or encoding is not supported on this platform.",
+              "type": "string"
+            },
+            {
+              "const": "invalidInput",
+              "description": "Supplied input, encoding or configuration is malformed.",
+              "type": "string"
+            },
+            {
+              "const": "capacity",
+              "description": "A materialization, input or owner capacity limit was exceeded.",
+              "type": "string"
+            },
+            {
+              "const": "conflict",
+              "description": "An attempt or immutable resource already has a conflicting owner.",
+              "type": "string"
+            },
+            {
+              "const": "unavailable",
+              "description": "A required platform resource could not be acquired.",
+              "type": "string"
+            },
+            {
+              "const": "runtime",
+              "description": "The owner thread/runtime could not be initialized.",
+              "type": "string"
+            },
+            {
+              "const": "spawn",
+              "description": "The target could not be created or its initial thread resumed.",
+              "type": "string"
+            },
+            {
+              "const": "inputDelivery",
+              "description": "Controlled stdin could not be delivered completely.",
+              "type": "string"
+            },
+            {
+              "const": "capture",
+              "description": "A standard output/error stream could not be read completely.",
+              "type": "string"
+            },
+            {
+              "const": "supervision",
+              "description": "Root process status could not be observed reliably.",
+              "type": "string"
+            },
+            {
+              "const": "outputValidation",
+              "description": "Captured output did not meet its declared encoding or structure.",
+              "type": "string"
+            }
+          ]
+        },
         "ProcessSummary": {
           "additionalProperties": false,
           "description": "Ordinary result projection. No raw output, paths, process identifiers or secrets.",
@@ -2622,6 +2702,10 @@
               "description": "Root exit code, independently from effect or scope quiescence.",
               "format": "int32",
               "type": ["integer", "null"]
+            },
+            "failureKind": {
+              "$ref": "#/$defs/ProcessFailureKind",
+              "description": "First mechanism failure. Required even when no failure has occurred."
             },
             "finished": {
               "description": "Root capture completed; not proof of all descendants terminating.",
@@ -2645,6 +2729,7 @@
           "required": [
             "finished",
             "end",
+            "failureKind",
             "quiescent",
             "totalOutputBytes",
             "quality"
@@ -3176,6 +3261,86 @@
             }
           ]
         },
+        "ProcessFailureKind": {
+          "description": "Closed, value-free mechanism diagnosis, independent of cancellation, exit and effect.",
+          "oneOf": [
+            {
+              "const": "none",
+              "description": "No mechanism failure was observed; not a statement of business success.",
+              "type": "string"
+            },
+            {
+              "const": "denied",
+              "description": "An immutable input or artifact did not satisfy access/integrity requirements.",
+              "type": "string"
+            },
+            {
+              "const": "unbound",
+              "description": "The requested OS identity or controlled input binding is absent.",
+              "type": "string"
+            },
+            {
+              "const": "capability",
+              "description": "The declared restriction cannot be enforced.",
+              "type": "string"
+            },
+            {
+              "const": "unsupported",
+              "description": "A profile or encoding is not supported on this platform.",
+              "type": "string"
+            },
+            {
+              "const": "invalidInput",
+              "description": "Supplied input, encoding or configuration is malformed.",
+              "type": "string"
+            },
+            {
+              "const": "capacity",
+              "description": "A materialization, input or owner capacity limit was exceeded.",
+              "type": "string"
+            },
+            {
+              "const": "conflict",
+              "description": "An attempt or immutable resource already has a conflicting owner.",
+              "type": "string"
+            },
+            {
+              "const": "unavailable",
+              "description": "A required platform resource could not be acquired.",
+              "type": "string"
+            },
+            {
+              "const": "runtime",
+              "description": "The owner thread/runtime could not be initialized.",
+              "type": "string"
+            },
+            {
+              "const": "spawn",
+              "description": "The target could not be created or its initial thread resumed.",
+              "type": "string"
+            },
+            {
+              "const": "inputDelivery",
+              "description": "Controlled stdin could not be delivered completely.",
+              "type": "string"
+            },
+            {
+              "const": "capture",
+              "description": "A standard output/error stream could not be read completely.",
+              "type": "string"
+            },
+            {
+              "const": "supervision",
+              "description": "Root process status could not be observed reliably.",
+              "type": "string"
+            },
+            {
+              "const": "outputValidation",
+              "description": "Captured output did not meet its declared encoding or structure.",
+              "type": "string"
+            }
+          ]
+        },
         "ProcessSummary": {
           "additionalProperties": false,
           "description": "Ordinary result projection. No raw output, paths, process identifiers or secrets.",
@@ -3188,6 +3353,10 @@
               "description": "Root exit code, independently from effect or scope quiescence.",
               "format": "int32",
               "type": ["integer", "null"]
+            },
+            "failureKind": {
+              "$ref": "#/$defs/ProcessFailureKind",
+              "description": "First mechanism failure. Required even when no failure has occurred."
             },
             "finished": {
               "description": "Root capture completed; not proof of all descendants terminating.",
@@ -3211,6 +3380,7 @@
           "required": [
             "finished",
             "end",
+            "failureKind",
             "quiescent",
             "totalOutputBytes",
             "quality"
@@ -3772,6 +3942,86 @@
             }
           ]
         },
+        "ProcessFailureKind": {
+          "description": "Closed, value-free mechanism diagnosis, independent of cancellation, exit and effect.",
+          "oneOf": [
+            {
+              "const": "none",
+              "description": "No mechanism failure was observed; not a statement of business success.",
+              "type": "string"
+            },
+            {
+              "const": "denied",
+              "description": "An immutable input or artifact did not satisfy access/integrity requirements.",
+              "type": "string"
+            },
+            {
+              "const": "unbound",
+              "description": "The requested OS identity or controlled input binding is absent.",
+              "type": "string"
+            },
+            {
+              "const": "capability",
+              "description": "The declared restriction cannot be enforced.",
+              "type": "string"
+            },
+            {
+              "const": "unsupported",
+              "description": "A profile or encoding is not supported on this platform.",
+              "type": "string"
+            },
+            {
+              "const": "invalidInput",
+              "description": "Supplied input, encoding or configuration is malformed.",
+              "type": "string"
+            },
+            {
+              "const": "capacity",
+              "description": "A materialization, input or owner capacity limit was exceeded.",
+              "type": "string"
+            },
+            {
+              "const": "conflict",
+              "description": "An attempt or immutable resource already has a conflicting owner.",
+              "type": "string"
+            },
+            {
+              "const": "unavailable",
+              "description": "A required platform resource could not be acquired.",
+              "type": "string"
+            },
+            {
+              "const": "runtime",
+              "description": "The owner thread/runtime could not be initialized.",
+              "type": "string"
+            },
+            {
+              "const": "spawn",
+              "description": "The target could not be created or its initial thread resumed.",
+              "type": "string"
+            },
+            {
+              "const": "inputDelivery",
+              "description": "Controlled stdin could not be delivered completely.",
+              "type": "string"
+            },
+            {
+              "const": "capture",
+              "description": "A standard output/error stream could not be read completely.",
+              "type": "string"
+            },
+            {
+              "const": "supervision",
+              "description": "Root process status could not be observed reliably.",
+              "type": "string"
+            },
+            {
+              "const": "outputValidation",
+              "description": "Captured output did not meet its declared encoding or structure.",
+              "type": "string"
+            }
+          ]
+        },
         "ProcessSummary": {
           "additionalProperties": false,
           "description": "Ordinary result projection. No raw output, paths, process identifiers or secrets.",
@@ -3784,6 +4034,10 @@
               "description": "Root exit code, independently from effect or scope quiescence.",
               "format": "int32",
               "type": ["integer", "null"]
+            },
+            "failureKind": {
+              "$ref": "#/$defs/ProcessFailureKind",
+              "description": "First mechanism failure. Required even when no failure has occurred."
             },
             "finished": {
               "description": "Root capture completed; not proof of all descendants terminating.",
@@ -3807,6 +4061,7 @@
           "required": [
             "finished",
             "end",
+            "failureKind",
             "quiescent",
             "totalOutputBytes",
             "quality"

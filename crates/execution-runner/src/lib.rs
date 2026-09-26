@@ -1,4 +1,7 @@
 //! Product OS adapters. No production authority, transport credential or automatic retry.
+#![deny(missing_docs)]
+mod diagnostics;
+/// Local IPC envelopes and the sole execution application adapter.
 pub mod host;
 #[cfg(target_os = "macos")]
 mod macos;
@@ -11,6 +14,7 @@ pub use materialize::{Artifacts, InputBytes, InputResolver};
 pub use runner::NativeRunner;
 
 #[cfg(target_os = "macos")]
+/// Native macOS XPC transport and read-only candidate probes.
 pub mod macos_service;
 
 #[cfg(not(any(target_os = "macos", windows)))]

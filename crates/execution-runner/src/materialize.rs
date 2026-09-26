@@ -13,6 +13,7 @@ use zeroize::Zeroize;
 /// A single-use input buffer. It is never cloned, serialized, or included in Debug output.
 pub struct InputBytes(Vec<u8>);
 impl InputBytes {
+    /// Take ownership of bytes and zeroize them on drop; the resolver enforces their bound.
     pub fn new(bytes: Vec<u8>) -> Self {
         Self(bytes)
     }
@@ -28,6 +29,7 @@ impl Drop for InputBytes {
 /// Trusted product input resolution, invoked only after consuming dispatch authority.
 /// Implementations must authorize the exact plan, reference and attempt, and honor the byte bound.
 pub trait InputResolver: Send + Sync {
+    /// Resolve once for this admitted attempt. Return an error for absent, unauthorized or oversized input.
     fn resolve(
         &self,
         plan: &FrozenPlan,
@@ -38,9 +40,13 @@ pub trait InputResolver: Send + Sync {
 }
 /// Fixed local materialization coordinates. These paths never grant execution authority.
 pub struct Artifacts {
+    /// Absolute protected interpreter artifact; its exact bytes must match the plan digest.
     pub interpreter: PathBuf,
+    /// Absolute protected content artifact, never an arbitrary command or download URL.
     pub content: PathBuf,
+    /// Existing private materialization directory owned by the execution identity.
     pub work_root: PathBuf,
+    /// Trusted per-attempt input resolver; absent means controlled stdin is refused.
     pub controlled_input: Option<Arc<dyn InputResolver>>,
     // Only the unit-test binary accepts caller-owned fixture sources; no production switch exists.
     #[cfg(test)]
@@ -61,6 +67,7 @@ impl Drop for Payload {
     }
 }
 pub(crate) struct Materialized {
+    /// Absolute protected interpreter artifact; its exact bytes must match the plan digest.
     pub interpreter: PathBuf,
     pub args: Vec<String>,
     pub env: BTreeMap<String, String>,

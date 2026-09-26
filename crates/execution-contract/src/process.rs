@@ -61,6 +61,41 @@ pub enum OutputQuality {
     /// A process or pipe is still unaccounted for.
     Partial,
 }
+/// Closed, value-free mechanism diagnosis, independent of cancellation, exit and effect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum ProcessFailureKind {
+    /// No mechanism failure was observed; not a statement of business success.
+    None,
+    /// An immutable input or artifact did not satisfy access/integrity requirements.
+    Denied,
+    /// The requested OS identity or controlled input binding is absent.
+    Unbound,
+    /// The declared restriction cannot be enforced.
+    Capability,
+    /// A profile or encoding is not supported on this platform.
+    Unsupported,
+    /// Supplied input, encoding or configuration is malformed.
+    InvalidInput,
+    /// A materialization, input or owner capacity limit was exceeded.
+    Capacity,
+    /// An attempt or immutable resource already has a conflicting owner.
+    Conflict,
+    /// A required platform resource could not be acquired.
+    Unavailable,
+    /// The owner thread/runtime could not be initialized.
+    Runtime,
+    /// The target could not be created or its initial thread resumed.
+    Spawn,
+    /// Controlled stdin could not be delivered completely.
+    InputDelivery,
+    /// A standard output/error stream could not be read completely.
+    Capture,
+    /// Root process status could not be observed reliably.
+    Supervision,
+    /// Captured output did not meet its declared encoding or structure.
+    OutputValidation,
+}
 /// Immutable terminal capture persisted beside the existing execution attempt.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -79,6 +114,8 @@ pub struct ProcessEvidence {
     pub exit_code: Option<i32>,
     /// Stop classification, separate from termination proof.
     pub end: ProcessEnd,
+    /// First mechanism failure. Required even when no failure has occurred.
+    pub failure_kind: ProcessFailureKind,
     /// True only if the whole delegated activity is proven quiescent.
     pub quiescent: bool,
     /// Raw bounded stdout. Never projected into ordinary task summaries.
@@ -110,6 +147,8 @@ pub struct ProcessSummary {
     pub exit_code: Option<i32>,
     /// Stop/failure classification.
     pub end: ProcessEnd,
+    /// First mechanism failure. Required even when no failure has occurred.
+    pub failure_kind: ProcessFailureKind,
     /// Explicit full-scope proof; false means unproven.
     pub quiescent: bool,
     /// Bytes observed including discarded bytes.
@@ -124,6 +163,7 @@ impl ProcessEvidence {
             finished: self.finished,
             exit_code: self.exit_code,
             end: self.end,
+            failure_kind: self.failure_kind,
             quiescent: self.quiescent,
             total_output_bytes: self.total_output_bytes,
             quality: self.quality,

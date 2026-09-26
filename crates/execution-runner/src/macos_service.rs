@@ -1,3 +1,4 @@
+use crate::diagnostics::{record, Stage};
 use crate::host::{self, Handler, Peer};
 use execution_app::Error;
 use std::{
@@ -21,6 +22,13 @@ extern "C" {
     ) -> i32;
 }
 pub(crate) fn run(handler: Box<dyn Handler>, stop: &'static AtomicBool) -> Result<(), Error> {
+    let result = run_inner(handler, stop);
+    if let Err(error) = result {
+        record(Stage::Startup, error);
+    }
+    result
+}
+fn run_inner(handler: Box<dyn Handler>, stop: &'static AtomicBool) -> Result<(), Error> {
     HANDLER
         .set(Mutex::new(handler))
         .map_err(|_| Error::Conflict)?;
@@ -30,7 +38,7 @@ pub(crate) fn run(handler: Box<dyn Handler>, stop: &'static AtomicBool) -> Resul
         while !stop.load(Ordering::Acquire) {
             let mut h = HANDLER.get().unwrap().lock().map_err(|_| {
                 stop.store(true, Ordering::Release);
-                eprintln!("execution handler unavailable");
+                record(Stage::Ingress, Error::Unavailable);
                 Error::Unavailable
             })?;
             {
@@ -38,7 +46,7 @@ pub(crate) fn run(handler: Box<dyn Handler>, stop: &'static AtomicBool) -> Resul
                     Ok(()) => previous = None,
                     Err(error) => {
                         if previous != Some(error) {
-                            eprintln!("execution reconcile: {error}");
+                            record(Stage::Reconcile, error);
                             previous = Some(error);
                         }
                     }
@@ -52,7 +60,10 @@ pub(crate) fn run(handler: Box<dyn Handler>, stop: &'static AtomicBool) -> Resul
             .unwrap()
             .lock()
             .map_err(|_| Error::Unavailable)?
-            .stop()?;
+            .stop()
+            .inspect_err(|&error| {
+                record(Stage::Shutdown, error);
+            })?;
         Ok::<(), Error>(())
     });
     let result = unsafe { rss_execution_listen() };
@@ -150,7 +161,7 @@ fn handle_call(
     }))
     .unwrap_or(Err(Error::Unavailable));
     if result.is_err() && !stop.swap(true, Ordering::AcqRel) {
-        eprintln!("execution handler unavailable");
+        record(Stage::Ingress, Error::Unavailable);
     }
     result
 }

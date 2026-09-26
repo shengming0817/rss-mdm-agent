@@ -1,8 +1,6 @@
 use crate::host::*;
+use crate::runner::support::*;
 use execution_app::*;
-#[path = "../../execution-app/tests/support/mod.rs"]
-pub(crate) mod support;
-use support::*;
 struct Caller;
 impl Ingress for Caller {
     fn authenticate(&self, _: &Peer) -> Result<RequestContext, Error> {
