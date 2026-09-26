@@ -35,7 +35,7 @@ const credentialType = ref<"api_key" | "auth_token">("api_key");
 const replaceKey = ref(false),
   secret = ref(""),
   revealSecret = ref(false);
-const testing = ref(new Set<string>());
+const testing = ref(new Map<string, boolean>());
 const secretField = ref<HTMLInputElement>();
 let disposed = false;
 function clearSecret() {
@@ -69,16 +69,16 @@ const labels = new Map([
   ["claude", "Claude"],
   ["deepseek", "DeepSeek"],
 ]);
-const testMessages = {
-  host: "AI Host 或模型进程不可用，请检查 Host 状态后重试。",
-  configuration: "配置无法解析，请检查地址、模型及本机配置。",
-  authentication: "认证失败，请检查或更换凭据后保存，再重新测试。",
-  provider: "网络或模型服务不可用，请检查网络及服务状态后重试。",
-  capability: "模型不支持当前用途，请修改模型或用途后保存。",
-  quota: "服务限额或额度不足，请检查额度后重试。",
-  timeout: "测试超时，请检查网络与服务状态后重试。",
-  cleanup: "测试进程未确认完成清理，请检查 Host 状态后重试。",
-};
+const testMessages = new Map([
+  ["host", "AI Host 或模型进程不可用，请检查 Host 状态后重试。"],
+  ["configuration", "配置无法解析，请检查地址、模型及本机配置。"],
+  ["authentication", "认证失败，请检查或更换凭据后保存，再重新测试。"],
+  ["provider", "网络或模型服务不可用，请检查网络及服务状态后重试。"],
+  ["capability", "模型不支持当前用途，请修改模型或用途后保存。"],
+  ["quota", "服务限额或额度不足，请检查额度后重试。"],
+  ["timeout", "测试超时，请检查网络与服务状态后重试。"],
+  ["cleanup", "测试进程未确认完成清理，请检查 Host 状态后重试。"],
+]);
 function connectionMessage(code: string) {
   if (code === "revision_conflict")
     return "已保存版本已变化，请核对最新记录后重新编辑或测试；当前草稿保留。";
@@ -91,7 +91,7 @@ function connectionMessage(code: string) {
 async function testConnection(row: Connection) {
   const runtime = c.runtime.value;
   if (!runtime || testing.value.has(row.connectionId)) return;
-  testing.value.add(row.connectionId);
+  testing.value.set(row.connectionId, true);
   error.value = "";
   try {
     const result = await runtime.testConnection(
@@ -100,7 +100,8 @@ async function testConnection(row: Connection) {
     );
     if (disposed) return;
     if (result.lastTest?.outcome === "failed")
-      error.value = testMessages[result.lastTest.stage];
+      error.value =
+        testMessages.get(result.lastTest.stage) ?? "测试结果未确认，请重试。";
     await load();
   } catch (e) {
     if (!disposed) {
@@ -304,7 +305,7 @@ function containRemovalFocus(event: KeyboardEvent) {
                 {{ row.configRevision }}</span
               >
               <span v-if="row.lastTest?.outcome === 'failed'" role="status">
-                · 最近测试失败：{{ testMessages[row.lastTest.stage] }}</span
+                · 最近测试失败：{{ testMessages.get(row.lastTest.stage) }}</span
               >
               <button
                 type="button"

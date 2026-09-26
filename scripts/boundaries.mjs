@@ -549,6 +549,8 @@ export function checkTree(treeRoot = root) {
         'native-process = { path = "../../../crates/native-process" }',
         'local-service = { path = "../../../crates/local-service" }',
         'windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_System_Threading"] }',
+        'aes-gcm = { version = "=0.10.3", features = ["zeroize"] }',
+        'zeroize = "=1.8.2"',
         'unicode-normalization = "=0.1.25"',
         'uuid = { version = "=1.26.0", features = ["v4"] }',
         'libc = "=0.2.189"',

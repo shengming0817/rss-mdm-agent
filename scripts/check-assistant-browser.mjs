@@ -22,6 +22,7 @@ try {
         : undefined),
   });
   page = await browser.newPage();
+  await page.clock.install();
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(fixture.url);
@@ -629,6 +630,7 @@ try {
     [2000, "计划已过期"],
   ]) {
     await page.clock.setFixedTime(new Date(ms));
+    await page.clock.runFor(1000);
     await page.locator(".plan-validity").filter({ hasText: note }).waitFor();
   }
   await page.clock.setFixedTime(new Date());
