@@ -39,6 +39,7 @@ fn from_value<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> Resul
 pub struct Users {
     path: PathBuf,
     page: TestUserPage,
+    active: Option<UserContext>,
 }
 impl Users {
     pub fn open(root: &Path) -> Result<Self> {
@@ -63,7 +64,11 @@ impl Users {
         } else {
             from_value(json!({"schemaVersion":5,"kind":"testUserPage","users":[]}))?
         };
-        let mut this = Self { path, page };
+        let mut this = Self {
+            path,
+            page,
+            active: None,
+        };
         let mut keys = std::collections::BTreeSet::new();
         let mut ids = std::collections::BTreeSet::new();
         for user in &this.page.users {
@@ -86,6 +91,7 @@ impl Users {
                 .clone();
             this.page.current = Some(Self::context(user)?);
         }
+        this.active = this.page.current.clone();
         this.persist(&this.page)?;
         Ok(this)
     }
@@ -95,16 +101,25 @@ impl Users {
         )
     }
     pub fn page(&self) -> TestUserPage {
-        self.page.clone()
+        let mut page = self.page.clone();
+        page.current = self.active.clone();
+        page
     }
     pub fn current(&self) -> Result<UserContext> {
-        self.page
-            .current
+        self.active
             .clone()
             .ok_or_else(|| error("user_required", "请先选择测试用户"))
     }
     pub fn require(&self, generation: &str) -> Result<UserContext> {
         let context = self.current()?;
+        if context
+            .identity
+            .as_ref()
+            .and_then(|i| i.expires_at_ms)
+            .is_some_and(|end| super::execution::now().map_or(true, |now| now >= end))
+        {
+            return Err(error("session_expired", "企业会话已过期，请重新登录"));
+        }
         if context.generation.as_str() != generation {
             return Err(error("user_changed", "测试用户已切换，请刷新当前视图"));
         }
@@ -134,11 +149,47 @@ impl Users {
         let context = page.current.clone().ok_or_else(storage)?;
         self.persist(&page)?;
         self.page = page;
+        self.active = Some(context.clone());
         Ok(context)
     }
     pub fn select(&mut self, name: &str) -> Result<UserContext> {
         let page = self.prepare(name)?;
         self.commit(page)
+    }
+    pub fn clear(&mut self) -> Result<()> {
+        // Revoke memory first, including when persistence fails.
+        self.active = None;
+        self.page.current = None;
+        self.persist(&self.page)
+    }
+    pub fn activate(&mut self, context: UserContext) -> Result<UserContext> {
+        self.clear()?;
+        self.active = Some(context.clone());
+        Ok(context)
+    }
+    pub fn guest(&self) -> Result<UserContext> {
+        let path = self.path.with_file_name("guest-id");
+        let id = if path.exists() {
+            let data = native_process::private_storage::read(&path, 64).map_err(|_| storage())?;
+            Uuid::parse_str(std::str::from_utf8(&data).map_err(|_| storage())?)
+                .map_err(|_| storage())?
+        } else {
+            let id = Uuid::new_v4();
+            let mut file =
+                native_process::private_storage::create_new(&path).map_err(|_| storage())?;
+            file.write_all(id.to_string().as_bytes())
+                .map_err(|_| storage())?;
+            file.sync_all().map_err(|_| storage())?;
+            id
+        };
+        from_value(json!({"schemaVersion":5,"kind":"userContext",
+            "user":{"schemaVersion":5,"kind":"testUser","userId":id.to_string(),"displayName":"访客","nameKey":"guest"},
+            "generation":Uuid::new_v4().to_string(),
+            "identity":{"mode":"guest","authorityId":"desktop-guest","tenantId":"local-guest","principalId":id.to_string()}}))
+    }
+    pub fn select_guest(&mut self) -> Result<UserContext> {
+        let context = self.guest()?;
+        self.activate(context)
     }
     fn persist(&self, page: &TestUserPage) -> Result<()> {
         let temporary = self.path.with_extension(format!("{}.tmp", Uuid::new_v4()));
@@ -163,6 +214,23 @@ impl Users {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn guest_is_stable_separate_from_same_named_test_user_and_revokes_generation() {
+        let root = std::env::temp_dir().join(format!("rss-guest-{}", Uuid::new_v4()));
+        native_process::private_storage::directory(&root).unwrap();
+        let mut users = Users::open(&root).unwrap();
+        let test = users.select("访客").unwrap();
+        let guest = users.select_guest().unwrap();
+        assert_ne!(test.user.user_id, guest.user.user_id);
+        assert!(users.require(test.generation.as_str()).is_err());
+        users.clear().unwrap();
+        assert!(users.require(guest.generation.as_str()).is_err());
+        let next = users.select_guest().unwrap();
+        assert_eq!(guest.user.user_id, next.user.user_id);
+        assert_ne!(guest.generation, next.generation);
+        assert_eq!(users.page().users.len(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn names_are_unicode_trimmed_nfc_and_ascii_insensitive() {
         assert_eq!(

@@ -256,6 +256,138 @@ impl<'de> ::serde::Deserialize<'de> for AccessUpdateSchemaVersion {
             .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
     }
 }
+#[doc = "`AccountIdentity`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct AccountIdentity {
+    #[serde(rename = "authorityId")]
+    #[doc = "`authority_id` member; see its generated type and parent schema."]
+    pub authority_id: Id,
+    #[serde(
+        rename = "expiresAtMs",
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    #[doc = "`expires_at_ms` member; see its generated type and parent schema."]
+    pub expires_at_ms: ::std::option::Option<u64>,
+    #[doc = "`mode` member; see its generated type and parent schema."]
+    pub mode: AccountIdentityMode,
+    #[serde(
+        rename = "organizationId",
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    #[doc = "`organization_id` member; see its generated type and parent schema."]
+    pub organization_id: ::std::option::Option<AccountIdentityOrganizationId>,
+    #[serde(rename = "principalId")]
+    #[doc = "`principal_id` member; see its generated type and parent schema."]
+    pub principal_id: Id,
+    #[serde(rename = "tenantId")]
+    #[doc = "`tenant_id` member; see its generated type and parent schema."]
+    pub tenant_id: Id,
+}
+#[doc = "`AccountIdentityMode`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum AccountIdentityMode {
+    #[serde(rename = "guest")]
+    #[doc = "`Guest` alternative; see the parent type's schema contract."]
+    Guest,
+    #[serde(rename = "enterprise")]
+    #[doc = "`Enterprise` alternative; see the parent type's schema contract."]
+    Enterprise,
+}
+impl ::std::fmt::Display for AccountIdentityMode {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Guest => f.write_str("guest"),
+            Self::Enterprise => f.write_str("enterprise"),
+        }
+    }
+}
+impl ::std::str::FromStr for AccountIdentityMode {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "guest" => Ok(Self::Guest),
+            "enterprise" => Ok(Self::Enterprise),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for AccountIdentityMode {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for AccountIdentityMode {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`AccountIdentityOrganizationId`"]
+#[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct AccountIdentityOrganizationId(
+    #[doc = "`` member; see its generated type and parent schema."] ::std::string::String,
+);
+impl ::std::ops::Deref for AccountIdentityOrganizationId {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<AccountIdentityOrganizationId> for ::std::string::String {
+    fn from(value: AccountIdentityOrganizationId) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for AccountIdentityOrganizationId {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() > 64usize {
+            return Err("longer than 64 characters".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for AccountIdentityOrganizationId {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for AccountIdentityOrganizationId {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for AccountIdentityOrganizationId {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
+}
 #[doc = "Native control acknowledgement; never a model turn outcome."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(tag = "type", content = "confirmation")]
@@ -9166,7 +9298,7 @@ impl ::std::convert::From<HostHealthProtocol> for i64 {
 impl ::std::convert::TryFrom<i64> for HostHealthProtocol {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![3_i64].contains(&value) {
+        if ![4_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -12866,12 +12998,15 @@ impl<'de> ::serde::Deserialize<'de> for TestUserSchemaVersion {
             .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
     }
 }
-#[doc = "UserContext product wire record; validated against the V5 schema."]
+#[doc = "Native-owned local profile and generation. An absent identity is a legacy test profile; enterprise authority is established only by native AuthN and AuthZ verification."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct UserContext {
     #[doc = "`generation` member; see its generated type and parent schema."]
     pub generation: Id,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[doc = "`identity` member; see its generated type and parent schema."]
+    pub identity: ::std::option::Option<AccountIdentity>,
     #[doc = "`kind` member; see its generated type and parent schema."]
     pub kind: UserContextKind,
     #[serde(rename = "schemaVersion")]
@@ -13412,6 +13547,24 @@ impl std::fmt::Debug for AccessUpdateSchemaVersion {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(
             stringify!(AccessUpdateSchemaVersion),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for AccountIdentity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(AccountIdentity), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for AccountIdentityMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(AccountIdentityMode), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for AccountIdentityOrganizationId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(AccountIdentityOrganizationId),
             "([redacted])"
         ))
     }
@@ -15581,7 +15734,7 @@ impl HistoryRequestSchemaVersion {
 }
 impl HostHealthProtocol {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(3_i64);
+    pub const VALUE: Self = Self(4_i64);
 }
 impl HostHealthSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]

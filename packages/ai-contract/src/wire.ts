@@ -1943,13 +1943,22 @@ export interface TestUser {
   nameKey: string;
 }
 /**
- * UserContext product wire record; validated against the V5 schema.
+ * Native-owned local profile and generation. An absent identity is a legacy test profile; enterprise authority is established only by native AuthN and AuthZ verification.
  */
 export interface UserContext {
   schemaVersion: 5;
   kind: "userContext";
   user: TestUser;
   generation: Id;
+  identity?: AccountIdentity;
+}
+export interface AccountIdentity {
+  mode: "guest" | "enterprise";
+  authorityId: Id;
+  tenantId: Id;
+  principalId: Id;
+  organizationId?: string;
+  expiresAtMs?: number;
 }
 export interface ConnectionPage {
   schemaVersion: 5;
@@ -2144,7 +2153,7 @@ export interface HostHealth {
   schemaVersion: 5;
   kind: "hostHealth";
   ready: true;
-  protocol: 3;
+  protocol: 4;
 }
 /**
  * Closed diagnostic frame on the inherited Host diagnostic pipe. Raw stderr and unknown frames never become product diagnostics.

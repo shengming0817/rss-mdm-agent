@@ -22,6 +22,12 @@
     "allow-test-users",
     "allow-select-test-user",
     "allow-save-connection",
-    "allow-local-service-status"
+    "allow-local-service-status",
+    "allow-select-guest",
+    "allow-account-logout",
+    "allow-account-status",
+    "allow-account-organizations",
+    "allow-account-save-organization",
+    "allow-account-login"
   ]
 }

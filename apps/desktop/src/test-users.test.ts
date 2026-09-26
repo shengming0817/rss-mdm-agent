@@ -126,3 +126,27 @@ it("keeps the current workspace mounted and inert while a switch is pending", as
   await flushPromises();
   wrapper.unmount();
 });
+
+it("keeps enterprise, test and guest entries visible before selecting a user", async () => {
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "test_users")
+      return { schemaVersion: 5, kind: "testUserPage", users: [] };
+    if (command === "account_organizations") return [];
+    throw { code: "ai_unavailable" };
+  });
+  const wrapper = mount(App);
+  try {
+    await flushPromises();
+    expect(wrapper.text()).toContain("企业登录");
+    expect(wrapper.find('[aria-label="测试用户名"]').exists()).toBe(true);
+    const guest = wrapper
+      .findAll("button")
+      .find((b) => b.text() === "不登录使用");
+    expect(guest).toBeDefined();
+    await guest!.trigger("click");
+    await flushPromises();
+    expect(invoke).toHaveBeenCalledWith("select_guest");
+  } finally {
+    wrapper.unmount();
+  }
+});

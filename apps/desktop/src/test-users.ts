@@ -74,3 +74,62 @@ export function selectionMessage(error: unknown): string {
       return "切换未完成，当前用户未变。请重新连接并重试；已登记设备任务仍可查询。";
   }
 }
+
+export async function enterGuest(): Promise<UserContext> {
+  const context = parsed(await invoke("select_guest"), "userContext");
+  currentUser.value = context;
+  return context;
+}
+export async function loginEnterprise(
+  organizationId: string,
+  login: string,
+): Promise<UserContext> {
+  try {
+    const context = parsed(
+      await invoke("account_login", { organizationId, login }),
+      "userContext",
+    );
+    currentUser.value = context;
+    return context;
+  } catch (error) {
+    // Native login revokes the preceding account before changing organizations.
+    await refreshAccount();
+    throw error;
+  }
+}
+export async function logoutAccount(): Promise<void> {
+  try {
+    await invoke("account_logout");
+  } finally {
+    currentUser.value = undefined;
+  }
+}
+export async function refreshAccount(): Promise<void> {
+  const expected = currentUser.value?.generation;
+  try {
+    const value = await invoke("account_status");
+    if (currentUser.value?.generation !== expected) return;
+    currentUser.value = value ? parsed(value, "userContext") : undefined;
+  } catch {
+    if (
+      currentUser.value?.generation === expected &&
+      currentUser.value?.identity?.mode === "enterprise"
+    )
+      currentUser.value = undefined;
+  }
+}
+
+export type Organization = {
+  id: string;
+  label: string;
+  origin: string;
+  tenantId: string;
+};
+export async function loadOrganizations(): Promise<Organization[]> {
+  return invoke<Organization[]>("account_organizations");
+}
+export async function saveOrganization(
+  input: Organization,
+): Promise<Organization[]> {
+  return invoke<Organization[]>("account_save_organization", { input });
+}

@@ -9,10 +9,15 @@ import {
   loadTestUsers,
   selectTestUser,
   selectionMessage,
+  enterGuest,
+  loginEnterprise,
+  logoutAccount,
+  refreshAccount,
 } from "./test-users";
 import type { TestUser } from "@rss-mdm-agent/ai-contract";
 import Settings from "./settings/Settings.vue";
 import TestUsers from "./settings/TestUsers.vue";
+import Account from "./settings/Account.vue";
 import { nativeHost } from "./settings/native";
 import { createHostSettings } from "./settings/controller";
 defineProps<{ assistantServices?: AssistantServices }>();
@@ -49,6 +54,26 @@ async function select(name: string) {
     loading.value = false;
   }
 }
+async function accountAction(action: () => Promise<unknown>) {
+  if (loading.value) return;
+  loading.value = true;
+  message.value = "";
+  try {
+    await action();
+    attention.value = 0;
+    page.value = "settings";
+  } catch (error) {
+    const code = (error as { code?: string })?.code;
+    message.value =
+      code === "logout_unconfirmed"
+        ? "本机会话已退出，服务端注销未确认；请在企业账户中撤销会话"
+        : code === "cancelled"
+          ? "已取消登录"
+          : "无法完成账户操作，请核对组织、账号和业务授权后重试";
+  } finally {
+    loading.value = false;
+  }
+}
 async function navigate(id: string) {
   page.value = nativeTestMode && !currentUser.value ? "settings" : id;
   await nextTick();
@@ -59,7 +84,11 @@ onMounted(() => {
   if (nativeTestMode) void refresh();
   if (host.available) {
     void host.refresh();
-    polling = setInterval(() => void host.refresh(), 2000);
+    polling = setInterval(() => {
+      void host.refresh();
+      if (!loading.value && currentUser.value?.identity?.mode === "enterprise")
+        void refreshAccount();
+    }, 2000);
   }
 });
 onBeforeUnmount(() => {
@@ -75,7 +104,13 @@ onBeforeUnmount(() => {
           <span class="eyebrow">RSS / WORKSPACE</span
           ><strong>自助服务中心</strong>
         </div>
-        <span class="mode-label">{{ mode }}</span>
+        <span class="mode-label">{{
+          currentUser?.identity?.mode === "enterprise"
+            ? "企业账户 · 本地 AI"
+            : currentUser?.identity?.mode === "guest"
+              ? "不登录 · 本地访客"
+              : mode
+        }}</span>
       </div></template
     >
     <template #navigation
@@ -114,25 +149,37 @@ onBeforeUnmount(() => {
         <template #user
           ><TestUsers
             :users="users"
-            :current="currentUser"
+            :current="currentUser?.identity ? undefined : currentUser"
             :native="nativeTestMode"
             :loading="loading"
             :message="message"
-            @select="select"
+            @select="select" /><Account
+            :loading="loading"
+            @guest="accountAction(enterGuest)"
+            @logout="accountAction(logoutAccount)"
+            @login="
+              (org, login) => accountAction(() => loginEnterprise(org, login))
+            "
         /></template>
       </Workspace>
       <Settings v-else :host="host"
         ><template #user
           ><TestUsers
             :users="users"
-            :current="currentUser"
+            :current="undefined"
             :native="nativeTestMode"
             :loading="loading"
             :message="message"
-            @select="select" /></template
+            @select="select" /><Account
+            :loading="loading"
+            @guest="accountAction(enterGuest)"
+            @logout="accountAction(logoutAccount)"
+            @login="
+              (org, login) => accountAction(() => loginEnterprise(org, login))
+            " /></template
       ></Settings>
     </div>
-    <p v-if="loading" role="status">正在读取或切换测试用户…</p>
+    <p v-if="loading" role="status">正在读取或切换账户…</p>
     <template #status
       ><div class="footer-note">
         <span>S1 测试服务 · 无系统副作用 · 独立测试批准</span

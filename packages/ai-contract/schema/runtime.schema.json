@@ -3967,6 +3967,9 @@
         },
         "generation": {
           "$ref": "#/$defs/Id"
+        },
+        "identity": {
+          "$ref": "#/$defs/AccountIdentity"
         }
       },
       "required": [
@@ -3976,7 +3979,7 @@
         "generation"
       ],
       "additionalProperties": false,
-      "description": "UserContext product wire record; validated against the V5 schema."
+      "description": "Native-owned local profile and generation. An absent identity is a legacy test profile; enterprise authority is established only by native AuthN and AuthZ verification."
     },
     "HistoryPreview": {
       "type": "object",
@@ -4826,7 +4829,7 @@
         },
         "protocol": {
           "type": "integer",
-          "const": 3
+          "const": 4
         }
       },
       "required": [
@@ -4865,6 +4868,42 @@
         "schemaVersion",
         "kind",
         "code"
+      ],
+      "additionalProperties": false
+    },
+    "AccountIdentity": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "guest",
+            "enterprise"
+          ]
+        },
+        "authorityId": {
+          "$ref": "#/$defs/Id"
+        },
+        "tenantId": {
+          "$ref": "#/$defs/Id"
+        },
+        "principalId": {
+          "$ref": "#/$defs/Id"
+        },
+        "organizationId": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "expiresAtMs": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "mode",
+        "authorityId",
+        "tenantId",
+        "principalId"
       ],
       "additionalProperties": false
     }

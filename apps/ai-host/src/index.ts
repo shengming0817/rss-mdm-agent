@@ -25,10 +25,10 @@ import { localResolver } from "./resolver.js";
 import { connectionPersistence, ConnectionSecrets } from "./secrets.js";
 import { NativeControl } from "./native.js";
 export type { LocalConfiguration } from "./configuration.js";
-const callerFor = (context: UserContext): Caller => ({
-  tenantId: "test-users",
-  principalId: context.user.userId,
-  authorityId: "desktop-fixture",
+export const callerFor = (context: UserContext): Caller => ({
+  tenantId: context.identity?.tenantId ?? "test-users",
+  principalId: context.identity?.principalId ?? context.user.userId,
+  authorityId: context.identity?.authorityId ?? "desktop-fixture",
 });
 /** Restart-safe user fence used by the private Native control handler. */
 export async function suspendNativeCaller(
@@ -97,9 +97,11 @@ export async function startLocalApp(
   let activeUser: UserContext | undefined;
   const available = (caller: Caller) =>
     !!activeUser &&
-    caller.principalId === activeUser.user.userId &&
-    caller.tenantId === "test-users" &&
-    caller.authorityId === "desktop-fixture";
+    (!activeUser.identity?.expiresAtMs ||
+      Date.now() < activeUser.identity.expiresAtMs) &&
+    caller.principalId === callerFor(activeUser).principalId &&
+    caller.tenantId === callerFor(activeUser).tenantId &&
+    caller.authorityId === callerFor(activeUser).authorityId;
   const link = new PrivateLink(parent.input, parent.output, "native");
   const executionLane = link.lane("execution");
   const execution = await connectExecution(
@@ -107,7 +109,11 @@ export async function startLocalApp(
     executionLane,
     async (request) => {
       const current = activeUser;
-      if (!current || current.user.userId !== request.namespace.principalId)
+      if (
+        !current ||
+        current.identity?.mode === "enterprise" ||
+        !available(request.namespace)
+      )
         throw new Error("unbound origin");
       if (!request.commandId) throw new Error("unbound origin");
       const command = await store.command(request.namespace, request.commandId),
@@ -203,7 +209,7 @@ export async function startLocalApp(
           schemaVersion: 5,
           kind: "hostHealth",
           ready: true,
-          protocol: 3,
+          protocol: 4,
         } satisfies HostHealth;
       if (method === "attach")
         return switchUser(async () => {

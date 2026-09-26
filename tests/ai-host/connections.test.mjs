@@ -12,6 +12,7 @@ import {
   ConnectionSecrets,
 } from "../../apps/ai-host/dist/secrets.js";
 import {
+  callerFor,
   closeOwners,
   suspendNativeCaller,
 } from "../../apps/ai-host/dist/index.js";
@@ -1029,4 +1030,64 @@ test("controlled connection verification requires the dedicated harmless tool ca
       await rm(root, { recursive: true, force: true });
     }
   }
+});
+
+test("enterprise and guest callers use native identity, never display name or provider identity", async () => {
+  const user = {
+    schemaVersion: 5,
+    kind: "testUser",
+    userId: "legacy",
+    displayName: "same",
+    nameKey: "same",
+  };
+  const context = {
+    schemaVersion: 5,
+    kind: "userContext",
+    user,
+    generation: "one",
+  };
+  assert.deepEqual(callerFor(context), {
+    tenantId: "test-users",
+    principalId: "legacy",
+    authorityId: "desktop-fixture",
+  });
+  const identity = {
+    mode: "enterprise",
+    tenantId: "tenant-a",
+    principalId: "subject-a",
+    authorityId: "instance-a",
+    expiresAtMs: Date.now() + 1000,
+  };
+  const a = { ...context, identity };
+  assert.deepEqual(callerFor(a), {
+    tenantId: "tenant-a",
+    principalId: "subject-a",
+    authorityId: "instance-a",
+  });
+  for (const field of ["tenantId", "principalId", "authorityId"]) {
+    const b = { ...a, identity: { ...identity, [field]: "other" } };
+    assert.notDeepEqual(callerFor(a), callerFor(b));
+  }
+  let suspended;
+  await suspendNativeCaller(
+    {
+      suspendCaller: async (caller) => {
+        suspended = caller;
+        return { ok: true, value: undefined };
+      },
+    },
+    a,
+  );
+  assert.deepEqual(suspended, callerFor(a));
+  await assert.rejects(() =>
+    suspendNativeCaller(
+      {
+        suspendCaller: async () => {
+          throw new Error("must not run");
+        },
+      },
+      a,
+      { ...a, generation: "new" },
+    ),
+  );
 });

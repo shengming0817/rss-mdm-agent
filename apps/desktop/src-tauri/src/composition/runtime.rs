@@ -22,6 +22,7 @@ fn unavailable() -> ui::ServiceError {
     ui::error("ai_unavailable", "AI 服务不可用；已登记任务仍可查询")
 }
 struct Connection {
+    generation: String,
     reader: Mutex<mpsc::Receiver<Value>>,
     stop: CancellationToken,
     control: Arc<Control>,
@@ -41,6 +42,8 @@ pub struct DesktopRuntime {
     pub execution: ExecutionHandle,
     pub users: Arc<std::sync::Mutex<super::users::Users>>,
     switching: Mutex<()>,
+    pub organizations: std::sync::Mutex<super::account::Organizations>,
+    account: Mutex<Option<super::account::Session>>,
     host: std::sync::Mutex<HostState>,
     root: PathBuf,
     artifact: PathBuf,
@@ -98,6 +101,11 @@ impl DesktopRuntime {
             execution,
             users,
             switching: Mutex::new(()),
+            organizations: std::sync::Mutex::new(
+                super::account::Organizations::open(root)
+                    .map_err(|_| "organization settings unavailable")?,
+            ),
+            account: Mutex::new(None),
             host: std::sync::Mutex::new(HostState {
                 generation: 0,
                 owner: Host::Stopped,
@@ -115,6 +123,9 @@ impl DesktopRuntime {
         };
         runtime.restart(0).await;
         Ok(runtime)
+    }
+    pub fn closed(&self) -> bool {
+        matches!(self.host.lock().unwrap().owner, Host::Closed)
     }
     fn epoch(&self) -> u64 {
         self.host.lock().unwrap().generation
@@ -224,6 +235,16 @@ impl DesktopRuntime {
     }
     pub fn execution_for(&self, generation: &str) -> ui::Result<ExecutionHandle> {
         let context = self.current(generation)?;
+        if context
+            .identity
+            .as_ref()
+            .is_some_and(|i| i.mode == ai_session_contract::AccountIdentityMode::Enterprise)
+        {
+            return Err(ui::error(
+                "enterprise_execution_unavailable",
+                "企业执行尚未接线，请使用测试用户入口体验 S1",
+            ));
+        }
         self.execution
             .for_caller(context.user.user_id.as_str())
             .map_err(|_| unavailable())
@@ -251,9 +272,94 @@ impl DesktopRuntime {
                 }
             }
         }
+        if let Some(account) = self.account.lock().await.take() {
+            let _ = account.logout().await;
+        }
         self.users.lock().map_err(|_| unavailable())?.commit(page)
     }
+    async fn revoke_locked(&self) -> ui::Result<()> {
+        let previous = self.users.lock().map_err(|_| unavailable())?.page().current;
+        let cleared = self.users.lock().map_err(|_| unavailable())?.clear();
+        self.detach_views().await;
+        if let (Some(previous), Some(process)) = (previous, self.process()) {
+            if !process.ready()
+                || process
+                    .control
+                    .suspend(&previous, Duration::from_secs(15))
+                    .await
+                    .is_err()
+            {
+                if !process.close().await {
+                    return Err(unavailable());
+                }
+            }
+        }
+        cleared
+    }
+    pub async fn logout(&self) -> ui::Result<()> {
+        let _switch = self.switching.lock().await;
+        let revoke = self.revoke_locked().await;
+        let remote = match self.account.lock().await.take() {
+            Some(account) => account.logout().await,
+            None => Ok(()),
+        };
+        revoke?;
+        remote.map_err(|_| {
+            ui::error(
+                "logout_unconfirmed",
+                "本机会话已退出，服务端注销未确认；请在企业账户中撤销会话",
+            )
+        })
+    }
+    pub async fn select_guest(&self) -> ui::Result<ai_session_contract::UserContext> {
+        let _switch = self.switching.lock().await;
+        let next = self.users.lock().map_err(|_| unavailable())?.guest()?;
+        self.revoke_locked().await?;
+        if let Some(account) = self.account.lock().await.take() {
+            let _ = account.logout().await;
+        }
+        self.users.lock().map_err(|_| unavailable())?.activate(next)
+    }
+    pub async fn login(
+        &self,
+        organization: super::account::Organization,
+        login: &str,
+        password: String,
+    ) -> ui::Result<ai_session_contract::UserContext> {
+        let _switch = self.switching.lock().await;
+        // Revoke before authenticating another organization: a failed login cannot retain the old grant.
+        self.revoke_locked().await?;
+        if let Some(account) = self.account.lock().await.take() {
+            let _ = account.logout().await;
+        }
+        let account = super::account::Session::login(organization, login, password).await?;
+        let next = account.context()?;
+        let result = self.users.lock().map_err(|_| unavailable())?.activate(next);
+        if result.is_err() {
+            let _ = account.logout().await;
+        } else {
+            *self.account.lock().await = Some(account);
+        }
+        result
+    }
+    /// Passive checks never refresh idle or persist an enterprise bearer.
+    pub async fn verify_account(&self) -> ui::Result<()> {
+        let _switch = self.switching.lock().await;
+        let verified = match self.account.lock().await.as_mut() {
+            Some(account) => account.verify().await,
+            None => Ok(()),
+        };
+        if let Err(error) = verified {
+            let _ = self.revoke_locked().await;
+            if let Some(account) = self.account.lock().await.take() {
+                let _ = account.logout().await;
+            }
+            return Err(error);
+        }
+        Ok(())
+    }
     pub async fn connect(&self, generation: &str) -> ui::Result<String> {
+        self.verify_account().await?;
         let _switch = self.switching.lock().await;
         let context = self
             .users
@@ -281,6 +387,7 @@ impl DesktopRuntime {
         connections.insert(
             id.clone(),
             Arc::new(Connection {
+                generation: generation.into(),
                 reader: Mutex::new(reader),
                 stop: process.stop.child_token(),
                 control: process.control.clone(),
@@ -298,12 +405,16 @@ impl DesktopRuntime {
     }
     pub async fn receive(&self, id: &str) -> ui::Result<Option<Value>> {
         let c = self.connection(id).await?;
+        self.verify_account().await?;
+        self.current(&c.generation)?;
         let mut reader = c.reader.try_lock().map_err(|_| unavailable())?;
-        tokio::select! {
+        let value = tokio::select! {
             _ = c.stop.cancelled() => Err(unavailable()),
             _ = tokio::time::sleep(Duration::from_secs(20)) => Ok(None),
             message = reader.recv() => message.map(Some).ok_or_else(unavailable),
-        }
+        };
+        self.current(&c.generation)?;
+        value
     }
     pub async fn send(&self, id: &str, message: Value) -> ui::Result<()> {
         if serde_json::to_vec(&message)
@@ -314,6 +425,8 @@ impl DesktopRuntime {
             return Err(unavailable());
         }
         let connection = self.connection(id).await?;
+        self.verify_account().await?;
+        self.current(&connection.generation)?;
         if connection.stop.is_cancelled() {
             return Err(unavailable());
         }
@@ -326,6 +439,7 @@ impl DesktopRuntime {
         expected: Option<u64>,
         secret: Option<String>,
     ) -> ui::Result<Value> {
+        self.verify_account().await?;
         self.current(generation)?;
         let epoch = self.epoch();
         let process = self
@@ -376,6 +490,19 @@ impl DesktopRuntime {
         if let Some(process) = self.process() {
             process.close().await;
         }
+        let _ = self.users.lock().map(|mut users| {
+            if users
+                .page()
+                .current
+                .as_ref()
+                .is_some_and(|c| c.identity.is_some())
+            {
+                let _ = users.clear();
+            }
+        });
+        if let Some(account) = self.account.lock().await.take() {
+            let _ = account.logout().await;
+        }
         self.host.lock().unwrap().owner = Host::Closed;
         self.execution.close().await;
     }
@@ -419,6 +546,40 @@ mod tests {
         assert_eq!(runtime.epoch(), generation + 1);
         assert!(runtime.connect(user.generation.as_str()).await.is_err());
         runtime.shutdown().await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[tokio::test]
+    async fn guest_and_logout_revoke_the_old_ipc_generation_without_claiming_test_history() {
+        let root = std::env::temp_dir().join(format!("rss-account-{}", uuid::Uuid::new_v4()));
+        private_directory(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        let runtime = DesktopRuntime::start_with_key_backend(
+            &root,
+            &root.join("missing"),
+            ai_session_contract::HostStatusSource::DevelopmentOverride,
+            NoKey,
+        )
+        .await
+        .unwrap();
+        let test = runtime.select_user("访客").await.unwrap();
+        let guest = runtime.select_guest().await.unwrap();
+        assert_ne!(test.user.user_id, guest.user.user_id);
+        assert!(runtime.execution_for(test.generation.as_str()).is_err());
+        assert!(runtime.execution_for(guest.generation.as_str()).is_ok());
+        runtime.logout().await.unwrap();
+        assert!(runtime.execution_for(guest.generation.as_str()).is_err());
+        let again = runtime.select_user("访客").await.unwrap();
+        assert_eq!(test.user.user_id, again.user.user_id);
+        runtime.shutdown().await;
+        assert_eq!(
+            super::super::users::Users::open(&root)
+                .unwrap()
+                .current()
+                .unwrap()
+                .user
+                .user_id,
+            test.user.user_id
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
     fn fixture_binary() -> &'static Path {
@@ -505,7 +666,7 @@ mod tests {
         let script = artifact.join("node_modules/@rss-mdm-agent/ai-host-app/dist/cli.js");
         std::fs::create_dir_all(script.parent().unwrap()).unwrap();
         std::fs::write(script, mode).unwrap();
-        let manifest = json!({"status":"passed","desktopProtocol":3,"contractVersion":5,
+        let manifest = json!({"status":"passed","desktopProtocol":4,"contractVersion":5,
             "verification":{"platform":if cfg!(windows){"win32"}else{"darwin"},"arch":if cfg!(windows){"x64"}else{"arm64"}},
             "runtimeTreeSha256":super::super::runtime_package::digest(&artifact).unwrap()});
         std::fs::write(

@@ -85,6 +85,14 @@ impl MasterKey {
 /// Returns input only to the native save operation, never to the WebView.
 #[cfg(target_os = "macos")]
 pub async fn enter<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<String> {
+    enter_named(app, false, String::new()).await
+}
+#[cfg(target_os = "macos")]
+pub async fn enter_named<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    enterprise: bool,
+    target: String,
+) -> Result<String> {
     let (sender, receiver) = tokio::sync::oneshot::channel();
     app.run_on_main_thread(move || {
         use objc2::MainThreadMarker;
@@ -93,11 +101,21 @@ pub async fn enter<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<String
         let result = (|| {
             let mtm = MainThreadMarker::new().ok_or_else(unavailable)?;
             let alert = NSAlert::new(mtm);
-            alert.setMessageText(&NSString::from_str("输入 API 密钥"));
-            alert.setInformativeText(&NSString::from_str(
-                "验证成功后与连接一起保存。取消或验证失败不会保存密钥。",
-            ));
-            alert.addButtonWithTitle(&NSString::from_str("验证并保存"));
+            alert.setMessageText(&NSString::from_str(if enterprise {
+                "输入企业账号密码"
+            } else {
+                "输入 API 密钥"
+            }));
+            alert.setInformativeText(&NSString::from_str(if enterprise {
+                &target
+            } else {
+                "验证成功后与连接一起保存。取消或验证失败不会保存密钥。"
+            }));
+            alert.addButtonWithTitle(&NSString::from_str(if enterprise {
+                "登录"
+            } else {
+                "验证并保存"
+            }));
             alert.addButtonWithTitle(&NSString::from_str("取消"));
             let field = NSSecureTextField::new(mtm);
             field.setFrame(NSRect::new(NSPoint::new(0., 0.), NSSize::new(360., 24.)));
@@ -153,9 +171,17 @@ pub fn platform_backend() -> impl KeyBackend {
 }
 #[cfg(windows)]
 pub async fn enter<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<String> {
+    enter_named(app, false, String::new()).await
+}
+#[cfg(windows)]
+pub async fn enter_named<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    enterprise: bool,
+    target: String,
+) -> Result<String> {
     let (sender, receiver) = tokio::sync::oneshot::channel();
     app.run_on_main_thread(move || {
-        let result = native_process::private_storage::enter_secret()
+        let result = native_process::private_storage::enter_secret_for(enterprise, &target)
             .map_err(|_| unavailable())
             .and_then(|value| value.ok_or_else(|| error("cancelled", "未保存连接")))
             .and_then(|value| {
