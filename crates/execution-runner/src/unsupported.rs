@@ -71,3 +71,12 @@ impl PathLease {
 pub(crate) fn boot_generation() -> Result<Id, Error> {
     Err(Error::Unsupported)
 }
+pub(crate) fn open_directory(_: &Path) -> Result<File, Error> {
+    Err(Error::Unsupported)
+}
+pub(crate) fn file_identity(_: &File) -> Result<Id, Error> {
+    Err(Error::Unsupported)
+}
+pub(crate) fn open_observed_file(_: &Path) -> Result<File, Error> {
+    Err(Error::Unsupported)
+}

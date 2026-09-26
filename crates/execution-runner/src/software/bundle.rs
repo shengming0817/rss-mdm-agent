@@ -12,11 +12,14 @@ pub(super) struct Expanded {
     pub root: PathBuf,
     pub manifest: BundleManifest,
     tree: Option<super::tree::Tree>,
+    cleanup_on_drop: bool,
 }
 impl Drop for Expanded {
     fn drop(&mut self) {
-        if let Some(tree) = self.tree.take() {
-            tree.cleanup();
+        if self.cleanup_on_drop {
+            if let Some(tree) = self.tree.take() {
+                let _ = tree.cleanup(&super::PreparationControl::cleanup());
+            }
         }
     }
 }
@@ -135,6 +138,7 @@ pub(super) fn extract(
         root,
         manifest,
         tree: Some(tree),
+        cleanup_on_drop: true,
     };
     let mut total = 0u64;
     for declared in &expanded.manifest.files {
@@ -228,18 +232,31 @@ mod archive_tests {
         std::fs::create_dir(&base).unwrap();
         let base = base.canonicalize().unwrap();
         let archive = base.join("input.zip");
-        let data = b"#!/bin/sh\nexit 0\n";
+        let data = if attack.starts_with("total-") {
+            vec![b'x'; 4096]
+        } else {
+            b"#!/bin/sh\nexit 0\n".to_vec()
+        };
         let mut manifest = BundleManifest {
             package: s.package.clone(),
             version: PackageValue::new("1.0").unwrap(),
             files: vec![BundleFile {
                 path: "install.sh".into(),
-                sha256: Digest::new(format!("{:x}", Sha256::digest(data))).unwrap(),
+                sha256: Digest::new(format!("{:x}", Sha256::digest(&data))).unwrap(),
             }],
             install: "install.sh".into(),
             uninstall: None,
             detection: s.detection.clone(),
         };
+        if attack.starts_with("total-") {
+            manifest.files.push(BundleFile {
+                path: "data.bin".into(),
+                sha256: Digest::new(format!("{:x}", Sha256::digest(&data))).unwrap(),
+            });
+            let limits = s.bundle.as_mut().unwrap();
+            limits.file_bytes = 4096;
+            limits.expanded_bytes = if attack == "total-exact" { 8192 } else { 8191 };
+        }
         let path = match attack {
             "traversal" => "../outside",
             "absolute" => "/outside",
@@ -267,7 +284,11 @@ mod archive_tests {
             zip.add_symlink(path, "../outside", options).unwrap();
         } else {
             zip.start_file(path, options).unwrap();
-            zip.write_all(data).unwrap();
+            zip.write_all(&data).unwrap();
+        }
+        if attack.starts_with("total-") {
+            zip.start_file("data.bin", options).unwrap();
+            zip.write_all(&data).unwrap();
         }
         if attack == "extra" || attack == "collision" {
             zip.start_file(
@@ -299,6 +320,8 @@ mod archive_tests {
     #[test]
     fn exact_manifest_extracts_and_cleans_staging() {
         assert!(exercise("valid"));
+        assert!(exercise("total-exact"));
+        assert!(!exercise("total-over"));
     }
     #[test]
     fn malicious_archives_never_escape_or_leave_partial_staging() {
@@ -316,5 +339,16 @@ mod archive_tests {
         ] {
             assert!(!exercise(attack), "accepted {attack}");
         }
+    }
+}
+
+impl Expanded {
+    pub(super) fn staging(&self) -> Result<SoftwareStaging, Error> {
+        Ok(SoftwareStaging::Pending {
+            object: self.tree.as_ref().ok_or(Error::Unavailable)?.identity()?,
+        })
+    }
+    pub(super) fn defer_cleanup(&mut self) {
+        self.cleanup_on_drop = false;
     }
 }

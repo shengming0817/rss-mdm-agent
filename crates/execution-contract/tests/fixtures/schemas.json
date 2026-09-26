@@ -770,17 +770,17 @@
         "description": "Dependency effects declared by the package ecosystem; no dependency solver is implemented here.",
         "oneOf": [
           {
-            "const": "None",
+            "const": "none",
             "description": "No dependency changes.",
             "type": "string"
           },
           {
-            "const": "Declared",
+            "const": "declared",
             "description": "Source/installer has declared dependency changes covered by management policy.",
             "type": "string"
           },
           {
-            "const": "Unknown",
+            "const": "unknown",
             "description": "Effects are unresolved; mutation is blocked.",
             "type": "string"
           }
@@ -793,33 +793,39 @@
             "additionalProperties": false,
             "description": "Exact selected version and immutable install payload, resolved by the source owner.",
             "properties": {
-              "Present": {
-                "properties": {
-                  "artifact": {
-                    "$ref": "#/$defs/ExactArtifactRef",
-                    "description": "Exact selected package payload."
-                  },
-                  "version": {
-                    "$ref": "#/$defs/PackageValue",
-                    "description": "Ecosystem version, preserved verbatim."
-                  }
-                },
-                "required": [
-                  "version",
-                  "artifact"
-                ],
-                "type": "object"
+              "artifact": {
+                "$ref": "#/$defs/ExactArtifactRef",
+                "description": "Exact selected package payload."
+              },
+              "kind": {
+                "const": "present",
+                "type": "string"
+              },
+              "version": {
+                "$ref": "#/$defs/PackageValue",
+                "description": "Ecosystem version, preserved verbatim."
               }
             },
             "required": [
-              "Present"
+              "kind",
+              "version",
+              "artifact"
             ],
             "type": "object"
           },
           {
-            "const": "Absent",
+            "additionalProperties": false,
             "description": "Absence of the exact package identity.",
-            "type": "string"
+            "properties": {
+              "kind": {
+                "const": "absent",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -1119,17 +1125,18 @@
         ]
       },
       "InstallerCapabilities": {
+        "additionalProperties": false,
         "description": "Installer semantics, not proof that the OS can execute or authorize it.",
         "properties": {
           "artifact": {
             "$ref": "#/$defs/ExactArtifactRef",
             "description": "Exact installer/manager binary."
           },
-          "can_detect": {
+          "canDetect": {
             "description": "Whether this selected mechanism can independently detect the package state.",
             "type": "boolean"
           },
-          "dependency_impact": {
+          "dependencyImpact": {
             "$ref": "#/$defs/DependencyImpact",
             "description": "Declared dependency effects of the selected change mechanism."
           },
@@ -1148,7 +1155,7 @@
             "$ref": "#/$defs/RestartBehavior",
             "description": "Selected configuration's restart semantics."
           },
-          "upgrade_strategy": {
+          "upgradeStrategy": {
             "$ref": "#/$defs/UpgradeStrategy",
             "description": "Upgrade behavior, relevant only for Upgrade/Downgrade."
           }
@@ -1156,11 +1163,11 @@
         "required": [
           "artifact",
           "manager",
-          "can_detect",
+          "canDetect",
           "operations",
-          "upgrade_strategy",
+          "upgradeStrategy",
           "restart",
-          "dependency_impact"
+          "dependencyImpact"
         ],
         "type": "object"
       },
@@ -1352,25 +1359,26 @@
         "type": "integer"
       },
       "ManagementConstraints": {
+        "additionalProperties": false,
         "description": "Host-supplied resource-management constraints from the bound policy revision.\nThese booleans are not actor authentication, C07 authorization or approval.",
         "properties": {
-          "allow_dependency_changes": {
+          "allowDependencyChanges": {
             "description": "Permit the installer's declared dependency effects.",
             "type": "boolean"
           },
-          "allow_downgrade": {
+          "allowDowngrade": {
             "description": "Permit downgrade, independently of installer support.",
             "type": "boolean"
           },
-          "allow_modify_user_owned": {
+          "allowModifyUserOwned": {
             "description": "Explicitly permit modifying existing user-owned software; no ownership change is inferred.",
             "type": "boolean"
           },
-          "allow_remove": {
+          "allowRemove": {
             "description": "Permit removal, including uninstall-before-upgrade.",
             "type": "boolean"
           },
-          "allow_restart": {
+          "allowRestart": {
             "description": "Permit a separately coordinated restart if necessary.",
             "type": "boolean"
           },
@@ -1381,11 +1389,11 @@
         },
         "required": [
           "required",
-          "allow_modify_user_owned",
-          "allow_remove",
-          "allow_downgrade",
-          "allow_restart",
-          "allow_dependency_changes"
+          "allowModifyUserOwned",
+          "allowRemove",
+          "allowDowngrade",
+          "allowRestart",
+          "allowDependencyChanges"
         ],
         "type": "object"
       },
@@ -1393,22 +1401,22 @@
         "description": "One possible mutation, not a queued workflow step.",
         "oneOf": [
           {
-            "const": "Install",
+            "const": "install",
             "description": "Install a known-absent package.",
             "type": "string"
           },
           {
-            "const": "Upgrade",
+            "const": "upgrade",
             "description": "Upgrade according to the ecosystem's ordering.",
             "type": "string"
           },
           {
-            "const": "Downgrade",
+            "const": "downgrade",
             "description": "Explicitly permitted downgrade.",
             "type": "string"
           },
           {
-            "const": "Uninstall",
+            "const": "uninstall",
             "description": "Remove the exact observed package.",
             "type": "string"
           }
@@ -1641,6 +1649,7 @@
         "type": "object"
       },
       "PackageIdentity": {
+        "additionalProperties": false,
         "description": "Exact package coordinates independent of the installed/desired version.",
         "properties": {
           "architecture": {
@@ -1715,17 +1724,17 @@
         "description": "Restart behavior of the selected installer configuration.",
         "oneOf": [
           {
-            "const": "Never",
+            "const": "never",
             "description": "Restart is not required and cannot be initiated by the selected invocation.",
             "type": "string"
           },
           {
-            "const": "MayRequire",
+            "const": "mayRequire",
             "description": "May request a later restart, without initiating it itself.",
             "type": "string"
           },
           {
-            "const": "Automatic",
+            "const": "automatic",
             "description": "May restart immediately; this planner cannot coordinate such execution.",
             "type": "string"
           }
@@ -1876,6 +1885,31 @@
           }
         ]
       },
+      "SoftwareResource": {
+        "additionalProperties": false,
+        "description": "Physical OS precondition, derived by the platform adapter and verified again before execution.\nDirectory serialization deliberately covers all names in that directory, including case aliases.",
+        "properties": {
+          "object": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Id"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Existing target file identity, or explicit absence at planning time."
+          },
+          "parent": {
+            "$ref": "#/$defs/Id",
+            "description": "Stable volume/directory identity, not a pathname or a tenant-selected lock namespace."
+          }
+        },
+        "required": [
+          "parent"
+        ],
+        "type": "object"
+      },
       "SoftwareSpec": {
         "additionalProperties": false,
         "description": "Typed software execution facts. These are declarations, never approval or identity.",
@@ -1938,6 +1972,10 @@
             "$ref": "#/$defs/PackageValue",
             "description": "Exact installed resource identity (e.g. MSI product code or fully qualified formula)."
           },
+          "resourceBinding": {
+            "$ref": "#/$defs/SoftwareResource",
+            "description": "Platform-verified directory conflict domain and optional pre-mutation file identity."
+          },
           "snapshot": {
             "$ref": "#/$defs/VersionedRef",
             "description": "Original planning snapshot reference."
@@ -1968,6 +2006,7 @@
           "installer",
           "source",
           "resource",
+          "resourceBinding",
           "detection",
           "management"
         ],
@@ -2123,12 +2162,12 @@
         "description": "Preserve installer upgrade semantics; some upgrades remove the existing installation first.",
         "oneOf": [
           {
-            "const": "InPlace",
+            "const": "inPlace",
             "description": "Does not require removing the old installation first.",
             "type": "string"
           },
           {
-            "const": "UninstallThenInstall",
+            "const": "uninstallThenInstall",
             "description": "Requires uninstall permission and dependency safety as well as upgrade capability.",
             "type": "string"
           }
@@ -2158,6 +2197,7 @@
         "type": "object"
       },
       "VersionComparison": {
+        "additionalProperties": false,
         "description": "Comparator identity and exact operands; a result cannot be replayed for another version pair.",
         "properties": {
           "comparator": {
@@ -2189,22 +2229,22 @@
         "description": "Result supplied by the ecosystem's comparator for one exact version pair.",
         "oneOf": [
           {
-            "const": "Equal",
+            "const": "equal",
             "description": "Ecosystem semantics establish equivalence.",
             "type": "string"
           },
           {
-            "const": "Older",
+            "const": "older",
             "description": "Installed version precedes the requested version.",
             "type": "string"
           },
           {
-            "const": "Newer",
+            "const": "newer",
             "description": "Installed version follows the requested version.",
             "type": "string"
           },
           {
-            "const": "Incomparable",
+            "const": "incomparable",
             "description": "Ecosystem semantics do not order these versions.",
             "type": "string"
           }

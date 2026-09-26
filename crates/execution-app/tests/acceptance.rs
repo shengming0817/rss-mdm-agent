@@ -1332,9 +1332,10 @@ fn software_application_persists_before_ack_and_reconciles_after_reopen_without_
             &self,
             p: &FrozenPlan,
             a: &AttemptId,
-            _: std::time::Instant,
+            _: execution_app::SoftwareObservation<'_>,
         ) -> Result<Option<SoftwareEvidence>, Error> {
             Ok(self.ready.load(Ordering::SeqCst).then(|| SoftwareEvidence {
+                staging: execution_contract::SoftwareStaging::NotRequired {},
                 attempt_id: a.clone(),
                 plan_digest: p.digest().clone(),
                 runner: self.id(),
@@ -1347,6 +1348,7 @@ fn software_application_persists_before_ack_and_reconciles_after_reopen_without_
                     version: PackageValue::new("1.0").unwrap(),
                 },
                 restart_required: false,
+                object_identity: None,
                 boot_generation: Some(id("test-boot")),
             }))
         }

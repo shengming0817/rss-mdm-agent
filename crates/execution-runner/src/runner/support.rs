@@ -212,7 +212,7 @@ impl RunnerPort for TestCarrier {
         &self,
         p: &FrozenPlan,
         a: &AttemptId,
-        deadline: Instant,
+        deadline: execution_app::SoftwareObservation<'_>,
     ) -> Result<Option<SoftwareEvidence>, Error> {
         self.0.software_evidence(p, a, deadline)
     }

@@ -104,6 +104,10 @@ fn local_path(path: &Path) -> Result<(), Error> {
 /// Retain every path component without delete/write sharing for the entire invocation.
 pub(crate) struct PathLease(Vec<File>);
 impl PathLease {
+    pub(crate) fn identity(&self) -> Result<Id, Error> {
+        file_identity(self.0.last().ok_or(Error::Unavailable)?)
+    }
+
     pub(crate) fn source(path: &Path, immutable: bool) -> Result<Self, Error> {
         Self::open(path, immutable)
     }
@@ -265,4 +269,35 @@ mod tests {
         assert!(super::executable(std::path::Path::new(r"C:\trusted\pwsh")).is_err());
         assert!(super::executable(std::path::Path::new(r"C:\trusted\pwsh.EXE")).is_ok());
     }
+}
+
+pub(crate) fn open_directory(path: &Path) -> Result<File, Error> {
+    let mut lease = PathLease::open(path, false)?;
+    let file = lease.0.pop().ok_or(Error::Denied)?;
+    if !file.metadata().map_err(|_| Error::Unavailable)?.is_dir() {
+        return Err(Error::Denied);
+    }
+    Ok(file)
+}
+pub(crate) fn file_identity(file: &File) -> Result<Id, Error> {
+    let mut info = unsafe { std::mem::zeroed::<BY_HANDLE_FILE_INFORMATION>() };
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
+        return Err(Error::Unavailable);
+    }
+    Id::new(format!(
+        "windows-{:x}-{:x}-{:x}",
+        info.dwVolumeSerialNumber, info.nFileIndexHigh, info.nFileIndexLow
+    ))
+    .map_err(|_| Error::Unavailable)
+}
+pub(crate) fn open_observed_file(path: &Path) -> Result<File, Error> {
+    let file = OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+        .map_err(|_| Error::Unavailable)?;
+    let (current, _) = token_identity()?;
+    check(&file, false, true, &current)?;
+    Ok(file)
 }

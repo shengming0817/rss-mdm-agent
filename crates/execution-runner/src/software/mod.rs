@@ -1,6 +1,7 @@
 //! Fixed software adapters sharing NativeRunner's process owner and execution journal.
 mod bundle;
 mod commands;
+mod resource;
 mod tree;
 use execution_app::Error;
 use execution_contract::*;
@@ -50,6 +51,13 @@ pub(crate) struct PreparationControl {
     pub cancelled: Arc<std::sync::atomic::AtomicBool>,
 }
 impl PreparationControl {
+    pub(crate) fn cleanup() -> Self {
+        Self {
+            deadline: std::time::Instant::now() + std::time::Duration::from_secs(1),
+            cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+
     pub(crate) fn check(&self) -> Result<(), Error> {
         if self.cancelled.load(std::sync::atomic::Ordering::Acquire)
             || std::time::Instant::now() >= self.deadline
@@ -74,6 +82,8 @@ pub(crate) struct Lease {
     expanded: Option<bundle::Expanded>,
     pub args: Vec<String>,
     pub before: SoftwareState,
+    pub before_object: Option<Id>,
+    target: resource::TargetGuard,
 }
 fn hash_file(file: &mut File, max: u64, control: &PreparationControl) -> Result<String, Error> {
     if max == 0 || file.metadata().map_err(|_| Error::Unavailable)?.len() > max {
@@ -98,47 +108,32 @@ fn hash_file(file: &mut File, max: u64, control: &PreparationControl) -> Result<
     Ok(format!("{:x}", hash.finalize()))
 }
 /// Independently inspect installed bytes. Permission errors, links and unknown bytes remain unknown.
-pub(crate) fn detect(spec: &SoftwareSpec, control: &PreparationControl) -> SoftwareState {
-    let unknown = |reason| SoftwareState::Unknown { reason };
+pub(crate) struct DetectionResult {
+    pub state: SoftwareState,
+    pub object: Option<Id>,
+}
+/// Resolve the stable directory/file precondition before freezing a software plan.
+/// The runner checks this physical binding again; this function confers no authority.
+pub fn resource_binding(detection: &SoftwareDetection) -> Result<SoftwareResource, Error> {
+    resource::TargetGuard::open(std::path::Path::new(&detection.path)).map(|g| g.binding)
+}
+pub(crate) fn detect(spec: &SoftwareSpec, control: &PreparationControl) -> DetectionResult {
     if control.check().is_err() {
-        return unknown(SoftwareDetectionFailure::BudgetExceeded);
+        return DetectionResult {
+            state: SoftwareState::Unknown {
+                reason: SoftwareDetectionFailure::BudgetExceeded,
+            },
+            object: None,
+        };
     }
-    let path = std::path::Path::new(&spec.detection.path);
-    match std::fs::symlink_metadata(path) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            if path
-                .parent()
-                .is_some_and(|p| crate::platform::protected_path(p, true).is_ok())
-                && control.check().is_ok()
-            {
-                SoftwareState::Absent {}
-            } else {
-                unknown(SoftwareDetectionFailure::Unavailable)
-            }
-        }
-        Ok(meta) if meta.is_file() => {
-            match crate::platform::open_file(path)
-                .and_then(|mut f| hash_file(&mut f, spec.detection.max_bytes, control))
-            {
-                Ok(hash) => match spec
-                    .detection
-                    .versions
-                    .iter()
-                    .find(|v| v.sha256.as_str() == hash)
-                {
-                    Some(v) => SoftwareState::Present {
-                        version: v.version.clone(),
-                    },
-                    None => unknown(SoftwareDetectionFailure::UnrecognizedVersion),
-                },
-                Err(Error::Capacity) => unknown(SoftwareDetectionFailure::BudgetExceeded),
-                Err(_) if control.check().is_err() => {
-                    unknown(SoftwareDetectionFailure::BudgetExceeded)
-                }
-                Err(_) => unknown(SoftwareDetectionFailure::Unavailable),
-            }
-        }
-        _ => unknown(SoftwareDetectionFailure::Unavailable),
+    match resource::TargetGuard::open(std::path::Path::new(&spec.detection.path)) {
+        Ok(mut guard) => guard.observe(spec, control),
+        Err(_) => DetectionResult {
+            state: SoftwareState::Unknown {
+                reason: SoftwareDetectionFailure::Unavailable,
+            },
+            object: None,
+        },
     }
 }
 impl SoftwareArtifacts {
@@ -178,9 +173,16 @@ impl SoftwareArtifacts {
             file.try_lock().map_err(|_| Error::Conflict)?;
             locks.push(file);
         }
-        let before = detect(s, control);
+        let mut target = resource::TargetGuard::open(std::path::Path::new(&s.detection.path))?;
+        if target.binding != s.resource_binding {
+            return Err(Error::Conflict);
+        }
+        let observation = target.observe(s, control);
+        let before = observation.state;
+        let before_object = observation.object;
         let owner = if provenance.ownership == Ownership::OrganizationManaged
             && provenance.state.as_ref() == Some(&before)
+            && provenance.object_identity == before_object
         {
             Ownership::OrganizationManaged
         } else if provenance.ownership == Ownership::UserExisting {
@@ -301,7 +303,10 @@ impl SoftwareArtifacts {
         } else {
             None
         };
-        let args = commands::arguments(s, &self.manager, &self.payload)?;
+        let mut args = commands::arguments(s, &self.manager, &self.payload)?;
+        if let Some(expanded) = &expanded {
+            args.push(expanded.root.to_str().ok_or(Error::InvalidInput)?.into());
+        }
         Ok(Lease {
             _locks: locks,
             _files: vec![payload, manager],
@@ -309,10 +314,31 @@ impl SoftwareArtifacts {
             expanded,
             args,
             before,
+            before_object,
+            target,
         })
     }
 }
 impl Lease {
+    pub(crate) fn staging(&mut self) -> Result<SoftwareStaging, Error> {
+        match self.expanded.as_mut() {
+            Some(tree) => {
+                let reference = tree.staging()?;
+                tree.defer_cleanup();
+                Ok(reference)
+            }
+            None => Ok(SoftwareStaging::NotRequired {}),
+        }
+    }
+
+    pub(crate) fn recheck(
+        &self,
+        spec: &SoftwareSpec,
+        control: &PreparationControl,
+    ) -> Result<(), Error> {
+        self.target.recheck(spec, &self.before, control)
+    }
+
     pub(crate) fn entry(&self, spec: &SoftwareSpec) -> Result<Option<PathBuf>, Error> {
         self.expanded
             .as_ref()
@@ -344,4 +370,31 @@ impl Lease {
 /// Canonical install entry bytes for native managers. Stage these in protected storage and bind their digest.
 pub fn install_entry(adapter: SoftwareKind) -> Option<&'static [u8]> {
     commands::wrapper(adapter)
+}
+
+pub(crate) fn recover_staging(
+    root: &std::path::Path,
+    attempt: &AttemptId,
+    previous: &SoftwareStaging,
+    quiescent: bool,
+    control: &PreparationControl,
+) -> SoftwareStaging {
+    if !quiescent {
+        return previous.clone();
+    }
+    let object = match previous {
+        SoftwareStaging::Pending { object } | SoftwareStaging::Failed { object } => object,
+        _ => return previous.clone(),
+    };
+    let path = root.join(format!("software-{}", attempt.as_str()));
+    if std::fs::symlink_metadata(&path).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
+        return SoftwareStaging::Cleaned {};
+    }
+    match tree::Tree::reopen(&path, object).and_then(|tree| tree.cleanup(control)) {
+        Ok(()) => SoftwareStaging::Cleaned {},
+        Err(Error::Conflict | Error::Denied) => SoftwareStaging::Unverified {},
+        Err(_) => SoftwareStaging::Failed {
+            object: object.clone(),
+        },
+    }
 }

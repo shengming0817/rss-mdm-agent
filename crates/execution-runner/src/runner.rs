@@ -179,40 +179,81 @@ impl RunnerPort for NativeRunner {
         &self,
         plan: &FrozenPlan,
         attempt: &AttemptId,
-        deadline: Instant,
+        context: execution_app::SoftwareObservation<'_>,
     ) -> Result<Option<SoftwareEvidence>, Error> {
         let Some(spec) = plan.spec().execution.software() else {
             return Ok(None);
         };
+        let artifacts = self
+            .artifacts
+            .get(plan.digest().as_str())
+            .ok_or(Error::Unbound)?;
+        let control = crate::software::PreparationControl {
+            deadline: context.deadline,
+            cancelled: Arc::new(AtomicBool::new(false)),
+        };
         let records = self.records.lock().map_err(|_| Error::Unavailable)?;
-        if let Some(record) = records.get(attempt) {
+        let live = if let Some(record) = records.get(attempt) {
             if record.plan.digest() != plan.digest() {
                 return Err(Error::Denied);
             }
-            return Ok(record
+            let value = record
                 .software
                 .lock()
                 .map_err(|_| Error::Unavailable)?
-                .clone());
-        }
-        if !self.artifacts.contains_key(plan.digest().as_str()) {
-            return Err(Error::Unbound);
-        }
-        Ok(Some(SoftwareEvidence {
-            attempt_id: attempt.clone(),
-            plan_digest: plan.digest().clone(),
-            runner: self.id.clone(),
-            before: None,
-            detected: crate::software::detect(
-                spec,
-                &crate::software::PreparationControl {
-                    deadline,
-                    cancelled: Arc::new(AtomicBool::new(false)),
+                .clone();
+            if value.is_none()
+                && !record
+                    .facts
+                    .lock()
+                    .map_err(|_| Error::Unavailable)?
+                    .as_ref()
+                    .is_some_and(|f| f.finished)
+            {
+                return Ok(None);
+            }
+            value
+        } else {
+            None
+        };
+        let mut value = if let Some(previous) = context.previous.filter(|_| context.finalized) {
+            previous.clone()
+        } else if let Some(live) = live {
+            live
+        } else {
+            let observation = crate::software::detect(spec, &control);
+            SoftwareEvidence {
+                object_identity: observation.object,
+                attempt_id: attempt.clone(),
+                plan_digest: plan.digest().clone(),
+                runner: self.id.clone(),
+                before: None,
+                detected: observation.state,
+                restart_required: false,
+                boot_generation: crate::platform::boot_generation().ok(),
+                staging: match std::fs::symlink_metadata(
+                    artifacts
+                        .work_root
+                        .join(format!("software-{}", attempt.as_str())),
+                ) {
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        SoftwareStaging::NotRequired {}
+                    }
+                    _ => SoftwareStaging::Unverified {},
                 },
-            ),
-            restart_required: false,
-            boot_generation: crate::platform::boot_generation().ok(),
-        }))
+            }
+        };
+        if let Some(previous) = context.previous {
+            value.staging = previous.staging.clone();
+        }
+        value.staging = crate::software::recover_staging(
+            &artifacts.work_root,
+            attempt,
+            &value.staging,
+            context.quiescent,
+            &control,
+        );
+        Ok(Some(value))
     }
 
     fn id(&self) -> Id {
@@ -449,17 +490,32 @@ async fn run(
         process: shared,
         software: software_facts,
     } = captures;
-    if let Some(lease) = &materialized.software {
+    if let Some(lease) = &mut materialized.software {
         if let Ok(mut slot) = software_facts.lock() {
             *slot = Some(SoftwareEvidence {
+                staging: lease.staging().unwrap_or(SoftwareStaging::Unverified {}),
                 attempt_id: attempt.clone(),
                 plan_digest: plan.digest().clone(),
                 runner: id.clone(),
                 before: Some(lease.before.clone()),
+                object_identity: lease.before_object.clone(),
                 detected: lease.before.clone(),
                 restart_required: false,
                 boot_generation: crate::platform::boot_generation().ok(),
             });
+        }
+    }
+    if let Some(lease) = &materialized.software {
+        let control = crate::software::PreparationControl {
+            deadline,
+            cancelled: cancel.clone(),
+        };
+        if let Err(error) = lease.recheck(
+            plan.spec().execution.software().expect("software"),
+            &control,
+        ) {
+            publish(&shared, failed(&plan, &attempt, &id, classify(error)));
+            return;
         }
     }
     let mut command = tokio::process::Command::new(&materialized.interpreter);
@@ -722,13 +778,15 @@ async fn run(
     if let Some(spec) = plan.spec().execution.software() {
         if let Ok(mut slot) = software_facts.lock() {
             if let Some(value) = slot.as_mut() {
-                value.detected = crate::software::detect(
+                let observation = crate::software::detect(
                     spec,
                     &crate::software::PreparationControl {
                         deadline: Instant::now() + Duration::from_secs(1),
                         cancelled: cancel.clone(),
                     },
                 );
+                value.detected = observation.state;
+                value.object_identity = observation.object;
                 value.restart_required = matches!(facts.exit_code, Some(3010 | 1641));
             }
         }

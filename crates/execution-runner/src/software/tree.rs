@@ -116,14 +116,143 @@ mod native {
             }
             Ok(unsafe { File::from_raw_fd(fd) })
         }
-        pub(super) fn cleanup(self) {
-            if self.intact() {
-                let path = self.path.clone();
-                drop(self);
-                let _ = std::fs::remove_dir_all(path);
+        pub(super) fn identity(&self) -> Result<execution_contract::Id, Error> {
+            crate::platform::file_identity(&self.root)
+        }
+        pub(super) fn reopen(
+            path: &Path,
+            expected: &execution_contract::Id,
+        ) -> Result<Self, Error> {
+            let root = crate::platform::open_directory(path)?;
+            if crate::platform::file_identity(&root)? != *expected {
+                return Err(Error::Conflict);
             }
+            Ok(Self {
+                path: path.into(),
+                root,
+            })
+        }
+        pub(super) fn cleanup(
+            self,
+            control: &super::super::PreparationControl,
+        ) -> Result<(), Error> {
+            if !self.intact() {
+                return Err(Error::Conflict);
+            }
+            let parent = crate::platform::open_directory(self.path.parent().ok_or(Error::Denied)?)?;
+            let name = CString::new(
+                self.path
+                    .file_name()
+                    .ok_or(Error::Denied)?
+                    .as_encoded_bytes(),
+            )
+            .map_err(|_| Error::Denied)?;
+            super::empty(&self.root, control, 0)?;
+            if !self.intact() {
+                return Err(Error::Conflict);
+            }
+            if unsafe { libc::unlinkat(parent.as_raw_fd(), name.as_ptr(), libc::AT_REMOVEDIR) } != 0
+            {
+                return Err(Error::Unavailable);
+            }
+            Ok(())
         }
     }
+}
+#[cfg(target_os = "macos")]
+fn empty(root: &File, control: &super::PreparationControl, depth: u32) -> Result<(), Error> {
+    use std::{
+        ffi::CStr,
+        os::fd::{AsRawFd, FromRawFd},
+    };
+    if depth > 64 {
+        return Err(Error::Capacity);
+    }
+    let fd = unsafe { libc::fcntl(root.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 0) };
+    if fd < 0 {
+        return Err(Error::Unavailable);
+    }
+    let dir = unsafe { libc::fdopendir(fd) };
+    if dir.is_null() {
+        unsafe { libc::close(fd) };
+        return Err(Error::Unavailable);
+    }
+    struct Directory(*mut libc::DIR);
+    impl Drop for Directory {
+        fn drop(&mut self) {
+            unsafe { libc::closedir(self.0) };
+        }
+    }
+    let _dir = Directory(dir);
+    loop {
+        control.check()?;
+        unsafe {
+            *libc::__error() = 0;
+        }
+        let entry = unsafe { libc::readdir(dir) };
+        if entry.is_null() {
+            if std::io::Error::last_os_error().raw_os_error() != Some(0) {
+                return Err(Error::Unavailable);
+            }
+            break;
+        }
+        let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) };
+        if name.to_bytes() == b"." || name.to_bytes() == b".." {
+            continue;
+        }
+        let mut stat = unsafe { std::mem::zeroed::<libc::stat>() };
+        if unsafe {
+            libc::fstatat(
+                root.as_raw_fd(),
+                name.as_ptr(),
+                &mut stat,
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        } != 0
+        {
+            return Err(Error::Unavailable);
+        }
+        let flags = if stat.st_mode & libc::S_IFMT == libc::S_IFDIR {
+            let fd = unsafe {
+                libc::openat(
+                    root.as_raw_fd(),
+                    name.as_ptr(),
+                    libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                )
+            };
+            if fd < 0 {
+                return Err(Error::Conflict);
+            }
+            let child = unsafe { File::from_raw_fd(fd) };
+            use std::os::unix::fs::MetadataExt;
+            let opened = child.metadata().map_err(|_| Error::Unavailable)?;
+            if opened.dev() != stat.st_dev as u64 || opened.ino() != stat.st_ino {
+                return Err(Error::Conflict);
+            }
+            empty(&child, control, depth + 1)?;
+            let mut now = unsafe { std::mem::zeroed::<libc::stat>() };
+            if unsafe {
+                libc::fstatat(
+                    root.as_raw_fd(),
+                    name.as_ptr(),
+                    &mut now,
+                    libc::AT_SYMLINK_NOFOLLOW,
+                )
+            } != 0
+                || now.st_dev != stat.st_dev
+                || now.st_ino != stat.st_ino
+            {
+                return Err(Error::Conflict);
+            }
+            libc::AT_REMOVEDIR
+        } else {
+            0
+        };
+        if unsafe { libc::unlinkat(root.as_raw_fd(), name.as_ptr(), flags) } != 0 {
+            return Err(Error::Unavailable);
+        }
+    }
+    Ok(())
 }
 #[cfg(windows)]
 mod native {
@@ -182,12 +311,81 @@ mod native {
                 .open(path)
                 .map_err(|_| Error::Denied)
         }
-        pub(super) fn cleanup(self) {
+        pub(super) fn identity(&self) -> Result<execution_contract::Id, Error> {
+            self.leases.first().ok_or(Error::Unavailable)?.identity()
+        }
+        pub(super) fn reopen(
+            path: &Path,
+            expected: &execution_contract::Id,
+        ) -> Result<Self, Error> {
+            let tree = Self::open(path)?;
+            if tree.identity()? != *expected {
+                return Err(Error::Conflict);
+            }
+            Ok(tree)
+        }
+        pub(super) fn cleanup(
+            self,
+            control: &super::super::PreparationControl,
+        ) -> Result<(), Error> {
+            let expected = self.identity()?;
             let path = self.path.clone();
+            let _parent =
+                crate::platform::PathLease::source(path.parent().ok_or(Error::Denied)?, false)?;
             drop(self);
-            let _ = std::fs::remove_dir_all(path);
+            let handle = super::delete_handle(&path)?;
+            if crate::platform::file_identity(&handle)? != expected {
+                return Err(Error::Conflict);
+            }
+            super::delete_tree(handle, &path, control, 0)
         }
     }
+}
+#[cfg(windows)]
+fn delete_handle(path: &Path) -> Result<File, Error> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::*;
+    std::fs::OpenOptions::new()
+        .access_mode(DELETE | FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+        .map_err(|_| Error::Unavailable)
+}
+#[cfg(windows)]
+fn delete_tree(
+    handle: File,
+    path: &Path,
+    control: &super::PreparationControl,
+    depth: u32,
+) -> Result<(), Error> {
+    use std::os::windows::{fs::MetadataExt, io::AsRawHandle};
+    use windows_sys::Win32::Storage::FileSystem::*;
+    control.check()?;
+    if depth > 64 {
+        return Err(Error::Capacity);
+    }
+    let meta = handle.metadata().map_err(|_| Error::Unavailable)?;
+    if meta.is_dir() && meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT == 0 {
+        for entry in std::fs::read_dir(path).map_err(|_| Error::Unavailable)? {
+            control.check()?;
+            let path = entry.map_err(|_| Error::Unavailable)?.path();
+            delete_tree(delete_handle(&path)?, &path, control, depth + 1)?;
+        }
+    }
+    let disposition = FILE_DISPOSITION_INFO { DeleteFile: true };
+    if unsafe {
+        SetFileInformationByHandle(
+            handle.as_raw_handle(),
+            FileDispositionInfo,
+            (&disposition as *const FILE_DISPOSITION_INFO).cast(),
+            std::mem::size_of::<FILE_DISPOSITION_INFO>() as u32,
+        )
+    } == 0
+    {
+        return Err(Error::Unavailable);
+    }
+    Ok(())
 }
 #[cfg(not(any(target_os = "macos", windows)))]
 mod native {
@@ -206,7 +404,15 @@ mod native {
         pub(super) fn file(&mut self, _: &str) -> Result<File, Error> {
             Err(Error::Unsupported)
         }
-        pub(super) fn cleanup(self) {}
+        pub(super) fn identity(&self) -> Result<execution_contract::Id, Error> {
+            Err(Error::Unsupported)
+        }
+        pub(super) fn reopen(_: &Path, _: &execution_contract::Id) -> Result<Self, Error> {
+            Err(Error::Unsupported)
+        }
+        pub(super) fn cleanup(self, _: &super::super::PreparationControl) -> Result<(), Error> {
+            Err(Error::Unsupported)
+        }
     }
 }
 pub(super) struct Tree(native::Tree);
@@ -224,8 +430,14 @@ impl Tree {
     pub(super) fn file(&mut self, name: &str) -> Result<File, Error> {
         self.0.file(name)
     }
-    pub(super) fn cleanup(self) {
-        self.0.cleanup()
+    pub(super) fn identity(&self) -> Result<execution_contract::Id, Error> {
+        self.0.identity()
+    }
+    pub(super) fn reopen(path: &Path, expected: &execution_contract::Id) -> Result<Self, Error> {
+        native::Tree::reopen(path, expected).map(Self)
+    }
+    pub(super) fn cleanup(self, control: &super::PreparationControl) -> Result<(), Error> {
+        self.0.cleanup(control)
     }
 }
 #[cfg(all(test, target_os = "macos"))]
@@ -242,7 +454,9 @@ mod tests {
         std::fs::rename(base.join("root"), base.join("original")).unwrap();
         symlink(base.join("other"), base.join("root")).unwrap();
         assert!(tree.file("escape").is_err());
-        tree.cleanup();
+        assert!(tree
+            .cleanup(&super::super::PreparationControl::test())
+            .is_err());
         assert!(!base.join("other/escape").exists());
         assert!(base.join("original").is_dir());
         std::fs::remove_dir_all(base).unwrap();

@@ -336,6 +336,79 @@
       "submitted": true
     }
   },
+  "software": {
+    "plan": {
+      "access": { "kind": "osIdentity" },
+      "actor": "actor-1",
+      "artifact": {
+        "resource": { "id": "script-1", "revision": "1" },
+        "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
+      },
+      "authority": { "id": "test-authority", "kind": "test" },
+      "budget": {
+        "maxAttempts": 1,
+        "totalOutputBytes": 4096,
+        "totalTimeoutMs": 1000
+      },
+      "execution": {
+        "adapter": "pkg",
+        "kind": "software",
+        "mutation": "install"
+      },
+      "initiator": {
+        "kind": "human",
+        "osSession": {
+          "account": { "platform": "linux", "subject": "uid:1000" },
+          "device": "origin-device",
+          "session": "login-1"
+        }
+      },
+      "interpreter": {
+        "artifact": {
+          "resource": { "id": "test-interpreter", "revision": "1" },
+          "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
+        },
+        "profile": { "id": "native-posix-sh-file", "revision": "1" }
+      },
+      "operation": {
+        "action": "software.install",
+        "resource": { "id": "network-tool", "revision": "1" }
+      },
+      "planDigest": "23a88819d2769b858893ad7af5fd313202d0599ca555f05f8ef961a61b16b4f5",
+      "planId": "plan-1",
+      "policy": { "id": "policy-1", "revision": "1" },
+      "runAs": {
+        "account": { "platform": "macos", "subject": "501" },
+        "kind": "user"
+      },
+      "schemaVersion": 3,
+      "sessionRequirement": { "kind": "notRequired" },
+      "target": {
+        "device": "device-1",
+        "platform": "macos",
+        "scope": { "kind": "device" }
+      },
+      "validity": { "expiresAtUnixMs": 2000, "notBeforeUnixMs": 1000 }
+    },
+    "status": {
+      "admission": "admitted",
+      "assessment": null,
+      "attemptId": "app-fd5e6aca451fdab554517dcc42aea4609d7c916efc7f7f5102c14914556715fa",
+      "attempts": 1,
+      "cancelRequested": false,
+      "dispatchCause": null,
+      "evidence": [],
+      "mode": "test",
+      "operationRequestId": "request-1",
+      "phase": "running",
+      "planDigest": "23a88819d2769b858893ad7af5fd313202d0599ca555f05f8ef961a61b16b4f5",
+      "planId": "plan-1",
+      "process": null,
+      "software": "awaitingDetection",
+      "stopOutcome": null,
+      "submitted": true
+    }
+  },
   "verified": {
     "plan": {
       "access": {

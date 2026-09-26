@@ -79,7 +79,7 @@ fn installer_capabilities_are_bound_and_unsupported_semantics_fail_closed() {
     let decode = |v: &serde_json::Value| decode_plan(&serde_json::to_vec(v).unwrap(), &limits());
     let original = execution_contract::FrozenPlan::freeze(decode(&v).unwrap(), &limits()).unwrap();
     let mut changed = v.clone();
-    changed["execution"]["software"]["installer"]["restart"] = "Never".into();
+    changed["execution"]["software"]["installer"]["restart"] = "never".into();
     assert_ne!(
         original.digest(),
         execution_contract::FrozenPlan::freeze(decode(&changed).unwrap(), &limits())
@@ -87,15 +87,41 @@ fn installer_capabilities_are_bound_and_unsupported_semantics_fail_closed() {
             .digest()
     );
     for (field, value) in [
-        ("restart", serde_json::json!("Automatic")),
-        ("operations", serde_json::json!(["Uninstall"])),
-        (
-            "upgrade_strategy",
-            serde_json::json!("UninstallThenInstall"),
-        ),
+        ("restart", serde_json::json!("automatic")),
+        ("operations", serde_json::json!(["uninstall"])),
+        ("upgradeStrategy", serde_json::json!("uninstallThenInstall")),
     ] {
         let mut changed = v.clone();
         changed["execution"]["software"]["installer"][field] = value;
         assert!(decode(&changed).is_err(), "{field}");
     }
+}
+
+#[test]
+fn software_wire_is_camel_case_and_physical_binding_is_covered_by_digest() {
+    let value: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/software.json")).unwrap();
+    let freeze = |v: &serde_json::Value| {
+        execution_contract::FrozenPlan::freeze(
+            decode_plan(&serde_json::to_vec(v).unwrap(), &limits()).unwrap(),
+            &limits(),
+        )
+        .unwrap()
+    };
+    let original = freeze(&value);
+    for field in ["parent", "object"] {
+        let mut changed = value.clone();
+        changed["execution"]["software"]["resourceBinding"][field] = "other-object".into();
+        assert_ne!(original.digest(), freeze(&changed).digest());
+    }
+    let mut old = value.clone();
+    old["execution"]["software"]["mutation"] = "Install".into();
+    assert!(decode_plan(&serde_json::to_vec(&old).unwrap(), &limits()).is_err());
+    let mut old = value;
+    let installer = old["execution"]["software"]["installer"]
+        .as_object_mut()
+        .unwrap();
+    let detect = installer.remove("canDetect").unwrap();
+    installer.insert("can_detect".into(), detect);
+    assert!(decode_plan(&serde_json::to_vec(&old).unwrap(), &limits()).is_err());
 }

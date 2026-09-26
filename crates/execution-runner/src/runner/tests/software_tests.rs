@@ -46,6 +46,7 @@ fn software_fixture(script: &str) -> Fixture {
     software.detection.path = f.root.join("installed").to_str().unwrap().into();
     software.detection.versions[0].sha256 =
         Digest::new(format!("{:x}", Sha256::digest(b"v1"))).unwrap();
+    software.resource_binding = crate::software::resource_binding(&software.detection).unwrap();
     software.installer.artifact = f.plan.spec().launch.interpreter.artifact.clone();
     software.bundle = Some(BundleLimits {
         archive_bytes: 1024 * 1024,
@@ -57,10 +58,16 @@ fn software_fixture(script: &str) -> Fixture {
     let manifest = BundleManifest {
         package: software.package.clone(),
         version: PackageValue::new("1.0").unwrap(),
-        files: vec![BundleFile {
-            path: "install.sh".into(),
-            sha256: f.plan.spec().launch.artifact.sha256.clone(),
-        }],
+        files: vec![
+            BundleFile {
+                path: "install.sh".into(),
+                sha256: f.plan.spec().launch.artifact.sha256.clone(),
+            },
+            BundleFile {
+                path: "payload.bin".into(),
+                sha256: Digest::new(format!("{:x}", Sha256::digest(b"v1"))).unwrap(),
+            },
+        ],
         install: "install.sh".into(),
         uninstall: None,
         detection: software.detection.clone(),
@@ -73,6 +80,8 @@ fn software_fixture(script: &str) -> Fixture {
         .unwrap();
     zip.start_file("install.sh", options).unwrap();
     zip.write_all(script.as_bytes()).unwrap();
+    zip.start_file("payload.bin", options).unwrap();
+    zip.write_all(b"v1").unwrap();
     zip.finish().unwrap();
     software.payload.sha256 = Digest::new(format!(
         "{:x}",
@@ -116,6 +125,7 @@ fn start_software(f: &Fixture) -> AttemptId {
             Some(SoftwareProvenance {
                 ownership: Ownership::UserExisting,
                 state: None,
+                object_identity: None,
             }),
         )
         .unwrap();
@@ -123,14 +133,18 @@ fn start_software(f: &Fixture) -> AttemptId {
 }
 #[test]
 fn real_bundle_effect_is_independent_and_not_a_quiescence_claim() {
-    let f = software_fixture("printf v1 > installed\n");
+    let f = software_fixture("/bin/cat \"$8/payload.bin\" > installed\n");
     let id = start_software(&f);
     let process = finish(&f, &id);
     assert_eq!(process.exit_code, Some(0));
     assert!(!process.quiescent);
     let detected = f
         .runner
-        .software_evidence(&f.plan, &id, Instant::now() + Duration::from_secs(1))
+        .software_evidence(
+            &f.plan,
+            &id,
+            execution_app::SoftwareObservation::new(Instant::now() + Duration::from_secs(1)),
+        )
         .unwrap()
         .unwrap();
     assert_eq!(detected.before, Some(SoftwareState::Absent {}));
@@ -148,7 +162,11 @@ fn real_bundle_effect_is_independent_and_not_a_quiescence_claim() {
     f.runner.acknowledge_capture(&f.plan, &process).unwrap();
     let recovered = f
         .runner
-        .software_evidence(&f.plan, &id, Instant::now() + Duration::from_secs(1))
+        .software_evidence(
+            &f.plan,
+            &id,
+            execution_app::SoftwareObservation::new(Instant::now() + Duration::from_secs(1)),
+        )
         .unwrap()
         .unwrap();
     assert_eq!(recovered.before, None);
@@ -162,7 +180,11 @@ fn zero_exit_without_installed_effect_is_not_satisfied() {
     assert_eq!(process.exit_code, Some(0));
     let facts = f
         .runner
-        .software_evidence(&f.plan, &id, Instant::now() + Duration::from_secs(1))
+        .software_evidence(
+            &f.plan,
+            &id,
+            execution_app::SoftwareObservation::new(Instant::now() + Duration::from_secs(1)),
+        )
         .unwrap()
         .unwrap();
     assert_eq!(facts.detected, SoftwareState::Absent {});
@@ -241,6 +263,7 @@ fn change_bundle(f: &mut Fixture, mutation: MutationKind, script: &str) {
         Sha256::digest(std::fs::read(payload).unwrap())
     ))
     .unwrap();
+    s.resource_binding = crate::software::resource_binding(&s.detection).unwrap();
     s.mutation = mutation;
     if mutation == MutationKind::Uninstall {
         s.desired = DesiredState::Absent;
@@ -271,7 +294,7 @@ fn change_bundle(f: &mut Fixture, mutation: MutationKind, script: &str) {
 #[test]
 fn real_bundle_upgrade_and_declared_uninstall_recheck_owned_version() {
     let mut f = software_fixture("printf v1 > installed\n");
-    let attempt = start_software(&f);
+    let mut attempt = start_software(&f);
     let facts = finish(&f, &attempt);
     assert_eq!(facts.exit_code, Some(0));
     f.runner.acknowledge_capture(&f.plan, &facts).unwrap();
@@ -285,6 +308,7 @@ fn real_bundle_upgrade_and_declared_uninstall_recheck_owned_version() {
         ),
         (MutationKind::Uninstall, "2.0", SoftwareState::Absent {}),
     ] {
+        attempt = AttemptId::new(format!("attempt-{version}")).unwrap();
         change_bundle(&mut f, mutation, "printf v2 > installed\n");
         f.runner
             .launch(
@@ -297,6 +321,15 @@ fn real_bundle_upgrade_and_declared_uninstall_recheck_owned_version() {
                 },
                 Some(SoftwareProvenance {
                     ownership: Ownership::OrganizationManaged,
+                    object_identity: f
+                        .plan
+                        .spec()
+                        .execution
+                        .software()
+                        .unwrap()
+                        .resource_binding
+                        .object
+                        .clone(),
                     state: Some(SoftwareState::Present {
                         version: PackageValue::new(version).unwrap(),
                     }),
@@ -307,7 +340,13 @@ fn real_bundle_upgrade_and_declared_uninstall_recheck_owned_version() {
         assert_eq!(facts.exit_code, Some(0), "{:?}", facts.failure_kind);
         assert_eq!(
             f.runner
-                .software_evidence(&f.plan, &attempt, Instant::now() + Duration::from_secs(1))
+                .software_evidence(
+                    &f.plan,
+                    &attempt,
+                    execution_app::SoftwareObservation::new(
+                        Instant::now() + Duration::from_secs(1)
+                    )
+                )
                 .unwrap()
                 .unwrap()
                 .detected,
@@ -346,6 +385,7 @@ fn manager_lock_blocks_a_second_attempt_and_cancel_keeps_effect_separate() {
             Some(SoftwareProvenance {
                 ownership: Ownership::UserExisting,
                 state: None,
+                object_identity: None,
             }),
         )
         .unwrap();
@@ -358,7 +398,11 @@ fn manager_lock_blocks_a_second_attempt_and_cancel_keeps_effect_separate() {
     assert!(!stopped.quiescent);
     assert_eq!(
         f.runner
-            .software_evidence(&f.plan, &first, Instant::now() + Duration::from_secs(1))
+            .software_evidence(
+                &f.plan,
+                &first,
+                execution_app::SoftwareObservation::new(Instant::now() + Duration::from_secs(1))
+            )
             .unwrap()
             .unwrap()
             .detected,
@@ -376,7 +420,7 @@ fn expired_detection_budget_does_not_read_or_report_absence() {
         cancelled: Arc::new(AtomicBool::new(false)),
     };
     assert_eq!(
-        crate::software::detect(f.plan.spec().execution.software().unwrap(), &control),
+        crate::software::detect(f.plan.spec().execution.software().unwrap(), &control).state,
         SoftwareState::Unknown {
             reason: SoftwareDetectionFailure::BudgetExceeded
         }
@@ -395,6 +439,7 @@ fn native_uninstall_does_not_accept_an_arbitrary_declared_script() {
         s.bundle = None;
         s.mutation = MutationKind::Uninstall;
         s.desired = DesiredState::Absent;
+        s.resource_binding = crate::software::resource_binding(&s.detection).unwrap();
         s.uninstall = Some(p.launch.artifact.clone());
         p.request.operation.action = Id::new("software.uninstall").unwrap();
     });
@@ -410,6 +455,15 @@ fn native_uninstall_does_not_accept_an_arbitrary_declared_script() {
             },
             Some(SoftwareProvenance {
                 ownership: Ownership::OrganizationManaged,
+                object_identity: f
+                    .plan
+                    .spec()
+                    .execution
+                    .software()
+                    .unwrap()
+                    .resource_binding
+                    .object
+                    .clone(),
                 state: Some(SoftwareState::Present {
                     version: PackageValue::new("1.0").unwrap(),
                 }),
@@ -419,4 +473,90 @@ fn native_uninstall_does_not_accept_an_arbitrary_declared_script() {
     let result = finish(&f, &attempt);
     assert_eq!(result.failure_kind, ProcessFailureKind::Denied);
     assert_eq!(std::fs::read(f.root.join("installed")).unwrap(), b"v1");
+}
+
+#[test]
+fn recovery_cleans_only_bound_staging_after_quiescence_and_keeps_historical_effect() {
+    let f = software_fixture("printf v1 > installed\n");
+    let attempt = start_software(&f);
+    let process = finish(&f, &attempt);
+    let previous = f
+        .runner
+        .software_evidence(
+            &f.plan,
+            &attempt,
+            execution_app::SoftwareObservation::new(Instant::now() + Duration::from_secs(1)),
+        )
+        .unwrap()
+        .unwrap();
+    let stage = f.root.join(format!("software-{}", attempt.as_str()));
+    assert!(stage.exists());
+    assert!(previous.staging.pending());
+    f.runner.acknowledge_capture(&f.plan, &process).unwrap();
+    let context = execution_app::SoftwareObservation {
+        deadline: Instant::now() + Duration::from_secs(1),
+        previous: Some(&previous),
+        quiescent: false,
+        finalized: true,
+    };
+    let unchanged = f
+        .runner
+        .software_evidence(&f.plan, &attempt, context)
+        .unwrap()
+        .unwrap();
+    assert_eq!(unchanged, previous);
+    assert!(stage.exists());
+    // Trusted adapter proof is injected only at this test seam; process exit did not supply it.
+    let cleaned = f
+        .runner
+        .software_evidence(
+            &f.plan,
+            &attempt,
+            execution_app::SoftwareObservation {
+                quiescent: true,
+                ..context
+            },
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(cleaned.detected, previous.detected);
+    assert_eq!(cleaned.staging, SoftwareStaging::Cleaned {});
+    assert!(!stage.exists());
+}
+
+#[test]
+fn staging_replacement_is_not_deleted_during_recovery() {
+    let f = software_fixture("exit 0\n");
+    let attempt = start_software(&f);
+    let process = finish(&f, &attempt);
+    let previous = f
+        .runner
+        .software_evidence(
+            &f.plan,
+            &attempt,
+            execution_app::SoftwareObservation::new(Instant::now() + Duration::from_secs(1)),
+        )
+        .unwrap()
+        .unwrap();
+    f.runner.acknowledge_capture(&f.plan, &process).unwrap();
+    let stage = f.root.join(format!("software-{}", attempt.as_str()));
+    std::fs::rename(&stage, f.root.join("retained-original")).unwrap();
+    std::fs::create_dir(&stage).unwrap();
+    std::fs::write(stage.join("user-data"), "keep").unwrap();
+    let recovered = f
+        .runner
+        .software_evidence(
+            &f.plan,
+            &attempt,
+            execution_app::SoftwareObservation {
+                deadline: Instant::now() + Duration::from_secs(1),
+                previous: Some(&previous),
+                quiescent: true,
+                finalized: true,
+            },
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(recovered.staging, SoftwareStaging::Unverified {});
+    assert_eq!(std::fs::read(stage.join("user-data")).unwrap(), b"keep");
 }

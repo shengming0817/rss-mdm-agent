@@ -71,7 +71,9 @@ export type SoftwareDiagnostic =
   | "unrecognizedVersion"
   | "detectionBudgetExceeded"
   | "desiredStateObserved"
-  | "desiredStateMissing";
+  | "desiredStateMissing"
+  | "cleanupPending"
+  | "cleanupUnverified";
 /**
  * Closed stop request diagnostics. Neither variant is a termination/effect observation.
  *
@@ -208,7 +210,7 @@ export type ExecutionSummary =
       /**
        * Selected mutation.
        */
-      mutation: "Install" | "Upgrade" | "Downgrade" | "Uninstall";
+      mutation: "install" | "upgrade" | "downgrade" | "uninstall";
     };
 /**
  * Opaque local reference identifier; syntax validity is not authenticity.
@@ -260,7 +262,7 @@ export type LocalContractV3 = 3;
  * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
  * via the `definition` "MutationKind".
  */
-export type MutationKind = "Install" | "Upgrade" | "Downgrade" | "Uninstall";
+export type MutationKind = "install" | "upgrade" | "downgrade" | "uninstall";
 /**
  * Quality of the captured result, independent from the exit code.
  *
@@ -503,7 +505,7 @@ export interface FrozenPlanSummary {
         /**
          * Selected mutation.
          */
-        mutation: "Install" | "Upgrade" | "Downgrade" | "Uninstall";
+        mutation: "install" | "upgrade" | "downgrade" | "uninstall";
       };
   /**
    * Human or AI origin, without granting execution permission.
@@ -1208,7 +1210,7 @@ export interface FrozenPlanSummary1 {
         /**
          * Selected mutation.
          */
-        mutation: "Install" | "Upgrade" | "Downgrade" | "Uninstall";
+        mutation: "install" | "upgrade" | "downgrade" | "uninstall";
       };
   /**
    * Human or AI origin, without granting execution permission.

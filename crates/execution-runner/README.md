@@ -54,3 +54,18 @@ V3 与 SQLite schema 4 直接替换旧格式：旧计划/库明确拒绝，文�
 独立软件检测使用单次一秒的恢复观察预算（不恢复原变更预算），块读取检查截止和取消；未完成检测只输出闭合失败原因。任务详情展示重启待处理、检测不可用、未知版本、检测预算耗尽及目标状态观察，不暴露路径或源。`desiredStateObserved` 不替代静止或最终成功。
 
 补充实现参考：[Apple XNU kern_mib.c](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_mib.c)、[System Informer phnt ntexapi.h](https://github.com/winsiderss/phnt/blob/master/ntexapi.h) 的 boot generation 声明。Windows API 不可用时保留未知，不用墙钟估算启动代际。
+
+外部复核后，冻结计划包含检测目标的物理目录/文件身份；OS 锁与 journal claim
+按相同物理对象取键，目录级保守互斥覆盖大小写别名，已有文件身份覆盖硬链接。
+检测句柄保留至调用前复核，发现替换即拒绝；不声称可以对不受该锁约束的第三方安装器实现跨进程事务。
+
+Bundle 的第八个固定位置参数为当前私有解压目录，脚本从该目录读取 manifest 声明并验过摘要的 payload。
+PKG 的第八个参数固定为系统 `/usr/sbin/pkgutil`，生产构造器不接受覆盖。
+真实 sh wrapper 测试使用局部假 manager/verifier 检验参数与退出传播，不能证明真实 PKG 签名或安装成功。
+Windows PowerShell 7 wrapper 测试在 Windows 条件编译，本次 macOS 只验证其交叉编译。
+
+软件证据独立记录 staging 对象身份和 `pending/failed/cleaned/unverified` 清理状态。
+已启动 Bundle 不由 Drop 删除；只有原 attempt 的静止证明提交后，恢复观察才可在有界时间内
+清理匹配的目录对象。macOS 使用目录句柄相对遍历，Windows 以删除句柄绑定对象后操作。
+未完成清理保留 journal claim；崩溃后缺失身份、目录被替换等情况显示诊断并保留数据，
+不能依据路径猜测归属。已完成效果的历史事实不因清理重试改写。

@@ -50,9 +50,13 @@ pub(crate) fn facts(
             |r| r.get(0),
         )
         .optional()?;
-    bytes
-        .map(|b| decode(&b, limits.max_record_bytes))
-        .transpose()
+    let value = bytes
+        .map(|b| decode::<SoftwareEvidence>(&b, limits.max_record_bytes))
+        .transpose()?;
+    if value.as_ref().is_some_and(|v| &v.attempt_id != attempt) {
+        return Err(Error::Corrupt);
+    }
+    Ok(value)
 }
 pub(crate) fn settle(
     conn: &Connection,
@@ -89,6 +93,9 @@ pub(crate) fn settle(
     {
         return Ok(());
     }
+    if facts(conn, &a.id, limits)?.is_some_and(|f| f.staging.pending()) {
+        return Ok(());
+    }
     if assessment == Some(EffectAssessment::Satisfied) {
         let evidence = facts(conn, &a.id, limits)?.ok_or(Error::Conflict)?;
         if evidence.plan_digest != *plan.digest()
@@ -97,7 +104,7 @@ pub(crate) fn settle(
         {
             return Err(Error::Conflict);
         }
-        let resource = &s.lock_keys()[1];
+        let resource = &s.ownership_key();
         match &evidence.detected {
             SoftwareState::Absent {} => {
                 conn.execute(
@@ -138,7 +145,7 @@ fn ownership(
                 bounded_blob("authority", limits.max_record_bytes),
                 bounded_blob("package", limits.max_record_bytes)
             ),
-            [&s.lock_keys()[1]],
+            [&s.ownership_key()],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .optional()?;
@@ -149,6 +156,12 @@ fn ownership(
         {
             SoftwareProvenance {
                 ownership: Ownership::OrganizationManaged,
+                object_identity: facts(
+                    conn,
+                    &AttemptId::new(id.clone()).map_err(|_| Error::Corrupt)?,
+                    limits,
+                )?
+                .and_then(|f| f.object_identity),
                 state: facts(
                     conn,
                     &AttemptId::new(id).map_err(|_| Error::Corrupt)?,
@@ -160,6 +173,7 @@ fn ownership(
         _ => SoftwareProvenance {
             ownership: Ownership::UserExisting,
             state: None,
+            object_identity: None,
         },
     })
 }
@@ -224,6 +238,20 @@ impl Store {
                 value.restart_required = true;
                 value.boot_generation = old.boot_generation.clone().or(value.boot_generation);
             }
+            use execution_contract::SoftwareStaging as S;
+            match (&old.staging, &value.staging) {
+                (
+                    S::Pending { object: a } | S::Failed { object: a },
+                    S::Pending { object: b } | S::Failed { object: b },
+                ) if a == b => {}
+                (S::Pending { .. } | S::Failed { .. }, S::Cleaned {})
+                    if a.termination.is_some() => {}
+                (S::Pending { .. } | S::Failed { .. }, S::Unverified {}) => {}
+                (old, new) if old == new => {}
+                _ => return Err(Error::Conflict),
+            }
+            let mut historical = value.clone();
+            historical.staging = old.staging.clone();
             if a.assessment.as_ref().is_some_and(|o| {
                 matches!(
                     o.observation,
@@ -233,12 +261,13 @@ impl Store {
                             | EffectAssessment::NotSatisfied
                     }
                 )
-            }) && value != old
+            }) && historical != old
             {
                 return Err(Error::Conflict);
             }
         }
         tx.execute("INSERT INTO software_evidence VALUES(?1,?2) ON CONFLICT(attempt_id) DO UPDATE SET body=excluded.body",params![a.id.as_str(),encode(&value,self.limits.max_record_bytes)?])?;
+        settle(&tx, &plan, execution.snapshot(), self.limits)?;
         tx.commit().map_err(|_| Error::OperationCommitUnknown)
     }
     /// Read independent observations under the same scope authorization as process evidence.
@@ -286,6 +315,15 @@ pub(crate) fn diagnostic(
     Ok(Some(match evidence {
         None => D::AwaitingDetection,
         Some(e) if e.restart_required => D::RestartPending,
+        Some(e)
+            if matches!(
+                e.staging,
+                execution_contract::SoftwareStaging::Unverified {}
+            ) =>
+        {
+            D::CleanupUnverified
+        }
+        Some(e) if e.staging.pending() => D::CleanupPending,
         Some(e) => match e.detected {
             SoftwareState::Unknown {
                 reason: F::Unavailable,

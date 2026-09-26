@@ -129,6 +129,8 @@ function stops(value: StopOutcome): string {
 }
 function softwareDiagnostic(value: SoftwareDiagnostic): string {
   const labels: Record<SoftwareDiagnostic, string> = {
+    cleanupPending: "临时安装文件尚待安全清理，资源占用保留",
+    cleanupUnverified: "无法确认临时目录归属，需要人工核实",
     awaitingDetection: "等待独立软件检测",
     restartPending: "安装器要求重启设备；重启后重新核实",
     detectionUnavailable: "软件检测不可用，请核对设备与读取权限",
@@ -251,6 +253,30 @@ const text = (value: unknown) => JSON.stringify(value, null, 2);
       <dd>{{ details.status.operationRequestId }}</dd>
       <dt>冻结计划 / 摘要</dt>
       <dd>{{ details.plan.planId }}<br />{{ details.plan.planDigest }}</dd>
+      <template v-if="details.plan.execution.kind === 'software'">
+        <dt>软件执行</dt>
+        <dd class="software-operation">
+          {{
+            {
+              msi: "Windows MSI",
+              winget: "WinGet",
+              pkg: "macOS PKG",
+              homebrew: "Homebrew",
+              windowsBundle: "Windows ZIP Bundle",
+              macosBundle: "macOS ZIP Bundle",
+            }[details.plan.execution.adapter]
+          }}
+          ·
+          {{
+            {
+              install: "安装",
+              upgrade: "升级",
+              downgrade: "降级",
+              uninstall: "卸载",
+            }[details.plan.execution.mutation]
+          }}
+        </dd>
+      </template>
       <dt>当前尝试</dt>
       <dd>
         {{ details.status.attemptId ?? "尚未准入" }} · 共

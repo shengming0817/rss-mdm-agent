@@ -386,6 +386,37 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             &ObservationEvidence(facts),
         )?)
     }
+    fn collect_software(&mut self, execution: &Execution) -> Result<(), Error> {
+        let Some(active) = &execution.snapshot().attempt else {
+            return Ok(());
+        };
+        let scope = Scope::from_plan(execution.plan());
+        let host = Host::new(&self.host, &self.binding, &self.config, None)
+            .with_plan(Some(execution.plan()));
+        let previous = self.store.software_evidence(&scope, &active.id, &host)?;
+        let observation = crate::SoftwareObservation {
+            deadline: std::time::Instant::now() + std::time::Duration::from_secs(1),
+            previous: previous.as_ref(),
+            quiescent: active.termination.is_some(),
+            finalized: active.assessment.as_ref().is_some_and(|a| {
+                matches!(
+                    a.observation,
+                    Observation::Effect {
+                        assessment: execution_lifecycle::EffectAssessment::Satisfied
+                            | execution_lifecycle::EffectAssessment::NoEffect
+                            | execution_lifecycle::EffectAssessment::NotSatisfied
+                    }
+                )
+            }),
+        };
+        if let Some(facts) =
+            self.runner
+                .software_evidence(execution.plan(), &active.id, observation)?
+        {
+            self.store.record_software(&scope, &facts, &host)?;
+        }
+        Ok(())
+    }
     fn capture_for(
         &mut self,
         request: &RequestId,
@@ -397,16 +428,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             .attempt
             .as_ref()
             .ok_or(Error::Conflict)?;
-        if let Some(facts) = self.runner.software_evidence(
-            execution.plan(),
-            &active.id,
-            std::time::Instant::now() + std::time::Duration::from_secs(1),
-        )? {
-            let host = Host::new(&self.host, &self.binding, &self.config, None)
-                .with_plan(Some(execution.plan()));
-            self.store
-                .record_software(&Scope::from_plan(execution.plan()), &facts, &host)?;
-        }
+        self.collect_software(execution)?;
         let live = self.runner.evidence(execution.plan(), &active.id)?;
         let had_live = live.is_some();
         let capture = match live {
@@ -443,19 +465,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                 *execution = self.load(None, request, ExecutionAccess::RunnerFact)?;
             }
             if facts.finished {
-                if let Some(software) = self.runner.software_evidence(
-                    execution.plan(),
-                    &facts.attempt_id,
-                    std::time::Instant::now() + std::time::Duration::from_secs(1),
-                )? {
-                    let host = Host::new(&self.host, &self.binding, &self.config, None)
-                        .with_plan(Some(execution.plan()));
-                    self.store.record_software(
-                        &Scope::from_plan(execution.plan()),
-                        &software,
-                        &host,
-                    )?;
-                }
+                self.collect_software(execution)?;
                 self.runner.acknowledge_capture(execution.plan(), facts)?;
             }
         }
@@ -482,6 +492,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                     })
                 })
             {
+                self.collect_software(&execution)?;
                 break;
             }
             let (capture, had_live) = self.capture_for(request, &mut execution)?;

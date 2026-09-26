@@ -334,3 +334,11 @@ mod boot_tests {
         );
     }
 }
+
+pub(crate) fn file_identity(file: &File) -> Result<Id, Error> {
+    let m = file.metadata().map_err(|_| Error::Unavailable)?;
+    Id::new(format!("macos-{:x}-{:x}", m.dev(), m.ino())).map_err(|_| Error::Unavailable)
+}
+pub(crate) fn open_observed_file(path: &Path) -> Result<File, Error> {
+    open_file(path)
+}

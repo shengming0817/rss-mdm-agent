@@ -6,6 +6,7 @@ use support::*;
 fn main() {
     let mut fixtures = serde_json::Map::new();
     for (name, scenario, approval, reconcile, cancel) in [
+        ("software", TestScenario::Wait, false, false, false),
         ("running", TestScenario::Wait, false, false, false),
         ("approvalRequired", TestScenario::Wait, true, false, false),
         ("outcomeUnknown", TestScenario::Unknown, false, true, false),
@@ -13,7 +14,21 @@ fn main() {
         ("cancelled", TestScenario::Wait, false, true, true),
     ] {
         let db = Database::new();
-        let host = TestHost::new();
+        let mut host = TestHost::new();
+        let p = if name == "software" {
+            execution_contract::FrozenPlan::freeze(
+                execution_contract::decode_plan(
+                    include_bytes!("../../execution-contract/tests/fixtures/software.json"),
+                    &test_store_limits().plan,
+                )
+                .unwrap(),
+                &test_store_limits().plan,
+            )
+            .unwrap()
+        } else {
+            plan()
+        };
+        host.template = p.clone();
         host.state.lock().unwrap().approval = approval;
         let runner = DeterministicTestRunner::new(id("test-runner"), scenario, 16).unwrap();
         let mut app = ExecutionApp::start(
@@ -24,7 +39,6 @@ fn main() {
             AppConfig::test_defaults(1),
         )
         .unwrap();
-        let p = plan();
         let request = &p.spec().request.request_id;
         app.submit(&caller(), request, &p).unwrap();
         if cancel {

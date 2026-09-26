@@ -124,18 +124,17 @@
         "variant": "stable"
       },
       "desired": {
-        "Present": {
-          "version": "1.0",
-          "artifact": {
-            "resource": {
-              "id": "script-1",
-              "revision": "1"
-            },
-            "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
-          }
+        "kind": "present",
+        "version": "1.0",
+        "artifact": {
+          "resource": {
+            "id": "script-1",
+            "revision": "1"
+          },
+          "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
         }
       },
-      "mutation": "Install",
+      "mutation": "install",
       "snapshot": {
         "id": "fixed",
         "revision": "1"
@@ -162,11 +161,11 @@
       "uninstall": null,
       "management": {
         "required": false,
-        "allow_modify_user_owned": false,
-        "allow_remove": true,
-        "allow_downgrade": false,
-        "allow_restart": true,
-        "allow_dependency_changes": false
+        "allowModifyUserOwned": false,
+        "allowRemove": true,
+        "allowDowngrade": false,
+        "allowRestart": true,
+        "allowDependencyChanges": false
       },
       "comparison": null,
       "bundle": null,
@@ -182,15 +181,19 @@
           "id": "fixed",
           "revision": "1"
         },
-        "can_detect": true,
+        "canDetect": true,
         "operations": [
-          "Install",
-          "Upgrade",
-          "Uninstall"
+          "install",
+          "upgrade",
+          "uninstall"
         ],
-        "upgrade_strategy": "InPlace",
-        "restart": "MayRequire",
-        "dependency_impact": "None"
+        "upgradeStrategy": "inPlace",
+        "restart": "mayRequire",
+        "dependencyImpact": "none"
+      },
+      "resourceBinding": {
+        "parent": "fixture-parent",
+        "object": null
       }
     }
   }
