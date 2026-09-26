@@ -1,5 +1,5 @@
 use crate::*;
-use execution_contract::{AttemptId, EvidenceRef, FrozenPlan};
+use execution_contract::{AttemptId, EvidenceRef, FrozenExecution};
 use execution_lifecycle::{ObservationError, ObservationFacts, ObservationVerifier};
 use execution_sqlite::{self as db, AccessRequest, AdmissionGate, Scope, TrustSnapshot};
 
@@ -8,7 +8,7 @@ pub(crate) struct Host<'a, H> {
     binding: &'a ServiceBinding,
     caller: Option<&'a RequestContext>,
     config: Option<AppConfig>,
-    plan: Option<&'a FrozenPlan>,
+    plan: Option<&'a FrozenExecution>,
 }
 impl<'a, H> Host<'a, H> {
     pub(crate) fn new(
@@ -25,14 +25,14 @@ impl<'a, H> Host<'a, H> {
             plan: None,
         }
     }
-    pub(crate) fn with_plan(mut self, plan: Option<&'a FrozenPlan>) -> Self {
+    pub(crate) fn with_plan(mut self, plan: Option<&'a FrozenExecution>) -> Self {
         self.plan = plan;
         self
     }
 }
 pub(crate) fn capabilities(
     host: &impl AppHost,
-    plan: &FrozenPlan,
+    plan: &FrozenExecution,
     config: AppConfig,
 ) -> Result<(), Error> {
     let snapshot = host.capabilities(plan)?;
@@ -62,14 +62,14 @@ pub(crate) struct ObservationEvidence<'a>(pub(crate) &'a ObservationFacts);
 impl ObservationVerifier for ObservationEvidence<'_> {
     fn verify(
         &self,
-        plan: &FrozenPlan,
+        plan: &FrozenExecution,
         attempt: &AttemptId,
         evidence: &EvidenceRef,
         now: u64,
     ) -> Result<ObservationFacts, ObservationError> {
         let facts = self.0;
-        if facts.plan_id != plan.spec().plan_id
-            || &facts.plan_digest != plan.digest()
+        if facts.request_id != plan.spec().request.request_id
+            || &facts.content_digest != plan.digest()
             || &facts.attempt_id != attempt
             || &facts.evidence != evidence
             || facts.observed_at_unix_ms > now
@@ -110,7 +110,7 @@ impl<H: AppHost> db::Host for Host<'_, H> {
     }
     fn admit(
         &self,
-        plan: &FrozenPlan,
+        plan: &FrozenExecution,
         attempt: &AttemptId,
         bindings: &[execution_approval::ProfileApproval],
         approvals: &dyn execution_approval::ApprovalVerifier,
@@ -145,13 +145,13 @@ impl<H: AppHost> db::Host for Host<'_, H> {
 
 /// A capture written by the authenticated runner remains readable after its in-memory ack.
 pub(crate) fn process_observation(
-    plan: &FrozenPlan,
+    plan: &FrozenExecution,
     facts: &execution_contract::ProcessEvidence,
     now: u64,
 ) -> Option<ObservationFacts> {
     use execution_contract::{EvidenceKind, EvidenceRef, Id, ProcessScope, VersionedRef};
     use execution_lifecycle::Observation;
-    if !facts.finished || !facts.quiescent || &facts.plan_digest != plan.digest() {
+    if !facts.finished || !facts.quiescent || &facts.content_digest != plan.digest() {
         return None;
     }
     let never = matches!(facts.scope, ProcessScope::NotStarted {});
@@ -166,8 +166,8 @@ pub(crate) fn process_observation(
         }
     };
     Some(ObservationFacts {
-        plan_id: plan.spec().plan_id.clone(),
-        plan_digest: plan.digest().clone(),
+        request_id: plan.spec().request.request_id.clone(),
+        content_digest: plan.digest().clone(),
         attempt_id: facts.attempt_id.clone(),
         observed_at_unix_ms: now,
         evidence: EvidenceRef {

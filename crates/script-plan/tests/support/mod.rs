@@ -3,8 +3,8 @@ use script_plan::*;
 use serde_json::json;
 use std::collections::BTreeMap;
 
-pub fn limits() -> PlanLimits {
-    PlanLimits {
+pub fn limits() -> ExecutionLimits {
+    ExecutionLimits {
         max_input_bytes: 65536,
         max_depth: 32,
         max_nodes: 4096,
@@ -39,7 +39,6 @@ pub fn input(profile: ScriptProfile) -> ScriptPlanInput {
         subject: id("uid:1000"),
     };
     ScriptPlanInput {
-        plan_id: PlanId::new("test-plan").unwrap(),
         request: ExecutionRequest {
             schema_version: V1,
             request_id: RequestId::new("test-request").unwrap(),

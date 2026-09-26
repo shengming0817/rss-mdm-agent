@@ -1,5 +1,5 @@
 use crate::*;
-use execution_contract::{Authority, FrozenPlan};
+use execution_contract::{Authority, FrozenExecution};
 
 /// Validated lifecycle state, not an executable permit.
 /// Restore validates protected journal data; it does not authenticate arbitrary JSON.
@@ -8,17 +8,17 @@ use execution_contract::{Authority, FrozenPlan};
 /// ~~~
 #[derive(Debug, Clone)]
 pub struct Execution {
-    plan: FrozenPlan,
+    plan: FrozenExecution,
     snapshot: Snapshot,
     limits: Limits,
 }
 impl Execution {
     /// Create received state. Time may precede the plan window; attempts cannot.
-    pub fn open(plan: FrozenPlan, now: u64, limits: Limits) -> Result<Self, LifecycleError> {
+    pub fn open(plan: FrozenExecution, now: u64, limits: Limits) -> Result<Self, LifecycleError> {
         let snapshot = Snapshot {
             version: crate::model::SNAPSHOT_VERSION,
-            plan_id: plan.spec().plan_id.clone(),
-            plan_digest: plan.digest().clone(),
+            request_id: plan.spec().request.request_id.clone(),
+            content_digest: plan.digest().clone(),
             opened_at_unix_ms: now,
             updated_at_unix_ms: now,
             revision: 0,
@@ -33,7 +33,11 @@ impl Execution {
         Self::restore(plan, snapshot, limits)
     }
     /// Decode the sole bounded format; storage authenticity must be established by C18.
-    pub fn decode(plan: FrozenPlan, bytes: &[u8], limits: Limits) -> Result<Self, LifecycleError> {
+    pub fn decode(
+        plan: FrozenExecution,
+        bytes: &[u8],
+        limits: Limits,
+    ) -> Result<Self, LifecycleError> {
         validate_limits(limits)?;
         if bytes.len() > limits.max_snapshot_bytes {
             return Err(LifecycleError::Limit);
@@ -43,7 +47,7 @@ impl Execution {
     }
     /// Restore protected storage after checking all structural and plan invariants.
     pub fn restore(
-        plan: FrozenPlan,
+        plan: FrozenExecution,
         snapshot: Snapshot,
         limits: Limits,
     ) -> Result<Self, LifecycleError> {
@@ -60,7 +64,7 @@ impl Execution {
         &self.snapshot
     }
     /// Borrow the exact immutable plan restored with these facts; this grants no dispatch authority.
-    pub fn plan(&self) -> &FrozenPlan {
+    pub fn plan(&self) -> &FrozenExecution {
         &self.plan
     }
     /// Cumulative output across attempts, saturating at the integer ceiling.
@@ -406,8 +410,8 @@ impl Execution {
         let facts = verifier
             .verify(&self.plan, attempt_id, evidence, now)
             .map_err(LifecycleError::ObservationVerification)?;
-        if facts.plan_id != s.plan_id
-            || facts.plan_digest != s.plan_digest
+        if facts.request_id != s.request_id
+            || facts.content_digest != s.content_digest
             || &facts.attempt_id != attempt_id
             || &facts.evidence != evidence
             || evidence.runner != a.runner

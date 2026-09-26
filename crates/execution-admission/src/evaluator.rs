@@ -1,6 +1,7 @@
 use crate::*;
 use execution_contract::{
-    AttemptId, ExecutionBudget, ExecutionRequest, FrozenPlan, Initiator, PlanSpec, ValidityWindow,
+    AttemptId, ExecutionBudget, ExecutionInput, ExecutionRequest, FrozenExecution, Initiator,
+    ValidityWindow,
 };
 
 // Only this verifier call can create the runtime trusted context. It has no serde/DTO constructor.
@@ -9,7 +10,7 @@ struct VerifiedContext {
 }
 impl VerifiedContext {
     fn obtain(
-        plan: &FrozenPlan,
+        plan: &FrozenExecution,
         attempt: &AttemptId,
         authority: &(impl AuthorityVerifier + ?Sized),
     ) -> Result<Self, VerificationError> {
@@ -32,10 +33,9 @@ fn budget_fits(plan: ExecutionBudget, ceiling: ExecutionBudget) -> bool {
 // Exhaustive patterns intentionally have no `..`: adding a contract field requires a
 // decision here. Whole-value comparisons below also include future nested fields.
 // ref: Rust Reference, patterns.html#struct-patterns
-fn scope(spec: &PlanSpec) -> impl PartialEq + '_ {
-    let PlanSpec {
-        schema_version: _, // FrozenPlan already validates the sole supported version.
-        plan_id: _,        // Correlation, not authority.
+fn scope(spec: &ExecutionInput) -> impl PartialEq + '_ {
+    let ExecutionInput {
+        schema_version: _, // FrozenExecution already validates the sole supported version.
         request,
         launch,
         execution,
@@ -47,7 +47,7 @@ fn scope(spec: &PlanSpec) -> impl PartialEq + '_ {
         policy: _,   // Exact verified policy checked by decide.
     } = spec;
     let ExecutionRequest {
-        schema_version: _, // Validated by FrozenPlan.
+        schema_version: _, // Validated by FrozenExecution.
         request_id: _,     // Correlation, not authority.
         initiator: _,      // Origin is authenticated by AuthorityVerifier.
         delegation: _,     // Verified and intersected independently by decide.
@@ -80,22 +80,24 @@ fn scope(spec: &PlanSpec) -> impl PartialEq + '_ {
         constraints,
     )
 }
-fn same_scope(template: &PlanSpec, plan: &PlanSpec) -> bool {
+fn same_scope(template: &ExecutionInput, plan: &ExecutionInput) -> bool {
     scope(template) == scope(plan)
 }
 /// Evaluate one frozen plan through the trusted host seam, always returning a closed decision.
 /// Missing verification, invalid rules and bounds fail as Denied, never as an approval request.
 /// No counters, approval records or execution intents are changed by this call.
 pub fn decide(
-    plan: &FrozenPlan,
+    plan: &FrozenExecution,
     attempt: &AttemptId,
     authority: &(impl AuthorityVerifier + ?Sized),
     limits: AdmissionLimits,
 ) -> AdmissionDecision {
     let spec = plan.spec();
     let result = |outcome, reason, rule_ids| AdmissionDecision {
-        plan_id: spec.plan_id.clone(),
-        plan_digest: plan.digest().clone(),
+        execution_gate: ExecutionGate::Blocked,
+        risk: None,
+        request_id: spec.request.request_id.clone(),
+        content_digest: plan.digest().clone(),
         policy: spec.policy.clone(),
         delegation: spec.request.delegation.clone(),
         outcome,
@@ -119,7 +121,8 @@ pub fn decide(
     if facts.rules.len() > limits.max_rules {
         return deny(Reason::Limit);
     }
-    if facts.subject.authority != spec.request.authority
+    if facts.verified_origin != spec.request.initiator
+        || facts.subject.authority != spec.request.authority
         || facts.subject.actor != spec.request.actor
     {
         return deny(Reason::SubjectMismatch);
@@ -189,15 +192,29 @@ pub fn decide(
         (a.id.as_str(), a.revision.as_str()).cmp(&(b.id.as_str(), b.revision.as_str()))
     });
     profiles.dedup();
-    let mut decision = if profiles.is_empty() {
-        result(DecisionOutcome::Allowed, Reason::RuleAllowed, rule_ids)
-    } else {
-        result(
-            DecisionOutcome::ApprovalRequired { profiles },
-            Reason::NeedsApproval,
-            rule_ids,
-        )
+    let mut decision =
+        if profiles.is_empty() || !matches!(facts.verified_origin, Initiator::Policy { .. }) {
+            result(DecisionOutcome::Allowed, Reason::RuleAllowed, rule_ids)
+        } else {
+            result(
+                DecisionOutcome::ApprovalRequired { profiles },
+                Reason::NeedsApproval,
+                rule_ids,
+            )
+        };
+    decision.risk = facts.risk;
+    decision.execution_gate = match (&facts.verified_origin, facts.risk) {
+        (Initiator::Human { .. }, _) => ExecutionGate::Confirmation,
+        (Initiator::Policy { .. }, _) => ExecutionGate::Direct,
+        (Initiator::Ai { .. }, Some(RiskLevel::Zero | RiskLevel::One)) => ExecutionGate::Direct,
+        (Initiator::Ai { .. }, Some(RiskLevel::Two)) => ExecutionGate::Confirmation,
+        _ => ExecutionGate::Blocked,
     };
+    if decision.execution_gate == ExecutionGate::Blocked {
+        decision.outcome = DecisionOutcome::Denied;
+        decision.reason = Reason::RiskBlocked;
+        return decision;
+    }
     decision.validity = Some(AdmissionValidity {
         revision: facts.verification_revision.clone(),
         verified_at_unix_ms: facts.now_unix_ms,

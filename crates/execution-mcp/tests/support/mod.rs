@@ -1,7 +1,7 @@
 //! Explicit TEST authority and in-memory service. No runner, database or platform effect.
 use execution_contract::{
-    AttemptId, Authority, Digest, ExactArtifactRef, FrozenPlan, Id, PlanId, PlanLimits, PlanSpec,
-    RequestId, VersionedRef,
+    AttemptId, Authority, Digest, ExactArtifactRef, ExecutionInput, ExecutionLimits,
+    FrozenExecution, Id, RequestId, VersionedRef,
 };
 use execution_mcp::*;
 use service_catalog::{decode_catalog, CatalogLimits, CatalogRef, FrozenCatalog, ParameterLimits};
@@ -40,8 +40,8 @@ pub fn limits() -> McpLimits {
         },
     }
 }
-fn plan_limits() -> PlanLimits {
-    PlanLimits {
+fn plan_limits() -> ExecutionLimits {
+    ExecutionLimits {
         max_input_bytes: 64 * 1024,
         max_depth: 32,
         max_nodes: 8192,
@@ -55,7 +55,7 @@ fn plan_limits() -> PlanLimits {
 }
 #[derive(Default)]
 pub struct TestStore {
-    plans: HashMap<(TestNamespace, RequestId), FrozenPlan>,
+    plans: HashMap<(TestNamespace, RequestId), FrozenExecution>,
     candidates: HashMap<(TestNamespace, RequestId), ExactArtifactRef>,
     accepted: HashMap<(TestNamespace, RequestId), OperationStatus>,
     cancellations: HashSet<(TestNamespace, RequestId)>,
@@ -72,7 +72,7 @@ pub struct TestService {
     pub store: Arc<Mutex<TestStore>>,
     pub namespace: TestNamespace,
     pub catalog: FrozenCatalog,
-    template: PlanSpec,
+    template: ExecutionInput,
     pub bound: AtomicBool,
     pub denied: AtomicBool,
     pub attempts: AtomicUsize,
@@ -144,9 +144,10 @@ impl TestService {
         id: RequestId,
         selection: Option<CatalogCandidate>,
         candidate: Option<ExactArtifactRef>,
-    ) -> Result<PlanPreview, ServiceError> {
+    ) -> Result<FrozenExecution, ServiceError> {
         let mut spec = self.template.clone();
-        spec.plan_id = PlanId::new(id.as_str()).map_err(|_| ServiceError::InvalidInput)?;
+        spec.request.request_id =
+            RequestId::new(id.as_str()).map_err(|_| ServiceError::InvalidInput)?;
         spec.request.request_id = id.clone();
         spec.request.authority = Authority::Test {
             id: Id::new(&self.namespace.authority).map_err(|_| ServiceError::Unbound)?,
@@ -164,12 +165,8 @@ impl TestService {
         if let Some(candidate) = candidate {
             spec.launch.artifact = candidate;
         }
-        let plan =
-            FrozenPlan::freeze(spec, &plan_limits()).map_err(|_| ServiceError::InvalidInput)?;
-        let reference = PlanRef {
-            plan_id: plan.spec().plan_id.clone(),
-            digest: plan.digest().clone(),
-        };
+        let plan = FrozenExecution::freeze(spec, &plan_limits())
+            .map_err(|_| ServiceError::InvalidInput)?;
         let mut db = self.store.lock().unwrap();
         let key = self.key(&id);
         if let Some(existing) = db.plans.get(&key) {
@@ -177,13 +174,9 @@ impl TestService {
                 return Err(ServiceError::Conflict);
             }
         } else {
-            db.plans.insert(key, plan);
+            db.plans.insert(key, plan.clone());
         }
-        Ok(PlanPreview {
-            operation_request_id: id,
-            plan: reference,
-            capability: Self::capability(),
-        })
+        Ok(plan)
     }
 }
 impl ExecutionServicePort for TestService {
@@ -226,103 +219,44 @@ impl ExecutionServicePort for TestService {
         .await;
         Ok(Self::capability())
     }
-    async fn preview(
+    async fn execute(
         &self,
-        request: PreviewRequest,
-        _: CancellationToken,
-    ) -> Result<PlanPreview, ServiceError> {
-        self.authorize()?;
-        match request {
-            PreviewRequest::Catalog(selection) => self.freeze(
-                selection.operation_request_id.clone(),
-                Some(*selection),
-                None,
-            ),
-            PreviewRequest::Candidate {
-                operation_request_id,
-                candidate,
-            } => {
-                if self
-                    .store
-                    .lock()
-                    .unwrap()
-                    .candidates
-                    .get(&self.key(&operation_request_id))
-                    != Some(&candidate)
-                {
-                    return Err(ServiceError::NotFound);
-                }
-                self.freeze(operation_request_id, None, Some(candidate))
-            }
-        }
-    }
-    async fn propose(
-        &self,
-        request: CandidateRequest,
-        _: CancellationToken,
-    ) -> Result<CandidateReceipt, ServiceError> {
-        self.authorize()?;
-        let (id, bytes) = match request {
-            CandidateRequest::Catalog(selection) => (
-                selection.operation_request_id,
-                serde_json::to_vec(selection.selection.reference()).unwrap(),
-            ),
-            CandidateRequest::Script(draft) => (
-                draft.operation_request_id().clone(),
-                serde_json::to_vec(&(draft.source_utf8(), draft.interpreter())).unwrap(),
-            ),
-        };
-        let candidate = ExactArtifactRef {
-            resource: VersionedRef {
-                id: Id::new(id.as_str()).unwrap(),
-                revision: Id::new("1").unwrap(),
-            },
-            sha256: Digest::new(format!("{:x}", Sha256::digest(bytes))).unwrap(),
-        };
-        let mut db = self.store.lock().unwrap();
-        let key = self.key(&id);
-        if let Some(existing) = db.candidates.get(&key) {
-            if existing != &candidate {
-                return Err(ServiceError::Conflict);
-            }
-        } else {
-            db.candidates.insert(key, candidate.clone());
-        }
-        Ok(CandidateReceipt {
-            operation_request_id: id,
-            candidate,
-        })
-    }
-    async fn submit(
-        &self,
-        request: SubmitRequest,
+        request: ExecuteRequest,
         _: CancellationToken,
     ) -> Result<OperationStatus, ServiceError> {
         self.authorize()?;
+        let plan = match request {
+            ExecuteRequest::Catalog(c) => {
+                self.freeze(c.operation_request_id.clone(), Some(*c), None)?
+            }
+            ExecuteRequest::Script(draft) => {
+                let id = draft.operation_request_id().clone();
+                let bytes =
+                    serde_json::to_vec(&(draft.source_utf8(), draft.interpreter())).unwrap();
+                let artifact = ExactArtifactRef {
+                    resource: VersionedRef {
+                        id: Id::new(id.as_str()).unwrap(),
+                        revision: Id::new("1").unwrap(),
+                    },
+                    sha256: Digest::new(format!("{:x}", Sha256::digest(bytes))).unwrap(),
+                };
+                self.freeze(id, None, Some(artifact))?
+            }
+        };
         let status = {
             let mut db = self.store.lock().unwrap();
-            let key = self.key(&request.operation_request_id);
+            let key = self.key(&plan.spec().request.request_id);
             if let Some(existing) = db.accepted.get(&key) {
-                if existing.plan != request.plan {
-                    return Err(ServiceError::Conflict);
-                }
                 existing.clone()
             } else {
-                let plan = db.plans.get(&key).ok_or(ServiceError::NotFound)?;
-                if plan.spec().plan_id != request.plan.plan_id
-                    || plan.digest() != &request.plan.digest
-                {
-                    return Err(ServiceError::Conflict);
-                }
                 self.attempts.fetch_add(1, Ordering::SeqCst);
                 let status = OperationStatus {
                     mode: execution_lifecycle::ExecutionMode::Test,
                     assessment: None,
                     process: None,
-                    submitted: true,
                     cancel_requested: false,
-                    operation_request_id: request.operation_request_id,
-                    plan: request.plan,
+                    operation_request_id: plan.spec().request.request_id.clone(),
+                    content_digest: plan.digest().clone(),
                     phase: OperationPhase::Accepted,
                     attempt_id: Some(AttemptId::new("test-attempt").unwrap()),
                     evidence: vec![],

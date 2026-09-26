@@ -194,7 +194,7 @@ mod tests {
             &handler,
             &stop,
             &peer,
-            br#"{"version":3,"request":{"method":"status","request":"r"}}"#
+            br#"{"version":4,"request":{"method":"status","request":"r"}}"#
         )
         .is_err());
         assert!(stop.load(Ordering::Acquire));

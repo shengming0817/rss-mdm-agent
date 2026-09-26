@@ -1,4 +1,4 @@
-use execution_contract::{AttemptId, Digest, EvidenceRef, Id, PlanId, RequestId};
+use execution_contract::{AttemptId, Digest, EvidenceRef, Id, RequestId};
 use execution_lifecycle::{EffectAssessment, ExecutionMode};
 
 /// Value-free application failures. Backend paths, SQL, secrets and runner text never escape.
@@ -122,6 +122,8 @@ pub enum TaskPhase {
     AdmissionDenied,
     /// An independently verified approval is required; an interaction answer is not approval.
     ApprovalRequired,
+    /// Exact-action user confirmation is pending; no attempt has started.
+    ConfirmationRequired,
     /// Intent committed, dispatch not confirmed.
     Accepted,
     /// Runner accepted the dispatch; no verified effect is implied.
@@ -143,13 +145,11 @@ pub enum TaskPhase {
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionStatus {
     /// The initial submission receipt exists; preview alone leaves this false.
-    pub submitted: bool,
     /// Original reliable business identity.
     pub operation_request_id: RequestId,
     /// Exact frozen plan identity.
-    pub plan_id: PlanId,
     /// Canonical C01 plan digest.
-    pub plan_digest: Digest,
+    pub content_digest: Digest,
     /// Current derived lifecycle phase.
     pub phase: TaskPhase,
     /// Explicit fixture provenance, also present before the first attempt.

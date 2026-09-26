@@ -4,7 +4,7 @@ use rusqlite::{Connection, OpenFlags, TransactionBehavior};
 use std::path::Path;
 
 // Includes persisted lifecycle records and the journal fingerprint domain, not just DDL.
-pub(crate) const SCHEMA_VERSION: u32 = 4;
+pub(crate) const SCHEMA_VERSION: u32 = 5;
 const APPLICATION_ID: u32 = 0x52534558;
 
 // Only internal schema column names are accepted, never caller-provided SQL.
@@ -372,7 +372,7 @@ mod tests {
     }
     fn test_limits() -> Limits {
         Limits {
-            plan: execution_contract::PlanLimits {
+            plan: execution_contract::ExecutionLimits {
                 max_input_bytes: 65_536,
                 max_depth: 32,
                 max_nodes: 4096,

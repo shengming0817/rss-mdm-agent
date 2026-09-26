@@ -4,7 +4,7 @@ CREATE TABLE metadata (
     clock_watermark INTEGER NOT NULL CHECK(clock_watermark>=0)
 );
 CREATE TABLE executions (
-    scope TEXT PRIMARY KEY, request_id TEXT NOT NULL UNIQUE, plan_id TEXT NOT NULL UNIQUE,
+    scope TEXT PRIMARY KEY, request_id TEXT NOT NULL UNIQUE,
     plan BLOB NOT NULL, digest TEXT NOT NULL, snapshot BLOB NOT NULL,
     revision INTEGER NOT NULL CHECK(revision>=0), reserve INTEGER NOT NULL CHECK(reserve BETWEEN 0 AND 31)
 );

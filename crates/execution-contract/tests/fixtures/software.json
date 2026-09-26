@@ -1,6 +1,5 @@
 {
-  "schemaVersion": 3,
-  "planId": "plan-1",
+  "schemaVersion": 4,
   "request": {
     "schemaVersion": 1,
     "requestId": "request-1",
@@ -10,14 +9,10 @@
     },
     "actor": "actor-1",
     "initiator": {
-      "kind": "human",
-      "osSession": {
-        "device": "origin-device",
-        "account": {
-          "platform": "linux",
-          "subject": "uid:1000"
-        },
-        "session": "login-1"
+      "kind": "policy",
+      "policy": {
+        "id": "policy-1",
+        "revision": "1"
       }
     },
     "delegation": {
@@ -182,11 +177,7 @@
           "revision": "1"
         },
         "canDetect": true,
-        "operations": [
-          "install",
-          "upgrade",
-          "uninstall"
-        ],
+        "operations": ["install", "upgrade", "uninstall"],
         "upgradeStrategy": "inPlace",
         "restart": "mayRequire",
         "dependencyImpact": "none"

@@ -48,16 +48,16 @@ pub enum StdinBinding {
         parameter: String,
         /// Materialized byte encoding.
         encoding: TextEncoding,
-        /// Positive maximum materialized bytes, bounded by C01 PlanLimits.
+        /// Positive maximum materialized bytes, bounded by C01 ExecutionLimits.
         max_bytes: u64,
     },
 }
 /// Complete compiler input. These are untrusted declarations, never policy or identity proofs.
-/// No mutable PlanSpec placeholder or second canonical launch description is used.
+/// No mutable ExecutionInput placeholder or second canonical launch description is used.
 #[derive(Clone)]
 pub struct ScriptPlanInput {
     /// Exact plan identity, also bound into the canonical digest.
-    pub plan_id: PlanId,
+
     /// Original request and normalized scalar/secret parameters.
     pub request: ExecutionRequest,
     /// Exact original script bytes, verified later without rewriting.

@@ -1,6 +1,6 @@
 use crate::*;
 use execution_admission::{AdmissionDecision, DecisionOutcome};
-use execution_contract::{FrozenPlan, VersionedRef};
+use execution_contract::{FrozenExecution, VersionedRef};
 use std::collections::{BTreeMap, BTreeSet};
 
 fn key(r: &VersionedRef) -> (&str, &str) {
@@ -10,15 +10,15 @@ fn key(r: &VersionedRef) -> (&str, &str) {
 /// Profiles come exclusively from the bound C07 decision, never a caller's subset.
 /// ref: jsonwebtoken src/decoding.rs@4c0ae752e9acc108c8e2c4c8ed8128dc66014210
 pub fn evaluate(
-    plan: &FrozenPlan,
+    plan: &FrozenExecution,
     admission: &AdmissionDecision,
     bindings: &[ProfileApproval],
     verifier: &(impl ApprovalVerifier + ?Sized),
     limits: ApprovalLimits,
 ) -> ApprovalDecision {
     let result = |outcome, bindings, consumptions| ApprovalDecision {
-        plan_id: plan.spec().plan_id.clone(),
-        plan_digest: plan.digest().clone(),
+        request_id: plan.spec().request.request_id.clone(),
+        content_digest: plan.digest().clone(),
         attempt_id: admission.attempt_id().clone(),
         admission_validity: admission.validity().cloned(),
         outcome,
@@ -26,8 +26,8 @@ pub fn evaluate(
         consumptions,
     };
     let reject = |reason| result(ApprovalOutcome::Rejected(reason), vec![], vec![]);
-    if admission.plan_id() != &plan.spec().plan_id
-        || admission.plan_digest() != plan.digest()
+    if admission.request_id() != &plan.spec().request.request_id
+        || admission.content_digest() != plan.digest()
         || admission.policy() != &plan.spec().policy
         || admission.delegation() != plan.spec().request.delegation.as_ref()
     {
@@ -93,8 +93,8 @@ pub fn evaluate(
     let mut consumptions = Vec::with_capacity(records.len());
     for (record, expected) in records.iter().zip(&requested) {
         if &record.reference != expected
-            || record.plan_id != plan.spec().plan_id
-            || &record.plan_digest != plan.digest()
+            || record.request_id != plan.spec().request.request_id
+            || &record.content_digest != plan.digest()
             || record.profiles.is_empty()
             || record.profiles.len() > limits.max_profiles
         {
@@ -127,8 +127,8 @@ pub fn evaluate(
             return reject(Reason::Exhausted);
         }
         consumptions.push(ConsumptionIntent {
-            plan_id: plan.spec().plan_id.clone(),
-            plan_digest: plan.digest().clone(),
+            request_id: plan.spec().request.request_id.clone(),
+            content_digest: plan.digest().clone(),
             attempt_id: admission.attempt_id().clone(),
             approval: record.reference.clone(),
             expected_consumption_revision: record.consumption_revision,

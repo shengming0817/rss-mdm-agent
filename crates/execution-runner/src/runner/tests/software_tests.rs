@@ -23,7 +23,7 @@ struct Probe;
 impl SoftwareProbe for Probe {
     fn begin_mutation(
         &self,
-        _: &FrozenPlan,
+        _: &FrozenExecution,
         _: &AttemptId,
         _: Instant,
     ) -> Result<Box<dyn crate::software::PreparedSoftwareMutation>, Error> {
@@ -31,19 +31,19 @@ impl SoftwareProbe for Probe {
     }
     fn recover_mutation(
         &self,
-        _: &FrozenPlan,
+        _: &FrozenExecution,
         _: &AttemptId,
         _: Instant,
     ) -> Result<Box<dyn crate::software::SoftwareMutationLease>, Error> {
         Ok(Box::new(IsolatedMutation))
     }
 
-    fn dependency_use(&self, _: &FrozenPlan) -> Result<DependencyUse, Error> {
+    fn dependency_use(&self, _: &FrozenExecution) -> Result<DependencyUse, Error> {
         Ok(DependencyUse::Unused)
     }
     fn comparison(
         &self,
-        plan: &FrozenPlan,
+        plan: &FrozenExecution,
         installed: &PackageValue,
     ) -> Result<Option<VersionComparison>, Error> {
         let s = plan.spec().execution.software().unwrap();
@@ -61,7 +61,7 @@ impl SoftwareProbe for Probe {
             _ => None,
         })
     }
-    fn quiescence(&self, _: &FrozenPlan, _: &AttemptId) -> Result<Option<EvidenceRef>, Error> {
+    fn quiescence(&self, _: &FrozenExecution, _: &AttemptId) -> Result<Option<EvidenceRef>, Error> {
         Ok(None)
     }
 }
@@ -133,7 +133,7 @@ fn software_fixture(script: &str) -> Fixture {
     spec.execution = ExecutionSpec::Software {
         software: Box::new(software),
     };
-    f.plan = FrozenPlan::freeze(spec, &execution_app::test_store_limits().plan).unwrap();
+    f.plan = FrozenExecution::freeze(spec, &execution_app::test_store_limits().plan).unwrap();
     source.software = Some(SoftwareArtifacts {
         payload,
         manager: "/bin/sh".into(),
@@ -322,7 +322,7 @@ fn change_bundle(f: &mut Fixture, mutation: MutationKind, script: &str) {
     }
     // Bundle entries are resolved from the exact archive, not this fallback path.
     source.content = f.root.join("unused-entry");
-    f.plan = FrozenPlan::freeze(p, &execution_app::test_store_limits().plan).unwrap();
+    f.plan = FrozenExecution::freeze(p, &execution_app::test_store_limits().plan).unwrap();
     f.runner
         .artifacts
         .insert(f.plan.digest().as_str().into(), Arc::new(source));
@@ -633,7 +633,7 @@ impl crate::software::PreparedSoftwareMutation for CountedPreparation {
 impl SoftwareProbe for ExclusionProbe {
     fn begin_mutation(
         &self,
-        _: &FrozenPlan,
+        _: &FrozenExecution,
         _: &AttemptId,
         _: Instant,
     ) -> Result<Box<dyn crate::software::PreparedSoftwareMutation>, Error> {
@@ -649,7 +649,7 @@ impl SoftwareProbe for ExclusionProbe {
     }
     fn recover_mutation(
         &self,
-        _: &FrozenPlan,
+        _: &FrozenExecution,
         _: &AttemptId,
         _: Instant,
     ) -> Result<Box<dyn crate::software::SoftwareMutationLease>, Error> {
@@ -659,17 +659,17 @@ impl SoftwareProbe for ExclusionProbe {
             Err(Error::Capability)
         }
     }
-    fn dependency_use(&self, p: &FrozenPlan) -> Result<DependencyUse, Error> {
+    fn dependency_use(&self, p: &FrozenExecution) -> Result<DependencyUse, Error> {
         Probe.dependency_use(p)
     }
     fn comparison(
         &self,
-        p: &FrozenPlan,
+        p: &FrozenExecution,
         v: &PackageValue,
     ) -> Result<Option<VersionComparison>, Error> {
         Probe.comparison(p, v)
     }
-    fn quiescence(&self, p: &FrozenPlan, a: &AttemptId) -> Result<Option<EvidenceRef>, Error> {
+    fn quiescence(&self, p: &FrozenExecution, a: &AttemptId) -> Result<Option<EvidenceRef>, Error> {
         Probe.quiescence(p, a)
     }
 }
@@ -772,7 +772,7 @@ fn validation_failure_after_exclusion_acquisition_aborts_before_spawn() {
                 }
             }
         }
-        f.plan = FrozenPlan::freeze(spec, &execution_app::test_store_limits().plan).unwrap();
+        f.plan = FrozenExecution::freeze(spec, &execution_app::test_store_limits().plan).unwrap();
         f.runner
             .artifacts
             .insert(f.plan.digest().as_str().into(), artifacts);

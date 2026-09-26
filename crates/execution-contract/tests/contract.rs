@@ -1,7 +1,7 @@
-use execution_contract::{decode_plan, FrozenPlan, PlanLimits};
+use execution_contract::{decode_execution, ExecutionLimits, FrozenExecution};
 
-fn limits() -> PlanLimits {
-    PlanLimits {
+fn limits() -> ExecutionLimits {
+    ExecutionLimits {
         max_input_bytes: 65536,
         max_depth: 32,
         max_nodes: 4096,
@@ -16,8 +16,8 @@ fn limits() -> PlanLimits {
 
 #[test]
 fn plan_is_frozen_from_validated_data() {
-    let plan = decode_plan(include_bytes!("fixtures/plan.json"), &limits()).unwrap();
-    let frozen = FrozenPlan::freeze(plan, &limits()).unwrap();
+    let plan = decode_execution(include_bytes!("fixtures/plan.json"), &limits()).unwrap();
+    let frozen = FrozenExecution::freeze(plan, &limits()).unwrap();
     assert_eq!(frozen.digest().as_str().len(), 64);
     assert!(!format!("{frozen:?}").contains("example.invalid"));
 }
@@ -28,9 +28,9 @@ fn duplicate_parameters_and_untrusted_fields_are_rejected() {
     for input in [
         source.replace("\"host\": {", "\"host\": {}, \"host\": {"),
         source.replacen("{", "{\"authorized\":true,", 1),
-        source.replacen("\"schemaVersion\": 3", "\"schemaVersion\": 1", 1),
+        source.replacen("\"schemaVersion\": 4", "\"schemaVersion\": 1", 1),
     ] {
-        assert!(decode_plan(input.as_bytes(), &limits()).is_err());
+        assert!(decode_execution(input.as_bytes(), &limits()).is_err());
     }
 }
 
@@ -45,16 +45,16 @@ fn budgets_and_numbers_cannot_be_silently_truncated() {
             "\"value\": 9007199254740993",
         ),
     ] {
-        assert!(decode_plan(input.as_bytes(), &limits()).is_err());
+        assert!(decode_execution(input.as_bytes(), &limits()).is_err());
     }
 }
 
 fn fixture() -> serde_json::Value {
     serde_json::from_str(include_str!("fixtures/plan.json")).unwrap()
 }
-fn freeze(value: &serde_json::Value) -> FrozenPlan {
-    FrozenPlan::freeze(
-        decode_plan(&serde_json::to_vec(value).unwrap(), &limits()).unwrap(),
+fn freeze(value: &serde_json::Value) -> FrozenExecution {
+    FrozenExecution::freeze(
+        decode_execution(&serde_json::to_vec(value).unwrap(), &limits()).unwrap(),
         &limits(),
     )
     .unwrap()
@@ -68,7 +68,7 @@ fn independent_digest_vector_and_order_invariance() {
     );
     let compact = serde_json::to_vec(&fixture()).unwrap();
     assert_eq!(
-        FrozenPlan::freeze(decode_plan(&compact, &limits()).unwrap(), &limits())
+        FrozenExecution::freeze(decode_execution(&compact, &limits()).unwrap(), &limits())
             .unwrap()
             .digest(),
         frozen.digest()
@@ -79,8 +79,8 @@ fn independent_digest_vector_and_order_invariance() {
     );
     assert_ne!(source, include_str!("fixtures/plan.json"));
     assert_eq!(
-        FrozenPlan::freeze(
-            decode_plan(source.as_bytes(), &limits()).unwrap(),
+        FrozenExecution::freeze(
+            decode_execution(source.as_bytes(), &limits()).unwrap(),
             &limits()
         )
         .unwrap()
@@ -203,7 +203,7 @@ fn nested_unknowns_ids_paths_and_execution_context_fail_closed() {
         let mut v = fixture();
         *v.pointer_mut(path).unwrap() = value;
         assert!(
-            decode_plan(&serde_json::to_vec(&v).unwrap(), &limits()).is_err(),
+            decode_execution(&serde_json::to_vec(&v).unwrap(), &limits()).is_err(),
             "{path}"
         );
     }
@@ -219,7 +219,7 @@ fn nested_unknowns_ids_paths_and_execution_context_fail_closed() {
             &format!("\"value\": {literal}"),
         );
         assert!(
-            decode_plan(source.as_bytes(), &limits()).is_err(),
+            decode_execution(source.as_bytes(), &limits()).is_err(),
             "{literal}"
         );
     }
@@ -229,37 +229,37 @@ fn bounds_cover_bytes_strings_depth_collections_nodes_and_budget() {
     let bytes = include_bytes!("fixtures/plan.json");
     let l = limits();
     let cases = [
-        PlanLimits {
+        ExecutionLimits {
             max_input_bytes: bytes.len() - 1,
             ..l
         },
-        PlanLimits {
+        ExecutionLimits {
             max_string_bytes: 63,
             ..l
         },
-        PlanLimits { max_depth: 3, ..l },
-        PlanLimits { max_nodes: 5, ..l },
-        PlanLimits {
+        ExecutionLimits { max_depth: 3, ..l },
+        ExecutionLimits { max_nodes: 5, ..l },
+        ExecutionLimits {
             max_collection_items: 1,
             ..l
         },
-        PlanLimits {
+        ExecutionLimits {
             max_output_bytes: 4095,
             ..l
         },
-        PlanLimits {
+        ExecutionLimits {
             max_timeout_ms: 999,
             ..l
         },
-        PlanLimits {
+        ExecutionLimits {
             max_attempts: 0,
             ..l
         },
     ];
     for limit in cases {
-        assert!(decode_plan(bytes, &limit).is_err());
+        assert!(decode_execution(bytes, &limit).is_err());
     }
-    let exact = PlanLimits {
+    let exact = ExecutionLimits {
         max_input_bytes: bytes.len(),
         max_timeout_ms: 1000,
         max_output_bytes: 4096,
@@ -267,10 +267,10 @@ fn bounds_cover_bytes_strings_depth_collections_nodes_and_budget() {
         max_attempts: 1,
         ..l
     };
-    assert!(decode_plan(bytes, &exact).is_ok());
-    let mut plan = decode_plan(bytes, &l).unwrap();
+    assert!(decode_execution(bytes, &exact).is_ok());
+    let mut plan = decode_execution(bytes, &l).unwrap();
     plan.budget.total_timeout_ms = 60001;
-    assert!(FrozenPlan::freeze(plan, &l).is_err());
+    assert!(FrozenExecution::freeze(plan, &l).is_err());
 }
 #[test]
 fn numeric_normalization_and_immutable_snapshot() {
@@ -288,7 +288,7 @@ fn numeric_normalization_and_immutable_snapshot() {
             value: "modified".into(),
         });
     assert_ne!(
-        FrozenPlan::freeze(copy, &limits()).unwrap().digest(),
+        FrozenExecution::freeze(copy, &limits()).unwrap().digest(),
         zero.digest()
     );
     assert!(!zero.matches_digest(&execution_contract::Digest::new("00".repeat(32)).unwrap()));
@@ -299,7 +299,7 @@ fn audit_references_are_correlated_without_secret_material_or_real_test_effects(
     let source = include_bytes!("fixtures/audit.json");
     let audit = decode_audit(source, &limits()).unwrap();
     assert_eq!(
-        audit.plan_digest.as_str(),
+        audit.content_digest.as_str(),
         include_str!("fixtures/plan.sha256").trim()
     );
     assert_eq!(
@@ -315,7 +315,7 @@ fn audit_references_are_correlated_without_secret_material_or_real_test_effects(
 }
 #[test]
 fn schema_snapshots_accept_goldens_and_reject_structural_bypasses() {
-    let schemas = serde_json::json!({"plan":execution_contract::plan_schema(),"audit":execution_contract::audit_schema()});
+    let schemas = serde_json::json!({"plan":execution_contract::execution_schema(),"audit":execution_contract::audit_schema()});
     let expected: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/schemas.json")).unwrap();
     assert_eq!(schemas, expected);
@@ -347,7 +347,7 @@ fn direct_dto_deserialization_cannot_hide_duplicate_parameter_or_literal_keys() 
             "\"value\": {\"a\":1,\"a\":2}",
         ),
     ] {
-        assert!(serde_json::from_str::<execution_contract::PlanSpec>(&bad).is_err());
+        assert!(serde_json::from_str::<execution_contract::ExecutionInput>(&bad).is_err());
     }
 }
 
@@ -368,7 +368,7 @@ fn typed_decode_errors_retain_owned_classification_without_input_values() {
         ),
     ] {
         let bad = source.replacen(old, new, 1);
-        let error = decode_plan(bad.as_bytes(), &limits()).unwrap_err();
+        let error = decode_execution(bad.as_bytes(), &limits()).unwrap_err();
         assert_eq!(error.kind(), expected);
         assert!(!error.to_string().contains("private"));
     }
@@ -382,7 +382,7 @@ fn typed_decode_errors_retain_owned_classification_without_input_values() {
         execution_contract::ErrorKind::UnsupportedVersion
     );
     assert_eq!(
-        decode_plan(b"{", &limits()).unwrap_err().kind(),
+        decode_execution(b"{", &limits()).unwrap_err().kind(),
         execution_contract::ErrorKind::Encoding
     );
 }
@@ -413,7 +413,7 @@ fn additional_attempts_do_not_multiply_total_plan_budgets() {
     for (field, over) in [("totalTimeoutMs", 60001u64), ("totalOutputBytes", 65537)] {
         let mut bad = value.clone();
         bad["budget"][field] = over.into();
-        assert!(decode_plan(&serde_json::to_vec(&bad).unwrap(), &limits()).is_err());
+        assert!(decode_execution(&serde_json::to_vec(&bad).unwrap(), &limits()).is_err());
     }
     let mut legacy = value;
     legacy["budget"]
@@ -421,5 +421,5 @@ fn additional_attempts_do_not_multiply_total_plan_budgets() {
         .unwrap()
         .remove("totalTimeoutMs");
     legacy["budget"]["timeoutMs"] = 1000.into();
-    assert!(decode_plan(&serde_json::to_vec(&legacy).unwrap(), &limits()).is_err());
+    assert!(decode_execution(&serde_json::to_vec(&legacy).unwrap(), &limits()).is_err());
 }

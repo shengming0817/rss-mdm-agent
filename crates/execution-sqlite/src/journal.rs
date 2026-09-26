@@ -378,7 +378,7 @@ pub(crate) fn load_plan(
     conn: &Connection,
     scope: &Scope,
     limits: Limits,
-) -> Result<execution_contract::FrozenPlan, Error> {
+) -> Result<execution_contract::FrozenExecution, Error> {
     let (bytes, digest): (Vec<u8>, String) = conn.query_row(
         &format!(
             "SELECT {},digest FROM executions WHERE scope=?1",
@@ -387,9 +387,10 @@ pub(crate) fn load_plan(
         [scope.key()],
         |r| Ok((r.get(0)?, r.get(1)?)),
     )?;
-    let spec = execution_contract::decode_plan(&bytes, &limits.plan).map_err(|_| Error::Corrupt)?;
-    let plan =
-        execution_contract::FrozenPlan::freeze(spec, &limits.plan).map_err(|_| Error::Corrupt)?;
+    let spec =
+        execution_contract::decode_execution(&bytes, &limits.plan).map_err(|_| Error::Corrupt)?;
+    let plan = execution_contract::FrozenExecution::freeze(spec, &limits.plan)
+        .map_err(|_| Error::Corrupt)?;
     if hash(plan.digest())? != digest || Scope::from_plan(&plan) != *scope {
         return Err(Error::Corrupt);
     }

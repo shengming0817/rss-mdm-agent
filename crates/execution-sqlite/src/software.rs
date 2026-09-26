@@ -5,14 +5,14 @@ use crate::{
     *,
 };
 use execution_contract::{
-    AttemptId, FrozenPlan, Ownership, SoftwareEvidence, SoftwareProvenance, SoftwareState,
+    AttemptId, FrozenExecution, Ownership, SoftwareEvidence, SoftwareProvenance, SoftwareState,
 };
 use execution_lifecycle::{EffectAssessment, Observation};
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 
 pub(crate) fn claim(
     conn: &Connection,
-    plan: &FrozenPlan,
+    plan: &FrozenExecution,
     attempt: &AttemptId,
 ) -> Result<(), Error> {
     if let Some(s) = plan.spec().execution.software() {
@@ -60,7 +60,7 @@ pub(crate) fn facts(
 }
 pub(crate) fn settle(
     conn: &Connection,
-    plan: &FrozenPlan,
+    plan: &FrozenExecution,
     next: &execution_lifecycle::Snapshot,
     limits: Limits,
 ) -> Result<(), Error> {
@@ -98,7 +98,7 @@ pub(crate) fn settle(
     }
     if assessment == Some(EffectAssessment::Satisfied) {
         let evidence = facts(conn, &a.id, limits)?.ok_or(Error::Conflict)?;
-        if evidence.plan_digest != *plan.digest()
+        if evidence.content_digest != *plan.digest()
             || !s.satisfied(&evidence.detected)
             || evidence.restart_required
         {
@@ -134,7 +134,7 @@ pub(crate) fn settle(
 }
 fn ownership(
     conn: &Connection,
-    plan: &FrozenPlan,
+    plan: &FrozenExecution,
     object: Option<&execution_contract::Id>,
     limits: Limits,
 ) -> Result<SoftwareProvenance, Error> {
@@ -235,7 +235,7 @@ impl Store {
             .ok_or(Error::InvalidInput)?;
         if a.id != value.attempt_id
             || a.runner != value.runner
-            || *plan.digest() != value.plan_digest
+            || *plan.digest() != value.content_digest
         {
             return Err(Error::InvalidInput);
         }
@@ -311,7 +311,7 @@ impl Store {
         let value = facts(&tx, attempt, self.limits)?;
         if value
             .as_ref()
-            .is_some_and(|v| v.plan_digest != *plan.digest())
+            .is_some_and(|v| v.content_digest != *plan.digest())
         {
             return Err(Error::Corrupt);
         }
@@ -321,7 +321,7 @@ impl Store {
 
 pub(crate) fn diagnostic(
     conn: &Connection,
-    plan: &FrozenPlan,
+    plan: &FrozenExecution,
     attempt: Option<&AttemptId>,
     limits: Limits,
 ) -> Result<Option<execution_contract::SoftwareDiagnostic>, Error> {

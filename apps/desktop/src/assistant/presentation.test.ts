@@ -117,7 +117,7 @@ it("keeps valid contract timestamps beyond Date's range readable", () => {
   const details = structuredClone(
     fixtures.approvalRequired,
   ) as ExecutionTaskDetails;
-  details.plan.validity.expiresAtUnixMs = Number.MAX_SAFE_INTEGER;
+  details.action.validity.expiresAtUnixMs = Number.MAX_SAFE_INTEGER;
   const wrapper = mount(ExecutionDetails, { props: { details, now: 2000 } });
   expect(wrapper.text()).toContain("9007199254740991 Unix ms");
   expect(wrapper.text()).toContain("超出本机日期格式范围");
@@ -291,9 +291,7 @@ it("shows software recovery diagnostics without treating detection as final succ
     >;
     const wrapper = mount(ExecutionDetails, { props: { details, now: 1000 } });
     expect(wrapper.find(".software-diagnostic").text()).toContain(label);
-    expect(wrapper.find(".software-operation").text()).toContain(
-      "macOS PKG",
-    );
+    expect(wrapper.find(".software-operation").text()).toContain("macOS PKG");
     expect(wrapper.find(".software-operation").text()).toContain("安装");
     wrapper.unmount();
   }

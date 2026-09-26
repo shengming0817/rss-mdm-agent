@@ -2,7 +2,7 @@
 import { reactive } from "vue";
 import type { Answer, CatalogItem, FieldInput, RequestView } from "./types";
 import ParameterForm from "./ParameterForm.vue";
-import PlanSummary from "./PlanSummary.vue";
+import ActionSummary from "./ActionSummary.vue";
 defineProps<{
   task: RequestView;
   item: CatalogItem | undefined;
@@ -11,7 +11,7 @@ defineProps<{
 }>();
 const emit = defineEmits<{
   respond: [interactionId: string, answer: Answer];
-  approve: [];
+  confirm: [];
   cancel: [];
 }>();
 const fields = reactive(new Map<string, FieldInput>());
@@ -29,7 +29,7 @@ function parameters(id: string) {
 </script>
 <template>
   <section class="task-detail" aria-label="任务详情">
-    <h2>{{ task.plan.title }}</h2>
+    <h2>{{ task.action.title }}</h2>
     <p class="notice" role="status">{{ task.message }}</p>
     <section
       v-for="interaction in task.interactions"
@@ -56,8 +56,14 @@ function parameters(id: string) {
           interaction.status === 'pending' && interaction.expiresAtUnixMs > now
         "
       >
+        <div v-if="interaction.kind.kind === 'executionAction'" class="actions">
+          <button :disabled="disabled" @click="emit('confirm')">
+            确认并执行
+          </button>
+          <button :disabled="disabled" @click="emit('cancel')">取消执行</button>
+        </div>
         <div
-          v-if="interaction.kind.kind === 'userConfirmation'"
+          v-else-if="interaction.kind.kind === 'userConfirmation'"
           class="actions"
         >
           <button
@@ -69,7 +75,7 @@ function parameters(id: string) {
               })
             "
           >
-            确认计划
+            确认动作
           </button>
           <button
             class="secondary"
@@ -162,20 +168,13 @@ function parameters(id: string) {
         </button>
       </template>
     </section>
-    <PlanSummary :plan="task.plan" />
+    <ActionSummary :action="task.action" />
     <button
-      v-if="['waiting', 'approval', 'unknownEffect'].includes(task.status)"
+      v-if="['waiting', 'confirmation', 'unknownEffect'].includes(task.status)"
       :disabled="disabled"
       @click="emit('cancel')"
     >
       请求取消原任务
     </button>
-    <section v-if="task.status === 'approval'" class="interaction-card">
-      <h3>S1 测试管理员批准</h3>
-      <p>只批准上方精确计划一次。参数、目标或摘要变化后必须重新复核。</p>
-      <button :disabled="disabled" @click="emit('approve')">
-        批准此测试计划一次
-      </button>
-    </section>
   </section>
 </template>

@@ -1,5 +1,5 @@
 use crate::*;
-use execution_contract::{Authority, EvidenceKind, FrozenPlan};
+use execution_contract::{Authority, EvidenceKind, FrozenExecution};
 
 pub(crate) fn valid_evidence(
     mode: ExecutionMode,
@@ -14,11 +14,15 @@ pub(crate) fn valid_evidence(
         _ => kind == EvidenceKind::StateObserved,
     }
 }
-pub(crate) fn validate(p: &FrozenPlan, s: &Snapshot, limits: Limits) -> Result<(), LifecycleError> {
+pub(crate) fn validate(
+    p: &FrozenExecution,
+    s: &Snapshot,
+    limits: Limits,
+) -> Result<(), LifecycleError> {
     let bad = || LifecycleError::Snapshot;
     if s.version != crate::model::SNAPSHOT_VERSION
-        || s.plan_id != p.spec().plan_id
-        || &s.plan_digest != p.digest()
+        || s.request_id != p.spec().request.request_id
+        || &s.content_digest != p.digest()
         || s.updated_at_unix_ms < s.opened_at_unix_ms
         || s.attempts > p.spec().budget.max_attempts
         || match &s.last_event {

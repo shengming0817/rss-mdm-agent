@@ -6,8 +6,6 @@ use execution_approval::ProfileApproval;
 use execution_capability::*;
 use execution_contract::*;
 use execution_sqlite::*;
-use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
 
 pub fn id(s: &str) -> Id {
     Id::new(s).expect("static or digest ID")
@@ -19,16 +17,12 @@ pub fn reference(s: &str) -> VersionedRef {
     }
 }
 #[derive(Clone)]
-pub struct S1Host {
-    grants: Arc<Mutex<BTreeMap<RequestId, TrustedApproval>>>,
-}
+pub struct S1Host;
 impl S1Host {
     pub fn new() -> Self {
-        Self {
-            grants: Default::default(),
-        }
+        Self
     }
-    pub fn validate(&self, plan: &FrozenPlan) -> Result<(), execution_app::Error> {
+    pub fn validate(&self, plan: &FrozenExecution) -> Result<(), execution_app::Error> {
         let p = plan.spec();
         if p.request.initiator != fixtures::human()
             && !super::origin::AiBinding::validate(&p.request.initiator)
@@ -69,7 +63,6 @@ impl S1Host {
         let expected = fixtures::freeze(
             &selected,
             &p.request.request_id,
-            p.plan_id.as_str().into(),
             p.validity.not_before_unix_ms,
             &p.request.initiator,
             &p.request.actor,
@@ -80,51 +73,20 @@ impl S1Host {
         }
         Ok(())
     }
-    /// Only the trusted desktop approval command calls this; never exposed by MCP.
-    pub fn approve(
-        &self,
-        caller: &RequestContext,
-        plan: &FrozenPlan,
-    ) -> Result<(), execution_app::Error> {
-        self.validate(plan)?;
-        let p = plan.spec();
-        if caller.actor != p.request.actor {
-            return Err(execution_app::Error::Denied);
-        }
-        if p.request.operation.resource.id.as_str() != "fixture-office"
-            || now()? >= p.validity.expires_at_unix_ms
-        {
-            return Err(execution_app::Error::Denied);
-        }
-        let approval = TrustedApproval {
-            state: ApprovalState::Active,
-            definition: ApprovalDefinition {
-                reference: reference(&format!("approval-{}", p.plan_id.as_str())),
-                approver: ActorId::new("s1-test-administrator").unwrap(),
-                plan_id: p.plan_id.clone(),
-                plan_digest: plan.digest().clone(),
-                profiles: vec![reference("s1-install")],
-                validity: p.validity,
-                max_uses: 1,
-            },
-        };
-        self.grants
-            .lock()
-            .map_err(|_| execution_app::Error::Unavailable)?
-            .insert(p.request.request_id.clone(), approval);
-        Ok(())
-    }
 }
+
 impl AuthorityVerifier for S1Host {
     fn verify(
         &self,
-        plan: &FrozenPlan,
+        plan: &FrozenExecution,
         _: &AttemptId,
     ) -> Result<AuthorityFacts, VerificationError> {
         self.validate(plan).map_err(|_| VerificationError::Policy)?;
         let p = plan.spec();
         let time = now().map_err(|_| VerificationError::Policy)?;
         Ok(AuthorityFacts {
+            verified_origin: p.request.initiator.clone(),
+            risk: fixtures::risk(p.request.operation.resource.id.as_str()),
             subject: SubjectFacts {
                 authority: p.request.authority.clone(),
                 actor: p.request.actor.clone(),
@@ -137,9 +99,6 @@ impl AuthorityVerifier for S1Host {
                 id: id("s1-catalog-rule"),
                 template: plan.clone(),
                 effect: match p.request.operation.resource.id.as_str() {
-                    "fixture-office" => RuleEffect::ApprovalRequired {
-                        profile: reference("s1-install"),
-                    },
                     "fixture-blocked" | "fixture-withdrawn" | "fixture-unsupported" => {
                         RuleEffect::Deny
                     }
@@ -183,7 +142,10 @@ impl AppHost for S1Host {
     fn reliable_now(&self) -> Result<u64, execution_sqlite::Error> {
         now().map_err(|_| execution_sqlite::Error::Clock)
     }
-    fn capabilities(&self, plan: &FrozenPlan) -> Result<CapabilitySnapshot, execution_app::Error> {
+    fn capabilities(
+        &self,
+        plan: &FrozenExecution,
+    ) -> Result<CapabilitySnapshot, execution_app::Error> {
         self.validate(plan)?;
         let time = now()?;
         let p = plan.spec();
@@ -234,42 +196,22 @@ impl AppHost for S1Host {
     }
     fn trusted_snapshot(
         &self,
-        plan: &FrozenPlan,
+        plan: &FrozenExecution,
     ) -> Result<TrustSnapshot, execution_sqlite::Error> {
-        let grant = self
-            .grants
-            .lock()
-            .map_err(|_| execution_sqlite::Error::Denied)?
-            .get(&plan.spec().request.request_id)
-            .cloned();
+        self.validate(plan)
+            .map_err(|_| execution_sqlite::Error::Denied)?;
         Ok(TrustSnapshot {
             authorization_revision: reference("s1-policy"),
-            approval_revision: reference(if grant.is_some() {
-                "s1-granted"
-            } else {
-                "s1-pending"
-            }),
+            approval_revision: reference("s1-no-approval"),
             fresh_until_unix_ms: self.reliable_now()? + 1000,
-            approvals: grant.into_iter().collect(),
+            approvals: vec![],
         })
     }
     fn approval_bindings(
         &self,
-        plan: &FrozenPlan,
+        _: &FrozenExecution,
     ) -> Result<Vec<ProfileApproval>, execution_app::Error> {
-        let grants = self
-            .grants
-            .lock()
-            .map_err(|_| execution_app::Error::Unavailable)?;
-        Ok(grants
-            .get(&plan.spec().request.request_id)
-            .map(|g| {
-                vec![ProfileApproval {
-                    profile: reference("s1-install"),
-                    record: g.definition.reference.clone(),
-                }]
-            })
-            .unwrap_or_default())
+        Ok(vec![])
     }
     fn configuration_change(&self, _: &ConfigChange) -> Result<(), execution_app::Error> {
         Err(execution_app::Error::Denied)

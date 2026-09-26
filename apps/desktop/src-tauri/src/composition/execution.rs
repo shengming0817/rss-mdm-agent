@@ -74,7 +74,7 @@ struct S1Runner {
     unknown: DeterministicTestRunner,
 }
 impl S1Runner {
-    fn select(&self, p: &FrozenPlan) -> &DeterministicTestRunner {
+    fn select(&self, p: &FrozenExecution) -> &DeterministicTestRunner {
         match p.spec().request.operation.resource.id.as_str() {
             "fixture-maintenance" => &self.wait,
             "fixture-unknown" => &self.unknown,
@@ -94,24 +94,24 @@ impl RunnerPort for S1Runner {
     }
     fn evidence(
         &self,
-        _plan: &execution_contract::FrozenPlan,
+        _plan: &execution_contract::FrozenExecution,
         _attempt: &execution_contract::AttemptId,
     ) -> Result<Option<execution_contract::ProcessEvidence>, execution_app::Error> {
         Ok(None)
     }
     fn acknowledge_capture(
         &self,
-        _: &execution_contract::FrozenPlan,
+        _: &execution_contract::FrozenExecution,
         _: &execution_contract::ProcessEvidence,
     ) -> Result<(), execution_app::Error> {
         Ok(())
     }
-    fn stop(&self, p: &FrozenPlan, a: &AttemptId) -> Result<(), Error> {
+    fn stop(&self, p: &FrozenExecution, a: &AttemptId) -> Result<(), Error> {
         self.select(p).stop(p, a)
     }
     fn observe(
         &self,
-        p: &FrozenPlan,
+        p: &FrozenExecution,
         a: &AttemptId,
         stage: ObservationStage,
         time: u64,
@@ -248,55 +248,36 @@ impl ExecutionHandle {
             .await
             .map_err(bad)
     }
-    pub async fn preview_ui(&self, draft: ui::Draft) -> ui::Result<ui::PlanView> {
+    pub async fn execute_ui(&self, draft: ui::Draft) -> ui::Result<ui::RequestView> {
         self.call(move |o, caller| {
             if draft.instance_id != BINDING {
                 return Err(Error::Denied);
             }
             let selected =
                 selection::select(&o.catalog, &draft).map_err(|_| Error::InvalidInput)?;
-            let p = o.preview(caller, &draft.request_id, selected, fixtures::human())?;
-            o.plan_view(&p, draft.revision)
+            let p = o.resolve(caller, &draft.request_id, selected, fixtures::human())?;
+            o.execute(caller, &p)?;
+            o.request_view(caller, &draft.request_id)
         })
         .await
         .map_err(bad)
     }
-    pub async fn submit_ui(&self, input: ui::Submission) -> ui::Result<ui::RequestView> {
+    pub async fn confirm_ui(&self, input: ui::ActionRef) -> ui::Result<ui::RequestView> {
         self.call(move |o, caller| {
-            o.check_submission(caller, &input)?;
-            o.submit(caller, &input.request_id)?;
+            o.check_action(caller, &input)?;
+            o.app
+                .confirm_execution(caller, &input.request_id, &input.digest, true)?;
+            o.started.entry(input.request_id.clone()).or_insert(now()?);
             o.request_view(caller, &input.request_id)
         })
         .await
         .map_err(bad)
     }
-    pub async fn cancel_ui(&self, input: ui::Submission) -> ui::Result<ui::RequestView> {
+    pub async fn cancel_ui(&self, input: ui::ActionRef) -> ui::Result<ui::RequestView> {
         self.call(move |o, caller| {
-            o.check_submission(caller, &input)?;
+            o.check_action(caller, &input)?;
             o.app.cancel(caller, &input.request_id)?;
             o.app.reconcile(&input.request_id)?;
-            o.request_view(caller, &input.request_id)
-        })
-        .await
-        .map_err(bad)
-    }
-    pub async fn approve_ui(&self, input: ui::Submission) -> ui::Result<ui::RequestView> {
-        self.call(move |o, caller| {
-            let p = o.check_submission(caller, &input)?;
-            let current = o.app.status(caller, &input.request_id)?;
-            if current.attempts > 0 {
-                return o.request_view(caller, &input.request_id);
-            }
-            if current.admission != Some(execution_sqlite::AdmissionStatus::ApprovalRequired) {
-                return Err(Error::Denied);
-            }
-            o.host.approve(caller, &p)?;
-            o.app.advance(
-                caller,
-                &input.request_id,
-                &CommandId::new(format!("approve-{}", p.digest().as_str()))?,
-            )?;
-            o.started.insert(input.request_id.clone(), now()?);
             o.request_view(caller, &input.request_id)
         })
         .await
@@ -367,14 +348,14 @@ impl Owner {
             }
         }
     }
-    fn preview(
+    fn resolve(
         &mut self,
         caller: &RequestContext,
         request: &RequestId,
         selection: SelectedOperation,
         origin: Initiator,
-    ) -> Result<FrozenPlan, Error> {
-        let previous = match self.app.frozen_plan(caller, request) {
+    ) -> Result<FrozenExecution, Error> {
+        let previous = match self.app.frozen_input(caller, request) {
             Ok(p) => Some(p),
             Err(Error::NotFound) => None,
             Err(e) => return Err(e),
@@ -383,15 +364,8 @@ impl Owner {
             .as_ref()
             .map(|p| p.spec().validity.not_before_unix_ms)
             .unwrap_or(now()?);
-        let p = fixtures::freeze(
-            &selection,
-            request,
-            format!("plan-{}", fixtures::digest(request.as_str().as_bytes())),
-            time,
-            &origin,
-            &caller.actor,
-        )
-        .map_err(|_| Error::InvalidInput)?;
+        let p = fixtures::freeze(&selection, request, time, &origin, &caller.actor)
+            .map_err(|_| Error::InvalidInput)?;
         if previous
             .as_ref()
             .is_some_and(|old| old.digest() != p.digest())
@@ -399,7 +373,6 @@ impl Owner {
             return Err(Error::Conflict);
         }
         self.host.validate(&p)?;
-        self.app.register_plan(caller, request, &p)?;
         Ok(p)
     }
     fn check_origin(
@@ -408,56 +381,39 @@ impl Owner {
         request: &RequestId,
         origin: &Initiator,
     ) -> Result<(), Error> {
-        let p = self.app.frozen_plan(caller, request)?;
+        let p = self.app.frozen_input(caller, request)?;
         if !super::origin::same_conversation(origin, &p.spec().request.initiator) {
             return Err(Error::Denied);
         }
         Ok(())
     }
-    fn check_submission(
+    fn check_action(
         &self,
         caller: &RequestContext,
-        input: &ui::Submission,
-    ) -> Result<FrozenPlan, Error> {
+        input: &ui::ActionRef,
+    ) -> Result<FrozenExecution, Error> {
         if input.instance_id != BINDING {
             return Err(Error::Denied);
         }
-        let p = self.app.frozen_plan(caller, &input.request_id)?;
-        if p.spec().plan_id != input.plan_id || p.digest() != &input.digest {
+        let p = self.app.frozen_input(caller, &input.request_id)?;
+        if p.spec().request.request_id != input.request_id || p.digest() != &input.digest {
             return Err(Error::Conflict);
         }
         Ok(p)
     }
-    fn submit(
+    fn execute(
         &mut self,
         caller: &RequestContext,
-        request: &RequestId,
+        p: &FrozenExecution,
     ) -> Result<ExecutionStatus, Error> {
-        let p = self.app.frozen_plan(caller, request)?;
-        let status = self.app.submit(caller, request, &p)?;
-        if status.attempts > 0
-            && p.spec().request.operation.resource.id.as_str() != "fixture-maintenance"
-        {
+        let request = &p.spec().request.request_id;
+        let status = self.app.request_execution(caller, request, p)?;
+        if status.attempts > 0 {
             self.started.entry(request.clone()).or_insert(now()?);
-        }
-        if p.spec().request.operation.resource.id.as_str() == "fixture-restart" {
-            self.app.open_interaction(
-                caller,
-                request,
-                execution_interaction::Reference::new(format!(
-                    "notice-{}",
-                    p.spec().plan_id.as_str()
-                ))
-                .map_err(|_| Error::InvalidInput)?,
-                execution_interaction::Kind::UserConfirmation {
-                    purpose: execution_interaction::ConfirmationPurpose::Continue,
-                },
-                p.spec().validity.expires_at_unix_ms,
-            )?;
         }
         Ok(status)
     }
-    fn plan_view(&self, p: &FrozenPlan, revision: u32) -> Result<ui::PlanView, Error> {
+    fn action_view(&self, p: &FrozenExecution, revision: u32) -> Result<ui::ActionView, Error> {
         let spec = p.spec();
         let item = self
             .catalog
@@ -466,13 +422,14 @@ impl Owner {
             .iter()
             .find(|i| i.operations[0].resource.reference == spec.request.operation.resource)
             .ok_or(Error::NotFound)?;
-        Ok(ui::PlanView {
+        Ok(ui::ActionView {
+            risk_level: fixtures::risk(spec.request.operation.resource.id.as_str())
+                .map(|r| r as u8),
             authority: spec.request.authority.clone(),
             actor: spec.request.actor.clone(),
             initiator: spec.request.initiator.clone(),
             request_id: spec.request.request_id.clone(),
             revision,
-            plan_id: spec.plan_id.clone(),
             digest: p.digest().clone(),
             item_id: item.id.clone(),
             title: item.name.clone(),
@@ -485,10 +442,18 @@ impl Owner {
             permission: "权限与批准由 Rust 受控执行服务裁决".into(),
             parameters: item.operations[0]
                 .parameters
-                .values()
-                .map(|field| ui::ParameterSummary {
+                .iter()
+                .map(|(key, field)| ui::ParameterSummary {
+                    value: spec
+                        .request
+                        .parameters
+                        .get(key.as_str())
+                        .and_then(|v| match v {
+                            InputValue::Literal { value } => Some(value.to_string()),
+                            InputValue::Secret { .. } => None,
+                        }),
                     label: field.title.clone(),
-                    state: "已校验；值不回显",
+                    state: "已校验；敏感引用不回显",
                 })
                 .collect(),
             expires_at_unix_ms: spec.validity.expires_at_unix_ms,
@@ -499,7 +464,7 @@ impl Owner {
         caller: &RequestContext,
         request: &RequestId,
     ) -> Result<ui::RequestView, Error> {
-        let p = self.app.frozen_plan(caller, request)?;
+        let p = self.app.frozen_input(caller, request)?;
         let s = self.app.status(caller, request)?;
         let (status, message) = if s.admission == Some(execution_sqlite::AdmissionStatus::Denied) {
             (
@@ -509,10 +474,7 @@ impl Owner {
         } else if s.admission == Some(execution_sqlite::AdmissionStatus::ApprovalRequired)
             && s.attempts == 0
         {
-            (
-                ui::RequestStatus::Approval,
-                "等待可信测试管理员批准精确计划",
-            )
+            (ui::RequestStatus::Confirmation, "等待动作确认")
         } else {
             match s.phase {
                 TaskPhase::Verified => (
@@ -533,37 +495,39 @@ impl Owner {
             }
         };
         let mut interactions = Vec::new();
-        if p.spec().request.operation.resource.id.as_str() == "fixture-restart" {
-            let reference = execution_interaction::Reference::new(format!(
-                "notice-{}",
-                p.spec().plan_id.as_str()
-            ))
-            .map_err(|_| Error::InvalidInput)?;
-            if let Ok(i) = self.app.interaction(caller, request, &reference) {
-                let snapshot = i.snapshot();
-                interactions.push(ui::InteractionView {
-                    id: reference.as_str().into(),
-                    kind: snapshot.spec.kind.clone(),
-                    status: match snapshot.status {
-                        execution_interaction::Status::Pending => ui::InteractionStatus::Pending,
-                        execution_interaction::Status::Answered { .. } => {
-                            ui::InteractionStatus::Answered
-                        }
-                        execution_interaction::Status::Cancelled { .. } => {
-                            ui::InteractionStatus::Cancelled
-                        }
-                        execution_interaction::Status::Expired { .. } => {
-                            ui::InteractionStatus::Expired
-                        }
-                    },
-                    message: "确认已阅读测试提示；不会重启设备，也不形成业务批准",
-                    expires_at_unix_ms: snapshot.spec.expires_at_unix_ms,
-                    options: vec![],
-                });
-            }
+        let reference = execution_sqlite::execution_confirmation(&p).id;
+        if let Ok(i) = self.app.interaction(caller, request, &reference) {
+            let snapshot = i.snapshot();
+            interactions.push(ui::InteractionView {
+                id: reference.as_str().into(),
+                kind: snapshot.spec.kind.clone(),
+                status: match snapshot.status {
+                    execution_interaction::Status::Pending => ui::InteractionStatus::Pending,
+                    execution_interaction::Status::Answered { .. } => {
+                        ui::InteractionStatus::Answered
+                    }
+                    execution_interaction::Status::Cancelled { .. } => {
+                        ui::InteractionStatus::Cancelled
+                    }
+                    execution_interaction::Status::Expired { .. } => ui::InteractionStatus::Expired,
+                },
+                message: "确认本次动作；确认不增加权限，也不改变发起来源",
+                expires_at_unix_ms: snapshot.spec.expires_at_unix_ms,
+                options: vec![],
+            });
         }
+        let status = if s.attempts == 0
+            && !s.cancel_requested
+            && interactions
+                .iter()
+                .any(|i| i.status == ui::InteractionStatus::Pending)
+        {
+            ui::RequestStatus::Confirmation
+        } else {
+            status
+        };
         Ok(ui::RequestView {
-            plan: self.plan_view(&p, 1)?,
+            action: self.action_view(&p, 1)?,
             status,
             message,
             interactions,
@@ -589,6 +553,7 @@ impl Owner {
                     .projection(&item.id, &op.id, &fixtures::PARAMETERS)
                     .map_err(|_| Error::Configuration)?;
                 Ok(ui::CatalogView {
+                    risk_level: fixtures::risk(op.resource.reference.id.as_str()).map(|r| r as u8),
                     catalog: self.catalog.reference(),
                     item_id: item.id.clone(),
                     variant_id: op.id.clone(),
@@ -621,16 +586,13 @@ impl Owner {
         let requests = page
             .items
             .iter()
-            .filter(|task| task.status.submitted)
             .map(|task| self.request_view(caller, &task.status.operation_request_id))
             .collect::<Result<_, _>>()?;
         let mut referenced_requests = Vec::new();
         for request in query.request_ids {
             match self.app.status(caller, &request) {
-                Ok(status) if status.submitted => {
-                    referenced_requests.push(self.request_view(caller, &request)?)
-                }
-                Ok(_) | Err(Error::NotFound) => (),
+                Ok(_) => referenced_requests.push(self.request_view(caller, &request)?),
+                Err(Error::NotFound) => (),
                 Err(error) => return Err(error),
             }
         }
@@ -650,19 +612,17 @@ fn operation(s: ExecutionStatus) -> mcp::OperationStatus {
         mode: s.mode,
         process: s.process,
         assessment: s.assessment,
-        submitted: s.submitted,
         cancel_requested: s.cancel_requested,
         operation_request_id: s.operation_request_id,
-        plan: mcp::PlanRef {
-            plan_id: s.plan_id,
-            digest: s.plan_digest,
-        },
+        content_digest: s.content_digest,
         phase: if s.admission == Some(execution_sqlite::AdmissionStatus::Denied) {
             mcp::OperationPhase::Failed
         } else {
             match s.phase {
                 TaskPhase::Accepted => mcp::OperationPhase::Accepted,
-                TaskPhase::Waiting | TaskPhase::ApprovalRequired => mcp::OperationPhase::Waiting,
+                TaskPhase::Waiting
+                | TaskPhase::ApprovalRequired
+                | TaskPhase::ConfirmationRequired => mcp::OperationPhase::Waiting,
                 TaskPhase::Running => mcp::OperationPhase::Running,
                 TaskPhase::OutcomeUnknown => mcp::OperationPhase::OutcomeUnknown,
                 TaskPhase::ExecutionEnded => mcp::OperationPhase::ExecutionEnded,
@@ -731,77 +691,18 @@ impl mcp::ExecutionServicePort for ExecutionHandle {
             reasons: vec![id("s1-test-runner-only")],
         })
     }
-    async fn preview(
+    async fn execute(
         &self,
-        request: mcp::PreviewRequest,
-        _: CancellationToken,
-    ) -> Result<mcp::PlanPreview, mcp::ServiceError> {
-        let origin = self.origin.clone().ok_or(mcp::ServiceError::Denied)?;
-        self.call(move |o, caller| {
-            let p = match request {
-                mcp::PreviewRequest::Catalog(c) => {
-                    o.preview(caller, &c.operation_request_id, c.selection, origin.clone())?
-                }
-                mcp::PreviewRequest::Candidate {
-                    operation_request_id,
-                    candidate,
-                } => {
-                    o.check_origin(caller, &operation_request_id, &origin)?;
-                    let p = o.app.frozen_plan(caller, &operation_request_id)?;
-                    if p.spec().launch.artifact != candidate {
-                        return Err(Error::Conflict);
-                    }
-                    p
-                }
-            };
-            Ok(mcp::PlanPreview {
-                operation_request_id: p.spec().request.request_id.clone(),
-                plan: mcp::PlanRef {
-                    plan_id: p.spec().plan_id.clone(),
-                    digest: p.digest().clone(),
-                },
-                capability: mcp::CapabilityView {
-                    state: mcp::CapabilityState::Supported,
-                    reasons: vec![id("s1-test-runner-only")],
-                },
-            })
-        })
-        .await
-        .map_err(mcp_error)
-    }
-    async fn propose(
-        &self,
-        request: mcp::CandidateRequest,
-        _: CancellationToken,
-    ) -> Result<mcp::CandidateReceipt, mcp::ServiceError> {
-        let origin = self.origin.clone().ok_or(mcp::ServiceError::Denied)?;
-        self.call(move |o, caller| {
-            let mcp::CandidateRequest::Catalog(c) = request else {
-                return Err(Error::Unsupported);
-            };
-            let p = o.preview(caller, &c.operation_request_id, c.selection, origin.clone())?;
-            Ok(mcp::CandidateReceipt {
-                operation_request_id: c.operation_request_id,
-                candidate: p.spec().launch.artifact.clone(),
-            })
-        })
-        .await
-        .map_err(mcp_error)
-    }
-    async fn submit(
-        &self,
-        request: mcp::SubmitRequest,
+        request: mcp::ExecuteRequest,
         _: CancellationToken,
     ) -> Result<mcp::OperationStatus, mcp::ServiceError> {
         let origin = self.origin.clone().ok_or(mcp::ServiceError::Denied)?;
         self.call(move |o, caller| {
-            o.check_origin(caller, &request.operation_request_id, &origin)?;
-            let p = o.app.frozen_plan(caller, &request.operation_request_id)?;
-            if p.spec().plan_id != request.plan.plan_id || p.digest() != &request.plan.digest {
-                return Err(Error::Conflict);
-            }
-            o.submit(caller, &request.operation_request_id)
-                .map(operation)
+            let mcp::ExecuteRequest::Catalog(c) = request else {
+                return Err(Error::Unsupported);
+            };
+            let p = o.resolve(caller, &c.operation_request_id, c.selection, origin)?;
+            o.execute(caller, &p).map(operation)
         })
         .await
         .map_err(mcp_error)
@@ -901,15 +802,14 @@ mod tests {
             fields: Default::default(),
         };
         let selected = selection::select(&o.catalog, &draft).map_err(|_| Error::InvalidInput)?;
-        o.preview(caller, &draft.request_id, selected, origin)?;
-        if submitted {
-            o.submit(caller, &draft.request_id)?;
-        }
+        let p = o.resolve(caller, &draft.request_id, selected, origin)?;
+        o.execute(caller, &p)?;
+        let _ = submitted;
         Ok(())
     }
 
     #[tokio::test]
-    async fn preview_only_page_keeps_continuation_to_submitted_tasks() {
+    async fn waiting_confirmation_requests_are_visible_and_paginated() {
         let (handle, root) = fixture().await;
         handle
             .call(|o, caller| {
@@ -918,7 +818,7 @@ mod tests {
                 }
                 let first = serde_json::to_value(o.snapshot(caller, ui::SnapshotQuery::default())?)
                     .unwrap();
-                assert_eq!(first["requests"].as_array().unwrap().len(), 0);
+                assert_eq!(first["requests"].as_array().unwrap().len(), 128);
                 assert_eq!(first["next"], "page-127");
                 let second = o.snapshot(
                     caller,
@@ -928,7 +828,7 @@ mod tests {
                     },
                 )?;
                 assert_eq!(second.requests.len(), 2);
-                assert_eq!(second.requests[0].plan.request_id.as_str(), "page-128");
+                assert_eq!(second.requests[0].action.request_id.as_str(), "page-128");
                 assert!(second.next.is_none());
                 Ok(())
             })
@@ -957,22 +857,22 @@ mod tests {
                 for (index, origin) in [human, ai].into_iter().enumerate() {
                     add(o, caller, index, true, origin.clone())?;
                     let request = RequestId::new(format!("page-{index:03}")).unwrap();
-                    let p = o.app.frozen_plan(caller, &request)?;
+                    let p = o.app.frozen_input(caller, &request)?;
                     let view = serde_json::to_value(o.request_view(caller, &request)?).unwrap();
-                    assert_eq!(view["status"], "approval");
+                    assert_eq!(view["status"], "confirmation");
                     assert_eq!(
-                        view["plan"]["actor"],
+                        view["action"]["actor"],
                         serde_json::to_value(&p.spec().request.actor).unwrap()
                     );
                     assert_eq!(
-                        view["plan"]["authority"],
+                        view["action"]["authority"],
                         serde_json::to_value(&p.spec().request.authority).unwrap()
                     );
                     assert_eq!(
-                        view["plan"]["initiator"],
+                        view["action"]["initiator"],
                         serde_json::to_value(origin).unwrap()
                     );
-                    assert_eq!(view["plan"]["digest"], p.digest().as_str());
+                    assert_eq!(view["action"]["digest"], p.digest().as_str());
                 }
                 Ok(())
             })
@@ -991,7 +891,7 @@ mod tests {
                 }
                 let first = o.snapshot(caller, ui::SnapshotQuery::default())?;
                 assert_eq!(first.requests.len(), 128);
-                let selected = first.requests[0].plan.request_id.clone();
+                let selected = first.requests[0].action.request_id.clone();
                 let second = o.snapshot(
                     caller,
                     ui::SnapshotQuery {
@@ -1002,7 +902,7 @@ mod tests {
                 assert_eq!(second.requests.len(), 2);
                 assert!(second.next.is_none());
                 assert_eq!(second.referenced_requests.len(), 1);
-                assert_eq!(second.referenced_requests[0].plan.request_id, selected);
+                assert_eq!(second.referenced_requests[0].action.request_id, selected);
                 assert_eq!(o.app.status(caller, &selected)?.attempts, 0);
                 assert!(o
                     .snapshot(
@@ -1036,8 +936,11 @@ mod tests {
                 };
                 let selected =
                     selection::select(&owner.catalog, &draft).map_err(|_| Error::InvalidInput)?;
-                owner.preview(caller, &draft.request_id, selected, fixtures::human())?;
-                owner.submit(caller, &draft.request_id)?;
+                let p = owner.resolve(caller, &draft.request_id, selected, fixtures::human())?;
+                owner.execute(caller, &p)?;
+                owner
+                    .app
+                    .confirm_execution(caller, &draft.request_id, p.digest(), true)?;
                 Ok(())
             })
             .await
@@ -1061,7 +964,7 @@ mod tests {
         alice
             .call(|owner, caller| {
                 let request = RequestId::new("alice-running").unwrap();
-                let plan = owner.app.frozen_plan(caller, &request)?;
+                let plan = owner.app.frozen_input(caller, &request)?;
                 assert_eq!(plan.spec().request.actor.as_str(), "fixture-actor");
                 assert_eq!(
                     owner.app.status(caller, &request)?.phase,
@@ -1070,7 +973,7 @@ mod tests {
                 assert_eq!(
                     owner
                         .app
-                        .frozen_plan(caller, &request)?
+                        .frozen_input(caller, &request)?
                         .spec()
                         .request
                         .actor

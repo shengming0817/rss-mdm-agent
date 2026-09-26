@@ -98,16 +98,8 @@ fn value(reply: &Value) -> &Value {
 fn error(reply: &Value) -> &Value {
     &reply["result"]["structuredContent"]["error"]
 }
-async fn plan(w: &mut Wire, s: &TestService, id: &str) -> Value {
-    let result = w
-        .call(
-            10,
-            "execution_preview",
-            json!({"catalog":{"selection":selection(s,id,json!({"host":"example.invalid"}))}}),
-        )
-        .await;
-    assert_eq!(result["result"]["isError"], false, "{result}");
-    value(&result)["plan"].clone()
+async fn action_input(_: &mut Wire, s: &TestService, id: &str) -> Value {
+    json!({"catalog":{"selection":selection(s,id,json!({"host":"example.invalid"}))}})
 }
 
 #[tokio::test]
@@ -118,7 +110,7 @@ async fn discovery_schemas_and_shared_parameter_projection() {
         .await;
     let list = w.recv().await;
     let tools = list["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 7);
+    assert_eq!(tools.len(), 5);
     assert!(tools
         .iter()
         .all(|t| !t["name"].as_str().unwrap().contains("approve")));
@@ -147,13 +139,13 @@ async fn discovery_schemas_and_shared_parameter_projection() {
     ));
     let schema = &tools
         .iter()
-        .find(|t| t["name"] == "execution_submit")
+        .find(|t| t["name"] == "execution_execute")
         .unwrap()["inputSchema"];
     assert!(!jsonschema::draft202012::is_valid(
         schema,
         &json!({"plan":{}})
     ));
-    let p = plan(&mut w, &s, "same-rules").await;
+    let p = action_input(&mut w, &s, "same-rules").await;
     let mut human_wire = selection(&s, "same-rules", json!({"host":"example.invalid"}));
     human_wire
         .as_object_mut()
@@ -168,8 +160,8 @@ async fn discovery_schemas_and_shared_parameter_projection() {
         )
         .unwrap();
     let human = s
-        .preview(
-            PreviewRequest::Catalog(Box::new(CatalogCandidate {
+        .execute(
+            ExecuteRequest::Catalog(Box::new(CatalogCandidate {
                 operation_request_id: execution_contract::RequestId::new("same-rules").unwrap(),
                 selection: selected,
             })),
@@ -177,7 +169,11 @@ async fn discovery_schemas_and_shared_parameter_projection() {
         )
         .await
         .unwrap();
-    assert_eq!(p, serde_json::to_value(human.plan).unwrap());
+    let result = w.call(10, "execution_execute", p).await;
+    assert_eq!(
+        value(&result)["contentDigest"],
+        serde_json::to_value(human.content_digest).unwrap()
+    );
     w.close().await;
 }
 
@@ -191,7 +187,7 @@ async fn raw_numbers_are_not_rounded_before_the_catalog_validates_them() {
     {
         let input = call(
             i as u64 + 20,
-            "execution_preview",
+            "execution_execute",
             json!({"catalog":{"selection":selection(&s,"bad-number",json!({"host":"example.invalid","count":"NUMBER"}))}}),
         );
         w.raw(&input.to_string().replace("\"NUMBER\"", numeric))
@@ -215,7 +211,7 @@ async fn raw_numbers_are_not_rounded_before_the_catalog_validates_them() {
         let r = w
             .call(
                 30 + i as u64,
-                "execution_preview",
+                "execution_execute",
                 json!({"catalog":{"selection":selection(&s,"bad",args)}}),
             )
             .await;
@@ -244,7 +240,7 @@ async fn catalog_diagnostics_are_structured_closed_and_match_output_schemas() {
         let reply = w
             .call(
                 3,
-                "execution_preview",
+                "execution_execute",
                 json!({"catalog":{"selection":selection(&s,"invalid",args)}}),
             )
             .await;
@@ -265,7 +261,7 @@ async fn catalog_diagnostics_are_structured_closed_and_match_output_schemas() {
     let reply = w
         .call(
             4,
-            "execution_preview",
+            "execution_execute",
             json!({"catalog":{"selection":missing}}),
         )
         .await;
@@ -309,9 +305,9 @@ async fn catalog_diagnostics_are_structured_closed_and_match_output_schemas() {
 async fn trusted_context_cannot_be_forged_and_query_authorization_is_rechecked() {
     let s = service();
     let mut w = Wire::open(s.clone(), limits()).await;
-    let p = plan(&mut w, &s, "owned").await;
-    let args = json!({"operationRequestId":"owned","plan":p});
-    let accepted = w.call(20, "execution_submit", args.clone()).await;
+    let p = action_input(&mut w, &s, "owned").await;
+    let args = p.clone();
+    let accepted = w.call(20, "execution_execute", args.clone()).await;
     assert_eq!(value(&accepted)["phase"], "accepted");
     for key in [
         "actor",
@@ -323,12 +319,12 @@ async fn trusted_context_cannot_be_forged_and_query_authorization_is_rechecked()
     ] {
         let mut forged = args.clone();
         forged[key] = json!("injected-sensitive-value");
-        let r = w.call(21, "execution_submit", forged).await;
+        let r = w.call(21, "execution_execute", forged).await;
         assert_eq!(error(&r)["code"], "invalidInput");
         assert!(!r.to_string().contains("injected-sensitive-value"));
     }
     // Protocol metadata never becomes trusted context.
-    let mut msg = call(22, "execution_submit", args);
+    let mut msg = call(22, "execution_execute", args);
     msg["params"]["_meta"] = json!({"actor":"admin","approved":true});
     w.send(msg).await;
     assert_eq!(value(&w.recv().await)["phase"], "accepted");
@@ -357,10 +353,10 @@ async fn accepted_response_loss_reconnect_and_concurrent_retry_preserve_one_atte
     let mut l = limits();
     l.request_timeout = Duration::from_millis(60);
     let mut w = Wire::open(s.clone(), l.clone()).await;
-    let p = plan(&mut w, &s, "retry").await;
-    let args = json!({"operationRequestId":"retry","plan":p});
+    let p = action_input(&mut w, &s, "retry").await;
+    let args = p.clone();
     s.submit_delay_ms.store(500, Ordering::SeqCst);
-    let unknown = w.call(20, "execution_submit", args.clone()).await;
+    let unknown = w.call(20, "execution_execute", args.clone()).await;
     assert_eq!(error(&unknown)["code"], "outcomeUnknown");
     assert_eq!(s.active_waits.load(Ordering::SeqCst), 0);
     w.close().await;
@@ -371,7 +367,7 @@ async fn accepted_response_loss_reconnect_and_concurrent_retry_preserve_one_atte
         .await;
     assert_eq!(value(&status)["phase"], "accepted");
     for id in 30..34 {
-        w.send(call(id, "execution_submit", args.clone())).await;
+        w.send(call(id, "execution_execute", args.clone())).await;
     }
     for _ in 30..34 {
         let r = w.recv().await;
@@ -379,9 +375,9 @@ async fn accepted_response_loss_reconnect_and_concurrent_retry_preserve_one_atte
         assert_eq!(value(&r)["phase"], "accepted");
     }
     let mut conflict = args.clone();
-    conflict["plan"]["digest"] = json!("a".repeat(64));
+    conflict["catalog"]["selection"]["arguments"]["host"] = json!("other.invalid");
     assert_eq!(
-        error(&w.call(40, "execution_submit", conflict).await)["code"],
+        error(&w.call(40, "execution_execute", conflict).await)["code"],
         "conflict"
     );
     assert_eq!(s.attempts.load(Ordering::SeqCst), 1);
@@ -392,13 +388,8 @@ async fn accepted_response_loss_reconnect_and_concurrent_retry_preserve_one_atte
 async fn bound_namespace_prevents_cross_actor_tenant_device_and_delegation_replay() {
     let s = service();
     let mut w = Wire::open(s.clone(), limits()).await;
-    let p = plan(&mut w, &s, "same-id").await;
-    w.call(
-        20,
-        "execution_submit",
-        json!({"operationRequestId":"same-id","plan":p}),
-    )
-    .await;
+    let p = action_input(&mut w, &s, "same-id").await;
+    w.call(20, "execution_execute", p.clone()).await;
     for dimension in ["authority", "actor", "tenant", "device", "delegation"] {
         let mut other = TestService::new(CATALOG, PLAN);
         let field = match dimension {
@@ -424,18 +415,6 @@ async fn bound_namespace_prevents_cross_actor_tenant_device_and_delegation_repla
             )["code"],
             "notFound"
         );
-        assert_eq!(
-            error(
-                &alien
-                    .call(
-                        3,
-                        "execution_submit",
-                        json!({"operationRequestId":"same-id","plan":p})
-                    )
-                    .await
-            )["code"],
-            "notFound"
-        );
         alien.close().await;
     }
     w.close().await;
@@ -445,14 +424,9 @@ async fn bound_namespace_prevents_cross_actor_tenant_device_and_delegation_repla
 async fn protocol_cancellation_releases_wait_and_does_not_cancel_business_operation() {
     let s = service();
     let mut w = Wire::open(s.clone(), limits()).await;
-    let p = plan(&mut w, &s, "cancel-wait").await;
+    let p = action_input(&mut w, &s, "cancel-wait").await;
     s.submit_delay_ms.store(1000, Ordering::SeqCst);
-    w.send(call(
-        20,
-        "execution_submit",
-        json!({"operationRequestId":"cancel-wait","plan":p}),
-    ))
-    .await;
+    w.send(call(20, "execution_execute", p.clone())).await;
     timeout(Duration::from_secs(1), async {
         while s.attempts.load(Ordering::SeqCst) == 0 {
             tokio::task::yield_now().await;
@@ -495,24 +469,21 @@ async fn script_candidates_are_immutable_bounded_and_never_echoed() {
     let interpreter =
         json!({"resource":{"id":"test-interpreter","revision":"1"},"sha256":"b".repeat(64)});
     let args = json!({"script":{"operationRequestId":"script","sourceUtf8":"sensitive-script-source","interpreter":interpreter}});
-    let candidate = w.call(20, "execution_propose", args.clone()).await;
+    let candidate = w.call(20, "execution_execute", args.clone()).await;
     assert_eq!(candidate["result"]["isError"], false);
     assert!(!candidate.to_string().contains("sensitive-script-source"));
-    let duplicate = w.call(21, "execution_propose", args.clone()).await;
+    let duplicate = w.call(21, "execution_execute", args.clone()).await;
     assert_eq!(value(&candidate), value(&duplicate));
     let mut changed = args.clone();
     changed["script"]["sourceUtf8"] = json!("changed");
     assert_eq!(
-        error(&w.call(22, "execution_propose", changed).await)["code"],
+        error(&w.call(22, "execution_execute", changed).await)["code"],
         "conflict"
     );
-    let preview = w.call(23, "execution_preview", json!({"candidate":{"operationRequestId":"script","candidate":value(&candidate)["candidate"]}})).await;
-    assert_eq!(preview["result"]["isError"], false);
-    assert!(!preview.to_string().contains("sensitive-script-source"));
     let mut large = args;
     large["script"]["sourceUtf8"] = json!("x".repeat(limits().parameters.max_bytes + 1));
     assert_eq!(
-        error(&w.call(24, "execution_propose", large).await)["code"],
+        error(&w.call(24, "execution_execute", large).await)["code"],
         "invalidInput"
     );
     w.close().await;
@@ -624,7 +595,7 @@ async fn official_rmcp_client_can_consume_the_bounded_service() {
             .unwrap()
             .tools
             .len(),
-        7
+        5
     );
     client.cancel().await.unwrap();
     timeout(Duration::from_secs(2), task)
@@ -660,20 +631,15 @@ async fn stale_catalog_and_terminal_test_evidence_remain_distinct() {
         error(
             &w.call(
                 2,
-                "execution_preview",
+                "execution_execute",
                 json!({"catalog":{"selection":stale}})
             )
             .await
         )["code"],
         "expired"
     );
-    let p = plan(&mut w, &s, "terminal").await;
-    w.call(
-        20,
-        "execution_submit",
-        json!({"operationRequestId":"terminal","plan":p}),
-    )
-    .await;
+    let p = action_input(&mut w, &s, "terminal").await;
+    w.call(20, "execution_execute", p.clone()).await;
     s.complete_test_result("terminal");
     let result = w
         .call(
@@ -788,32 +754,23 @@ async fn every_tool_advertises_and_times_out_according_to_its_effects() {
     let mut l = limits();
     l.request_timeout = Duration::from_millis(100);
     let mut w = Wire::open(s.clone(), l).await;
-    let p = plan(&mut w, &s, "original-id").await;
-    let submit = json!({"operationRequestId":"original-id","plan":p});
+    let p = action_input(&mut w, &s, "original-id").await;
+    let submit = p.clone();
     assert_eq!(
-        value(&w.call(11, "execution_submit", submit.clone()).await)["phase"],
+        value(&w.call(11, "execution_execute", submit.clone()).await)["phase"],
         "accepted"
     );
     w.send(json!({"jsonrpc":"2.0","id":12,"method":"tools/list","params":{}}))
         .await;
     let list = w.recv().await;
     let tools = list["result"]["tools"].as_array().unwrap();
-    let selected =
-        json!({"catalog":{"selection":selection(&s,"delayed",json!({"host":"example.invalid"}))}});
     let operation = json!({"operationRequestId":"original-id"});
     let cases = [
         ("execution_catalog", json!({}), true, "unavailable"),
         ("execution_capabilities", json!({}), true, "unavailable"),
         ("execution_status", operation.clone(), true, "unavailable"),
-        (
-            "execution_propose",
-            selected.clone(),
-            false,
-            "outcomeUnknown",
-        ),
-        ("execution_submit", submit, false, "outcomeUnknown"),
+        ("execution_execute", submit, false, "outcomeUnknown"),
         ("execution_cancel", operation, false, "outcomeUnknown"),
-        ("execution_preview", selected, false, "outcomeUnknown"),
     ];
     assert_eq!(tools.len(), cases.len());
     s.catalog_delay_ms.store(1000, Ordering::SeqCst);
@@ -888,7 +845,7 @@ async fn sdk_tracing_never_receives_raw_tool_arguments_metadata_or_cancel_reason
     let mut w = Wire::open(s.clone(), limits()).await;
     let mut request = call(
         2,
-        "execution_propose",
+        "execution_execute",
         json!({"script":{
             "operationRequestId":"log-test", "sourceUtf8":"script-log-canary",
             "interpreter":{"resource":{"id":"test-interpreter","revision":"1"},"sha256":"b".repeat(64)}
@@ -897,7 +854,7 @@ async fn sdk_tracing_never_receives_raw_tool_arguments_metadata_or_cancel_reason
     request["params"]["_meta"] = json!({"private":"metadata-log-canary"});
     w.send(request).await;
     assert_eq!(w.recv().await["result"]["isError"], false);
-    let reply = w.call(3, "execution_preview", json!({"catalog":{"selection":selection(
+    let reply = w.call(3, "execution_execute", json!({"catalog":{"selection":selection(
         &s, "log-secret", json!({"host":"example.invalid","credential":{"kind":"secret","reference":{"id":"secret-log-canary","revision":"1"}}})
     )}})).await;
     assert!(reply["result"].is_object());

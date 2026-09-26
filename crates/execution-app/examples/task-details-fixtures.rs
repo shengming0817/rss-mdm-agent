@@ -16,8 +16,8 @@ fn main() {
         let db = Database::new();
         let mut host = TestHost::new();
         let p = if name == "software" {
-            execution_contract::FrozenPlan::freeze(
-                execution_contract::decode_plan(
+            execution_contract::FrozenExecution::freeze(
+                execution_contract::decode_execution(
                     include_bytes!("../../execution-contract/tests/fixtures/software.json"),
                     &test_store_limits().plan,
                 )
@@ -40,7 +40,7 @@ fn main() {
         )
         .unwrap();
         let request = &p.spec().request.request_id;
-        app.submit(&caller(), request, &p).unwrap();
+        app.request_execution(&caller(), request, &p).unwrap();
         if cancel {
             app.cancel(&caller(), request).unwrap();
         }

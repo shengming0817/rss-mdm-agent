@@ -1,7 +1,7 @@
 use crate::database::bounded_blob;
 use crate::{journal::*, trust::*, *};
 use execution_approval::ProfileApproval;
-use execution_contract::{AuditEvent, Decision, EventId, EvidenceRefs, FrozenPlan, Id, V1};
+use execution_contract::{AuditEvent, Decision, EventId, EvidenceRefs, FrozenExecution, Id, V1};
 use execution_lifecycle::{
     self as lifecycle, Command, CommandEvent, EventRecord, Execution, ObservationEvent,
     ObservationVerifier,
@@ -27,9 +27,9 @@ impl Store {
             [request.as_str()],
             |row| row.get(0),
         )?;
-        let spec = execution_contract::decode_plan(&bytes, &self.limits.plan)
+        let spec = execution_contract::decode_execution(&bytes, &self.limits.plan)
             .map_err(|_| Error::Corrupt)?;
-        let plan = FrozenPlan::freeze(spec, &self.limits.plan).map_err(|_| Error::Corrupt)?;
+        let plan = FrozenExecution::freeze(spec, &self.limits.plan).map_err(|_| Error::Corrupt)?;
         let scope = Scope::from_plan(&plan);
         self.check_scope(&scope)?;
         access.authorize(&scope, host)?;
@@ -135,13 +135,14 @@ impl Store {
     pub fn open_execution(
         &mut self,
         op: &OperationRequestId,
-        plan: &FrozenPlan,
+        plan: &FrozenExecution,
         host: &impl Host,
     ) -> Result<CommitOutcome, Error> {
         let scope = Scope::from_plan(plan);
         // Revalidate against the store bounds even if another caller froze with looser limits.
         let bytes = encode(plan.spec(), self.limits.plan.max_input_bytes)?;
-        execution_contract::decode_plan(&bytes, &self.limits.plan).map_err(|_| Error::Capacity)?;
+        execution_contract::decode_execution(&bytes, &self.limits.plan)
+            .map_err(|_| Error::Capacity)?;
         let w = match self.start(
             op,
             &scope,
@@ -181,11 +182,10 @@ impl Store {
         let state = Execution::open(plan.clone(), w.now, w.limits.lifecycle)
             .map_err(|_| Error::InvalidInput)?;
         w.tx.execute(
-            "INSERT INTO executions VALUES(?1,?2,?3,?4,?5,?6,0,31)",
+            "INSERT INTO executions VALUES(?1,?2,?3,?4,?5,0,31)",
             params![
                 scope.key(),
                 plan.spec().request.request_id.as_str(),
-                plan.spec().plan_id.as_str(),
                 bytes,
                 hash(plan.digest())?,
                 w.bounded(state.snapshot())?
@@ -428,7 +428,14 @@ impl Store {
             audit.reason = AuditReason::AdmissionEvaluated;
             audit.admission = Some(admission_audit(&gate.admission));
             audit.approval = Some(approval_audit(&gate.approval));
-            if !check_gate(&w, &plan, attempt_id, bindings, &gate, &h) {
+            let confirmation_ok = match gate.admission.execution_gate() {
+                execution_admission::ExecutionGate::Direct => true,
+                execution_admission::ExecutionGate::Blocked => false,
+                execution_admission::ExecutionGate::Confirmation => {
+                    crate::interaction::confirmed(&w.tx, &plan, w.limits, w.now)?
+                }
+            };
+            if !confirmation_ok || !check_gate(&w, &plan, attempt_id, bindings, &gate, &h) {
                 audit.reason = AuditReason::CommitGateRejected;
                 audit.event.as_mut().expect("plan audit").decision = Decision::Denied {};
                 return w.finish(Outcome::Rejected, current.snapshot().revision, audit);
@@ -525,7 +532,7 @@ pub(crate) fn load_execution(
     conn: &Connection,
     scope: &Scope,
     limits: Limits,
-) -> Result<(FrozenPlan, Execution, u8), Error> {
+) -> Result<(FrozenExecution, Execution, u8), Error> {
     let plan = load_plan(conn, scope, limits)?;
     let (bytes, revision, reserve): (Vec<u8>, u64, u8) = conn.query_row(
         &format!(
@@ -603,7 +610,7 @@ fn terminal_reserve(
 }
 pub(crate) fn plan_audit(
     w: &Write<'_>,
-    plan: &FrozenPlan,
+    plan: &FrozenExecution,
     decision: Decision,
     reason: AuditReason,
 ) -> AuditRecord {
@@ -614,8 +621,7 @@ pub(crate) fn plan_audit(
         event_id: EventId::new("pending").expect("static ID"),
         authority: p.request.authority.clone(),
         request_id: p.request.request_id.clone(),
-        plan_id: p.plan_id.clone(),
-        plan_digest: plan.digest().clone(),
+        content_digest: plan.digest().clone(),
         actor: p.request.actor.clone(),
         initiator: p.request.initiator.clone(),
         approver: None,
@@ -640,8 +646,9 @@ impl AuditRecord {
 
 fn admission_audit(a: &execution_admission::AdmissionDecision) -> AdmissionAudit {
     AdmissionAudit {
-        plan_id: a.plan_id().clone(),
-        plan_digest: a.plan_digest().clone(),
+        risk_level: a.risk().map(|r| r as u8),
+        request_id: a.request_id().clone(),
+        content_digest: a.content_digest().clone(),
         attempt_id: a.attempt_id().clone(),
         policy: a.policy().clone(),
         delegation: a.delegation().cloned(),
@@ -653,8 +660,8 @@ fn admission_audit(a: &execution_admission::AdmissionDecision) -> AdmissionAudit
 }
 fn approval_audit(p: &execution_approval::ApprovalDecision) -> ApprovalAudit {
     ApprovalAudit {
-        plan_id: p.plan_id().clone(),
-        plan_digest: p.plan_digest().clone(),
+        request_id: p.request_id().clone(),
+        content_digest: p.content_digest().clone(),
         attempt_id: p.attempt_id().clone(),
         outcome: p.outcome().clone(),
         bindings: p
@@ -707,9 +714,10 @@ impl Store {
                 [&key],
                 |r| r.get(0),
             )?;
-            let spec = execution_contract::decode_plan(&bytes, &self.limits.plan)
+            let spec = execution_contract::decode_execution(&bytes, &self.limits.plan)
                 .map_err(|_| Error::Corrupt)?;
-            let plan = FrozenPlan::freeze(spec, &self.limits.plan).map_err(|_| Error::Corrupt)?;
+            let plan =
+                FrozenExecution::freeze(spec, &self.limits.plan).map_err(|_| Error::Corrupt)?;
             let scope = Scope::from_plan(&plan);
             self.check_scope(&scope)?;
             if scope.key() != key {

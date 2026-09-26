@@ -366,7 +366,7 @@ pub struct SoftwareEvidence {
     /// Existing attempt identity.
     pub attempt_id: AttemptId,
     /// Complete canonical plan digest.
-    pub plan_digest: Digest,
+    pub content_digest: Digest,
     /// Runner identity.
     pub runner: Id,
     /// Detection before mutation, absent when history was lost.

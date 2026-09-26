@@ -1,15 +1,12 @@
 {
   "identifier": "main",
   "description": "Local main window: S1 execution service and private AI transport.",
-  "windows": [
-    "main"
-  ],
+  "windows": ["main"],
   "permissions": [
     "allow-self-service-snapshot",
-    "allow-self-service-preview",
-    "allow-self-service-submit",
+    "allow-self-service-execute",
     "allow-self-service-respond",
-    "allow-self-service-approve",
+    "allow-self-service-confirm",
     "allow-execution-task-details",
     "allow-ai-host-status",
     "allow-ai-restart-host",

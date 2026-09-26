@@ -7,10 +7,9 @@ import { parse, compileTemplate } from "vue/compiler-sfc";
 
 const selfServiceCommands = [
   "self_service_snapshot",
-  "self_service_preview",
-  "self_service_submit",
+  "self_service_execute",
   "self_service_respond",
-  "self_service_approve",
+  "self_service_confirm",
   "self_service_cancel",
 ];
 const assistantCommands = [

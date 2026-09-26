@@ -1,4 +1,4 @@
-use execution_contract::{AttemptId, Digest, EventId, EvidenceRef, FrozenPlan, Id, PlanId};
+use execution_contract::{AttemptId, Digest, EventId, EvidenceRef, FrozenExecution, Id, RequestId};
 use serde::{Deserialize, Serialize};
 
 pub(crate) const SNAPSHOT_VERSION: u8 = 3;
@@ -99,9 +99,9 @@ pub enum Observation {
 #[derive(Debug, Clone)]
 pub struct ObservationFacts {
     /// Verified exact plan identity.
-    pub plan_id: PlanId,
+    pub request_id: RequestId,
     /// Verified exact plan digest.
-    pub plan_digest: Digest,
+    pub content_digest: Digest,
     /// Verified attempt identity.
     pub attempt_id: AttemptId,
     /// Verified reference, category and runner.
@@ -122,7 +122,7 @@ pub trait ObservationVerifier {
     /// Resolve and verify one exact reference at the supplied reliable receipt time.
     fn verify(
         &self,
-        plan: &FrozenPlan,
+        plan: &FrozenExecution,
         attempt: &AttemptId,
         evidence: &EvidenceRef,
         now_unix_ms: u64,
@@ -330,9 +330,9 @@ pub struct Snapshot {
     /// Exactly version 3, with a tagged command or observation record.
     pub version: u8,
     /// Bound frozen plan identity.
-    pub plan_id: PlanId,
+    pub request_id: RequestId,
     /// Bound canonical plan digest.
-    pub plan_digest: Digest,
+    pub content_digest: Digest,
     /// Creation time in reliable UTC Unix milliseconds.
     pub opened_at_unix_ms: u64,
     /// Last committed receipt time, also the durable clock watermark.

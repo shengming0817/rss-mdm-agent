@@ -1,6 +1,5 @@
 {
-  "schemaVersion": 3,
-  "planId": "plan-1",
+  "schemaVersion": 4,
   "request": {
     "schemaVersion": 1,
     "requestId": "request-1",
@@ -120,9 +119,7 @@
     "network": {
       "kind": "denied"
     },
-    "readPaths": [
-      "/workspace"
-    ],
+    "readPaths": ["/workspace"],
     "writePaths": [],
     "allowChildProcesses": false,
     "requireSandbox": true,

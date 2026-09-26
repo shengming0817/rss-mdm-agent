@@ -18,7 +18,7 @@ fn main() {
                 }
             };
             let response = execution_runner::macos_service::query(
-                br#"{"version":3,"request":{"method":"status","request":"mechanism-probe"}}"#,
+                br#"{"version":4,"request":{"method":"status","request":"mechanism-probe"}}"#,
                 system,
             );
             match response {
@@ -48,7 +48,7 @@ fn main() {
         let argument = std::env::args().nth(1);
         if matches!(argument.as_deref(), Some("--probe-user" | "--probe-system")) {
             match execution_runner::windows_service::query(
-                br#"{"version":3,"request":{"method":"status","request":"mechanism-probe"}}"#,
+                br#"{"version":4,"request":{"method":"status","request":"mechanism-probe"}}"#,
                 argument.as_deref() == Some("--probe-system"),
             ) {
                 Ok(bytes) => println!("{}", String::from_utf8_lossy(&bytes)),

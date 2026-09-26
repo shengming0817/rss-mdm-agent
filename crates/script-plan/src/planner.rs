@@ -8,7 +8,7 @@ fn literal(value: impl Into<String>) -> LaunchArg {
         value: value.into(),
     }
 }
-fn scalar(value: &InputValue, limits: &PlanLimits) -> Result<String, ScriptPlanError> {
+fn scalar(value: &InputValue, limits: &ExecutionLimits) -> Result<String, ScriptPlanError> {
     let InputValue::Literal { value } = value else {
         return Err(ScriptPlanError::SecretChannel);
     };
@@ -28,7 +28,7 @@ fn parameter<'a>(
     name: &str,
     values: &'a BTreeMap<String, InputValue>,
     used: &mut BTreeSet<String>,
-    limits: &PlanLimits,
+    limits: &ExecutionLimits,
 ) -> Result<&'a InputValue, ScriptPlanError> {
     if name.len() > limits.max_string_bytes {
         return Err(ScriptPlanError::Limit);
@@ -43,7 +43,7 @@ fn named(
     value: &InputValue,
     names: &mut BTreeSet<String>,
     argv: &mut Vec<LaunchArg>,
-    limits: &PlanLimits,
+    limits: &ExecutionLimits,
 ) -> Result<(), ScriptPlanError> {
     if name.is_empty()
         || name.len() > 128
@@ -76,7 +76,7 @@ fn input_stream(
     binding: StdinBinding,
     parameters: &BTreeMap<String, InputValue>,
     used: &mut BTreeSet<String>,
-    limits: &PlanLimits,
+    limits: &ExecutionLimits,
 ) -> Result<StandardInput, ScriptPlanError> {
     match binding {
         StdinBinding::Closed => Ok(StandardInput::Closed {}),
@@ -158,9 +158,11 @@ fn check_environment(
 /// Compile normalized parameters into one native invocation and freeze all execution facts.
 /// No script parsing, byte rewriting, artifact/secret resolution, system clock or spawning.
 /// C01 is the sole validation/normalization/digest owner; freezing is not authorization.
-pub fn compile(input: ScriptPlanInput, limits: &PlanLimits) -> Result<FrozenPlan, ScriptPlanError> {
+pub fn compile(
+    input: ScriptPlanInput,
+    limits: &ExecutionLimits,
+) -> Result<FrozenExecution, ScriptPlanError> {
     let ScriptPlanInput {
-        plan_id,
         request,
         artifact,
         interpreter,
@@ -230,11 +232,11 @@ pub fn compile(input: ScriptPlanInput, limits: &PlanLimits) -> Result<FrozenPlan
         return Err(ScriptPlanError::UnusedParameter);
     }
     check_environment(profile, &env)?;
-    Ok(FrozenPlan::freeze(
-        PlanSpec {
-            schema_version: V3,
+    Ok(FrozenExecution::freeze(
+        ExecutionInput {
+            schema_version: V4,
             execution: execution_contract::ExecutionSpec::Process {},
-            plan_id,
+
             request,
             launch: LaunchSpec {
                 artifact,

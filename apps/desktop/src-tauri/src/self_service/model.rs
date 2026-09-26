@@ -1,4 +1,4 @@
-use execution_contract::{Digest, Id, PlanId, RequestId};
+use execution_contract::{Digest, Id, RequestId};
 use execution_interaction::Kind;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -26,10 +26,9 @@ pub struct Draft {
 }
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Submission {
+pub struct ActionRef {
     pub instance_id: String,
     pub request_id: RequestId,
-    pub plan_id: PlanId,
     pub digest: Digest,
 }
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
@@ -91,6 +90,7 @@ impl From<execution_interaction::InteractionError> for ServiceError {
 #[serde(rename_all = "camelCase")]
 #[schemars(rename = "CatalogItem")]
 pub struct CatalogView {
+    pub risk_level: Option<u8>,
     pub catalog: CatalogRef,
     pub item_id: Id,
     pub variant_id: Id,
@@ -107,14 +107,14 @@ pub struct CatalogView {
 }
 #[derive(Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-#[schemars(rename = "Plan")]
-pub struct PlanView {
+#[schemars(rename = "Action")]
+pub struct ActionView {
+    pub risk_level: Option<u8>,
     pub authority: execution_contract::Authority,
     pub actor: execution_contract::ActorId,
     pub initiator: execution_contract::Initiator,
     pub request_id: RequestId,
     pub revision: u32,
-    pub plan_id: PlanId,
     pub digest: Digest,
     pub item_id: Id,
     pub title: String,
@@ -130,6 +130,7 @@ pub struct PlanView {
 }
 #[derive(Clone, Serialize, JsonSchema)]
 pub struct ParameterSummary {
+    pub value: Option<String>,
     pub label: String,
     pub state: &'static str,
 }
@@ -152,7 +153,7 @@ pub struct InteractionView {
 #[derive(Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RequestView {
-    pub plan: PlanView,
+    pub action: ActionView,
     pub status: RequestStatus,
     pub message: &'static str,
     pub interactions: Vec<InteractionView>,
@@ -202,7 +203,7 @@ pub enum InteractionStatus {
 #[serde(rename_all = "camelCase")]
 pub enum RequestStatus {
     Waiting,
-    Approval,
+    Confirmation,
     Complete,
     Stopped,
     RestartRequired,

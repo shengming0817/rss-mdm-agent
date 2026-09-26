@@ -1,11 +1,11 @@
 import { mount } from "@vue/test-utils";
 import { expect, test } from "vitest";
 import TaskDetail from "./TaskDetail.vue";
-import preview from "./preview";
+import { executionTask } from "./testing";
 import type { RequestView } from "./types";
 test("an expired prompt stops offering confirmation while business cancellation remains separate", async () => {
   const task: RequestView = {
-    ...preview.requests[0]!,
+    ...executionTask(),
     interactions: [
       {
         id: "expiry-test",
@@ -20,26 +20,26 @@ test("an expired prompt stops offering confirmation while business cancellation 
   const wrapper = mount(TaskDetail, {
     props: { task, item: undefined, disabled: false, now: 1000 },
   });
-  expect(wrapper.findAll("button").some((b) => b.text() === "确认计划")).toBe(
+  expect(wrapper.findAll("button").some((b) => b.text() === "确认动作")).toBe(
     true,
   );
   await wrapper.setProps({ now: 2000 });
   expect(wrapper.text()).toContain("按本机时间已过期");
-  expect(wrapper.findAll("button").some((b) => b.text() === "确认计划")).toBe(
+  expect(wrapper.findAll("button").some((b) => b.text() === "确认动作")).toBe(
     false,
   );
 });
 
 test("approval shows the frozen actor, authority and AI account separately from run-as", async () => {
-  const task = structuredClone(preview.requests[0]!);
-  task.status = "approval";
-  task.plan.actor = "request-actor";
-  task.plan.authority = {
+  const task = structuredClone(executionTask());
+  task.status = "confirmation";
+  task.action.actor = "request-actor";
+  task.action.authority = {
     kind: "enterprise",
     id: "authority-a",
     tenant: "tenant-a",
   };
-  task.plan.initiator = {
+  task.action.initiator = {
     kind: "ai",
     provider: "codex",
     osSession: {
@@ -51,7 +51,7 @@ test("approval shows the frozen actor, authority and AI account separately from 
     conversation: "conversation-7",
     toolCall: "tool-call-7",
   };
-  task.plan.runAs = "execution-user";
+  task.action.runAs = "execution-user";
   const wrapper = mount(TaskDetail, {
     props: { task, item: undefined, disabled: false, now: 1000 },
   });
@@ -74,15 +74,18 @@ test("approval shows the frozen actor, authority and AI account separately from 
   expect(wrapper.text()).toContain("execution-user");
   await wrapper
     .findAll("button")
-    .find((b) => b.text() === "批准此测试计划一次")!
+    .find((b) => b.text() === "确认并执行")!
     .trigger("click");
-  expect(wrapper.emitted("approve")).toHaveLength(1);
+  expect(wrapper.emitted("confirm")).toHaveLength(1);
   await wrapper.setProps({
     task: {
       ...task,
-      plan: {
-        ...task.plan,
-        initiator: { kind: "human", osSession: task.plan.initiator.osSession },
+      action: {
+        ...task.action,
+        initiator: {
+          kind: "human",
+          osSession: task.action.initiator.osSession,
+        },
       },
     },
   });

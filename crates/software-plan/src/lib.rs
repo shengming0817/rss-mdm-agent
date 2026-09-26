@@ -6,12 +6,12 @@ mod planner;
 pub use model::*;
 pub use planner::decide;
 
-/// Bind a pure decision to the sole canonical V3 execution plan; this does not authorize dispatch.
+/// Bind a pure decision to the sole canonical V4 execution plan; this does not authorize dispatch.
 pub fn bind(
     decision: &SoftwareDecision,
-    spec: execution_contract::PlanSpec,
-    limits: &execution_contract::PlanLimits,
-) -> Result<execution_contract::FrozenPlan, execution_contract::ContractError> {
+    spec: execution_contract::ExecutionInput,
+    limits: &execution_contract::ExecutionLimits,
+) -> Result<execution_contract::FrozenExecution, execution_contract::ContractError> {
     use execution_contract::{ContractError, ErrorKind, Field, Rule};
     let invalid =
         || ContractError::new(ErrorKind::InconsistentContext, Field::Plan, Rule::Mismatch);
@@ -33,5 +33,5 @@ pub fn bind(
     {
         return Err(invalid());
     }
-    execution_contract::FrozenPlan::freeze(spec, limits)
+    execution_contract::FrozenExecution::freeze(spec, limits)
 }

@@ -91,9 +91,7 @@ export class ParentTransport implements Transport {
 const methods = new Set([
   "execution_catalog",
   "execution_capabilities",
-  "execution_preview",
-  "execution_propose",
-  "execution_submit",
+  "execution_execute",
   "execution_status",
   "execution_cancel",
 ]);
@@ -220,7 +218,7 @@ export async function connectExecution(
       const { name, arguments: args } = request.body.proposal;
       try {
         // These reads and exact immutable registrations are receiver-idempotent and never dispatch.
-        if (!["execution_submit", "execution_cancel"].includes(name))
+        if (!["execution_execute", "execution_cancel"].includes(name))
           return ok({
             state: "committed",
             receipt: receipt(request, await call(request, name, args, b)),
@@ -236,25 +234,6 @@ export async function connectExecution(
             state:
               status.error?.code === "notFound" ? "not_submitted" : "unknown",
           });
-        if (name === "execution_submit") {
-          const plan = args.plan as Record<string, unknown>;
-          if (
-            status.result.plan?.planId !== plan?.planId ||
-            status.result.plan?.digest !== plan?.digest
-          )
-            return ok({
-              state: "committed",
-              receipt: receipt(request, {
-                status: "error",
-                error: { code: "conflict" },
-              }),
-            });
-          if (status.result.submitted !== true)
-            return ok({
-              state:
-                status.result.submitted === false ? "not_submitted" : "unknown",
-            });
-        }
         if (
           name === "execution_cancel" &&
           status.result.cancelRequested !== true &&

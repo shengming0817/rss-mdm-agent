@@ -1,6 +1,6 @@
 use execution_contract::{
-    Digest, ExactArtifactRef, ExecutionBudget, FrozenPlan, InterpreterRef, NetworkAccess,
-    Operation, PlanId, RunAs, SessionRequirement, Target, ValidityWindow, VersionedRef, V3,
+    Digest, ExactArtifactRef, ExecutionBudget, FrozenExecution, InterpreterRef, NetworkAccess,
+    Operation, RequestId, RunAs, SessionRequirement, Target, ValidityWindow, VersionedRef, V4,
 };
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -35,7 +35,7 @@ pub enum AccessSummary {
 /// Allowlisted view of the immutable plan; no parameters, launch inputs, secrets or audit.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct FrozenPlanSummary {
+pub struct FrozenExecutionSummary {
     /// Product authority bound to the exact plan.
     pub authority: execution_contract::Authority,
     /// Permission-bearing principal; not the model account.
@@ -43,13 +43,13 @@ pub struct FrozenPlanSummary {
     /// Human or AI origin, without granting execution permission.
     pub initiator: execution_contract::Initiator,
     /// Version of the frozen execution plan, independent of the AI wire version.
-    pub schema_version: V3,
+    pub schema_version: V4,
     /// Closed execution kind without private software paths or source inputs.
     pub execution: ExecutionSummary,
     /// Exact frozen plan identity.
-    pub plan_id: PlanId,
+    pub request_id: RequestId,
     /// Digest covers the complete original plan, including omitted private values.
-    pub plan_digest: Digest,
+    pub content_digest: Digest,
     /// Explicit device/platform/user target.
     pub target: Target,
     /// Explicit execution identity; never inferred from a provider login.
@@ -71,8 +71,8 @@ pub struct FrozenPlanSummary {
     /// Restrictions summarized without individual private values.
     pub access: AccessSummary,
 }
-impl FrozenPlanSummary {
-    pub(crate) fn from_plan(plan: &FrozenPlan) -> Self {
+impl FrozenExecutionSummary {
+    pub(crate) fn from_plan(plan: &FrozenExecution) -> Self {
         let p = plan.spec();
         Self {
             authority: p.request.authority.clone(),
@@ -88,8 +88,8 @@ impl FrozenPlanSummary {
                     }
                 }
             },
-            plan_id: p.plan_id.clone(),
-            plan_digest: plan.digest().clone(),
+            request_id: p.request.request_id.clone(),
+            content_digest: plan.digest().clone(),
             target: p.request.target.clone(),
             run_as: p.run_as.clone(),
             operation: p.request.operation.clone(),
@@ -130,7 +130,7 @@ pub struct ExecutionTaskDetails {
     /// Authoritative lifecycle projection.
     pub status: crate::ExecutionStatus,
     /// Redacted frozen plan bound to that lifecycle.
-    pub plan: FrozenPlanSummary,
+    pub action: FrozenExecutionSummary,
 }
 /// Bounded authorized task list using the same detail projection as individual reads.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]

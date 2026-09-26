@@ -129,7 +129,7 @@ try {
     assert.ok(
       deliveries.length === 1 &&
         deliveries[0].status === "delivered" &&
-        deliveries[0].n >= 5,
+        deliveries[0].n >= 3,
     );
     const tasks = execution
       .prepare(
@@ -152,7 +152,6 @@ try {
         );
         return {
           requestId: row.request_id,
-          planId: plan.planId,
           digest: row.digest,
           origin: plan.request.initiator.kind,
           attempts: state.attempts,

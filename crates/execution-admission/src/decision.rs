@@ -1,5 +1,5 @@
 use crate::VerificationError;
-use execution_contract::{AttemptId, Digest, Id, PlanId, VersionedRef};
+use execution_contract::{AttemptId, Digest, Id, RequestId, VersionedRef};
 
 /// Authorization result only. None of these variants is an execution permit or consumed approval.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,6 +41,8 @@ pub enum Reason {
     RuleAllowed,
     /// One or more rules explicitly require subsequent approval.
     NeedsApproval,
+    /// AI risk is prohibited or cannot be classified by trusted policy.
+    RiskBlocked,
 }
 /// Immutable decision bound to the evaluated plan, never deserializable as a permission.
 /// ```compile_fail
@@ -48,8 +50,10 @@ pub enum Reason {
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdmissionDecision {
-    pub(crate) plan_id: PlanId,
-    pub(crate) plan_digest: Digest,
+    pub(crate) execution_gate: crate::ExecutionGate,
+    pub(crate) risk: Option<crate::RiskLevel>,
+    pub(crate) request_id: RequestId,
+    pub(crate) content_digest: Digest,
     pub(crate) policy: VersionedRef,
     pub(crate) delegation: Option<VersionedRef>,
     pub(crate) outcome: DecisionOutcome,
@@ -87,6 +91,15 @@ impl AdmissionValidity {
     }
 }
 impl AdmissionDecision {
+    /// Product gate after authenticated source and protected risk evaluation.
+    pub fn execution_gate(&self) -> crate::ExecutionGate {
+        self.execution_gate
+    }
+    /// Protected classification, absent when unavailable.
+    pub fn risk(&self) -> Option<crate::RiskLevel> {
+        self.risk
+    }
+
     /// Exact attempt authenticated through the authority port. It cannot be rebound.
     pub fn attempt_id(&self) -> &AttemptId {
         &self.attempt_id
@@ -96,12 +109,12 @@ impl AdmissionDecision {
         self.validity.as_ref()
     }
     /// Exact plan identity; no newer plan is implicitly substituted.
-    pub fn plan_id(&self) -> &PlanId {
-        &self.plan_id
+    pub fn request_id(&self) -> &RequestId {
+        &self.request_id
     }
     /// Exact plan digest, covering identities, execution content, constraints and all bounds.
-    pub fn plan_digest(&self) -> &Digest {
-        &self.plan_digest
+    pub fn content_digest(&self) -> &Digest {
+        &self.content_digest
     }
     /// Policy reference claimed by the evaluated plan; InvalidPolicy means it was not verified.
     pub fn policy(&self) -> &VersionedRef {

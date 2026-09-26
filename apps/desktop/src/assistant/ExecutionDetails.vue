@@ -15,9 +15,9 @@ import type {
 } from "./execution-types";
 const props = defineProps<{ details: ExecutionTaskDetails; now: number }>();
 const validity = computed(() =>
-  props.now < props.details.plan.validity.notBeforeUnixMs
+  props.now < props.details.action.validity.notBeforeUnixMs
     ? "计划尚未生效"
-    : props.now >= props.details.plan.validity.expiresAtUnixMs
+    : props.now >= props.details.action.validity.expiresAtUnixMs
       ? "计划已过期"
       : "计划在有效期内",
 );
@@ -31,6 +31,8 @@ function phase(value: TaskPhase): string {
       return "等待执行条件";
     case "admissionDenied":
       return "执行准入被拒绝";
+    case "confirmationRequired":
+      return "等待用户确认本次动作";
     case "approvalRequired":
       return "执行服务记录：需要管理员批准";
     case "accepted":
@@ -247,13 +249,15 @@ const text = (value: unknown) => JSON.stringify(value, null, 2);
     <p v-if="details.status.cancelRequested">
       执行取消已请求；取消意图、停止响应和效果验证分别记录。
     </p>
-    <RequestOrigin :plan="details.plan" />
+    <RequestOrigin :plan="details.action" />
     <dl>
       <dt>原始执行请求</dt>
       <dd>{{ details.status.operationRequestId }}</dd>
       <dt>冻结计划 / 摘要</dt>
-      <dd>{{ details.plan.planId }}<br />{{ details.plan.planDigest }}</dd>
-      <template v-if="details.plan.execution.kind === 'software'">
+      <dd>
+        {{ details.action.requestId }}<br />{{ details.action.contentDigest }}
+      </dd>
+      <template v-if="details.action.execution.kind === 'software'">
         <dt>软件执行</dt>
         <dd class="software-operation">
           {{
@@ -264,7 +268,7 @@ const text = (value: unknown) => JSON.stringify(value, null, 2);
               homebrew: "Homebrew",
               windowsBundle: "Windows ZIP Bundle",
               macosBundle: "macOS ZIP Bundle",
-            }[details.plan.execution.adapter]
+            }[details.action.execution.adapter]
           }}
           ·
           {{
@@ -273,7 +277,7 @@ const text = (value: unknown) => JSON.stringify(value, null, 2);
               upgrade: "升级",
               downgrade: "降级",
               uninstall: "卸载",
-            }[details.plan.execution.mutation]
+            }[details.action.execution.mutation]
           }}
         </dd>
       </template>
@@ -284,44 +288,44 @@ const text = (value: unknown) => JSON.stringify(value, null, 2);
       </dd>
       <dt>目标</dt>
       <dd>
-        <pre>{{ text(details.plan.target) }}</pre>
+        <pre>{{ text(details.action.target) }}</pre>
       </dd>
       <dt>运行身份</dt>
       <dd>
-        <pre>{{ text(details.plan.runAs) }}</pre>
+        <pre>{{ text(details.action.runAs) }}</pre>
       </dd>
       <dt>操作与资源版本</dt>
       <dd>
-        <pre>{{ text(details.plan.operation) }}</pre>
+        <pre>{{ text(details.action.operation) }}</pre>
       </dd>
       <dt>精确制品</dt>
       <dd>
-        <pre>{{ text(details.plan.artifact) }}</pre>
+        <pre>{{ text(details.action.artifact) }}</pre>
       </dd>
       <dt>解释器</dt>
       <dd>
-        <pre>{{ text(details.plan.interpreter) }}</pre>
+        <pre>{{ text(details.action.interpreter) }}</pre>
       </dd>
       <dt>策略版本</dt>
       <dd>
-        <pre>{{ text(details.plan.policy) }}</pre>
+        <pre>{{ text(details.action.policy) }}</pre>
       </dd>
       <dt>用户会话要求</dt>
       <dd>
-        <pre>{{ text(details.plan.sessionRequirement) }}</pre>
+        <pre>{{ text(details.action.sessionRequirement) }}</pre>
       </dd>
       <dt>有效期</dt>
       <dd>
-        生效：{{ instant(details.plan.validity.notBeforeUnixMs) }}<br />
-        到期（不含）：{{ instant(details.plan.validity.expiresAtUnixMs) }}
+        生效：{{ instant(details.action.validity.notBeforeUnixMs) }}<br />
+        到期（不含）：{{ instant(details.action.validity.expiresAtUnixMs) }}
       </dd>
       <dt>累计预算</dt>
       <dd>
-        <pre>{{ text(details.plan.budget) }}</pre>
+        <pre>{{ text(details.action.budget) }}</pre>
       </dd>
       <dt>访问范围</dt>
       <dd>
-        <pre>{{ text(details.plan.access) }}</pre>
+        <pre>{{ text(details.action.access) }}</pre>
       </dd>
       <dt>派发诊断 / 停止响应</dt>
       <dd>

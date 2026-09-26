@@ -1,7 +1,7 @@
 use execution_capability::*;
 use execution_contract::*;
-fn limits() -> PlanLimits {
-    PlanLimits {
+fn limits() -> ExecutionLimits {
+    ExecutionLimits {
         max_input_bytes: 65536,
         max_depth: 32,
         max_nodes: 4096,
@@ -13,8 +13,8 @@ fn limits() -> PlanLimits {
         max_attempts: 3,
     }
 }
-fn plan(platform: Platform) -> FrozenPlan {
-    let mut p = decode_plan(
+fn plan(platform: Platform) -> FrozenExecution {
+    let mut p = decode_execution(
         include_bytes!("../../execution-contract/tests/fixtures/plan.json"),
         &limits(),
     )
@@ -44,7 +44,7 @@ fn plan(platform: Platform) -> FrozenPlan {
         };
         *read_paths = vec![p.launch.cwd.clone()];
     }
-    FrozenPlan::freeze(p, &limits()).unwrap()
+    FrozenExecution::freeze(p, &limits()).unwrap()
 }
 fn inventory<T>(values: Vec<T>) -> Inventory<T> {
     Inventory {
@@ -58,7 +58,7 @@ fn inventory<T>(values: Vec<T>) -> Inventory<T> {
             .collect(),
     }
 }
-fn snapshot(p: &FrozenPlan) -> EnvironmentSnapshot {
+fn snapshot(p: &FrozenExecution) -> EnvironmentSnapshot {
     let s = p.spec();
     EnvironmentSnapshot {
         authority: s.request.authority.clone(),
@@ -89,7 +89,7 @@ fn snapshot(p: &FrozenPlan) -> EnvironmentSnapshot {
         ]),
     }
 }
-fn check(p: &FrozenPlan, s: &EnvironmentSnapshot) -> MatchReport {
+fn check(p: &FrozenExecution, s: &EnvironmentSnapshot) -> MatchReport {
     match_capabilities(p, s, MatchLimits { max_entries: 64 }).unwrap()
 }
 #[test]
@@ -146,7 +146,7 @@ fn disabling_sandbox_does_not_disable_other_constraints() {
         *allow_child_processes = true;
     }
     spec.session_requirement = SessionRequirement::NotRequired {};
-    let p = FrozenPlan::freeze(spec, &limits()).unwrap();
+    let p = FrozenExecution::freeze(spec, &limits()).unwrap();
     let mut s = snapshot(&p);
     s.isolation.entries.retain(|e| {
         !matches!(
@@ -259,7 +259,7 @@ fn exact_identity_and_every_inventory_fail_closed() {
             }],
         };
     }
-    let p = FrozenPlan::freeze(spec, &limits()).unwrap();
+    let p = FrozenExecution::freeze(spec, &limits()).unwrap();
     let mut s = snapshot(&p);
     assert_eq!(check(&p, &s).status, MatchStatus::Supported);
     s.isolation
@@ -289,7 +289,7 @@ fn identical_device_ids_cannot_replay_snapshots_across_authorities_or_tenants() 
     for source in &authorities {
         let mut spec = plan(Platform::Linux).spec().clone();
         spec.request.authority = source.clone();
-        let p = FrozenPlan::freeze(spec, &limits()).unwrap();
+        let p = FrozenExecution::freeze(spec, &limits()).unwrap();
         let s = snapshot(&p);
         assert_eq!(check(&p, &s).status, MatchStatus::Supported);
         for target in &authorities {
@@ -298,7 +298,7 @@ fn identical_device_ids_cannot_replay_snapshots_across_authorities_or_tenants() 
             }
             let mut other = p.spec().clone();
             other.request.authority = target.clone();
-            let other = FrozenPlan::freeze(other, &limits()).unwrap();
+            let other = FrozenExecution::freeze(other, &limits()).unwrap();
             let result = check(&other, &s);
             assert_eq!(result.status, MatchStatus::Unknown);
             assert!(result
@@ -319,7 +319,7 @@ fn profile_and_each_stream_requirement_need_exact_positive_facts() {
         max_bytes: 64,
     };
     spec.launch.output.stderr = TextEncoding::Utf16Le;
-    let p = FrozenPlan::freeze(spec, &limits()).unwrap();
+    let p = FrozenExecution::freeze(spec, &limits()).unwrap();
     let mut s = snapshot(&p);
     s.launch_io.complete = false;
     assert_eq!(check(&p, &s).status, MatchStatus::Unknown);

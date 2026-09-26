@@ -1,6 +1,6 @@
 use crate::{
-    ActorId, AttemptId, Authority, ContractError, Digest, EventId, Id, Initiator, Operation,
-    PlanId, PlanLimits, RequestId, Target, VersionedRef, V1,
+    ActorId, AttemptId, Authority, ContractError, Digest, EventId, ExecutionLimits, Id, Initiator,
+    Operation, RequestId, Target, VersionedRef, V1,
 };
 use crate::{ErrorKind, Field, Rule};
 use schemars::JsonSchema;
@@ -94,11 +94,10 @@ pub struct AuditEvent {
     /// Claimed authority namespace; a deserialized reference is not an authenticated issuer.
     pub authority: Authority,
     /// Stable local request correlation identity.
-    pub request_id: RequestId,
     /// Immutable local plan identity, also bound into its digest.
-    pub plan_id: PlanId,
+    pub request_id: RequestId,
     /// Digest of the exact frozen plan observed by this record, not a signature or permit.
-    pub plan_digest: Digest,
+    pub content_digest: Digest,
     /// Claimed product actor reference; OS/provider login does not establish this identity.
     pub actor: ActorId,
     /// Origin and account provenance only; authority must be independently verified.
@@ -124,7 +123,7 @@ pub struct AuditEvent {
 }
 impl AuditEvent {
     /// Validate constructed audit DTOs; not a trusted audit receipt or signature check.
-    pub fn validate(&self, limits: &PlanLimits) -> Result<(), ContractError> {
+    pub fn validate(&self, limits: &ExecutionLimits) -> Result<(), ContractError> {
         limits.validate()?;
         if let Decision::Observed { evidence, .. } = &self.decision {
             if evidence.as_slice().len() > limits.max_collection_items {
@@ -165,7 +164,7 @@ impl AuditEvent {
     }
 }
 /// Decode bounded audit data. A successful decode is not evidence verification.
-pub fn decode_audit(bytes: &[u8], limits: &PlanLimits) -> Result<AuditEvent, ContractError> {
+pub fn decode_audit(bytes: &[u8], limits: &ExecutionLimits) -> Result<AuditEvent, ContractError> {
     let value = crate::validation::decode_value(bytes, limits)?;
     let event: AuditEvent = crate::validation::typed_value(value)?;
     event.validate(limits)?;

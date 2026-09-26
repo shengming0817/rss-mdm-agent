@@ -11,3 +11,5 @@ mod software;
 mod trust;
 pub use database::{OpenOutcome, Store};
 pub use model::*;
+
+pub use interaction::execution_confirmation;

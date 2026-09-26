@@ -1,6 +1,6 @@
 use crate::{ApprovalOutcome, ProfileApproval};
 use execution_admission::AdmissionValidity;
-use execution_contract::{AttemptId, Digest, PlanId, VersionedRef};
+use execution_contract::{AttemptId, Digest, RequestId, VersionedRef};
 
 /// Candidate consume-one CAS, committed together with its attempt intent by C18.
 /// The authority namespace comes from the identically bound frozen plan.
@@ -11,8 +11,8 @@ use execution_contract::{AttemptId, Digest, PlanId, VersionedRef};
 /// ~~~
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConsumptionIntent {
-    pub(crate) plan_id: PlanId,
-    pub(crate) plan_digest: Digest,
+    pub(crate) request_id: RequestId,
+    pub(crate) content_digest: Digest,
     pub(crate) attempt_id: AttemptId,
     pub(crate) approval: VersionedRef,
     pub(crate) expected_consumption_revision: u64,
@@ -22,12 +22,12 @@ pub struct ConsumptionIntent {
 }
 impl ConsumptionIntent {
     /// Exact frozen plan identity.
-    pub fn plan_id(&self) -> &PlanId {
-        &self.plan_id
+    pub fn request_id(&self) -> &RequestId {
+        &self.request_id
     }
     /// Exact canonical plan digest.
-    pub fn plan_digest(&self) -> &Digest {
-        &self.plan_digest
+    pub fn content_digest(&self) -> &Digest {
+        &self.content_digest
     }
     /// Stable attempt identity used for durable idempotency.
     pub fn attempt_id(&self) -> &AttemptId {
@@ -61,8 +61,8 @@ impl ConsumptionIntent {
 /// ~~~
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApprovalDecision {
-    pub(crate) plan_id: PlanId,
-    pub(crate) plan_digest: Digest,
+    pub(crate) request_id: RequestId,
+    pub(crate) content_digest: Digest,
     pub(crate) attempt_id: AttemptId,
     pub(crate) outcome: ApprovalOutcome,
     pub(crate) bindings: Vec<ProfileApproval>,
@@ -79,13 +79,13 @@ impl ApprovalDecision {
     /// This validates the immutable identity; it does not perform or prove persistence.
     pub fn valid_for_commit(
         &self,
-        plan: &execution_contract::FrozenPlan,
+        plan: &execution_contract::FrozenExecution,
         attempt: &AttemptId,
         now: u64,
         authority_revision: &VersionedRef,
     ) -> bool {
-        self.plan_id == plan.spec().plan_id
-            && &self.plan_digest == plan.digest()
+        self.request_id == plan.spec().request.request_id
+            && &self.content_digest == plan.digest()
             && &self.attempt_id == attempt
             && matches!(
                 self.outcome,
@@ -101,12 +101,12 @@ impl ApprovalDecision {
                 .all(|c| now < c.valid_until_unix_ms)
     }
     /// Exact plan identity evaluated.
-    pub fn plan_id(&self) -> &PlanId {
-        &self.plan_id
+    pub fn request_id(&self) -> &RequestId {
+        &self.request_id
     }
     /// Exact canonical plan digest evaluated.
-    pub fn plan_digest(&self) -> &Digest {
-        &self.plan_digest
+    pub fn content_digest(&self) -> &Digest {
+        &self.content_digest
     }
     /// Attempt for which pending consumptions were calculated.
     pub fn attempt_id(&self) -> &AttemptId {

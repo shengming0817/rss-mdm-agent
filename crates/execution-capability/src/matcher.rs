@@ -1,7 +1,7 @@
 use crate::*;
 use execution_contract::{
-    ExecutionRequest, FrozenPlan, IsolationPolicy, LaunchSpec, NetworkAccess, OutputSpec, PlanSpec,
-    SessionRequirement, StandardInput, Target,
+    ExecutionInput, ExecutionRequest, FrozenExecution, IsolationPolicy, LaunchSpec, NetworkAccess,
+    OutputSpec, SessionRequirement, StandardInput, Target,
 };
 
 fn validate<T: PartialEq>(
@@ -47,7 +47,7 @@ fn checked_inventory<'a, T: PartialEq>(
 /// Check every requirement from the immutable plan. There is no caller override for session
 /// or isolation requirements. Invalid snapshots return an error instead of a partial success.
 pub fn match_capabilities(
-    plan: &FrozenPlan,
+    plan: &FrozenExecution,
     snapshot: &EnvironmentSnapshot,
     limits: MatchLimits,
 ) -> Result<MatchReport, MatchError> {
@@ -68,9 +68,8 @@ pub fn match_capabilities(
         user_sessions,
         isolation,
     } = snapshot;
-    let PlanSpec {
+    let ExecutionInput {
         schema_version: _,
-        plan_id: _, // Validated version and correlation, not capabilities.
         request,
         launch,
         execution,
@@ -211,7 +210,7 @@ pub fn match_capabilities(
         .max()
         .unwrap_or(MatchStatus::Unknown);
     Ok(MatchReport {
-        plan_digest: plan.digest().clone(),
+        content_digest: plan.digest().clone(),
         snapshot: source.clone(),
         status,
         checks,

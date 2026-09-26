@@ -65,6 +65,17 @@ impl Store {
         };
         let plan = load_plan(&w.tx, scope, w.limits)?;
         let state = load(&w.tx, scope, id, w.limits)?;
+        if let interaction::Kind::ExecutionAction { digest } = &state.snapshot().spec.kind {
+            if digest.as_str() != plan.digest().as_str() {
+                return Err(Error::Denied);
+            }
+            host.authorize(AccessRequest {
+                access: Access::Execute,
+                scope,
+                consumer: None,
+                interaction: Some((&state.snapshot().spec, command)),
+            })?;
+        }
         host.authorize(AccessRequest {
             access: Access::Interact,
             scope,
@@ -127,7 +138,7 @@ impl Store {
         load(&tx, scope, id, self.limits)
     }
 }
-fn load(
+pub(crate) fn load(
     conn: &rusqlite::Connection,
     scope: &Scope,
     id: &Reference,
@@ -149,4 +160,43 @@ fn load(
         return Err(Error::Corrupt);
     }
     Ok(state)
+}
+
+/// Stable interaction identity for the one product execution confirmation.
+pub fn execution_confirmation(plan: &execution_contract::FrozenExecution) -> Spec {
+    Spec {
+        id: Reference::new(format!("execute-{}", plan.digest().as_str())).expect("bounded digest"),
+        subject: Scope::from_plan(plan).interaction_subject(),
+        kind: interaction::Kind::ExecutionAction {
+            digest: Reference::new(plan.digest().as_str()).expect("digest"),
+        },
+        expires_at_unix_ms: plan.spec().validity.expires_at_unix_ms.min(
+            plan.spec()
+                .validity
+                .not_before_unix_ms
+                .saturating_add(60_000),
+        ),
+    }
+}
+pub(crate) fn confirmed(
+    conn: &rusqlite::Connection,
+    plan: &execution_contract::FrozenExecution,
+    limits: Limits,
+    now: u64,
+) -> Result<bool, Error> {
+    let expected = execution_confirmation(plan);
+    let state = match load(conn, &Scope::from_plan(plan), &expected.id, limits) {
+        Ok(s) => s,
+        Err(Error::NotFound) => return Ok(false),
+        Err(e) => return Err(e),
+    };
+    Ok(state.snapshot().spec == expected
+        && now < expected.expires_at_unix_ms
+        && matches!(
+            state.snapshot().status,
+            interaction::Status::Answered {
+                response: interaction::Response::Confirmation { accepted: true },
+                ..
+            }
+        ))
 }

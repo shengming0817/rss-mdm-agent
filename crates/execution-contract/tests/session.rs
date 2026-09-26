@@ -1,7 +1,7 @@
-use execution_contract::{decode_plan, FrozenPlan, PlanLimits};
+use execution_contract::{decode_execution, ExecutionLimits, FrozenExecution};
 use serde_json::{json, Value};
-fn limits() -> PlanLimits {
-    PlanLimits {
+fn limits() -> ExecutionLimits {
+    ExecutionLimits {
         max_input_bytes: 65536,
         max_depth: 32,
         max_nodes: 4096,
@@ -16,8 +16,10 @@ fn limits() -> PlanLimits {
 fn fixture() -> Value {
     serde_json::from_str(include_str!("fixtures/plan.json")).unwrap()
 }
-fn decode(v: &Value) -> Result<execution_contract::PlanSpec, execution_contract::ContractError> {
-    decode_plan(&serde_json::to_vec(v).unwrap(), &limits())
+fn decode(
+    v: &Value,
+) -> Result<execution_contract::ExecutionInput, execution_contract::ContractError> {
+    decode_execution(&serde_json::to_vec(v).unwrap(), &limits())
 }
 #[test]
 fn session_requirement_is_required_and_bound_to_the_plan() {
@@ -28,13 +30,13 @@ fn session_requirement_is_required_and_bound_to_the_plan() {
         "old plans must not silently omit session requirements"
     );
     v["sessionRequirement"] = json!({"kind":"notRequired"});
-    let first = FrozenPlan::freeze(decode(&v).unwrap(), &limits()).unwrap();
+    let first = FrozenExecution::freeze(decode(&v).unwrap(), &limits()).unwrap();
     v["sessionRequirement"] =
         json!({"kind":"activeUser", "account":{"platform":"linux","subject":"uid:1000"}});
-    let active = FrozenPlan::freeze(decode(&v).unwrap(), &limits()).unwrap();
+    let active = FrozenExecution::freeze(decode(&v).unwrap(), &limits()).unwrap();
     assert_ne!(first.digest(), active.digest());
     v["sessionRequirement"]["account"]["subject"] = json!("uid:1001");
-    let changed = FrozenPlan::freeze(decode(&v).unwrap(), &limits()).unwrap();
+    let changed = FrozenExecution::freeze(decode(&v).unwrap(), &limits()).unwrap();
     assert_ne!(changed.digest(), active.digest());
 }
 #[test]
@@ -63,7 +65,7 @@ fn invalid_session_context_is_rejected_by_decode_and_freeze() {
         json!({"kind":"activeUser","account":{"platform":"linux","subject":"uid:1000"}});
     let mut p = decode(&v).unwrap();
     p.request.target.platform = execution_contract::Platform::Windows;
-    let error = FrozenPlan::freeze(p, &limits()).unwrap_err();
+    let error = FrozenExecution::freeze(p, &limits()).unwrap_err();
     assert_eq!(
         (error.kind(), error.field(), error.rule()),
         (K::InconsistentContext, F::Session, R::Mismatch)

@@ -2,7 +2,7 @@ use crate::{
     host::{capabilities, Host, ObservationEvidence},
     *,
 };
-use execution_contract::{AttemptId, Authority, EventId, FrozenPlan, RequestId};
+use execution_contract::{AttemptId, Authority, EventId, FrozenExecution, RequestId};
 use execution_lifecycle::{
     Command, CommandEvent, Directive, DispatchAction, DispatchCause, DispatchState, Execution,
     ExecutionMode, Observation, ObservationEvent, ObservationFacts, Phase, Preparation,
@@ -74,14 +74,14 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
     pub(crate) fn adapter<'a>(
         &'a self,
         context: Option<&'a RequestContext>,
-        plan: Option<&'a FrozenPlan>,
+        plan: Option<&'a FrozenExecution>,
     ) -> Host<'a, H> {
         Host::new(&self.host, &self.binding, &self.config, context).with_plan(plan)
     }
     fn check_binding(
         &self,
         context: Option<&RequestContext>,
-        plan: &FrozenPlan,
+        plan: &FrozenExecution,
     ) -> Result<(), Error> {
         let actual = self.host.service_binding()?;
         let p = &plan.spec().request;
@@ -107,51 +107,118 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         self.check_binding(context, execution.plan())?;
         Ok(execution)
     }
-    /// Persist a preview without submitting it or obtaining dispatch authority.
-    pub fn register_plan(
+    /// Accept a single immutable execution. Exact replays continue only before the first intent.
+    pub fn request_execution(
         &mut self,
         caller: &RequestContext,
         request: &RequestId,
-        plan: &FrozenPlan,
+        plan: &FrozenExecution,
     ) -> Result<ExecutionStatus, Error> {
-        let context = Some(caller);
-        self.check_binding(context, plan)?;
+        self.check_binding(Some(caller), plan)?;
         if request != &plan.spec().request.request_id {
             return Err(Error::Conflict);
         }
-        let op = operation(plan, "preview", "")?;
-        self.store.open_execution(
-            &op,
-            plan,
-            &Host::new(&self.host, &self.binding, &self.config, context).with_plan(Some(plan)),
-        )?;
-        self.status_for(context, request, ExecutionAccess::Submission)
-    }
-    /// Submit an immutable plan under its original business request ID. Replays return current
-    /// durable state without consuming approval, checking new execution policy or dispatching.
-    pub fn submit(
-        &mut self,
-        caller: &RequestContext,
-        request: &RequestId,
-        plan: &FrozenPlan,
-    ) -> Result<ExecutionStatus, Error> {
-        let context = Some(caller);
-        self.check_binding(context, plan)?;
-        if request != &plan.spec().request.request_id {
-            return Err(Error::Conflict);
-        }
-        let operation = operation(plan, "register", "")?;
+        let op = operation(plan, "request", "")?;
         let host =
-            Host::new(&self.host, &self.binding, &self.config, context).with_plan(Some(plan));
-        let result = self.store.open_execution(&operation, plan, &host)?;
-        if matches!(result, CommitOutcome::AlreadyCommitted(_)) {
-            return self.status_for(context, request, ExecutionAccess::Submission);
+            Host::new(&self.host, &self.binding, &self.config, Some(caller)).with_plan(Some(plan));
+        self.store.open_execution(&op, plan, &host)?;
+        let current = self.status_for(Some(caller), request, ExecutionAccess::Submission)?;
+        if current.attempts > 0 || current.cancel_requested || current.admission.is_some() {
+            return Ok(current);
+        }
+        let attempt = AttemptId::new(key(plan, "attempt", CommandId::initial_attempt().as_str())?)
+            .map_err(|_| Error::InvalidInput)?;
+        let decision = execution_admission::decide(
+            plan,
+            &attempt,
+            &self.host,
+            execution_admission::AdmissionLimits {
+                max_rules: self.config.active()?.max_rules,
+            },
+        );
+        if decision.execution_gate() == execution_admission::ExecutionGate::Confirmation {
+            let spec = execution_sqlite::execution_confirmation(plan);
+            self.open_interaction(
+                caller,
+                request,
+                spec.id.clone(),
+                spec.kind,
+                spec.expires_at_unix_ms,
+            )?;
+            let state = self.interaction(caller, request, &spec.id)?;
+            match &state.snapshot().status {
+                execution_interaction::Status::Answered {
+                    response: execution_interaction::Response::Confirmation { accepted: true },
+                    ..
+                } if self.host.reliable_now()? < spec.expires_at_unix_ms => {}
+                execution_interaction::Status::Pending
+                    if self.host.reliable_now()? < spec.expires_at_unix_ms =>
+                {
+                    return self.status_for(Some(caller), request, ExecutionAccess::Submission)
+                }
+                _ => return self.cancel(caller, request),
+            }
         }
         self.advance(caller, request, &CommandId::initial_attempt())
     }
+    /// Confirm the exact persisted action through a trusted caller; never change its origin.
+    pub fn confirm_execution(
+        &mut self,
+        caller: &RequestContext,
+        request: &RequestId,
+        digest: &execution_contract::Digest,
+        accepted: bool,
+    ) -> Result<ExecutionStatus, Error> {
+        let input = self.frozen_input(caller, request)?;
+        if input.digest() != digest {
+            return Err(Error::Conflict);
+        }
+        let spec = execution_sqlite::execution_confirmation(&input);
+        let command = CommandId::new(if accepted {
+            "execute-confirm"
+        } else {
+            "execute-decline"
+        })?;
+        self.respond(
+            caller,
+            request,
+            &command,
+            &spec.id,
+            &execution_interaction::Command::Answer {
+                id: execution_interaction::Reference::new(key(
+                    &input,
+                    "confirmation-answer",
+                    command.as_str(),
+                )?)
+                .map_err(|_| Error::InvalidInput)?,
+                response: execution_interaction::Response::Confirmation { accepted },
+            },
+        )?;
+        self.request_execution(caller, request, &input)
+    }
+    /// Explicit owner retry after a completed attempt; never an initial submission stage.
+    pub fn retry_execution(
+        &mut self,
+        caller: &RequestContext,
+        request: &RequestId,
+        command: &CommandId,
+    ) -> Result<ExecutionStatus, Error> {
+        if self
+            .status_for(Some(caller), request, ExecutionAccess::Execute)?
+            .attempts
+            == 0
+            && !matches!(
+                self.frozen_input(caller, request)?.spec().request.initiator,
+                execution_contract::Initiator::Policy { .. }
+            )
+        {
+            return Err(Error::Conflict);
+        }
+        self.advance(caller, request, command)
+    }
     /// Explicit owner action, distinct from submit replay. Every new attempt rechecks capabilities,
     /// C07 and C08 against current trusted facts and atomically consumes all required approvals.
-    pub fn advance(
+    pub(crate) fn advance(
         &mut self,
         caller: &RequestContext,
         request: &RequestId,
@@ -553,8 +620,8 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                                 execution_lifecycle::EffectAssessment::NotSatisfied
                             };
                             ObservationFacts {
-                                plan_id: execution.plan().spec().plan_id.clone(),
-                                plan_digest: execution.plan().digest().clone(),
+                                request_id: execution.plan().spec().request.request_id.clone(),
+                                content_digest: execution.plan().digest().clone(),
                                 attempt_id: attempt.id.clone(),
                                 observed_at_unix_ms: now,
                                 evidence: execution_contract::EvidenceRef {
@@ -668,7 +735,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         }
         Ok(())
     }
-    fn authorize_runner(&self, plan: &FrozenPlan, access: Access) -> Result<(), Error> {
+    fn authorize_runner(&self, plan: &FrozenExecution, access: Access) -> Result<(), Error> {
         let context = None;
         self.adapter(context, Some(plan)).authorize(AccessRequest {
             access,
@@ -698,11 +765,11 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
     }
     /// Trusted Rust composition read of the original plan. Contains private launch inputs;
     /// UI/model transports must expose only task_details, never serialize this value.
-    pub fn frozen_plan(
+    pub fn frozen_input(
         &self,
         caller: &RequestContext,
         request: &RequestId,
-    ) -> Result<FrozenPlan, Error> {
+    ) -> Result<FrozenExecution, Error> {
         let context = Some(caller);
         Ok(self
             .load(context, request, ExecutionAccess::Result)?
@@ -817,18 +884,26 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                 Phase::Cancelled => TaskPhase::Cancelled,
             }
         };
+        let phase = if s.attempt.is_none() && !s.cancel_requested && record.admission.is_none() {
+            let spec = execution_sqlite::execution_confirmation(execution.plan());
+            match self.store.interaction(
+                &Scope::from_plan(execution.plan()),
+                &spec.id,
+                &self.adapter(context, None),
+            ) {
+                Ok(i) if matches!(i.snapshot().status, execution_interaction::Status::Pending) => {
+                    TaskPhase::ConfirmationRequired
+                }
+                _ => phase,
+            }
+        } else {
+            phase
+        };
         let status = ExecutionStatus {
             process: record.process,
             software: record.software,
-            submitted: self.store.has_execution_receipt(
-                &Scope::from_plan(execution.plan()),
-                &operation(execution.plan(), "register", "")?,
-                access,
-                &self.adapter(context, Some(execution.plan())),
-            )?,
             operation_request_id: request.clone(),
-            plan_id: s.plan_id.clone(),
-            plan_digest: s.plan_digest.clone(),
+            content_digest: s.content_digest.clone(),
             phase,
             mode: s.attempt.as_ref().map_or(self.runner.mode(), |a| a.mode),
             attempt_id: s.attempt.as_ref().map(|a| a.id.clone()),
@@ -847,7 +922,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         };
         Ok(crate::ExecutionTaskDetails {
             status,
-            plan: crate::FrozenPlanSummary::from_plan(execution.plan()),
+            action: crate::FrozenExecutionSummary::from_plan(execution.plan()),
         })
     }
     /// Current service configuration health.
@@ -873,7 +948,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         })
     }
 }
-pub(crate) fn key(plan: &FrozenPlan, stage: &str, identity: &str) -> Result<String, Error> {
+pub(crate) fn key(plan: &FrozenExecution, stage: &str, identity: &str) -> Result<String, Error> {
     let bytes = serde_json_canonicalizer::to_vec(&(
         "execution-app/v1",
         &plan.spec().request.authority,
@@ -885,7 +960,7 @@ pub(crate) fn key(plan: &FrozenPlan, stage: &str, identity: &str) -> Result<Stri
     Ok(format!("app-{:x}", Sha256::digest(bytes)))
 }
 pub(crate) fn operation(
-    plan: &FrozenPlan,
+    plan: &FrozenExecution,
     stage: &str,
     identity: &str,
 ) -> Result<OperationRequestId, Error> {

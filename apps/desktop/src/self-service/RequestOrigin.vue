@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import type { Plan } from "./types";
-defineProps<{ plan: Pick<Plan, "actor" | "authority" | "initiator"> }>();
+import type { Action } from "./types";
+defineProps<{ plan: Pick<Action, "actor" | "authority" | "initiator"> }>();
 </script>
 <template>
   <section class="request-origin" aria-label="冻结的请求来源">

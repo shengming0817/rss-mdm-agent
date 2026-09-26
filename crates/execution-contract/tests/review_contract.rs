@@ -1,7 +1,7 @@
-use execution_contract::{decode_plan, FrozenPlan, PlanLimits};
+use execution_contract::{decode_execution, ExecutionLimits, FrozenExecution};
 use serde_json::{json, Value};
-fn limits() -> PlanLimits {
-    PlanLimits {
+fn limits() -> ExecutionLimits {
+    ExecutionLimits {
         max_input_bytes: 65536,
         max_depth: 32,
         max_nodes: 4096,
@@ -16,11 +16,13 @@ fn limits() -> PlanLimits {
 fn fixture() -> Value {
     serde_json::from_str(include_str!("fixtures/plan.json")).unwrap()
 }
-fn decode(v: &Value) -> Result<execution_contract::PlanSpec, execution_contract::ContractError> {
-    decode_plan(&serde_json::to_vec(v).unwrap(), &limits())
+fn decode(
+    v: &Value,
+) -> Result<execution_contract::ExecutionInput, execution_contract::ContractError> {
+    decode_execution(&serde_json::to_vec(v).unwrap(), &limits())
 }
-fn freeze(v: &Value) -> FrozenPlan {
-    FrozenPlan::freeze(decode(v).unwrap(), &limits()).unwrap()
+fn freeze(v: &Value) -> FrozenExecution {
+    FrozenExecution::freeze(decode(v).unwrap(), &limits()).unwrap()
 }
 fn windows() -> Value {
     let mut v = fixture();
@@ -212,7 +214,7 @@ fn origin_accounts_are_required_independent_and_bound_in_plan_and_audit() {
 #[test]
 fn new_origin_and_endpoint_shapes_are_required_by_derived_schema() {
     let validator = jsonschema::validator_for(
-        &serde_json::to_value(execution_contract::plan_schema()).unwrap(),
+        &serde_json::to_value(execution_contract::execution_schema()).unwrap(),
     )
     .unwrap();
     let mut v = fixture();

@@ -17,7 +17,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 type MutationSlot = Arc<Mutex<Option<Box<dyn crate::software::SoftwareMutationLease>>>>;
 struct Record {
     mutation: MutationSlot,
-    plan: FrozenPlan,
+    plan: FrozenExecution,
     cancel: Arc<AtomicBool>,
     facts: Arc<Mutex<Option<ProcessEvidence>>>,
     software: Arc<Mutex<Option<SoftwareEvidence>>>,
@@ -51,7 +51,7 @@ impl NativeRunner {
     }
     fn launch(
         &self,
-        plan: &FrozenPlan,
+        plan: &FrozenExecution,
         attempt: &AttemptId,
         allowance: DispatchAllowance,
         ownership: Option<SoftwareProvenance>,
@@ -182,7 +182,7 @@ impl Drop for NativeRunner {
 impl RunnerPort for NativeRunner {
     fn software_evidence(
         &self,
-        plan: &FrozenPlan,
+        plan: &FrozenExecution,
         attempt: &AttemptId,
         context: execution_app::SoftwareObservation<'_>,
     ) -> Result<Option<SoftwareEvidence>, Error> {
@@ -230,7 +230,7 @@ impl RunnerPort for NativeRunner {
             SoftwareEvidence {
                 object_identity: observation.object,
                 attempt_id: attempt.clone(),
-                plan_digest: plan.digest().clone(),
+                content_digest: plan.digest().clone(),
                 runner: self.id.clone(),
                 before: None,
                 detected: observation.state,
@@ -300,16 +300,20 @@ impl RunnerPort for NativeRunner {
             if action.mode() != ExecutionMode::Real
                 || matches!(plan.spec().request.authority, Authority::Test { .. })
                 || action.runner() != &self.id
-                || action.plan_digest() != plan.digest()
-                || action.plan_id() != &plan.spec().plan_id
+                || action.content_digest() != plan.digest()
+                || action.request_id() != &plan.spec().request.request_id
             {
                 return Err(Error::Denied);
             }
             self.launch(plan, action.attempt_id(), allowance, ownership)
         })
     }
-    fn acknowledge_capture(&self, plan: &FrozenPlan, facts: &ProcessEvidence) -> Result<(), Error> {
-        if !facts.finished || facts.plan_digest != *plan.digest() {
+    fn acknowledge_capture(
+        &self,
+        plan: &FrozenExecution,
+        facts: &ProcessEvidence,
+    ) -> Result<(), Error> {
+        if !facts.finished || facts.content_digest != *plan.digest() {
             return Err(Error::Denied);
         }
         let mut records = self.records.lock().map_err(|_| Error::Unavailable)?;
@@ -335,7 +339,7 @@ impl RunnerPort for NativeRunner {
         }
         Ok(())
     }
-    fn stop(&self, plan: &FrozenPlan, attempt: &AttemptId) -> Result<(), Error> {
+    fn stop(&self, plan: &FrozenExecution, attempt: &AttemptId) -> Result<(), Error> {
         let records = self.records.lock().map_err(|_| Error::Unavailable)?;
         let record = records.get(attempt).ok_or(Error::Unavailable)?;
         if record.plan.digest() != plan.digest() {
@@ -346,7 +350,7 @@ impl RunnerPort for NativeRunner {
     }
     fn evidence(
         &self,
-        plan: &FrozenPlan,
+        plan: &FrozenExecution,
         attempt: &AttemptId,
     ) -> Result<Option<ProcessEvidence>, Error> {
         let records = self.records.lock().map_err(|_| Error::Unavailable)?;
@@ -361,7 +365,7 @@ impl RunnerPort for NativeRunner {
     }
     fn observe(
         &self,
-        plan: &FrozenPlan,
+        plan: &FrozenExecution,
         attempt: &AttemptId,
         stage: ObservationStage,
         now: u64,
@@ -380,8 +384,8 @@ impl RunnerPort for NativeRunner {
                         return Err(Error::Denied);
                     }
                     return Ok(Some(ObservationFacts {
-                        plan_id: plan.spec().plan_id.clone(),
-                        plan_digest: plan.digest().clone(),
+                        request_id: plan.spec().request.request_id.clone(),
+                        content_digest: plan.digest().clone(),
                         attempt_id: attempt.clone(),
                         observed_at_unix_ms: now,
                         evidence,
@@ -405,8 +409,8 @@ impl RunnerPort for NativeRunner {
             return Ok(None);
         }
         Ok(Some(ObservationFacts {
-            plan_id: plan.spec().plan_id.clone(),
-            plan_digest: plan.digest().clone(),
+            request_id: plan.spec().request.request_id.clone(),
+            content_digest: plan.digest().clone(),
             attempt_id: attempt.clone(),
             observed_at_unix_ms: now,
             evidence: EvidenceRef {
@@ -444,9 +448,14 @@ fn now() -> Result<u64, Error> {
     )
     .map_err(|_| Error::Clock)
 }
-fn rejected(plan: &FrozenPlan, attempt: &AttemptId, id: &Id, end: ProcessEnd) -> ProcessEvidence {
+fn rejected(
+    plan: &FrozenExecution,
+    attempt: &AttemptId,
+    id: &Id,
+    end: ProcessEnd,
+) -> ProcessEvidence {
     ProcessEvidence {
-        plan_digest: plan.digest().clone(),
+        content_digest: plan.digest().clone(),
         attempt_id: attempt.clone(),
         runner: id.clone(),
         scope: ProcessScope::NotStarted {},
@@ -480,7 +489,7 @@ pub(crate) fn classify(error: Error) -> ProcessFailureKind {
     }
 }
 fn failed(
-    plan: &FrozenPlan,
+    plan: &FrozenExecution,
     attempt: &AttemptId,
     id: &Id,
     kind: ProcessFailureKind,
@@ -518,7 +527,7 @@ struct Captures {
 }
 async fn run(
     mut materialized: Materialized,
-    plan: FrozenPlan,
+    plan: FrozenExecution,
     attempt: AttemptId,
     id: Id,
     (cap, deadline): (u64, Instant),
@@ -535,7 +544,7 @@ async fn run(
             *slot = Some(SoftwareEvidence {
                 staging: lease.staging().unwrap_or(SoftwareStaging::Unverified {}),
                 attempt_id: attempt.clone(),
-                plan_digest: plan.digest().clone(),
+                content_digest: plan.digest().clone(),
                 runner: id.clone(),
                 before: Some(lease.before.clone()),
                 object_identity: lease.before_object.clone(),
@@ -633,7 +642,7 @@ async fn run(
         }
     };
     let mut facts = ProcessEvidence {
-        plan_digest: plan.digest().clone(),
+        content_digest: plan.digest().clone(),
         attempt_id: attempt,
         runner: id,
         scope: owner.scope(),

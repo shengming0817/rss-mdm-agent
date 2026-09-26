@@ -1,5 +1,6 @@
 use execution_contract::{
-    ActorId, AttemptId, Authority, ExecutionBudget, FrozenPlan, Id, ValidityWindow, VersionedRef,
+    ActorId, AttemptId, Authority, ExecutionBudget, FrozenExecution, Id, ValidityWindow,
+    VersionedRef,
 };
 
 /// Authentication and actor-wide limits delivered by the trusted adapter, not an input DTO.
@@ -20,7 +21,7 @@ pub struct DelegationFacts {
     /// Exact authenticated delegation identity and revision.
     pub reference: VersionedRef,
     /// Exact scope plus budget/window ceiling; this template cannot supply a base permission.
-    pub scope: FrozenPlan,
+    pub scope: FrozenExecution,
 }
 /// Explicit rule disposition; no model risk label or implicit approval heuristic.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,17 +42,22 @@ pub struct Rule {
     /// Unique rule identity for stable, value-free decision explanations.
     pub id: Id,
     /// Exact execution scope and budget/window ceiling. Correlation IDs and initiator do not grant rights.
-    pub template: FrozenPlan,
+    pub template: FrozenExecution,
     /// Explicit effect selected by the trusted policy owner.
     pub effect: RuleEffect,
 }
 /// Adapter output only: no Deserialize and no direct `decide(plan, facts)` entry point.
-/// A FrozenPlan proves normalization only; the verifier must independently obtain these rules.
+/// A FrozenExecution proves normalization only; the verifier must independently obtain these rules.
 /// ```compile_fail
 /// let _: execution_admission::AuthorityFacts = serde_json::from_str("{}").unwrap();
 /// ```
 #[derive(Debug, Clone)]
 pub struct AuthorityFacts {
+    /// Origin independently authenticated by the host, never copied from an untrusted DTO.
+    pub verified_origin: execution_contract::Initiator,
+    /// Classification of the exact normalized action under the protected policy revision.
+    /// None is unknown and blocks AI execution.
+    pub risk: Option<RiskLevel>,
     /// Authenticated actor and current actor-wide ceilings.
     pub subject: SubjectFacts,
     /// Authenticated delegation if and only if the request references one.
@@ -81,7 +87,7 @@ pub trait AuthorityVerifier {
     /// Static failures are always mapped to Denied.
     fn verify(
         &self,
-        plan: &FrozenPlan,
+        plan: &FrozenExecution,
         attempt: &AttemptId,
     ) -> Result<AuthorityFacts, VerificationError>;
 }
@@ -109,4 +115,28 @@ pub enum VerificationError {
 pub struct AdmissionLimits {
     /// Maximum number of rules; must be nonzero.
     pub max_rules: usize,
+}
+
+/// Protected policy classification; never accepted as a request field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum RiskLevel {
+    /// Pure computation without external effects.
+    Zero = 0,
+    /// Bounded non-sensitive read.
+    One = 1,
+    /// Explicitly permitted bounded side effects; AI requires user confirmation.
+    Two = 2,
+    /// Destructive or security-sensitive effects; AI is blocked.
+    Three = 3,
+}
+/// Product interaction gate, separate from base authorization and OS consent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionGate {
+    /// No additional product interaction.
+    Direct,
+    /// Exact-action confirmation by an authenticated authorized user.
+    Confirmation,
+    /// Execution must not begin.
+    Blocked,
 }

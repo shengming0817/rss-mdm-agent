@@ -42,6 +42,11 @@ pub enum ConfirmationPurpose {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub enum Kind {
+    /// Confirm this immutable execution content; the host still verifies responder authority.
+    ExecutionAction {
+        /// Canonical digest of all execution and origin facts.
+        digest: Reference,
+    },
     /// Ordinary user confirmation, never an elevation grant.
     UserConfirmation {
         /// The bounded purpose of confirmation.
@@ -112,8 +117,10 @@ impl Kind {
     pub(crate) fn accepts(&self, response: &Response) -> bool {
         matches!(
             (self, response),
-            (Self::UserConfirmation { .. }, Response::Confirmation { .. })
-                | (Self::PrivacyConsent { .. }, Response::PrivacyConsent { .. })
+            (
+                Self::UserConfirmation { .. } | Self::ExecutionAction { .. },
+                Response::Confirmation { .. }
+            ) | (Self::PrivacyConsent { .. }, Response::PrivacyConsent { .. })
                 | (
                     Self::AdministratorAuthorization { .. },
                     Response::AdministratorDecision { .. }

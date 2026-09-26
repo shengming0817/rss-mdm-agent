@@ -1,8 +1,8 @@
-use execution_contract::{decode_plan, FrozenPlan, PlanLimits};
+use execution_contract::{decode_execution, ExecutionLimits, FrozenExecution};
 use serde_json::{json, Value};
 
-fn limits() -> PlanLimits {
-    PlanLimits {
+fn limits() -> ExecutionLimits {
+    ExecutionLimits {
         max_input_bytes: 65536,
         max_depth: 32,
         max_nodes: 4096,
@@ -25,9 +25,9 @@ fn complete() -> Value {
     v["launch"]["output"] = json!({"stdout":"utf8","stderr":"utf8","format":{"kind":"text"}});
     v
 }
-fn freeze(v: &Value) -> FrozenPlan {
-    FrozenPlan::freeze(
-        decode_plan(&serde_json::to_vec(v).unwrap(), &limits()).unwrap(),
+fn freeze(v: &Value) -> FrozenExecution {
+    FrozenExecution::freeze(
+        decode_execution(&serde_json::to_vec(v).unwrap(), &limits()).unwrap(),
         &limits(),
     )
     .unwrap()
@@ -35,7 +35,7 @@ fn freeze(v: &Value) -> FrozenPlan {
 #[test]
 fn complete_launch_requires_v3_and_binds_every_new_requirement() {
     let v = complete();
-    assert_eq!(v["schemaVersion"], 3);
+    assert_eq!(v["schemaVersion"], 4);
     let original = freeze(&v);
     for (pointer, value) in [
         ("/launch/interpreter/profile/revision", json!("2")),
@@ -56,7 +56,7 @@ fn launch_rejects_missing_requirements_legacy_argv_and_bad_slot_counts() {
     for field in ["stdin", "output", "artifactEncoding"] {
         let mut v = complete();
         v["launch"].as_object_mut().unwrap().remove(field);
-        assert!(decode_plan(&serde_json::to_vec(&v).unwrap(), &limits()).is_err());
+        assert!(decode_execution(&serde_json::to_vec(&v).unwrap(), &limits()).is_err());
     }
     for argv in [
         json!(["legacy"]),
@@ -66,13 +66,13 @@ fn launch_rejects_missing_requirements_legacy_argv_and_bad_slot_counts() {
     ] {
         let mut v = complete();
         v["launch"]["argv"] = argv;
-        assert!(decode_plan(&serde_json::to_vec(&v).unwrap(), &limits()).is_err());
+        assert!(decode_execution(&serde_json::to_vec(&v).unwrap(), &limits()).is_err());
     }
     let mut v = complete();
     v["launch"]["stdin"]["maxBytes"] = json!(0);
-    assert!(decode_plan(&serde_json::to_vec(&v).unwrap(), &limits()).is_err());
+    assert!(decode_execution(&serde_json::to_vec(&v).unwrap(), &limits()).is_err());
     v["launch"]["stdin"]["maxBytes"] = json!(65537);
-    assert!(decode_plan(&serde_json::to_vec(&v).unwrap(), &limits()).is_err());
+    assert!(decode_execution(&serde_json::to_vec(&v).unwrap(), &limits()).is_err());
 }
 
 #[test]

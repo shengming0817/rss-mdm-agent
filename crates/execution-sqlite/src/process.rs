@@ -90,7 +90,7 @@ impl Store {
             .checked_add(facts.stderr.len())
             .ok_or(Error::Capacity)? as u64;
         if facts.attempt_id != attempt.id
-            || facts.plan_digest != *execution.plan().digest()
+            || facts.content_digest != *execution.plan().digest()
             || facts.runner != attempt.runner
             || retained > facts.total_output_bytes
             || retained > execution.plan().spec().budget.total_output_bytes
@@ -105,7 +105,7 @@ impl Store {
             if (previous.failure_kind != execution_contract::ProcessFailureKind::None
                 && previous.failure_kind != facts.failure_kind)
                 || previous.finished
-                || previous.plan_digest != facts.plan_digest
+                || previous.content_digest != facts.content_digest
                 || (previous.scope != facts.scope
                     && !matches!(
                         previous.scope,
@@ -164,7 +164,7 @@ impl Store {
         let (plan, _, _) = load_execution(&tx, scope, self.limits)?;
         if facts
             .as_ref()
-            .is_some_and(|f| &f.plan_digest != plan.digest())
+            .is_some_and(|f| &f.content_digest != plan.digest())
         {
             return Err(Error::Corrupt);
         }

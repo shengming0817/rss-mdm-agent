@@ -1,6 +1,6 @@
 use crate::*;
 use execution_contract::{
-    AttemptId, Authority, EvidenceKind, EvidenceRef, FrozenPlan, Id, VersionedRef,
+    AttemptId, Authority, EvidenceKind, EvidenceRef, FrozenExecution, Id, VersionedRef,
 };
 use execution_lifecycle::{EffectAssessment, ExecutionMode, Observation, ObservationFacts};
 use std::{
@@ -25,7 +25,7 @@ pub enum TestScenario {
     NoEffect,
 }
 struct Record {
-    plan: FrozenPlan,
+    plan: FrozenExecution,
     scenario: TestScenario,
     cancelled: bool,
     termination: Option<ObservationFacts>,
@@ -70,8 +70,8 @@ impl RunnerPort for DeterministicTestRunner {
             if action.mode() != ExecutionMode::Test
                 || !matches!(plan.spec().request.authority, Authority::Test { .. })
                 || action.runner() != &self.id
-                || action.plan_id() != &plan.spec().plan_id
-                || action.plan_digest() != plan.digest()
+                || action.request_id() != &plan.spec().request.request_id
+                || action.content_digest() != plan.digest()
             {
                 return Err(Error::Denied);
             }
@@ -104,19 +104,19 @@ impl RunnerPort for DeterministicTestRunner {
     }
     fn evidence(
         &self,
-        _plan: &execution_contract::FrozenPlan,
+        _plan: &execution_contract::FrozenExecution,
         _attempt: &execution_contract::AttemptId,
     ) -> Result<Option<execution_contract::ProcessEvidence>, Error> {
         Ok(None)
     }
     fn acknowledge_capture(
         &self,
-        _: &execution_contract::FrozenPlan,
+        _: &execution_contract::FrozenExecution,
         _: &execution_contract::ProcessEvidence,
     ) -> Result<(), Error> {
         Ok(())
     }
-    fn stop(&self, plan: &FrozenPlan, attempt: &AttemptId) -> Result<(), Error> {
+    fn stop(&self, plan: &FrozenExecution, attempt: &AttemptId) -> Result<(), Error> {
         let mut records = self.records.lock().map_err(|_| Error::Unavailable)?;
         if let Some(record) = records.get_mut(attempt) {
             if record.plan.digest() != plan.digest() {
@@ -128,7 +128,7 @@ impl RunnerPort for DeterministicTestRunner {
     }
     fn observe(
         &self,
-        plan: &FrozenPlan,
+        plan: &FrozenExecution,
         attempt: &AttemptId,
         stage: ObservationStage,
         now: u64,
@@ -179,8 +179,8 @@ impl RunnerPort for DeterministicTestRunner {
             },
         };
         let facts = ObservationFacts {
-            plan_id: plan.spec().plan_id.clone(),
-            plan_digest: plan.digest().clone(),
+            request_id: plan.spec().request.request_id.clone(),
+            content_digest: plan.digest().clone(),
             attempt_id: attempt.clone(),
             evidence: EvidenceRef {
                 kind: EvidenceKind::TestResult,

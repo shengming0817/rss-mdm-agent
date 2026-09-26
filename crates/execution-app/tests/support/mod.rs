@@ -20,16 +20,21 @@ pub fn reference(value: &str) -> VersionedRef {
         revision: id("1"),
     }
 }
-pub fn plan() -> FrozenPlan {
-    FrozenPlan::freeze(
-        decode_plan(
+pub fn plan() -> FrozenExecution {
+    let original = FrozenExecution::freeze(
+        decode_execution(
             include_bytes!("../../../execution-contract/tests/fixtures/plan.json"),
             &test_store_limits().plan,
         )
         .unwrap(),
         &test_store_limits().plan,
     )
-    .unwrap()
+    .unwrap();
+    let mut spec = original.spec().clone();
+    spec.request.initiator = execution_contract::Initiator::Policy {
+        policy: spec.policy.clone(),
+    };
+    FrozenExecution::freeze(spec, &test_store_limits().plan).unwrap()
 }
 pub struct Database {
     pub path: std::path::PathBuf,
@@ -70,6 +75,7 @@ impl Drop for Database {
 }
 
 pub struct State {
+    pub risk: Option<RiskLevel>,
     pub accesses: Option<Vec<Access>>,
     pub consumer: Option<Id>,
     pub capability_error: Option<execution_app::Error>,
@@ -94,7 +100,7 @@ pub struct State {
 }
 #[derive(Clone)]
 pub struct TestHost {
-    pub template: FrozenPlan,
+    pub template: FrozenExecution,
     pub state: Arc<Mutex<State>>,
 }
 impl TestHost {
@@ -102,6 +108,7 @@ impl TestHost {
         let template = plan();
         Self {
             state: Arc::new(Mutex::new(State {
+                risk: Some(RiskLevel::One),
                 accesses: None,
                 consumer: None,
                 capability_error: None,
@@ -134,8 +141,8 @@ impl TestHost {
             definition: ApprovalDefinition {
                 reference: reference("approval"),
                 approver: ActorId::new("approver").unwrap(),
-                plan_id: self.template.spec().plan_id.clone(),
-                plan_digest: self.template.digest().clone(),
+                request_id: self.template.spec().request.request_id.clone(),
+                content_digest: self.template.digest().clone(),
                 profiles: vec![reference("profile")],
                 validity: self.template.spec().validity,
                 max_uses: uses,
@@ -145,11 +152,17 @@ impl TestHost {
     }
 }
 impl AuthorityVerifier for TestHost {
-    fn verify(&self, _: &FrozenPlan, _: &AttemptId) -> Result<AuthorityFacts, VerificationError> {
+    fn verify(
+        &self,
+        _: &FrozenExecution,
+        _: &AttemptId,
+    ) -> Result<AuthorityFacts, VerificationError> {
         let mut s = self.state.lock().unwrap();
         s.admissions += 1;
         let p = self.template.spec();
         Ok(AuthorityFacts {
+            verified_origin: p.request.initiator.clone(),
+            risk: s.risk,
             subject: SubjectFacts {
                 authority: p.request.authority.clone(),
                 actor: s.actor.clone(),
@@ -237,7 +250,10 @@ impl AppHost for TestHost {
     fn reliable_now(&self) -> Result<u64, execution_sqlite::Error> {
         Ok(self.state.lock().unwrap().now)
     }
-    fn capabilities(&self, _: &FrozenPlan) -> Result<CapabilitySnapshot, execution_app::Error> {
+    fn capabilities(
+        &self,
+        _: &FrozenExecution,
+    ) -> Result<CapabilitySnapshot, execution_app::Error> {
         let mut s = self.state.lock().unwrap();
         s.capabilities += 1;
         let hook = if s
@@ -321,7 +337,10 @@ impl AppHost for TestHost {
         }
         Ok(snapshot)
     }
-    fn trusted_snapshot(&self, _: &FrozenPlan) -> Result<TrustSnapshot, execution_sqlite::Error> {
+    fn trusted_snapshot(
+        &self,
+        _: &FrozenExecution,
+    ) -> Result<TrustSnapshot, execution_sqlite::Error> {
         let s = self.state.lock().unwrap();
         Ok(TrustSnapshot {
             authorization_revision: s.policy_epoch.clone(),
@@ -332,7 +351,7 @@ impl AppHost for TestHost {
     }
     fn approval_bindings(
         &self,
-        _: &FrozenPlan,
+        _: &FrozenExecution,
     ) -> Result<Vec<ProfileApproval>, execution_app::Error> {
         let s = self.state.lock().unwrap();
         Ok(if s.approval && !s.grants.is_empty() {

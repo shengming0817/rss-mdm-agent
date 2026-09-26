@@ -1,53 +1,21 @@
-//! Generate read-only browser data by exercising the actual Rust fixture owner.
-use execution_contract::RequestId;
-use rss_mdm_desktop::self_service::{Draft, FieldInput, FixtureService, Submission};
-fn main() {
-    let mut service = FixtureService::new("browser-preview".into(), 1000).expect("fixture");
-    let catalog = service.snapshot(1000).expect("snapshot").catalog;
-    for item in catalog.iter().filter(|item| {
-        matches!(
-            item.item_id.as_str(),
-            "office" | "diagnostics" | "restart" | "unknown"
-        )
-    }) {
-        let mut fields = std::collections::BTreeMap::new();
-        if item.item_id.as_str() == "diagnostics" {
-            fields.insert(
-                "host".into(),
-                FieldInput::Text {
-                    value: "example.invalid".into(),
-                },
-            );
-        }
-        let plan = service
-            .preview(
-                Draft {
-                    instance_id: "browser-preview".into(),
-                    request_id: RequestId::new(format!("preview-{}", item.item_id.as_str()))
-                        .expect("id"),
-                    revision: 1,
-                    catalog: item.catalog.clone(),
-                    item_id: item.item_id.clone(),
-                    variant_id: item.variant_id.clone(),
-                    fields,
-                },
-                1000,
-            )
-            .expect("preview");
-        service
-            .submit(
-                Submission {
-                    instance_id: "browser-preview".into(),
-                    request_id: plan.request_id,
-                    plan_id: plan.plan_id,
-                    digest: plan.digest,
-                },
-                1000,
-            )
-            .expect("submit");
+//! Read-only browser catalogue from the actual S1 SQLite composition, without fake executions.
+use rss_mdm_desktop::{composition::execution::ExecutionHandle, self_service::SnapshotQuery};
+#[tokio::main]
+async fn main() {
+    let root = std::env::temp_dir()
+        .canonicalize()
+        .unwrap()
+        .join(format!("rss-browser-catalog-{}", std::process::id()));
+    std::fs::create_dir(&root).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
     }
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&service.snapshot(1000).expect("snapshot")).expect("JSON")
-    );
+    let handle = ExecutionHandle::start(&root.join("execution.db")).unwrap();
+    let caller = handle.for_caller("browser-catalog").unwrap();
+    let snapshot = caller.snapshot(SnapshotQuery::default()).await.unwrap();
+    println!("{}", serde_json::to_string_pretty(&snapshot).unwrap());
+    handle.close().await;
+    std::fs::remove_dir_all(root).unwrap();
 }

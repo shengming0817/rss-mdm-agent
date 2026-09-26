@@ -135,7 +135,7 @@ pub struct CapabilityCheck {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MatchReport {
     /// Exact frozen-plan digest checked by this call.
-    pub plan_digest: Digest,
+    pub content_digest: Digest,
     /// Exact snapshot reference supplied by the caller.
     pub snapshot: VersionedRef,
     /// Unsupported > Unknown > Blocked > Supported, retaining all checks below.

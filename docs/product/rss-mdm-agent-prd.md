@@ -166,11 +166,13 @@ Agent wire 的唯一 producer 仍为 rss-mdm；`execution-contract` 是本地执
 
 ## 5. 统一模型和执行边界
 
-最小业务对象：CatalogItem、OperationVariant、ParameterSchema、Conversation、ToolCallProposal、ExecutionRequest、FrozenPlan、ApprovalRecord、ExecutionIntent、Attempt、Evidence、Interaction、AuditEvent。
+最小业务对象：CatalogItem、OperationVariant、ParameterSchema、Conversation、ToolCallProposal、ExecutionRequest、FrozenExecution、ApprovalRecord、ExecutionIntent、Attempt、Evidence、Interaction、AuditEvent。
+
+一次性执行不建立独立 Plan 生命周期。人工在已有权限内只需本人确认；AI 工具由可信策略标定 0/1/2/3，0/1 按允许规则执行、2 由当前有执行权限用户确认、3 与未知默认阻止。人工确认和 AI 确认均不补充权限，AI 来源不能因点击确认变成人工；Policy 保持独立非交互授权。
 
 `actor` 表示承担权限的主体，`initiator` 只记录 human/ai/policy 来源，`delegation` 限制代理范围；另存批准者和目标 OS 用户。
 模型账号、OS用户和企业身份不能按相同用户名或email自动合并。
-批准用既有完整规范计划摘要绑定目标与身份、产物/参数、授权版本和预算，并绑定记录版本、期限与允许尝试次数；不维护第二套可漂移的字段投影。任何有效范围改变须重新判定。
+批准用既有完整规范执行内容摘要绑定目标与身份、产物/参数、授权版本和预算，并绑定记录版本、期限与允许尝试次数；不维护第二套可漂移的字段投影。任何有效范围改变须重新判定。
 每次新attempt重新取得C07裁决；只有ApprovalRequired进入C08可信验证接缝。多个必需profile须全部满足，批准可预授多次使用，每次新尝试对每个不同记录消费一次。总时钟与attempt计数从intent原子接纳开始，等待/重试不重置。
 纯核心只验证可信输入并输出裁决/消耗意图；真实主体验证、批准签发与原子消耗由指定 adapter/host 完成。
 本地authority由OS管理员在后续服务bootstrap中建立：绑定稳定OS主体标识、允许目录与政策，指定有批准权的主体和签发密钥；密钥/政策/撤销版本位于UI/AI不可写的服务存储。

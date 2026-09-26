@@ -144,7 +144,7 @@ impl Configuration {
 /// Fixed S1 protected-storage envelope. These bootstrap values are never hot-replaced.
 pub fn test_store_limits() -> execution_sqlite::Limits {
     execution_sqlite::Limits {
-        plan: execution_contract::PlanLimits {
+        plan: execution_contract::ExecutionLimits {
             max_input_bytes: 65_536,
             max_depth: 32,
             max_nodes: 4096,

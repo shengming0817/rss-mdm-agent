@@ -2,7 +2,7 @@ use crate::{ConfigChange, Error};
 use execution_admission::AuthorityVerifier;
 use execution_approval::ProfileApproval;
 use execution_capability::EnvironmentSnapshot;
-use execution_contract::{ActorId, AttemptId, Authority, DeviceId, FrozenPlan, Id};
+use execution_contract::{ActorId, AttemptId, Authority, DeviceId, FrozenExecution, Id};
 use execution_lifecycle::{DispatchAction, ExecutionMode, ObservationFacts};
 use execution_sqlite::{AccessRequest, TrustSnapshot};
 
@@ -47,12 +47,14 @@ pub trait AppHost: AuthorityVerifier {
     /// Independently reliable UTC; uncertainty/rollback is an error.
     fn reliable_now(&self) -> Result<u64, execution_sqlite::Error>;
     /// Verified capability inventory for the bound plan, never a preview cache.
-    fn capabilities(&self, plan: &FrozenPlan) -> Result<CapabilitySnapshot, Error>;
+    fn capabilities(&self, plan: &FrozenExecution) -> Result<CapabilitySnapshot, Error>;
     /// Independently verified approval definitions, current policy and revocation identity.
-    fn trusted_snapshot(&self, plan: &FrozenPlan)
-        -> Result<TrustSnapshot, execution_sqlite::Error>;
+    fn trusted_snapshot(
+        &self,
+        plan: &FrozenExecution,
+    ) -> Result<TrustSnapshot, execution_sqlite::Error>;
     /// References selected by the trusted approval authority. C08 still validates every profile.
-    fn approval_bindings(&self, plan: &FrozenPlan) -> Result<Vec<ProfileApproval>, Error>;
+    fn approval_bindings(&self, plan: &FrozenExecution) -> Result<Vec<ProfileApproval>, Error>;
     /// Authenticate administrative rights and durably record a configuration activation.
     /// Failure must leave the previous configuration usable; no UI/AI approval boolean is accepted.
     fn configuration_change(&self, change: &ConfigChange) -> Result<(), Error>;
@@ -68,7 +70,7 @@ pub trait AppHost: AuthorityVerifier {
 /// ```
 pub struct AuthorizedDispatch {
     pub(crate) action: DispatchAction,
-    pub(crate) plan: FrozenPlan,
+    pub(crate) plan: FrozenExecution,
     pub(crate) allowance: execution_lifecycle::DispatchAllowance,
     pub(crate) issued: std::time::Instant,
     pub(crate) software_ownership: Option<execution_contract::SoftwareProvenance>,
@@ -80,7 +82,7 @@ impl AuthorizedDispatch {
     }
     /// Inspect the authorized immutable plan to select the host's runner implementation.
     /// Reading it cannot clone or reconstruct first-dispatch authority.
-    pub fn plan(&self) -> &FrozenPlan {
+    pub fn plan(&self) -> &FrozenExecution {
         &self.plan
     }
     /// Inspect the remaining cumulative allowance; reading does not grant dispatch authority.
@@ -92,7 +94,7 @@ impl AuthorizedDispatch {
         allowance
     }
     /// Consume first-dispatch authority. Runner implementations must perform no action beforehand.
-    pub fn dispatch<T>(self, run: impl FnOnce(&FrozenPlan, &DispatchAction) -> T) -> T {
+    pub fn dispatch<T>(self, run: impl FnOnce(&FrozenExecution, &DispatchAction) -> T) -> T {
         self.action.dispatch(|action| run(&self.plan, action))
     }
 }
@@ -143,7 +145,7 @@ pub trait RunnerPort {
     /// Independent software observations. Process-only runners must reject software plans.
     fn software_evidence(
         &self,
-        plan: &FrozenPlan,
+        plan: &FrozenExecution,
         _attempt: &AttemptId,
         _observation: SoftwareObservation<'_>,
     ) -> Result<Option<execution_contract::SoftwareEvidence>, Error> {
@@ -163,23 +165,23 @@ pub trait RunnerPort {
     /// Latest completed capture, never a reason to redispatch. Missing capture remains unknown.
     fn evidence(
         &self,
-        plan: &FrozenPlan,
+        plan: &FrozenExecution,
         attempt: &AttemptId,
     ) -> Result<Option<execution_contract::ProcessEvidence>, Error>;
     /// The owner has committed this final capture and its cumulative accounting. Release only
     /// the matching finished record; acknowledgements never grant a new dispatch permission.
     fn acknowledge_capture(
         &self,
-        plan: &FrozenPlan,
+        plan: &FrozenExecution,
         facts: &execution_contract::ProcessEvidence,
     ) -> Result<(), Error>;
     /// Request bounded stopping. Success only acknowledges the request, not termination.
-    fn stop(&self, plan: &FrozenPlan, attempt: &AttemptId) -> Result<(), Error>;
+    fn stop(&self, plan: &FrozenExecution, attempt: &AttemptId) -> Result<(), Error>;
     /// Return independently verified facts if available. Lost records return None, never fabricated
     /// Exited/NeverDispatched evidence inferred from the plan or lack of a visible process.
     fn observe(
         &self,
-        plan: &FrozenPlan,
+        plan: &FrozenExecution,
         attempt: &AttemptId,
         stage: ObservationStage,
         now: u64,
