@@ -258,7 +258,7 @@ impl RunnerPort for NativeRunner {
                     lease.release(context.deadline)?;
                 }
                 *slot = None;
-            } else if context.previous.is_some_and(|p| p.before.is_some()) && !context.finalized {
+            } else if !context.finalized {
                 let mut lease = artifacts
                     .software
                     .as_ref()
@@ -531,16 +531,6 @@ async fn run(
         software: software_facts,
     } = captures;
     if let Some(lease) = &mut materialized.software {
-        match mutation.lock() {
-            Ok(mut slot) => *slot = lease.mutation.take(),
-            Err(_) => {
-                publish(
-                    &shared,
-                    failed(&plan, &attempt, &id, ProcessFailureKind::Runtime),
-                );
-                return;
-            }
-        }
         if let Ok(mut slot) = software_facts.lock() {
             *slot = Some(SoftwareEvidence {
                 staging: lease.staging().unwrap_or(SoftwareStaging::Unverified {}),
@@ -564,6 +554,22 @@ async fn run(
             plan.spec().execution.software().expect("software"),
             &control,
         ) {
+            publish(&shared, failed(&plan, &attempt, &id, classify(error)));
+            return;
+        }
+    }
+    if let Some(lease) = &mut materialized.software {
+        // All materialization and the final target recheck have succeeded. Store the active
+        // token before any command can spawn; a failed activation still aborts preparation.
+        let activated = mutation
+            .lock()
+            .map_err(|_| Error::Unavailable)
+            .and_then(|mut slot| {
+                let prepared = lease.mutation.take().ok_or(Error::Conflict)?;
+                *slot = Some(prepared.activate(&attempt, deadline)?);
+                Ok(())
+            });
+        if let Err(error) = activated {
             publish(&shared, failed(&plan, &attempt, &id, classify(error)));
             return;
         }

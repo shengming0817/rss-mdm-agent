@@ -8,6 +8,17 @@ impl crate::software::SoftwareMutationLease for IsolatedMutation {
         Ok(())
     }
 }
+struct IsolatedPreparation;
+impl crate::software::PreparedSoftwareMutation for IsolatedPreparation {
+    fn activate(
+        &mut self,
+        _: &AttemptId,
+        _: Instant,
+    ) -> Result<Box<dyn crate::software::SoftwareMutationLease>, Error> {
+        Ok(Box::new(IsolatedMutation))
+    }
+    fn abort(self: Box<Self>) {}
+}
 struct Probe;
 impl SoftwareProbe for Probe {
     fn begin_mutation(
@@ -15,8 +26,8 @@ impl SoftwareProbe for Probe {
         _: &FrozenPlan,
         _: &AttemptId,
         _: Instant,
-    ) -> Result<Box<dyn crate::software::SoftwareMutationLease>, Error> {
-        Ok(Box::new(IsolatedMutation))
+    ) -> Result<Box<dyn crate::software::PreparedSoftwareMutation>, Error> {
+        Ok(Box::new(IsolatedPreparation))
     }
     fn recover_mutation(
         &self,
@@ -588,6 +599,8 @@ fn staging_replacement_is_not_deleted_during_recovery() {
 
 struct ExclusionProbe {
     allowed: bool,
+    fail_activation: bool,
+    aborts: Arc<std::sync::atomic::AtomicUsize>,
     releases: Arc<std::sync::atomic::AtomicUsize>,
 }
 struct CountedExclusion(Arc<std::sync::atomic::AtomicUsize>);
@@ -597,8 +610,44 @@ impl crate::software::SoftwareMutationLease for CountedExclusion {
         Ok(())
     }
 }
+struct CountedPreparation {
+    fail_activation: bool,
+    aborts: Arc<std::sync::atomic::AtomicUsize>,
+    releases: Arc<std::sync::atomic::AtomicUsize>,
+}
+impl crate::software::PreparedSoftwareMutation for CountedPreparation {
+    fn activate(
+        &mut self,
+        _: &AttemptId,
+        _: Instant,
+    ) -> Result<Box<dyn crate::software::SoftwareMutationLease>, Error> {
+        if self.fail_activation {
+            return Err(Error::Capability);
+        }
+        Ok(Box::new(CountedExclusion(self.releases.clone())))
+    }
+    fn abort(self: Box<Self>) {
+        self.aborts.fetch_add(1, Ordering::SeqCst);
+    }
+}
 impl SoftwareProbe for ExclusionProbe {
     fn begin_mutation(
+        &self,
+        _: &FrozenPlan,
+        _: &AttemptId,
+        _: Instant,
+    ) -> Result<Box<dyn crate::software::PreparedSoftwareMutation>, Error> {
+        if self.allowed {
+            Ok(Box::new(CountedPreparation {
+                fail_activation: self.fail_activation,
+                aborts: self.aborts.clone(),
+                releases: self.releases.clone(),
+            }))
+        } else {
+            Err(Error::Capability)
+        }
+    }
+    fn recover_mutation(
         &self,
         _: &FrozenPlan,
         _: &AttemptId,
@@ -609,14 +658,6 @@ impl SoftwareProbe for ExclusionProbe {
         } else {
             Err(Error::Capability)
         }
-    }
-    fn recover_mutation(
-        &self,
-        p: &FrozenPlan,
-        a: &AttemptId,
-        d: Instant,
-    ) -> Result<Box<dyn crate::software::SoftwareMutationLease>, Error> {
-        self.begin_mutation(p, a, d)
     }
     fn dependency_use(&self, p: &FrozenPlan) -> Result<DependencyUse, Error> {
         Probe.dependency_use(p)
@@ -636,6 +677,7 @@ impl SoftwareProbe for ExclusionProbe {
 fn mutation_requires_exclusion_and_capture_cannot_release_it_before_quiescence() {
     for (allowed, reopened) in [(false, false), (true, false), (true, true)] {
         let mut f = software_fixture("printf v1 > installed\n");
+        let aborts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let releases = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         Arc::get_mut(
             f.runner
@@ -648,6 +690,8 @@ fn mutation_requires_exclusion_and_capture_cannot_release_it_before_quiescence()
         .as_mut()
         .unwrap()
         .probe = Arc::new(ExclusionProbe {
+            aborts: aborts.clone(),
+            fail_activation: false,
             allowed,
             releases: releases.clone(),
         });
@@ -658,7 +702,7 @@ fn mutation_requires_exclusion_and_capture_cannot_release_it_before_quiescence()
             assert!(matches!(process.scope, ProcessScope::NotStarted {}));
             continue;
         }
-        let previous = f
+        let mut previous = f
             .runner
             .software_evidence(
                 &f.plan,
@@ -670,8 +714,15 @@ fn mutation_requires_exclusion_and_capture_cannot_release_it_before_quiescence()
         f.runner.acknowledge_capture(&f.plan, &process).unwrap();
         assert_eq!(releases.load(Ordering::SeqCst), 0);
         assert!(f.runner.records.lock().unwrap().contains_key(&attempt));
+        assert_eq!(aborts.load(Ordering::SeqCst), 0);
         if reopened {
             f.runner.records.lock().unwrap().clear();
+            previous.before = None; // Crash may have lost the pre-mutation observation.
+            assert_eq!(
+                releases.load(Ordering::SeqCst),
+                0,
+                "active Drop cannot release backend exclusion"
+            );
         }
         f.runner
             .software_evidence(
@@ -687,5 +738,57 @@ fn mutation_requires_exclusion_and_capture_cannot_release_it_before_quiescence()
             .unwrap();
         assert_eq!(releases.load(Ordering::SeqCst), 1);
         assert!(!f.runner.records.lock().unwrap().contains_key(&attempt));
+    }
+}
+
+#[test]
+fn validation_failure_after_exclusion_acquisition_aborts_before_spawn() {
+    for failure in ["payload", "entry", "activation"] {
+        let mut f = software_fixture("printf v1 > installed\n");
+        let aborts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let releases = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let old = f.plan.digest().as_str().to_owned();
+        let mut artifacts = f.runner.artifacts.remove(&old).unwrap();
+        Arc::get_mut(&mut artifacts)
+            .unwrap()
+            .software
+            .as_mut()
+            .unwrap()
+            .probe = Arc::new(ExclusionProbe {
+            aborts: aborts.clone(),
+            allowed: true,
+            fail_activation: failure == "activation",
+            releases: releases.clone(),
+        });
+        let mut spec = f.plan.spec().clone();
+        if failure == "entry" {
+            spec.launch.artifact.sha256 = Digest::new("34".repeat(32)).unwrap();
+        }
+        if failure == "payload" {
+            if let ExecutionSpec::Software { software } = &mut spec.execution {
+                software.payload.sha256 = Digest::new("34".repeat(32)).unwrap();
+                if let DesiredState::Present { artifact, .. } = &mut software.desired {
+                    artifact.sha256 = software.payload.sha256.clone();
+                }
+            }
+        }
+        f.plan = FrozenPlan::freeze(spec, &execution_app::test_store_limits().plan).unwrap();
+        f.runner
+            .artifacts
+            .insert(f.plan.digest().as_str().into(), artifacts);
+        let attempt = start_software(&f);
+        let process = finish(&f, &attempt);
+        assert!(matches!(process.scope, ProcessScope::NotStarted {}));
+        assert!(!f.root.join("installed").exists());
+        assert_eq!(
+            aborts.load(Ordering::SeqCst),
+            1,
+            "{failure}: abort preparation once"
+        );
+        assert_eq!(
+            releases.load(Ordering::SeqCst),
+            0,
+            "{failure}: no active lease to release"
+        );
     }
 }

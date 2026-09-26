@@ -22,6 +22,50 @@ pub trait SoftwareMutationLease: Send + Sync {
     /// Failure retains the lease and blocks lifecycle assessment; obey the supplied deadline.
     fn release(&mut self, deadline: std::time::Instant) -> Result<(), Error>;
 }
+/// Exclusion acquired before any manager can run. It must be safe and infallible to abort
+/// this preparation (including process death), without leaving a durable reservation behind.
+/// Providers unable to supply that property must refuse begin_mutation.
+pub trait PreparedSoftwareMutation: Send + Sync {
+    /// Transfer exclusion into a crash-resilient active lease for the exact attempt.
+    /// This must not start an installer. On error, preparation remains abortable; on success,
+    /// dropping this emptied preparation must not release the returned active ownership.
+    fn activate(
+        &mut self,
+        attempt: &AttemptId,
+        deadline: std::time::Instant,
+    ) -> Result<Box<dyn SoftwareMutationLease>, Error>;
+    /// Release a preparation for which no manager has been started. No I/O retry or mutation
+    /// may remain after this returns; use an RAII-capable reservation or refuse the capability.
+    fn abort(self: Box<Self>);
+}
+/// Local typestate owner: all preparation error paths abort, only activate consumes that right.
+/// This is resource ownership, not another task lifecycle or journal.
+pub(crate) struct PreparedMutation(Option<Box<dyn PreparedSoftwareMutation>>);
+impl PreparedMutation {
+    fn new(value: Box<dyn PreparedSoftwareMutation>) -> Self {
+        Self(Some(value))
+    }
+    pub(crate) fn activate(
+        mut self,
+        attempt: &AttemptId,
+        deadline: std::time::Instant,
+    ) -> Result<Box<dyn SoftwareMutationLease>, Error> {
+        let active = self
+            .0
+            .as_mut()
+            .ok_or(Error::Conflict)?
+            .activate(attempt, deadline)?;
+        self.0.take(); // Successful transfer: no abort of the now-active resource.
+        Ok(active)
+    }
+}
+impl Drop for PreparedMutation {
+    fn drop(&mut self) {
+        if let Some(prepared) = self.0.take() {
+            prepared.abort();
+        }
+    }
+}
 /// Host-owned, independently refreshed software facts, not values decoded from an IPC request.
 /// Production composition and source trust are supplied by the consuming product.
 pub trait SoftwareProbe: Send + Sync {
@@ -32,7 +76,7 @@ pub trait SoftwareProbe: Send + Sync {
         plan: &FrozenPlan,
         attempt: &AttemptId,
         deadline: std::time::Instant,
-    ) -> Result<Box<dyn SoftwareMutationLease>, Error>;
+    ) -> Result<Box<dyn PreparedSoftwareMutation>, Error>;
     /// Recover only the original attempt's exclusion. Never start a new mutation or substitute
     /// a newly acquired advisory lock for the original backend ownership.
     fn recover_mutation(
@@ -102,7 +146,7 @@ impl PreparationControl {
     }
 }
 pub(crate) struct Lease {
-    pub(crate) mutation: Option<Box<dyn SoftwareMutationLease>>,
+    pub(crate) mutation: Option<PreparedMutation>,
     _locks: Vec<File>,
     _files: Vec<File>,
     _paths: Vec<crate::platform::PathLease>,
@@ -200,7 +244,8 @@ impl SoftwareArtifacts {
             file.try_lock().map_err(|_| Error::Conflict)?;
             locks.push(file);
         }
-        let mutation = self.probe.begin_mutation(plan, attempt, control.deadline)?;
+        let mutation =
+            PreparedMutation::new(self.probe.begin_mutation(plan, attempt, control.deadline)?);
         control.check()?;
         let mut target = resource::TargetGuard::open(std::path::Path::new(&s.detection.path))?;
         if target.binding != s.resource_binding {

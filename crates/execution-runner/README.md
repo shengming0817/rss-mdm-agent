@@ -59,7 +59,10 @@ V3 与 SQLite schema 4 直接替换旧格式：旧计划/库明确拒绝，文�
 按相同物理对象取键，目录级保守互斥覆盖大小写别名，已有文件身份覆盖硬链接。
 检测句柄保留至调用前复核，发现替换即拒绝。句柄和协作锁不能排除同 UID 非协作名称写入，
 所以变更还必须取得可信 adapter 的 SoftwareMutationLease；无法覆盖这些写入者就返回 Capability。
-lease 在原 attempt 静止事实提交前保持持有，确认进程输出不释放它。服务重开只能恢复该 attempt
+PreparedSoftwareMutation 只覆盖尚未启动的准备；任意早退由唯一 PreparedMutation owner
+调用 infallible abort，无法提供可安全 RAII 中止的准备租约就拒绝该能力。
+全部物化和最终目标重检后才 activate，成功后先把 Active lease 放入原 Record，再允许 spawn；
+activate 失败仍中止准备。Active lease 在原 attempt 静止事实提交前保持持有，确认进程输出不释放它。服务重开只能恢复该 attempt
 原有的后端排他权，不能用新锁冒充；实现必须保证进程死亡但安装器仍活动时后端排他不被静默释放。
 没有通用 lease 实现，也没有生产假实现；本地 fixture 的隔离替身只编译进测试。生产 #2564 必须
 提供可验证的排他保障，否则这些适配保持拒绝变更，不能把本地测试结果视为已具备生产能力。
