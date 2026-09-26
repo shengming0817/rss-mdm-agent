@@ -17,7 +17,7 @@ function select(value: string) {
 </script>
 <template>
   <section class="test-users" aria-label="测试用户">
-    <strong>测试模式</strong>
+    <strong>测试模式 · 非登录 · 不代表企业身份认证</strong>
     <small
       >切换用户会取消当前用户的模型请求并记录结果、清空未发送草稿；设备任务仍属于原用户并继续。</small
     >

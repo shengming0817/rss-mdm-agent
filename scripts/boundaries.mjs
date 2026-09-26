@@ -26,7 +26,17 @@ const settingsCommands = [
   "ai_restart_host",
   "ai_export_diagnostics",
 ];
-const userCommands = ["test_users", "select_test_user", "save_connection"];
+const userCommands = [
+  "test_users",
+  "select_test_user",
+  "save_connection",
+  "select_guest",
+  "account_logout",
+  "account_status",
+  "account_login",
+  "account_organizations",
+  "account_save_organization",
+];
 const compositionCommands = [
   ...selfServiceCommands,
   ...assistantCommands,
@@ -562,6 +572,8 @@ export function checkTree(treeRoot = root) {
         'serde_json = { workspace = true, features = ["raw_value"] }',
         "serde_json.workspace = true",
         "sha2.workspace = true",
+        'reqwest = { version = "=0.13.5", default-features = false, features = ["json", "native-tls"] }',
+        "url.workspace = true",
         'constant_time_eq = "=0.4.2"',
         "schemars.workspace = true",
         'syn = { version = "=2.0.119", features = ["full", "visit"] }',

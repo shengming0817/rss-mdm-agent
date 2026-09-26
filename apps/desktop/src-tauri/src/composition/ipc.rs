@@ -116,6 +116,77 @@ pub async fn select_test_user(
 }
 
 #[tauri::command]
+pub async fn select_guest(
+    state: State<'_, DesktopRuntime>,
+) -> Result<ai_session_contract::UserContext> {
+    state.select_guest().await
+}
+#[tauri::command]
+pub async fn account_logout(state: State<'_, DesktopRuntime>) -> Result<()> {
+    state.logout().await
+}
+#[tauri::command]
+pub fn account_status(
+    state: State<'_, DesktopRuntime>,
+) -> Result<ai_session_contract::AccountStatus> {
+    state.account_status()
+}
+#[tauri::command]
+pub fn account_organizations(
+    state: State<'_, DesktopRuntime>,
+) -> Result<ai_session_contract::AccountSettings> {
+    Ok(ai_session_contract::AccountSettings {
+        kind: ai_session_contract::AccountSettingsKind::AccountSettings,
+        schema_version: ai_session_contract::AccountSettingsSchemaVersion::VALUE,
+        organizations: state
+            .organizations
+            .lock()
+            .map_err(|_| error("users_unavailable", "组织配置不可用"))?
+            .list(),
+        selected: None,
+    })
+}
+#[tauri::command]
+pub fn account_save_organization(
+    state: State<'_, DesktopRuntime>,
+    input: serde_json::Value,
+) -> Result<ai_session_contract::AccountSettings> {
+    let mut settings = state
+        .organizations
+        .lock()
+        .map_err(|_| error("users_unavailable", "组织配置不可用"))?;
+    let saved = settings.save(decode(input)?)?;
+    Ok(ai_session_contract::AccountSettings {
+        kind: ai_session_contract::AccountSettingsKind::AccountSettings,
+        schema_version: ai_session_contract::AccountSettingsSchemaVersion::VALUE,
+        organizations: settings.list(),
+        selected: Some(saved.id),
+    })
+}
+#[tauri::command]
+pub async fn account_login<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, DesktopRuntime>,
+    organization_id: String,
+    login: String,
+) -> Result<ai_session_contract::UserContext> {
+    let organization = state
+        .organizations
+        .lock()
+        .map_err(|_| error("users_unavailable", "组织配置不可用"))?
+        .get(&organization_id)?;
+    if login.trim().is_empty() || login.len() > 256 || login.chars().any(char::is_control) {
+        return Err(error("input", "无效企业账号"));
+    }
+    let target = format!(
+        "服务：{}\n租户：{}\n账号：{}\n密码仅由原生层发送至该组织服务，不保存在本机。",
+        organization.origin, organization.tenant_id, login
+    );
+    let password = super::credentials::enter_named(app, true, target).await?;
+    state.login(organization, &login, password).await
+}
+
+#[tauri::command]
 pub async fn save_connection<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, DesktopRuntime>,
@@ -172,6 +243,12 @@ pub async fn local_service_status() -> local_service::ServiceView {
 }
 pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder.invoke_handler(tauri::generate_handler![
+        select_guest,
+        account_logout,
+        account_status,
+        account_organizations,
+        account_save_organization,
+        account_login,
         local_service_status,
         ai_host_status,
         ai_restart_host,
@@ -277,6 +354,12 @@ mod tests {
         .unwrap();
         assert!(service.get("phase").is_some());
         for command in [
+            "select_guest",
+            "account_logout",
+            "account_status",
+            "account_login",
+            "account_organizations",
+            "account_save_organization",
             "local_service_status",
             "ai_host_status",
             "ai_restart_host",

@@ -52,7 +52,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if let syn::Fields::Named(fields) = &mut variant.fields {
                     for field in &mut fields.named {
                         if matches!(&field.ty, syn::Type::Path(p)
-                            if p.path.is_ident("SurfaceState") || p.path.is_ident("Event") || p.path.is_ident("EventSurfaceBody"))
+                            if p.path.is_ident("SurfaceState") || p.path.is_ident("Event") || p.path.is_ident("EventSurfaceBody") || p.path.is_ident("NativeAttachData") || p.path.is_ident("NativeSuspendData"))
                         {
                             let ty = &field.ty;
                             field.ty = syn::parse_quote!(::std::boxed::Box<#ty>);

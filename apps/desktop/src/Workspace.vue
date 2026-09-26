@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, watch } from "vue";
+import { currentUser } from "./test-users";
 import { nativeAssistant } from "./assistant/native";
 import Assistant from "./assistant/Assistant.vue";
 import {
@@ -25,7 +26,12 @@ const emit = defineEmits<{
   mode: [label: string];
 }>();
 const newIdentity = () => crypto.randomUUID();
-const controller = createController(nativePort(), newIdentity, preview);
+const enterprise = currentUser.value?.identity?.mode === "enterprise";
+const controller = createController(
+  enterprise ? null : nativePort(),
+  newIdentity,
+  preview,
+);
 const assistant = createAssistant(
   props.assistantServices ?? nativeAssistant(),
   newIdentity,
@@ -63,7 +69,21 @@ onMounted(() => {
 onBeforeUnmount(assistant.dispose);
 </script>
 <template>
+  <section
+    v-if="enterprise && page !== 'assistant' && page !== 'settings'"
+    aria-label="企业能力说明"
+  >
+    <h1>企业账户</h1>
+    <p>
+      已登录企业账户，可使用独立的个人 AI 工作区。企业设备执行与批准尚未接线。
+    </p>
+    <button @click="emit('navigate', 'assistant')">前往 AI 助手</button>
+    <button @click="emit('navigate', 'settings')">
+      切换测试用户或不登录使用
+    </button>
+  </section>
   <SelfService
+    v-if="!enterprise"
     v-show="page !== 'assistant' && page !== 'settings'"
     :controller="controller"
   />

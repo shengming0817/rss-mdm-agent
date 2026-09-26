@@ -25,11 +25,45 @@ import { localResolver } from "./resolver.js";
 import { connectionPersistence, ConnectionSecrets } from "./secrets.js";
 import { NativeControl } from "./native.js";
 export type { LocalConfiguration } from "./configuration.js";
-const callerFor = (context: UserContext): Caller => ({
-  tenantId: "test-users",
-  principalId: context.user.userId,
-  authorityId: "desktop-fixture",
+export const callerFor = (context: UserContext): Caller => ({
+  tenantId: context.identity?.tenantId ?? "test-users",
+  principalId: context.identity?.principalId ?? context.user.userId,
+  authorityId: context.identity?.authorityId ?? "desktop-fixture",
 });
+/** Exact native caller binding, including an enterprise deadline of zero. */
+export function callerAvailable(
+  context: UserContext | undefined,
+  caller: Caller,
+  now = Date.now(),
+): boolean {
+  if (
+    !context ||
+    (context.identity?.mode === "enterprise" &&
+      now >= context.identity.expiresAtMs)
+  )
+    return false;
+  const expected = callerFor(context);
+  return (
+    expected.tenantId === caller.tenantId &&
+    expected.principalId === caller.principalId &&
+    expected.authorityId === caller.authorityId
+  );
+}
+/** Product login never grants the fixture execution authority. */
+export function requireLocalExecution(
+  context: UserContext | undefined,
+  caller: Caller,
+): void {
+  if (!context || context.identity?.mode === "enterprise")
+    throw new Error("unbound origin");
+  const expected = callerFor(context);
+  if (
+    expected.tenantId !== caller.tenantId ||
+    expected.principalId !== caller.principalId ||
+    expected.authorityId !== caller.authorityId
+  )
+    throw new Error("unbound origin");
+}
 /** Restart-safe user fence used by the private Native control handler. */
 export async function suspendNativeCaller(
   host: {
@@ -95,11 +129,7 @@ export async function startLocalApp(
     );
   const store = opened.value;
   let activeUser: UserContext | undefined;
-  const available = (caller: Caller) =>
-    !!activeUser &&
-    caller.principalId === activeUser.user.userId &&
-    caller.tenantId === "test-users" &&
-    caller.authorityId === "desktop-fixture";
+  const available = (caller: Caller) => callerAvailable(activeUser, caller);
   const link = new PrivateLink(parent.input, parent.output, "native");
   const executionLane = link.lane("execution");
   const execution = await connectExecution(
@@ -107,7 +137,8 @@ export async function startLocalApp(
     executionLane,
     async (request) => {
       const current = activeUser;
-      if (!current || current.user.userId !== request.namespace.principalId)
+      requireLocalExecution(current, request.namespace);
+      if (!current || !available(request.namespace))
         throw new Error("unbound origin");
       if (!request.commandId) throw new Error("unbound origin");
       const command = await store.command(request.namespace, request.commandId),
@@ -203,7 +234,7 @@ export async function startLocalApp(
           schemaVersion: 5,
           kind: "hostHealth",
           ready: true,
-          protocol: 3,
+          protocol: 4,
         } satisfies HostHealth;
       if (method === "attach")
         return switchUser(async () => {

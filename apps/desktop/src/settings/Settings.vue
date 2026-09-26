@@ -76,15 +76,15 @@ function keys(event: KeyboardEvent) {
     <div :inert="confirming ? true : undefined">
       <LocalService />
       <section class="settings-card">
-        <h2>测试用户</h2>
-        <p>本地测试模式 · 非登录 · 不代表企业身份认证。</p>
+        <h2>账户入口</h2>
+        <p>选择企业登录、测试用户或不登录使用。各入口的数据独立保存。</p>
         <slot name="user" />
       </section>
       <section class="settings-card">
         <h2>AI 连接</h2>
         <template v-if="assistant">
           <p v-if="!readyConnection">
-            首次配置：选择测试用户 → 验证并保存连接 → 新建对话。
+            首次配置：选择账户入口 → 验证并保存连接 → 新建对话。
           </p>
           <ConnectionSettings :controller="assistant" />
           <button
@@ -103,7 +103,7 @@ function keys(event: KeyboardEvent) {
           </p>
         </template>
         <p v-else>
-          先选择测试用户，再配置该用户的个人连接。没有凭据也可使用自助入口。
+          先选择账户入口，再配置该账户的个人连接。没有凭据也可使用自助入口。
         </p>
       </section>
       <section class="settings-card">

@@ -46,6 +46,28 @@ impl AiBinding {
             },
         })
     }
+    pub fn for_context(context: &ai_session_contract::UserContext) -> Result<Self, ServiceError> {
+        if let Some(identity) = &context.identity {
+            let ai_session_contract::AccountIdentity::Guest {
+                tenant_id,
+                principal_id,
+                authority_id,
+            } = identity
+            else {
+                return Err(ServiceError::Denied);
+            };
+            return Ok(Self {
+                caller: Caller {
+                    tenant_id: Id::new(tenant_id.as_str()).map_err(|_| ServiceError::Denied)?,
+                    principal_id: Id::new(principal_id.as_str())
+                        .map_err(|_| ServiceError::Denied)?,
+                    authority_id: Id::new(authority_id.as_str())
+                        .map_err(|_| ServiceError::Denied)?,
+                },
+            });
+        }
+        Self::for_user(context.user.user_id.as_str())
+    }
     pub fn principal(metadata: &Map<String, Value>) -> Result<String, ServiceError> {
         let origin = Self::origin(metadata)?;
         Ok(origin.namespace.principal_id.as_str().to_owned())

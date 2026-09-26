@@ -41,6 +41,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 serde_json::to_string(&runtime.status())?
             );
             app.manage(runtime);
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    let runtime = handle.state::<DesktopRuntime>();
+                    if runtime.closed() {
+                        break;
+                    }
+                    let _ = runtime.verify_account().await;
+                }
+            });
             use tauri::menu::{Menu, MenuItem, Submenu};
             let show = MenuItem::with_id(app, "show", "显示窗口", true, None::<&str>)?;
             let quit =

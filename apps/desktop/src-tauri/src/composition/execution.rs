@@ -685,7 +685,7 @@ impl mcp::ExecutionServicePort for ExecutionHandle {
             return Err(mcp::ServiceError::Denied);
         }
         let mut call = self.for_caller(&actor).map_err(mcp_error)?;
-        call.origin = Some(super::origin::AiBinding::for_user(&actor)?.bind_origin(origin)?);
+        call.origin = Some(super::origin::AiBinding::for_context(&trusted)?.bind_origin(origin)?);
         Ok(Arc::new(call))
     }
     fn check_binding(&self) -> Result<(), mcp::ServiceError> {

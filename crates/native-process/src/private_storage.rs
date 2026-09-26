@@ -127,4 +127,6 @@ pub fn write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
     file.sync_all()
 }
 #[cfg(windows)]
-pub use win::{enter_secret, key_path, protect_key, random_key, save_dialog, unprotect_key};
+pub use win::{
+    enter_secret, enter_secret_for, key_path, protect_key, random_key, save_dialog, unprotect_key,
+};
