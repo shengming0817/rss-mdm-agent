@@ -181,3 +181,44 @@ it("restart and connection deletion dialogs trap both tab directions, escape and
     t.close();
   }
 });
+
+it("projects connection requirements into visible labels and associated help", async () => {
+  const t = await setup();
+  try {
+    const label = (prefix: string) =>
+      t.wrapper.findAll("label").find((l) => l.text().startsWith(prefix))!;
+    expect(label("名称").text()).toContain("必填");
+    expect(label("模型").text()).toContain("可选");
+    await label("认证来源").get("select").setValue("custom_api");
+    for (const prefix of ["API 地址", "API Key / Auth Token", "模型"]) {
+      const field = label(prefix);
+      expect(field.text()).toContain("必填");
+      const input = field.get("input");
+      const helpId = input.attributes("aria-describedby");
+      expect(helpId).toBeTruthy();
+      expect(t.wrapper.get(`#${helpId}`).text()).toContain("必填");
+    }
+    expect(label("模型").get("input").attributes("placeholder")).not.toContain(
+      "留空",
+    );
+    await label("认证来源").get("select").setValue("existing_config");
+    expect(label("模型").text()).toContain("可选");
+    expect(label("模型").get("input").attributes("required")).toBeUndefined();
+  } finally {
+    t.close();
+  }
+});
+it("explains connection capacity failures without the history size message", async () => {
+  const t = await setup();
+  try {
+    vi.mocked(t.client.saveConnection).mockRejectedValueOnce({
+      code: "limit_exceeded",
+    });
+    await t.fill();
+    expect(t.wrapper.text()).toContain("连接数量已达上限");
+    expect(t.wrapper.text()).toContain("删除不用的连接");
+    expect(t.wrapper.text()).not.toContain("64 KiB");
+  } finally {
+    t.close();
+  }
+});

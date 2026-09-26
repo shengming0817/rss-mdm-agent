@@ -86,6 +86,8 @@ function connectionMessage(code: string) {
     return "请填写凭据；若已填写，请检查应用密钥存储是否可用。";
   if (code === "ai_unavailable")
     return "AI Host 不可用，配置尚未保存；恢复连接后重试。";
+  if (code === "limit_exceeded")
+    return "连接数量已达上限，请删除不用的连接后重试。";
   return operationMessage(code);
 }
 async function testConnection(row: Connection) {
@@ -349,7 +351,9 @@ function containRemovalFocus(event: KeyboardEvent) {
           </ul>
           <form class="connection-form" @submit.prevent="save">
             <h3>{{ editing ? "编辑连接" : "添加连接" }}</h3>
-            <label>名称<input v-model="name" required maxlength="64" /></label>
+            <label
+              >名称（必填）<input v-model="name" required maxlength="64"
+            /></label>
             <label
               >服务<select v-model="provider">
                 <option value="codex">Codex</option>
@@ -372,11 +376,15 @@ function containRemovalFocus(event: KeyboardEvent) {
                   <option value="auth_token">Auth Token</option>
                 </select></label
               ><label
-                >API 地址<input
+                >API 地址（必填）<input
                   v-model="apiUrl"
                   required
                   placeholder="HTTPS API 地址"
+                  aria-describedby="connection-api-help"
               /></label>
+              <p id="connection-api-help">
+                必填：输入服务提供的 HTTPS API 地址。
+              </p>
               <p role="status">
                 {{
                   editing?.source.type === "custom_api" && !needsSecret
@@ -392,12 +400,15 @@ function containRemovalFocus(event: KeyboardEvent) {
                 更换凭据
               </button>
               <label
-                >API Key / Auth Token<input
+                >API Key / Auth Token（{{
+                  needsSecret ? "必填" : "已保存"
+                }}）<input
                   ref="secretField"
                   v-model="secret"
                   :type="revealSecret ? 'text' : 'password'"
                   :disabled="!needsSecret"
                   :required="needsSecret"
+                  aria-describedby="connection-secret-help"
                   autocomplete="off"
                   autocapitalize="none"
                   :spellcheck="false"
@@ -405,6 +416,13 @@ function containRemovalFocus(event: KeyboardEvent) {
                     needsSecret ? '输入凭据' : '已安全保存，不回填原值'
                   "
               /></label>
+              <p id="connection-secret-help">
+                {{
+                  needsSecret
+                    ? "必填：输入此连接的凭据。"
+                    : "沿用已保存凭据；更换时需要重新填写。"
+                }}
+              </p>
               <button
                 type="button"
                 :disabled="!needsSecret"
@@ -415,11 +433,23 @@ function containRemovalFocus(event: KeyboardEvent) {
               </button>
             </template>
             <label
-              >模型<input
+              >模型（{{ sourceType === "custom_api" ? "必填" : "可选" }}）<input
                 v-model="model"
                 :required="sourceType === 'custom_api'"
-                placeholder="留空使用官方配置的默认模型"
+                :placeholder="
+                  sourceType === 'custom_api'
+                    ? '输入服务支持的模型名称'
+                    : '留空使用官方配置的默认模型'
+                "
+                aria-describedby="connection-model-help"
             /></label>
+            <p id="connection-model-help">
+              {{
+                sourceType === "custom_api"
+                  ? "必填：自定义 API 需要指定模型。"
+                  : "可选：留空使用官方配置的默认模型。"
+              }}
+            </p>
             <details>
               <summary>高级选项</summary>
               <label v-if="sourceType !== 'custom_api'"

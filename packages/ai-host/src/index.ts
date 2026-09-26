@@ -113,6 +113,10 @@ export interface HostOptions {
   readonly operationTimeoutMs?: number;
   readonly now?: () => number;
 }
+type ProbeOutcome =
+  | { readonly outcome: "passed" }
+  | Omit<Extract<ConnectionTest, { outcome: "failed" }>, "testedRevision">;
+
 interface Runtime {
   verification?: true;
   dispose?: () => Promise<void>;
@@ -699,6 +703,195 @@ export class SessionHost implements HostPort {
       }),
     );
   }
+  private async runConnectionProbe(
+    caller: Caller,
+    connection: Connection,
+    namespace: Namespace,
+    b: Budget,
+  ): Promise<ProbeOutcome> {
+    const progress: {
+      stage: Extract<ProbeOutcome, { outcome: "failed" }>["stage"];
+    } = { stage: "host" };
+    const result = await this.result(async () => {
+      if (this.runtimes.size >= this.workerLimit) return fail("limit_exceeded");
+      const probe = {
+        ...namespace,
+        sessionId: `verification-${randomUUID()}`,
+      };
+      progress.stage = "configuration";
+      const resolved = await this.options.resolve(
+        caller,
+        this.connectionOptions(connection),
+        probe,
+        b,
+        null,
+        true,
+      );
+      const dispose = this.ownDispose(resolved.dispose);
+      let probing = false,
+        toolObserved = false,
+        toolViolation = false;
+      const tools: ToolEndpoint = {
+        propose: async (proposal) => {
+          if (
+            !probing ||
+            toolObserved ||
+            proposal.name !== "connection_probe" ||
+            Object.keys(proposal.arguments).length !== 0
+          ) {
+            toolViolation = true;
+            return fail("permission_denied");
+          }
+          toolObserved = true;
+          return ok({
+            disposition: "returned",
+            text: "Connection probe passed. No device operation was performed.",
+          });
+        },
+      };
+      const worker = new WorkerPort(
+        this.options.workerRuntime,
+        this.options.launchFences,
+        probe,
+        resolved.artifact,
+        resolved.admission ? tools : undefined,
+        resolved.activation,
+      );
+      const runtime: Runtime = {
+        verification: true,
+        dispose,
+        worker,
+        observing: new Set(),
+        inFlight: new Set(),
+        controlBurst: 0,
+        retryAfter: new Map(),
+        abort: new AbortController(),
+      };
+      const key = namespaceKey(probe);
+      this.runtimes.set(key, runtime);
+      b = {
+        ...b,
+        signal: AbortSignal.any([b.signal, runtime.abort.signal]),
+      };
+      try {
+        progress.stage = "host";
+        requireValue(await worker.start(resolved.configuration, b, null));
+        progress.stage = "provider";
+        const verified = requireValue(
+          await VerifiedProviderSession.open(
+            worker,
+            resolved.configuration,
+            b,
+            resolved.admission
+              ? { verifier: resolved.admission.verifier, tools }
+              : undefined,
+          ),
+        );
+        const command: Command = {
+          schemaVersion: 6,
+          kind: "command",
+          sessionId: probe.sessionId,
+          commandId: randomUUID(),
+          expiresAtMs: this.now() + b.timeoutMs,
+          input: {
+            type: "prompt",
+            policy: "queue_next",
+            text:
+              connection.profile === "controlled_tools"
+                ? 'Call rss_host.propose once with name "connection_probe" and arguments {}. Then reply OK. This verifies the connection only; do not request any device operation.'
+                : "Reply with OK only. Do not use any tools.",
+          },
+        };
+        const binding = verified.binding;
+        // This verification bridge exposes only the harmless probe, never device execution.
+        worker.admitTools();
+        probing = true;
+        const sent = await worker.dispatch(
+          binding,
+          command,
+          {
+            attemptId: randomUUID(),
+            originGeneration: binding.generation,
+            observerGeneration: binding.generation,
+            nativeSessionId: binding.nativeSessionId,
+            ...(binding.nativeThreadId
+              ? { nativeThreadId: binding.nativeThreadId }
+              : {}),
+            certainty: "intent",
+          },
+          b,
+        );
+        if (sent.certainty === "not_sent")
+          return { ok: false, error: sent.error };
+        if (sent.certainty !== "submitted") return fail("unavailable");
+        let completed = false,
+          responseObserved = false;
+        let failure: import("@rss-mdm-agent/ai-contract").Failure = {
+          code: "unavailable",
+          retry: "never",
+        };
+        for await (const item of worker.observe(sent.binding, b)) {
+          if (item.type !== "event" || item.commandId !== command.commandId)
+            continue;
+          if (item.body.type === "text" && item.body.text.trim())
+            responseObserved = true;
+          if (item.body.type === "error") failure = item.body.failure;
+          if (item.body.type === "terminal") {
+            completed = item.body.outcome === "completed";
+            if (item.body.outcome === "cancelled")
+              failure = { code: "verification_cancelled", retry: "never" };
+            if (item.body.outcome === "refused")
+              failure = { code: "verification_refused", retry: "never" };
+            if (["max_tokens", "max_turn_requests"].includes(item.body.outcome))
+              failure = { code: "limit_exceeded", retry: "never" };
+            break;
+          }
+        }
+        probing = false;
+        if (!completed || !responseObserved)
+          return { ok: false, error: failure };
+        if (
+          connection.profile === "controlled_tools" &&
+          (!toolObserved || toolViolation)
+        )
+          return fail("unsupported_capability");
+        progress.stage = "cleanup";
+        const stopped = requireValue(await worker.close(b));
+        if (
+          !stopped.processStopped ||
+          b.signal.aborted ||
+          !this.callerAvailable(caller)
+        )
+          return fail("unavailable");
+        return ok(undefined);
+      } finally {
+        const stopped = await worker.close(budget(2000));
+        if (stopped.ok && stopped.value.processStopped) {
+          if (!(await this.releaseRuntime(key, runtime))) {
+            progress.stage = "cleanup";
+            throw new HostFailure({ code: "unavailable", retry: "never" });
+          }
+        } else {
+          runtime.abort.abort();
+          worker.terminate();
+          this.blocked.add(key);
+          progress.stage = "cleanup";
+          throw new HostFailure({ code: "unavailable", retry: "never" });
+        }
+      }
+    });
+    if (result.ok) return { outcome: "passed" };
+    const code = result.error.code;
+    if (progress.stage !== "cleanup") {
+      if (b.signal.aborted) progress.stage = "timeout";
+      else if (code === "authentication_required")
+        progress.stage = "authentication";
+      else if (code === "unsupported_capability") progress.stage = "capability";
+      else if (code === "limit_exceeded") progress.stage = "quota";
+      else if (code === "invalid_input") progress.stage = "configuration";
+    }
+    return { outcome: "failed", stage: progress.stage, failure: result.error };
+  }
   testConnection(
     caller: Caller,
     id: string,
@@ -714,185 +907,15 @@ export class SessionHost implements HostPort {
         if (connection.configRevision !== expected)
           return fail("revision_conflict");
         if (connection.status === "deleted") return fail("connection_required");
-        const progress: {
-          stage: Extract<ConnectionTest, { outcome: "failed" }>["stage"];
-        } = { stage: "host" };
-        const result = await this.result(async () => {
-          if (this.runtimes.size >= this.workerLimit)
-            return fail("limit_exceeded");
-          const probe = {
-            ...namespace,
-            sessionId: `verification-${randomUUID()}`,
-          };
-          progress.stage = "configuration";
-          const resolved = await this.options.resolve(
-            caller,
-            this.connectionOptions(connection),
-            probe,
-            b,
-            null,
-            true,
-          );
-          const dispose = this.ownDispose(resolved.dispose);
-          let probing = false,
-            toolObserved = false,
-            toolViolation = false;
-          const tools: ToolEndpoint = {
-            propose: async (proposal) => {
-              if (
-                !probing ||
-                toolObserved ||
-                proposal.name !== "connection_probe" ||
-                Object.keys(proposal.arguments).length !== 0
-              ) {
-                toolViolation = true;
-                return fail("permission_denied");
-              }
-              toolObserved = true;
-              return ok({
-                disposition: "returned",
-                text: "Connection probe passed. No device operation was performed.",
-              });
-            },
-          };
-          const worker = new WorkerPort(
-            this.options.workerRuntime,
-            this.options.launchFences,
-            probe,
-            resolved.artifact,
-            resolved.admission ? tools : undefined,
-            resolved.activation,
-          );
-          const runtime: Runtime = {
-            verification: true,
-            dispose,
-            worker,
-            observing: new Set(),
-            inFlight: new Set(),
-            controlBurst: 0,
-            retryAfter: new Map(),
-            abort: new AbortController(),
-          };
-          const key = namespaceKey(probe);
-          this.runtimes.set(key, runtime);
-          b = {
-            ...b,
-            signal: AbortSignal.any([b.signal, runtime.abort.signal]),
-          };
-          try {
-            progress.stage = "host";
-            requireValue(await worker.start(resolved.configuration, b, null));
-            progress.stage = "provider";
-            const verified = requireValue(
-              await VerifiedProviderSession.open(
-                worker,
-                resolved.configuration,
-                b,
-                resolved.admission
-                  ? { verifier: resolved.admission.verifier, tools }
-                  : undefined,
-              ),
-            );
-            const command: Command = {
-              schemaVersion: 6,
-              kind: "command",
-              sessionId: probe.sessionId,
-              commandId: randomUUID(),
-              expiresAtMs: this.now() + b.timeoutMs,
-              input: {
-                type: "prompt",
-                policy: "queue_next",
-                text:
-                  connection.profile === "controlled_tools"
-                    ? 'Call rss_host.propose once with name "connection_probe" and arguments {}. Then reply OK. This verifies the connection only; do not request any device operation.'
-                    : "Reply with OK only. Do not use any tools.",
-              },
-            };
-            const binding = verified.binding;
-            // This verification bridge exposes only the harmless probe, never device execution.
-            worker.admitTools();
-            probing = true;
-            const sent = await worker.dispatch(
-              binding,
-              command,
-              {
-                attemptId: randomUUID(),
-                originGeneration: binding.generation,
-                observerGeneration: binding.generation,
-                nativeSessionId: binding.nativeSessionId,
-                ...(binding.nativeThreadId
-                  ? { nativeThreadId: binding.nativeThreadId }
-                  : {}),
-                certainty: "intent",
-              },
-              b,
-            );
-            if (sent.certainty === "not_sent")
-              return { ok: false, error: sent.error };
-            if (sent.certainty !== "submitted") return fail("unavailable");
-            let completed = false,
-              responseObserved = false;
-            let failure: import("@rss-mdm-agent/ai-contract").Failure = {
-              code: "unavailable",
-              retry: "never",
-            };
-            for await (const item of worker.observe(sent.binding, b)) {
-              if (item.type !== "event" || item.commandId !== command.commandId)
-                continue;
-              if (item.body.type === "text" && item.body.text.trim())
-                responseObserved = true;
-              if (item.body.type === "error") failure = item.body.failure;
-              if (item.body.type === "terminal") {
-                completed = item.body.outcome === "completed";
-                if (item.body.outcome === "cancelled")
-                  failure = { code: "verification_cancelled", retry: "never" };
-                if (item.body.outcome === "refused")
-                  failure = { code: "verification_refused", retry: "never" };
-                if (
-                  ["max_tokens", "max_turn_requests"].includes(
-                    item.body.outcome,
-                  )
-                )
-                  failure = { code: "limit_exceeded", retry: "never" };
-                break;
-              }
-            }
-            probing = false;
-            if (!completed || !responseObserved)
-              return { ok: false, error: failure };
-            if (
-              connection.profile === "controlled_tools" &&
-              (!toolObserved || toolViolation)
-            )
-              return fail("unsupported_capability");
-            progress.stage = "cleanup";
-            const stopped = requireValue(await worker.close(b));
-            if (
-              !stopped.processStopped ||
-              b.signal.aborted ||
-              !this.callerAvailable(caller)
-            )
-              return fail("unavailable");
-            return ok(undefined);
-          } finally {
-            const stopped = await worker.close(budget(2000));
-            if (stopped.ok && stopped.value.processStopped) {
-              if (!(await this.releaseRuntime(key, runtime))) {
-                progress.stage = "cleanup";
-                throw new HostFailure({ code: "unavailable", retry: "never" });
-              }
-            } else {
-              runtime.abort.abort();
-              worker.terminate();
-              this.blocked.add(key);
-              progress.stage = "cleanup";
-              throw new HostFailure({ code: "unavailable", retry: "never" });
-            }
-          }
-        });
+        const outcome = await this.runConnectionProbe(
+          caller,
+          connection,
+          namespace,
+          b,
+        );
         if (!this.callerAvailable(caller) || this.closing)
           return fail("unavailable");
-        if (result.ok)
+        if (outcome.outcome === "passed")
           return this.saveValidatedConnection(
             caller,
             {
@@ -904,21 +927,9 @@ export class SessionHost implements HostPort {
             expected,
             b,
           );
-        const code = result.error.code;
-        if (progress.stage !== "cleanup") {
-          if (b.signal.aborted) progress.stage = "timeout";
-          else if (code === "authentication_required")
-            progress.stage = "authentication";
-          else if (code === "unsupported_capability")
-            progress.stage = "capability";
-          else if (code === "limit_exceeded") progress.stage = "quota";
-          else if (code === "invalid_input") progress.stage = "configuration";
-        }
         return this.store.recordConnectionTest(caller, id, expected, {
-          outcome: "failed",
           testedRevision: expected,
-          stage: progress.stage,
-          failure: result.error,
+          ...outcome,
         });
       }),
     );
