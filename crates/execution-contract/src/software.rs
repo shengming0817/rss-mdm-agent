@@ -408,11 +408,12 @@ impl SoftwareSpec {
         }
         keys
     }
-    /// Stable software provenance slot, distinct from the conservatively serialized parent directory.
-    pub fn ownership_key(&self) -> String {
+    /// Physical software provenance slot. Use observed installed identity for writes and the
+    /// frozen pre-mutation identity for reads/removals; absent test facts use the parent domain.
+    pub fn ownership_key(&self, object: Option<&Id>) -> String {
         use sha2::{Digest as _, Sha256};
         let bytes = serde_json_canonicalizer::to_vec(&(
-            &self.resource_binding.parent,
+            object.unwrap_or(&self.resource_binding.parent),
             &self.package,
             &self.resource,
         ))

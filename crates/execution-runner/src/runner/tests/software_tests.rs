@@ -1,8 +1,32 @@
 use super::*;
 use crate::software::{SoftwareArtifacts, SoftwareProbe};
 use std::io::Write;
+// Local isolated fixture only; this is not an OS exclusion implementation.
+struct IsolatedMutation;
+impl crate::software::SoftwareMutationLease for IsolatedMutation {
+    fn release(&mut self, _: Instant) -> Result<(), Error> {
+        Ok(())
+    }
+}
 struct Probe;
 impl SoftwareProbe for Probe {
+    fn begin_mutation(
+        &self,
+        _: &FrozenPlan,
+        _: &AttemptId,
+        _: Instant,
+    ) -> Result<Box<dyn crate::software::SoftwareMutationLease>, Error> {
+        Ok(Box::new(IsolatedMutation))
+    }
+    fn recover_mutation(
+        &self,
+        _: &FrozenPlan,
+        _: &AttemptId,
+        _: Instant,
+    ) -> Result<Box<dyn crate::software::SoftwareMutationLease>, Error> {
+        Ok(Box::new(IsolatedMutation))
+    }
+
     fn dependency_use(&self, _: &FrozenPlan) -> Result<DependencyUse, Error> {
         Ok(DependencyUse::Unused)
     }
@@ -169,7 +193,8 @@ fn real_bundle_effect_is_independent_and_not_a_quiescence_claim() {
         )
         .unwrap()
         .unwrap();
-    assert_eq!(recovered.before, None);
+    // Capturing process output cannot release the exclusion lease or its original observations.
+    assert_eq!(recovered.before, detected.before);
     assert_eq!(recovered.detected, detected.detected);
 }
 #[test]
@@ -559,4 +584,108 @@ fn staging_replacement_is_not_deleted_during_recovery() {
         .unwrap();
     assert_eq!(recovered.staging, SoftwareStaging::Unverified {});
     assert_eq!(std::fs::read(stage.join("user-data")).unwrap(), b"keep");
+}
+
+struct ExclusionProbe {
+    allowed: bool,
+    releases: Arc<std::sync::atomic::AtomicUsize>,
+}
+struct CountedExclusion(Arc<std::sync::atomic::AtomicUsize>);
+impl crate::software::SoftwareMutationLease for CountedExclusion {
+    fn release(&mut self, _: Instant) -> Result<(), Error> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+}
+impl SoftwareProbe for ExclusionProbe {
+    fn begin_mutation(
+        &self,
+        _: &FrozenPlan,
+        _: &AttemptId,
+        _: Instant,
+    ) -> Result<Box<dyn crate::software::SoftwareMutationLease>, Error> {
+        if self.allowed {
+            Ok(Box::new(CountedExclusion(self.releases.clone())))
+        } else {
+            Err(Error::Capability)
+        }
+    }
+    fn recover_mutation(
+        &self,
+        p: &FrozenPlan,
+        a: &AttemptId,
+        d: Instant,
+    ) -> Result<Box<dyn crate::software::SoftwareMutationLease>, Error> {
+        self.begin_mutation(p, a, d)
+    }
+    fn dependency_use(&self, p: &FrozenPlan) -> Result<DependencyUse, Error> {
+        Probe.dependency_use(p)
+    }
+    fn comparison(
+        &self,
+        p: &FrozenPlan,
+        v: &PackageValue,
+    ) -> Result<Option<VersionComparison>, Error> {
+        Probe.comparison(p, v)
+    }
+    fn quiescence(&self, p: &FrozenPlan, a: &AttemptId) -> Result<Option<EvidenceRef>, Error> {
+        Probe.quiescence(p, a)
+    }
+}
+#[test]
+fn mutation_requires_exclusion_and_capture_cannot_release_it_before_quiescence() {
+    for (allowed, reopened) in [(false, false), (true, false), (true, true)] {
+        let mut f = software_fixture("printf v1 > installed\n");
+        let releases = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        Arc::get_mut(
+            f.runner
+                .artifacts
+                .get_mut(f.plan.digest().as_str())
+                .unwrap(),
+        )
+        .unwrap()
+        .software
+        .as_mut()
+        .unwrap()
+        .probe = Arc::new(ExclusionProbe {
+            allowed,
+            releases: releases.clone(),
+        });
+        let attempt = start_software(&f);
+        let process = finish(&f, &attempt);
+        assert_eq!(f.root.join("installed").exists(), allowed);
+        if !allowed {
+            assert!(matches!(process.scope, ProcessScope::NotStarted {}));
+            continue;
+        }
+        let previous = f
+            .runner
+            .software_evidence(
+                &f.plan,
+                &attempt,
+                execution_app::SoftwareObservation::new(Instant::now() + Duration::from_secs(1)),
+            )
+            .unwrap()
+            .unwrap();
+        f.runner.acknowledge_capture(&f.plan, &process).unwrap();
+        assert_eq!(releases.load(Ordering::SeqCst), 0);
+        assert!(f.runner.records.lock().unwrap().contains_key(&attempt));
+        if reopened {
+            f.runner.records.lock().unwrap().clear();
+        }
+        f.runner
+            .software_evidence(
+                &f.plan,
+                &attempt,
+                execution_app::SoftwareObservation {
+                    deadline: Instant::now() + Duration::from_secs(1),
+                    previous: Some(&previous),
+                    quiescent: true,
+                    finalized: !reopened,
+                },
+            )
+            .unwrap();
+        assert_eq!(releases.load(Ordering::SeqCst), 1);
+        assert!(!f.runner.records.lock().unwrap().contains_key(&attempt));
+    }
 }

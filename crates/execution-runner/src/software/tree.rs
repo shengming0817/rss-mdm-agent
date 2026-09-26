@@ -367,10 +367,70 @@ fn delete_tree(
     }
     let meta = handle.metadata().map_err(|_| Error::Unavailable)?;
     if meta.is_dir() && meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT == 0 {
-        for entry in std::fs::read_dir(path).map_err(|_| Error::Unavailable)? {
+        let mut restart = true;
+        loop {
             control.check()?;
-            let path = entry.map_err(|_| Error::Unavailable)?.path();
-            delete_tree(delete_handle(&path)?, &path, control, depth + 1)?;
+            // The root and every ancestor remain held without delete sharing. Enumerate the
+            // directory handle, then compare the enumerated file ID before touching a child.
+            let mut buffer = vec![0u64; 4096];
+            let ok = unsafe {
+                GetFileInformationByHandleEx(
+                    handle.as_raw_handle(),
+                    if restart {
+                        FileIdBothDirectoryRestartInfo
+                    } else {
+                        FileIdBothDirectoryInfo
+                    },
+                    buffer.as_mut_ptr().cast(),
+                    (buffer.len() * 8) as u32,
+                )
+            };
+            restart = false;
+            if ok == 0 {
+                if std::io::Error::last_os_error().raw_os_error() == Some(18) {
+                    break;
+                }
+                return Err(Error::Unavailable);
+            }
+            let mut offset = 0usize;
+            loop {
+                let capacity = buffer.len() * 8;
+                let name_offset = std::mem::offset_of!(FILE_ID_BOTH_DIR_INFO, FileName);
+                if offset + std::mem::size_of::<FILE_ID_BOTH_DIR_INFO>() > capacity
+                    || offset % 8 != 0
+                {
+                    return Err(Error::Conflict);
+                }
+                let entry = unsafe {
+                    &*(buffer
+                        .as_ptr()
+                        .cast::<u8>()
+                        .add(offset)
+                        .cast::<FILE_ID_BOTH_DIR_INFO>())
+                };
+                let bytes = entry.FileNameLength as usize;
+                if bytes % 2 != 0 || offset + name_offset + bytes > capacity {
+                    return Err(Error::Conflict);
+                }
+                let name =
+                    unsafe { std::slice::from_raw_parts(entry.FileName.as_ptr(), bytes / 2) };
+                if name != [46] && name != [46, 46] {
+                    if name.is_empty() || name.iter().any(|c| matches!(*c, 0 | 47 | 92 | 58)) {
+                        return Err(Error::Conflict);
+                    }
+                    use std::os::windows::ffi::OsStringExt;
+                    let child_path = path.join(std::ffi::OsString::from_wide(name));
+                    delete_bound_child(&child_path, entry.FileId as u64, control, depth + 1)?;
+                }
+                if entry.NextEntryOffset == 0 {
+                    break;
+                }
+                let next = entry.NextEntryOffset as usize;
+                if next < name_offset + bytes {
+                    return Err(Error::Conflict);
+                }
+                offset = offset.checked_add(next).ok_or(Error::Conflict)?;
+            }
         }
     }
     let disposition = FILE_DISPOSITION_INFO { DeleteFile: true };
@@ -386,6 +446,60 @@ fn delete_tree(
         return Err(Error::Unavailable);
     }
     Ok(())
+}
+#[cfg(windows)]
+fn delete_bound_child(
+    path: &Path,
+    expected: u64,
+    control: &super::PreparationControl,
+    depth: u32,
+) -> Result<(), Error> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::*;
+    let child = delete_handle(path)?;
+    let mut identity = BY_HANDLE_FILE_INFORMATION::default();
+    if unsafe { GetFileInformationByHandle(child.as_raw_handle(), &mut identity) } == 0
+        || ((u64::from(identity.nFileIndexHigh) << 32) | u64::from(identity.nFileIndexLow))
+            != expected
+    {
+        return Err(Error::Conflict);
+    }
+    delete_tree(child, path, control, depth)
+}
+#[cfg(all(test, windows))]
+mod windows_cleanup_tests {
+    use super::*;
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::*;
+    #[test]
+    fn child_replaced_after_enumeration_is_preserved() {
+        let root = std::env::temp_dir().join(format!("rss-cleanup-child-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("child");
+        std::fs::create_dir(&path).unwrap();
+        let original = delete_handle(&path).unwrap();
+        let mut info = BY_HANDLE_FILE_INFORMATION::default();
+        assert_ne!(
+            unsafe { GetFileInformationByHandle(original.as_raw_handle(), &mut info) },
+            0
+        );
+        let expected = (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow);
+        drop(original);
+        std::fs::rename(&path, root.join("original")).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        std::fs::write(path.join("user-data"), b"keep").unwrap();
+        assert_eq!(
+            delete_bound_child(
+                &path,
+                expected,
+                &super::super::PreparationControl::test(),
+                0
+            ),
+            Err(Error::Conflict)
+        );
+        assert_eq!(std::fs::read(path.join("user-data")).unwrap(), b"keep");
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
 #[cfg(not(any(target_os = "macos", windows)))]
 mod native {

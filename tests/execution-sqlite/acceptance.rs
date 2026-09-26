@@ -2616,7 +2616,7 @@ fn software_ownership_is_atomic_with_verified_effect_and_cannot_be_rewritten() {
             version: PackageValue::new("1.0").unwrap(),
         },
         restart_required: false,
-        object_identity: None,
+        object_identity: Some(id("physical-installed")),
         boot_generation: None,
     };
     db.sql().execute_batch("CREATE TABLE software_commit_fault (id INTEGER REFERENCES receipts(sequence) DEFERRABLE INITIALLY DEFERRED);
@@ -2664,6 +2664,25 @@ fn software_ownership_is_atomic_with_verified_effect_and_cannot_be_rewritten() {
     let owner = store.software_ownership(&host.scope(), &host).unwrap();
     assert_eq!(owner.ownership, Ownership::OrganizationManaged);
     assert_eq!(owner.state, Some(facts.detected.clone()));
+    let mut alias = software_host();
+    let mut spec = alias.plan.spec().clone();
+    spec.plan_id = PlanId::new("alias-plan").unwrap();
+    spec.request.request_id = RequestId::new("alias-request").unwrap();
+    if let ExecutionSpec::Software { software } = &mut spec.execution {
+        software.resource_binding.parent = id("different-parent");
+        software.resource_binding.object = Some(id("physical-installed"));
+    }
+    alias.plan = FrozenPlan::freeze(spec, &limits().plan).unwrap();
+    store
+        .refresh_trust(&operation("alias-trust"), &alias.scope(), None, &alias)
+        .unwrap();
+    store
+        .open_execution(&operation("alias-open"), &alias.plan, &alias)
+        .unwrap();
+    assert_eq!(
+        store.software_ownership(&alias.scope(), &alias).unwrap(),
+        owner
+    );
     facts.detected = SoftwareState::Absent {};
     assert_eq!(
         store.record_software(&host.scope(), &facts, &host),
@@ -2812,4 +2831,75 @@ fn software_evidence_rejects_mismatched_attempt_and_oversized_blob() {
         store.software_evidence(&host.scope(), &facts.attempt_id, &host),
         Err(Error::Corrupt)
     );
+}
+
+#[test]
+fn simultaneous_software_requests_have_one_committed_resource_owner() {
+    let db = Database::new();
+    let mut store = db.create();
+    let first = software_host();
+    first.prepare(&mut store);
+    let mut second = software_host();
+    let mut spec = second.plan.spec().clone();
+    spec.plan_id = PlanId::new("other-plan").unwrap();
+    spec.request.request_id = RequestId::new("other-request").unwrap();
+    second.plan = FrozenPlan::freeze(spec, &limits().plan).unwrap();
+    store
+        .refresh_trust(&operation("other-trust"), &second.scope(), None, &second)
+        .unwrap();
+    store
+        .open_execution(&operation("other-open"), &second.plan, &second)
+        .unwrap();
+    store
+        .apply_command(
+            &operation("other-prepare"),
+            &second.scope(),
+            &event("other-prepare", 0, lifecycle::Command::Prepare),
+            &[],
+            &second,
+        )
+        .unwrap();
+    drop(store);
+    let barrier = Arc::new(Barrier::new(2));
+    let handles: Vec<_> = [first, second]
+        .into_iter()
+        .enumerate()
+        .map(|(i, host)| {
+            let mut store = db.open();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                let name = format!("concurrent-{i}");
+                let begin = event(
+                    &name,
+                    1,
+                    lifecycle::Command::BeginAttempt {
+                        attempt_id: AttemptId::new(&name).unwrap(),
+                        runner: id("test-runner"),
+                        mode: lifecycle::ExecutionMode::Test,
+                    },
+                );
+                barrier.wait();
+                store.apply_command(&operation(&name), &host.scope(), &begin, &[], &host)
+            })
+        })
+        .collect();
+    let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+    assert_eq!(
+        results
+            .iter()
+            .filter(|r| r
+                .as_ref()
+                .is_ok_and(|c| c.receipt().outcome == Outcome::Changed))
+            .count(),
+        1
+    );
+    assert_eq!(
+        results
+            .iter()
+            .filter(|r| matches!(r, Err(Error::Busy)))
+            .count(),
+        1
+    );
+    assert_eq!(db.count("attempts"), 1);
+    assert_eq!(db.count("software_claims"), 2);
 }

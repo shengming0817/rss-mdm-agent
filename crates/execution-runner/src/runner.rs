@@ -14,7 +14,9 @@ use std::{
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+type MutationSlot = Arc<Mutex<Option<Box<dyn crate::software::SoftwareMutationLease>>>>;
 struct Record {
+    mutation: MutationSlot,
     plan: FrozenPlan,
     cancel: Arc<AtomicBool>,
     facts: Arc<Mutex<Option<ProcessEvidence>>>,
@@ -70,9 +72,11 @@ impl NativeRunner {
         preparing.quality = OutputQuality::Partial;
         let facts = Arc::new(Mutex::new(Some(preparing)));
         let software = Arc::new(Mutex::new(None));
+        let mutation = Arc::new(Mutex::new(None));
         records.insert(
             attempt.clone(),
             Record {
+                mutation: mutation.clone(),
                 plan: plan.clone(),
                 cancel: cancel.clone(),
                 facts: facts.clone(),
@@ -152,6 +156,7 @@ impl NativeRunner {
                     (allowance.remaining_output_bytes, deadline),
                     cancel,
                     Captures {
+                        mutation,
                         process: facts,
                         software,
                     },
@@ -192,7 +197,7 @@ impl RunnerPort for NativeRunner {
             deadline: context.deadline,
             cancelled: Arc::new(AtomicBool::new(false)),
         };
-        let records = self.records.lock().map_err(|_| Error::Unavailable)?;
+        let mut records = self.records.lock().map_err(|_| Error::Unavailable)?;
         let live = if let Some(record) = records.get(attempt) {
             if record.plan.digest() != plan.digest() {
                 return Err(Error::Denied);
@@ -246,6 +251,23 @@ impl RunnerPort for NativeRunner {
         if let Some(previous) = context.previous {
             value.staging = previous.staging.clone();
         }
+        if context.quiescent {
+            if let Some(record) = records.get(attempt) {
+                let mut slot = record.mutation.lock().map_err(|_| Error::Unavailable)?;
+                if let Some(lease) = slot.as_mut() {
+                    lease.release(context.deadline)?;
+                }
+                *slot = None;
+            } else if context.previous.is_some_and(|p| p.before.is_some()) && !context.finalized {
+                let mut lease = artifacts
+                    .software
+                    .as_ref()
+                    .ok_or(Error::Unbound)?
+                    .probe
+                    .recover_mutation(plan, attempt, context.deadline)?;
+                lease.release(context.deadline)?;
+            }
+        }
         value.staging = crate::software::recover_staging(
             &artifacts.work_root,
             attempt,
@@ -253,6 +275,15 @@ impl RunnerPort for NativeRunner {
             context.quiescent,
             &control,
         );
+        if context.finalized
+            && records.get(attempt).is_some_and(|r| {
+                r.facts
+                    .lock()
+                    .is_ok_and(|f| f.as_ref().is_some_and(|f| f.finished))
+            })
+        {
+            records.remove(attempt);
+        }
         Ok(Some(value))
     }
 
@@ -293,7 +324,14 @@ impl RunnerPort for NativeRunner {
             {
                 return Err(Error::Conflict);
             }
-            records.remove(&facts.attempt_id);
+            if record
+                .mutation
+                .lock()
+                .map_err(|_| Error::Unavailable)?
+                .is_none()
+            {
+                records.remove(&facts.attempt_id);
+            }
         }
         Ok(())
     }
@@ -474,6 +512,7 @@ fn publish(slot: &Mutex<Option<ProcessEvidence>>, facts: ProcessEvidence) {
     }
 }
 struct Captures {
+    mutation: MutationSlot,
     process: Arc<Mutex<Option<ProcessEvidence>>>,
     software: Arc<Mutex<Option<SoftwareEvidence>>>,
 }
@@ -487,10 +526,21 @@ async fn run(
     captures: Captures,
 ) {
     let Captures {
+        mutation,
         process: shared,
         software: software_facts,
     } = captures;
     if let Some(lease) = &mut materialized.software {
+        match mutation.lock() {
+            Ok(mut slot) => *slot = lease.mutation.take(),
+            Err(_) => {
+                publish(
+                    &shared,
+                    failed(&plan, &attempt, &id, ProcessFailureKind::Runtime),
+                );
+                return;
+            }
+        }
         if let Ok(mut slot) = software_facts.lock() {
             *slot = Some(SoftwareEvidence {
                 staging: lease.staging().unwrap_or(SoftwareStaging::Unverified {}),

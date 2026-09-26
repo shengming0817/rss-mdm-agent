@@ -104,7 +104,10 @@ pub(crate) fn settle(
         {
             return Err(Error::Conflict);
         }
-        let resource = &s.ownership_key();
+        let resource = &s.ownership_key(match &evidence.detected {
+            SoftwareState::Present { .. } => evidence.object_identity.as_ref(),
+            _ => s.resource_binding.object.as_ref(),
+        });
         match &evidence.detected {
             SoftwareState::Absent {} => {
                 conn.execute(
@@ -113,8 +116,9 @@ pub(crate) fn settle(
                 )?;
             }
             SoftwareState::Present { .. } => {
-                let existing =
-                    ownership(conn, plan, limits)?.ownership == Ownership::OrganizationManaged;
+                let existing = ownership(conn, plan, s.resource_binding.object.as_ref(), limits)?
+                    .ownership
+                    == Ownership::OrganizationManaged;
                 if existing || matches!(evidence.before, Some(SoftwareState::Absent {})) {
                     conn.execute("INSERT INTO software_ownership VALUES(?1,?2,?3,?4) ON CONFLICT(resource) DO UPDATE SET attempt_id=excluded.attempt_id,authority=excluded.authority,package=excluded.package", params![resource,a.id.as_str(),encode(&plan.spec().request.authority,limits.max_record_bytes)?,encode(&s.package,limits.max_record_bytes)?])?;
                 }
@@ -131,6 +135,7 @@ pub(crate) fn settle(
 fn ownership(
     conn: &Connection,
     plan: &FrozenPlan,
+    object: Option<&execution_contract::Id>,
     limits: Limits,
 ) -> Result<SoftwareProvenance, Error> {
     let s = plan
@@ -145,7 +150,7 @@ fn ownership(
                 bounded_blob("authority", limits.max_record_bytes),
                 bounded_blob("package", limits.max_record_bytes)
             ),
-            [&s.ownership_key()],
+            [&s.ownership_key(object)],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .optional()?;
@@ -185,8 +190,24 @@ impl Store {
         host: &impl Host,
     ) -> Result<SoftwareProvenance, Error> {
         let tx = self.read(scope, Access::RunnerFact, None, host)?;
-        let (plan, _, _) = load_execution(&tx, scope, self.limits)?;
-        ownership(&tx, &plan, self.limits)
+        let (plan, execution, _) = load_execution(&tx, scope, self.limits)?;
+        let observed = execution
+            .snapshot()
+            .attempt
+            .as_ref()
+            .map(|a| facts(&tx, &a.id, self.limits))
+            .transpose()?
+            .flatten();
+        let object = observed
+            .as_ref()
+            .and_then(|f| f.object_identity.as_ref())
+            .or_else(|| {
+                plan.spec()
+                    .execution
+                    .software()
+                    .and_then(|s| s.resource_binding.object.as_ref())
+            });
+        ownership(&tx, &plan, object, self.limits)
     }
     /// Persist independent software detection even when process termination remains unknown.
     pub fn record_software(

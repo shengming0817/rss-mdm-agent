@@ -108,6 +108,12 @@ mod tests {
         let alias = root.join("alias");
         std::fs::hard_link(&target, &alias).unwrap();
         assert_eq!(guard.binding, TargetGuard::open(&alias).unwrap().binding);
+        std::fs::create_dir(root.join("other-parent")).unwrap();
+        let cross_parent = root.join("other-parent/alias");
+        std::fs::hard_link(&target, &cross_parent).unwrap();
+        let cross = TargetGuard::open(&cross_parent).unwrap();
+        assert_eq!(guard.binding.object, cross.binding.object);
+        assert_ne!(guard.binding.parent, cross.binding.parent);
         let case_alias = root.join("installed");
         if case_alias.exists() {
             assert_eq!(

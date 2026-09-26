@@ -13,9 +13,35 @@ use std::{
     sync::Arc,
 };
 
+/// Trusted adapter exclusion of every writer that can invalidate the frozen mutation precondition.
+/// This is not the local cooperative file lock. Implementors must preserve backend exclusion if
+/// this process dies while installer activity remains; dropping a lease must not silently release
+/// an uncertain backend operation. Unsupported managers must refuse the capability.
+pub trait SoftwareMutationLease: Send + Sync {
+    /// Release only after independently committed quiescence of this exact attempt.
+    /// Failure retains the lease and blocks lifecycle assessment; obey the supplied deadline.
+    fn release(&mut self, deadline: std::time::Instant) -> Result<(), Error>;
+}
 /// Host-owned, independently refreshed software facts, not values decoded from an IPC request.
 /// Production composition and source trust are supplied by the consuming product.
 pub trait SoftwareProbe: Send + Sync {
+    /// Acquire adapter-wide exclusion before detection, including non-cooperative same-UID
+    /// name writers. A pathname recheck or this runner's advisory lock is not sufficient.
+    fn begin_mutation(
+        &self,
+        plan: &FrozenPlan,
+        attempt: &AttemptId,
+        deadline: std::time::Instant,
+    ) -> Result<Box<dyn SoftwareMutationLease>, Error>;
+    /// Recover only the original attempt's exclusion. Never start a new mutation or substitute
+    /// a newly acquired advisory lock for the original backend ownership.
+    fn recover_mutation(
+        &self,
+        plan: &FrozenPlan,
+        attempt: &AttemptId,
+        deadline: std::time::Instant,
+    ) -> Result<Box<dyn SoftwareMutationLease>, Error>;
+
     /// Establish current incoming dependency use for the exact package under the manager lock.
     fn dependency_use(&self, plan: &FrozenPlan) -> Result<DependencyUse, Error>;
     /// Compare the exact installed/desired version pair using this package ecosystem.
@@ -76,6 +102,7 @@ impl PreparationControl {
     }
 }
 pub(crate) struct Lease {
+    pub(crate) mutation: Option<Box<dyn SoftwareMutationLease>>,
     _locks: Vec<File>,
     _files: Vec<File>,
     _paths: Vec<crate::platform::PathLease>,
@@ -173,6 +200,8 @@ impl SoftwareArtifacts {
             file.try_lock().map_err(|_| Error::Conflict)?;
             locks.push(file);
         }
+        let mutation = self.probe.begin_mutation(plan, attempt, control.deadline)?;
+        control.check()?;
         let mut target = resource::TargetGuard::open(std::path::Path::new(&s.detection.path))?;
         if target.binding != s.resource_binding {
             return Err(Error::Conflict);
@@ -308,6 +337,7 @@ impl SoftwareArtifacts {
             args.push(expanded.root.to_str().ok_or(Error::InvalidInput)?.into());
         }
         Ok(Lease {
+            mutation: Some(mutation),
             _locks: locks,
             _files: vec![payload, manager],
             _paths: paths,
