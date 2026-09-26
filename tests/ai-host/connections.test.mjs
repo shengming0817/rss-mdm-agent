@@ -9,6 +9,9 @@ import { openSqliteStore } from "../../packages/ai-store-sqlite/dist/index.js";
 import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import { connectionPersistence } from "../../apps/ai-host/dist/secrets.js";
 import {
+  callerFor,
+  callerAvailable,
+  requireLocalExecution,
   closeOwners,
   suspendNativeCaller,
 } from "../../apps/ai-host/dist/index.js";
@@ -710,7 +713,8 @@ test("application persistence retains ciphertext without decrypting and lets onl
     openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
   );
   const encrypted = new Uint8Array(32).fill(9);
-  let available = true;
+  let available = true,
+    rejectProbe = false;
   const host = unwrap(
     await createHost({
       workerRuntime,
@@ -727,7 +731,12 @@ test("application persistence retains ciphertext without decrypting and lets onl
           workingDirectory: root,
           permissions: "tools_disabled",
         },
-        artifact: new URL("./provider.mjs", import.meta.url).href,
+        artifact: new URL(
+          rejectProbe
+            ? "./provider.mjs?scenario=probe_reject"
+            : "./provider.mjs",
+          import.meta.url,
+        ).href,
       }),
     }),
   );
@@ -781,13 +790,29 @@ test("application persistence retains ciphertext without decrypting and lets onl
     unwrap(await store.encryptedSecret(caller, "one", current.configRevision)),
     encrypted,
   );
+  const ready = unwrap(await host.testConnection(caller, "one", 3, budget()));
+  assert.equal(ready.status, "ready");
+  assert.equal(ready.configRevision, 4);
+  assert.deepEqual(
+    unwrap(await store.encryptedSecret(caller, "one", 4)),
+    encrypted,
+  );
+  rejectProbe = true;
+  const failed = unwrap(await host.testConnection(caller, "one", 4, budget()));
+  assert.equal(failed.lastTest.outcome, "failed");
+  assert.equal(failed.configRevision, 4);
+  assert.equal(failed.status, "ready");
+  assert.deepEqual(
+    unwrap(await store.encryptedSecret(caller, "one", 4)),
+    encrypted,
+  );
   available = false;
   assert.equal(
-    (await host.saveConnection(caller, draftOf(current), 3, budget())).error
+    (await host.saveConnection(caller, draftOf(current), 4, budget())).error
       .code,
     "unavailable",
   );
-  assert.equal(unwrap(await store.connection(caller, "one")).configRevision, 3);
+  assert.equal(unwrap(await store.connection(caller, "one")).configRevision, 4);
 });
 
 test("user fence settles persistent offline queues across pages and propagates durable failure", async (t) => {
@@ -1027,4 +1052,94 @@ test("controlled connection verification requires the dedicated harmless tool ca
       await rm(root, { recursive: true, force: true });
     }
   }
+});
+
+test("enterprise and guest callers use native identity, never display name or provider identity", async () => {
+  const user = {
+    schemaVersion: 6,
+    kind: "testUser",
+    userId: "legacy",
+    displayName: "same",
+    nameKey: "same",
+  };
+  const context = {
+    schemaVersion: 6,
+    kind: "userContext",
+    user,
+    generation: "one",
+  };
+  assert.deepEqual(callerFor(context), {
+    tenantId: "test-users",
+    principalId: "legacy",
+    authorityId: "desktop-fixture",
+  });
+  const identity = {
+    mode: "enterprise",
+    organizationId: "organization-a",
+    tenantId: "tenant-a",
+    principalId: "subject-a",
+    authorityId: "instance-a",
+    expiresAtMs: Date.now() + 1000,
+  };
+  const a = { ...context, identity };
+  assert.equal(
+    callerAvailable(a, callerFor(a), identity.expiresAtMs - 1),
+    true,
+  );
+  assert.equal(callerAvailable(a, callerFor(a), identity.expiresAtMs), false);
+  assert.equal(
+    callerAvailable(
+      { ...a, identity: { ...identity, expiresAtMs: 0 } },
+      callerFor(a),
+      1,
+    ),
+    false,
+  );
+  assert.throws(() => requireLocalExecution(a, callerFor(a)), /unbound origin/);
+  assert.doesNotThrow(() => requireLocalExecution(context, callerFor(context)));
+  const guest = {
+    ...context,
+    identity: {
+      mode: "guest",
+      authorityId: "desktop-guest",
+      tenantId: "local-guest",
+      principalId: "guest",
+    },
+  };
+  assert.doesNotThrow(() => requireLocalExecution(guest, callerFor(guest)));
+  assert.throws(
+    () => requireLocalExecution(guest, callerFor(context)),
+    /unbound origin/,
+  );
+  assert.deepEqual(callerFor(a), {
+    tenantId: "tenant-a",
+    principalId: "subject-a",
+    authorityId: "instance-a",
+  });
+  for (const field of ["tenantId", "principalId", "authorityId"]) {
+    const b = { ...a, identity: { ...identity, [field]: "other" } };
+    assert.notDeepEqual(callerFor(a), callerFor(b));
+  }
+  let suspended;
+  await suspendNativeCaller(
+    {
+      suspendCaller: async (caller) => {
+        suspended = caller;
+        return { ok: true, value: undefined };
+      },
+    },
+    a,
+  );
+  assert.deepEqual(suspended, callerFor(a));
+  await assert.rejects(() =>
+    suspendNativeCaller(
+      {
+        suspendCaller: async () => {
+          throw new Error("must not run");
+        },
+      },
+      a,
+      { ...a, generation: "new" },
+    ),
+  );
 });

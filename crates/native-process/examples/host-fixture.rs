@@ -121,7 +121,7 @@ fn main() {
                 std::thread::sleep(Duration::from_millis(400));
             }
             let reply = if health {
-                serde_json::json!({"schemaVersion":6,"kind":"hostHealth","ready":true,"protocol":if mode=="bad_health"{0}else{3}})
+                serde_json::json!({"schemaVersion":6,"kind":"hostHealth","ready":true,"protocol":if mode=="bad_health"{0}else{4}})
             } else {
                 serde_json::json!(true)
             };

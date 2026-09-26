@@ -41,7 +41,9 @@ export type WireRecord =
   | HostHealth
   | HostProcessDiagnostic
   | TestConnectionRequest
-  | DeleteConnectionRequest;
+  | DeleteConnectionRequest
+  | AccountSettings
+  | AccountStatus;
 /**
  * Opaque ASCII correlation identifier (1–128 characters); never an authentication credential.
  */
@@ -127,7 +129,7 @@ export type Input =
 export type CommandRecord =
   | {
       /**
-       * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+       * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
       schemaVersion: 6;
       /**
@@ -150,7 +152,7 @@ export type CommandRecord =
     }
   | {
       /**
-       * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+       * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
       schemaVersion: 6;
       /**
@@ -174,7 +176,7 @@ export type CommandRecord =
     }
   | {
       /**
-       * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+       * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
       schemaVersion: 6;
       /**
@@ -198,7 +200,7 @@ export type CommandRecord =
     }
   | {
       /**
-       * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+       * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
       schemaVersion: 6;
       /**
@@ -223,7 +225,7 @@ export type CommandRecord =
     }
   | {
       /**
-       * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+       * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
       schemaVersion: 6;
       /**
@@ -247,7 +249,7 @@ export type CommandRecord =
     }
   | {
       /**
-       * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+       * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
       schemaVersion: 6;
       /**
@@ -271,7 +273,7 @@ export type CommandRecord =
     }
   | {
       /**
-       * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+       * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
       schemaVersion: 6;
       /**
@@ -295,7 +297,7 @@ export type CommandRecord =
     }
   | {
       /**
-       * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+       * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
       schemaVersion: 6;
       /**
@@ -320,7 +322,7 @@ export type CommandRecord =
     }
   | {
       /**
-       * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+       * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
       schemaVersion: 6;
       /**
@@ -425,7 +427,7 @@ export type Acknowledgement =
 export type Event =
   | {
       /**
-       * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+       * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
       schemaVersion: 6;
       /**
@@ -462,7 +464,7 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+       * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
       schemaVersion: 6;
       /**
@@ -494,7 +496,7 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+       * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
       schemaVersion: 6;
       /**
@@ -529,7 +531,7 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+       * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
       schemaVersion: 6;
       /**
@@ -562,7 +564,7 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+       * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
       schemaVersion: 6;
       /**
@@ -597,7 +599,7 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+       * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
       schemaVersion: 6;
       /**
@@ -638,7 +640,7 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+       * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
       schemaVersion: 6;
       /**
@@ -679,7 +681,7 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+       * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
       schemaVersion: 6;
       /**
@@ -722,7 +724,7 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+       * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
       schemaVersion: 6;
       /**
@@ -761,7 +763,7 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+       * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
       schemaVersion: 6;
       /**
@@ -798,7 +800,7 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+       * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
       schemaVersion: 6;
       /**
@@ -830,7 +832,7 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+       * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
       schemaVersion: 6;
       /**
@@ -862,7 +864,7 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+       * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
       schemaVersion: 6;
       /**
@@ -895,7 +897,7 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+       * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
       schemaVersion: 6;
       /**
@@ -938,7 +940,7 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+       * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
       schemaVersion: 6;
       /**
@@ -971,7 +973,7 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+       * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
       schemaVersion: 6;
       /**
@@ -1002,7 +1004,7 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+       * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
       schemaVersion: 6;
       /**
@@ -1031,7 +1033,7 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+       * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
       schemaVersion: 6;
       /**
@@ -1064,7 +1066,7 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+       * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
       schemaVersion: 6;
       /**
@@ -1096,7 +1098,7 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+       * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
       schemaVersion: 6;
       /**
@@ -1125,7 +1127,7 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+       * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
       schemaVersion: 6;
       /**
@@ -1167,7 +1169,7 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+       * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
       schemaVersion: 6;
       /**
@@ -1203,7 +1205,7 @@ export type Event =
     }
   | {
       /**
-       * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+       * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
       schemaVersion: 6;
       /**
@@ -1320,6 +1322,26 @@ export type ConnectionTest =
         | "cleanup";
       failure: Failure;
     };
+/**
+ * Native-owned identity projection. Guest identities cannot carry enterprise metadata; enterprise identities require organization and expiry.
+ */
+export type AccountIdentity =
+  | {
+      mode: "guest";
+      authorityId: Id;
+      tenantId: Id;
+      principalId: Id;
+      organizationId?: never;
+      expiresAtMs?: never;
+    }
+  | {
+      mode: "enterprise";
+      authorityId: Id;
+      tenantId: Id;
+      principalId: Id;
+      organizationId: string;
+      expiresAtMs: number;
+    };
 export type PreferenceChange =
   | {
       set: Id;
@@ -1378,13 +1400,25 @@ export type EncryptedCredential = [
   ...number[],
 ];
 export type NativeReply = NativeReplySuccess | NativeReplyFailure;
+export type AccountFailureStage =
+  | "configuration"
+  | "login"
+  | "session"
+  | "authorization"
+  | "logout";
+export type AccountFailureKind =
+  | "configuration"
+  | "denied"
+  | "unavailable"
+  | "rate_limited"
+  | "contract";
 
 /**
  * Client command identity and complete canonical input; trusted namespace is supplied separately.
  */
 export interface Command {
   /**
-   * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+   * Exact product wire version; Earlier versions are rejected without migration or fallback.
    */
   schemaVersion: 6;
   /**
@@ -1435,7 +1469,7 @@ export interface SurfaceReference {
  */
 export interface Receipt {
   /**
-   * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+   * Exact product wire version; Earlier versions are rejected without migration or fallback.
    */
   schemaVersion: 6;
   /**
@@ -1519,7 +1553,7 @@ export interface InteractionRequest {
  */
 export interface SurfaceState {
   /**
-   * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+   * Exact product wire version; Earlier versions are rejected without migration or fallback.
    */
   schemaVersion: 6;
   /**
@@ -1570,7 +1604,7 @@ export interface SurfaceState {
  */
 export interface Session {
   /**
-   * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+   * Exact product wire version; Earlier versions are rejected without migration or fallback.
    */
   schemaVersion: 6;
   /**
@@ -1680,7 +1714,7 @@ export interface Capabilities {
  */
 export interface Interaction {
   /**
-   * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+   * Exact product wire version; Earlier versions are rejected without migration or fallback.
    */
   schemaVersion: 6;
   /**
@@ -1721,7 +1755,7 @@ export interface Interaction {
  */
 export interface Delivery {
   /**
-   * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+   * Exact product wire version; Earlier versions are rejected without migration or fallback.
    */
   schemaVersion: 6;
   /**
@@ -1762,7 +1796,7 @@ export interface Delivery {
  */
 export interface SurfaceAction {
   /**
-   * Exact product wire version; Versions 1–4 are rejected without migration or fallback.
+   * Exact product wire version; Earlier versions are rejected without migration or fallback.
    */
   schemaVersion: 6;
   /**
@@ -1999,13 +2033,14 @@ export interface TestUser {
   nameKey: string;
 }
 /**
- * UserContext product wire record; validated against the V6 schema.
+ * Native-owned local profile and generation. An absent identity is a legacy test profile; enterprise authority is established only by native AuthN and AuthZ verification.
  */
 export interface UserContext {
   schemaVersion: 6;
   kind: "userContext";
   user: TestUser;
   generation: Id;
+  identity?: AccountIdentity;
 }
 export interface ConnectionPage {
   schemaVersion: 6;
@@ -2227,7 +2262,7 @@ export interface HostHealth {
   schemaVersion: 6;
   kind: "hostHealth";
   ready: true;
-  protocol: 3;
+  protocol: 4;
 }
 /**
  * Closed diagnostic frame on the inherited Host diagnostic pipe. Raw stderr and unknown frames never become product diagnostics.
@@ -2254,6 +2289,35 @@ export interface DeleteConnectionRequest {
   kind: "deleteConnectionRequest";
   connectionId: Id;
   expectedRevision: Counter;
+}
+export interface AccountSettings {
+  schemaVersion: 6;
+  kind: "accountSettings";
+  /**
+   * @maxItems 32
+   */
+  organizations: AccountOrganization[];
+  selected?: string;
+}
+/**
+ * Native-normalized organization configuration; canonical HTTPS origin and tenant validation belong to the native account adapter.
+ */
+export interface AccountOrganization {
+  id: string;
+  label: string;
+  origin: string;
+  tenantId: string;
+}
+export interface AccountStatus {
+  schemaVersion: 6;
+  kind: "accountStatus";
+  current?: UserContext;
+  failure?: AccountFailure;
+}
+export interface AccountFailure {
+  stage: AccountFailureStage;
+  reason: AccountFailureKind;
+  observedAtMs: Counter;
 }
 
 /**

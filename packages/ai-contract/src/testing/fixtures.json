@@ -1333,6 +1333,44 @@
         "responseCommandId": "response-golden"
       },
       "attemptId": "attempt-command-1"
+    },
+    {
+      "schemaVersion": 6,
+      "kind": "userContext",
+      "user": {
+        "schemaVersion": 6,
+        "kind": "testUser",
+        "userId": "account-profile",
+        "displayName": "Account",
+        "nameKey": "account"
+      },
+      "generation": "generation-account",
+      "identity": {
+        "mode": "guest",
+        "authorityId": "desktop-guest",
+        "tenantId": "local-guest",
+        "principalId": "guest"
+      }
+    },
+    {
+      "schemaVersion": 6,
+      "kind": "userContext",
+      "user": {
+        "schemaVersion": 6,
+        "kind": "testUser",
+        "userId": "account-profile",
+        "displayName": "Account",
+        "nameKey": "account"
+      },
+      "generation": "generation-account",
+      "identity": {
+        "mode": "enterprise",
+        "authorityId": "desktop-guest",
+        "tenantId": "local-guest",
+        "principalId": "guest",
+        "organizationId": "organization",
+        "expiresAtMs": 1000
+      }
     }
   ],
   "invalid": [
@@ -1516,6 +1554,26 @@
     {
       "name": "interaction event missing responseCommandId",
       "raw": "{\"schemaVersion\":6,\"kind\":\"event\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"eventId\":\"answered-golden\",\"sequence\":1,\"commandId\":\"command-1\",\"generation\":\"generation-1\",\"body\":{\"type\":\"interaction\",\"interactionId\":\"question-golden\",\"status\":\"answered\"},\"attemptId\":\"attempt-command-1\"}",
+      "code": "schema"
+    },
+    {
+      "name": "enterprise requires organizationId",
+      "raw": "{\"schemaVersion\":6,\"kind\":\"userContext\",\"user\":{\"schemaVersion\":6,\"kind\":\"testUser\",\"userId\":\"account-profile\",\"displayName\":\"Account\",\"nameKey\":\"account\"},\"generation\":\"generation-account\",\"identity\":{\"mode\":\"enterprise\",\"authorityId\":\"desktop-guest\",\"tenantId\":\"local-guest\",\"principalId\":\"guest\",\"expiresAtMs\":1000}}",
+      "code": "schema"
+    },
+    {
+      "name": "enterprise requires expiresAtMs",
+      "raw": "{\"schemaVersion\":6,\"kind\":\"userContext\",\"user\":{\"schemaVersion\":6,\"kind\":\"testUser\",\"userId\":\"account-profile\",\"displayName\":\"Account\",\"nameKey\":\"account\"},\"generation\":\"generation-account\",\"identity\":{\"mode\":\"enterprise\",\"authorityId\":\"desktop-guest\",\"tenantId\":\"local-guest\",\"principalId\":\"guest\",\"organizationId\":\"organization\"}}",
+      "code": "schema"
+    },
+    {
+      "name": "guest forbids organizationId",
+      "raw": "{\"schemaVersion\":6,\"kind\":\"userContext\",\"user\":{\"schemaVersion\":6,\"kind\":\"testUser\",\"userId\":\"account-profile\",\"displayName\":\"Account\",\"nameKey\":\"account\"},\"generation\":\"generation-account\",\"identity\":{\"mode\":\"guest\",\"authorityId\":\"desktop-guest\",\"tenantId\":\"local-guest\",\"principalId\":\"guest\",\"organizationId\":\"organization\"}}",
+      "code": "schema"
+    },
+    {
+      "name": "guest forbids expiresAtMs",
+      "raw": "{\"schemaVersion\":6,\"kind\":\"userContext\",\"user\":{\"schemaVersion\":6,\"kind\":\"testUser\",\"userId\":\"account-profile\",\"displayName\":\"Account\",\"nameKey\":\"account\"},\"generation\":\"generation-account\",\"identity\":{\"mode\":\"guest\",\"authorityId\":\"desktop-guest\",\"tenantId\":\"local-guest\",\"principalId\":\"guest\",\"expiresAtMs\":1000}}",
       "code": "schema"
     }
   ],

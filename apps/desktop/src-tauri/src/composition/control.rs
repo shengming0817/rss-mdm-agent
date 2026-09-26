@@ -257,7 +257,7 @@ impl Control {
         self.call(
             |id| NativeCall::Attach {
                 id,
-                data,
+                data: Box::new(data),
                 kind: NativeCallKind::NativeCall,
                 schema_version: NativeCallSchemaVersion::VALUE,
             },
@@ -273,9 +273,9 @@ impl Control {
         self.call(
             |id| NativeCall::Suspend {
                 id,
-                data: NativeSuspendData {
+                data: Box::new(NativeSuspendData {
                     context: context.clone(),
-                },
+                }),
                 kind: NativeCallKind::NativeCall,
                 schema_version: NativeCallSchemaVersion::VALUE,
             },

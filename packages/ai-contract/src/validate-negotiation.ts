@@ -386,7 +386,7 @@ const schema31 = {
           type: "integer",
           const: 6,
           description:
-            "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+            "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
         kind: {
           type: "string",
@@ -433,7 +433,7 @@ const schema31 = {
           type: "integer",
           const: 6,
           description:
-            "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+            "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
         kind: {
           type: "string",
@@ -506,7 +506,7 @@ const schema31 = {
               type: "integer",
               const: 6,
               description:
-                "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+                "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
             kind: {
               type: "string",
@@ -537,7 +537,7 @@ const schema31 = {
               type: "integer",
               const: 6,
               description:
-                "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+                "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
             kind: {
               type: "string",
@@ -580,7 +580,7 @@ const schema31 = {
               type: "integer",
               const: 6,
               description:
-                "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+                "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
             kind: {
               type: "string",
@@ -623,7 +623,7 @@ const schema31 = {
               type: "integer",
               const: 6,
               description:
-                "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+                "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
             kind: {
               type: "string",
@@ -671,7 +671,7 @@ const schema31 = {
               type: "integer",
               const: 6,
               description:
-                "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+                "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
             kind: {
               type: "string",
@@ -714,7 +714,7 @@ const schema31 = {
               type: "integer",
               const: 6,
               description:
-                "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+                "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
             kind: {
               type: "string",
@@ -756,7 +756,7 @@ const schema31 = {
               type: "integer",
               const: 6,
               description:
-                "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+                "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
             kind: {
               type: "string",
@@ -800,7 +800,7 @@ const schema31 = {
               type: "integer",
               const: 6,
               description:
-                "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+                "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
             kind: {
               type: "string",
@@ -849,7 +849,7 @@ const schema31 = {
               type: "integer",
               const: 6,
               description:
-                "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+                "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
             kind: {
               type: "string",
@@ -912,7 +912,7 @@ const schema31 = {
               type: "integer",
               const: 6,
               description:
-                "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+                "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
             kind: {
               type: "string",
@@ -994,7 +994,7 @@ const schema31 = {
               type: "integer",
               const: 6,
               description:
-                "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+                "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
             kind: {
               type: "string",
@@ -1065,7 +1065,7 @@ const schema31 = {
               type: "integer",
               const: 6,
               description:
-                "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+                "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
             kind: {
               type: "string",
@@ -1142,7 +1142,7 @@ const schema31 = {
               type: "integer",
               const: 6,
               description:
-                "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+                "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
             kind: {
               type: "string",
@@ -1219,7 +1219,7 @@ const schema31 = {
               type: "integer",
               const: 6,
               description:
-                "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+                "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
             kind: {
               type: "string",
@@ -1297,7 +1297,7 @@ const schema31 = {
               type: "integer",
               const: 6,
               description:
-                "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+                "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
             kind: {
               type: "string",
@@ -1385,7 +1385,7 @@ const schema31 = {
               type: "integer",
               const: 6,
               description:
-                "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+                "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
             kind: {
               type: "string",
@@ -1474,7 +1474,7 @@ const schema31 = {
               type: "integer",
               const: 6,
               description:
-                "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+                "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
             kind: {
               type: "string",
@@ -1579,7 +1579,7 @@ const schema31 = {
               type: "integer",
               const: 6,
               description:
-                "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+                "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
             kind: {
               type: "string",
@@ -1672,7 +1672,7 @@ const schema31 = {
               type: "integer",
               const: 6,
               description:
-                "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+                "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
             kind: {
               type: "string",
@@ -1755,7 +1755,7 @@ const schema31 = {
               type: "integer",
               const: 6,
               description:
-                "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+                "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
             kind: {
               type: "string",
@@ -1825,7 +1825,7 @@ const schema31 = {
               type: "integer",
               const: 6,
               description:
-                "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+                "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
             kind: {
               type: "string",
@@ -1896,7 +1896,7 @@ const schema31 = {
               type: "integer",
               const: 6,
               description:
-                "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+                "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
             kind: {
               type: "string",
@@ -1973,7 +1973,7 @@ const schema31 = {
               type: "integer",
               const: 6,
               description:
-                "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+                "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
             kind: {
               type: "string",
@@ -2063,7 +2063,7 @@ const schema31 = {
               type: "integer",
               const: 6,
               description:
-                "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+                "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
             kind: {
               type: "string",
@@ -2139,7 +2139,7 @@ const schema31 = {
               type: "integer",
               const: 6,
               description:
-                "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+                "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
             kind: {
               type: "string",
@@ -2204,7 +2204,7 @@ const schema31 = {
               type: "integer",
               const: 6,
               description:
-                "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+                "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
             kind: {
               type: "string",
@@ -2264,7 +2264,7 @@ const schema31 = {
               type: "integer",
               const: 6,
               description:
-                "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+                "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
             kind: {
               type: "string",
@@ -2339,7 +2339,7 @@ const schema31 = {
               type: "integer",
               const: 6,
               description:
-                "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+                "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
             kind: {
               type: "string",
@@ -2408,7 +2408,7 @@ const schema31 = {
               type: "integer",
               const: 6,
               description:
-                "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+                "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
             kind: {
               type: "string",
@@ -2467,7 +2467,7 @@ const schema31 = {
               type: "integer",
               const: 6,
               description:
-                "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+                "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
             kind: {
               type: "string",
@@ -2551,7 +2551,7 @@ const schema31 = {
               type: "integer",
               const: 6,
               description:
-                "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+                "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
             kind: {
               type: "string",
@@ -2624,7 +2624,7 @@ const schema31 = {
               type: "integer",
               const: 6,
               description:
-                "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+                "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
             kind: {
               type: "string",
@@ -2705,7 +2705,7 @@ const schema31 = {
           type: "integer",
           const: 6,
           description:
-            "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+            "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
         kind: {
           type: "string",
@@ -2766,7 +2766,7 @@ const schema31 = {
           type: "integer",
           const: 6,
           description:
-            "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+            "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
         kind: {
           type: "string",
@@ -2860,7 +2860,7 @@ const schema31 = {
           type: "integer",
           const: 6,
           description:
-            "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+            "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
         kind: {
           type: "string",
@@ -2941,7 +2941,7 @@ const schema31 = {
           type: "integer",
           const: 6,
           description:
-            "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+            "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
         kind: {
           type: "string",
@@ -3091,7 +3091,7 @@ const schema31 = {
           type: "integer",
           const: 6,
           description:
-            "Exact product wire version; Versions 1–4 are rejected without migration or fallback.",
+            "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
         kind: {
           type: "string",
@@ -3813,11 +3813,12 @@ const schema31 = {
         kind: { type: "string", const: "userContext" },
         user: { $ref: "#/$defs/TestUser" },
         generation: { $ref: "#/$defs/Id" },
+        identity: { $ref: "#/$defs/AccountIdentity" },
       },
       required: ["schemaVersion", "kind", "user", "generation"],
       additionalProperties: false,
       description:
-        "UserContext product wire record; validated against the V6 schema.",
+        "Native-owned local profile and generation. An absent identity is a legacy test profile; enterprise authority is established only by native AuthN and AuthZ verification.",
     },
     HistoryPreview: {
       type: "object",
@@ -4291,7 +4292,7 @@ const schema31 = {
         schemaVersion: { type: "integer", const: 6 },
         kind: { type: "string", const: "hostHealth" },
         ready: { type: "boolean", const: true },
-        protocol: { type: "integer", const: 3 },
+        protocol: { type: "integer", const: 4 },
       },
       required: ["schemaVersion", "kind", "ready", "protocol"],
       additionalProperties: false,
@@ -4415,6 +4416,110 @@ const schema31 = {
       items: { type: "integer", minimum: 0, maximum: 255 },
       minItems: 29,
       maxItems: 16412,
+    },
+    AccountIdentity: {
+      oneOf: [
+        {
+          type: "object",
+          properties: {
+            mode: { type: "string", const: "guest" },
+            authorityId: { $ref: "#/$defs/Id" },
+            tenantId: { $ref: "#/$defs/Id" },
+            principalId: { $ref: "#/$defs/Id" },
+          },
+          required: ["mode", "authorityId", "tenantId", "principalId"],
+          additionalProperties: false,
+        },
+        {
+          type: "object",
+          properties: {
+            mode: { type: "string", const: "enterprise" },
+            authorityId: { $ref: "#/$defs/Id" },
+            tenantId: { $ref: "#/$defs/Id" },
+            principalId: { $ref: "#/$defs/Id" },
+            organizationId: { type: "string", maxLength: 64, minLength: 1 },
+            expiresAtMs: {
+              type: "integer",
+              minimum: 0,
+              maximum: 9007199254740991,
+            },
+          },
+          required: [
+            "mode",
+            "authorityId",
+            "tenantId",
+            "principalId",
+            "organizationId",
+            "expiresAtMs",
+          ],
+          additionalProperties: false,
+        },
+      ],
+      description:
+        "Native-owned identity projection. Guest identities cannot carry enterprise metadata; enterprise identities require organization and expiry.",
+    },
+    AccountOrganization: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        label: { type: "string" },
+        origin: { type: "string" },
+        tenantId: { type: "string" },
+      },
+      required: ["id", "label", "origin", "tenantId"],
+      additionalProperties: false,
+      description:
+        "Native-normalized organization configuration; canonical HTTPS origin and tenant validation belong to the native account adapter.",
+    },
+    AccountFailureStage: {
+      type: "string",
+      enum: ["configuration", "login", "session", "authorization", "logout"],
+    },
+    AccountFailureKind: {
+      type: "string",
+      enum: [
+        "configuration",
+        "denied",
+        "unavailable",
+        "rate_limited",
+        "contract",
+      ],
+    },
+    AccountFailure: {
+      type: "object",
+      properties: {
+        stage: { $ref: "#/$defs/AccountFailureStage" },
+        reason: { $ref: "#/$defs/AccountFailureKind" },
+        observedAtMs: { $ref: "#/$defs/Counter" },
+      },
+      required: ["stage", "reason", "observedAtMs"],
+      additionalProperties: false,
+    },
+    AccountSettings: {
+      type: "object",
+      properties: {
+        schemaVersion: { type: "integer", const: 6 },
+        kind: { type: "string", const: "accountSettings" },
+        organizations: {
+          type: "array",
+          items: { $ref: "#/$defs/AccountOrganization" },
+          maxItems: 32,
+        },
+        selected: { type: "string" },
+      },
+      required: ["schemaVersion", "kind", "organizations"],
+      additionalProperties: false,
+    },
+    AccountStatus: {
+      type: "object",
+      properties: {
+        schemaVersion: { type: "integer", const: 6 },
+        kind: { type: "string", const: "accountStatus" },
+        current: { $ref: "#/$defs/UserContext" },
+        failure: { $ref: "#/$defs/AccountFailure" },
+      },
+      required: ["schemaVersion", "kind"],
+      additionalProperties: false,
     },
   },
   $ref: "#/$defs/Negotiation",

@@ -11,7 +11,7 @@ use std::{
 };
 use windows_sys::Win32::{
     Foundation::*,
-    Security::{Authorization::*, Cryptography::*, *},
+    Security::{Authorization::*, Credentials::*, Cryptography::*, *},
     Storage::FileSystem::*,
     System::{Com::CoTaskMemFree, Threading::*},
     UI::{
@@ -336,6 +336,51 @@ pub fn random_key() -> io::Result<Vec<u8>> {
         return Err(io::Error::other("system RNG"));
     }
     Ok(key)
+}
+pub fn enter_enterprise_password(target: &str) -> io::Result<Option<String>> {
+    let caption = wide("RSS 企业登录");
+    let message = wide(target);
+    let mut info: CREDUI_INFOW = unsafe { std::mem::zeroed() };
+    info.cbSize = size_of_val(&info) as u32;
+    info.pszCaptionText = caption.as_ptr();
+    info.pszMessageText = message.as_ptr();
+    let mut user = vec![0u16; 256];
+    user[..6].copy_from_slice(&wide("Secret")[..6]);
+    let mut password = vec![0u16; 1024];
+    let mut save = 0;
+    let result = unsafe {
+        CredUIPromptForCredentialsW(
+            &info,
+            wide("RSS custom API").as_ptr(),
+            null(),
+            0,
+            user.as_mut_ptr(),
+            user.len() as u32,
+            password.as_mut_ptr(),
+            password.len() as u32,
+            &mut save,
+            CREDUI_FLAGS_GENERIC_CREDENTIALS
+                | CREDUI_FLAGS_ALWAYS_SHOW_UI
+                | CREDUI_FLAGS_DO_NOT_PERSIST
+                | CREDUI_FLAGS_EXCLUDE_CERTIFICATES
+                | CREDUI_FLAGS_KEEP_USERNAME,
+        )
+    };
+    let value = if result == ERROR_CANCELLED {
+        Ok(None)
+    } else if result != 0 {
+        Err(io::Error::from_raw_os_error(result as i32))
+    } else {
+        let len = password
+            .iter()
+            .position(|c| *c == 0)
+            .unwrap_or(password.len());
+        String::from_utf16(&password[..len])
+            .map(Some)
+            .map_err(io::Error::other)
+    };
+    password.fill(0);
+    value
 }
 pub fn save_dialog() -> io::Result<Option<PathBuf>> {
     let mut file = vec![0u16; 32768];

@@ -68,8 +68,8 @@ async function bounded<T>(
 }
 export function operationMessage(code: string): string {
   const messages: Record<string, string> = {
-    verification_cancelled: "连接验证已取消，未保存配置。",
-    verification_refused: "模型拒绝了验证请求，未保存配置。",
+    verification_cancelled: "连接测试已取消，已保存配置保留。",
+    verification_refused: "模型拒绝了测试请求，已保存配置保留。",
     authentication_required:
       "认证不可用。请在管理 AI 连接中更新认证来源并重新验证；历史仍可查看。",
     connection_required: "请为本会话选择一条可用连接；历史仍可查看。",

@@ -607,6 +607,10 @@ it("drops a history preview that completes after the selected session changed", 
 it("maps history capacity and user cancellation without a generic retry error", () => {
   expect(operationMessage("limit_exceeded")).toContain("64 KiB");
   expect(operationMessage("cancelled")).toBe("");
+  expect(operationMessage("verification_cancelled")).toContain(
+    "已保存配置保留",
+  );
+  expect(operationMessage("verification_refused")).toContain("已保存配置保留");
 });
 
 it("deleting the selected connection preserves history and immediately disables ordinary input", async () => {
