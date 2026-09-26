@@ -9,6 +9,7 @@ import type {
   OutputQuality,
   StopOutcome,
   EffectAssessment,
+  SoftwareDiagnostic,
   DispatchCause,
   LimitReason,
 } from "./execution-types";
@@ -126,6 +127,20 @@ function stops(value: StopOutcome): string {
   const exhaustive: never = value;
   return exhaustive;
 }
+function softwareDiagnostic(value: SoftwareDiagnostic): string {
+  const labels: Record<SoftwareDiagnostic, string> = {
+    cleanupPending: "临时安装文件尚待安全清理，资源占用保留",
+    cleanupUnverified: "无法确认临时目录归属，需要人工核实",
+    awaitingDetection: "等待独立软件检测",
+    restartPending: "安装器要求重启设备；重启后重新核实",
+    detectionUnavailable: "软件检测不可用，请核对设备与读取权限",
+    unrecognizedVersion: "检测到未知软件内容，需要人工核实",
+    detectionBudgetExceeded: "软件检测预算耗尽，等待下一次有界核实",
+    desiredStateObserved: "已观察到目标软件状态；不代表后台活动已终止",
+    desiredStateMissing: "已检测软件状态，尚未达到目标",
+  };
+  return labels[value];
+}
 function assessments(value: EffectAssessment): string {
   switch (value) {
     case "noEffect":
@@ -200,6 +215,9 @@ const text = (value: unknown) => JSON.stringify(value, null, 2);
       {{ details.status.mode === "test" ? "S1 测试执行器" : "真实执行器" }}
     </h3>
     <p class="execution-phase">{{ phase(details.status.phase) }}</p>
+    <p v-if="details.status.software" class="software-diagnostic">
+      {{ softwareDiagnostic(details.status.software) }}
+    </p>
     <div v-if="details.status.process" class="process-facts">
       <p>
         根进程：{{
@@ -235,6 +253,30 @@ const text = (value: unknown) => JSON.stringify(value, null, 2);
       <dd>{{ details.status.operationRequestId }}</dd>
       <dt>冻结计划 / 摘要</dt>
       <dd>{{ details.plan.planId }}<br />{{ details.plan.planDigest }}</dd>
+      <template v-if="details.plan.execution.kind === 'software'">
+        <dt>软件执行</dt>
+        <dd class="software-operation">
+          {{
+            {
+              msi: "Windows MSI",
+              winget: "WinGet",
+              pkg: "macOS PKG",
+              homebrew: "Homebrew",
+              windowsBundle: "Windows ZIP Bundle",
+              macosBundle: "macOS ZIP Bundle",
+            }[details.plan.execution.adapter]
+          }}
+          ·
+          {{
+            {
+              install: "安装",
+              upgrade: "升级",
+              downgrade: "降级",
+              uninstall: "卸载",
+            }[details.plan.execution.mutation]
+          }}
+        </dd>
+      </template>
       <dt>当前尝试</dt>
       <dd>
         {{ details.status.attemptId ?? "尚未准入" }} · 共

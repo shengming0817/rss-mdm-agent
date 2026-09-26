@@ -1,5 +1,5 @@
 use crate::*;
-use execution_contract::{Authority, EvidenceKind, EvidenceRef, TargetScope};
+use execution_contract::*;
 use std::ops::ControlFlow::{self, Break, Continue};
 
 fn evidence(authority: &Authority, fact: &EvidenceRef, state: bool) -> Result<(), DecisionError> {
@@ -272,6 +272,9 @@ pub fn decide(
 ) -> Result<SoftwareDecision, DecisionError> {
     validate(intent, snapshot, limits)?;
     Ok(SoftwareDecision {
+        installer: snapshot.installer.clone(),
+        management: snapshot.management,
+        comparison: snapshot.comparison.clone(),
         intent: intent.clone(),
         snapshot: snapshot.revision.clone(),
         outcome: outcome(intent, snapshot),

@@ -156,6 +156,8 @@ pub struct ExecutionStatus {
     pub mode: ExecutionMode,
     /// Redacted process progress, distinct from lifecycle termination and effect proof.
     pub process: Option<execution_contract::ProcessSummary>,
+    /// Safe independent software diagnostic; observed state is not final success.
+    pub software: Option<execution_contract::SoftwareDiagnostic>,
     /// Current admitted attempt, absent before admission.
     pub attempt_id: Option<AttemptId>,
     /// Total admitted attempts; retries never reset it.

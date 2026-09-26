@@ -1,6 +1,6 @@
 use execution_contract::{
     Digest, ExactArtifactRef, ExecutionBudget, FrozenPlan, InterpreterRef, NetworkAccess,
-    Operation, PlanId, RunAs, SessionRequirement, Target, ValidityWindow, VersionedRef, V2,
+    Operation, PlanId, RunAs, SessionRequirement, Target, ValidityWindow, VersionedRef, V3,
 };
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -43,7 +43,9 @@ pub struct FrozenPlanSummary {
     /// Human or AI origin, without granting execution permission.
     pub initiator: execution_contract::Initiator,
     /// Version of the frozen execution plan, independent of the AI wire version.
-    pub schema_version: V2,
+    pub schema_version: V3,
+    /// Closed execution kind without private software paths or source inputs.
+    pub execution: ExecutionSummary,
     /// Exact frozen plan identity.
     pub plan_id: PlanId,
     /// Digest covers the complete original plan, including omitted private values.
@@ -77,6 +79,15 @@ impl FrozenPlanSummary {
             actor: p.request.actor.clone(),
             initiator: p.request.initiator.clone(),
             schema_version: p.schema_version,
+            execution: match &p.execution {
+                execution_contract::ExecutionSpec::Process {} => ExecutionSummary::Process {},
+                execution_contract::ExecutionSpec::Software { software } => {
+                    ExecutionSummary::Software {
+                        adapter: software.adapter,
+                        mutation: software.mutation,
+                    }
+                }
+            },
             plan_id: p.plan_id.clone(),
             plan_digest: plan.digest().clone(),
             target: p.request.target.clone(),
@@ -129,4 +140,19 @@ pub struct TaskPage {
     pub items: Vec<ExecutionTaskDetails>,
     /// Exclusive request continuation; absent at the end.
     pub next: Option<execution_contract::RequestId>,
+}
+
+/// Safe execution semantics for task presentation; it never grants execution permission.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ExecutionSummary {
+    /// Existing process or collection execution.
+    Process {},
+    /// Software mutation, requiring independent installed-state verification.
+    Software {
+        /// Selected platform adapter.
+        adapter: execution_contract::SoftwareKind,
+        /// Selected mutation.
+        mutation: execution_contract::MutationKind,
+    },
 }

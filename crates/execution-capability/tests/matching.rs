@@ -68,6 +68,10 @@ fn snapshot(p: &FrozenPlan) -> EnvironmentSnapshot {
             revision: Id::new("1").unwrap(),
         },
         platform: Some(s.request.target.platform),
+        software: Inventory {
+            complete: true,
+            entries: vec![],
+        },
         interpreters: inventory(vec![s.launch.interpreter.clone()]),
         launch_io: inventory(vec![LaunchIoCapability::CapturedText(TextEncoding::Utf8)]),
         run_as: inventory(vec![s.run_as.clone()]),

@@ -26,3 +26,8 @@ BootstrapUnpublished 仅来自发布前的 migration 提交；其它文件系统
 
 
 API 与配置见 [src](src/)，来源和权利依据见[来源记录](../../docs/reference/execution-sqlite.md)。
+
+软件 evidence 与原 attempt、plan digest 关联，读取时同时校验 BLOB 内身份。
+软件 staging 身份及清理状态归同一 evidence；效果核实后若清理仍未完成，保留 claim。
+静止提交后只允许清理状态推进，最终效果事实保持不可变；清理写入与 claim 释放在同一事务。
+旧 schema 仍原样保留并拒绝，无自动迁移或旧批准恢复。

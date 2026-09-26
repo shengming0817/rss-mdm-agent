@@ -146,7 +146,7 @@ pub fn freeze(
     let account = json!({"platform":"macos","subject":"fixture-user"});
     let artifact = json!({"resource":operation.resource.reference,"sha256":digest(ARTIFACT)});
     let spec = json!({
-        "schemaVersion":2,"planId":plan_id,
+        "schemaVersion":3,"execution":{"kind":"process"},"planId":plan_id,
         "request":{"schemaVersion":1,"requestId":request_id,"authority":{"kind":"test","id":"desktop-fixture"},"actor":actor,"initiator":initiator,"delegation":null,
         "target":{"device":"fixture-device","platform":"macos","scope":{"kind":"user","account":account}},"operation":{"action":operation.action,"resource":operation.resource.reference},"parameters":selected.parameters()},
         "launch":{"artifact":artifact,"interpreter":{"artifact":{"resource":{"id":"fixture-interpreter","revision":"r1"},"sha256":digest(b"fixed interpreter marker; no interpreter exists")},"profile":{"id":"fixture-only","revision":"r1"}},"argv":[{"kind":"artifactPath"}],"artifactEncoding":"utf8","stdin":{"kind":"closed"},"output":{"format":{"kind":"text"},"stdout":"utf8","stderr":"utf8"},"cwd":"/s1-fixture","env":{}},

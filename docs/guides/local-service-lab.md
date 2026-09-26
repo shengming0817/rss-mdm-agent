@@ -72,7 +72,7 @@ cargo test -p local-service、Host/desktop 测试及交叉编译只是前置证�
 系统场景使用 `--scope system` 和 `--probe-system`，需要管理员及 root 拥有的保护安装路径，不复用用户可写的开发目录。
 
 候选执行机制支持固定解释器、受控进程、输出及恢复接缝；生产身份和可信批准由 #2564 接线。
-当前 V2 计划和 SQLite 当前格式直接替换旧格式。旧库保留并拒绝打开；实验室明确选择新的私有目录初始化，不能删除旧库冒充恢复成功。
+当前 V3 计划和 SQLite schema 4直接替换旧格式。旧库保留并拒绝打开；实验室明确选择新的私有目录初始化，不能删除旧库冒充恢复成功。
 机制详情与本机测试入口见 [execution-runner](../../crates/execution-runner/README.md)。没有运行的系统账号、Windows、签名发布或真机矩阵不得记为已通过。
 
 

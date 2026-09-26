@@ -62,6 +62,7 @@ pub fn match_capabilities(
         source,
         platform,
         interpreters,
+        software,
         launch_io,
         run_as: identities,
         user_sessions,
@@ -72,6 +73,7 @@ pub fn match_capabilities(
         plan_id: _, // Validated version and correlation, not capabilities.
         request,
         launch,
+        execution,
         run_as,
         session_requirement,
         constraints,
@@ -110,6 +112,7 @@ pub fn match_capabilities(
     let mut remaining = limits.max_entries;
     let interpreters = checked_inventory(interpreters, Dimension::Interpreter, &mut remaining)?;
     let launch_io = checked_inventory(launch_io, Dimension::LaunchIo, &mut remaining)?;
+    let software = checked_inventory(software, Dimension::Software, &mut remaining)?;
     let identities = checked_inventory(identities, Dimension::RunAs, &mut remaining)?;
     let user_sessions = checked_inventory(user_sessions, Dimension::UserSession, &mut remaining)?;
     let isolation = checked_inventory(isolation, Dimension::Isolation, &mut remaining)?;
@@ -135,6 +138,9 @@ pub fn match_capabilities(
         },
     );
     push(Dimension::Interpreter, interpreters(interpreter));
+    if let Some(spec) = execution.software() {
+        push(Dimension::Software, software(&spec.adapter));
+    }
     match stdin {
         StandardInput::Closed {} => {}
         StandardInput::Controlled {

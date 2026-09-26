@@ -198,3 +198,43 @@ pub(crate) fn arguments(
     }
     Ok(())
 }
+
+// ref: System Informer phnt/ntexapi.h, SYSTEM_BOOT_ENVIRONMENT_INFORMATION (class 90).
+// The kernel GUID survives service restarts and is not derived from adjustable wall time.
+pub(crate) fn boot_generation() -> Result<Id, Error> {
+    #[repr(C)]
+    struct BootEnvironment {
+        identifier: windows_sys::core::GUID,
+        firmware: u32,
+        flags: u64,
+    }
+    let mut info = BootEnvironment {
+        identifier: windows_sys::core::GUID::from_u128(0),
+        firmware: 0,
+        flags: 0,
+    };
+    let mut returned = 0u32;
+    let status = unsafe {
+        windows_sys::Wdk::System::SystemInformation::NtQuerySystemInformation(
+            90,
+            (&mut info as *mut BootEnvironment).cast(),
+            std::mem::size_of::<BootEnvironment>() as u32,
+            &mut returned,
+        )
+    };
+    if status < 0 || returned < 16 {
+        return Err(Error::Unavailable);
+    }
+    let g = info.identifier;
+    Id::new(format!(
+        "{:08x}-{:04x}-{:04x}-{}",
+        g.data1,
+        g.data2,
+        g.data3,
+        g.data4
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    ))
+    .map_err(|_| Error::Unavailable)
+}

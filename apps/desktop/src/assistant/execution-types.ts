@@ -59,6 +59,22 @@ export type LimitReason =
   | "output"
   | "attempts";
 /**
+ * Safe software diagnostic; contains no paths, source coordinates or captured output.
+ *
+ * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
+ * via the `definition` "SoftwareDiagnostic".
+ */
+export type SoftwareDiagnostic =
+  | "awaitingDetection"
+  | "restartPending"
+  | "detectionUnavailable"
+  | "unrecognizedVersion"
+  | "detectionBudgetExceeded"
+  | "desiredStateObserved"
+  | "desiredStateMissing"
+  | "cleanupPending"
+  | "cleanupUnverified";
+/**
  * Closed stop request diagnostics. Neither variant is a termination/effect observation.
  *
  * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
@@ -170,6 +186,33 @@ export type EvidenceKind = "testResult" | "processExited" | "stateObserved";
  */
 export type ExecutionMode = "test" | "real";
 /**
+ * Safe execution semantics for task presentation; it never grants execution permission.
+ *
+ * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
+ * via the `definition` "ExecutionSummary".
+ */
+export type ExecutionSummary =
+  | {
+      kind: "process";
+    }
+  | {
+      /**
+       * Selected platform adapter.
+       */
+      adapter:
+        | "msi"
+        | "winget"
+        | "pkg"
+        | "homebrew"
+        | "windowsBundle"
+        | "macosBundle";
+      kind: "software";
+      /**
+       * Selected mutation.
+       */
+      mutation: "install" | "upgrade" | "downgrade" | "uninstall";
+    };
+/**
  * Opaque local reference identifier; syntax validity is not authenticity.
  *
  * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
@@ -210,9 +253,16 @@ export type Initiator =
     };
 /**
  * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
- * via the `definition` "LocalContractV2".
+ * via the `definition` "LocalContractV3".
  */
-export type LocalContractV2 = 2;
+export type LocalContractV3 = 3;
+/**
+ * One possible mutation, not a queued workflow step.
+ *
+ * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
+ * via the `definition` "MutationKind".
+ */
+export type MutationKind = "install" | "upgrade" | "downgrade" | "uninstall";
 /**
  * Quality of the captured result, independent from the exit code.
  *
@@ -308,6 +358,19 @@ export type SessionRequirement =
       account: OsAccountRef2;
       kind: "activeUser";
     };
+/**
+ * The supported software adapters. No plugin names or command strings are accepted.
+ *
+ * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
+ * via the `definition` "SoftwareKind".
+ */
+export type SoftwareKind =
+  | "msi"
+  | "winget"
+  | "pkg"
+  | "homebrew"
+  | "windowsBundle"
+  | "macosBundle";
 /**
  * Device-wide or explicit-user scope of the requested operation.
  *
@@ -421,6 +484,30 @@ export interface FrozenPlanSummary {
       };
   budget: ExecutionBudget;
   /**
+   * Closed execution kind without private software paths or source inputs.
+   */
+  execution:
+    | {
+        kind: "process";
+      }
+    | {
+        /**
+         * Selected platform adapter.
+         */
+        adapter:
+          | "msi"
+          | "winget"
+          | "pkg"
+          | "homebrew"
+          | "windowsBundle"
+          | "macosBundle";
+        kind: "software";
+        /**
+         * Selected mutation.
+         */
+        mutation: "install" | "upgrade" | "downgrade" | "uninstall";
+      };
+  /**
    * Human or AI origin, without granting execution permission.
    */
   initiator:
@@ -478,7 +565,7 @@ export interface FrozenPlanSummary {
   /**
    * Version of the frozen execution plan, independent of the AI wire version.
    */
-  schemaVersion: 2;
+  schemaVersion: 3;
   /**
    * Required target user session.
    */
@@ -810,6 +897,10 @@ export interface ExecutionStatus {
    */
   process: ProcessSummary | null;
   /**
+   * Safe independent software diagnostic; observed state is not final success.
+   */
+  software: SoftwareDiagnostic | null;
+  /**
    * Last stop request response; independent of termination/effect evidence.
    */
   stopOutcome: StopOutcome | null;
@@ -1009,6 +1100,10 @@ export interface ExecutionStatus1 {
    */
   process: ProcessSummary | null;
   /**
+   * Safe independent software diagnostic; observed state is not final success.
+   */
+  software: SoftwareDiagnostic | null;
+  /**
    * Last stop request response; independent of termination/effect evidence.
    */
   stopOutcome: StopOutcome | null;
@@ -1094,6 +1189,30 @@ export interface FrozenPlanSummary1 {
       };
   budget: ExecutionBudget;
   /**
+   * Closed execution kind without private software paths or source inputs.
+   */
+  execution:
+    | {
+        kind: "process";
+      }
+    | {
+        /**
+         * Selected platform adapter.
+         */
+        adapter:
+          | "msi"
+          | "winget"
+          | "pkg"
+          | "homebrew"
+          | "windowsBundle"
+          | "macosBundle";
+        kind: "software";
+        /**
+         * Selected mutation.
+         */
+        mutation: "install" | "upgrade" | "downgrade" | "uninstall";
+      };
+  /**
    * Human or AI origin, without granting execution permission.
    */
   initiator:
@@ -1151,7 +1270,7 @@ export interface FrozenPlanSummary1 {
   /**
    * Version of the frozen execution plan, independent of the AI wire version.
    */
-  schemaVersion: 2;
+  schemaVersion: 3;
   /**
    * Required target user session.
    */

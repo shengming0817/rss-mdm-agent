@@ -92,6 +92,9 @@ fn bound_file(path: &Path, directory: bool, immutable: bool) -> Result<File, Err
 pub(crate) fn protected_path(path: &Path, directory: bool) -> Result<(), Error> {
     bound_file(path, directory, false).map(|_| ())
 }
+pub(crate) fn open_directory(path: &Path) -> Result<File, Error> {
+    bound_file(path, true, false)
+}
 pub(crate) fn open_file(path: &Path) -> Result<File, Error> {
     bound_file(path, false, false)
 }
@@ -296,4 +299,46 @@ mod path_tests {
         assert!(WorkingDirectory::open(&root.join("ancestor/child")).is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
+}
+
+// ref: Apple XNU bsd/kern/kern_mib.c, kern.bootsessionuuid (kernel boot generation).
+pub(crate) fn boot_generation() -> Result<Id, Error> {
+    let mut bytes = [0u8; 128];
+    let mut length = bytes.len();
+    if unsafe {
+        libc::sysctlbyname(
+            c"kern.bootsessionuuid".as_ptr(),
+            bytes.as_mut_ptr().cast(),
+            &mut length,
+            std::ptr::null_mut(),
+            0,
+        )
+    } != 0
+        || length == 0
+        || length > bytes.len()
+    {
+        return Err(Error::Unavailable);
+    }
+    let text = std::str::from_utf8(&bytes[..length])
+        .map_err(|_| Error::Unavailable)?
+        .trim_end_matches('\0');
+    Id::new(text).map_err(|_| Error::Unavailable)
+}
+#[cfg(test)]
+mod boot_tests {
+    #[test]
+    fn same_kernel_boot_is_stable_across_reads() {
+        assert_eq!(
+            super::boot_generation().unwrap(),
+            super::boot_generation().unwrap()
+        );
+    }
+}
+
+pub(crate) fn file_identity(file: &File) -> Result<Id, Error> {
+    let m = file.metadata().map_err(|_| Error::Unavailable)?;
+    Id::new(format!("macos-{:x}-{:x}", m.dev(), m.ino())).map_err(|_| Error::Unavailable)
+}
+pub(crate) fn open_observed_file(path: &Path) -> Result<File, Error> {
+    open_file(path)
 }

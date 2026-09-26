@@ -207,6 +207,10 @@ impl AppHost for S1Host {
                 device: p.request.target.device.clone(),
                 source: reference("s1-test-capabilities"),
                 platform: Some(p.request.target.platform),
+                software: execution_capability::Inventory {
+                    complete: true,
+                    entries: vec![],
+                },
                 interpreters: inventory(vec![p.launch.interpreter.clone()]),
                 launch_io: inventory(vec![
                     LaunchIoCapability::ControlledStdin(TextEncoding::Utf8),

@@ -48,6 +48,8 @@ pub struct Artifacts {
     pub work_root: PathBuf,
     /// Trusted per-attempt input resolver; absent means controlled stdin is refused.
     pub controlled_input: Option<Arc<dyn InputResolver>>,
+    /// Fixed auxiliary software artifacts; absent for ordinary process plans.
+    pub software: Option<crate::software::SoftwareArtifacts>,
     // Only the unit-test binary accepts caller-owned fixture sources; no production switch exists.
     #[cfg(test)]
     pub(crate) fixture_owned: bool,
@@ -76,6 +78,7 @@ pub(crate) struct Materialized {
     cwd: super::platform::WorkingDirectory,
     _interpreter: File,
     _leases: Vec<super::platform::PathLease>,
+    pub(crate) software: Option<crate::software::Lease>,
 }
 impl Materialized {
     pub(crate) fn configure(&self, command: &mut std::process::Command) -> Result<(), Error> {
@@ -107,6 +110,8 @@ impl Artifacts {
         &self,
         plan: &FrozenPlan,
         attempt: &AttemptId,
+        ownership: Option<SoftwareProvenance>,
+        control: &crate::software::PreparationControl,
     ) -> Result<Materialized, Error> {
         let p = plan.spec();
         super::platform::identity(&p.run_as, &p.session_requirement)?;
@@ -114,13 +119,33 @@ impl Artifacts {
             return Err(Error::Capability);
         }
         super::platform::profile(&p.launch.interpreter.profile)?;
+        super::platform::protected_path(&self.work_root, true)?;
+        let work_lease = super::platform::PathLease::source(&self.work_root, false)?;
+        let software = match (&p.execution, &self.software) {
+            (ExecutionSpec::Process {}, None) => None,
+            (ExecutionSpec::Software { .. }, Some(source)) => Some(source.prepare(
+                plan,
+                attempt,
+                ownership.ok_or(Error::Denied)?,
+                &self.work_root,
+                control,
+            )?),
+            _ => return Err(Error::Denied),
+        };
+        let entry = software
+            .as_ref()
+            .map(|s| s.entry(p.execution.software().expect("software")))
+            .transpose()?
+            .flatten();
+        let content_path = entry.as_deref().unwrap_or(&self.content);
         #[cfg(not(test))]
-        let content_immutable = true;
+        let content_immutable = entry.is_none();
         #[cfg(test)]
-        let content_immutable = !self.fixture_owned;
+        let content_immutable = !self.fixture_owned && entry.is_none();
         let mut leases = vec![
+            work_lease,
             super::platform::PathLease::source(&self.interpreter, true)?,
-            super::platform::PathLease::source(&self.content, content_immutable)?,
+            super::platform::PathLease::source(content_path, content_immutable)?,
         ];
         let (interpreter, _) = exact(
             &self.interpreter,
@@ -128,7 +153,7 @@ impl Artifacts {
             256 * 1024 * 1024,
         )?;
         let (content_file, content) =
-            exact(&self.content, &p.launch.artifact.sha256, 16 * 1024 * 1024)?;
+            exact(content_path, &p.launch.artifact.sha256, 16 * 1024 * 1024)?;
         super::platform::encoding(p.launch.artifact_encoding)?;
         match p.launch.artifact_encoding {
             ArtifactEncoding::Utf8
@@ -141,6 +166,15 @@ impl Artifacts {
                 if content.starts_with(&[0xff, 0xfe])
                     && crate::output::decode(&content[2..], TextEncoding::Utf16Le).is_some() => {}
             _ => return Err(Error::InvalidInput),
+        }
+        if let Some(spec) = p.execution.software() {
+            if spec.mutation != MutationKind::Uninstall || spec.adapter != SoftwareKind::Pkg {
+                if let Some(expected) = crate::software::install_entry(spec.adapter) {
+                    if content != expected {
+                        return Err(Error::Denied);
+                    }
+                }
+            }
         }
         let query = p.launch.interpreter.profile.id.as_str() == "native-osquery-info-v1";
         if query
@@ -162,7 +196,7 @@ impl Artifacts {
             attempt,
             &p.launch.interpreter.profile,
         )?;
-        let args = p
+        let mut args = p
             .launch
             .argv
             .iter()
@@ -176,6 +210,9 @@ impl Artifacts {
             })
             .collect::<Result<Vec<_>, _>>()?;
         super::platform::arguments(&p.launch.interpreter.profile, &args, &payload.path)?;
+        if let Some(software) = &software {
+            args.extend(software.args.clone());
+        }
         let mut env = BTreeMap::new();
         for (key, value) in &p.launch.env {
             let upper = key.as_str().to_ascii_uppercase();
@@ -233,6 +270,7 @@ impl Artifacts {
             cwd,
             _interpreter: interpreter,
             _leases: leases,
+            software,
         })
     }
 }

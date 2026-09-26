@@ -59,7 +59,21 @@ impl Store {
         } else {
             None
         };
+        let software = if matches!(
+            access,
+            ExecutionAccess::Result | ExecutionAccess::Audit | ExecutionAccess::RunnerFact
+        ) {
+            crate::software::diagnostic(
+                &tx,
+                &plan,
+                execution.snapshot().attempt.as_ref().map(|a| &a.id),
+                self.limits,
+            )?
+        } else {
+            None
+        };
         Ok(ExecutionRecord {
+            software,
             execution,
             admission,
             process,
@@ -456,6 +470,7 @@ impl Store {
                 "INSERT INTO attempts VALUES(?1,?2,?3)",
                 params![attempt_id.as_str(), scope.key(), op.as_str()],
             )?;
+            crate::software::claim(&w.tx, &plan, attempt_id)?;
             audit.consumptions = consume(&w, &plan, attempt_id, &gate, &h)?;
             audit.event.as_mut().expect("plan audit").decision = Decision::Admitted {};
         }
@@ -479,6 +494,7 @@ impl Store {
         ) {
             audit.reason = AuditReason::Lifecycle(evaluation.directive);
         }
+        crate::software::settle(&w.tx, &plan, next, w.limits)?;
         let reserve = terminal_reserve(current.snapshot(), next, reserve, &event);
         let changed = w.tx.execute("UPDATE executions SET snapshot=?1,revision=?2,reserve=?3 WHERE scope=?4 AND revision=?5",
             params![w.bounded(next)?, integer(next.revision)?, reserve, scope.key(), integer(transition.expected_revision())?])?;

@@ -14,10 +14,13 @@ use std::{
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+type MutationSlot = Arc<Mutex<Option<Box<dyn crate::software::SoftwareMutationLease>>>>;
 struct Record {
+    mutation: MutationSlot,
     plan: FrozenPlan,
     cancel: Arc<AtomicBool>,
     facts: Arc<Mutex<Option<ProcessEvidence>>>,
+    software: Arc<Mutex<Option<SoftwareEvidence>>>,
 }
 /// One bounded OS runner. Its inventory is supplied by trusted host code, never IPC DTOs.
 pub struct NativeRunner {
@@ -51,6 +54,7 @@ impl NativeRunner {
         plan: &FrozenPlan,
         attempt: &AttemptId,
         allowance: DispatchAllowance,
+        ownership: Option<SoftwareProvenance>,
     ) -> Result<DispatchOutcome, Error> {
         let received = Instant::now();
         let mut records = self.records.lock().map_err(|_| Error::Unavailable)?;
@@ -67,12 +71,16 @@ impl NativeRunner {
         preparing.quiescent = false;
         preparing.quality = OutputQuality::Partial;
         let facts = Arc::new(Mutex::new(Some(preparing)));
+        let software = Arc::new(Mutex::new(None));
+        let mutation = Arc::new(Mutex::new(None));
         records.insert(
             attempt.clone(),
             Record {
+                mutation: mutation.clone(),
                 plan: plan.clone(),
                 cancel: cancel.clone(),
                 facts: facts.clone(),
+                software: software.clone(),
             },
         );
         drop(records); // Never hold the admission lock during filesystem or input I/O.
@@ -109,13 +117,24 @@ impl NativeRunner {
         let spawned = std::thread::Builder::new()
             .name("rss-execution-owner".into())
             .spawn(move || {
+                let control = crate::software::PreparationControl {
+                    deadline,
+                    cancelled: cancel.clone(),
+                };
                 let prepared = source
                     .ok_or(Error::Unbound)
-                    .and_then(|a| a.prepare(&plan, &attempt));
+                    .and_then(|a| a.prepare(&plan, &attempt, ownership, &control));
                 let materialized = match prepared {
                     Ok(value) => value,
                     Err(error) => {
-                        publish(&facts, failed(&plan, &attempt, &id, classify(error)));
+                        let failure = if cancel.load(Ordering::Acquire) {
+                            rejected(&plan, &attempt, &id, ProcessEnd::Cancelled)
+                        } else if Instant::now() >= deadline {
+                            rejected(&plan, &attempt, &id, ProcessEnd::TimedOut)
+                        } else {
+                            failed(&plan, &attempt, &id, classify(error))
+                        };
+                        publish(&facts, failure);
                         return;
                     }
                 };
@@ -136,7 +155,11 @@ impl NativeRunner {
                     id,
                     (allowance.remaining_output_bytes, deadline),
                     cancel,
-                    facts,
+                    Captures {
+                        mutation,
+                        process: facts,
+                        software,
+                    },
                 ));
             });
         Ok(if spawned.is_ok() {
@@ -157,6 +180,113 @@ impl Drop for NativeRunner {
     }
 }
 impl RunnerPort for NativeRunner {
+    fn software_evidence(
+        &self,
+        plan: &FrozenPlan,
+        attempt: &AttemptId,
+        context: execution_app::SoftwareObservation<'_>,
+    ) -> Result<Option<SoftwareEvidence>, Error> {
+        let Some(spec) = plan.spec().execution.software() else {
+            return Ok(None);
+        };
+        let artifacts = self
+            .artifacts
+            .get(plan.digest().as_str())
+            .ok_or(Error::Unbound)?;
+        let control = crate::software::PreparationControl {
+            deadline: context.deadline,
+            cancelled: Arc::new(AtomicBool::new(false)),
+        };
+        let mut records = self.records.lock().map_err(|_| Error::Unavailable)?;
+        let live = if let Some(record) = records.get(attempt) {
+            if record.plan.digest() != plan.digest() {
+                return Err(Error::Denied);
+            }
+            let value = record
+                .software
+                .lock()
+                .map_err(|_| Error::Unavailable)?
+                .clone();
+            if value.is_none()
+                && !record
+                    .facts
+                    .lock()
+                    .map_err(|_| Error::Unavailable)?
+                    .as_ref()
+                    .is_some_and(|f| f.finished)
+            {
+                return Ok(None);
+            }
+            value
+        } else {
+            None
+        };
+        let mut value = if let Some(previous) = context.previous.filter(|_| context.finalized) {
+            previous.clone()
+        } else if let Some(live) = live {
+            live
+        } else {
+            let observation = crate::software::detect(spec, &control);
+            SoftwareEvidence {
+                object_identity: observation.object,
+                attempt_id: attempt.clone(),
+                plan_digest: plan.digest().clone(),
+                runner: self.id.clone(),
+                before: None,
+                detected: observation.state,
+                restart_required: false,
+                boot_generation: crate::platform::boot_generation().ok(),
+                staging: match std::fs::symlink_metadata(
+                    artifacts
+                        .work_root
+                        .join(format!("software-{}", attempt.as_str())),
+                ) {
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        SoftwareStaging::NotRequired {}
+                    }
+                    _ => SoftwareStaging::Unverified {},
+                },
+            }
+        };
+        if let Some(previous) = context.previous {
+            value.staging = previous.staging.clone();
+        }
+        if context.quiescent {
+            if let Some(record) = records.get(attempt) {
+                let mut slot = record.mutation.lock().map_err(|_| Error::Unavailable)?;
+                if let Some(lease) = slot.as_mut() {
+                    lease.release(context.deadline)?;
+                }
+                *slot = None;
+            } else if !context.finalized {
+                let mut lease = artifacts
+                    .software
+                    .as_ref()
+                    .ok_or(Error::Unbound)?
+                    .probe
+                    .recover_mutation(plan, attempt, context.deadline)?;
+                lease.release(context.deadline)?;
+            }
+        }
+        value.staging = crate::software::recover_staging(
+            &artifacts.work_root,
+            attempt,
+            &value.staging,
+            context.quiescent,
+            &control,
+        );
+        if context.finalized
+            && records.get(attempt).is_some_and(|r| {
+                r.facts
+                    .lock()
+                    .is_ok_and(|f| f.as_ref().is_some_and(|f| f.finished))
+            })
+        {
+            records.remove(attempt);
+        }
+        Ok(Some(value))
+    }
+
     fn id(&self) -> Id {
         self.id.clone()
     }
@@ -165,6 +295,7 @@ impl RunnerPort for NativeRunner {
     }
     fn dispatch(&self, permit: AuthorizedDispatch) -> Result<DispatchOutcome, Error> {
         let allowance = permit.allowance();
+        let ownership = permit.software_ownership();
         permit.dispatch(|plan, action| {
             if action.mode() != ExecutionMode::Real
                 || matches!(plan.spec().request.authority, Authority::Test { .. })
@@ -174,7 +305,7 @@ impl RunnerPort for NativeRunner {
             {
                 return Err(Error::Denied);
             }
-            self.launch(plan, action.attempt_id(), allowance)
+            self.launch(plan, action.attempt_id(), allowance, ownership)
         })
     }
     fn acknowledge_capture(&self, plan: &FrozenPlan, facts: &ProcessEvidence) -> Result<(), Error> {
@@ -193,7 +324,14 @@ impl RunnerPort for NativeRunner {
             {
                 return Err(Error::Conflict);
             }
-            records.remove(&facts.attempt_id);
+            if record
+                .mutation
+                .lock()
+                .map_err(|_| Error::Unavailable)?
+                .is_none()
+            {
+                records.remove(&facts.attempt_id);
+            }
         }
         Ok(())
     }
@@ -228,7 +366,31 @@ impl RunnerPort for NativeRunner {
         stage: ObservationStage,
         now: u64,
     ) -> Result<Option<ObservationFacts>, Error> {
-        let Some(facts) = self.evidence(plan, attempt)? else {
+        let capture = self.evidence(plan, attempt)?;
+        if stage == ObservationStage::Termination
+            && capture.as_ref().is_none_or(|f| f.finished && !f.quiescent)
+        {
+            if let Some(source) = self
+                .artifacts
+                .get(plan.digest().as_str())
+                .and_then(|a| a.software.as_ref())
+            {
+                if let Some(evidence) = source.probe.quiescence(plan, attempt)? {
+                    if evidence.runner != self.id || evidence.kind != EvidenceKind::StateObserved {
+                        return Err(Error::Denied);
+                    }
+                    return Ok(Some(ObservationFacts {
+                        plan_id: plan.spec().plan_id.clone(),
+                        plan_digest: plan.digest().clone(),
+                        attempt_id: attempt.clone(),
+                        observed_at_unix_ms: now,
+                        evidence,
+                        observation: Observation::Quiescent {},
+                    }));
+                }
+            }
+        }
+        let Some(facts) = capture else {
             return Ok(None);
         };
         if !facts.finished || !facts.quiescent {
@@ -349,6 +511,11 @@ fn publish(slot: &Mutex<Option<ProcessEvidence>>, facts: ProcessEvidence) {
         *slot = Some(facts)
     }
 }
+struct Captures {
+    mutation: MutationSlot,
+    process: Arc<Mutex<Option<ProcessEvidence>>>,
+    software: Arc<Mutex<Option<SoftwareEvidence>>>,
+}
 async fn run(
     mut materialized: Materialized,
     plan: FrozenPlan,
@@ -356,8 +523,57 @@ async fn run(
     id: Id,
     (cap, deadline): (u64, Instant),
     cancel: Arc<AtomicBool>,
-    shared: Arc<Mutex<Option<ProcessEvidence>>>,
+    captures: Captures,
 ) {
+    let Captures {
+        mutation,
+        process: shared,
+        software: software_facts,
+    } = captures;
+    if let Some(lease) = &mut materialized.software {
+        if let Ok(mut slot) = software_facts.lock() {
+            *slot = Some(SoftwareEvidence {
+                staging: lease.staging().unwrap_or(SoftwareStaging::Unverified {}),
+                attempt_id: attempt.clone(),
+                plan_digest: plan.digest().clone(),
+                runner: id.clone(),
+                before: Some(lease.before.clone()),
+                object_identity: lease.before_object.clone(),
+                detected: lease.before.clone(),
+                restart_required: false,
+                boot_generation: crate::platform::boot_generation().ok(),
+            });
+        }
+    }
+    if let Some(lease) = &materialized.software {
+        let control = crate::software::PreparationControl {
+            deadline,
+            cancelled: cancel.clone(),
+        };
+        if let Err(error) = lease.recheck(
+            plan.spec().execution.software().expect("software"),
+            &control,
+        ) {
+            publish(&shared, failed(&plan, &attempt, &id, classify(error)));
+            return;
+        }
+    }
+    if let Some(lease) = &mut materialized.software {
+        // All materialization and the final target recheck have succeeded. Store the active
+        // token before any command can spawn; a failed activation still aborts preparation.
+        let activated = mutation
+            .lock()
+            .map_err(|_| Error::Unavailable)
+            .and_then(|mut slot| {
+                let prepared = lease.mutation.take().ok_or(Error::Conflict)?;
+                *slot = Some(prepared.activate(&attempt, deadline)?);
+                Ok(())
+            });
+        if let Err(error) = activated {
+            publish(&shared, failed(&plan, &attempt, &id, classify(error)));
+            return;
+        }
+    }
     let mut command = tokio::process::Command::new(&materialized.interpreter);
     command
         .args(&materialized.args)
@@ -615,6 +831,23 @@ async fn run(
     {
         fault(&mut facts, ProcessFailureKind::OutputValidation);
     }
+    if let Some(spec) = plan.spec().execution.software() {
+        if let Ok(mut slot) = software_facts.lock() {
+            if let Some(value) = slot.as_mut() {
+                let observation = crate::software::detect(
+                    spec,
+                    &crate::software::PreparationControl {
+                        deadline: Instant::now() + Duration::from_secs(1),
+                        cancelled: cancel.clone(),
+                    },
+                );
+                value.detected = observation.state;
+                value.object_identity = observation.object;
+                value.restart_required = matches!(facts.exit_code, Some(3010 | 1641));
+            }
+        }
+    }
+    drop(materialized.software.take());
     publish(&facts);
 }
 #[cfg(test)]

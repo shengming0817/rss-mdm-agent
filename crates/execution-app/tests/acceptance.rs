@@ -308,7 +308,7 @@ fn newer_schema_retains_read_only_startup_diagnostic() {
     };
     assert_eq!(
         format!("{error:?}"),
-        "NewerSchema { found: 999, supported: 3 }"
+        "NewerSchema { found: 999, supported: 4 }"
     );
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
     assert_eq!(runner.dispatch_count(), 0);
@@ -1291,4 +1291,177 @@ fn live_capture_stays_running_and_retired_capture_survives_reopen() {
     assert!(!serde_json::to_string(&details)
         .unwrap()
         .contains("secret-canary"));
+}
+
+#[test]
+fn software_application_persists_before_ack_and_reconciles_after_reopen_without_dispatch() {
+    use execution_lifecycle::{ExecutionMode, Observation, ObservationFacts};
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    };
+    #[derive(Clone)]
+    struct SoftwareRunner {
+        inner: DeterministicTestRunner,
+        db: std::path::PathBuf,
+        capture: Arc<Mutex<Option<ProcessEvidence>>>,
+        ready: Arc<AtomicBool>,
+        recovered: Arc<AtomicBool>,
+    }
+    impl RunnerPort for SoftwareRunner {
+        fn id(&self) -> Id {
+            self.inner.id()
+        }
+        fn mode(&self) -> ExecutionMode {
+            ExecutionMode::Test
+        }
+        fn dispatch(&self, p: AuthorizedDispatch) -> Result<DispatchOutcome, Error> {
+            self.inner.dispatch(p)
+        }
+        fn stop(&self, p: &FrozenPlan, a: &AttemptId) -> Result<(), Error> {
+            self.inner.stop(p, a)
+        }
+        fn evidence(
+            &self,
+            _: &FrozenPlan,
+            _: &AttemptId,
+        ) -> Result<Option<ProcessEvidence>, Error> {
+            Ok(self.capture.lock().unwrap().clone())
+        }
+        fn software_evidence(
+            &self,
+            p: &FrozenPlan,
+            a: &AttemptId,
+            _: execution_app::SoftwareObservation<'_>,
+        ) -> Result<Option<SoftwareEvidence>, Error> {
+            Ok(self.ready.load(Ordering::SeqCst).then(|| SoftwareEvidence {
+                staging: execution_contract::SoftwareStaging::NotRequired {},
+                attempt_id: a.clone(),
+                plan_digest: p.digest().clone(),
+                runner: self.id(),
+                before: if self.recovered.load(Ordering::SeqCst) {
+                    None
+                } else {
+                    Some(SoftwareState::Absent {})
+                },
+                detected: SoftwareState::Present {
+                    version: PackageValue::new("1.0").unwrap(),
+                },
+                restart_required: false,
+                object_identity: None,
+                boot_generation: Some(id("test-boot")),
+            }))
+        }
+        fn acknowledge_capture(&self, _: &FrozenPlan, f: &ProcessEvidence) -> Result<(), Error> {
+            let sql = rusqlite::Connection::open(&self.db).unwrap();
+            let bytes: Vec<u8> = sql
+                .query_row(
+                    "SELECT body FROM software_evidence WHERE attempt_id=?1",
+                    [f.attempt_id.as_str()],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            let stored: SoftwareEvidence = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(stored.before, Some(SoftwareState::Absent {}));
+            assert_eq!(stored.plan_digest, f.plan_digest);
+            self.capture.lock().unwrap().take();
+            Ok(())
+        }
+        fn observe(
+            &self,
+            p: &FrozenPlan,
+            a: &AttemptId,
+            stage: ObservationStage,
+            now: u64,
+        ) -> Result<Option<ObservationFacts>, Error> {
+            Ok(
+                (self.recovered.load(Ordering::SeqCst) && stage == ObservationStage::Termination)
+                    .then(|| ObservationFacts {
+                        plan_id: p.spec().plan_id.clone(),
+                        plan_digest: p.digest().clone(),
+                        attempt_id: a.clone(),
+                        observed_at_unix_ms: now,
+                        evidence: EvidenceRef {
+                            reference: reference("recovered-quiescence"),
+                            kind: EvidenceKind::TestResult,
+                            runner: self.id(),
+                        },
+                        observation: Observation::Quiescent {},
+                    }),
+            )
+        }
+    }
+    let db = Database::new();
+    let mut host = TestHost::new();
+    let p = FrozenPlan::freeze(
+        decode_plan(
+            include_bytes!("../../execution-contract/tests/fixtures/software.json"),
+            &test_store_limits().plan,
+        )
+        .unwrap(),
+        &test_store_limits().plan,
+    )
+    .unwrap();
+    host.template = p.clone();
+    let runner = SoftwareRunner {
+        inner: DeterministicTestRunner::new(id("test-runner"), TestScenario::Wait, 8).unwrap(),
+        db: db.path.clone(),
+        capture: Arc::new(Mutex::new(None)),
+        ready: Arc::new(AtomicBool::new(false)),
+        recovered: Arc::new(AtomicBool::new(false)),
+    };
+    let request = &p.spec().request.request_id;
+    let mut app = ExecutionApp::start(
+        &db.path,
+        Startup::CreateTest,
+        host.clone(),
+        runner.clone(),
+        AppConfig::test_defaults(1),
+    )
+    .unwrap();
+    let first = app.submit(&caller(), request, &p).unwrap();
+    let attempt = first.attempt_id.unwrap();
+    assert_eq!(runner.inner.dispatch_count(), 1);
+    runner.ready.store(true, Ordering::SeqCst);
+    *runner.capture.lock().unwrap() = Some(ProcessEvidence {
+        plan_digest: p.digest().clone(),
+        attempt_id: attempt,
+        runner: id("test-runner"),
+        scope: ProcessScope::Preparing {},
+        finished: true,
+        exit_code: Some(0),
+        end: ProcessEnd::Exited,
+        failure_kind: ProcessFailureKind::None,
+        quiescent: false,
+        stdout: vec![],
+        stderr: vec![],
+        total_output_bytes: 0,
+        quality: OutputQuality::Complete,
+    });
+    app.reconcile(request).unwrap();
+    assert!(runner.capture.lock().unwrap().is_none());
+    assert_eq!(db.count("software_claims"), 2);
+    drop(app);
+    runner.recovered.store(true, Ordering::SeqCst);
+    let mut app = ExecutionApp::start(
+        &db.path,
+        Startup::OpenTest,
+        host,
+        runner.clone(),
+        AppConfig::test_defaults(1),
+    )
+    .unwrap();
+    assert_eq!(app.submit(&caller(), request, &p).unwrap().attempts, 1);
+    let result = app.reconcile(request).unwrap();
+    assert_eq!(
+        result.assessment,
+        Some(execution_lifecycle::EffectAssessment::Satisfied)
+    );
+    assert_eq!(
+        result.software,
+        Some(SoftwareDiagnostic::DesiredStateObserved)
+    );
+    assert_eq!(runner.inner.dispatch_count(), 1);
+    assert_eq!(db.count("software_claims"), 0);
+    assert_eq!(db.count("software_ownership"), 1);
 }

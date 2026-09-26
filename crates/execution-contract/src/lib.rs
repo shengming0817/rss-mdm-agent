@@ -12,6 +12,7 @@ mod model;
 mod network;
 mod plan;
 mod process;
+mod software;
 mod validation;
 mod value;
 pub use audit::*;
@@ -22,6 +23,7 @@ pub use model::*;
 pub use network::*;
 pub use plan::{decode_plan, FrozenPlan};
 pub use process::*;
+pub use software::*;
 pub use validation::PlanLimits;
 pub use value::*;
 

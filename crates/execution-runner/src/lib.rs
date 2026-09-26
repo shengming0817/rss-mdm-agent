@@ -8,6 +8,8 @@ mod macos;
 mod materialize;
 mod output;
 mod runner;
+/// Software materialization and independent ecosystem facts.
+pub mod software;
 #[cfg(target_os = "macos")]
 use macos as platform;
 pub use materialize::{Artifacts, InputBytes, InputResolver};

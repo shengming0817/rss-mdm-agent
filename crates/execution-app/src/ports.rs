@@ -71,8 +71,13 @@ pub struct AuthorizedDispatch {
     pub(crate) plan: FrozenPlan,
     pub(crate) allowance: execution_lifecycle::DispatchAllowance,
     pub(crate) issued: std::time::Instant,
+    pub(crate) software_ownership: Option<execution_contract::SoftwareProvenance>,
 }
 impl AuthorizedDispatch {
+    /// Protected provenance read from the same device journal after admission.
+    pub fn software_ownership(&self) -> Option<execution_contract::SoftwareProvenance> {
+        self.software_ownership.clone()
+    }
     /// Inspect the authorized immutable plan to select the host's runner implementation.
     /// Reading it cannot clone or reconstruct first-dispatch authority.
     pub fn plan(&self) -> &FrozenPlan {
@@ -109,8 +114,46 @@ pub enum ObservationStage {
     /// Assess the effect after quiescence was durably recorded.
     Assessment,
 }
+/// Bounded observation context loaded by the application from its authorized journal.
+/// This is not an IPC DTO and never grants a new execution attempt.
+#[derive(Clone, Copy)]
+pub struct SoftwareObservation<'a> {
+    /// Independent observation deadline, including cleanup work.
+    pub deadline: std::time::Instant,
+    /// Previously committed software evidence for this exact attempt.
+    pub previous: Option<&'a execution_contract::SoftwareEvidence>,
+    /// The journal already contains independently verified quiescence/termination.
+    pub quiescent: bool,
+    /// Keep historical effect facts immutable; only cleanup may advance.
+    pub finalized: bool,
+}
+impl SoftwareObservation<'_> {
+    /// A fresh bounded probe with no restored history or termination assertion.
+    pub fn new(deadline: std::time::Instant) -> Self {
+        Self {
+            deadline,
+            previous: None,
+            quiescent: false,
+            finalized: false,
+        }
+    }
+}
 /// Trusted bounded runner seam. Only dispatch may start work; observations never replay it.
 pub trait RunnerPort {
+    /// Independent software observations. Process-only runners must reject software plans.
+    fn software_evidence(
+        &self,
+        plan: &FrozenPlan,
+        _attempt: &AttemptId,
+        _observation: SoftwareObservation<'_>,
+    ) -> Result<Option<execution_contract::SoftwareEvidence>, Error> {
+        if plan.spec().execution.software().is_some() {
+            Err(Error::Unsupported)
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Exact runner identity, immutable across a task's attempts.
     fn id(&self) -> Id;
     /// Provenance supported by this implementation.

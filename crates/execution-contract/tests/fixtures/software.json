@@ -1,0 +1,200 @@
+{
+  "schemaVersion": 3,
+  "planId": "plan-1",
+  "request": {
+    "schemaVersion": 1,
+    "requestId": "request-1",
+    "authority": {
+      "kind": "test",
+      "id": "test-authority"
+    },
+    "actor": "actor-1",
+    "initiator": {
+      "kind": "human",
+      "osSession": {
+        "device": "origin-device",
+        "account": {
+          "platform": "linux",
+          "subject": "uid:1000"
+        },
+        "session": "login-1"
+      }
+    },
+    "delegation": {
+      "id": "delegation-1",
+      "revision": "1"
+    },
+    "target": {
+      "device": "device-1",
+      "platform": "macos",
+      "scope": {
+        "kind": "device"
+      }
+    },
+    "operation": {
+      "action": "software.install",
+      "resource": {
+        "id": "network-tool",
+        "revision": "1"
+      }
+    },
+    "parameters": {}
+  },
+  "launch": {
+    "artifact": {
+      "resource": {
+        "id": "script-1",
+        "revision": "1"
+      },
+      "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
+    },
+    "interpreter": {
+      "artifact": {
+        "resource": {
+          "id": "test-interpreter",
+          "revision": "1"
+        },
+        "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
+      },
+      "profile": {
+        "id": "native-posix-sh-file",
+        "revision": "1"
+      }
+    },
+    "argv": [
+      {
+        "kind": "artifactPath"
+      }
+    ],
+    "cwd": "/workspace",
+    "env": {},
+    "artifactEncoding": "utf8",
+    "stdin": {
+      "kind": "closed"
+    },
+    "output": {
+      "stdout": "utf8",
+      "stderr": "utf8",
+      "format": {
+        "kind": "text"
+      }
+    }
+  },
+  "runAs": {
+    "kind": "user",
+    "account": {
+      "platform": "macos",
+      "subject": "501"
+    }
+  },
+  "constraints": {
+    "kind": "osIdentity"
+  },
+  "budget": {
+    "totalTimeoutMs": 1000,
+    "totalOutputBytes": 4096,
+    "maxAttempts": 1
+  },
+  "validity": {
+    "notBeforeUnixMs": 1000,
+    "expiresAtUnixMs": 2000
+  },
+  "policy": {
+    "id": "policy-1",
+    "revision": "1"
+  },
+  "sessionRequirement": {
+    "kind": "notRequired"
+  },
+  "execution": {
+    "kind": "software",
+    "software": {
+      "adapter": "pkg",
+      "package": {
+        "manager": {
+          "id": "fixed",
+          "revision": "1"
+        },
+        "source": {
+          "id": "fixed",
+          "revision": "1"
+        },
+        "package": "rss-test",
+        "architecture": "arm64",
+        "variant": "stable"
+      },
+      "desired": {
+        "kind": "present",
+        "version": "1.0",
+        "artifact": {
+          "resource": {
+            "id": "script-1",
+            "revision": "1"
+          },
+          "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
+        }
+      },
+      "mutation": "install",
+      "snapshot": {
+        "id": "fixed",
+        "revision": "1"
+      },
+      "payload": {
+        "resource": {
+          "id": "script-1",
+          "revision": "1"
+        },
+        "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
+      },
+      "source": "controlled",
+      "resource": "com.rss.test",
+      "detection": {
+        "path": "/opt/rss-test/file",
+        "versions": [
+          {
+            "version": "1.0",
+            "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
+          }
+        ],
+        "maxBytes": 4096
+      },
+      "uninstall": null,
+      "management": {
+        "required": false,
+        "allowModifyUserOwned": false,
+        "allowRemove": true,
+        "allowDowngrade": false,
+        "allowRestart": true,
+        "allowDependencyChanges": false
+      },
+      "comparison": null,
+      "bundle": null,
+      "installer": {
+        "artifact": {
+          "resource": {
+            "id": "test-interpreter",
+            "revision": "1"
+          },
+          "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
+        },
+        "manager": {
+          "id": "fixed",
+          "revision": "1"
+        },
+        "canDetect": true,
+        "operations": [
+          "install",
+          "upgrade",
+          "uninstall"
+        ],
+        "upgradeStrategy": "inPlace",
+        "restart": "mayRequire",
+        "dependencyImpact": "none"
+      },
+      "resourceBinding": {
+        "parent": "fixture-parent",
+        "object": null
+      }
+    }
+  }
+}

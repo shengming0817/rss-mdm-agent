@@ -31,11 +31,11 @@ impl Peer {
         self.session
     }
 }
-/// Local IPC V2 request. Idempotency and authorization still belong to ExecutionApp.
+/// Local IPC V3 request. Idempotency and authorization still belong to ExecutionApp.
 #[derive(Serialize)]
 #[serde(tag = "method", rename_all = "camelCase")]
 pub enum Request {
-    /// Submit an exact V2 frozen plan through the application admission funnel.
+    /// Submit an exact V3 frozen plan through the application admission funnel.
     Submit {
         /// Raw bounded JSON retained for duplicate-key and canonical contract checks.
         plan: Box<serde_json::value::RawValue>,
@@ -191,7 +191,7 @@ pub fn dispatch(handler: &mut dyn Handler, peer: &Peer, bytes: &[u8]) -> Vec<u8>
         Reply::Rejected
     } else {
         match serde_json::from_slice::<Envelope>(bytes) {
-            Ok(e) if e.version == 2 => match e.request.into_request() {
+            Ok(e) if e.version == 3 => match e.request.into_request() {
                 Some(request) => handler.handle(peer, request),
                 None => Reply::Rejected,
             },
@@ -223,8 +223,8 @@ mod tests {
         let mut handler = Unbound;
         for bytes in [
             br#"{"version":1,"request":{"method":"status","request":"r"}}"#.as_slice(),
-            br#"{"version":2,"request":{"method":"status","request":"r"}}"#,
-            br#"{"version":2,"actor":"root","request":{"method":"cancel","request":"r"}}"#,
+            br#"{"version":3,"request":{"method":"status","request":"r"}}"#,
+            br#"{"version":3,"actor":"root","request":{"method":"cancel","request":"r"}}"#,
         ] {
             assert_eq!(
                 dispatch(&mut handler, &peer, bytes),

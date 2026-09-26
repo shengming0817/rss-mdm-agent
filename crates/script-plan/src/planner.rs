@@ -232,7 +232,8 @@ pub fn compile(input: ScriptPlanInput, limits: &PlanLimits) -> Result<FrozenPlan
     check_environment(profile, &env)?;
     Ok(FrozenPlan::freeze(
         PlanSpec {
-            schema_version: V2,
+            schema_version: V3,
+            execution: execution_contract::ExecutionSpec::Process {},
             plan_id,
             request,
             launch: LaunchSpec {

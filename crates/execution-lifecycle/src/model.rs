@@ -1,7 +1,7 @@
 use execution_contract::{AttemptId, Digest, EventId, EvidenceRef, FrozenPlan, Id, PlanId};
 use serde::{Deserialize, Serialize};
 
-pub(crate) const SNAPSHOT_VERSION: u8 = 2;
+pub(crate) const SNAPSHOT_VERSION: u8 = 3;
 
 /// Explicit execution provenance; test effects never become real effects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -81,6 +81,8 @@ pub enum Observation {
         /// Final attempt diagnostic output, including any work before failed dispatch.
         total_output_bytes: u64,
     },
+    /// Independently established quiescence after recovery; exit and final output are unknown.
+    Quiescent {},
     /// Independent verification after termination.
     Effect {
         /// Assessment with an explicit unknown/no-effect distinction.
@@ -325,7 +327,7 @@ impl EventRecord {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Snapshot {
-    /// Exactly version 2, with a tagged command or observation record.
+    /// Exactly version 3, with a tagged command or observation record.
     pub version: u8,
     /// Bound frozen plan identity.
     pub plan_id: PlanId,

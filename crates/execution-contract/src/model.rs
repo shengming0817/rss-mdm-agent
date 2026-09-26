@@ -1,5 +1,5 @@
 use crate::{
-    ActorId, DeviceId, Digest, EnvironmentKey, Id, NetworkDestination, PlanId, RequestId, V1, V2,
+    ActorId, DeviceId, Digest, EnvironmentKey, Id, NetworkDestination, PlanId, RequestId, V1, V3,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -303,8 +303,10 @@ pub enum SessionRequirement {
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PlanSpec {
-    /// Required current V2 discriminator; absent or unsupported versions are rejected.
-    pub schema_version: V2,
+    /// Required current V3 discriminator; absent or unsupported versions are rejected.
+    pub schema_version: V3,
+    /// Closed execution semantics, included in the sole canonical digest.
+    pub execution: crate::ExecutionSpec,
     /// Immutable local plan identity, also bound into its digest.
     pub plan_id: PlanId,
     /// Original operation intent, retained once as part of the canonical plan.
