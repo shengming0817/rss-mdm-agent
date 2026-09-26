@@ -176,13 +176,34 @@ export class MemorySessionStore implements SessionStore {
     )
       prefs.defaultConnectionId = next.connectionId;
     if (
-      next.status === "deleted" &&
+      next.status !== "ready" &&
       prefs.defaultConnectionId === next.connectionId
     )
       delete prefs.defaultConnectionId;
     this.catalog.set(scope, [...rows, clone(next)]);
     this.prefs.set(scope, prefs);
     return checked;
+  }
+  async recordConnectionTest(
+    caller: Caller,
+    id: string,
+    expected: number,
+    result: import("../wire.js").ConnectionTest,
+  ): Promise<Result<Connection>> {
+    const current = await this.connection(caller, id);
+    if (
+      !current.ok ||
+      current.value.configRevision !== expected ||
+      current.value.status === "deleted"
+    )
+      return fail("revision_conflict");
+    const next = { ...current.value, lastTest: result };
+    const rows = this.catalog.get(this.scope(caller))!;
+    const index = rows.findIndex(
+      (row) => row.connectionId === id && row.configRevision === expected,
+    );
+    rows[index] = clone(next);
+    return ok(clone(next));
   }
   async selectConnection(
     namespace: Namespace,

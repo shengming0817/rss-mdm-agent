@@ -1,3 +1,4 @@
+import { fixturePersistence } from "./harness.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -90,6 +91,7 @@ test("startup failure before ownership registration retains an uncertain launch 
   );
   const host = unwrap(
     await createHost({
+      credentialPersistence: fixturePersistence(store),
       workerRuntime: {
         launcher: process.execPath,
         manifestDigest: "a".repeat(64),

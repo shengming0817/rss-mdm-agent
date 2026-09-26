@@ -158,16 +158,16 @@ export async function startLocalApp(
     throw error;
   });
   let control: NativeControl;
-  const secrets = new ConnectionSecrets(store, async (create) => {
-    const bytes = await control.call("masterKey", { create });
-    if (
-      !Array.isArray(bytes) ||
-      bytes.length !== 32 ||
-      bytes.some((n) => !Number.isInteger(n) || n < 0 || n > 255)
-    )
-      throw new Error("authentication_required");
-    return Uint8Array.from(bytes);
-  });
+  const secrets = new ConnectionSecrets(
+    store,
+    (caller, connection, encrypted) =>
+      control.call("openCredential", {
+        caller,
+        connection,
+        encrypted:
+          encrypted as import("@rss-mdm-agent/ai-contract").EncryptedCredential,
+      }),
+  );
   const runtimeRoot = dirname(dirname(process.execPath));
   const created = await createHost({
     workerRuntime: {
@@ -187,7 +187,16 @@ export async function startLocalApp(
       process.stderr.write(`AI Host ${diagnostic.stage}: ${diagnostic.code}\n`),
     resolve: localResolver(local, store, secrets),
     callerAvailable: available,
-    persistConnection: connectionPersistence(store, secrets, available),
+    credentialPersistence: connectionPersistence(
+      store,
+      available,
+      async (caller, previous, connection) =>
+        (await control.call("matchCredential", {
+          caller,
+          previous,
+          connection,
+        })) === true,
+    ),
   });
   if (!created.ok) {
     await execution?.close();
@@ -231,7 +240,7 @@ export async function startLocalApp(
     async ({ method, data }) => {
       if (method === "health")
         return {
-          schemaVersion: 5,
+          schemaVersion: 6,
           kind: "hostHealth",
           ready: true,
           protocol: 4,
@@ -296,27 +305,28 @@ export async function startLocalApp(
         detach(data.channel);
         return true;
       }
+      if (method === "credentialContext") {
+        if (!activeUser || activeUser.generation !== data.generation)
+          throw new Error("unavailable");
+        const existing = await store.hasSecrets();
+        if (!existing.ok) throw new Error("unavailable");
+        return { hasSecrets: existing.value };
+      }
       if (method === "saveConnection") {
         const current = activeUser;
         if (!current || current.generation !== data.generation)
           return fail("unavailable");
-        const connection = decode(
-          boundedJson(data.connection, defaultLimits),
-          defaultLimits,
-        );
-        if (
-          connection.kind !== "connection" ||
-          !(data.expected === null || Number.isSafeInteger(data.expected)) ||
-          (data.secret != null && typeof data.secret !== "string")
-        )
-          return fail("invalid_input");
-        return host.saveConnection(
-          callerFor(current),
-          connection as Connection,
-          data.expected,
-          { timeoutMs: 90000, signal: AbortSignal.timeout(90000) },
-          data.secret ?? undefined,
-        );
+        const caller = callerFor(current);
+        const budget = { timeoutMs: 10000, signal: AbortSignal.timeout(10000) };
+        return data.encrypted === null
+          ? host.saveConnection(caller, data.connection, data.expected, budget)
+          : host.saveNativeConnection(
+              caller,
+              data.connection,
+              data.expected,
+              budget,
+              Uint8Array.from(data.encrypted),
+            );
       }
       throw new Error("unknown native method");
     },

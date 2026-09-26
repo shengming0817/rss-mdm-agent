@@ -263,7 +263,7 @@ test("Fake Host never advertises durable receipts from an in-memory implementati
     assert.equal(
       unwrap(
         host.negotiate({
-          contractVersion: 5,
+          contractVersion: 6,
           acp: 1,
           cursorAttach: true,
           durableReceipts,
@@ -346,7 +346,7 @@ test("resume detaches the old generation before Host changes it, then rebuilds f
   assert.equal("session" in resumed, false);
   assert.equal(states.includes("resync_required"), false);
   await r.submit({
-    schemaVersion: 5,
+    schemaVersion: 6,
     kind: "command",
     sessionId: id,
     commandId: "after-resume",
@@ -362,7 +362,7 @@ test("RuntimeClient preserves tool state and content across live updates and sna
     r = await runtime(t, service);
   const id = (await r.createSession()).namespace.sessionId;
   await r.submit({
-    schemaVersion: 5,
+    schemaVersion: 6,
     kind: "command",
     sessionId: id,
     commandId: "tools",
@@ -470,7 +470,7 @@ for (const extended of [false, true])
     await agent.request(
       extended ? extension.resume : "session/resume",
       extended
-        ? { schemaVersion: 5, kind: "resumeRequest", sessionId: id }
+        ? { schemaVersion: 6, kind: "resumeRequest", sessionId: id }
         : { sessionId: id, cwd: "/", mcpServers: [] },
     );
     await until(() => subscriptions.length === 2);
@@ -643,7 +643,7 @@ test("F9 snapshot and live interaction projections preserve authoritative expiry
   const r = await runtime(t, service);
   const id = (await r.createSession()).namespace.sessionId;
   await r.submit({
-    schemaVersion: 5,
+    schemaVersion: 6,
     kind: "command",
     sessionId: id,
     commandId: "question",
@@ -678,7 +678,7 @@ test("F10 answered projection identifies the first response across live and rest
     await host.respond(
       fixtureCaller,
       {
-        schemaVersion: 5,
+        schemaVersion: 6,
         kind: "command",
         sessionId: id,
         commandId: "winning-response",
@@ -731,7 +731,7 @@ test("F3 detach while resume is pending cannot resurrect the old attachment", as
     };
   };
   const result = r.connection.agent.request(extension.resume, {
-    schemaVersion: 5,
+    schemaVersion: 6,
     kind: "resumeRequest",
     sessionId: id,
   });
@@ -773,7 +773,7 @@ test("F1 selection may disable offered booleans, never enable unoffered ones", a
     "../../packages/ai-contract/dist/index.js"
   );
   const offer = {
-    contractVersion: 5,
+    contractVersion: 6,
     acp: 1,
     cursorAttach: false,
     durableReceipts: false,

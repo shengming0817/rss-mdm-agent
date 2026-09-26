@@ -14,6 +14,7 @@ const nativeLimits = {
   maxBytes: 524288,
   maxTextBytes: 524288,
   maxDepth: 64,
+  maxNodes: 32768,
 };
 /** Private inherited parent descriptor. Request IDs correlate replies; they grant no authority. */
 export class NativeControl {
@@ -84,7 +85,7 @@ export class NativeControl {
         .then(
           (value) =>
             this.send({
-              schemaVersion: 5,
+              schemaVersion: 6,
               kind: "nativeReply",
               id: frame.id,
               ok: true,
@@ -92,7 +93,7 @@ export class NativeControl {
             }),
           () =>
             this.send({
-              schemaVersion: 5,
+              schemaVersion: 6,
               kind: "nativeReply",
               id: frame.id,
               ok: false,
@@ -115,7 +116,7 @@ export class NativeControl {
     this.socket.write(line);
   }
   emit(channel: string, message: unknown) {
-    this.send({ schemaVersion: 5, kind: "nativeEvent", channel, message });
+    this.send({ schemaVersion: 6, kind: "nativeEvent", channel, message });
   }
   call<M extends Method>(method: M, data: Call<M>["data"]): Promise<unknown> {
     if (this.ended || this.pending.size >= 16)
@@ -129,7 +130,7 @@ export class NativeControl {
       this.pending.set(id, { resolve, reject, timer });
       try {
         this.send({
-          schemaVersion: 5,
+          schemaVersion: 6,
           kind: "nativeCall",
           id,
           method,

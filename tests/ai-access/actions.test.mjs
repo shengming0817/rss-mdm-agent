@@ -40,11 +40,11 @@ async function fixture(t) {
     return runtime;
   }
   const action = (commandId = "answer") => ({
-    schemaVersion: 5,
+    schemaVersion: 6,
     kind: "actionRequest",
     expiresAtMs: 100,
     metadata: {
-      schemaVersion: 5,
+      schemaVersion: 6,
       kind: "surfaceAction",
       sessionId: seeded.session.namespace.sessionId,
       commandId,
@@ -192,7 +192,7 @@ test("expired or lost question callback stays unavailable after display recovery
       interactions: [{ ...f.interaction, status: "unavailable" }],
       events: [
         {
-          schemaVersion: 5,
+          schemaVersion: 6,
           kind: "event",
           namespace: head.namespace,
           eventId: "callback-lost",

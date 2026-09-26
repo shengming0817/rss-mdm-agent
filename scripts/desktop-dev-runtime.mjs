@@ -66,7 +66,7 @@ export function verifyDevelopmentRuntime(root, directory) {
   if (
     manifest.status !== "passed" ||
     manifest.desktopProtocol !== protocol ||
-    manifest.contractVersion !== 5 ||
+    manifest.contractVersion !== 6 ||
     manifest.node?.version !== node.version ||
     manifest.node?.archiveSha256 !== node.sha256 ||
     manifest.node?.target !== node.target ||

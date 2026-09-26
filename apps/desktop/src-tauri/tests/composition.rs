@@ -41,10 +41,10 @@ fn started(path: &std::path::Path) -> (ExecutionHandle, String) {
             .unwrap()
             .write_all(
                 serde_json::to_string(&json!({
-                    "schemaVersion": 5,
+                    "schemaVersion": 6,
                     "kind": "testUserPage",
-                    "users": [{"schemaVersion":5,"kind":"testUser","userId":"fixture-actor","displayName":"Fixture","nameKey":"fixture"}],
-                    "current": {"schemaVersion":5,"kind":"userContext","user":{"schemaVersion":5,"kind":"testUser","userId":"fixture-actor","displayName":"Fixture","nameKey":"fixture"},"generation":"fixture-generation"}
+                    "users": [{"schemaVersion":6,"kind":"testUser","userId":"fixture-actor","displayName":"Fixture","nameKey":"fixture"}],
+                    "current": {"schemaVersion":6,"kind":"userContext","user":{"schemaVersion":6,"kind":"testUser","userId":"fixture-actor","displayName":"Fixture","nameKey":"fixture"},"generation":"fixture-generation"}
                 }))
                 .unwrap()
                 .as_bytes(),
@@ -71,7 +71,7 @@ fn bound(
     session: &str,
     operation: &str,
 ) -> Arc<ExecutionHandle> {
-    Arc::new(handle.clone()).bind_call(json!({"com.rss-mdm/ai-origin":{"schemaVersion":5,"kind":"executionOrigin","namespace":{"tenantId":"test-users","principalId":"fixture-actor","authorityId":"desktop-fixture","sessionId":session},"userGeneration":generation,"operationId":operation,"provider":"codex","config":{"id":"local","revision":"r1"}}}).as_object().unwrap()).unwrap()
+    Arc::new(handle.clone()).bind_call(json!({"com.rss-mdm/ai-origin":{"schemaVersion":6,"kind":"executionOrigin","namespace":{"tenantId":"test-users","principalId":"fixture-actor","authorityId":"desktop-fixture","sessionId":session},"userGeneration":generation,"operationId":operation,"provider":"codex","config":{"id":"local","revision":"r1"}}}).as_object().unwrap()).unwrap()
 }
 async fn draft(handle: &ExecutionHandle, request: &str, item: &str) -> ui::PlanView {
     let snapshot = handle.snapshot(Default::default()).await.unwrap();
@@ -226,7 +226,7 @@ async fn ai_origin_is_host_bound_and_recovery_never_redispatches_unknown_attempt
                 .unwrap()
         )
         .is_err());
-    let valid = json!({"schemaVersion":5,"kind":"executionOrigin","namespace":{"tenantId":"test-users","principalId":"fixture-actor","authorityId":"desktop-fixture","sessionId":"conversation-a"},"userGeneration":generation.as_str(),"operationId":"preview-delivery","provider":"codex","config":{"id":"local","revision":"r1"}});
+    let valid = json!({"schemaVersion":6,"kind":"executionOrigin","namespace":{"tenantId":"test-users","principalId":"fixture-actor","authorityId":"desktop-fixture","sessionId":"conversation-a"},"userGeneration":generation.as_str(),"operationId":"preview-delivery","provider":"codex","config":{"id":"local","revision":"r1"}});
     for pointer in [
         "/namespace/tenantId",
         "/namespace/principalId",

@@ -6,6 +6,7 @@ import ConnectionSettings from "./ConnectionSettings.vue";
 import { diagnosticMessage, type HostSettings } from "./controller";
 const props = defineProps<{
   host: HostSettings;
+  active?: boolean;
   assistant?: AssistantController;
 }>();
 const emit = defineEmits<{ assistant: []; reconnected: [] }>();
@@ -84,9 +85,9 @@ function keys(event: KeyboardEvent) {
         <h2>AI 连接</h2>
         <template v-if="assistant">
           <p v-if="!readyConnection">
-            首次配置：选择账户入口 → 验证并保存连接 → 新建对话。
+            首次配置：选择账户入口 → 保存配置 → 测试连接 → 新建对话。
           </p>
-          <ConnectionSettings :controller="assistant" />
+          <ConnectionSettings :controller="assistant" :active="active" />
           <button
             :disabled="
               !readyConnection ||
@@ -191,7 +192,7 @@ function keys(event: KeyboardEvent) {
           <h3>隐私</h3>
           <p>
             用户、连接和历史保存在本机。API
-            密钥在原生输入框提交后加密保存；官方工具持有自己的登录配置。对话发送至所选服务，跨连接携带历史需要明确确认。诊断由用户主动导出。
+            密钥在设置表单提交后由原生层加密保存；官方工具持有自己的登录配置。对话发送至所选服务，跨连接携带历史需要明确确认。诊断由用户主动导出。
           </p>
         </details>
       </section>

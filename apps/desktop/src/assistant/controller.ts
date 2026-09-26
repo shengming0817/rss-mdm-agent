@@ -68,8 +68,8 @@ async function bounded<T>(
 }
 export function operationMessage(code: string): string {
   const messages: Record<string, string> = {
-    verification_cancelled: "连接验证已取消，未保存配置。",
-    verification_refused: "模型拒绝了验证请求，未保存配置。",
+    verification_cancelled: "连接测试已取消，已保存配置保留。",
+    verification_refused: "模型拒绝了测试请求，已保存配置保留。",
     authentication_required:
       "认证不可用。请在管理 AI 连接中更新认证来源并重新验证；历史仍可查看。",
     connection_required: "请为本会话选择一条可用连接；历史仍可查看。",
@@ -119,7 +119,7 @@ export function createAssistant(
     opening: false,
     connections: [] as Connection[],
     preferences: {
-      schemaVersion: 5,
+      schemaVersion: 6,
       kind: "userPreferences",
     } as import("@rss-mdm-agent/ai-contract").UserPreferences,
     sessions: new Map<string, SessionItem>(),
@@ -579,7 +579,7 @@ export function createAssistant(
       return;
     state.pending.set(id, {
       command: {
-        schemaVersion: 5,
+        schemaVersion: 6,
         kind: "command",
         sessionId: id,
         commandId: identity(),
@@ -713,7 +713,7 @@ export function createAssistant(
     state.taskLoading = false;
     state.task = undefined;
     state.connections = [];
-    state.preferences = { schemaVersion: 5, kind: "userPreferences" };
+    state.preferences = { schemaVersion: 6, kind: "userPreferences" };
     state.sessions.clear();
     state.views.clear();
     state.drafts.clear();

@@ -98,7 +98,7 @@ export class RuntimeClient {
   async initialize(): Promise<Negotiation> {
     return this.boundary(async () => {
       const offered: Negotiation = {
-        contractVersion: 5,
+        contractVersion: 6,
         acp: 1,
         durableReceipts: true,
         cursorAttach: true,
@@ -121,7 +121,7 @@ export class RuntimeClient {
       }
       if (
         response.protocolVersion !== 1 ||
-        selected?.contractVersion !== 5 ||
+        selected?.contractVersion !== 6 ||
         !selected.cursorAttach
       )
         throw new ClientError("negotiation_failed");
@@ -154,7 +154,7 @@ export class RuntimeClient {
       this.ready();
       return parse(
         await this.connection.agent.request(extension.connections, {
-          schemaVersion: 5,
+          schemaVersion: 6,
           kind: "connectionsRequest",
         }),
         "connectionPage",
@@ -162,16 +162,50 @@ export class RuntimeClient {
     });
   }
   async saveConnection(
-    connection: Connection,
+    connection: import("@rss-mdm-agent/ai-contract").ConnectionDraft,
     expectedRevision: number | null,
   ): Promise<Connection> {
     return this.boundary(async () => {
       this.ready();
       return parse(
         await this.connection.agent.request(extension.saveConnection, {
-          schemaVersion: 5,
+          schemaVersion: 6,
           kind: "saveConnectionRequest",
           connection,
+          expectedRevision,
+        }),
+        "connection",
+      );
+    });
+  }
+  async testConnection(
+    connectionId: string,
+    expectedRevision: number,
+  ): Promise<Connection> {
+    return this.boundary(async () => {
+      this.ready();
+      return parse(
+        await this.connection.agent.request(extension.testConnection, {
+          schemaVersion: 6,
+          kind: "testConnectionRequest",
+          connectionId,
+          expectedRevision,
+        }),
+        "connection",
+      );
+    });
+  }
+  async deleteConnection(
+    connectionId: string,
+    expectedRevision: number,
+  ): Promise<Connection> {
+    return this.boundary(async () => {
+      this.ready();
+      return parse(
+        await this.connection.agent.request(extension.deleteConnection, {
+          schemaVersion: 6,
+          kind: "deleteConnectionRequest",
+          connectionId,
           expectedRevision,
         }),
         "connection",
@@ -185,7 +219,7 @@ export class RuntimeClient {
       this.ready();
       return parse(
         await this.connection.agent.request(extension.preferences, {
-          schemaVersion: 5,
+          schemaVersion: 6,
           kind: "preferencesRequest",
           patch: preferences,
         }),
@@ -202,7 +236,7 @@ export class RuntimeClient {
       this.ready();
       parse(
         await this.connection.agent.request(extension.selectConnection, {
-          schemaVersion: 5,
+          schemaVersion: 6,
           kind: "selectConnectionRequest",
           sessionId,
           connectionId,
@@ -222,7 +256,7 @@ export class RuntimeClient {
       this.ready();
       return parse(
         await this.connection.agent.request(extension.history, {
-          schemaVersion: 5,
+          schemaVersion: 6,
           kind: "historyRequest",
           sessionId,
           connectionId,
@@ -247,7 +281,7 @@ export class RuntimeClient {
       this.ready();
       return parse(
         await this.connection.agent.request(extension.list, {
-          schemaVersion: 5,
+          schemaVersion: 6,
           kind: "listRequest",
           query,
         }),
@@ -272,7 +306,7 @@ export class RuntimeClient {
           if (index >= 4096) throw new ClientError("resync_required");
           const page = parse(
             await this.connection.agent.request(extension.snapshot, {
-              schemaVersion: 5,
+              schemaVersion: 6,
               kind: "snapshotRequest",
               sessionId,
               query: {
@@ -308,7 +342,7 @@ export class RuntimeClient {
         this.views.set(sessionId, view);
         view.connection = "attached";
         await this.connection.agent.request(extension.attach, {
-          schemaVersion: 5,
+          schemaVersion: 6,
           kind: "attachRequest",
           sessionId,
           attachmentId,
@@ -340,7 +374,7 @@ export class RuntimeClient {
       }
       if (attachmentId && !this.connection.signal.aborted)
         await this.connection.agent.request(extension.detach, {
-          schemaVersion: 5,
+          schemaVersion: 6,
           kind: "detachRequest",
           sessionId,
           attachmentId,
@@ -381,7 +415,7 @@ export class RuntimeClient {
       await this.detach(sessionId);
       parse(
         await this.connection.agent.request(extension.resume, {
-          schemaVersion: 5,
+          schemaVersion: 6,
           kind: "resumeRequest",
           sessionId,
         }),

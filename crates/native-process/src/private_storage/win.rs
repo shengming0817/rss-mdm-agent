@@ -337,20 +337,9 @@ pub fn random_key() -> io::Result<Vec<u8>> {
     }
     Ok(key)
 }
-pub fn enter_secret() -> io::Result<Option<String>> {
-    enter_secret_for(false, "")
-}
-pub fn enter_secret_for(enterprise: bool, target: &str) -> io::Result<Option<String>> {
-    let caption = wide(if enterprise {
-        "RSS 企业登录"
-    } else {
-        "RSS 连接凭据"
-    });
-    let message = wide(if enterprise {
-        target
-    } else {
-        "输入所选连接的凭据。取消不会保存。"
-    });
+pub fn enter_enterprise_password(target: &str) -> io::Result<Option<String>> {
+    let caption = wide("RSS 企业登录");
+    let message = wide(target);
     let mut info: CREDUI_INFOW = unsafe { std::mem::zeroed() };
     info.cbSize = size_of_val(&info) as u32;
     info.pszCaptionText = caption.as_ptr();

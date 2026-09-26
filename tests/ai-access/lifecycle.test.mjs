@@ -144,7 +144,7 @@ test("standard ACP prompt waits for terminal, carries text/tool updates, and sup
   );
   await assert.rejects(
     agent.request(extension.list, {
-      schemaVersion: 5,
+      schemaVersion: 6,
       kind: "listRequest",
       query: { limit: 2 },
     }),
@@ -208,7 +208,7 @@ test("product receipt, paged recovery and late delta use only the shared stable 
   const view = await runtime.createSession(),
     id = view.namespace.sessionId;
   const prompt = {
-    schemaVersion: 5,
+    schemaVersion: 6,
     kind: "command",
     sessionId: id,
     commandId: "product-1",
@@ -371,5 +371,59 @@ test("permission first response cancels other deliveries; expired live callback 
     (await service.requestPermission(fixtureCaller, request, ended.signal))
       .outcome.outcome,
     "cancelled",
+  );
+});
+
+test("connection management crosses RuntimeClient and access with exact revision CAS", async (t) => {
+  const { service } = setup(t);
+  const [a, b] = localTransportPair();
+  service.connect(a, fixtureCaller);
+  const runtime = new RuntimeClient(b);
+  t.after(() => runtime.close());
+  await runtime.initialize();
+  const draft = {
+    connectionId: "managed",
+    name: "Managed",
+    provider: "codex",
+    profile: "conversation",
+    source: { type: "existing_config" },
+  };
+  const saved = await runtime.saveConnection(draft, null);
+  assert.equal(saved.status, "unverified");
+  assert.equal(saved.configRevision, 1);
+  const tested = await runtime.testConnection(
+    saved.connectionId,
+    saved.configRevision,
+  );
+  assert.equal(tested.status, "ready");
+  assert.equal(tested.configRevision, 2);
+  await assert.rejects(
+    runtime.saveConnection({ ...draft, name: "Stale" }, 1),
+    (error) => error.code === "revision_conflict",
+  );
+  await assert.rejects(
+    runtime.testConnection(saved.connectionId, 1),
+    (error) => error.code === "revision_conflict",
+  );
+  const deleted = await runtime.deleteConnection(
+    tested.connectionId,
+    tested.configRevision,
+  );
+  assert.equal(deleted.status, "deleted");
+  assert.equal(deleted.configRevision, 3);
+  assert.equal(
+    (await runtime.connections()).connections.some(
+      (row) => row.connectionId === saved.connectionId,
+    ),
+    false,
+  );
+  const { agent } = await standard(t, service);
+  await assert.rejects(
+    agent.request(extension.saveConnection, {
+      schemaVersion: 5,
+      kind: "saveConnectionRequest",
+      connection: draft,
+      expectedRevision: null,
+    }),
   );
 });

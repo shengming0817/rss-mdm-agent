@@ -1,3 +1,4 @@
+import { fixturePersistence } from "./harness.mjs";
 import { workerRuntime } from "./worker-runtime.mjs";
 import { openFixture, fixtureArtifact } from "./harness.mjs";
 import { activeStage } from "../../packages/ai-contract/dist/index.js";
@@ -82,6 +83,7 @@ test("Host SIGKILL closes worker group; restart reconciles the original attempt 
   );
   const host = unwrap(
     await createHost({
+      credentialPersistence: fixturePersistence(store),
       workerRuntime,
       delivery: null,
       store,
@@ -142,6 +144,7 @@ test("crash after durable registration cannot import the SDK before activation",
   );
   const host = unwrap(
     await createHost({
+      credentialPersistence: fixturePersistence(store),
       workerRuntime,
       delivery: null,
       store,
@@ -296,6 +299,7 @@ test("unresolved registered process group freezes recovery without signaling or 
   let resolves = 0;
   host = unwrap(
     await createHost({
+      credentialPersistence: fixturePersistence(reopened),
       workerRuntime,
       delivery: null,
       store: reopened,
@@ -364,6 +368,7 @@ for (const hasSession of [true, false])
     const reopened = unwrap(openSqliteStore({ path, mode: "open" }));
     host = unwrap(
       await createHost({
+        credentialPersistence: fixturePersistence(reopened),
         workerRuntime,
         delivery: null,
         store: reopened,
