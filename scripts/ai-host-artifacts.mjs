@@ -13,6 +13,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createHash, timingSafeEqual } from "node:crypto";
 import assert from "node:assert/strict";
 import { load } from "js-yaml";
+import { cargoTargetDir } from "./cargo-target.mjs";
 const runtimeRoots = [
   "bin",
   "node_modules",
@@ -285,7 +286,7 @@ export function stageWorkerRuntime(
   if (resolve(node) !== resolve(runtimeNode)) copyFileSync(node, runtimeNode);
   for (const name of ["rss-ai-worker-launcher", "rss-private-storage"]) {
     copyFileSync(
-      join(root, "target/release", name + suffix),
+      join(cargoTargetDir(root), "release", name + suffix),
       join(directory, "bin", name + suffix),
     );
     if (process.platform !== "win32")

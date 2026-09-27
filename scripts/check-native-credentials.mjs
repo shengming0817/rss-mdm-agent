@@ -18,6 +18,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { run, verifyRuntimeIntegrity } from "./ai-host-artifacts.mjs";
+import { cargoTargetDir } from "./cargo-target.mjs";
 
 const repository = fileURLToPath(new URL("../", import.meta.url));
 const artifact = join(repository, ".local-ci-runs/ai-host-runtime");
@@ -128,8 +129,8 @@ try {
     repository,
   );
   const executable = join(
-    repository,
-    "target/debug/examples/custom-connection-acceptance",
+    cargoTargetDir(repository),
+    "debug/examples/custom-connection-acceptance",
   );
   executableSha256 = sha256(readFileSync(executable));
   await new Promise((resolve, reject) => {

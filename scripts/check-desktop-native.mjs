@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { run, verifyRuntimeIntegrity } from "./ai-host-artifacts.mjs";
+import { cargoTargetDir } from "./cargo-target.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url));
 if (process.platform !== "darwin" || process.arch !== "arm64")
   throw new Error("acceptance requires macOS arm64");
@@ -50,7 +51,7 @@ try {
   );
   await new Promise((resolve, reject) => {
     const child = spawn(
-      join(root, "target/debug/examples/desktop-acceptance"),
+      join(cargoTargetDir(root), "debug/examples/desktop-acceptance"),
       [directory, artifact, report],
       { cwd: root, stdio: ["ignore", "ignore", "inherit"] },
     );

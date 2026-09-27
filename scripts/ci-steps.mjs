@@ -7,6 +7,7 @@ export const steps = [
       "scripts/ci-result.test.mjs",
       "scripts/ci-impact.test.mjs",
       "scripts/ci-plan.test.mjs",
+      "scripts/build-run.test.mjs",
     ],
   ],
   ["frozen dependencies", "pnpm", ["install", "--frozen-lockfile"]],

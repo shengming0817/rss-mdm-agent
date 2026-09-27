@@ -14,6 +14,7 @@ import { fixtureSession } from "../../packages/ai-contract/dist/testing/index.js
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { cargoTargetDir } from "../../scripts/cargo-target.mjs";
 const unwrap = (result) => {
   assert.equal(result.ok, true, JSON.stringify(result));
   return result.value;
@@ -30,12 +31,10 @@ test("a hanging scope probe cannot monopolize the Host event loop or close budge
     ["build", "--locked", "-p", "native-process", "--example", "host-fixture"],
     { stdio: "ignore" },
   );
-  const launcher = fileURLToPath(
-    new URL(
-      "../../target/debug/examples/host-fixture" +
-        (process.platform === "win32" ? ".exe" : ""),
-      import.meta.url,
-    ),
+  const launcher = join(
+    cargoTargetDir(fileURLToPath(new URL("../../", import.meta.url))),
+    "debug/examples",
+    "host-fixture" + (process.platform === "win32" ? ".exe" : ""),
   );
   const before = performance.now();
   let tick = false;

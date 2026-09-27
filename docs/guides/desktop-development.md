@@ -66,6 +66,10 @@ pnpm check:boundaries
 make ci CI_BASE=origin/develop # 按影响范围；ci-full 强制全量，ci-plan 查看计划
 ```
 
+macOS 的正式 `make ci` / `make ci-full` 对整个 Node 与 Rust 检查过程取得 worktree 独占租约，并将 Cargo `target` 放进默认四槽的本机缓存池；同一 worktree 优先复用槽位，槽位换属时清理旧产物。`AGENT_TARGET_POOL_N` 可设置正整数槽数，`AGENT_TARGET_POOL_ROOT` 可指定专用空目录或已标记的池目录。槽满或同一 worktree 已有受管运行时立即失败，原运行结束后重试。`make ci-plan` 不占槽；Windows 仍使用原入口。受管运行拒绝外部 `CARGO_TARGET_DIR`、`CARGO_BUILD_TARGET_DIR` 和自定义 rustc wrapper。
+
+定向 Rust 验证可用 `python3 scripts/build-run.py -- cargo test --locked -p <包名>` 复用同一槽位机制。直接运行 `cargo` 使用仓内 `target`；直接运行 `pnpm` 或 `cargo` 不取得 CI 的 worktree 租约，避免与同一 checkout 的正式 CI 同时修改仓内 Node 产物或运行回执。旧仓内 `target` 不自动迁移或删除。
+
 浏览器未在 Tauri 环境运行时只显示明确的静态样本，写入口禁用。静态样本不作为真实桌面/AI 验收。真实模型与原生窗口验收仅覆盖 macOS arm64、manifest 固定的 Codex；不要求 Windows/Linux 或三个引擎完成同一 E2E。S2 真实平台执行、安装签名、公证、升级及 T3 企业身份仍在本次范围外。
 
 来源：Tauri `crates/tauri/src/app.rs` / `webview/webview_window.rs` @ 2.11.2；runtime-wry `src/lib.rs` @ 2.11.4（最后窗口销毁与 ExitRequested）；rmcp `src/model/meta.rs` @ 3.4.0（request metadata）；MCP TypeScript SDK `client/index.ts` / `shared/stdio.ts` @ 1.30.0。

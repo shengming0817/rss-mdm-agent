@@ -14,6 +14,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { run, verifyRuntimeIntegrity } from "./ai-host-artifacts.mjs";
+import { cargoTargetDir } from "./cargo-target.mjs";
 
 export async function checkDesktopBundle(root, runtimeTreeSha256) {
   run("pnpm", ["stage:desktop-runtime"], root);
@@ -34,8 +35,8 @@ export async function checkDesktopBundle(root, runtimeTreeSha256) {
     root,
   );
   const bundle = join(
-    root,
-    "target/debug/bundle/macos/RSS MDM Agent.app/Contents",
+    cargoTargetDir(root),
+    "debug/bundle/macos/RSS MDM Agent.app/Contents",
   );
   verifyRuntimeIntegrity(
     join(bundle, "Resources/ai-host-runtime"),

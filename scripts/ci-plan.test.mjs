@@ -106,21 +106,40 @@ test("formal Make targets cannot inherit preview mode", () => {
   const root = mkdtempSync(join(tmpdir(), "agent-make-"));
   try {
     cpSync(new URL("../Makefile", import.meta.url), join(root, "Makefile"));
+    execFileSync("/usr/bin/git", ["init", "-q", root]);
+    mkdirSync(join(root, "scripts"));
+    cpSync(
+      new URL("./build-run.py", import.meta.url),
+      join(root, "scripts/build-run.py"),
+    );
+    const pool = join(root, "pool");
+    const home = join(root, "home");
+    mkdirSync(home);
     writeFileSync(join(root, "node"), '#!/bin/sh\nprintf "%s" "$CI_PLAN"\n', {
       mode: 0o755,
     });
-    for (const target of ["ci", "ci-full", "ci-plan"]) {
+    const childEnv = {
+      ...process.env,
+      PATH: `${root}:${process.env.PATH}`,
+      HOME: home,
+      AGENT_TARGET_POOL_ROOT: pool,
+      CI_PLAN: "1",
+    };
+    for (const key of [
+      "_AGENT_BUILD_LEASE",
+      "CARGO_TARGET_DIR",
+      "CARGO_BUILD_TARGET_DIR",
+    ])
+      delete childEnv[key];
+    for (const target of ["ci-plan", "ci", "ci-full"]) {
       const result = spawnSync("make", ["-s", target], {
         cwd: root,
         encoding: "utf8",
-        env: {
-          ...process.env,
-          PATH: `${root}:${process.env.PATH}`,
-          CI_PLAN: "1",
-        },
+        env: childEnv,
       });
       assert.equal(result.status, 0, result.stderr);
       assert.equal(result.stdout, target === "ci-plan" ? "1" : "0");
+      if (target === "ci-plan") assert.equal(existsSync(pool), false);
     }
   } finally {
     rmSync(root, { recursive: true, force: true });
