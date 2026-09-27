@@ -16,6 +16,7 @@ import { runCI } from "./ci.mjs";
 import { steps } from "./ci-steps.mjs";
 import {
   planSteps,
+  runCommand,
   executeSteps,
   prepareEvidence,
   publishPlan,
@@ -25,6 +26,27 @@ const impact = (rustPackages = [], nodePackages = []) => ({
   rustPackages,
   nodePackages,
   packages: [...rustPackages, ...nodePackages],
+});
+const withoutBuildLease = (source = process.env) => {
+  const env = { ...source };
+  for (const key of [
+    "_AGENT_BUILD_LEASE",
+    "CARGO_TARGET_DIR",
+    "CARGO_BUILD_TARGET_DIR",
+  ])
+    delete env[key];
+  return env;
+};
+
+test("managed gate rejects a forged lease before starting a child", async () => {
+  await assert.rejects(
+    runCommand(process.execPath, ["-e", "process.exit(0)"], {
+      env: { ...process.env, _AGENT_BUILD_LEASE: "{}" },
+      cwd: process.cwd(),
+      stdio: "inherit",
+    }),
+    /invalid build lease/,
+  );
 });
 
 test("docs execute runner/docs only and never invoke skipped test commands", async () => {
@@ -225,7 +247,10 @@ function lifecycleFixture(
   );
   return {
     root,
-    env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+    env: withoutBuildLease({
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH}`,
+    }),
     head: git("rev-parse", "HEAD"),
     read: () =>
       JSON.parse(
@@ -381,6 +406,8 @@ test("real spawn failure is recorded and later gates still run", async () => {
       },
     ],
     process.cwd(),
+    undefined,
+    { env: withoutBuildLease() },
   );
   assert.equal(results[0].outcome, "failed");
   assert.match(results[0].error, /ENOENT/);

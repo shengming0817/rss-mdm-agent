@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Lease one macOS CI run and its reusable Cargo target slot.
 
-Adapted from rss-mdm hack/build_run.py at 5bd5cc71824bde54bd3858bff19f25c1248ea304.
+Adapted from rss-mdm hack/build_run.py at 97c11076ca38852dc915cd3f6cf6d1ef5a01003e.
+This variant removes nested lease borrowing and direct-target mode, adds gate
+descriptor handoff, and bounds allocator wait and slot count.
 ref: CPython v3.11.13 Lib/subprocess.py (explicit pass_fds across Python children).
 """
 from __future__ import annotations
@@ -23,6 +25,8 @@ import unicodedata
 LEASE_ENV = '_AGENT_BUILD_LEASE'
 LOCK_ROOT = Path.home() / '.cache/rss-mdm-agent-build-locks'
 POOL_MARKER = '.agent-target-pool-v1'
+LOCK_WAIT_SECONDS = 2
+MAX_POOL_SLOTS = 32
 
 
 def log(message):
@@ -36,12 +40,12 @@ def directory(path):
     return path.resolve()
 
 
-def lock_file(path, blocking=False):
+def lock_file(path):
     fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
             raise ValueError(f'not a regular lock file: {path}')
-        fcntl.flock(fd, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         return fd
     except BlockingIOError:
         os.close(fd)
@@ -51,9 +55,20 @@ def lock_file(path, blocking=False):
         raise
 
 
+def wait_lock_file(path):
+    deadline = time.monotonic() + LOCK_WAIT_SECONDS
+    while True:
+        fd = lock_file(path)
+        if fd is not None:
+            return fd
+        if time.monotonic() >= deadline:
+            raise ValueError(f'allocator busy: {path}')
+        time.sleep(.02)
+
+
 def owned_directory(path, marker):
     root = directory(path)
-    fd = lock_file(root / '.init.lock', blocking=True)
+    fd = wait_lock_file(root / '.init.lock')
     try:
         identity = root / marker
         if not identity.exists() and not identity.is_symlink():
@@ -90,8 +105,8 @@ def target_config(env):
     if 'CARGO_TARGET_DIR' in env or 'CARGO_BUILD_TARGET_DIR' in env:
         raise ValueError('managed CI owns Cargo target; remove external target overrides')
     raw = env.get('AGENT_TARGET_POOL_N', '4')
-    if not re.fullmatch(r'[1-9][0-9]*', raw):
-        raise ValueError('AGENT_TARGET_POOL_N must be a positive integer')
+    if not re.fullmatch(r'[1-9][0-9]*', raw) or len(raw) > 2 or int(raw) > MAX_POOL_SLOTS:
+        raise ValueError(f'AGENT_TARGET_POOL_N must be an integer from 1 to {MAX_POOL_SLOTS}')
     root = Path(env.get('AGENT_TARGET_POOL_ROOT', str(Path.home() / '.cache/rss-mdm-agent-cargo-target-pool')))
     return root.absolute(), int(raw)
 
@@ -124,7 +139,7 @@ def write_metadata(root, index, worktree):
 def acquire_slot(root, slots, worktree):
     root = owned_directory(root, POOL_MARKER)
     # Only metadata selection holds this lock; busy target slots still fail fast.
-    global_fd = lock_file(root / '.pool.lock', blocking=True)
+    global_fd = wait_lock_file(root / '.pool.lock')
     held = {}
     retired = []
     try:
@@ -264,7 +279,10 @@ def main(argv):
         target, target_fd = acquire_slot(*pool, worktree)
         env['CARGO_TARGET_DIR'] = str(target)
         fds = (work_fd, target_fd)
-        env[LEASE_ENV] = json.dumps({'worktree': str(worktree), 'target': str(target), 'fds': fds})
+        env[LEASE_ENV] = json.dumps({
+            'worktree': str(worktree), 'target': str(target), 'fds': fds,
+            'locks': [str(lock_path('worktree', worktree)), str(lock_path('target', target))],
+        })
         log(f'target={target} pool=on')
         return run_child(argv[1:], env, fds)
     finally:

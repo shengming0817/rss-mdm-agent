@@ -260,6 +260,117 @@ test(
 );
 
 test(
+  "a live gate keeps both locks after both supervisors are killed",
+  onlyMac,
+  async () => {
+    const f = fixture();
+    let launcher, runnerPid, gatePid;
+    try {
+      const work = f.worktree("work");
+      const gateReady = join(f.root, "gate-double-kill");
+      const runnerReady = join(f.root, "runner-double-kill");
+      const moduleUrl = new URL("./ci-plan.mjs", import.meta.url).href;
+      const gateCode = `require('fs').writeFileSync(${JSON.stringify(gateReady)}, String(process.pid)); setInterval(() => {}, 1000)`;
+      const script = join(f.root, "double-kill.mjs");
+      writeFileSync(
+        script,
+        `import {runCommand} from ${JSON.stringify(moduleUrl)}; import {writeFileSync} from 'node:fs'; writeFileSync(${JSON.stringify(runnerReady)}, String(process.pid)); await runCommand(process.execPath, ['-e', ${JSON.stringify(gateCode)}], {env:process.env, stdio:'inherit'});`,
+      );
+      launcher = spawn("python3", [runner, "--", process.execPath, script], {
+        cwd: work,
+        env: f.env,
+        stdio: "ignore",
+      });
+      const deadline = Date.now() + 5000;
+      while (
+        (!existsSync(gateReady) || !existsSync(runnerReady)) &&
+        Date.now() < deadline
+      )
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.ok(existsSync(gateReady) && existsSync(runnerReady));
+      runnerPid = Number(readFileSync(runnerReady, "utf8"));
+      gatePid = Number(readFileSync(gateReady, "utf8"));
+      launcher.kill("SIGKILL");
+      process.kill(runnerPid, "SIGKILL");
+      await new Promise((resolve) => launcher.once("close", resolve));
+      const competing = f.run(work, "process.exit(0)");
+      assert.equal(competing.status, 2, competing.stderr);
+      assert.match(competing.stderr, /worktree busy/);
+      const other = f.worktree("other");
+      const full = f.run(other, "process.exit(0)");
+      assert.equal(full.status, 2, full.stderr);
+      assert.match(full.stderr, /pool full/);
+    } finally {
+      if (gatePid) {
+        try {
+          process.kill(gatePid, "SIGTERM");
+        } catch (error) {
+          if (error.code !== "ESRCH") throw error;
+        }
+      }
+      if (runnerPid) {
+        try {
+          process.kill(runnerPid, "SIGKILL");
+        } catch (error) {
+          if (error.code !== "ESRCH") throw error;
+        }
+      }
+      if (launcher?.exitCode === null) launcher.kill("SIGKILL");
+      f.close();
+    }
+  },
+);
+
+test(
+  "allocator reports prolonged metadata contention within a bound",
+  onlyMac,
+  async () => {
+    const f = fixture();
+    let locker;
+    try {
+      const work = f.worktree("work");
+      assert.equal(f.run(work, "process.exit(0)").status, 0);
+      const ready = join(f.root, "allocator-timeout-ready");
+      locker = spawn(
+        "python3",
+        [
+          "-c",
+          `import fcntl, pathlib, time; p=pathlib.Path(${JSON.stringify(join(f.pool, ".pool.lock"))}); h=p.open('r+'); fcntl.flock(h, fcntl.LOCK_EX); pathlib.Path(${JSON.stringify(ready)}).touch(); time.sleep(4)`,
+        ],
+        { stdio: "ignore" },
+      );
+      const deadline = Date.now() + 5000;
+      while (!existsSync(ready) && Date.now() < deadline)
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.ok(existsSync(ready));
+      const start = Date.now();
+      const result = f.run(work, "process.exit(0)");
+      assert.equal(result.status, 2, result.stderr);
+      assert.match(result.stderr, /allocator busy/);
+      assert.ok(Date.now() - start < 3000, "allocator wait was unbounded");
+    } finally {
+      if (locker?.exitCode === null) locker.kill("SIGTERM");
+      f.close();
+    }
+  },
+);
+
+test("pool size above the supported fd budget is rejected", onlyMac, () => {
+  const f = fixture();
+  try {
+    const work = f.worktree("work");
+    const result = f.run(work, "process.exit(0)", {
+      AGENT_TARGET_POOL_N: "33",
+    });
+    assert.equal(result.status, 2, result.stderr);
+    assert.match(result.stderr, /AGENT_TARGET_POOL_N/);
+    assert.equal(existsSync(f.pool), false);
+  } finally {
+    f.close();
+  }
+});
+
+test(
   "unowned pool and symlink slot are rejected without deleting outside data",
   onlyMac,
   () => {

@@ -1,6 +1,14 @@
 import { spawn } from "node:child_process";
-import { mkdirSync, rmSync, writeFileSync, renameSync } from "node:fs";
-import { join } from "node:path";
+import {
+  fstatSync,
+  lstatSync,
+  realpathSync,
+  mkdirSync,
+  rmSync,
+  writeFileSync,
+  renameSync,
+} from "node:fs";
+import { isAbsolute, join, resolve } from "node:path";
 import { stepResult } from "./ci-result.mjs";
 const npm = (name) => `@rss-mdm-agent/${name}`;
 const groups = {
@@ -60,16 +68,66 @@ export function planSteps(steps, impact) {
   });
 }
 
-// ref: Node.js v24.14.1 lib/child_process.js (spawn, close, abort lifecycle).
+function leaseFds(env, cwd, stdio) {
+  if (env?._AGENT_BUILD_LEASE === undefined) return null;
+  try {
+    const lease = JSON.parse(env._AGENT_BUILD_LEASE);
+    if (
+      !Array.isArray(lease.fds) ||
+      lease.fds.length !== 2 ||
+      new Set(lease.fds).size !== 2 ||
+      lease.fds.some((fd) => !Number.isSafeInteger(fd) || fd < 3) ||
+      !Array.isArray(lease.locks) ||
+      lease.locks.length !== 2 ||
+      lease.locks.some(
+        (path) => typeof path !== "string" || !isAbsolute(path),
+      ) ||
+      typeof lease.worktree !== "string" ||
+      !isAbsolute(lease.worktree) ||
+      typeof lease.target !== "string" ||
+      !isAbsolute(lease.target) ||
+      resolve(env.CARGO_TARGET_DIR) !== lease.target ||
+      realpathSync(cwd ?? process.cwd()) !== lease.worktree ||
+      stdio !== "inherit"
+    )
+      throw Error("lease paths, descriptors or stdio do not match this run");
+    for (let index = 0; index < 2; index++) {
+      const held = fstatSync(lease.fds[index], { bigint: true });
+      const lock = lstatSync(lease.locks[index], { bigint: true });
+      if (
+        !held.isFile() ||
+        !lock.isFile() ||
+        held.dev !== lock.dev ||
+        held.ino !== lock.ino
+      )
+        throw Error("descriptor does not identify its lock file");
+    }
+    return lease.fds;
+  } catch (error) {
+    throw Error(`invalid build lease: ${error.message}`);
+  }
+}
+
+// ref: Node.js v24.14.1 lib/internal/child_process.js (numeric stdio descriptors).
 export function runCommand(command, args, { signal, ...options }) {
   return new Promise((resolve) => {
     if (signal?.aborted) {
       resolve({ status: null, signal: signal.reason });
       return;
     }
-    const managed = Boolean(options.env?._AGENT_BUILD_LEASE);
+    const childEnv = options.env ?? process.env;
+    const fds = leaseFds(childEnv, options.cwd, options.stdio);
+    const managed = fds !== null;
+    const stdio = managed
+      ? Array.from({ length: Math.max(...fds) + 1 }, (_, index) =>
+          index < 3 ? "inherit" : "ignore",
+        )
+      : options.stdio;
+    if (managed) for (const fd of fds) stdio[fd] = fd;
     const child = spawn(command, args, {
       ...options,
+      env: childEnv,
+      stdio,
       detached: process.platform !== "win32" && !managed,
     });
     let failure, timer;
