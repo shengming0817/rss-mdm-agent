@@ -1,10 +1,8 @@
 import { reactive } from "vue";
 import type {
-  Answer,
   CatalogItem,
   FieldInput,
   Draft,
-  Reply,
   RequestView,
   SelfServicePort,
   Snapshot,
@@ -64,8 +62,6 @@ export function createController(
     uncertain: false,
     accepted: false,
     taskId: "",
-    replying: false,
-    replyUnknown: false,
     after: null as string | null,
     pageHistory: [] as (string | null)[],
     loading: false,
@@ -74,10 +70,9 @@ export function createController(
   let snapshotWrites = 0;
   let refreshSequence = 0;
   let pendingExecution: Draft | null = null;
-  let pendingReply: Reply | null = null;
   let pendingAction: { kind: "cancel" | "confirm"; input: ActionRef } | null =
     null;
-  let errorSource: "snapshot" | "submission" | "reply" | "action" | null = null;
+  let errorSource: "snapshot" | "submission" | "action" | null = null;
   function setError(message: string, source: typeof errorSource = null) {
     state.error = message;
     errorSource = source;
@@ -137,7 +132,6 @@ export function createController(
         requestIds: [
           state.taskId,
           state.uncertain ? state.requestId : "",
-          pendingReply?.requestId ?? "",
           pendingAction?.input.requestId ?? "",
         ].filter(
           (value, index, ids) => value !== "" && ids.indexOf(value) === index,
@@ -157,12 +151,9 @@ export function createController(
         state.requestId = "";
         state.uncertain = false;
         state.busy = false;
-        state.replying = false;
         state.accepted = false;
-        pendingReply = null;
         pendingAction = null;
         pendingExecution = null;
-        state.replyUnknown = false;
         state.taskId = "";
         after = null;
         history = [];
@@ -181,16 +172,6 @@ export function createController(
         state.uncertain = false;
         if (errorSource === "submission") setError("");
       }
-      if (pendingReply) {
-        const interaction = tasks
-          .find((r) => r.action.requestId === pendingReply?.requestId)
-          ?.interactions.find((i) => i.id === pendingReply?.interactionId);
-        if (interaction && interaction.status !== "pending") {
-          pendingReply = null;
-          state.replyUnknown = false;
-          if (errorSource === "reply") setError("");
-        }
-      }
       if (pendingAction) {
         const { kind, input } = pendingAction;
         const current = tasks.find(
@@ -202,9 +183,7 @@ export function createController(
           current &&
           (kind === "confirm"
             ? current.status !== "confirmation"
-            : ["stopped", "complete", "restartRequired"].includes(
-                current.status,
-              ))
+            : ["stopped", "complete"].includes(current.status))
         ) {
           pendingAction = null;
           if (errorSource === "action") setError("");
@@ -311,7 +290,6 @@ export function createController(
       !state.snapshot ||
       state.busy ||
       state.uncertain ||
-      pendingReply ||
       (kind === "confirm" && task.status !== "confirmation")
     )
       return;
@@ -361,54 +339,6 @@ export function createController(
   async function confirm(task: RequestView) {
     await act("confirm", task);
   }
-  async function sendReply() {
-    if (!port || !pendingReply || state.replying) return;
-    state.replying = true;
-    setError("");
-    const reply = pendingReply;
-    try {
-      const result = await port.respond(reply);
-      if (state.snapshot?.instanceId !== reply.instanceId) return;
-      record(result);
-      pendingReply = null;
-      state.replyUnknown = false;
-    } catch (error) {
-      if (state.snapshot?.instanceId !== reply.instanceId) return;
-      if (rejected(error)) {
-        setError(error.message);
-        pendingReply = null;
-        state.replyUnknown = false;
-      } else {
-        state.replyUnknown = true;
-        setError("交互回答结果不明，请刷新或重试原回答。", "reply");
-      }
-    } finally {
-      if (state.snapshot?.instanceId === reply.instanceId)
-        state.replying = false;
-    }
-  }
-  async function respond(
-    task: RequestView,
-    interactionId: string,
-    answer: Answer,
-  ) {
-    if (
-      !port ||
-      !state.snapshot ||
-      state.replying ||
-      pendingReply ||
-      pendingAction
-    )
-      return;
-    pendingReply = {
-      instanceId: state.snapshot.instanceId,
-      requestId: task.action.requestId,
-      interactionId,
-      commandId: newId(),
-      answer,
-    };
-    await sendReply();
-  }
   function navigate(page: string) {
     state.page = page;
     if (page === "tasks") void refresh();
@@ -422,10 +352,8 @@ export function createController(
     select,
     change,
     execute,
-    respond,
     confirm,
     cancel,
-    retryReply: sendReply,
     navigate,
   };
 }

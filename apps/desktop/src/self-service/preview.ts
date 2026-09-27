@@ -17,7 +17,7 @@ const snapshot: Snapshot = {
           revision: "r1",
         },
         digest:
-          "7a763c58eb07f82dd2f09db5ac7a2926c6ffa2262972c5a519b29414bcb565f3",
+          "1f5cb1365e7e0ae95db78f9a0854fc6a32a743d4945ea6a52f04101d1e867ddd",
       },
       itemId: "blocked",
       variantId: "test",
@@ -66,7 +66,7 @@ const snapshot: Snapshot = {
           revision: "r1",
         },
         digest:
-          "7a763c58eb07f82dd2f09db5ac7a2926c6ffa2262972c5a519b29414bcb565f3",
+          "1f5cb1365e7e0ae95db78f9a0854fc6a32a743d4945ea6a52f04101d1e867ddd",
       },
       itemId: "diagnostics",
       variantId: "test",
@@ -206,21 +206,21 @@ const snapshot: Snapshot = {
           revision: "r1",
         },
         digest:
-          "7a763c58eb07f82dd2f09db5ac7a2926c6ffa2262972c5a519b29414bcb565f3",
+          "1f5cb1365e7e0ae95db78f9a0854fc6a32a743d4945ea6a52f04101d1e867ddd",
       },
-      itemId: "maintenance",
+      itemId: "long-running",
       variantId: "test",
       kind: "tool",
-      name: "维护窗口",
-      description: "选择固定测试时段；不会安排系统任务。",
+      name: "持续执行示例",
+      description: "保持测试执行直至取消；不安排维护窗口。",
       category: "工具",
       resource: {
         reference: {
-          id: "fixture-maintenance",
+          id: "fixture-long-running",
           revision: "r1",
         },
         versionDigest:
-          "15f7f10668b4c73214413942b7f87e8a01596d7fa9ab829504b44eceae0e14c8",
+          "0ff6b36b4c95ccc36340a5df1dd5e0fd5a28743b11aa0645d06c04e9d3d23538",
         selector: {
           platform: "macos",
           architecture: "aarch64",
@@ -255,7 +255,7 @@ const snapshot: Snapshot = {
           revision: "r1",
         },
         digest:
-          "7a763c58eb07f82dd2f09db5ac7a2926c6ffa2262972c5a519b29414bcb565f3",
+          "1f5cb1365e7e0ae95db78f9a0854fc6a32a743d4945ea6a52f04101d1e867ddd",
       },
       itemId: "office",
       variantId: "test",
@@ -327,13 +327,13 @@ const snapshot: Snapshot = {
           revision: "r1",
         },
         digest:
-          "7a763c58eb07f82dd2f09db5ac7a2926c6ffa2262972c5a519b29414bcb565f3",
+          "1f5cb1365e7e0ae95db78f9a0854fc6a32a743d4945ea6a52f04101d1e867ddd",
       },
       itemId: "parameter-check",
       variantId: "test",
       kind: "tool",
-      name: "参数复核",
-      description: "重新核对原动作参数；更改参数需新建请求。",
+      name: "参数校验示例",
+      description: "按目录规则校验输入后执行；更改输入需新建请求。",
       category: "工具",
       resource: {
         reference: {
@@ -456,55 +456,6 @@ const snapshot: Snapshot = {
       availability: "listed",
     },
     {
-      riskLevel: 2,
-      catalog: {
-        authority: {
-          kind: "test",
-          id: "desktop-fixture",
-        },
-        identity: {
-          id: "self-service",
-          revision: "r1",
-        },
-        digest:
-          "7a763c58eb07f82dd2f09db5ac7a2926c6ffa2262972c5a519b29414bcb565f3",
-      },
-      itemId: "restart",
-      variantId: "test",
-      kind: "tool",
-      name: "重启提示",
-      description: "选择稍后提醒或确认已阅读；不会重启设备。",
-      category: "工具",
-      resource: {
-        reference: {
-          id: "fixture-restart",
-          revision: "r1",
-        },
-        versionDigest:
-          "06110b6b40dd281f01b9824d4c4a73ec03a2c6a68e4c69e6f5bcbadaf6e6e8b3",
-        selector: {
-          platform: "macos",
-          architecture: "aarch64",
-          key: "fixture",
-        },
-      },
-      fields: {},
-      inputSchema: {
-        $schema: "https://json-schema.org/draft/2020-12/schema",
-        additionalProperties: false,
-        properties: {},
-        required: [],
-        type: "object",
-      },
-      display: {
-        visibility: "allowed",
-        requestability: "allowed",
-        executability: "unknown",
-      },
-      reason: "S1 测试目录；最终裁决由提交时 Rust 校验产生",
-      availability: "listed",
-    },
-    {
       riskLevel: 1,
       catalog: {
         authority: {
@@ -516,7 +467,7 @@ const snapshot: Snapshot = {
           revision: "r1",
         },
         digest:
-          "7a763c58eb07f82dd2f09db5ac7a2926c6ffa2262972c5a519b29414bcb565f3",
+          "1f5cb1365e7e0ae95db78f9a0854fc6a32a743d4945ea6a52f04101d1e867ddd",
       },
       itemId: "unknown",
       variantId: "test",
@@ -565,7 +516,7 @@ const snapshot: Snapshot = {
           revision: "r1",
         },
         digest:
-          "7a763c58eb07f82dd2f09db5ac7a2926c6ffa2262972c5a519b29414bcb565f3",
+          "1f5cb1365e7e0ae95db78f9a0854fc6a32a743d4945ea6a52f04101d1e867ddd",
       },
       itemId: "unsupported",
       variantId: "test",
@@ -614,7 +565,7 @@ const snapshot: Snapshot = {
           revision: "r1",
         },
         digest:
-          "7a763c58eb07f82dd2f09db5ac7a2926c6ffa2262972c5a519b29414bcb565f3",
+          "1f5cb1365e7e0ae95db78f9a0854fc6a32a743d4945ea6a52f04101d1e867ddd",
       },
       itemId: "withdrawn",
       variantId: "test",

@@ -97,11 +97,24 @@ const methods = new Set([
 ]);
 function businessId(proposal: DeliveryRequest["body"]["proposal"]): unknown {
   const args = proposal.arguments;
-  const variant = args.catalog ?? args.candidate ?? args.script ?? args;
-  return typeof variant === "object" && variant !== null
-    ? ((variant as any).selection?.operationRequestId ??
-        (variant as any).operationRequestId)
-    : undefined;
+  if (proposal.name === "execution_execute") {
+    const catalog = args.catalog;
+    const script = args.script;
+    if (catalog && typeof catalog === "object" && "selection" in catalog) {
+      const selection = catalog.selection;
+      return selection &&
+        typeof selection === "object" &&
+        "operationRequestId" in selection
+        ? selection.operationRequestId
+        : undefined;
+    }
+    return script &&
+      typeof script === "object" &&
+      "operationRequestId" in script
+      ? script.operationRequestId
+      : undefined;
+  }
+  return args.operationRequestId;
 }
 /** MCP owns validation; this mapper supplies stage identity and reconciles against Rust. */
 export async function connectExecution(

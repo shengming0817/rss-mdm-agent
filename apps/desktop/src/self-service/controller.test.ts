@@ -1,3 +1,5 @@
+import { mount, flushPromises } from "@vue/test-utils";
+import SelfService from "./SelfService.vue";
 import { describe, expect, it, vi } from "vitest";
 import { createController } from "./controller";
 import preview from "./preview";
@@ -22,9 +24,6 @@ function fixture() {
       ...structuredClone(task),
       status: "stopped",
     })),
-    respond: vi.fn<SelfServicePort["respond"]>(async () =>
-      structuredClone(task),
-    ),
   } satisfies SelfServicePort;
   let ids = 0;
   const c = createController(
@@ -164,14 +163,6 @@ describe("single execution request", () => {
     await refresh;
     expect(c.state.snapshot!.referencedRequests).toHaveLength(1);
   });
-  it("keeps the original interaction answer when its response is lost", async () => {
-    const { c, port, task } = fixture();
-    await c.refresh();
-    port.respond.mockRejectedValueOnce(new Error());
-    await c.respond(task, "notice", { kind: "confirmation", accepted: true });
-    await c.retryReply();
-    expect(port.respond.mock.calls[0]).toEqual(port.respond.mock.calls[1]);
-  });
 });
 
 it("a lost confirmation response followed by Unknown unlocks cancellation of the original request", async () => {
@@ -184,4 +175,44 @@ it("a lost confirmation response followed by Unknown unlocks cancellation of the
   await c.cancel(snapshot.referencedRequests[0]!);
   expect(port.cancel).toHaveBeenCalledTimes(1);
   expect(port.execute).not.toHaveBeenCalled();
+});
+
+it("ParameterForm preserves exact numeric tokens, explicit false and secret references in execute", async () => {
+  const { c, port, snapshot } = fixture();
+  await c.refresh();
+  c.select(snapshot.catalog.find((i) => i.itemId === "diagnostics")!);
+  const wrapper = mount(SelfService, { props: { controller: c } });
+  await flushPromises();
+  await wrapper.get("#draft-host").setValue("example.invalid");
+  await wrapper.get("#draft-count").setValue("3.0000000000000000001");
+  await wrapper.get("#draft-detail").setValue("false");
+  expect(wrapper.get("#draft-credential").attributes("type")).toBe("password");
+  expect(wrapper.get("#draft-credential-revision").attributes("type")).toBe(
+    "password",
+  );
+  await wrapper.get("#draft-credential").setValue("secret-id");
+  await wrapper.get("#draft-credential-revision").setValue("r2");
+  await wrapper.get("form").trigger("submit");
+  await flushPromises();
+  expect(port.execute.mock.calls[0]![0].fields).toEqual({
+    host: { kind: "text", value: "example.invalid" },
+    count: { kind: "integer", value: "3.0000000000000000001" },
+    detail: { kind: "boolean", value: false },
+    credential: { kind: "secretReference", id: "secret-id", revision: "r2" },
+  });
+  wrapper.unmount();
+});
+it("ParameterForm leaves defaulted fields absent instead of materializing defaults", async () => {
+  const { c, port, snapshot } = fixture();
+  await c.refresh();
+  c.select(snapshot.catalog.find((i) => i.itemId === "diagnostics")!);
+  const wrapper = mount(SelfService, { props: { controller: c } });
+  await flushPromises();
+  await wrapper.get("#draft-host").setValue("example.invalid");
+  await wrapper.get("form").trigger("submit");
+  await flushPromises();
+  expect(port.execute.mock.calls[0]![0].fields).toEqual({
+    host: { kind: "text", value: "example.invalid" },
+  });
+  wrapper.unmount();
 });

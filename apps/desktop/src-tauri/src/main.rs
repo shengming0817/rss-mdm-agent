@@ -17,10 +17,13 @@ fn window(app: &tauri::AppHandle) -> tauri::Result<()> {
     }
     Ok(())
 }
-fn run() -> Result<(), Box<dyn std::error::Error>> {
+fn run(data_root: Option<std::path::PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
     let app = ipc::register(tauri::Builder::default())
-        .setup(|app| {
-            let root = app.path().app_data_dir()?.join("test-users");
+        .setup(move |app| {
+            let root = match &data_root {
+                Some(root) => root.clone(),
+                None => app.path().app_data_dir()?.join("test-users"),
+            };
             let override_path = if cfg!(debug_assertions) {
                 std::env::var_os("RSS_AI_HOST_RUNTIME")
             } else {
@@ -87,10 +90,14 @@ fn main() -> std::process::ExitCode {
             std::process::ExitCode::FAILURE
         };
     }
-    if !args.is_empty() {
-        return std::process::ExitCode::FAILURE;
-    }
-    match run() {
+    let data_root = match args.as_slice() {
+        [] => None,
+        [flag, path] if flag == "--test-data-dir" && std::path::Path::new(path).is_absolute() => {
+            Some(std::path::PathBuf::from(path))
+        }
+        _ => return std::process::ExitCode::FAILURE,
+    };
+    match run(data_root) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {
             startup::report(error.as_ref());

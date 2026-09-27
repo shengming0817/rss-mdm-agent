@@ -185,12 +185,11 @@ pub struct OperationStatus {
     pub process: Option<execution_contract::ProcessSummary>,
     /// Independent effect assessment, never inferred from process exit.
     pub assessment: Option<execution_lifecycle::EffectAssessment>,
-    /// Durable initial submission receipt; preview alone is false.
     /// Durable cancellation request, independent of termination/effect status.
     pub cancel_requested: bool,
     /// Original business identity.
     pub operation_request_id: RequestId,
-    /// Original frozen plan.
+    /// Canonical digest of the original immutable execution input.
     pub content_digest: Digest,
     /// Service-owned current phase.
     pub phase: OperationPhase,

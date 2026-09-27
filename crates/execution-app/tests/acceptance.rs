@@ -308,7 +308,7 @@ fn newer_schema_retains_read_only_startup_diagnostic() {
     };
     assert_eq!(
         format!("{error:?}"),
-        "NewerSchema { found: 999, supported: 5 }"
+        "UnsupportedSchema { found: 999, supported: 5 }"
     );
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
     assert_eq!(runner.dispatch_count(), 0);
@@ -1700,4 +1700,26 @@ fn service_expires_pending_confirmation_and_exposes_corrupt_confirmation_storage
         }
         assert_eq!(runner.dispatch_count(), 0);
     }
+}
+
+#[test]
+fn old_schema_reports_exact_versions_and_keeps_bytes() {
+    let db = Database::new();
+    let host = TestHost::new();
+    let runner = DeterministicTestRunner::new(id("test-runner"), TestScenario::Wait, 16).unwrap();
+    drop(open(&db, host.clone(), runner.clone(), Startup::CreateTest));
+    db.sql().execute_batch("PRAGMA user_version=4;").unwrap();
+    let before = std::fs::read(&db.path).unwrap();
+    let error = match ExecutionApp::start(
+        &db.path,
+        Startup::OpenTest,
+        host,
+        runner,
+        AppConfig::test_defaults(1),
+    ) {
+        Ok(_) => panic!("old format opened"),
+        Err(e) => e,
+    };
+    assert_eq!(error.to_string(),"execution database schema 4 is unsupported; required schema 5; preserve the existing database and explicitly select a new test data directory");
+    assert_eq!(std::fs::read(&db.path).unwrap(), before);
 }

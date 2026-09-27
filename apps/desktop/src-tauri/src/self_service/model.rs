@@ -1,5 +1,4 @@
 use execution_contract::{Digest, Id, RequestId};
-use execution_interaction::Kind;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use service_catalog::{CatalogKind, CatalogRef, DisplayStatus, Parameter, ResourceBinding};
@@ -31,32 +30,6 @@ pub struct ActionRef {
     pub request_id: RequestId,
     pub digest: Digest,
 }
-#[derive(Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
-pub enum Answer {
-    Confirmation {
-        accepted: bool,
-    },
-    PrivacyConsent {
-        accepted: bool,
-    },
-    Choice {
-        selection: String,
-    },
-    Parameters {
-        fields: BTreeMap<String, FieldInput>,
-    },
-    Cancel {},
-}
-#[derive(Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Reply {
-    pub instance_id: String,
-    pub request_id: RequestId,
-    pub interaction_id: String,
-    pub command_id: execution_interaction::Reference,
-    pub answer: Answer,
-}
 #[derive(Clone, Debug, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceError {
@@ -79,11 +52,6 @@ pub fn error(code: &'static str, message: impl Into<String>) -> ServiceError {
 impl From<service_catalog::CatalogError> for ServiceError {
     fn from(value: service_catalog::CatalogError) -> Self {
         error("catalog", format!("目录校验失败：{value}"))
-    }
-}
-impl From<execution_interaction::InteractionError> for ServiceError {
-    fn from(value: execution_interaction::InteractionError) -> Self {
-        error("interaction", format!("交互未接纳：{value}"))
     }
 }
 #[derive(Clone, Serialize, JsonSchema)]
@@ -135,20 +103,12 @@ pub struct ParameterSummary {
     pub state: &'static str,
 }
 #[derive(Clone, Serialize, JsonSchema)]
-pub struct Choice {
-    pub id: &'static str,
-    pub label: &'static str,
-}
-#[derive(Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-#[schemars(rename = "Interaction")]
-pub struct InteractionView {
-    pub id: String,
-    pub kind: Kind,
-    pub status: InteractionStatus,
+#[schemars(rename = "Confirmation")]
+pub struct ConfirmationView {
+    pub status: ConfirmationStatus,
     pub message: &'static str,
     pub expires_at_unix_ms: u64,
-    pub options: Vec<Choice>,
 }
 #[derive(Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -156,13 +116,13 @@ pub struct RequestView {
     pub action: ActionView,
     pub status: RequestStatus,
     pub message: &'static str,
-    pub interactions: Vec<InteractionView>,
+    pub confirmation: Option<ConfirmationView>,
 }
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SnapshotQuery {
     pub after: Option<RequestId>,
-    /// Independently refresh selection and unresolved submit/reply identities (at most three).
+    /// Independently refresh selected and unresolved execution/confirmation identities (at most three).
     #[schemars(length(max = 3))]
     pub request_ids: Vec<RequestId>,
 }
@@ -193,7 +153,7 @@ pub enum ServiceMode {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub enum InteractionStatus {
+pub enum ConfirmationStatus {
     Pending,
     Answered,
     Cancelled,
@@ -204,8 +164,8 @@ pub enum InteractionStatus {
 pub enum RequestStatus {
     Waiting,
     Confirmation,
+    Approval,
     Complete,
     Stopped,
-    RestartRequired,
     UnknownEffect,
 }

@@ -849,8 +849,7 @@ export interface ExecutionStatus {
    */
   cancelRequested: boolean;
   /**
-   * Exact frozen plan identity.
-   * Canonical C01 plan digest.
+   * Canonical digest of the complete immutable execution input.
    */
   contentDigest: string;
   /**
@@ -866,7 +865,6 @@ export interface ExecutionStatus {
    */
   mode: "test" | "real";
   /**
-   * The initial submission receipt exists; preview alone leaves this false.
    * Original reliable business identity.
    */
   operationRequestId: string;
@@ -1047,8 +1045,7 @@ export interface ExecutionStatus1 {
    */
   cancelRequested: boolean;
   /**
-   * Exact frozen plan identity.
-   * Canonical C01 plan digest.
+   * Canonical digest of the complete immutable execution input.
    */
   contentDigest: string;
   /**
@@ -1064,7 +1061,6 @@ export interface ExecutionStatus1 {
    */
   mode: "test" | "real";
   /**
-   * The initial submission receipt exists; preview alone leaves this false.
    * Original reliable business identity.
    */
   operationRequestId: string;

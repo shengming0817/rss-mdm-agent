@@ -25,7 +25,7 @@ it("does not expose IPC outside Tauri", () => {
   expect(nativePort()).toBeNull();
   expect(invoke).not.toHaveBeenCalled();
 });
-it.each(["snapshot", "execute", "confirm", "respond"] as const)(
+it.each(["snapshot", "execute", "confirm", "cancel"] as const)(
   "%s preserves its command, exact envelope, response and rejection",
   async (method) => {
     const port = nativePort()!;

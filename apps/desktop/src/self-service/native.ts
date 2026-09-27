@@ -14,7 +14,5 @@ export function nativePort(): SelfServicePort | null {
       invoke<RequestView>("self_service_cancel", { input, generation }),
     confirm: (input) =>
       invoke<RequestView>("self_service_confirm", { input, generation }),
-    respond: (input) =>
-      invoke<RequestView>("self_service_respond", { input, generation }),
   };
 }

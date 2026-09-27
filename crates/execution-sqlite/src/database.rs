@@ -24,15 +24,15 @@ pub struct Store {
     pub(crate) limits: Limits,
     pub(crate) authority: Authority,
 }
-/// Opening a newer database never creates a write-capable handle.
+/// Opening an unsupported database never creates a write-capable handle.
 pub enum OpenOutcome {
     /// Validated current database.
     Ready(Box<Store>),
     /// Header diagnostics only; no business queries, migrations or execution methods.
-    NewerSchema {
+    UnsupportedSchema {
         /// Version found using a read-only SQLite connection.
         found: u32,
-        /// Maximum version this binary understands.
+        /// Only version this binary accepts.
         supported: u32,
     },
 }
@@ -72,7 +72,7 @@ impl Store {
         sync_parent(path)?;
         match Self::open(path, &authority, limits)? {
             OpenOutcome::Ready(store) => Ok(*store),
-            OpenOutcome::NewerSchema { .. } => Err(Error::Schema),
+            OpenOutcome::UnsupportedSchema { .. } => Err(Error::Schema),
         }
     }
     /// Open ONLY an existing database after read-only identity/version inspection.
@@ -86,14 +86,11 @@ impl Store {
         if application != APPLICATION_ID {
             return Err(Error::Schema);
         }
-        if version > SCHEMA_VERSION {
-            return Ok(OpenOutcome::NewerSchema {
+        if version != SCHEMA_VERSION {
+            return Ok(OpenOutcome::UnsupportedSchema {
                 found: version,
                 supported: SCHEMA_VERSION,
             });
-        }
-        if version != SCHEMA_VERSION {
-            return Err(Error::Schema);
         }
         let encoded: Vec<u8> = reader.query_row(
             &format!(

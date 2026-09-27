@@ -36,7 +36,7 @@ pub const PARAMETERS: ParameterLimits = ParameterLimits {
     max_string_bytes: 1024,
     max_parameters: 16,
 };
-pub const PLAN_LIMITS: ExecutionLimits = ExecutionLimits {
+pub const INPUT_LIMITS: ExecutionLimits = ExecutionLimits {
     max_input_bytes: 16384,
     max_depth: 16,
     max_nodes: 2048,
@@ -67,22 +67,16 @@ pub fn catalog(_now: u64) -> Result<FrozenCatalog> {
             "只读测试动作；不会发送网络请求。",
         ),
         (
-            "restart",
+            "long-running",
             "tool",
-            "重启提示",
-            "选择稍后提醒或确认已阅读；不会重启设备。",
-        ),
-        (
-            "maintenance",
-            "tool",
-            "维护窗口",
-            "选择固定测试时段；不会安排系统任务。",
+            "持续执行示例",
+            "保持测试执行直至取消；不安排维护窗口。",
         ),
         (
             "parameter-check",
             "tool",
-            "参数复核",
-            "重新核对原动作参数；更改参数需新建请求。",
+            "参数校验示例",
+            "按目录规则校验输入后执行；更改输入需新建请求。",
         ),
         (
             "unknown",
@@ -151,8 +145,10 @@ pub fn freeze(
         "launch":{"artifact":artifact,"interpreter":{"artifact":{"resource":{"id":"fixture-interpreter","revision":"r1"},"sha256":digest(b"fixed interpreter marker; no interpreter exists")},"profile":{"id":"fixture-only","revision":"r1"}},"argv":[{"kind":"artifactPath"}],"artifactEncoding":"utf8","stdin":{"kind":"closed"},"output":{"format":{"kind":"text"},"stdout":"utf8","stderr":"utf8"},"cwd":"/s1-fixture","env":{}},
         "runAs":{"kind":"user","account":account},"constraints":{"kind":"restricted","network":{"kind":"denied"},"readPaths":[],"writePaths":[],"allowChildProcesses":false,"requireSandbox":true},"budget":{"totalTimeoutMs":60_000,"totalOutputBytes":4096,"maxAttempts":1},"validity":{"notBeforeUnixMs":now,"expiresAtUnixMs":now+300_000},"policy":{"id":"fixture-policy","revision":"r1"},"sessionRequirement":{"kind":"notRequired"}
     });
-    let spec = serde_json::from_value(spec).map_err(|_| error("fixture", "测试计划结构错误"))?;
-    FrozenExecution::freeze(spec, &PLAN_LIMITS).map_err(|_| error("fixture", "测试计划校验失败"))
+    let spec =
+        serde_json::from_value(spec).map_err(|_| error("fixture", "测试执行输入结构错误"))?;
+    FrozenExecution::freeze(spec, &INPUT_LIMITS)
+        .map_err(|_| error("fixture", "测试执行输入校验失败"))
 }
 
 /// Protected S1 classification after exact fixture reconstruction, never tool-description inference.
@@ -161,7 +157,7 @@ pub fn risk(resource: &str) -> Option<execution_admission::RiskLevel> {
     match resource {
         "fixture-parameter-check" => Some(Zero),
         "fixture-diagnostics" | "fixture-unknown" => Some(One),
-        "fixture-office" | "fixture-maintenance" | "fixture-restart" => Some(Two),
+        "fixture-office" | "fixture-long-running" => Some(Two),
         "fixture-blocked" | "fixture-unsupported" | "fixture-withdrawn" => Some(Three),
         _ => None,
     }

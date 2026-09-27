@@ -34,6 +34,10 @@ fn bad(error: Error) -> ui::ServiceError {
         Error::Denied | Error::Unbound => "denied",
         Error::Conflict => "conflict",
         Error::InvalidInput => "invalidInput",
+        Error::Storage => "storage",
+        Error::Clock => "clock",
+        Error::Capability => "capability",
+        Error::Capacity => "capacity",
         _ => "execution",
     };
     ui::error(code, "受控执行操作未确认；请查询原任务")
@@ -66,7 +70,14 @@ pub struct Owner {
     app: App,
     host: S1Host,
     catalog: FrozenCatalog,
-    started: std::collections::BTreeMap<RequestId, u64>,
+    scheduled: std::collections::BTreeMap<RequestId, Scheduled>,
+}
+#[derive(Clone, Copy)]
+struct Scheduled {
+    at: u64,
+    confirmation_deadline: u64,
+    failures: u8,
+    error: Option<Error>,
 }
 #[derive(Clone)]
 struct S1Runner {
@@ -77,7 +88,7 @@ struct S1Runner {
 impl S1Runner {
     fn select(&self, p: &FrozenExecution) -> &DeterministicTestRunner {
         match p.spec().request.operation.resource.id.as_str() {
-            "fixture-maintenance" => &self.wait,
+            "fixture-long-running" => &self.wait,
             "fixture-unknown" => &self.unknown,
             _ => &self.complete,
         }
@@ -171,7 +182,7 @@ impl ExecutionHandle {
             app,
             host,
             catalog: catalog().map_err(|_| Error::Configuration)?,
-            started: Default::default(),
+            scheduled: Default::default(),
         };
         // Fresh runner has no pre-crash facts. Reconcile original attempts; never re-dispatch.
         let mut after = None;
@@ -185,13 +196,18 @@ impl ExecutionHandle {
                     let status = owner
                         .app
                         .resume_initial(&task.status.operation_request_id)?;
-                    if !status.cancel_requested
-                        && (status.attempts > 0 || status.phase == TaskPhase::ConfirmationRequired)
-                    {
-                        owner
-                            .started
-                            .insert(task.status.operation_request_id.clone(), now()?);
-                    }
+                    let input = owner.app.frozen_input(
+                        &RequestContext {
+                            actor: task.action.actor.clone(),
+                        },
+                        &task.status.operation_request_id,
+                    )?;
+                    owner.schedule_status(
+                        &task.status.operation_request_id,
+                        &status,
+                        execution_sqlite::execution_confirmation(&input).expires_at_unix_ms,
+                        now()?,
+                    );
                 }
                 if matches!(
                     task.status.phase,
@@ -313,10 +329,16 @@ impl ExecutionHandle {
     }
     pub async fn confirm_ui(&self, input: ui::ActionRef) -> ui::Result<ui::RequestView> {
         self.call(move |o, caller| {
-            o.check_action(caller, &input)?;
-            o.app
+            let frozen = o.check_action(caller, &input)?;
+            let status = o
+                .app
                 .confirm_execution(caller, &input.request_id, &input.digest, true)?;
-            o.started.entry(input.request_id.clone()).or_insert(now()?);
+            o.schedule_status(
+                &input.request_id,
+                &status,
+                execution_sqlite::execution_confirmation(&frozen).expires_at_unix_ms,
+                now()?,
+            );
             o.request_view(caller, &input.request_id)
         })
         .await
@@ -326,80 +348,121 @@ impl ExecutionHandle {
         self.call(move |o, caller| {
             o.check_action(caller, &input)?;
             o.app.cancel(caller, &input.request_id)?;
-            o.app.reconcile(&input.request_id)?;
-            o.request_view(caller, &input.request_id)
-        })
-        .await
-        .map_err(bad)
-    }
-    pub async fn respond_ui(&self, input: ui::Reply) -> ui::Result<ui::RequestView> {
-        self.call(move |o, caller| {
-            if input.instance_id != BINDING {
-                return Err(Error::Denied);
-            }
-            let command = match input.answer {
-                ui::Answer::Cancel {} => execution_interaction::Command::Cancel {
-                    id: input.command_id.clone(),
-                },
-                ui::Answer::Confirmation { accepted } => execution_interaction::Command::Answer {
-                    id: input.command_id.clone(),
-                    response: execution_interaction::Response::Confirmation { accepted },
-                },
-                _ => return Err(Error::InvalidInput),
-            };
-            o.app.respond(
-                caller,
-                &input.request_id,
-                &CommandId::new(input.command_id.as_str())?,
-                &execution_interaction::Reference::new(input.interaction_id)
-                    .map_err(|_| Error::InvalidInput)?,
-                &command,
-            )?;
+            let status = o.app.reconcile(&input.request_id)?;
+            o.schedule_status(&input.request_id, &status, 0, now()?);
             o.request_view(caller, &input.request_id)
         })
         .await
         .map_err(bad)
     }
     pub async fn details(&self, request: RequestId) -> Result<ExecutionTaskDetails, Error> {
-        self.call(move |o, caller| o.app.task_details(caller, &request))
-            .await
+        self.call(move |o, caller| {
+            let details = o.app.task_details(caller, &request)?;
+            o.schedule_error(&request)?;
+            Ok(details)
+        })
+        .await
     }
     pub async fn cancel_task(&self, request: RequestId) -> Result<ExecutionStatus, Error> {
         self.call(move |o, caller| {
             o.app.cancel(caller, &request)?;
-            o.app.reconcile(&request)
+            let status = o.app.reconcile(&request)?;
+            o.schedule_status(&request, &status, 0, now()?);
+            Ok(status)
         })
         .await
     }
 }
 impl Owner {
+    fn schedule_status(
+        &mut self,
+        request: &RequestId,
+        status: &ExecutionStatus,
+        confirmation_deadline: u64,
+        time: u64,
+    ) {
+        let at = match status.phase {
+            TaskPhase::ConfirmationRequired => Some(confirmation_deadline),
+            TaskPhase::Accepted | TaskPhase::Running | TaskPhase::ExecutionEnded => {
+                Some(time.saturating_add(1500))
+            }
+            _ => None,
+        };
+        self.scheduled.remove(request);
+        if let Some(at) = at {
+            self.scheduled.insert(
+                request.clone(),
+                Scheduled {
+                    at,
+                    confirmation_deadline,
+                    failures: 0,
+                    error: None,
+                },
+            );
+        }
+    }
+    fn schedule_error(&self, request: &RequestId) -> Result<(), Error> {
+        match self.scheduled.get(request).and_then(|s| s.error) {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
+    }
+    fn record_schedule_failure(
+        &mut self,
+        request: RequestId,
+        mut scheduled: Scheduled,
+        error: Error,
+        time: u64,
+    ) {
+        if matches!(
+            error,
+            Error::Unavailable
+                | Error::Capacity
+                | Error::OutcomeUnknown
+                | Error::ConfirmationUnknown
+        ) && scheduled.failures < 3
+        {
+            scheduled.at = time.saturating_add(1500u64 << scheduled.failures);
+            scheduled.failures += 1;
+        } else {
+            scheduled.error = Some(error);
+        }
+        self.scheduled.insert(request, scheduled);
+    }
+    // ref: Rust std/sync/mpsc.rs Receiver::recv_timeout; messages wake the owner immediately.
     fn next_tick(&self) -> Option<Duration> {
-        let now = now().unwrap_or(0);
-        self.started
+        let time = now().ok()?;
+        self.scheduled
             .values()
+            .filter(|s| s.error.is_none())
+            .map(|s| s.at)
             .min()
-            .map(|at| Duration::from_millis(at.saturating_add(1500).saturating_sub(now)))
+            .map(|at| Duration::from_millis(at.saturating_sub(time)))
     }
     fn tick(&mut self) {
         let Ok(time) = now() else {
             return;
         };
         let due: Vec<_> = self
-            .started
+            .scheduled
             .iter()
-            .filter(|(_, at)| time >= at.saturating_add(1500))
-            .map(|(id, _)| id.clone())
+            .filter(|(_, s)| s.error.is_none() && time >= s.at)
+            .map(|(id, s)| (id.clone(), *s))
             .collect();
-        for request in due {
-            self.started.remove(&request);
-            let resumed = self.app.resume_initial(&request);
-            if resumed
-                .as_ref()
-                .is_ok_and(|s| s.phase == TaskPhase::ConfirmationRequired)
-                || resumed.is_err()
-                || self.app.reconcile(&request).is_err()
-            {
-                self.started.insert(request, time);
+        for (request, scheduled) in due {
+            self.scheduled.remove(&request);
+            let result = self.app.resume_initial(&request).and_then(|status| {
+                if status.phase == TaskPhase::ConfirmationRequired {
+                    Ok(status)
+                } else {
+                    self.app.reconcile(&request)
+                }
+            });
+            match result {
+                Ok(status) => {
+                    self.schedule_status(&request, &status, scheduled.confirmation_deadline, time)
+                }
+                Err(error) => self.record_schedule_failure(request, scheduled, error, time),
             }
         }
     }
@@ -463,9 +526,12 @@ impl Owner {
     ) -> Result<ExecutionStatus, Error> {
         let request = &p.spec().request.request_id;
         let status = self.app.request_execution(caller, p)?;
-        if status.attempts > 0 || status.phase == TaskPhase::ConfirmationRequired {
-            self.started.entry(request.clone()).or_insert(now()?);
-        }
+        self.schedule_status(
+            request,
+            &status,
+            execution_sqlite::execution_confirmation(p).expires_at_unix_ms,
+            now()?,
+        );
         Ok(status)
     }
     fn action_view(&self, p: &FrozenExecution, revision: u32) -> Result<ui::ActionView, Error> {
@@ -521,6 +587,7 @@ impl Owner {
     ) -> Result<ui::RequestView, Error> {
         let p = self.app.frozen_input(caller, request)?;
         let s = self.app.status(caller, request)?;
+        self.schedule_error(request)?;
         let (status, message) = if s.admission == Some(execution_sqlite::AdmissionStatus::Denied) {
             (
                 ui::RequestStatus::Stopped,
@@ -529,7 +596,10 @@ impl Owner {
         } else if s.admission == Some(execution_sqlite::AdmissionStatus::ApprovalRequired)
             && s.attempts == 0
         {
-            (ui::RequestStatus::Confirmation, "等待动作确认")
+            (
+                ui::RequestStatus::Approval,
+                "等待策略授权；本人确认不能替代批准",
+            )
         } else {
             match s.phase {
                 TaskPhase::Verified => (
@@ -549,38 +619,31 @@ impl Owner {
                 ),
             }
         };
-        let mut interactions = Vec::new();
         let reference = execution_sqlite::execution_confirmation(&p).id;
-        let interaction = match self.app.interaction(caller, request, &reference) {
-            Ok(i) => Some(i),
+        let confirmation = match self.app.interaction(caller, request, &reference) {
+            Ok(i) => Some(ui::ConfirmationView {
+                status: match i.snapshot().status {
+                    execution_interaction::Status::Pending => ui::ConfirmationStatus::Pending,
+                    execution_interaction::Status::Answered { .. } => {
+                        ui::ConfirmationStatus::Answered
+                    }
+                    execution_interaction::Status::Cancelled { .. } => {
+                        ui::ConfirmationStatus::Cancelled
+                    }
+                    execution_interaction::Status::Expired { .. } => {
+                        ui::ConfirmationStatus::Expired
+                    }
+                },
+                message: "确认本次动作；确认不增加权限，也不改变发起来源",
+                expires_at_unix_ms: i.snapshot().spec.expires_at_unix_ms,
+            }),
             Err(Error::NotFound) => None,
             Err(e) => return Err(e),
         };
-        if let Some(i) = interaction {
-            let snapshot = i.snapshot();
-            interactions.push(ui::InteractionView {
-                id: reference.as_str().into(),
-                kind: snapshot.spec.kind.clone(),
-                status: match snapshot.status {
-                    execution_interaction::Status::Pending => ui::InteractionStatus::Pending,
-                    execution_interaction::Status::Answered { .. } => {
-                        ui::InteractionStatus::Answered
-                    }
-                    execution_interaction::Status::Cancelled { .. } => {
-                        ui::InteractionStatus::Cancelled
-                    }
-                    execution_interaction::Status::Expired { .. } => ui::InteractionStatus::Expired,
-                },
-                message: "确认本次动作；确认不增加权限，也不改变发起来源",
-                expires_at_unix_ms: snapshot.spec.expires_at_unix_ms,
-                options: vec![],
-            });
-        }
-        let status = if s.attempts == 0
-            && !s.cancel_requested
-            && interactions
-                .iter()
-                .any(|i| i.status == ui::InteractionStatus::Pending)
+        let status = if s.phase == TaskPhase::ConfirmationRequired
+            && confirmation
+                .as_ref()
+                .is_some_and(|c| c.status == ui::ConfirmationStatus::Pending)
         {
             ui::RequestStatus::Confirmation
         } else {
@@ -590,7 +653,7 @@ impl Owner {
             action: self.action_view(&p, 1)?,
             status,
             message,
-            interactions,
+            confirmation,
         })
     }
     fn snapshot(
@@ -775,6 +838,7 @@ impl mcp::ExecutionServicePort for ExecutionHandle {
         let origin = self.origin.clone().ok_or(mcp::ServiceError::Denied)?;
         self.call(move |o, caller| {
             o.check_origin(caller, &request.operation_request_id, &origin)?;
+            o.schedule_error(&request.operation_request_id)?;
             o.app
                 .status(caller, &request.operation_request_id)
                 .map(operation)
@@ -791,9 +855,11 @@ impl mcp::ExecutionServicePort for ExecutionHandle {
         self.call(move |o, caller| {
             o.check_origin(caller, &request.operation_request_id, &origin)?;
             o.app.cancel(caller, &request.operation_request_id)?;
+            let status = o.app.reconcile(&request.operation_request_id)?;
+            o.schedule_status(&request.operation_request_id, &status, 0, now()?);
             Ok(mcp::CancelResult {
                 disposition: mcp::CancelDisposition::Requested,
-                operation: operation(o.app.reconcile(&request.operation_request_id)?),
+                operation: operation(status),
             })
         })
         .await
@@ -990,7 +1056,7 @@ mod tests {
                     request_id: RequestId::new("alice-running").unwrap(),
                     revision: 1,
                     catalog: owner.catalog.reference(),
-                    item_id: id("maintenance"),
+                    item_id: id("long-running"),
                     variant_id: id("test"),
                     fields: Default::default(),
                 };
@@ -1107,7 +1173,7 @@ mod tests {
                     },
                 )?;
                 assert_eq!(owner.app.status(caller, &request)?.attempts, 0);
-                owner.started.clear();
+                owner.scheduled.clear();
                 Ok(())
             })
             .await
@@ -1132,6 +1198,64 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
         restored.close().await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[tokio::test]
+    async fn pending_confirmation_schedules_only_its_expiry() {
+        let (handle, root) = fixture().await;
+        handle
+            .call(|owner, caller| {
+                add(owner, caller, 0, true, fixtures::human())?;
+                assert!(owner.next_tick().unwrap() > Duration::from_secs(45));
+                Ok(())
+            })
+            .await
+            .unwrap();
+        handle.close().await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn scheduling_failures_back_off_and_stop_with_a_closed_error() {
+        let (handle, root) = fixture().await;
+        handle
+            .call(|owner, _| {
+                let request = RequestId::new("scheduled-failure").unwrap();
+                let mut entry = Scheduled {
+                    at: 1000,
+                    confirmation_deadline: 60000,
+                    failures: 0,
+                    error: None,
+                };
+                for (index, delay) in [1500, 3000, 6000].into_iter().enumerate() {
+                    owner.record_schedule_failure(request.clone(), entry, Error::Unavailable, 1000);
+                    entry = *owner.scheduled.get(&request).unwrap();
+                    assert_eq!(entry.at, 1000 + delay);
+                    assert_eq!(entry.failures, index as u8 + 1);
+                    assert!(entry.error.is_none());
+                }
+                owner.record_schedule_failure(request.clone(), entry, Error::Unavailable, 1000);
+                assert_eq!(owner.schedule_error(&request), Err(Error::Unavailable));
+                assert!(owner.next_tick().is_none());
+                owner.scheduled.clear();
+                owner.record_schedule_failure(
+                    request.clone(),
+                    Scheduled {
+                        at: 1000,
+                        confirmation_deadline: 60000,
+                        failures: 0,
+                        error: None,
+                    },
+                    Error::Storage,
+                    1000,
+                );
+                assert_eq!(owner.schedule_error(&request), Err(Error::Storage));
+                assert!(owner.next_tick().is_none());
+                Ok(())
+            })
+            .await
+            .unwrap();
+        handle.close().await;
         std::fs::remove_dir_all(root).unwrap();
     }
 }

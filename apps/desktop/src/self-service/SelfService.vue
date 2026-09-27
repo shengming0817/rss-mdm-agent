@@ -41,14 +41,14 @@ function status(value: RequestView["status"]): string {
   switch (value) {
     case "waiting":
       return "等待交互";
+    case "approval":
+      return "等待策略授权";
     case "confirmation":
       return "等待动作确认";
     case "complete":
       return "测试流程完成";
     case "stopped":
       return "流程停止";
-    case "restartRequired":
-      return "待重启提示";
     case "unknownEffect":
       return "效果未知";
   }
@@ -58,7 +58,7 @@ let polling: ReturnType<typeof setInterval>;
 onMounted(() => {
   polling = setInterval(() => {
     now.value = Date.now();
-    if (!s.busy && !s.replying && !s.loading) void c.refresh();
+    if (!s.busy && !s.loading) void c.refresh();
   }, 1500);
   void c.refresh();
 });
@@ -277,18 +277,11 @@ onUnmounted(() => clearInterval(polling));
           :key="task.action.requestId"
           :task="task"
           :now="now"
-          :item="
-            s.snapshot.catalog.find(
-              (item) => item.itemId === task?.action.itemId,
-            )
-          "
-          :disabled="!c.interactive || s.busy || s.replying || s.replyUnknown"
+          :disabled="!c.interactive || s.busy"
           @confirm="task && c.confirm(task)"
           @cancel="task && c.cancel(task)"
-          @respond="(id, answer) => task && c.respond(task, id, answer)"
         />
       </div>
-      <button v-if="s.replyUnknown" @click="c.retryReply">重试原回答</button>
     </template>
     <template v-else-if="s.page === 'help'"
       ><h1>设备与帮助</h1>

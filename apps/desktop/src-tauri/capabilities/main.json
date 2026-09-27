@@ -5,7 +5,6 @@
   "permissions": [
     "allow-self-service-snapshot",
     "allow-self-service-execute",
-    "allow-self-service-respond",
     "allow-self-service-confirm",
     "allow-execution-task-details",
     "allow-ai-host-status",

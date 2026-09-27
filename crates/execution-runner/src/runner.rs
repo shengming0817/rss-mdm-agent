@@ -483,7 +483,7 @@ pub(crate) fn classify(error: Error) -> ProcessFailureKind {
         | Error::Clock
         | Error::Unavailable
         | Error::Storage
-        | Error::NewerSchema { .. }
+        | Error::UnsupportedSchema { .. }
         | Error::OutcomeUnknown
         | Error::ConfirmationUnknown => ProcessFailureKind::Unavailable,
     }

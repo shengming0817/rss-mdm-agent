@@ -56,8 +56,8 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             Startup::OpenTest => {
                 match Store::open(path, &binding.authority, test_store_limits())? {
                     OpenOutcome::Ready(store) => *store,
-                    OpenOutcome::NewerSchema { found, supported } => {
-                        return Err(Error::NewerSchema { found, supported })
+                    OpenOutcome::UnsupportedSchema { found, supported } => {
+                        return Err(Error::UnsupportedSchema { found, supported })
                     }
                 }
             }

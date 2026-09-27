@@ -1555,12 +1555,12 @@
               "description": "Service-owned attempt identity, if an attempt exists."
             },
             "cancelRequested": {
-              "description": "Durable initial submission receipt; preview alone is false.\nDurable cancellation request, independent of termination/effect status.",
+              "description": "Durable cancellation request, independent of termination/effect status.",
               "type": "boolean"
             },
             "contentDigest": {
               "$ref": "#/$defs/Digest",
-              "description": "Original frozen plan."
+              "description": "Canonical digest of the original immutable execution input."
             },
             "evidence": {
               "description": "Authorized evidence references only.",
@@ -2178,12 +2178,12 @@
               "description": "Service-owned attempt identity, if an attempt exists."
             },
             "cancelRequested": {
-              "description": "Durable initial submission receipt; preview alone is false.\nDurable cancellation request, independent of termination/effect status.",
+              "description": "Durable cancellation request, independent of termination/effect status.",
               "type": "boolean"
             },
             "contentDigest": {
               "$ref": "#/$defs/Digest",
-              "description": "Original frozen plan."
+              "description": "Canonical digest of the original immutable execution input."
             },
             "evidence": {
               "description": "Authorized evidence references only.",
@@ -2831,12 +2831,12 @@
               "description": "Service-owned attempt identity, if an attempt exists."
             },
             "cancelRequested": {
-              "description": "Durable initial submission receipt; preview alone is false.\nDurable cancellation request, independent of termination/effect status.",
+              "description": "Durable cancellation request, independent of termination/effect status.",
               "type": "boolean"
             },
             "contentDigest": {
               "$ref": "#/$defs/Digest",
-              "description": "Original frozen plan."
+              "description": "Canonical digest of the original immutable execution input."
             },
             "evidence": {
               "description": "Authorized evidence references only.",

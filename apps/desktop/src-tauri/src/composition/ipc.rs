@@ -58,7 +58,6 @@ commands! {
     self_service_execute(Draft) -> RequestView = execute_ui,
     self_service_cancel(ActionRef) -> RequestView = cancel_ui,
     self_service_confirm(ActionRef) -> RequestView = confirm_ui,
-    self_service_respond(Reply) -> RequestView = respond_ui,
 }
 #[tauri::command]
 pub async fn execution_task_details(
@@ -248,7 +247,6 @@ pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder
         self_service_execute,
         self_service_cancel,
         self_service_confirm,
-        self_service_respond,
         execution_task_details,
         ai_connect,
         ai_receive,
@@ -329,7 +327,7 @@ mod tests {
         .unwrap()
         .deserialize::<serde_json::Value>()
         .unwrap();
-        assert_eq!(snapshot["catalog"].as_array().unwrap().len(), 9);
+        assert_eq!(snapshot["catalog"].as_array().unwrap().len(), 8);
         let service = call(
             &main,
             "local_service_status",
@@ -355,7 +353,6 @@ mod tests {
             "self_service_execute",
             "self_service_confirm",
             "self_service_cancel",
-            "self_service_respond",
             "execution_task_details",
             "save_connection",
             "ai_connect",
@@ -389,7 +386,6 @@ mod tests {
             "self_service_execute",
             "self_service_confirm",
             "self_service_cancel",
-            "self_service_respond",
         ] {
             let error = call(
                 &main,

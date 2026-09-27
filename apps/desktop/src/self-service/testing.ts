@@ -5,16 +5,11 @@ export function executionTask(): RequestView {
   return {
     status: "confirmation",
     message: "等待本人确认",
-    interactions: [
-      {
-        id: "confirm-action",
-        kind: { kind: "executionAction", digest: "a".repeat(64) },
-        status: "pending",
-        expiresAtUnixMs: 2000,
-        message: "确认本次动作",
-        options: [],
-      },
-    ],
+    confirmation: {
+      status: "pending",
+      expiresAtUnixMs: 2000,
+      message: "确认本次动作",
+    },
     action: {
       riskLevel: 2,
       authority: { kind: "test", id: "test" },

@@ -182,6 +182,27 @@ test("lost submit receipt recovers the same Rust attempt and keeps process exit 
     name: "execution_execute",
     arguments: input,
   };
+  assert.equal(
+    connection.router.prepare(session.namespace, {
+      name: "execution_execute",
+      arguments: { candidate: { operationRequestId: "legacy" } },
+    }).ok,
+    false,
+  );
+  assert.equal(
+    connection.router.prepare(session.namespace, {
+      name: "execution_execute",
+      arguments: { operationRequestId: "legacy" },
+    }).ok,
+    false,
+  );
+  assert.equal(
+    connection.router.prepare(session.namespace, {
+      name: "execution_execute",
+      arguments: { script: { operationRequestId: "script" } },
+    }).ok,
+    true,
+  );
   const request = await crashAfterRustAcceptance(
     t,
     aiDb,

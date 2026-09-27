@@ -58,7 +58,7 @@ defineProps<{ input: Pick<Action, "actor" | "authority" | "initiator"> }>();
       </template>
     </dl>
     <p class="muted">
-      来源随计划冻结；来源账号不授予执行权限，运行身份由计划单独指定。
+      来源随动作冻结；来源账号不授予执行权限，运行身份由动作单独指定。
     </p>
   </section>
 </template>
