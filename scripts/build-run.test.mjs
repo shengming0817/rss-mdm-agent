@@ -169,6 +169,97 @@ test(
 );
 
 test(
+  "allocator waits for metadata lock when free slots remain",
+  onlyMac,
+  async () => {
+    const f = fixture();
+    let locker;
+    try {
+      const work = f.worktree("work");
+      assert.equal(f.run(work, "process.exit(0)").status, 0);
+      const ready = join(f.root, "allocator-ready");
+      locker = spawn(
+        "python3",
+        [
+          "-c",
+          `import fcntl, pathlib, time; p=pathlib.Path(${JSON.stringify(join(f.pool, ".pool.lock"))}); h=p.open('r+'); fcntl.flock(h, fcntl.LOCK_EX); pathlib.Path(${JSON.stringify(ready)}).touch(); time.sleep(.5)`,
+        ],
+        { stdio: "ignore" },
+      );
+      const deadline = Date.now() + 5000;
+      while (!existsSync(ready) && Date.now() < deadline)
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.ok(existsSync(ready));
+      const result = f.run(work, "process.exit(0)");
+      assert.equal(result.status, 0, result.stderr);
+    } finally {
+      if (locker?.exitCode === null) locker.kill("SIGTERM");
+      f.close();
+    }
+  },
+);
+
+test(
+  "a crashed CI runner cannot leave an unlocked live gate",
+  onlyMac,
+  async () => {
+    const f = fixture();
+    let launcher, gatePid;
+    try {
+      const work = f.worktree("work");
+      const gateReady = join(f.root, "gate-ready");
+      const runnerReady = join(f.root, "runner-ready");
+      const moduleUrl = new URL("./ci-plan.mjs", import.meta.url).href;
+      const gateCode = `require('fs').writeFileSync(${JSON.stringify(gateReady)}, String(process.pid)); setInterval(() => {}, 1000)`;
+      const script = join(f.root, "runner.mjs");
+      writeFileSync(
+        script,
+        `import {runCommand} from ${JSON.stringify(moduleUrl)}; import {writeFileSync} from 'node:fs'; writeFileSync(${JSON.stringify(runnerReady)}, String(process.pid)); await runCommand(process.execPath, ['-e', ${JSON.stringify(gateCode)}], {env:process.env, stdio:'inherit'});`,
+      );
+      launcher = spawn("python3", [runner, "--", process.execPath, script], {
+        cwd: work,
+        env: f.env,
+        stdio: "ignore",
+      });
+      const done = new Promise((resolve) => launcher.once("close", resolve));
+      const deadline = Date.now() + 5000;
+      while (
+        (!existsSync(gateReady) || !existsSync(runnerReady)) &&
+        Date.now() < deadline
+      )
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.ok(existsSync(gateReady) && existsSync(runnerReady));
+      gatePid = Number(readFileSync(gateReady, "utf8"));
+      process.kill(Number(readFileSync(runnerReady, "utf8")), "SIGKILL");
+      assert.equal(await done, 137);
+      let gateAlive = true;
+      try {
+        process.kill(gatePid, 0);
+      } catch (error) {
+        if (error.code === "ESRCH") gateAlive = false;
+        else throw error;
+      }
+      assert.equal(
+        gateAlive,
+        false,
+        "gate survived after its lease was released",
+      );
+      assert.equal(f.run(work, "process.exit(0)").status, 0);
+    } finally {
+      if (gatePid) {
+        try {
+          process.kill(gatePid, "SIGKILL");
+        } catch (error) {
+          if (error.code !== "ESRCH") throw error;
+        }
+      }
+      if (launcher?.exitCode === null) launcher.kill("SIGTERM");
+      f.close();
+    }
+  },
+);
+
+test(
   "unowned pool and symlink slot are rejected without deleting outside data",
   onlyMac,
   () => {

@@ -67,15 +67,16 @@ export function runCommand(command, args, { signal, ...options }) {
       resolve({ status: null, signal: signal.reason });
       return;
     }
+    const managed = Boolean(options.env?._AGENT_BUILD_LEASE);
     const child = spawn(command, args, {
       ...options,
-      detached: process.platform !== "win32",
+      detached: process.platform !== "win32" && !managed,
     });
     let failure, timer;
     const stop = (kind) => {
       if (!child.pid) return;
       try {
-        if (process.platform === "win32") child.kill(kind);
+        if (process.platform === "win32" || managed) child.kill(kind);
         else process.kill(-child.pid, kind);
       } catch (error) {
         if (error.code !== "ESRCH") failure = error;

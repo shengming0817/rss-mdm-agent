@@ -123,9 +123,8 @@ def write_metadata(root, index, worktree):
 
 def acquire_slot(root, slots, worktree):
     root = owned_directory(root, POOL_MARKER)
-    global_fd = lock_file(root / '.pool.lock')
-    if global_fd is None:
-        raise ValueError(f'allocator busy: {root}')
+    # Only metadata selection holds this lock; busy target slots still fail fast.
+    global_fd = lock_file(root / '.pool.lock', blocking=True)
     held = {}
     retired = []
     try:
@@ -190,12 +189,19 @@ def run_child(argv, env, fds):
     process = None
     cancelled = []
     previous = {}
+    def group_alive():
+        try:
+            os.killpg(process.pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+
     def forward(sig, _frame):
         if not cancelled:
             cancelled.append((sig, time.monotonic()))
         if process is not None:
             try:
-                # ci.mjs handles INT/TERM and uses them to stop detached gate groups.
+                # ci.mjs handles INT/TERM; HUP/QUIT also trigger its cleanup.
                 delivered = signal.SIGTERM if sig in (signal.SIGHUP, signal.SIGQUIT) else sig
                 os.killpg(process.pid, delivered)
             except ProcessLookupError:
@@ -213,19 +219,22 @@ def run_child(argv, env, fds):
             except subprocess.TimeoutExpired:
                 if cancelled and time.monotonic() - cancelled[0][1] >= 7:
                     forward(signal.SIGKILL, None)
-        # A shell can exit on TERM while a grandchild ignores it. Reap that group too.
-        if cancelled:
-            end = cancelled[0][1] + 7
-            while True:
-                try:
-                    os.killpg(process.pid, 0)
-                except ProcessLookupError:
-                    break
-                if time.monotonic() >= end:
-                    forward(signal.SIGKILL, None)
-                    break
+        # The Node runner may exit while a gate is still alive. Keep both locks
+        # until the managed process group has been stopped.
+        leaked = group_alive()
+        if leaked:
+            if not cancelled:
+                log('child exited with a live gate; stopping its process group')
+                os.killpg(process.pid, signal.SIGTERM)
+            end = cancelled[0][1] + 7 if cancelled else time.monotonic() + 7
+            while group_alive() and time.monotonic() < end:
                 time.sleep(.02)
+            if group_alive():
+                os.killpg(process.pid, signal.SIGKILL)
+        if cancelled:
             return 128 + cancelled[0][0]
+        if leaked and result == 0:
+            return 2
         return result if result >= 0 else 128 - result
     finally:
         if process is not None and process.poll() is None:
