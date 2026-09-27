@@ -1,10 +1,19 @@
 use std::error::Error;
 
-pub(super) fn diagnostic(_error: &dyn Error) -> String {
+pub(super) fn diagnostic(error: &(dyn Error + 'static)) -> String {
+    let mut current = Some(error);
+    while let Some(cause) = current {
+        if let Some(execution_app::Error::UnsupportedSchema { found, supported }) =
+            cause.downcast_ref::<execution_app::Error>()
+        {
+            return format!("执行数据库格式 {found} 不受支持，当前要求格式 {supported}。旧数据库保持原样；请使用 --test-data-dir <新的绝对目录> 显式选择新测试数据目录后启动。不会迁移、覆盖或清空旧数据。");
+        }
+        current = cause.source();
+    }
     "RSS MDM Agent 启动失败：桌面组件不可用。请检查安装与本地数据目录权限后重试。".into()
 }
 
-pub fn report(error: &dyn Error) {
+pub fn report(error: &(dyn Error + 'static)) {
     let message = diagnostic(error);
     eprintln!("{message}");
     #[cfg(windows)]
@@ -62,5 +71,17 @@ mod tests {
         assert!(!message.contains("CANARY_SECRET"));
         assert!(!message.contains("/Users/private"));
         assert!(message.contains("启动失败"));
+    }
+    #[test]
+    fn schema_diagnostic_names_versions_and_explicit_new_directory_without_raw_paths() {
+        let error = execution_app::Error::UnsupportedSchema {
+            found: 4,
+            supported: 5,
+        };
+        let message = diagnostic(&error);
+        assert!(message.contains("格式 4"));
+        assert!(message.contains("格式 5"));
+        assert!(message.contains("--test-data-dir"));
+        assert!(message.contains("旧数据库保持原样"));
     }
 }

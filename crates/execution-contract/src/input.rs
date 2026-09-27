@@ -1,33 +1,36 @@
 use crate::{
     validation::{check_json, decode_value, validate_plan},
-    ContractError, Digest, PlanLimits, PlanSpec,
+    ContractError, Digest, ExecutionInput, ExecutionLimits,
 };
 use crate::{ErrorKind, Field, Rule};
 use sha2::{Digest as _, Sha256};
 use std::fmt;
 
-const DIGEST_DOMAIN: &[u8] = b"rss-mdm-agent/execution-plan/v3\0";
+const DIGEST_DOMAIN: &[u8] = b"rss-mdm-agent/execution-input/v4\0";
 
 /// Immutable, validated plan data. Freezing does not authenticate or authorize it.
 ///
 /// INVARIANT: EXECUTION-FROZEN-PLAN-01 — fields are private and there is no Deserialize.
 /// ```compile_fail
-/// use execution_contract::FrozenPlan;
-/// let _: FrozenPlan = serde_json::from_str("{}").unwrap();
+/// use execution_contract::FrozenExecution;
+/// let _: FrozenExecution = serde_json::from_str("{}").unwrap();
 /// ```
 /// ```compile_fail
-/// use execution_contract::{FrozenPlan, PlanSpec, Digest};
-/// fn forge(spec: PlanSpec, digest: Digest) -> FrozenPlan { FrozenPlan { spec, digest } }
+/// use execution_contract::{FrozenExecution, ExecutionInput, Digest};
+/// fn forge(spec: ExecutionInput, digest: Digest) -> FrozenExecution { FrozenExecution { spec, digest } }
 /// ```
 #[derive(Clone)]
-pub struct FrozenPlan {
-    spec: PlanSpec,
+pub struct FrozenExecution {
+    spec: ExecutionInput,
     digest: Digest,
 }
-impl FrozenPlan {
-    /// Validate and normalize the complete plan, then bind its canonical V3 bytes to SHA-256.
+impl FrozenExecution {
+    /// Validate and normalize the complete plan, then bind its canonical V4 bytes to SHA-256.
     /// Returns a structured configuration, value, context, budget or encoding diagnostic; grants no authority.
-    pub fn freeze(mut spec: PlanSpec, limits: &PlanLimits) -> Result<Self, ContractError> {
+    pub fn freeze(
+        mut spec: ExecutionInput,
+        limits: &ExecutionLimits,
+    ) -> Result<Self, ContractError> {
         validate_plan(&spec, limits)?;
         // Validation rejects collisions before canonical collection can overwrite anything.
         spec.launch.env = std::mem::take(&mut spec.launch.env)
@@ -70,7 +73,7 @@ impl FrozenPlan {
         Ok(Self { spec, digest })
     }
     /// Borrow the immutable normalized plan. Mutating a clone requires a new freeze and digest.
-    pub fn spec(&self) -> &PlanSpec {
+    pub fn spec(&self) -> &ExecutionInput {
         &self.spec
     }
     /// Borrow the derived plan digest; this value is neither a signature nor approval.
@@ -82,17 +85,20 @@ impl FrozenPlan {
         &self.digest == expected
     }
 }
-impl fmt::Debug for FrozenPlan {
+impl fmt::Debug for FrozenExecution {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("FrozenPlan")
-            .field("plan_id", &self.spec.plan_id)
+        f.debug_struct("FrozenExecution")
+            .field("request_id", &self.spec.request.request_id)
             .finish_non_exhaustive()
     }
 }
 /// Bounded strict decoding plus semantic validation. The result is still untrusted plan data.
-pub fn decode_plan(bytes: &[u8], limits: &PlanLimits) -> Result<PlanSpec, ContractError> {
+pub fn decode_execution(
+    bytes: &[u8],
+    limits: &ExecutionLimits,
+) -> Result<ExecutionInput, ContractError> {
     let value = decode_value(bytes, limits)?;
-    let spec: PlanSpec = crate::validation::typed_value(value)?;
+    let spec: ExecutionInput = crate::validation::typed_value(value)?;
     validate_plan(&spec, limits)?;
     Ok(spec)
 }

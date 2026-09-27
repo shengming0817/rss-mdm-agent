@@ -1,6 +1,4 @@
-use crate::{
-    ActorId, DeviceId, Digest, EnvironmentKey, Id, NetworkDestination, PlanId, RequestId, V1, V3,
-};
+use crate::{ActorId, DeviceId, Digest, EnvironmentKey, Id, NetworkDestination, RequestId, V1, V4};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt};
@@ -302,14 +300,12 @@ pub enum SessionRequirement {
 /// The sole canonical execution description, including its original request.
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct PlanSpec {
-    /// Required current V3 discriminator; absent or unsupported versions are rejected.
-    pub schema_version: V3,
+pub struct ExecutionInput {
+    /// Required current V4 discriminator; absent or unsupported versions are rejected.
+    pub schema_version: V4,
     /// Closed execution semantics, included in the sole canonical digest.
     pub execution: crate::ExecutionSpec,
-    /// Immutable local plan identity, also bound into its digest.
-    pub plan_id: PlanId,
-    /// Original operation intent, retained once as part of the canonical plan.
+    /// Original operation intent, retained once as part of the canonical execution input.
     pub request: ExecutionRequest,
     /// Resolved launch description, including exact artifacts and ordered process inputs.
     pub launch: LaunchSpec,
@@ -331,4 +327,4 @@ macro_rules! redacted_debug {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { f.write_str(concat!(stringify!($t), "([redacted])")) }
     })* };
 }
-redacted_debug!(ExecutionRequest, LaunchSpec, PlanSpec);
+redacted_debug!(ExecutionRequest, LaunchSpec, ExecutionInput);

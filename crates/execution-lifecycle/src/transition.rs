@@ -1,7 +1,7 @@
 use crate::{
     Command, CommandEvent, Directive, EventOutcome, EventRecord, Execution, ExecutionMode,
 };
-use execution_contract::{AttemptId, Digest, Id, PlanId};
+use execution_contract::{AttemptId, Digest, Id, RequestId};
 
 /// Outcome reported by the trusted atomic persistence owner.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,8 +58,8 @@ impl Transition {
             return Ok(None);
         };
         Ok(Some(DispatchAction {
-            plan_id: s.plan_id.clone(),
-            plan_digest: s.plan_digest.clone(),
+            request_id: s.request_id.clone(),
+            content_digest: s.content_digest.clone(),
             attempt_id: attempt_id.clone(),
             runner: runner.clone(),
             mode: *mode,
@@ -80,8 +80,8 @@ impl Transition {
 #[derive(Debug)]
 #[must_use = "dispatch once or reconcile the admitted attempt after recovery"]
 pub struct DispatchAction {
-    plan_id: PlanId,
-    plan_digest: Digest,
+    request_id: RequestId,
+    content_digest: Digest,
     attempt_id: AttemptId,
     runner: Id,
     mode: ExecutionMode,
@@ -96,12 +96,12 @@ impl DispatchAction {
         dispatch(&self)
     }
     /// Exact committed plan.
-    pub fn plan_id(&self) -> &PlanId {
-        &self.plan_id
+    pub fn request_id(&self) -> &RequestId {
+        &self.request_id
     }
     /// Exact committed content identity.
-    pub fn plan_digest(&self) -> &Digest {
-        &self.plan_digest
+    pub fn content_digest(&self) -> &Digest {
+        &self.content_digest
     }
     /// Exact committed attempt.
     pub fn attempt_id(&self) -> &AttemptId {

@@ -11,9 +11,8 @@ mod server;
 mod transport;
 pub use config::McpLimits;
 pub use model::{
-    CancelDisposition, CancelResult, CandidateReceipt, CandidateRequest, CapabilityState,
-    CapabilityView, CatalogCandidate, OperationPhase, OperationRequest, OperationStatus,
-    PlanPreview, PlanRef, PreviewRequest, ScriptDraft, ServiceError, SubmitRequest,
+    CancelDisposition, CancelResult, CapabilityState, CapabilityView, CatalogCandidate,
+    ExecuteRequest, OperationPhase, OperationRequest, OperationStatus, ScriptDraft, ServiceError,
 };
 pub use port::ExecutionServicePort;
 

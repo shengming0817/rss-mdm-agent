@@ -95,15 +95,15 @@ pub struct Scope {
     /// Permission-bearing actor, not the model/provider account.
     pub actor: ActorId,
     /// Immutable execution plan identity.
-    pub plan_id: PlanId,
+    pub request_id: RequestId,
 }
 impl Scope {
     /// Derive claims from a frozen plan; Host still authenticates them independently.
-    pub fn from_plan(plan: &FrozenPlan) -> Self {
+    pub fn from_input(plan: &FrozenExecution) -> Self {
         Self {
             authority: plan.spec().request.authority.clone(),
             actor: plan.spec().request.actor.clone(),
-            plan_id: plan.spec().plan_id.clone(),
+            request_id: plan.spec().request.request_id.clone(),
         }
     }
     /// Opaque interaction subject bound to the complete scope, not just a display ID.
@@ -119,7 +119,7 @@ impl Scope {
 #[derive(Debug, Clone, Copy)]
 pub struct Limits {
     /// Frozen plan decoder limits.
-    pub plan: PlanLimits,
+    pub input: ExecutionLimits,
     /// Lifecycle snapshot limit, including terminal-state headroom.
     pub lifecycle: execution_lifecycle::Limits,
     /// Interaction bounds.
@@ -157,7 +157,7 @@ impl Limits {
             || self.interaction.max_snapshot_bytes == 0
             || self.interaction.max_snapshot_bytes > self.max_record_bytes
             || self.interaction.max_lifetime_ms == 0
-            || self.plan.max_input_bytes > self.max_record_bytes
+            || self.input.max_input_bytes > self.max_record_bytes
             || self.busy_timeout_ms > 60_000
         {
             return Err(Error::Configuration);
@@ -267,9 +267,9 @@ pub struct ApprovalDefinition {
     /// Authenticated approving actor.
     pub approver: ActorId,
     /// Exact approved plan.
-    pub plan_id: PlanId,
+    pub request_id: RequestId,
     /// Complete canonical plan digest.
-    pub plan_digest: Digest,
+    pub content_digest: Digest,
     /// All profiles authorized by this record.
     pub profiles: Vec<VersionedRef>,
     /// Exclusive validity interval.
@@ -336,7 +336,7 @@ pub trait Host {
     /// Replay never calls this method and never needs a fresh execution approval.
     fn admit(
         &self,
-        _plan: &FrozenPlan,
+        _plan: &FrozenExecution,
         _attempt: &AttemptId,
         _bindings: &[ProfileApproval],
         _approvals: &dyn ApprovalVerifier,
@@ -508,10 +508,12 @@ impl From<&execution_admission::AdmissionValidity> for DecisionValidity {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AdmissionAudit {
+    /// Protected numeric classification of the exact action; None means unknown.
+    pub risk_level: Option<u8>,
     /// Evaluated plan identity.
-    pub plan_id: PlanId,
+    pub request_id: RequestId,
     /// Evaluated canonical plan digest.
-    pub plan_digest: Digest,
+    pub content_digest: Digest,
     /// Evaluated attempt.
     pub attempt_id: AttemptId,
     /// Claimed policy; denial does not authenticate it.
@@ -566,9 +568,9 @@ pub struct PendingConsumptionAudit {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ApprovalAudit {
     /// Evaluated plan.
-    pub plan_id: PlanId,
+    pub request_id: RequestId,
     /// Evaluated digest.
-    pub plan_digest: Digest,
+    pub content_digest: Digest,
     /// Evaluated attempt.
     pub attempt_id: AttemptId,
     /// Closed C08 result and rejection reason.
@@ -676,6 +678,8 @@ enum AdmissionReasonWire {
     ExplicitDeny,
     RuleAllowed,
     NeedsApproval,
+    RiskBlocked,
+    ConditionalPermission,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(

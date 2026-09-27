@@ -18,16 +18,21 @@ fn reference(value: &str) -> VersionedRef {
         revision: id("1"),
     }
 }
-pub fn plan() -> FrozenPlan {
-    FrozenPlan::freeze(
-        decode_plan(
+pub fn plan() -> FrozenExecution {
+    let original = FrozenExecution::freeze(
+        decode_execution(
             include_bytes!("../../../execution-contract/tests/fixtures/plan.json"),
-            &execution_app::test_store_limits().plan,
+            &execution_app::test_store_limits().input,
         )
         .unwrap(),
-        &execution_app::test_store_limits().plan,
+        &execution_app::test_store_limits().input,
     )
-    .unwrap()
+    .unwrap();
+    let mut spec = original.spec().clone();
+    spec.request.initiator = execution_contract::Initiator::Policy {
+        policy: spec.policy.clone(),
+    };
+    FrozenExecution::freeze(spec, &execution_app::test_store_limits().input).unwrap()
 }
 pub fn caller() -> RequestContext {
     RequestContext {
@@ -62,7 +67,7 @@ impl Drop for Database {
 }
 #[derive(Clone)]
 pub struct TestHost {
-    pub template: FrozenPlan,
+    pub template: FrozenExecution,
 }
 impl TestHost {
     pub fn new() -> Self {
@@ -78,9 +83,15 @@ impl TestHost {
     }
 }
 impl AuthorityVerifier for TestHost {
-    fn verify(&self, _: &FrozenPlan, _: &AttemptId) -> Result<AuthorityFacts, VerificationError> {
+    fn verify(
+        &self,
+        _: &FrozenExecution,
+        _: &AttemptId,
+    ) -> Result<AuthorityFacts, VerificationError> {
         let p = self.template.spec();
         Ok(AuthorityFacts {
+            verified_origin: p.request.initiator.clone(),
+            risk: Some(execution_admission::RiskLevel::One),
             subject: SubjectFacts {
                 authority: p.request.authority.clone(),
                 actor: p.request.actor.clone(),
@@ -148,7 +159,7 @@ impl AppHost for TestHost {
     fn reliable_now(&self) -> Result<u64, execution_sqlite::Error> {
         Ok(self.now())
     }
-    fn capabilities(&self, _: &FrozenPlan) -> Result<CapabilitySnapshot, Error> {
+    fn capabilities(&self, _: &FrozenExecution) -> Result<CapabilitySnapshot, Error> {
         let p = self.template.spec();
         Ok(CapabilitySnapshot {
             verified_at_unix_ms: self.now(),
@@ -183,7 +194,10 @@ impl AppHost for TestHost {
             },
         })
     }
-    fn trusted_snapshot(&self, _: &FrozenPlan) -> Result<TrustSnapshot, execution_sqlite::Error> {
+    fn trusted_snapshot(
+        &self,
+        _: &FrozenExecution,
+    ) -> Result<TrustSnapshot, execution_sqlite::Error> {
         Ok(TrustSnapshot {
             authorization_revision: reference("runner-policy"),
             approval_revision: reference("runner-approval"),
@@ -193,7 +207,7 @@ impl AppHost for TestHost {
     }
     fn approval_bindings(
         &self,
-        _: &FrozenPlan,
+        _: &FrozenExecution,
     ) -> Result<Vec<execution_approval::ProfileApproval>, Error> {
         Ok(vec![])
     }
@@ -210,7 +224,7 @@ pub struct TestCarrier(
 impl RunnerPort for TestCarrier {
     fn software_evidence(
         &self,
-        p: &FrozenPlan,
+        p: &FrozenExecution,
         a: &AttemptId,
         deadline: execution_app::SoftwareObservation<'_>,
     ) -> Result<Option<SoftwareEvidence>, Error> {
@@ -230,8 +244,8 @@ impl RunnerPort for TestCarrier {
             if action.mode() != ExecutionMode::Test
                 || !matches!(plan.spec().request.authority, Authority::Test { .. })
                 || action.runner() != &self.0.id
-                || action.plan_digest() != plan.digest()
-                || action.plan_id() != &plan.spec().plan_id
+                || action.content_digest() != plan.digest()
+                || action.request_id() != &plan.spec().request.request_id
             {
                 return Err(Error::Denied);
             }
@@ -240,18 +254,22 @@ impl RunnerPort for TestCarrier {
                 .launch(plan, action.attempt_id(), allowance, ownership)
         })
     }
-    fn stop(&self, p: &FrozenPlan, a: &AttemptId) -> Result<(), Error> {
+    fn stop(&self, p: &FrozenExecution, a: &AttemptId) -> Result<(), Error> {
         self.0.stop(p, a)
     }
-    fn evidence(&self, p: &FrozenPlan, a: &AttemptId) -> Result<Option<ProcessEvidence>, Error> {
+    fn evidence(
+        &self,
+        p: &FrozenExecution,
+        a: &AttemptId,
+    ) -> Result<Option<ProcessEvidence>, Error> {
         self.0.evidence(p, a)
     }
-    fn acknowledge_capture(&self, p: &FrozenPlan, f: &ProcessEvidence) -> Result<(), Error> {
+    fn acknowledge_capture(&self, p: &FrozenExecution, f: &ProcessEvidence) -> Result<(), Error> {
         self.0.acknowledge_capture(p, f)
     }
     fn observe(
         &self,
-        p: &FrozenPlan,
+        p: &FrozenExecution,
         a: &AttemptId,
         s: ObservationStage,
         n: u64,

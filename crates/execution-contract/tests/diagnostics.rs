@@ -1,10 +1,10 @@
 use execution_contract::{
-    decode_audit, decode_plan, ContractError, ErrorKind as K, Field as F, FrozenPlan, PlanLimits,
-    Rule as R,
+    decode_audit, decode_execution, ContractError, ErrorKind as K, ExecutionLimits, Field as F,
+    FrozenExecution, Rule as R,
 };
 use serde_json::{json, Value};
-fn limits() -> PlanLimits {
-    PlanLimits {
+fn limits() -> ExecutionLimits {
+    ExecutionLimits {
         max_input_bytes: 65536,
         max_depth: 32,
         max_nodes: 4096,
@@ -36,44 +36,44 @@ fn configuration_errors_identify_each_host_bound_before_input_parsing() {
     let l = limits();
     for (bad, field) in [
         (
-            PlanLimits {
+            ExecutionLimits {
                 max_input_bytes: 0,
                 ..l
             },
             F::InputBytes,
         ),
-        (PlanLimits { max_depth: 0, ..l }, F::Depth),
-        (PlanLimits { max_nodes: 0, ..l }, F::Nodes),
+        (ExecutionLimits { max_depth: 0, ..l }, F::Depth),
+        (ExecutionLimits { max_nodes: 0, ..l }, F::Nodes),
         (
-            PlanLimits {
+            ExecutionLimits {
                 max_string_bytes: 0,
                 ..l
             },
             F::StringBytes,
         ),
         (
-            PlanLimits {
+            ExecutionLimits {
                 max_collection_items: 0,
                 ..l
             },
             F::CollectionItems,
         ),
         (
-            PlanLimits {
+            ExecutionLimits {
                 max_timeout_ms: 0,
                 ..l
             },
             F::Timeout,
         ),
         (
-            PlanLimits {
+            ExecutionLimits {
                 max_output_bytes: 0,
                 ..l
             },
             F::OutputBytes,
         ),
         (
-            PlanLimits {
+            ExecutionLimits {
                 max_attempts: 0,
                 ..l
             },
@@ -81,7 +81,7 @@ fn configuration_errors_identify_each_host_bound_before_input_parsing() {
         ),
     ] {
         check(
-            decode_plan(b"private malformed", &bad).unwrap_err(),
+            decode_execution(b"private malformed", &bad).unwrap_err(),
             K::InvalidConfiguration,
             field,
             R::NonZero,
@@ -94,7 +94,7 @@ fn configuration_errors_identify_each_host_bound_before_input_parsing() {
         );
     }
     check(
-        decode_plan(b"{", &PlanLimits { max_depth: 65, ..l }).unwrap_err(),
+        decode_execution(b"{", &ExecutionLimits { max_depth: 65, ..l }).unwrap_err(),
         K::InvalidConfiguration,
         F::Depth,
         R::NumericRange,
@@ -106,7 +106,7 @@ fn input_limits_and_budget_limits_are_distinct_from_configuration() {
     let l = limits();
     for (bound, kind, field, rule) in [
         (
-            PlanLimits {
+            ExecutionLimits {
                 max_input_bytes: 1,
                 ..l
             },
@@ -115,19 +115,19 @@ fn input_limits_and_budget_limits_are_distinct_from_configuration() {
             R::ByteLimit,
         ),
         (
-            PlanLimits { max_depth: 1, ..l },
+            ExecutionLimits { max_depth: 1, ..l },
             K::LimitExceeded,
             F::Depth,
             R::DepthLimit,
         ),
         (
-            PlanLimits { max_nodes: 1, ..l },
+            ExecutionLimits { max_nodes: 1, ..l },
             K::LimitExceeded,
             F::Nodes,
             R::NodeLimit,
         ),
         (
-            PlanLimits {
+            ExecutionLimits {
                 max_string_bytes: 63,
                 ..l
             },
@@ -136,7 +136,7 @@ fn input_limits_and_budget_limits_are_distinct_from_configuration() {
             R::ByteLimit,
         ),
         (
-            PlanLimits {
+            ExecutionLimits {
                 max_collection_items: 1,
                 ..l
             },
@@ -145,7 +145,7 @@ fn input_limits_and_budget_limits_are_distinct_from_configuration() {
             R::CollectionLimit,
         ),
         (
-            PlanLimits {
+            ExecutionLimits {
                 max_timeout_ms: 999,
                 ..l
             },
@@ -154,7 +154,7 @@ fn input_limits_and_budget_limits_are_distinct_from_configuration() {
             R::BudgetLimit,
         ),
         (
-            PlanLimits {
+            ExecutionLimits {
                 max_output_bytes: 4095,
                 ..l
             },
@@ -163,7 +163,12 @@ fn input_limits_and_budget_limits_are_distinct_from_configuration() {
             R::BudgetLimit,
         ),
     ] {
-        check(decode_plan(source, &bound).unwrap_err(), kind, field, rule);
+        check(
+            decode_execution(source, &bound).unwrap_err(),
+            kind,
+            field,
+            rule,
+        );
     }
     for (pointer, value, field, rule) in [
         ("/budget/maxAttempts", json!(0), F::Attempts, R::NonZero),
@@ -179,13 +184,13 @@ fn input_limits_and_budget_limits_are_distinct_from_configuration() {
         *v.pointer_mut(pointer).unwrap() = value;
         let plan = serde_json::from_value(v.clone()).unwrap();
         check(
-            FrozenPlan::freeze(plan, &l).unwrap_err(),
+            FrozenExecution::freeze(plan, &l).unwrap_err(),
             K::InvalidBudget,
             field,
             rule,
         );
         check(
-            decode_plan(&serde_json::to_vec(&v).unwrap(), &l).unwrap_err(),
+            decode_execution(&serde_json::to_vec(&v).unwrap(), &l).unwrap_err(),
             K::InvalidBudget,
             field,
             rule,
@@ -248,7 +253,7 @@ fn semantic_errors_survive_serde_without_disclosing_rejected_values() {
         let mut v = fixture();
         *v.pointer_mut(path).unwrap() = value;
         check(
-            decode_plan(&serde_json::to_vec(&v).unwrap(), &limits()).unwrap_err(),
+            decode_execution(&serde_json::to_vec(&v).unwrap(), &limits()).unwrap_err(),
             kind,
             field,
             rule,
@@ -259,7 +264,7 @@ fn semantic_errors_survive_serde_without_disclosing_rejected_values() {
         b"{\"private\":{\"private\":1,\"private\":2}}",
     ] {
         check(
-            decode_plan(raw, &limits()).unwrap_err(),
+            decode_execution(raw, &limits()).unwrap_err(),
             K::Encoding,
             F::Document,
             R::DuplicateKey,
@@ -268,13 +273,13 @@ fn semantic_errors_survive_serde_without_disclosing_rejected_values() {
     let mut v = fixture();
     v["private-unknown"] = json!("private payload");
     check(
-        decode_plan(&serde_json::to_vec(&v).unwrap(), &limits()).unwrap_err(),
+        decode_execution(&serde_json::to_vec(&v).unwrap(), &limits()).unwrap_err(),
         K::Encoding,
         F::Document,
         R::Syntax,
     );
     check(
-        decode_plan(b"{private", &limits()).unwrap_err(),
+        decode_execution(b"{private", &limits()).unwrap_err(),
         K::Encoding,
         F::Document,
         R::Syntax,

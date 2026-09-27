@@ -1,5 +1,5 @@
 use execution_contract::{
-    ActorId, Authority, Digest, FrozenPlan, PlanId, ValidityWindow, VersionedRef,
+    ActorId, Authority, Digest, FrozenExecution, RequestId, ValidityWindow, VersionedRef,
 };
 
 /// Caller-supplied references only; neither authenticates an approval.
@@ -29,9 +29,9 @@ pub struct ApprovalRecord {
     /// Authenticated approver; the verifier checks their right to approve this plan.
     pub approver: ActorId,
     /// Exact approved plan identity.
-    pub plan_id: PlanId,
+    pub request_id: RequestId,
     /// Exact approved canonical digest, not a signature.
-    pub plan_digest: Digest,
+    pub content_digest: Digest,
     /// Exact profiles for which the approver is authorized.
     pub profiles: Vec<VersionedRef>,
     /// Approval window, with an exclusive deadline.
@@ -75,7 +75,7 @@ pub trait ApprovalVerifier {
     /// Batch-verify the distinct exact record references for this frozen plan.
     fn verify(
         &self,
-        plan: &FrozenPlan,
+        plan: &FrozenExecution,
         records: &[VersionedRef],
     ) -> Result<ApprovalFacts, VerificationError>;
 }

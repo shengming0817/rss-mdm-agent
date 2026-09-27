@@ -1,6 +1,6 @@
 use crate::{
     catalog_error::CatalogErrorView,
-    model::{CatalogInput, Empty, ErrorView, PreviewInput, ProposeInput, ToolOutput},
+    model::{CatalogInput, Empty, ErrorView, ExecuteInput, ToolOutput},
     transport::OriginalArguments,
     *,
 };
@@ -77,9 +77,7 @@ fn schema<T: JsonSchema>() -> Arc<serde_json::Map<String, Value>> {
 pub(crate) enum ToolKind {
     Catalog,
     Capabilities,
-    Preview,
-    Propose,
-    Submit,
+    Execute,
     Status,
     Cancel,
 }
@@ -89,12 +87,10 @@ enum Effect {
     MayPersist,
 }
 impl ToolKind {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 5] = [
         Self::Catalog,
         Self::Capabilities,
-        Self::Preview,
-        Self::Propose,
-        Self::Submit,
+        Self::Execute,
         Self::Status,
         Self::Cancel,
     ];
@@ -103,9 +99,7 @@ impl ToolKind {
         match self {
             Self::Catalog => ("execution_catalog", "Authorized directory and shared parameter schemas. Visibility does not authorize execution.", Effect::ReadOnly),
             Self::Capabilities => ("execution_capabilities", "Current bound-context capabilities. Unknown is not supported.", Effect::ReadOnly),
-            Self::Preview => ("execution_preview", "Freeze an exact plan without approval or execution.", Effect::MayPersist),
-            Self::Propose => ("execution_propose", "Record a bounded immutable candidate; never approve or execute it.", Effect::MayPersist),
-            Self::Submit => ("execution_submit", "Accept an exact plan idempotently. On timeout query or retry the SAME operationRequestId. Accepted is not success.", Effect::MayPersist),
+            Self::Execute => ("execution_execute", "Request one exact action. Keep operationRequestId on retry; query status after an unknown outcome. User confirmation is handled by the trusted desktop.", Effect::MayPersist),
             Self::Status => ("execution_status", "Authorized lookup by the original operationRequestId.", Effect::ReadOnly),
             Self::Cancel => ("execution_cancel", "Request business cancellation; receipt does not prove termination or rollback.", Effect::MayPersist),
         }
@@ -125,9 +119,7 @@ impl ToolKind {
         match self {
             Self::Catalog => tool::<Empty, CatalogView>(self),
             Self::Capabilities => tool::<Empty, CapabilityView>(self),
-            Self::Preview => tool::<PreviewInput, PlanPreview>(self),
-            Self::Propose => tool::<ProposeInput, CandidateReceipt>(self),
-            Self::Submit => tool::<SubmitRequest, OperationStatus>(self),
+            Self::Execute => tool::<ExecuteInput, OperationStatus>(self),
             Self::Status => tool::<OperationRequest, OperationStatus>(self),
             Self::Cancel => tool::<OperationRequest, CancelResult>(self),
         }
@@ -240,31 +232,16 @@ impl<S: ExecutionServicePort> Handler<S> {
             items,
         })
     }
-    async fn preview(&self, raw: &str, wait: CancellationToken) -> Result<PlanPreview, Failure> {
-        let request = match decode::<PreviewInput>(raw)? {
-            PreviewInput::Catalog { selection } => {
-                PreviewRequest::Catalog(Box::new(self.selection(selection, wait.clone()).await?))
-            }
-            PreviewInput::Candidate {
-                operation_request_id,
-                candidate,
-            } => PreviewRequest::Candidate {
-                operation_request_id,
-                candidate,
-            },
-        };
-        Ok(self.service.preview(request, wait).await?)
-    }
-    async fn propose(
+    async fn execute(
         &self,
         raw: &str,
         wait: CancellationToken,
-    ) -> Result<CandidateReceipt, Failure> {
-        let request = match decode::<ProposeInput>(raw)? {
-            ProposeInput::Catalog { selection } => {
-                CandidateRequest::Catalog(Box::new(self.selection(selection, wait.clone()).await?))
+    ) -> Result<OperationStatus, Failure> {
+        let request = match decode::<ExecuteInput>(raw)? {
+            ExecuteInput::Catalog { selection } => {
+                ExecuteRequest::Catalog(Box::new(self.selection(selection, wait.clone()).await?))
             }
-            ProposeInput::Script {
+            ExecuteInput::Script {
                 operation_request_id,
                 source_utf8,
                 interpreter,
@@ -275,14 +252,14 @@ impl<S: ExecutionServicePort> Handler<S> {
                 {
                     return Err(ServiceError::InvalidInput.into());
                 }
-                CandidateRequest::Script(ScriptDraft {
+                ExecuteRequest::Script(ScriptDraft {
                     operation_request_id,
                     source_utf8,
                     interpreter,
                 })
             }
         };
-        Ok(self.service.propose(request, wait).await?)
+        Ok(self.service.execute(request, wait).await?)
     }
     pub(crate) async fn call(
         &self,
@@ -306,12 +283,7 @@ impl<S: ExecutionServicePort> Handler<S> {
                 .await;
                 result(r, max)
             }
-            ToolKind::Preview => result(self.preview(raw, wait).await, max),
-            ToolKind::Propose => result(self.propose(raw, wait).await, max),
-            ToolKind::Submit => result(
-                async { Ok(self.service.submit(decode(raw)?, wait).await?) }.await,
-                max,
-            ),
+            ToolKind::Execute => result(self.execute(raw, wait).await, max),
             ToolKind::Status => result(
                 async { Ok(self.service.status(decode(raw)?, wait).await?) }.await,
                 max,

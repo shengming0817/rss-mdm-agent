@@ -3,7 +3,6 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import type { Controller } from "./controller";
 import type { Decision, RequestView } from "./types";
 import ParameterForm from "./ParameterForm.vue";
-import PlanSummary from "./PlanSummary.vue";
 import TaskDetail from "./TaskDetail.vue";
 const props = defineProps<{ controller: Controller }>();
 const c = props.controller;
@@ -20,7 +19,7 @@ const task = computed(() =>
   [
     ...(s.snapshot?.requests ?? []),
     ...(s.snapshot?.referencedRequests ?? []),
-  ].find((item) => item.plan.requestId === s.taskId),
+  ].find((item) => item.action.requestId === s.taskId),
 );
 function decision(value: Decision): string {
   switch (value) {
@@ -43,13 +42,13 @@ function status(value: RequestView["status"]): string {
     case "waiting":
       return "等待交互";
     case "approval":
-      return "等待管理员";
+      return "等待策略授权";
+    case "confirmation":
+      return "等待动作确认";
     case "complete":
       return "测试流程完成";
     case "stopped":
       return "流程停止";
-    case "restartRequired":
-      return "待重启提示";
     case "unknownEffect":
       return "效果未知";
   }
@@ -59,7 +58,7 @@ let polling: ReturnType<typeof setInterval>;
 onMounted(() => {
   polling = setInterval(() => {
     now.value = Date.now();
-    if (!s.busy && !s.replying && !s.loading) void c.refresh();
+    if (!s.busy && !s.loading) void c.refresh();
   }, 1500);
   void c.refresh();
 });
@@ -92,7 +91,7 @@ onUnmounted(() => clearInterval(polling));
         <article>
           <span class="card-index">01 / SOFTWARE</span>
           <h2>按需申请软件</h2>
-          <p>先了解版本、适用条件和权限，再确认计划。</p>
+          <p>先了解版本、适用条件和权限，再确认动作。</p>
         </article>
         <article>
           <span class="card-index">02 / TOOLS</span>
@@ -115,7 +114,7 @@ onUnmounted(() => clearInterval(polling));
         <div>
           <span class="eyebrow">SELF SERVICE</span>
           <h1>{{ s.page === "software" ? "软件中心" : "工具中心" }}</h1>
-          <p>选择项目，查看条件与精确计划。</p>
+          <p>选择项目，查看条件与精确动作。</p>
         </div>
         <button
           class="secondary"
@@ -177,7 +176,7 @@ onUnmounted(() => clearInterval(polling));
       <p v-if="!c.interactive" class="notice">
         浏览器仅展示页面，请在桌面应用中填写并提交测试请求。
       </p>
-      <form novalidate @submit.prevent="c.prepare">
+      <form novalidate @submit.prevent="c.execute">
         <ParameterForm
           :fields="s.item.fields"
           :values="s.fields"
@@ -201,7 +200,7 @@ onUnmounted(() => clearInterval(polling));
               s.item.display.requestability !== 'allowed'
             "
           >
-            {{ s.busy ? "处理中…" : "预览确定性计划" }}</button
+            {{ s.busy ? "处理中…" : "检查并执行" }}</button
           ><button
             type="button"
             class="secondary"
@@ -212,22 +211,6 @@ onUnmounted(() => clearInterval(polling));
           </button>
         </div>
       </form>
-      <template v-if="s.plan"
-        ><PlanSummary :plan="s.plan" /><button
-          :disabled="s.busy || s.accepted"
-          @click="c.submit"
-        >
-          {{
-            s.accepted
-              ? "请求已接纳"
-              : s.uncertain
-                ? "按原请求重试提交"
-                : s.item.kind === "software"
-                  ? "提交测试申请"
-                  : "提交测试请求"
-          }}
-        </button></template
-      >
       <button v-if="s.uncertain" class="secondary" @click="c.refresh()">
         查询原请求
       </button>
@@ -235,7 +218,7 @@ onUnmounted(() => clearInterval(polling));
     <template v-else-if="s.page === 'tasks'">
       <div v-if="s.uncertain" class="notice">
         提交结果尚不明确，可查询或重试原请求。
-        <button :disabled="s.busy" @click="c.submit">按原请求重试提交</button>
+        <button :disabled="s.busy" @click="c.execute">按原请求重试提交</button>
       </div>
       <div class="page-heading">
         <div>
@@ -262,14 +245,14 @@ onUnmounted(() => clearInterval(polling));
         <div class="task-list">
           <button
             v-for="request in s.snapshot.requests"
-            :key="request.plan.requestId"
+            :key="request.action.requestId"
             class="task-row secondary"
-            :aria-pressed="s.taskId === request.plan.requestId"
-            @click="s.taskId = request.plan.requestId"
+            :aria-pressed="s.taskId === request.action.requestId"
+            @click="s.taskId = request.action.requestId"
           >
-            <strong>{{ request.plan.title }}</strong
+            <strong>{{ request.action.title }}</strong
             ><span>{{ status(request.status) }}</span
-            ><small class="identifier">{{ request.plan.requestId }}</small>
+            ><small class="identifier">{{ request.action.requestId }}</small>
           </button>
           <nav class="actions" aria-label="任务分页">
             <button
@@ -291,19 +274,14 @@ onUnmounted(() => clearInterval(polling));
         </div>
         <TaskDetail
           v-if="task"
-          :key="task.plan.requestId"
+          :key="task.action.requestId"
           :task="task"
           :now="now"
-          :item="
-            s.snapshot.catalog.find((item) => item.itemId === task?.plan.itemId)
-          "
-          :disabled="!c.interactive || s.busy || s.replying || s.replyUnknown"
-          @approve="task && c.approve(task)"
+          :disabled="!c.interactive || s.busy"
+          @confirm="task && c.confirm(task)"
           @cancel="task && c.cancel(task)"
-          @respond="(id, answer) => task && c.respond(task, id, answer)"
         />
       </div>
-      <button v-if="s.replyUnknown" @click="c.retryReply">重试原回答</button>
     </template>
     <template v-else-if="s.page === 'help'"
       ><h1>设备与帮助</h1>
@@ -313,7 +291,7 @@ onUnmounted(() => clearInterval(polling));
         关闭窗口不会取消任务。S1 任务与会话分别保存在本地，重开后可查询原请求。
       </p>
       <p>
-        测试批准仅授权精确的 S1 计划；当前没有真实安装、脚本执行或企业权限。
+        测试批准仅授权精确的 S1 动作；当前没有真实安装、脚本执行或企业权限。
       </p></template
     >
   </div>

@@ -31,10 +31,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind",
-              "id"
-            ],
+            "required": ["kind", "id"],
             "type": "object"
           },
           {
@@ -54,11 +51,7 @@
                 "description": "Explicit enterprise tenant reference; local/test authority never fabricates a tenant."
               }
             },
-            "required": [
-              "kind",
-              "id",
-              "tenant"
-            ],
+            "required": ["kind", "id", "tenant"],
             "type": "object"
           },
           {
@@ -74,10 +67,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind",
-              "id"
-            ],
+            "required": ["kind", "id"],
             "type": "object"
           }
         ]
@@ -94,9 +84,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind"
-            ],
+            "required": ["kind"],
             "type": "object"
           },
           {
@@ -108,9 +96,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind"
-            ],
+            "required": ["kind"],
             "type": "object"
           },
           {
@@ -122,9 +108,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind"
-            ],
+            "required": ["kind"],
             "type": "object"
           },
           {
@@ -136,9 +120,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind"
-            ],
+            "required": ["kind"],
             "type": "object"
           },
           {
@@ -158,11 +140,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind",
-              "attemptId",
-              "evidence"
-            ],
+            "required": ["kind", "attemptId", "evidence"],
             "type": "object"
           }
         ]
@@ -225,11 +203,7 @@
             "description": "Runner reference whose evidence is being recorded, including an explicit fixture runner in tests."
           }
         },
-        "required": [
-          "reference",
-          "kind",
-          "runner"
-        ],
+        "required": ["reference", "kind", "runner"],
         "type": "object"
       },
       "EvidenceRefs": {
@@ -263,10 +237,7 @@
                 "description": "Originating OS account/session reference, separate from requested run-as identity."
               }
             },
-            "required": [
-              "kind",
-              "osSession"
-            ],
+            "required": ["kind", "osSession"],
             "type": "object"
           },
           {
@@ -321,10 +292,7 @@
                 "description": "Exact policy revision associated with this request or audit decision."
               }
             },
-            "required": [
-              "kind",
-              "policy"
-            ],
+            "required": ["kind", "policy"],
             "type": "object"
           }
         ]
@@ -346,10 +314,7 @@
             "description": "Exact resource ID and revision; no latest-version lookup is performed here."
           }
         },
-        "required": [
-          "action",
-          "resource"
-        ],
+        "required": ["action", "resource"],
         "type": "object"
       },
       "OsAccountRef": {
@@ -365,10 +330,7 @@
             "description": "Opaque stable OS account reference, such as a SID/UID reference, not an authentication credential."
           }
         },
-        "required": [
-          "platform",
-          "subject"
-        ],
+        "required": ["platform", "subject"],
         "type": "object"
       },
       "OsSessionRef": {
@@ -388,19 +350,8 @@
             "description": "Origin OS login/session reference, including an explicit test reference in fixtures."
           }
         },
-        "required": [
-          "device",
-          "account",
-          "session"
-        ],
+        "required": ["device", "account", "session"],
         "type": "object"
-      },
-      "PlanId": {
-        "description": "Immutable local plan identity.",
-        "maxLength": 128,
-        "minLength": 1,
-        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
-        "type": "string"
       },
       "Platform": {
         "description": "Target OS semantics for validation; an enum value is not a platform support claim.",
@@ -446,11 +397,7 @@
             "description": "Device-wide or explicit-user scope as defined by this type."
           }
         },
-        "required": [
-          "device",
-          "platform",
-          "scope"
-        ],
+        "required": ["device", "platform", "scope"],
         "type": "object"
       },
       "TargetScope": {
@@ -465,9 +412,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind"
-            ],
+            "required": ["kind"],
             "type": "object"
           },
           {
@@ -483,10 +428,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind",
-              "account"
-            ],
+            "required": ["kind", "account"],
             "type": "object"
           }
         ]
@@ -504,10 +446,7 @@
             "description": "Exact immutable revision reference; does not resolve or follow a moving alias."
           }
         },
-        "required": [
-          "id",
-          "revision"
-        ],
+        "required": ["id", "revision"],
         "type": "object"
       }
     },
@@ -545,6 +484,10 @@
         "$ref": "#/$defs/Authority",
         "description": "Claimed authority namespace; a deserialized reference is not an authenticated issuer."
       },
+      "contentDigest": {
+        "$ref": "#/$defs/Digest",
+        "description": "Digest of the exact frozen execution input observed by this record, not a signature or permit."
+      },
       "decision": {
         "$ref": "#/$defs/Decision",
         "description": "Recorded decision/observation shape; recording Admitted cannot issue a permit."
@@ -578,14 +521,6 @@
         "$ref": "#/$defs/Operation",
         "description": "Action and exact resource reference whose permission must be decided by the owner."
       },
-      "planDigest": {
-        "$ref": "#/$defs/Digest",
-        "description": "Digest of the exact frozen plan observed by this record, not a signature or permit."
-      },
-      "planId": {
-        "$ref": "#/$defs/PlanId",
-        "description": "Immutable local plan identity, also bound into its digest."
-      },
       "policy": {
         "$ref": "#/$defs/VersionedRef",
         "description": "Exact policy revision associated with this request or audit decision."
@@ -612,8 +547,7 @@
       "eventId",
       "authority",
       "requestId",
-      "planId",
-      "planDigest",
+      "contentDigest",
       "actor",
       "initiator",
       "operation",
@@ -626,7 +560,7 @@
     "title": "AuditEvent",
     "type": "object"
   },
-  "plan": {
+  "execution": {
     "$defs": {
       "ActorId": {
         "description": "Product actor reference, not an authenticated principal.",
@@ -671,10 +605,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind",
-              "id"
-            ],
+            "required": ["kind", "id"],
             "type": "object"
           },
           {
@@ -694,11 +625,7 @@
                 "description": "Explicit enterprise tenant reference; local/test authority never fabricates a tenant."
               }
             },
-            "required": [
-              "kind",
-              "id",
-              "tenant"
-            ],
+            "required": ["kind", "id", "tenant"],
             "type": "object"
           },
           {
@@ -714,10 +641,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind",
-              "id"
-            ],
+            "required": ["kind", "id"],
             "type": "object"
           }
         ]
@@ -806,11 +730,7 @@
                 "description": "Ecosystem version, preserved verbatim."
               }
             },
-            "required": [
-              "kind",
-              "version",
-              "artifact"
-            ],
+            "required": ["kind", "version", "artifact"],
             "type": "object"
           },
           {
@@ -822,9 +742,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind"
-            ],
+            "required": ["kind"],
             "type": "object"
           }
         ]
@@ -856,10 +774,7 @@
             "description": "Expected content SHA-256. The adapter must verify the actual bytes before use."
           }
         },
-        "required": [
-          "resource",
-          "sha256"
-        ],
+        "required": ["resource", "sha256"],
         "type": "object"
       },
       "ExecutionBudget": {
@@ -885,11 +800,7 @@
             "type": "integer"
           }
         },
-        "required": [
-          "totalTimeoutMs",
-          "totalOutputBytes",
-          "maxAttempts"
-        ],
+        "required": ["totalTimeoutMs", "totalOutputBytes", "maxAttempts"],
         "type": "object"
       },
       "ExecutionRequest": {
@@ -967,9 +878,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind"
-            ],
+            "required": ["kind"],
             "type": "object"
           },
           {
@@ -985,10 +894,7 @@
                 "description": "Software semantics cannot be lowered to generic process parameters."
               }
             },
-            "required": [
-              "kind",
-              "software"
-            ],
+            "required": ["kind", "software"],
             "type": "object"
           }
         ]
@@ -1016,10 +922,7 @@
                 "description": "Originating OS account/session reference, separate from requested run-as identity."
               }
             },
-            "required": [
-              "kind",
-              "osSession"
-            ],
+            "required": ["kind", "osSession"],
             "type": "object"
           },
           {
@@ -1074,10 +977,7 @@
                 "description": "Exact policy revision associated with this request or audit decision."
               }
             },
-            "required": [
-              "kind",
-              "policy"
-            ],
+            "required": ["kind", "policy"],
             "type": "object"
           }
         ]
@@ -1097,10 +997,7 @@
                 "description": "Untrusted literal data; long-lived credentials must be passed as controlled references."
               }
             },
-            "required": [
-              "kind",
-              "value"
-            ],
+            "required": ["kind", "value"],
             "type": "object"
           },
           {
@@ -1116,10 +1013,7 @@
                 "description": "Exact versioned reference. Authenticity and access are checked by its owner."
               }
             },
-            "required": [
-              "kind",
-              "reference"
-            ],
+            "required": ["kind", "reference"],
             "type": "object"
           }
         ]
@@ -1184,10 +1078,7 @@
             "description": "Calling convention identity/revision; matched together with the binary."
           }
         },
-        "required": [
-          "artifact",
-          "profile"
-        ],
+        "required": ["artifact", "profile"],
         "type": "object"
       },
       "IsolationPolicy": {
@@ -1202,9 +1093,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind"
-            ],
+            "required": ["kind"],
             "type": "object"
           },
           {
@@ -1270,10 +1159,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind",
-              "value"
-            ],
+            "required": ["kind", "value"],
             "type": "object"
           },
           {
@@ -1285,9 +1171,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind"
-            ],
+            "required": ["kind"],
             "type": "object"
           }
         ]
@@ -1354,8 +1238,8 @@
         "const": 1,
         "type": "integer"
       },
-      "LocalContractV3": {
-        "const": 3,
+      "LocalContractV4": {
+        "const": 4,
         "type": "integer"
       },
       "ManagementConstraints": {
@@ -1434,9 +1318,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind"
-            ],
+            "required": ["kind"],
             "type": "object"
           },
           {
@@ -1455,10 +1337,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind",
-              "destinations"
-            ],
+            "required": ["kind", "destinations"],
             "type": "object"
           }
         ]
@@ -1483,11 +1362,7 @@
             "description": "Protocol the runner must enforce; HTTPS cannot be silently treated as unrestricted TCP."
           }
         },
-        "required": [
-          "scheme",
-          "host",
-          "port"
-        ],
+        "required": ["scheme", "host", "port"],
         "type": "object"
       },
       "NetworkHost": {
@@ -1534,10 +1409,7 @@
             "description": "Exact resource ID and revision; no latest-version lookup is performed here."
           }
         },
-        "required": [
-          "action",
-          "resource"
-        ],
+        "required": ["action", "resource"],
         "type": "object"
       },
       "OsAccountRef": {
@@ -1553,10 +1425,7 @@
             "description": "Opaque stable OS account reference, such as a SID/UID reference, not an authentication credential."
           }
         },
-        "required": [
-          "platform",
-          "subject"
-        ],
+        "required": ["platform", "subject"],
         "type": "object"
       },
       "OsSessionRef": {
@@ -1576,11 +1445,7 @@
             "description": "Origin OS login/session reference, including an explicit test reference in fixtures."
           }
         },
-        "required": [
-          "device",
-          "account",
-          "session"
-        ],
+        "required": ["device", "account", "session"],
         "type": "object"
       },
       "OutputFormat": {
@@ -1595,9 +1460,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind"
-            ],
+            "required": ["kind"],
             "type": "object"
           },
           {
@@ -1616,10 +1479,7 @@
                 "type": "integer"
               }
             },
-            "required": [
-              "kind",
-              "maxRows"
-            ],
+            "required": ["kind", "maxRows"],
             "type": "object"
           }
         ]
@@ -1641,11 +1501,7 @@
             "description": "Required stdout interpretation; preserve raw bytes on failure."
           }
         },
-        "required": [
-          "format",
-          "stdout",
-          "stderr"
-        ],
+        "required": ["format", "stdout", "stderr"],
         "type": "object"
       },
       "PackageIdentity": {
@@ -1673,24 +1529,11 @@
             "description": "Exact variant/channel selector, never a default/latest fallback."
           }
         },
-        "required": [
-          "manager",
-          "source",
-          "package",
-          "architecture",
-          "variant"
-        ],
+        "required": ["manager", "source", "package", "architecture", "variant"],
         "type": "object"
       },
       "PackageValue": {
         "description": "Exact ecosystem text: no SemVer, case folding, alias lookup or normalization.\nAccepts 1..=1024 UTF-8 bytes without control characters, including '+' and '~'.",
-        "type": "string"
-      },
-      "PlanId": {
-        "description": "Immutable local plan identity.",
-        "maxLength": 128,
-        "minLength": 1,
-        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
         "type": "string"
       },
       "Platform": {
@@ -1756,10 +1599,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind",
-              "account"
-            ],
+            "required": ["kind", "account"],
             "type": "object"
           },
           {
@@ -1775,10 +1615,7 @@
                 "description": "OS namespace of this reference or target; does not assert platform support."
               }
             },
-            "required": [
-              "kind",
-              "platform"
-            ],
+            "required": ["kind", "platform"],
             "type": "object"
           }
         ]
@@ -1795,9 +1632,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind"
-            ],
+            "required": ["kind"],
             "type": "object"
           },
           {
@@ -1813,10 +1648,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind",
-              "account"
-            ],
+            "required": ["kind", "account"],
             "type": "object"
           }
         ]
@@ -1843,11 +1675,7 @@
             "type": "array"
           }
         },
-        "required": [
-          "path",
-          "versions",
-          "maxBytes"
-        ],
+        "required": ["path", "versions", "maxBytes"],
         "type": "object"
       },
       "SoftwareKind": {
@@ -1905,9 +1733,7 @@
             "description": "Stable volume/directory identity, not a pathname or a tenant-selected lock namespace."
           }
         },
-        "required": [
-          "parent"
-        ],
+        "required": ["parent"],
         "type": "object"
       },
       "SoftwareSpec": {
@@ -2025,10 +1851,7 @@
             "description": "Original ecosystem version."
           }
         },
-        "required": [
-          "version",
-          "sha256"
-        ],
+        "required": ["version", "sha256"],
         "type": "object"
       },
       "StandardInput": {
@@ -2043,9 +1866,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind"
-            ],
+            "required": ["kind"],
             "type": "object"
           },
           {
@@ -2071,12 +1892,7 @@
                 "description": "Immutable input reference, not input/credential bytes."
               }
             },
-            "required": [
-              "kind",
-              "reference",
-              "encoding",
-              "maxBytes"
-            ],
+            "required": ["kind", "reference", "encoding", "maxBytes"],
             "type": "object"
           }
         ]
@@ -2098,11 +1914,7 @@
             "description": "Device-wide or explicit-user scope as defined by this type."
           }
         },
-        "required": [
-          "device",
-          "platform",
-          "scope"
-        ],
+        "required": ["device", "platform", "scope"],
         "type": "object"
       },
       "TargetScope": {
@@ -2117,9 +1929,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind"
-            ],
+            "required": ["kind"],
             "type": "object"
           },
           {
@@ -2135,10 +1945,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind",
-              "account"
-            ],
+            "required": ["kind", "account"],
             "type": "object"
           }
         ]
@@ -2190,10 +1997,7 @@
             "type": "integer"
           }
         },
-        "required": [
-          "notBeforeUnixMs",
-          "expiresAtUnixMs"
-        ],
+        "required": ["notBeforeUnixMs", "expiresAtUnixMs"],
         "type": "object"
       },
       "VersionComparison": {
@@ -2217,12 +2021,7 @@
             "description": "Ecosystem result; the core performs no parsing."
           }
         },
-        "required": [
-          "comparator",
-          "installed",
-          "desired",
-          "relation"
-        ],
+        "required": ["comparator", "installed", "desired", "relation"],
         "type": "object"
       },
       "VersionRelation": {
@@ -2263,10 +2062,7 @@
             "description": "Exact immutable revision reference; does not resolve or follow a moving alias."
           }
         },
-        "required": [
-          "id",
-          "revision"
-        ],
+        "required": ["id", "revision"],
         "type": "object"
       }
     },
@@ -2290,25 +2086,21 @@
         "$ref": "#/$defs/LaunchSpec",
         "description": "Resolved launch description, including exact artifacts and ordered process inputs."
       },
-      "planId": {
-        "$ref": "#/$defs/PlanId",
-        "description": "Immutable local plan identity, also bound into its digest."
-      },
       "policy": {
         "$ref": "#/$defs/VersionedRef",
         "description": "Exact policy revision associated with this request or audit decision."
       },
       "request": {
         "$ref": "#/$defs/ExecutionRequest",
-        "description": "Original operation intent, retained once as part of the canonical plan."
+        "description": "Original operation intent, retained once as part of the canonical execution input."
       },
       "runAs": {
         "$ref": "#/$defs/RunAs",
         "description": "Requested target execution identity, separate from actor and originating login."
       },
       "schemaVersion": {
-        "$ref": "#/$defs/LocalContractV3",
-        "description": "Required current V3 discriminator; absent or unsupported versions are rejected."
+        "$ref": "#/$defs/LocalContractV4",
+        "description": "Required current V4 discriminator; absent or unsupported versions are rejected."
       },
       "sessionRequirement": {
         "$ref": "#/$defs/SessionRequirement",
@@ -2322,7 +2114,6 @@
     "required": [
       "schemaVersion",
       "execution",
-      "planId",
       "request",
       "launch",
       "runAs",
@@ -2332,7 +2123,7 @@
       "validity",
       "policy"
     ],
-    "title": "PlanSpec",
+    "title": "ExecutionInput",
     "type": "object"
   }
 }

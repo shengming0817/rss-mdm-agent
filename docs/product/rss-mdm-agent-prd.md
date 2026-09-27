@@ -28,7 +28,7 @@ S1 不要求所有 AI 引擎完成才验证首个闭环：C20 选择 Codex；Cla
 | --- | --- | --- |
 | 终端用户 | 浏览软件/工具、填参数、申请或执行、看结果、处理重启提示 | 自助点击不自动获得管理员权限 |
 | 运维人员 | 发布受控工具、诊断、选择任务、查看获准的详细证据 | 发布、批准、执行权限分别判定 |
-| 管理员/批准者 | 管理目录与委托、批准超出预授权的具体操作 | 批准必须绑定主体、目标、计划和期限 |
+| 管理员/批准者 | 管理目录与委托、批准超出预授权的具体操作 | 批准必须绑定主体、目标、动作和期限 |
 | AI 助手 | 查询事实、推荐目录项、构造候选、在委托内提交 | AI 是发起来源，不是新的权限 authority |
 
 ### J1：人主动安装或修复软件
@@ -91,14 +91,14 @@ Agent wire 的唯一 producer 仍为 rss-mdm；`execution-contract` 是本地执
 | CLI-CAT03 | 参数 schema 同源派生人用表单与 AI 工具参数 | 类型/枚举/长度/默认值/敏感输入规则一致；不同入口错误分类一致 |
 | CLI-CAT04 | 可见、可申请、可执行分别建模 | 列表可见或模型 readOnlyHint 不能使后台放行；执行前重新授权 |
 | CLI-CAT05 | 支持企业必装、可选自助和申请后可用的分发描述 | 必装卸载/用户已有软件接管由可信政策决定；S1 使用固定策略样本 |
-| CLI-CAT06 | 目录下架、版本变更、过期和离线缓存有明确行为 | 缓存可浏览不表示仍获执行权；已批准计划不能自动替换成最新产物 |
+| CLI-CAT06 | 目录下架、版本变更、过期和离线缓存有明确行为 | 缓存可浏览不表示仍获执行权；已确认动作不能自动替换成最新产物 |
 
 ### 4.3 传统桌面与交互
 
 | 编号 | 要求 | 验收 |
 | --- | --- | --- |
 | CLI-UI01 | 提供首页、软件中心、工具/脚本表单、任务中心、交互通知、设备/帮助入口 | 用户不启用 AI 也能完成测试目录提交、申请、查看结果和处理提示 |
-| CLI-UI02 | 展示确定性计划摘要、版本、目标、身份、权限、数据/网络范围与计划 ID | AI 摘要仅作补充；未知效果不显示为已核实；敏感参数不可明文回显 |
+| CLI-UI02 | 展示确定性动作摘要、版本、目标、身份、权限、数据/网络范围与请求 ID | AI 摘要仅作补充；未知效果不显示为已核实；敏感参数不可明文回显 |
 | CLI-UI03 | 普通用户看到业务说明，脚本正文/详细日志按权限开放 | 目录和结果查询分别授权；用户不能借任务详情读取其他主体内容 |
 | CLI-UI04 | 无 PR 导航、数据、路由、后台任务与必填字段 | 在没有仓库/PR 数据时可运行；应用不探测 gh/az/glab 来完成客户端功能 |
 | CLI-INT01 | 分离用户确认、隐私同意、管理员授权三类交互 | “已保存文件”不能成为提权批准；批准者由可信上下文确定 |
@@ -111,7 +111,7 @@ Agent wire 的唯一 producer 仍为 rss-mdm；`execution-contract` 是本地执
 | --- | --- | --- |
 | CLI-AI01 | 通用 Conversation/Message/ToolCall 契约，无 PR 语义 | 不要求 pr_number/repository；流式输出、中断和错误可独立消费 |
 | CLI-AI02 | Codex app-server、Claude Agent SDK、DeepSeek Harness 独立适配，共用宿主工具裁决接缝 | 各自固定版本并声明续接/进程 generation/工具控制能力；不以一个引擎证明全部支持 |
-| CLI-AI03 | AI 通过目录、能力、预览、候选、提交、状态和取消工具工作 | 无“AI 自行批准”工具；MCP adapter 不直接调用 shell/PTY 或 runner |
+| CLI-AI03 | AI 通过目录、能力、一次性执行、状态和取消工具工作 | 无“AI 自行批准”工具；MCP adapter 不直接调用 shell/PTY 或 runner |
 | CLI-AI04 | 受控模式禁止继承来源项目自动批准/全权限旁路 | 任意原生工具、直接 shell、本地 IPC 或其他入口可绕过时，受控模式不可用 |
 | CLI-AI05 | AI 输出、工具元数据和终端输出都视作不可信数据 | 工具输出中的指令/自报安全等级/自报完成不能创建授权或执行回执 |
 | CLI-AI06 | AI 对话恢复与执行恢复分别处理 | 引擎进程重启后不能恢复会话时显示失效；持久执行状态不被清空或再次派发 |
@@ -120,9 +120,9 @@ Agent wire 的唯一 producer 仍为 rss-mdm；`execution-contract` 是本地执
 
 | 编号 | 要求 | 验收 |
 | --- | --- | --- |
-| CLI-EX01 | 人、AI、策略请求共用能力/授权/批准/执行入口 | 同一主体/委托/计划得到一致裁决，不因来源改变上限 |
+| CLI-EX01 | 人、AI、策略请求共用能力/授权/批准/执行入口 | 同一主体/委托/动作保持一致基础权限，不因来源改变上限 |
 | CLI-EX02 | 能力匹配只消费快照，区分 supported/blocked/unsupported/unknown | 解释器、运行用户、权限或沙箱能力未知时不能自动降级无限制运行 |
-| CLI-EX03 | 计划冻结精确脚本/安装物、参数、目标、身份、约束、期限和版本 | Windows 环境名拒绝大小写冲突并统一表示；网络端点明确 scheme、规范 DNS/IP host 与非零 port，拒绝 URL 组件和隐式端口。修改任一授权相关字段使摘要或适用性变化，旧批准不再放行 |
+| CLI-EX03 | 不可变输入固定精确脚本/安装物、参数、目标、身份、约束、期限和版本 | Windows 环境名拒绝大小写冲突并统一表示；网络端点明确 scheme、规范 DNS/IP host 与非零 port，拒绝 URL 组件和隐式端口。修改任一授权相关字段使摘要或适用性变化，旧批准不再放行 |
 | CLI-EX04 | 原生 PS/sh/Bash 作为产物执行，无需 JS/Rust 字符串包装 | C10 只生成固定解释器/argv/cwd/env 描述；参数不拼接进任意 shell 命令 |
 | CLI-EX05 | 任意脚本的声明和静态分析不证明其只读或安全 | 沙箱/权限约束必须在实际平台强制；特权新脚本需精确授权 |
 | CLI-EX06 | 禁止把收到、排队、进程退出、目标已核实合并成成功 | 无真实进程的测试 runner 只能返回 test evidence，不能形成真实 Applied/Converged |
@@ -135,17 +135,19 @@ Agent wire 的唯一 producer 仍为 rss-mdm；`execution-contract` 是本地执
 
 | 编号 | 要求 | 验收 |
 | --- | --- | --- |
-| CLI-REC01 | SQLite 是已接纳本地执行/交互/批准的持久 authority，AuditEvent可关联完整裁决 | 稳定事件ID、authority/tenant与device、request/plan/attempt、actor/initiator/approver、action/resource/target、decision/reason、委托/政策/批准版本、时间及evidence引用；准入裁决审计与intent同事务，失败不调用runner；审计读取单独授权，秘密只存引用或脱敏值 |
+| CLI-REC01 | SQLite 是已接纳本地执行/交互/批准的持久 authority，AuditEvent可关联完整裁决 | 稳定事件ID、authority/tenant与device、request/attempt、actor/initiator/approver、action/resource/target、decision/reason、委托/政策/批准版本、时间及evidence引用；准入裁决审计与intent同事务，失败不调用runner；审计读取单独授权，秘密只存引用或脱敏值 |
 | CLI-REC02 | 每次新尝试的批准消耗与执行 intent 原子提交 | 必需profile全部满足；同一记录覆盖多个profile只消费一次。同一attempt重放不重复消费，并发CAS只有一个成功；事务失败不扣减，已提交但失败/未派发不自动退还；intent不是已产生OS副作用的证明 |
 | CLI-REC03 | intent之后、执行中、结果保存前的崩溃有明确恢复状态 | 非幂等动作不得盲重跑；先核实、保留未知或转人工处理 |
 | CLI-REC04 | 取消请求、超时、进程终止和副作用回滚分别记录 | 取消不保证全进程树终止或系统效果消失；真实平台支持后独立验证 |
 | CLI-REC05 | 离线/时钟回拨/授权撤销有界处理 | 无可靠授权时效依据时不接纳新变更；离线不承诺即时撤销，截止及最大窗口明确 |
 | CLI-REC06 | 本地DB迁移、容量、磁盘满、锁竞争与损坏有可诊断结果 | 明确支持的迁移必须事务化并可从中断恢复；不受支持的格式转换原样保留旧库并拒绝执行/写入，不恢复旧批准；旧客户端遇到更高schema只读诊断并禁止执行/写入；失败保留原库或隔离副本，禁止自动初始化新authority；真实SQLite故障测试覆盖上述边界 |
 
-#2477/#2478 本次已批准交付边界：本地冻结计划 V3 / SQLite schema 4 直接替换旧格式，
-不实现 V2/schema 3 解码、迁移或兼容 reader；旧数据完整保留并明确拒绝。六种软件适配的
-本次验收采用可隔离 macOS 本地运行、受控 manager 替身、跨平台逻辑及 Windows 交叉编译；
-不制作或验收签名产物，未做 Windows 真机/签名不阻塞本 PR 正常交接与两项关闭。
+#2571 当前交付边界：本地执行输入 V4 / SQLite schema 5 直接替换旧格式，
+不实现旧执行格式/schema 的解码、迁移或兼容 reader；旧数据完整保留并明确拒绝。
+#2571 的 S1 fixture 仅证明控制链；真实身份、可信 IPC 与企业接线仍由 #2564 验证，不能据此关闭为生产完成。
+
+#2477/#2478 的六种软件适配验收采用可隔离 macOS 本地运行、受控 manager 替身、跨平台逻辑及 Windows 交叉编译；
+该软件适配验收不制作或验收签名产物，未做 Windows 真机/签名不阻塞 #2477/#2478 的既定交接。
 生产身份、批准、可信内容及联网装配归 #2564；默认服务继续 Unbound。本次本地证据不能
 改写为生产可用、真实平台包安装或签名通过。此处是两项本次交付验收口径。
 
@@ -166,11 +168,13 @@ Agent wire 的唯一 producer 仍为 rss-mdm；`execution-contract` 是本地执
 
 ## 5. 统一模型和执行边界
 
-最小业务对象：CatalogItem、OperationVariant、ParameterSchema、Conversation、ToolCallProposal、ExecutionRequest、FrozenPlan、ApprovalRecord、ExecutionIntent、Attempt、Evidence、Interaction、AuditEvent。
+最小业务对象：CatalogItem、OperationVariant、ParameterSchema、Conversation、ToolCallProposal、ExecutionRequest、FrozenExecution、ApprovalRecord、ExecutionIntent、Attempt、Evidence、Interaction、AuditEvent。
+
+一次性执行不建立独立 Plan 生命周期。人工在已有权限内只需本人确认；AI 工具由可信策略标定 0/1/2/3，0/1 按允许规则执行、2 由当前有执行权限用户确认、3 与未知默认阻止。人工确认和 AI 确认均不补充权限，AI 来源不能因点击确认变成人工；Policy 保持独立非交互授权。
 
 `actor` 表示承担权限的主体，`initiator` 只记录 human/ai/policy 来源，`delegation` 限制代理范围；另存批准者和目标 OS 用户。
 模型账号、OS用户和企业身份不能按相同用户名或email自动合并。
-批准用既有完整规范计划摘要绑定目标与身份、产物/参数、授权版本和预算，并绑定记录版本、期限与允许尝试次数；不维护第二套可漂移的字段投影。任何有效范围改变须重新判定。
+批准用既有完整规范执行内容摘要绑定目标与身份、产物/参数、授权版本和预算，并绑定记录版本、期限与允许尝试次数；不维护第二套可漂移的字段投影。任何有效范围改变须重新判定。
 每次新attempt重新取得C07裁决；只有ApprovalRequired进入C08可信验证接缝。多个必需profile须全部满足，批准可预授多次使用，每次新尝试对每个不同记录消费一次。总时钟与attempt计数从intent原子接纳开始，等待/重试不重置。
 纯核心只验证可信输入并输出裁决/消耗意图；真实主体验证、批准签发与原子消耗由指定 adapter/host 完成。
 本地authority由OS管理员在后续服务bootstrap中建立：绑定稳定OS主体标识、允许目录与政策，指定有批准权的主体和签发密钥；密钥/政策/撤销版本位于UI/AI不可写的服务存储。
@@ -181,7 +185,7 @@ flowchart LR
   H[人：目录按钮/表单] --> R[统一操作请求]
   A[AI：类型化工具] --> R
   P[后续企业策略] --> R
-  R --> G[能力预检/授权/计划冻结]
+  R --> G[能力预检/授权/输入固定]
   G --> I[必要交互或批准]
   G --> J[持久执行准入]
   I --> J
@@ -193,7 +197,7 @@ flowchart LR
 
 进入 J 前所有必需批准都必须满足；图中直达 J 的路径仅适用于已有授权且不需新增交互的请求。
 AI请求与手动请求都不能自行取得可执行capability。运行模式与runner标识进入记录；测试证据不能被转换成真实执行回执。
-输出中的“已完成”文字不是 Evidence；证据由可信执行接缝生成并归属原任务/attempt/计划。
+输出中的“已完成”文字不是 Evidence；证据由可信执行接缝生成并归属原请求/attempt/内容摘要。
 
 服务类型与执行器分开：Agent/MDM是产品管理通道，HTTPS等是传输，PowerShell/Bash/安装器是执行器，System/root/用户会话是执行上下文。
 原生MDM报文与用户工具请求不复用同一wire；其组装映射由rss-mdm负责。

@@ -625,9 +625,9 @@ try {
     .getByText("执行服务记录：需要管理员批准", { exact: true })
     .waitFor();
   for (const [ms, note] of [
-    [500, "计划尚未生效"],
-    [1000, "计划在有效期内"],
-    [2000, "计划已过期"],
+    [500, "动作尚未生效"],
+    [1000, "动作在有效期内"],
+    [2000, "动作已过期"],
   ]) {
     await page.clock.setFixedTime(new Date(ms));
     await page.clock.runFor(1000);

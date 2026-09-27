@@ -4,7 +4,7 @@ use execution_approval::{
     ApprovalFacts, ApprovalRecord, ApprovalStatus, ApprovalVerifier, ProfileApproval,
     VerificationError,
 };
-use execution_contract::{AttemptId, FrozenPlan, VersionedRef};
+use execution_contract::{AttemptId, FrozenExecution, VersionedRef};
 use rusqlite::{params, Connection, OptionalExtension};
 
 pub(crate) struct Head {
@@ -149,7 +149,7 @@ fn validate_snapshot(
     for entry in &mut snapshot.approvals {
         let d = &mut entry.definition;
         if previous == Some(&d.reference.id)
-            || d.plan_id != scope.plan_id
+            || d.request_id != scope.request_id
             || d.max_uses == 0
             || d.profiles.is_empty()
             || d.profiles.len() > limits.max_approvals
@@ -254,8 +254,8 @@ impl StoredApprovals<'_> {
                 definition: ApprovalDefinition {
                     reference: r.reference,
                     approver: r.approver,
-                    plan_id: r.plan_id,
-                    plan_digest: r.plan_digest,
+                    request_id: r.request_id,
+                    content_digest: r.content_digest,
                     profiles: r.profiles,
                     validity: r.validity,
                     max_uses: r.max_uses,
@@ -287,8 +287,8 @@ impl StoredApprovals<'_> {
         Ok(ApprovalRecord {
             reference: d.reference,
             approver: d.approver,
-            plan_id: d.plan_id,
-            plan_digest: d.plan_digest,
+            request_id: d.request_id,
+            content_digest: d.content_digest,
             profiles: d.profiles,
             validity: d.validity,
             status: match status.as_str() {
@@ -306,14 +306,14 @@ impl StoredApprovals<'_> {
 impl ApprovalVerifier for StoredApprovals<'_> {
     fn verify(
         &self,
-        plan: &FrozenPlan,
+        plan: &FrozenExecution,
         refs: &[VersionedRef],
     ) -> Result<ApprovalFacts, VerificationError> {
         let now = (self.clock)().map_err(|_| VerificationError::Clock)?;
         if now < self.now {
             return Err(VerificationError::Clock);
         }
-        if Scope::from_plan(plan) != *self.scope
+        if Scope::from_input(plan) != *self.scope
             || refs.len() > self.limits.max_approvals
             || now >= self.head.until
         {
@@ -335,7 +335,7 @@ impl ApprovalVerifier for StoredApprovals<'_> {
 }
 pub(crate) fn check_gate(
     w: &Write<'_>,
-    plan: &FrozenPlan,
+    plan: &FrozenExecution,
     attempt: &AttemptId,
     bindings: &[ProfileApproval],
     gate: &AdmissionGate,
@@ -345,8 +345,8 @@ pub(crate) fn check_gate(
     use execution_approval::ApprovalOutcome;
     let a = &gate.admission;
     let p = &gate.approval;
-    if a.plan_id() != &plan.spec().plan_id
-        || a.plan_digest() != plan.digest()
+    if a.request_id() != &plan.spec().request.request_id
+        || a.content_digest() != plan.digest()
         || a.attempt_id() != attempt
         || !a
             .validity()
@@ -375,7 +375,7 @@ pub(crate) fn check_gate(
 }
 pub(crate) fn consume(
     w: &Write<'_>,
-    plan: &FrozenPlan,
+    plan: &FrozenExecution,
     attempt: &AttemptId,
     gate: &AdmissionGate,
     h: &Head,
@@ -392,16 +392,16 @@ pub(crate) fn consume(
     for intent in gate.approval.consumptions() {
         let record = provider.record(intent.approval())?;
         if record.status != ApprovalStatus::Active
-            || record.plan_id != plan.spec().plan_id
-            || &record.plan_digest != plan.digest()
+            || record.request_id != plan.spec().request.request_id
+            || &record.content_digest != plan.digest()
             || record.used != intent.expected_uses()
             || record.consumption_revision != intent.expected_consumption_revision()
             || record.used >= record.max_uses
             || record.validity.not_before_unix_ms > w.now
             || w.now >= record.validity.expires_at_unix_ms
             || intent.verification_revision() != &h.approval
-            || intent.plan_id() != &plan.spec().plan_id
-            || intent.plan_digest() != plan.digest()
+            || intent.request_id() != &plan.spec().request.request_id
+            || intent.content_digest() != plan.digest()
             || intent.attempt_id() != attempt
             || w.now >= intent.valid_until_unix_ms()
         {

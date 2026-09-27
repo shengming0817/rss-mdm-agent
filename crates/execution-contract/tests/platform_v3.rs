@@ -1,7 +1,7 @@
-use execution_contract::{decode_plan, FrozenPlan, PlanLimits};
+use execution_contract::{decode_execution, ExecutionLimits, FrozenExecution};
 
-fn limits() -> PlanLimits {
-    PlanLimits {
+fn limits() -> ExecutionLimits {
+    ExecutionLimits {
         max_input_bytes: 65536,
         max_depth: 32,
         max_nodes: 4096,
@@ -18,24 +18,24 @@ fn limits() -> PlanLimits {
 fn explicit_os_identity_requires_v3_and_changes_the_frozen_digest() {
     let mut value: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/plan.json")).unwrap();
-    value["schemaVersion"] = 3.into();
+    value["schemaVersion"] = 4.into();
     value["constraints"]["kind"] = "restricted".into();
     value["launch"]["output"]["format"] = serde_json::json!({"kind":"text"});
-    let restricted = FrozenPlan::freeze(
-        decode_plan(&serde_json::to_vec(&value).unwrap(), &limits()).unwrap(),
+    let restricted = FrozenExecution::freeze(
+        decode_execution(&serde_json::to_vec(&value).unwrap(), &limits()).unwrap(),
         &limits(),
     )
     .unwrap();
     value["constraints"] = serde_json::json!({"kind":"osIdentity"});
-    let native = FrozenPlan::freeze(
-        decode_plan(&serde_json::to_vec(&value).unwrap(), &limits()).unwrap(),
+    let native = FrozenExecution::freeze(
+        decode_execution(&serde_json::to_vec(&value).unwrap(), &limits()).unwrap(),
         &limits(),
     )
     .unwrap();
     assert_ne!(restricted.digest(), native.digest());
     value["schemaVersion"] = 1.into();
-    assert!(decode_plan(&serde_json::to_vec(&value).unwrap(), &limits()).is_err());
-    value["schemaVersion"] = 3.into();
+    assert!(decode_execution(&serde_json::to_vec(&value).unwrap(), &limits()).is_err());
+    value["schemaVersion"] = 4.into();
     value["constraints"] = serde_json::json!({"kind":"automatic"});
-    assert!(decode_plan(&serde_json::to_vec(&value).unwrap(), &limits()).is_err());
+    assert!(decode_execution(&serde_json::to_vec(&value).unwrap(), &limits()).is_err());
 }

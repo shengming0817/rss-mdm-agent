@@ -6,7 +6,7 @@ use scenario::{input, limits};
 use script_plan::*;
 use serde_json::json;
 
-fn literals(p: &FrozenPlan) -> Vec<&str> {
+fn literals(p: &FrozenExecution) -> Vec<&str> {
     p.spec()
         .launch
         .argv
@@ -17,9 +17,9 @@ fn literals(p: &FrozenPlan) -> Vec<&str> {
         })
         .collect()
 }
-fn assert_context(s: &PlanSpec, i: &ScriptPlanInput) {
+fn assert_context(s: &ExecutionInput, i: &ScriptPlanInput) {
     assert_eq!(s.request, i.request);
-    assert_eq!(s.plan_id, i.plan_id);
+    assert_eq!(s.request.request_id, i.request.request_id);
     assert_eq!(s.launch.artifact, i.artifact);
     assert_eq!(s.launch.interpreter.artifact, i.interpreter);
     assert_eq!(s.launch.cwd, i.cwd);
@@ -41,7 +41,7 @@ fn native_profiles_keep_bytes_arguments_and_entire_execution_context() {
         let p = compile(i.clone(), &limits()).unwrap();
         let bytes = serde_json::to_vec(p.spec()).unwrap();
         assert_eq!(
-            FrozenPlan::freeze(decode_plan(&bytes, &limits()).unwrap(), &limits())
+            FrozenExecution::freeze(decode_execution(&bytes, &limits()).unwrap(), &limits())
                 .unwrap()
                 .digest(),
             p.digest()
@@ -234,7 +234,7 @@ fn canonical_validation_and_budget_are_not_bypassed() {
     }
     assert!(compile(
         input(ScriptProfile::Bash),
-        &PlanLimits {
+        &ExecutionLimits {
             max_collection_items: 1,
             ..limits()
         }

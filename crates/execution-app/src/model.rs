@@ -1,4 +1,4 @@
-use execution_contract::{AttemptId, Digest, EvidenceRef, Id, PlanId, RequestId};
+use execution_contract::{AttemptId, Digest, EvidenceRef, Id, RequestId};
 use execution_lifecycle::{EffectAssessment, ExecutionMode};
 
 /// Value-free application failures. Backend paths, SQL, secrets and runner text never escape.
@@ -44,11 +44,11 @@ pub enum Error {
     #[error("protected execution storage unavailable")]
     Storage,
     /// Read-only header diagnosis; no application/write handle was created.
-    #[error("database schema {found} is newer than supported schema {supported}")]
-    NewerSchema {
+    #[error("execution database schema {found} is unsupported; required schema {supported}; preserve the existing database and explicitly select a new test data directory")]
+    UnsupportedSchema {
         /// Version read without opening a writer.
         found: u32,
-        /// Maximum supported schema.
+        /// Only accepted schema.
         supported: u32,
     },
     /// Query the original operation; never allocate a replacement attempt.
@@ -79,7 +79,7 @@ impl From<execution_sqlite::Error> for Error {
 
 /// Stable logical command identity, distinct from a business task's RequestId.
 /// Retain this value across network retries/unknown outcomes. Generate a new value only for
-/// a deliberately new owner action; doing so for advance can spend another attempt/approval.
+/// a deliberately new owner action; an explicit retry can spend another attempt/approval.
 /// ```compile_fail
 /// let _: execution_app::CommandId = execution_contract::RequestId::new("task").unwrap();
 /// ```
@@ -90,7 +90,7 @@ impl CommandId {
     pub fn new(value: impl Into<String>) -> Result<Self, Error> {
         Ok(Self(Id::new(value).map_err(|_| Error::InvalidInput)?))
     }
-    /// The exact first-attempt command owned by submit. Use it to resume a registered task with
+    /// The exact first-attempt command owned by request_execution. Use it to resume a registered task with
     /// no admitted attempt after a pre-commit transient failure; rejected admission stays rejected.
     pub fn initial_attempt() -> Self {
         Self(Id::new("initial").expect("static ID"))
@@ -122,6 +122,8 @@ pub enum TaskPhase {
     AdmissionDenied,
     /// An independently verified approval is required; an interaction answer is not approval.
     ApprovalRequired,
+    /// Exact-action user confirmation is pending; no attempt has started.
+    ConfirmationRequired,
     /// Intent committed, dispatch not confirmed.
     Accepted,
     /// Runner accepted the dispatch; no verified effect is implied.
@@ -142,14 +144,10 @@ pub enum TaskPhase {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionStatus {
-    /// The initial submission receipt exists; preview alone leaves this false.
-    pub submitted: bool,
     /// Original reliable business identity.
     pub operation_request_id: RequestId,
-    /// Exact frozen plan identity.
-    pub plan_id: PlanId,
-    /// Canonical C01 plan digest.
-    pub plan_digest: Digest,
+    /// Canonical digest of the complete immutable execution input.
+    pub content_digest: Digest,
     /// Current derived lifecycle phase.
     pub phase: TaskPhase,
     /// Explicit fixture provenance, also present before the first attempt.

@@ -68,7 +68,7 @@ test("new execution fields require an explicit admission/capability decision", (
       const baseline = check(consumer);
       assert.equal(baseline.status, 0, baseline.stderr);
       for (const type of [
-        "PlanSpec",
+        "ExecutionInput",
         "ExecutionRequest",
         "IsolationPolicy",
         ...(consumer === "execution-capability"

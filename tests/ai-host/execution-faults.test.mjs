@@ -171,7 +171,7 @@ test("lost submit receipt recovers the same Rust attempt and keeps process exit 
       },
     ),
   );
-  const plan = JSON.parse(await readFile(audit, "utf8"));
+  const input = JSON.parse(await readFile(audit, "utf8"));
 
   const submitCommand = {
     ...fixtureCommand("submit-command"),
@@ -179,12 +179,30 @@ test("lost submit receipt recovers the same Rust attempt and keeps process exit 
     expiresAtMs: Date.now() + 60_000,
   };
   const submit = {
-    name: "execution_submit",
-    arguments: {
-      operationRequestId: "ai-unknown",
-      plan,
-    },
+    name: "execution_execute",
+    arguments: input,
   };
+  assert.equal(
+    connection.router.prepare(session.namespace, {
+      name: "execution_execute",
+      arguments: { candidate: { operationRequestId: "legacy" } },
+    }).ok,
+    false,
+  );
+  assert.equal(
+    connection.router.prepare(session.namespace, {
+      name: "execution_execute",
+      arguments: { operationRequestId: "legacy" },
+    }).ok,
+    false,
+  );
+  assert.equal(
+    connection.router.prepare(session.namespace, {
+      name: "execution_execute",
+      arguments: { script: { operationRequestId: "script" } },
+    }).ok,
+    true,
+  );
   const request = await crashAfterRustAcceptance(
     t,
     aiDb,

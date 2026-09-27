@@ -1,5 +1,6 @@
 {
-  "schemaVersion": 4,
+  "schemaVersion": 3,
+  "planId": "plan-1",
   "request": {
     "schemaVersion": 1,
     "requestId": "request-1",

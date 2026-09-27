@@ -101,7 +101,7 @@ pub enum ProcessFailureKind {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProcessEvidence {
     /// Exact immutable plan, not a bare task identifier.
-    pub plan_digest: Digest,
+    pub content_digest: Digest,
     /// Exact admitted attempt.
     pub attempt_id: AttemptId,
     /// Runner provenance.

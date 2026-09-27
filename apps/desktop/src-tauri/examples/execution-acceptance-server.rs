@@ -1,8 +1,6 @@
 //! Process-bound acceptance fixture for the real Desktop execution composition and MCP adapter.
 use execution_contract::RequestId;
-use execution_mcp::{
-    CatalogCandidate, ExecutionMcp, ExecutionServicePort, McpLimits, PreviewRequest,
-};
+use execution_mcp::{ExecutionMcp, McpLimits};
 use rss_mdm_desktop::composition::execution::ExecutionHandle;
 use serde_json::json;
 use std::{
@@ -75,53 +73,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_trusted_users(Arc::new(Mutex::new(users)))
         .for_caller("fixture-actor")?;
     let catalog = rss_mdm_desktop::composition::execution::catalog()?;
-    let selected = catalog.select(
-        &serde_json::to_vec(&json!({
-            "catalog": catalog.reference(),
-            "itemId": "unknown",
-            "variantId": "test",
-            "arguments": {}
-        }))?,
-        &service_catalog::CatalogLimits {
-            max_bytes: 65_536,
-            max_depth: 16,
-            max_nodes: 4_096,
-            max_string_bytes: 4_096,
-            max_collection_items: 128,
-        },
-        &service_catalog::ParameterLimits {
-            max_bytes: 4_096,
-            max_string_bytes: 1_024,
-            max_parameters: 16,
-        },
-    )?;
-    let metadata = json!({
-        "com.rss-mdm/ai-origin": {
-            "schemaVersion": 6,
-            "kind": "executionOrigin",
-            "userGeneration": generation,
-            "namespace": {
-                "tenantId": "test-users",
-                "principalId": "fixture-actor",
-                "authorityId": "desktop-fixture",
-                "sessionId": "conversation-a"
-            },
-            "operationId": "preflight-preview",
-            "provider": "codex",
-                        "config": { "id": "local", "revision": "r1" }
-        }
-    });
-    let preview = Arc::new(execution.clone())
-        .bind_call(metadata.as_object().expect("static metadata object"))?
-        .preview(
-            PreviewRequest::Catalog(Box::new(CatalogCandidate {
-                operation_request_id: RequestId::new("ai-unknown")?,
-                selection: selected,
-            })),
-            CancellationToken::new(),
-        )
-        .await?;
-    std::fs::write(&args[1], serde_json::to_vec_pretty(&preview.plan)?)?;
+    let input = json!({"catalog":{"selection":{
+        "operationRequestId":"ai-unknown", "catalog":catalog.reference(),
+        "itemId":"unknown", "variantId":"test", "arguments":{}
+    }}});
+    std::fs::write(&args[1], serde_json::to_vec_pretty(&input)?)?;
     let limits = McpLimits {
         frame_bytes: 262_144,
         response_bytes: 262_144,

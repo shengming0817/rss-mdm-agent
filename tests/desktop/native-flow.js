@@ -138,26 +138,28 @@
         ),
       );
       office.querySelector("button").click();
-      await click("预览确定性计划");
-      await click("提交测试申请");
+      await click("检查并执行");
       const human = await wait(async () =>
-        (await snapshot()).requests.find((r) => r.plan.itemId === "office"),
+        (await snapshot()).requests.find((r) => r.action.itemId === "office"),
       );
-      if ((await details(human.plan.requestId)).plan.initiator.kind !== "human")
+      if (
+        (await details(human.action.requestId)).action.initiator.kind !==
+        "human"
+      )
         throw new Error("origin");
       await click("刷新任务");
       (
         await wait(() =>
           [...document.querySelectorAll(".task-row")].find((b) =>
-            b.textContent.includes(human.plan.requestId),
+            b.textContent.includes(human.action.requestId),
           ),
         )
       ).click();
-      await verifyOrigin(human.plan);
-      await click("批准此测试计划一次");
+      await verifyOrigin(human.action);
+      await click("确认并执行");
       await wait(
         async () =>
-          (await details(human.plan.requestId)).status.phase === "verified",
+          (await details(human.action.requestId)).status.phase === "verified",
       );
       setStage("ai_connect");
       await click("AI 助手");
@@ -169,7 +171,7 @@
       });
       setStage("ai_submit");
       input.value =
-        "使用受控工具完成这次 S1 测试：先读取 execution_catalog，选办公套件 office/test，参数 edition=standard，使用唯一 operationRequestId=ai-s1-smoke；先 execution_preview 冻结，再 execution_submit 提交，保留相同请求和精确 plan。不要批准，不调用本机命令；等待测试管理员的事实是正常结果。另用 operationRequestId=ai-s1-tool 预览并提交 diagnostics/test，参数 host=example.invalid。最后只回复 RSS_S1_DONE，并列出两个原任务编号。";
+        "使用受控工具完成这次 S1 测试：先读取 execution_catalog，选办公套件 office/test，参数 edition=standard，使用唯一 operationRequestId=ai-s1-smoke；调用 execution_execute 一次，保留原请求身份。不调用本机命令；等待用户确认是正常结果。另用 operationRequestId=ai-s1-tool 执行 diagnostics/test，参数 host=example.invalid。最后只回复 RSS_S1_DONE，并列出两个原任务编号。";
       input.dispatchEvent(new Event("input", { bubbles: true }));
       await click("发送");
       await wait(() =>
@@ -203,14 +205,12 @@
       const ai = await details("ai-s1-smoke"),
         tool = await details("ai-s1-tool");
       if (
-        ai.plan.initiator.kind !== "ai" ||
-        !ai.status.submitted ||
+        ai.action.initiator.kind !== "ai" ||
         ai.status.attempts !== 0 ||
-        ai.status.admission !== "approvalRequired"
+        ai.status.phase !== "confirmationRequired"
       )
         throw new Error("approval");
-      if (tool.plan.initiator.kind !== "ai" || !tool.status.submitted)
-        throw new Error("tool");
+      if (tool.action.initiator.kind !== "ai") throw new Error("tool");
       setStage("shared_task_approval");
       await click("请求与任务");
       await click("刷新任务");
@@ -221,10 +221,10 @@
           ),
         )
       ).click();
-      await verifyOrigin(ai.plan);
+      await verifyOrigin(ai.action);
       const alice = await current();
       const oldChannel = await invoke("ai_connect", { generation });
-      await click("批准此测试计划一次");
+      await click("确认并执行");
       // The durable runner is now in flight. Switching must not change its frozen origin.
       const started = await details("ai-s1-smoke");
       if (started.status.attempts !== 1 || started.status.phase === "verified")
@@ -284,7 +284,7 @@
         return value.status.phase === "verified" && value;
       });
       if (
-        JSON.stringify(completed.plan) !== JSON.stringify(ai.plan) ||
+        JSON.stringify(completed.action) !== JSON.stringify(ai.action) ||
         completed.status.attempts !== 1
       )
         throw new Error("original task identity changed");

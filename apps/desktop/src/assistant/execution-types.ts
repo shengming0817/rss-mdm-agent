@@ -253,9 +253,9 @@ export type Initiator =
     };
 /**
  * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
- * via the `definition` "LocalContractV3".
+ * via the `definition` "LocalContractV4".
  */
-export type LocalContractV3 = 3;
+export type LocalContractV4 = 4;
 /**
  * One possible mutation, not a queued workflow step.
  *
@@ -270,13 +270,6 @@ export type MutationKind = "install" | "upgrade" | "downgrade" | "uninstall";
  * via the `definition` "OutputQuality".
  */
 export type OutputQuality = "complete" | "truncated" | "failed" | "partial";
-/**
- * Immutable local plan identity.
- *
- * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
- * via the `definition` "PlanId".
- */
-export type PlanId = string;
 /**
  * Target OS semantics for validation; an enum value is not a platform support claim.
  *
@@ -395,6 +388,7 @@ export type TaskPhase =
   | "waiting"
   | "admissionDenied"
   | "approvalRequired"
+  | "confirmationRequired"
   | "accepted"
   | "running"
   | "outcomeUnknown"
@@ -407,13 +401,13 @@ export type TaskPhase =
  * One authorized record read provides both lifecycle status and frozen plan facts.
  */
 export interface ExecutionTaskDetails {
-  plan: FrozenPlanSummary;
+  action: FrozenExecutionSummary;
   status: ExecutionStatus;
 }
 /**
  * Redacted frozen plan bound to that lifecycle.
  */
-export interface FrozenPlanSummary {
+export interface FrozenExecutionSummary {
   /**
    * Restrictions summarized without individual private values.
    */
@@ -484,6 +478,10 @@ export interface FrozenPlanSummary {
       };
   budget: ExecutionBudget;
   /**
+   * Digest covers the complete original plan, including omitted private values.
+   */
+  contentDigest: string;
+  /**
    * Closed execution kind without private software paths or source inputs.
    */
   execution:
@@ -538,15 +536,11 @@ export interface FrozenPlanSummary {
       };
   interpreter: InterpreterRef;
   operation: Operation;
-  /**
-   * Digest covers the complete original plan, including omitted private values.
-   */
-  planDigest: string;
+  policy: VersionedRef5;
   /**
    * Exact frozen plan identity.
    */
-  planId: string;
-  policy: VersionedRef5;
+  requestId: string;
   /**
    * Explicit execution identity; never inferred from a provider login.
    */
@@ -565,7 +559,7 @@ export interface FrozenPlanSummary {
   /**
    * Version of the frozen execution plan, independent of the AI wire version.
    */
-  schemaVersion: 3;
+  schemaVersion: 4;
   /**
    * Required target user session.
    */
@@ -855,6 +849,10 @@ export interface ExecutionStatus {
    */
   cancelRequested: boolean;
   /**
+   * Canonical digest of the complete immutable execution input.
+   */
+  contentDigest: string;
+  /**
    * First-delivery diagnosis; never evidence that execution had no effect.
    */
   dispatchCause: DispatchCause | null;
@@ -877,6 +875,7 @@ export interface ExecutionStatus {
     | "waiting"
     | "admissionDenied"
     | "approvalRequired"
+    | "confirmationRequired"
     | "accepted"
     | "running"
     | "outcomeUnknown"
@@ -884,14 +883,6 @@ export interface ExecutionStatus {
     | "verified"
     | "failedBeforeDispatch"
     | "cancelled";
-  /**
-   * Canonical C01 plan digest.
-   */
-  planDigest: string;
-  /**
-   * Exact frozen plan identity.
-   */
-  planId: string;
   /**
    * Redacted process progress, distinct from lifecycle termination and effect proof.
    */
@@ -904,10 +895,6 @@ export interface ExecutionStatus {
    * Last stop request response; independent of termination/effect evidence.
    */
   stopOutcome: StopOutcome | null;
-  /**
-   * The initial submission receipt exists; preview alone leaves this false.
-   */
-  submitted: boolean;
 }
 /**
  * Versioned observation reference and runner provenance; the referenced fact remains unverified.
@@ -1058,6 +1045,10 @@ export interface ExecutionStatus1 {
    */
   cancelRequested: boolean;
   /**
+   * Canonical digest of the complete immutable execution input.
+   */
+  contentDigest: string;
+  /**
    * First-delivery diagnosis; never evidence that execution had no effect.
    */
   dispatchCause: DispatchCause | null;
@@ -1080,6 +1071,7 @@ export interface ExecutionStatus1 {
     | "waiting"
     | "admissionDenied"
     | "approvalRequired"
+    | "confirmationRequired"
     | "accepted"
     | "running"
     | "outcomeUnknown"
@@ -1087,14 +1079,6 @@ export interface ExecutionStatus1 {
     | "verified"
     | "failedBeforeDispatch"
     | "cancelled";
-  /**
-   * Canonical C01 plan digest.
-   */
-  planDigest: string;
-  /**
-   * Exact frozen plan identity.
-   */
-  planId: string;
   /**
    * Redacted process progress, distinct from lifecycle termination and effect proof.
    */
@@ -1107,18 +1091,14 @@ export interface ExecutionStatus1 {
    * Last stop request response; independent of termination/effect evidence.
    */
   stopOutcome: StopOutcome | null;
-  /**
-   * The initial submission receipt exists; preview alone leaves this false.
-   */
-  submitted: boolean;
 }
 /**
  * Allowlisted view of the immutable plan; no parameters, launch inputs, secrets or audit.
  *
  * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
- * via the `definition` "FrozenPlanSummary".
+ * via the `definition` "FrozenExecutionSummary".
  */
-export interface FrozenPlanSummary1 {
+export interface FrozenExecutionSummary1 {
   /**
    * Restrictions summarized without individual private values.
    */
@@ -1189,6 +1169,10 @@ export interface FrozenPlanSummary1 {
       };
   budget: ExecutionBudget;
   /**
+   * Digest covers the complete original plan, including omitted private values.
+   */
+  contentDigest: string;
+  /**
    * Closed execution kind without private software paths or source inputs.
    */
   execution:
@@ -1243,15 +1227,11 @@ export interface FrozenPlanSummary1 {
       };
   interpreter: InterpreterRef;
   operation: Operation;
-  /**
-   * Digest covers the complete original plan, including omitted private values.
-   */
-  planDigest: string;
+  policy: VersionedRef5;
   /**
    * Exact frozen plan identity.
    */
-  planId: string;
-  policy: VersionedRef5;
+  requestId: string;
   /**
    * Explicit execution identity; never inferred from a provider login.
    */
@@ -1270,7 +1250,7 @@ export interface FrozenPlanSummary1 {
   /**
    * Version of the frozen execution plan, independent of the AI wire version.
    */
-  schemaVersion: 3;
+  schemaVersion: 4;
   /**
    * Required target user session.
    */

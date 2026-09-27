@@ -1,7 +1,5 @@
 use execution_contract::{Initiator, RequestId};
-use execution_mcp::{
-    CatalogCandidate, ExecutionServicePort, OperationRequest, PreviewRequest, SubmitRequest,
-};
+use execution_mcp::{CatalogCandidate, ExecuteRequest, ExecutionServicePort, OperationRequest};
 use rss_mdm_desktop::{
     composition::{
         execution::{ExecutionHandle, BINDING},
@@ -73,7 +71,7 @@ fn bound(
 ) -> Arc<ExecutionHandle> {
     Arc::new(handle.clone()).bind_call(json!({"com.rss-mdm/ai-origin":{"schemaVersion":6,"kind":"executionOrigin","namespace":{"tenantId":"test-users","principalId":"fixture-actor","authorityId":"desktop-fixture","sessionId":session},"userGeneration":generation,"operationId":operation,"provider":"codex","config":{"id":"local","revision":"r1"}}}).as_object().unwrap()).unwrap()
 }
-async fn draft(handle: &ExecutionHandle, request: &str, item: &str) -> ui::PlanView {
+async fn draft(handle: &ExecutionHandle, request: &str, item: &str) -> ui::ActionView {
     let snapshot = handle.snapshot(Default::default()).await.unwrap();
     let item = snapshot
         .catalog
@@ -81,7 +79,7 @@ async fn draft(handle: &ExecutionHandle, request: &str, item: &str) -> ui::PlanV
         .find(|i| i.item_id.as_str() == item)
         .unwrap();
     handle
-        .preview_ui(ui::Draft {
+        .execute_ui(ui::Draft {
             instance_id: BINDING.into(),
             request_id: RequestId::new(request).unwrap(),
             revision: 1,
@@ -92,12 +90,12 @@ async fn draft(handle: &ExecutionHandle, request: &str, item: &str) -> ui::PlanV
         })
         .await
         .unwrap()
+        .action
 }
-fn submission(plan: &ui::PlanView) -> ui::Submission {
-    ui::Submission {
+fn submission(plan: &ui::ActionView) -> ui::ActionRef {
+    ui::ActionRef {
         instance_id: BINDING.into(),
         request_id: plan.request_id.clone(),
-        plan_id: plan.plan_id.clone(),
         digest: plan.digest.clone(),
     }
 }
@@ -113,39 +111,18 @@ async fn ai_cannot_preview_submit_read_or_cancel_a_human_request() {
     let root = directory();
     let (handle, generation) = started(&root.join("execution.sqlite"));
     let plan = draft(&handle, "human-private", "office").await;
-    let details = handle.details(plan.request_id.clone()).await.unwrap();
+    let _details = handle.details(plan.request_id.clone()).await.unwrap();
     let ai = bound(&handle, &generation, "conversation-a", "foreign-access");
     let request = || OperationRequest {
         operation_request_id: plan.request_id.clone(),
     };
     let denied = vec![
-        ai.preview(
-            PreviewRequest::Candidate {
-                operation_request_id: plan.request_id.clone(),
-                candidate: details.plan.artifact,
-            },
-            CancellationToken::new(),
-        )
-        .await
-        .err(),
-        ai.submit(
-            SubmitRequest {
-                operation_request_id: plan.request_id.clone(),
-                plan: execution_mcp::PlanRef {
-                    plan_id: plan.plan_id.clone(),
-                    digest: plan.digest.clone(),
-                },
-            },
-            CancellationToken::new(),
-        )
-        .await
-        .err(),
         ai.status(request(), CancellationToken::new()).await.err(),
         ai.cancel(request(), CancellationToken::new()).await.err(),
     ];
     handle.close().await;
     std::fs::remove_dir_all(root).unwrap();
-    assert_eq!(denied, vec![Some(execution_mcp::ServiceError::Denied); 4]);
+    assert_eq!(denied, vec![Some(execution_mcp::ServiceError::Denied); 2]);
 }
 #[tokio::test]
 async fn shared_durable_service_distinguishes_preview_submission_approval_and_replay() {
@@ -154,32 +131,22 @@ async fn shared_durable_service_distinguishes_preview_submission_approval_and_re
     let (handle, _generation) = started(&path);
     let plan = draft(&handle, "human-office", "office").await;
     let before = handle.details(plan.request_id.clone()).await.unwrap();
-    assert!(!before.status.submitted);
     assert_eq!(before.status.attempts, 0);
-    assert!(matches!(before.plan.initiator, Initiator::Human { .. }));
-    assert!(handle
-        .snapshot(Default::default())
-        .await
-        .unwrap()
-        .requests
-        .is_empty());
+    assert!(matches!(before.action.initiator, Initiator::Human { .. }));
     assert_eq!(
-        handle.submit_ui(submission(&plan)).await.unwrap().status,
-        ui::RequestStatus::Approval
-    );
-    assert!(
         handle
-            .details(plan.request_id.clone())
+            .snapshot(Default::default())
             .await
             .unwrap()
-            .status
-            .submitted
+            .requests
+            .len(),
+        1
     );
     let mut stale = submission(&plan);
     stale.digest = execution_contract::Digest::new("0".repeat(64)).unwrap();
-    assert!(handle.approve_ui(stale).await.is_err());
-    handle.approve_ui(submission(&plan)).await.unwrap();
-    handle.approve_ui(submission(&plan)).await.unwrap();
+    assert!(handle.confirm_ui(stale).await.is_err());
+    handle.confirm_ui(submission(&plan)).await.unwrap();
+    handle.confirm_ui(submission(&plan)).await.unwrap();
     assert_eq!(
         handle
             .details(plan.request_id.clone())
@@ -201,7 +168,7 @@ async fn shared_durable_service_distinguishes_preview_submission_approval_and_re
     );
     handle.close().await;
     let (restored, _generation) = started(&path);
-    restored.submit_ui(submission(&plan)).await.unwrap();
+    restored.confirm_ui(submission(&plan)).await.unwrap();
     assert_eq!(
         restored
             .details(plan.request_id)
@@ -256,9 +223,9 @@ async fn ai_origin_is_host_bound_and_recovery_never_redispatches_unknown_attempt
     let catalog = ai.catalog(None, CancellationToken::new()).await.unwrap();
     let selected=catalog.select(&serde_json::to_vec(&json!({"catalog":catalog.reference(),"itemId":"unknown","variantId":"test","arguments":{}})).unwrap(), &service_catalog::CatalogLimits { max_bytes:262144,max_depth:32,max_nodes:16384,max_string_bytes:16384,max_collection_items:128 }, &service_catalog::ParameterLimits { max_bytes:16384,max_string_bytes:4096,max_parameters:32 }).unwrap();
     let request = RequestId::new("ai-unknown").unwrap();
-    let preview = ai
-        .preview(
-            PreviewRequest::Catalog(Box::new(CatalogCandidate {
+    let execution = ai
+        .execute(
+            ExecuteRequest::Catalog(Box::new(CatalogCandidate {
                 operation_request_id: request.clone(),
                 selection: selected,
             })),
@@ -289,19 +256,12 @@ async fn ai_origin_is_host_bound_and_recovery_never_redispatches_unknown_attempt
     }
     let detail = handle.details(request.clone()).await.unwrap();
     assert!(
-        matches!(detail.plan.initiator,Initiator::Ai {conversation,tool_call,..} if conversation.as_str()=="conversation-a" && tool_call.as_str()=="preview-delivery")
+        matches!(detail.action.initiator,Initiator::Ai {conversation,tool_call,..} if conversation.as_str()=="conversation-a" && tool_call.as_str()=="preview-delivery")
     );
-    let submit = bound(&handle, &generation, "conversation-a", "submit-delivery");
-    submit
-        .submit(
-            SubmitRequest {
-                operation_request_id: request.clone(),
-                plan: preview.plan.clone(),
-            },
-            CancellationToken::new(),
-        )
-        .await
-        .unwrap();
+    assert_eq!(
+        execution.phase,
+        execution_mcp::OperationPhase::OutcomeUnknown
+    );
     assert!(
         bound(&handle, &generation, "conversation-b", "status-delivery")
             .status(
@@ -322,10 +282,9 @@ async fn ai_origin_is_host_bound_and_recovery_never_redispatches_unknown_attempt
         "submit-delivery",
     );
     let status = ai
-        .submit(
-            SubmitRequest {
+        .status(
+            OperationRequest {
                 operation_request_id: request.clone(),
-                plan: preview.plan,
             },
             CancellationToken::new(),
         )

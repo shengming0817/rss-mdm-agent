@@ -20,7 +20,7 @@ fn ipc_submit_uses_durable_submission_and_duplicate_delivery_never_dispatches() 
         AppConfig::test_defaults(1),
     )
     .unwrap();
-    let mut endpoint = Endpoint::new(app, Caller, test_store_limits().plan);
+    let mut endpoint = Endpoint::new(app, Caller, test_store_limits().input);
     let peer = Peer {
         pid: 1,
         uid: Some(1),
@@ -28,13 +28,12 @@ fn ipc_submit_uses_durable_submission_and_duplicate_delivery_never_dispatches() 
         native: 0,
     };
     let request = serde_json::to_vec(
-        &serde_json::json!({"version":3,"request":{"method":"submit","plan":plan().spec()}}),
+        &serde_json::json!({"version":4,"request":{"method":"execute","input":plan().spec()}}),
     )
     .unwrap();
     for _ in 0..2 {
         let reply: serde_json::Value =
             serde_json::from_slice(&dispatch(&mut endpoint, &peer, &request)).unwrap();
-        assert_eq!(reply["value"]["submitted"], true);
         assert_eq!(reply["value"]["attempts"], 1);
     }
     assert_eq!(runner.dispatch_count(), 1);
@@ -70,7 +69,7 @@ fn windows_installer_stops_uncertain_start_before_removing_registration() {
 }
 
 #[test]
-fn only_v3_envelope_calls_the_handler() {
+fn only_v4_envelope_calls_the_handler() {
     struct Spy(usize);
     impl Handler for Spy {
         fn handle(&mut self, _: &Peer, _: Request) -> Reply {
@@ -91,7 +90,7 @@ fn only_v3_envelope_calls_the_handler() {
         session: 1,
         native: 0,
     };
-    for version in [1, 2, 4] {
+    for version in [1, 2, 3, 5] {
         let bytes = serde_json::to_vec(
             &serde_json::json!({"version":version,"request":{"method":"status","request":"r"}}),
         )
@@ -103,7 +102,7 @@ fn only_v3_envelope_calls_the_handler() {
         dispatch(
             &mut spy,
             &peer,
-            br#"{"version":3,"request":{"method":"status","request":"r"}}"#
+            br#"{"version":4,"request":{"method":"status","request":"r"}}"#
         ),
         br#"{"kind":"unavailable"}"#
     );

@@ -32,7 +32,7 @@ pub trait InputResolver: Send + Sync {
     /// Resolve once for this admitted attempt. Return an error for absent, unauthorized or oversized input.
     fn resolve(
         &self,
-        plan: &FrozenPlan,
+        plan: &FrozenExecution,
         attempt: &AttemptId,
         reference: &VersionedRef,
         max_bytes: u64,
@@ -108,7 +108,7 @@ fn exact(path: &Path, digest: &Digest, limit: u64) -> Result<(File, Vec<u8>), Er
 impl Artifacts {
     pub(crate) fn prepare(
         &self,
-        plan: &FrozenPlan,
+        plan: &FrozenExecution,
         attempt: &AttemptId,
         ownership: Option<SoftwareProvenance>,
         control: &crate::software::PreparationControl,

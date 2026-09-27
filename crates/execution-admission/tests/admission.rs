@@ -4,8 +4,8 @@ use execution_contract::*;
 fn id(v: &str) -> Id {
     Id::new(v).unwrap()
 }
-fn limits() -> PlanLimits {
-    PlanLimits {
+fn limits() -> ExecutionLimits {
+    ExecutionLimits {
         max_input_bytes: 65536,
         max_depth: 32,
         max_nodes: 4096,
@@ -17,9 +17,9 @@ fn limits() -> PlanLimits {
         max_attempts: 3,
     }
 }
-fn plan() -> FrozenPlan {
-    FrozenPlan::freeze(
-        decode_plan(
+fn plan() -> FrozenExecution {
+    FrozenExecution::freeze(
+        decode_execution(
             include_bytes!("../../execution-contract/tests/fixtures/plan.json"),
             &limits(),
         )
@@ -31,13 +31,19 @@ fn plan() -> FrozenPlan {
 #[derive(Clone)]
 struct TestAuthority(Result<AuthorityFacts, VerificationError>);
 impl AuthorityVerifier for TestAuthority {
-    fn verify(&self, _: &FrozenPlan, _: &AttemptId) -> Result<AuthorityFacts, VerificationError> {
+    fn verify(
+        &self,
+        _: &FrozenExecution,
+        _: &AttemptId,
+    ) -> Result<AuthorityFacts, VerificationError> {
         self.0.clone()
     }
 }
-fn authority(p: &FrozenPlan) -> TestAuthority {
+fn authority(p: &FrozenExecution) -> TestAuthority {
     let s = p.spec();
     TestAuthority(Ok(AuthorityFacts {
+        verified_origin: s.request.initiator.clone(),
+        risk: Some(execution_admission::RiskLevel::One),
         subject: SubjectFacts {
             authority: s.request.authority.clone(),
             actor: s.request.actor.clone(),
@@ -66,7 +72,7 @@ fn authority(p: &FrozenPlan) -> TestAuthority {
         fresh_until_unix_ms: 1950,
     }))
 }
-fn decide_for(p: &FrozenPlan, a: &TestAuthority) -> AdmissionDecision {
+fn decide_for(p: &FrozenExecution, a: &TestAuthority) -> AdmissionDecision {
     decide(
         p,
         &AttemptId::new("attempt-1").unwrap(),
@@ -87,7 +93,7 @@ fn each_attempt_obtains_current_authority_and_an_exclusive_deadline() {
     impl AuthorityVerifier for ChangingAuthority {
         fn verify(
             &self,
-            _: &FrozenPlan,
+            _: &FrozenExecution,
             attempt: &AttemptId,
         ) -> Result<AuthorityFacts, VerificationError> {
             self.calls.set(self.calls.get() + 1);
@@ -157,17 +163,20 @@ fn sources_share_actor_permissions_but_have_distinct_plan_bindings() {
         conversation: id("chat"),
         tool_call: id("call"),
     };
-    let ai = FrozenPlan::freeze(spec, &limits()).unwrap();
-    let result = decide_for(&ai, &a);
+    let ai = FrozenExecution::freeze(spec, &limits()).unwrap();
+    let result = decide_for(&ai, &authority(&ai));
     assert_eq!(result.outcome(), &DecisionOutcome::Allowed);
-    assert_eq!(result.plan_digest(), ai.digest());
-    assert_ne!(result.plan_digest(), p.digest());
+    assert_eq!(result.content_digest(), ai.digest());
+    assert_ne!(result.content_digest(), p.digest());
     let mut spec = ai.spec().clone();
     spec.request.initiator = Initiator::Policy {
         policy: spec.policy.clone(),
     };
-    let policy = FrozenPlan::freeze(spec, &limits()).unwrap();
-    assert_eq!(decide_for(&policy, &a).outcome(), &DecisionOutcome::Allowed);
+    let policy = FrozenExecution::freeze(spec, &limits()).unwrap();
+    assert_eq!(
+        decide_for(&policy, &authority(&policy)).outcome(),
+        &DecisionOutcome::Allowed
+    );
 }
 #[test]
 fn unavailable_context_policy_or_time_always_denies() {
@@ -222,7 +231,8 @@ fn subjects_delegations_and_windows_are_intersections() {
             7 => {
                 let mut s = f.delegation.as_ref().unwrap().scope.spec().clone();
                 s.request.target.device = DeviceId::new("other").unwrap();
-                f.delegation.as_mut().unwrap().scope = FrozenPlan::freeze(s, &limits()).unwrap();
+                f.delegation.as_mut().unwrap().scope =
+                    FrozenExecution::freeze(s, &limits()).unwrap();
             }
             _ => f.subject.budget.total_output_bytes -= 1,
         }
@@ -234,7 +244,7 @@ fn subjects_delegations_and_windows_are_intersections() {
     }
     let mut s = p.spec().clone();
     s.request.delegation = None;
-    let direct = FrozenPlan::freeze(s, &limits()).unwrap();
+    let direct = FrozenExecution::freeze(s, &limits()).unwrap();
     let mut a = authority(&p);
     assert_eq!(decide_for(&direct, &a).outcome(), &DecisionOutcome::Denied);
     facts(&mut a).delegation = None;
@@ -244,7 +254,7 @@ fn subjects_delegations_and_windows_are_intersections() {
 fn no_launch_parameter_identity_or_constraint_substitution_is_allowed() {
     let mut direct = plan().spec().clone();
     direct.request.delegation = None;
-    let p = FrozenPlan::freeze(direct, &limits()).unwrap();
+    let p = FrozenExecution::freeze(direct, &limits()).unwrap();
     let a = authority(&p);
     for case in 0..21 {
         let mut s = p.spec().clone();
@@ -325,7 +335,7 @@ fn no_launch_parameter_identity_or_constraint_substitution_is_allowed() {
                 }
             }
         }
-        let altered = FrozenPlan::freeze(s, &limits()).unwrap();
+        let altered = FrozenExecution::freeze(s, &limits()).unwrap();
         assert_eq!(
             decide_for(&altered, &a).outcome(),
             &DecisionOutcome::Denied,
@@ -335,7 +345,11 @@ fn no_launch_parameter_identity_or_constraint_substitution_is_allowed() {
 }
 #[test]
 fn rule_priority_is_order_independent_and_approval_is_not_denial() {
-    let p = plan();
+    let mut spec = plan().spec().clone();
+    spec.request.initiator = Initiator::Policy {
+        policy: spec.policy.clone(),
+    };
+    let p = FrozenExecution::freeze(spec, &limits()).unwrap();
     let mut a = authority(&p);
     let profile = VersionedRef {
         id: id("admin"),
@@ -380,19 +394,19 @@ fn each_budget_and_rule_window_is_enforced_without_permission_splicing() {
     let mut a = authority(&p);
     let mut low = p.spec().clone();
     low.budget.total_timeout_ms -= 1;
-    facts(&mut a).rules[0].template = FrozenPlan::freeze(low, &limits()).unwrap();
+    facts(&mut a).rules[0].template = FrozenExecution::freeze(low, &limits()).unwrap();
     let mut low = p.spec().clone();
     low.budget.total_output_bytes -= 1;
     facts(&mut a).rules.push(Rule {
         id: id("other-rule"),
-        template: FrozenPlan::freeze(low, &limits()).unwrap(),
+        template: FrozenExecution::freeze(low, &limits()).unwrap(),
         effect: RuleEffect::Allow,
     });
     assert_eq!(decide_for(&p, &a).outcome(), &DecisionOutcome::Denied);
     let mut a = authority(&p);
     let mut short = p.spec().clone();
     short.validity.expires_at_unix_ms = 1999;
-    facts(&mut a).rules[0].template = FrozenPlan::freeze(short, &limits()).unwrap();
+    facts(&mut a).rules[0].template = FrozenExecution::freeze(short, &limits()).unwrap();
     assert_eq!(decide_for(&p, &a).outcome(), &DecisionOutcome::Denied);
 }
 
@@ -405,7 +419,7 @@ fn active_denial_cannot_be_evaded_using_the_denial_templates_budget() {
     narrower.validity.expires_at_unix_ms = 1600;
     facts(&mut a).rules.push(Rule {
         id: id("deny"),
-        template: FrozenPlan::freeze(narrower, &limits()).unwrap(),
+        template: FrozenExecution::freeze(narrower, &limits()).unwrap(),
         effect: RuleEffect::Deny,
     });
     assert_eq!(decide_for(&p, &a).reason(), Reason::ExplicitDeny);
@@ -414,7 +428,11 @@ fn active_denial_cannot_be_evaded_using_the_denial_templates_budget() {
 }
 #[test]
 fn invalid_rules_and_multiple_approval_profiles_are_not_silently_ignored() {
-    let p = plan();
+    let mut spec = plan().spec().clone();
+    spec.request.initiator = Initiator::Policy {
+        policy: spec.policy.clone(),
+    };
+    let p = FrozenExecution::freeze(spec, &limits()).unwrap();
     let mut a = authority(&p);
     let duplicate = facts(&mut a).rules[0].clone();
     facts(&mut a).rules.push(duplicate);
@@ -422,7 +440,7 @@ fn invalid_rules_and_multiple_approval_profiles_are_not_silently_ignored() {
     let mut a = authority(&p);
     let mut stale = p.spec().clone();
     stale.policy.revision = id("stale");
-    facts(&mut a).rules[0].template = FrozenPlan::freeze(stale, &limits()).unwrap();
+    facts(&mut a).rules[0].template = FrozenExecution::freeze(stale, &limits()).unwrap();
     assert_eq!(decide_for(&p, &a).reason(), Reason::InvalidPolicy);
     let mut a = authority(&p);
     for (key, profile) in [("r-b", "privacy"), ("r-a", "admin"), ("r-c", "admin")] {
@@ -467,4 +485,90 @@ fn invalid_rules_and_multiple_approval_profiles_are_not_silently_ignored() {
         .reason(),
         Reason::Limit
     );
+}
+
+#[test]
+fn trusted_origin_and_numeric_risk_choose_the_confirmation_gate() {
+    let original = plan();
+    let human = original.spec().request.initiator.clone();
+    let ai = Initiator::Ai {
+        os_session: match &human {
+            Initiator::Human { os_session } => os_session.clone(),
+            _ => panic!("human fixture"),
+        },
+        provider: id("provider"),
+        config: VersionedRef {
+            id: id("config"),
+            revision: id("1"),
+        },
+        conversation: id("conversation"),
+        tool_call: id("call"),
+    };
+    for origin in [human.clone(), ai.clone()] {
+        for risk in [
+            Some(RiskLevel::Zero),
+            Some(RiskLevel::One),
+            Some(RiskLevel::Two),
+            Some(RiskLevel::Three),
+            None,
+        ] {
+            let mut spec = original.spec().clone();
+            spec.request.initiator = origin.clone();
+            let p = FrozenExecution::freeze(spec, &limits()).unwrap();
+            let mut a = authority(&p);
+            facts(&mut a).verified_origin = origin.clone();
+            facts(&mut a).risk = risk;
+            let result = decide_for(&p, &a);
+            let expected = match (&origin, risk) {
+                (Initiator::Human { .. }, _) => ExecutionGate::Confirmation,
+                (_, Some(RiskLevel::Zero | RiskLevel::One)) => ExecutionGate::Direct,
+                (_, Some(RiskLevel::Two)) => ExecutionGate::Confirmation,
+                _ => ExecutionGate::Blocked,
+            };
+            assert_eq!(result.execution_gate(), expected);
+        }
+    }
+    let mut a = authority(&original);
+    facts(&mut a).verified_origin = ai;
+    assert_eq!(
+        decide_for(&original, &a).outcome(),
+        &DecisionOutcome::Denied
+    );
+}
+
+#[test]
+fn user_confirmation_is_never_a_substitute_for_conditional_authorization() {
+    let original = plan();
+    let mut origins = vec![original.spec().request.initiator.clone()];
+    let Initiator::Human { os_session } = origins[0].clone() else {
+        panic!("fixture")
+    };
+    origins.push(Initiator::Ai {
+        os_session,
+        provider: id("ai"),
+        config: VersionedRef {
+            id: id("cfg"),
+            revision: id("1"),
+        },
+        conversation: id("chat"),
+        tool_call: id("tool"),
+    });
+    for origin in origins {
+        for risk in [RiskLevel::Zero, RiskLevel::One, RiskLevel::Two] {
+            let mut spec = original.spec().clone();
+            spec.request.initiator = origin.clone();
+            let p = FrozenExecution::freeze(spec, &limits()).unwrap();
+            let mut a = authority(&p);
+            facts(&mut a).risk = Some(risk);
+            facts(&mut a).rules[0].effect = RuleEffect::ApprovalRequired {
+                profile: VersionedRef {
+                    id: id("conditional"),
+                    revision: id("1"),
+                },
+            };
+            let decision = decide_for(&p, &a);
+            assert_eq!(decision.outcome(), &DecisionOutcome::Denied);
+            assert_eq!(decision.reason(), Reason::ConditionalPermission);
+        }
+    }
 }

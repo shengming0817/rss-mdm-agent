@@ -111,13 +111,13 @@ mod tests {
 
     #[test]
     fn duplicate_keys_are_rejected_before_sdk_maps_can_collapse_them() {
-        let frame = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"execution_preview","arguments":{"arguments":{"count":1,"count":2}}}}"#;
+        let frame = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"execution_execute","arguments":{"arguments":{"count":1,"count":2}}}}"#;
         assert!(inspect(frame, 32, 1024).is_err());
     }
 
     #[test]
     fn original_argument_number_and_whitespace_survive_protocol_decode() {
-        let frame = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"execution_preview","arguments":{ "count":9007199254740990.9 }}}"#;
+        let frame = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"execution_execute","arguments":{ "count":9007199254740990.9 }}}"#;
         assert_eq!(
             inspect(frame, 32, 1024).unwrap().as_deref(),
             Some(r#"{ "count":9007199254740990.9 }"#)

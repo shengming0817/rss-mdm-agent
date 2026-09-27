@@ -6,7 +6,7 @@ use std::{os::unix::fs::PermissionsExt, path::PathBuf, sync::atomic::AtomicU64};
 static NEXT: AtomicU64 = AtomicU64::new(0);
 struct Fixture {
     root: PathBuf,
-    plan: FrozenPlan,
+    plan: FrozenExecution,
     runner: NativeRunner,
 }
 impl Drop for Fixture {
@@ -48,7 +48,7 @@ fn fixture(script: &str, argv: Vec<LaunchArg>, budget: u64, timeout: u64) -> Fix
         serde_json::json!({"totalTimeoutMs":timeout,"totalOutputBytes":budget,"maxAttempts":1});
     let time = now().unwrap();
     value["validity"] = serde_json::json!({"notBeforeUnixMs":time-1,"expiresAtUnixMs":time+60000});
-    let limits = PlanLimits {
+    let limits = ExecutionLimits {
         max_input_bytes: 65536,
         max_depth: 32,
         max_nodes: 4096,
@@ -59,8 +59,8 @@ fn fixture(script: &str, argv: Vec<LaunchArg>, budget: u64, timeout: u64) -> Fix
         max_stdin_bytes: 65536,
         max_attempts: 3,
     };
-    let plan = FrozenPlan::freeze(
-        decode_plan(&serde_json::to_vec(&value).unwrap(), &limits).unwrap(),
+    let plan = FrozenExecution::freeze(
+        decode_execution(&serde_json::to_vec(&value).unwrap(), &limits).unwrap(),
         &limits,
     )
     .unwrap();
@@ -392,7 +392,7 @@ fn controlled_input_is_bound_once_and_partial_delivery_is_failed() {
     impl InputResolver for Input {
         fn resolve(
             &self,
-            _: &FrozenPlan,
+            _: &FrozenExecution,
             attempt: &AttemptId,
             reference: &VersionedRef,
             max: u64,
@@ -425,9 +425,9 @@ fn controlled_input_is_bound_once_and_partial_delivery_is_failed() {
         encoding: TextEncoding::Utf8,
         max_bytes: 1_048_576,
     };
-    let mut limits = execution_app::test_store_limits().plan;
+    let mut limits = execution_app::test_store_limits().input;
     limits.max_stdin_bytes = 1_048_576;
-    f.plan = FrozenPlan::freeze(spec, &limits).unwrap();
+    f.plan = FrozenExecution::freeze(spec, &limits).unwrap();
     f.runner
         .artifacts
         .insert(f.plan.digest().as_str().into(), Arc::new(source));
@@ -437,10 +437,10 @@ fn controlled_input_is_bound_once_and_partial_delivery_is_failed() {
     assert!(facts.stdout.len() + facts.stderr.len() <= 128);
 }
 
-fn replan(f: &mut Fixture, change: impl FnOnce(&mut PlanSpec)) {
+fn replan(f: &mut Fixture, change: impl FnOnce(&mut ExecutionInput)) {
     let mut spec = f.plan.spec().clone();
     change(&mut spec);
-    let plan = FrozenPlan::freeze(spec, &execution_app::test_store_limits().plan).unwrap();
+    let plan = FrozenExecution::freeze(spec, &execution_app::test_store_limits().input).unwrap();
     let artifacts = f.runner.artifacts.remove(f.plan.digest().as_str()).unwrap();
     f.runner
         .artifacts
@@ -486,7 +486,9 @@ fn macos_capture_is_durable_and_reopened_attempt_does_not_launch() {
         AppConfig::test_defaults(1),
     )
     .unwrap();
-    app.submit(&caller, request, &f.plan).unwrap();
+    assert_eq!(app.request_execution(&caller, &f.plan).unwrap().attempts, 0);
+    app.confirm_execution(&caller, request, f.plan.digest(), true)
+        .unwrap();
     let until = Instant::now() + Duration::from_secs(20);
     loop {
         let status = app.reconcile(request).unwrap();
@@ -530,7 +532,7 @@ fn macos_capture_is_durable_and_reopened_attempt_does_not_launch() {
         AppConfig::test_defaults(1),
     )
     .unwrap();
-    let recovered = app.submit(&caller, request, &f.plan).unwrap();
+    let recovered = app.request_execution(&caller, &f.plan).unwrap();
     assert_eq!(recovered.attempts, 1);
     assert_eq!(
         app.status(&caller, request)
@@ -549,7 +551,7 @@ fn input_binding_limit_encoding_and_platform_guards_refuse_before_spawn() {
     impl crate::InputResolver for ValueInput {
         fn resolve(
             &self,
-            _: &FrozenPlan,
+            _: &FrozenExecution,
             _: &AttemptId,
             _: &VersionedRef,
             _: u64,
@@ -683,7 +685,10 @@ fn application_cancel_captures_real_process_and_reopen_does_not_dispatch() {
         AppConfig::test_defaults(1),
     )
     .unwrap();
-    let started = app.submit(&caller, request, &f.plan).unwrap();
+    assert_eq!(app.request_execution(&caller, &f.plan).unwrap().attempts, 0);
+    let started = app
+        .confirm_execution(&caller, request, f.plan.digest(), true)
+        .unwrap();
     let attempt = started.attempt_id.unwrap();
     let until = Instant::now() + Duration::from_secs(5);
     loop {
@@ -727,7 +732,7 @@ fn application_cancel_captures_real_process_and_reopen_does_not_dispatch() {
         AppConfig::test_defaults(1),
     )
     .unwrap();
-    assert_eq!(app.submit(&caller, request, &f.plan).unwrap().attempts, 1);
+    assert_eq!(app.request_execution(&caller, &f.plan).unwrap().attempts, 1);
     assert_eq!(
         app.status(&caller, request).unwrap().process.unwrap().end,
         ProcessEnd::Cancelled
@@ -741,7 +746,7 @@ fn cancellation_remains_the_end_reason_when_blocked_stdin_breaks() {
     impl crate::InputResolver for Input {
         fn resolve(
             &self,
-            _: &FrozenPlan,
+            _: &FrozenExecution,
             _: &AttemptId,
             _: &VersionedRef,
             _: u64,
@@ -765,9 +770,9 @@ fn cancellation_remains_the_end_reason_when_blocked_stdin_breaks() {
         encoding: TextEncoding::Utf8,
         max_bytes: 1_048_576,
     };
-    let mut limits = execution_app::test_store_limits().plan;
+    let mut limits = execution_app::test_store_limits().input;
     limits.max_stdin_bytes = 1_048_576;
-    f.plan = FrozenPlan::freeze(spec, &limits).unwrap();
+    f.plan = FrozenExecution::freeze(spec, &limits).unwrap();
     f.runner
         .artifacts
         .insert(f.plan.digest().as_str().into(), artifacts);

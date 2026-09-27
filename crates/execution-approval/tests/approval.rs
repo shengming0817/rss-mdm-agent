@@ -15,8 +15,8 @@ fn reference(s: &str) -> VersionedRef {
         revision: id("1"),
     }
 }
-fn plan() -> FrozenPlan {
-    let limits = PlanLimits {
+fn plan() -> FrozenExecution {
+    let limits = ExecutionLimits {
         max_input_bytes: 65536,
         max_depth: 32,
         max_nodes: 4096,
@@ -28,17 +28,25 @@ fn plan() -> FrozenPlan {
         max_attempts: 3,
     };
     let bytes = include_bytes!("../../execution-contract/tests/fixtures/plan.json");
-    FrozenPlan::freeze(decode_plan(bytes, &limits).unwrap(), &limits).unwrap()
+    let original =
+        FrozenExecution::freeze(decode_execution(bytes, &limits).unwrap(), &limits).unwrap();
+    let mut spec = original.spec().clone();
+    spec.request.initiator = execution_contract::Initiator::Policy {
+        policy: spec.policy.clone(),
+    };
+    FrozenExecution::freeze(spec, &limits).unwrap()
 }
-struct Policy(FrozenPlan, Vec<RuleEffect>);
+struct Policy(FrozenExecution, Vec<RuleEffect>);
 impl AuthorityVerifier for Policy {
     fn verify(
         &self,
-        _: &FrozenPlan,
+        _: &FrozenExecution,
         _: &AttemptId,
     ) -> Result<AuthorityFacts, execution_admission::VerificationError> {
         let s = self.0.spec();
         Ok(AuthorityFacts {
+            verified_origin: s.request.initiator.clone(),
+            risk: Some(execution_admission::RiskLevel::One),
             subject: SubjectFacts {
                 authority: s.request.authority.clone(),
                 actor: s.request.actor.clone(),
@@ -66,7 +74,10 @@ impl AuthorityVerifier for Policy {
         })
     }
 }
-fn decision(p: &FrozenPlan, effects: Vec<RuleEffect>) -> execution_admission::AdmissionDecision {
+fn decision(
+    p: &FrozenExecution,
+    effects: Vec<RuleEffect>,
+) -> execution_admission::AdmissionDecision {
     decide(
         p,
         &AttemptId::new("attempt-1").unwrap(),
@@ -82,7 +93,7 @@ struct Verifier {
 impl ApprovalVerifier for Verifier {
     fn verify(
         &self,
-        _: &FrozenPlan,
+        _: &FrozenExecution,
         _: &[VersionedRef],
     ) -> Result<ApprovalFacts, VerificationError> {
         self.calls.set(self.calls.get() + 1);
@@ -93,7 +104,7 @@ impl ApprovalVerifier for Verifier {
         }
     }
 }
-fn verifier(p: &FrozenPlan) -> Verifier {
+fn verifier(p: &FrozenExecution) -> Verifier {
     Verifier {
         calls: Cell::new(0),
         fail: false,
@@ -106,8 +117,8 @@ fn verifier(p: &FrozenPlan) -> Verifier {
             records: vec![ApprovalRecord {
                 reference: reference("grant"),
                 approver: ActorId::new("approver").unwrap(),
-                plan_id: p.spec().plan_id.clone(),
-                plan_digest: p.digest().clone(),
+                request_id: p.spec().request.request_id.clone(),
+                content_digest: p.digest().clone(),
                 profiles: vec![reference("admin"), reference("security")],
                 validity: p.spec().validity,
                 status: ApprovalStatus::Active,
@@ -119,7 +130,7 @@ fn verifier(p: &FrozenPlan) -> Verifier {
     }
 }
 fn check(
-    p: &FrozenPlan,
+    p: &FrozenExecution,
     d: &execution_admission::AdmissionDecision,
     bindings: &[ProfileApproval],
     v: &Verifier,
@@ -168,7 +179,7 @@ fn admission_cannot_be_rebound_to_another_attempt() {
     ));
     assert!(result.valid_for_commit(&p, d.attempt_id(), 1500, &reference("authority-epoch")));
 }
-fn required(p: &FrozenPlan) -> execution_admission::AdmissionDecision {
+fn required(p: &FrozenExecution) -> execution_admission::AdmissionDecision {
     decision(
         p,
         ["admin", "security"]
@@ -272,7 +283,26 @@ fn allowed_and_denied_never_verify_or_consume_approval() {
 
 #[test]
 fn human_and_ai_share_the_same_approval_outcomes() {
-    let p = plan();
+    let limits = ExecutionLimits {
+        max_input_bytes: 65536,
+        max_depth: 32,
+        max_nodes: 4096,
+        max_string_bytes: 4096,
+        max_collection_items: 128,
+        max_timeout_ms: 60000,
+        max_output_bytes: 65536,
+        max_stdin_bytes: 65536,
+        max_attempts: 3,
+    };
+    let p = FrozenExecution::freeze(
+        decode_execution(
+            include_bytes!("../../execution-contract/tests/fixtures/plan.json"),
+            &limits,
+        )
+        .unwrap(),
+        &limits,
+    )
+    .unwrap();
     let Initiator::Human { os_session } = p.spec().request.initiator.clone() else {
         panic!("human fixture")
     };
@@ -284,7 +314,7 @@ fn human_and_ai_share_the_same_approval_outcomes() {
         conversation: id("conversation"),
         tool_call: id("call"),
     };
-    let limits = PlanLimits {
+    let limits = ExecutionLimits {
         max_input_bytes: 65536,
         max_depth: 32,
         max_nodes: 4096,
@@ -295,7 +325,7 @@ fn human_and_ai_share_the_same_approval_outcomes() {
         max_stdin_bytes: 65536,
         max_attempts: 3,
     };
-    let ai = FrozenPlan::freeze(spec, &limits).unwrap();
+    let ai = FrozenExecution::freeze(spec, &limits).unwrap();
     for p in [p, ai] {
         let v = verifier(&p);
         assert_eq!(
@@ -303,8 +333,8 @@ fn human_and_ai_share_the_same_approval_outcomes() {
             &ApprovalOutcome::NotRequired
         );
         assert_eq!(
-            check(&p, &required(&p), &bindings(), &v).outcome(),
-            &ApprovalOutcome::Satisfied
+            check(&p, &required(&p), &[], &v).outcome(),
+            &ApprovalOutcome::Rejected(Reason::AdmissionDenied)
         );
         assert_eq!(
             check(&p, &decision(&p, vec![RuleEffect::Deny]), &bindings(), &v).outcome(),
@@ -319,7 +349,7 @@ fn every_trusted_verifier_failure_is_preserved_without_consumption() {
     impl ApprovalVerifier for Reject {
         fn verify(
             &self,
-            _: &FrozenPlan,
+            _: &FrozenExecution,
             _: &[VersionedRef],
         ) -> Result<ApprovalFacts, VerificationError> {
             Err(self.0)
@@ -404,8 +434,8 @@ fn invalid_facts_reject_the_entire_batch_without_consumption() {
             2 => v.facts.records[0].used = 2,
             3 => v.facts.now_unix_ms = 2000,
             4 => v.facts.fresh_until_unix_ms = 1500,
-            5 => v.facts.records[0].plan_id = PlanId::new("different").unwrap(),
-            6 => v.facts.records[0].plan_digest = Digest::new("ab".repeat(32)).unwrap(),
+            5 => v.facts.records[0].request_id = RequestId::new("different").unwrap(),
+            6 => v.facts.records[0].content_digest = Digest::new("ab".repeat(32)).unwrap(),
             7 => v.facts.records[0].profiles.pop().map(|_| ()).unwrap(),
             8 => v.facts.records[0].reference = reference("unknown"),
             9 => v.facts.policy = reference("other-policy"),
@@ -424,8 +454,8 @@ fn invalid_facts_reject_the_entire_batch_without_consumption() {
 fn a_decision_for_another_plan_cannot_be_reused_even_if_allowed() {
     let p = plan();
     let mut spec = p.spec().clone();
-    spec.plan_id = PlanId::new("other").unwrap();
-    let limits = PlanLimits {
+    spec.request.request_id = RequestId::new("other").unwrap();
+    let limits = ExecutionLimits {
         max_input_bytes: 65536,
         max_depth: 32,
         max_nodes: 4096,
@@ -436,7 +466,7 @@ fn a_decision_for_another_plan_cannot_be_reused_even_if_allowed() {
         max_stdin_bytes: 65536,
         max_attempts: 3,
     };
-    let other = FrozenPlan::freeze(spec, &limits).unwrap();
+    let other = FrozenExecution::freeze(spec, &limits).unwrap();
     let v = verifier(&p);
     assert_eq!(
         check(&p, &decision(&other, vec![RuleEffect::Allow]), &[], &v).outcome(),
@@ -509,7 +539,7 @@ fn rejection_reasons_distinguish_renewal_from_temporary_unavailability() {
 // A deterministic transaction model, not SQLite/concurrency integration evidence.
 use execution_lifecycle as lifecycle;
 struct Store {
-    plan: FrozenPlan,
+    plan: FrozenExecution,
     state: lifecycle::Execution,
     used: u32,
     revision: u64,
@@ -585,8 +615,8 @@ impl Store {
         let attempt = next.attempt.as_ref().ok_or("attempt missing")?;
         if fail
             || self.state.snapshot().revision != candidate.expected_revision()
-            || decision.plan_id() != &next.plan_id
-            || decision.plan_digest() != &next.plan_digest
+            || decision.request_id() != &next.request_id
+            || decision.content_digest() != &next.content_digest
             || !decision.valid_for_commit(&self.plan, &attempt.id, now, &self.authority_revision)
         {
             return Err("admission or lifecycle CAS failed");

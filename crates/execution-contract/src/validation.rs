@@ -1,5 +1,5 @@
 use crate::{
-    ContractError, ErrorKind, Field, InputValue, IsolationPolicy, NetworkAccess, PlanSpec,
+    ContractError, ErrorKind, ExecutionInput, Field, InputValue, IsolationPolicy, NetworkAccess,
     Platform, Rule, RunAs, TargetScope,
 };
 use serde::{
@@ -11,7 +11,7 @@ use std::{collections::BTreeSet, fmt};
 const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 /// Host bounds independent from the untrusted plan; all limits must be positive.
 #[derive(Debug, Clone, Copy)]
-pub struct PlanLimits {
+pub struct ExecutionLimits {
     /// Maximum raw input and canonical plan bytes, checked before parsing/after encoding.
     pub max_input_bytes: usize,
     /// Maximum JSON value depth, root counted as one; supported range is 1..=64.
@@ -31,7 +31,7 @@ pub struct PlanLimits {
     /// Maximum attempts permitted for the complete plan.
     pub max_attempts: u32,
 }
-impl PlanLimits {
+impl ExecutionLimits {
     pub(crate) fn validate(&self) -> Result<(), ContractError> {
         for (zero, field) in [
             (self.max_input_bytes == 0, Field::InputBytes),
@@ -62,11 +62,11 @@ impl PlanLimits {
         Ok(())
     }
 }
-pub(crate) fn check_json(value: &Value, limits: &PlanLimits) -> Result<(), ContractError> {
+pub(crate) fn check_json(value: &Value, limits: &ExecutionLimits) -> Result<(), ContractError> {
     let mut remaining = limits.max_nodes;
     fn walk(
         v: &Value,
-        l: &PlanLimits,
+        l: &ExecutionLimits,
         depth: usize,
         left: &mut usize,
     ) -> Result<(), ContractError> {
@@ -150,7 +150,7 @@ pub(crate) fn check_json(value: &Value, limits: &PlanLimits) -> Result<(), Contr
     }
     walk(value, limits, 1, &mut remaining)
 }
-fn collection(count: usize, limits: &PlanLimits) -> Result<(), ContractError> {
+fn collection(count: usize, limits: &ExecutionLimits) -> Result<(), ContractError> {
     if count > limits.max_collection_items {
         return Err(ContractError::new(
             ErrorKind::LimitExceeded,
@@ -231,7 +231,7 @@ impl<'de> Deserialize<'de> for UniqueValue {
         d.deserialize_any(UniqueVisitor)
     }
 }
-pub(crate) fn decode_value(bytes: &[u8], limits: &PlanLimits) -> Result<Value, ContractError> {
+pub(crate) fn decode_value(bytes: &[u8], limits: &ExecutionLimits) -> Result<Value, ContractError> {
     limits.validate()?;
     if bytes.len() > limits.max_input_bytes {
         return Err(ContractError::new(
@@ -244,7 +244,7 @@ pub(crate) fn decode_value(bytes: &[u8], limits: &PlanLimits) -> Result<Value, C
     check_json(&value, limits)?;
     Ok(value)
 }
-pub(crate) fn validate_plan(p: &PlanSpec, l: &PlanLimits) -> Result<(), ContractError> {
+pub(crate) fn validate_plan(p: &ExecutionInput, l: &ExecutionLimits) -> Result<(), ContractError> {
     l.validate()?;
     for (value, max, field) in [
         (p.budget.total_timeout_ms, l.max_timeout_ms, Field::Timeout),
@@ -425,7 +425,7 @@ fn path(value: &str, platform: Platform, field: Field) -> Result<(), ContractErr
     }
     Ok(())
 }
-fn environment(p: &PlanSpec) -> Result<(), ContractError> {
+fn environment(p: &ExecutionInput) -> Result<(), ContractError> {
     let mut names = BTreeSet::new();
     for (name, value) in &p.launch.env {
         if !names.insert(name.canonical_for(p.request.target.platform)) {
@@ -488,7 +488,7 @@ pub(crate) fn typed_value<T: serde::de::DeserializeOwned>(
     serde_json::from_value(value).map_err(ContractError::from_serde)
 }
 
-fn software(p: &PlanSpec) -> Result<(), ContractError> {
+fn software(p: &ExecutionInput) -> Result<(), ContractError> {
     let invalid =
         || ContractError::new(ErrorKind::InconsistentContext, Field::Plan, Rule::Mismatch);
     let action = p.request.operation.action.as_str();

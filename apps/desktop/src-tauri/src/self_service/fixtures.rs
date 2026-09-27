@@ -1,6 +1,6 @@
 use super::model::*;
 use execution_contract::{
-    DeviceId, FrozenPlan, Id, Initiator, OsAccountRef, OsSessionRef, PlanLimits, Platform,
+    DeviceId, ExecutionLimits, FrozenExecution, Id, Initiator, OsAccountRef, OsSessionRef, Platform,
 };
 use serde_json::json;
 use service_catalog::{CatalogLimits, FrozenCatalog, ParameterLimits, SelectedOperation};
@@ -36,7 +36,7 @@ pub const PARAMETERS: ParameterLimits = ParameterLimits {
     max_string_bytes: 1024,
     max_parameters: 16,
 };
-pub const PLAN_LIMITS: PlanLimits = PlanLimits {
+pub const INPUT_LIMITS: ExecutionLimits = ExecutionLimits {
     max_input_bytes: 16384,
     max_depth: 16,
     max_nodes: 2048,
@@ -58,31 +58,25 @@ pub fn catalog(_now: u64) -> Result<FrozenCatalog> {
             "office",
             "software",
             "办公套件",
-            "申请测试软件，等待管理员批准；不会安装软件。",
+            "确认本次测试动作后执行；不会安装软件。",
         ),
         (
             "diagnostics",
             "tool",
             "网络诊断",
-            "确认与隐私同意流程；不会发送网络请求。",
+            "只读测试动作；不会发送网络请求。",
         ),
         (
-            "restart",
+            "long-running",
             "tool",
-            "重启提示",
-            "选择稍后提醒或确认已阅读；不会重启设备。",
-        ),
-        (
-            "maintenance",
-            "tool",
-            "维护窗口",
-            "选择固定测试时段；不会安排系统任务。",
+            "持续执行示例",
+            "保持测试执行直至取消；不安排维护窗口。",
         ),
         (
             "parameter-check",
             "tool",
-            "参数复核",
-            "重新核对原计划参数；更改参数需新建请求。",
+            "参数校验示例",
+            "按目录规则校验输入后执行；更改输入需新建请求。",
         ),
         (
             "unknown",
@@ -137,21 +131,34 @@ pub fn catalog(_now: u64) -> Result<FrozenCatalog> {
 pub fn freeze(
     selected: &SelectedOperation,
     request_id: &execution_contract::RequestId,
-    plan_id: String,
     now: u64,
     initiator: &execution_contract::Initiator,
     actor: &execution_contract::ActorId,
-) -> Result<FrozenPlan> {
+) -> Result<FrozenExecution> {
     let operation = selected.operation();
     let account = json!({"platform":"macos","subject":"fixture-user"});
     let artifact = json!({"resource":operation.resource.reference,"sha256":digest(ARTIFACT)});
     let spec = json!({
-        "schemaVersion":3,"execution":{"kind":"process"},"planId":plan_id,
+        "schemaVersion":4,"execution":{"kind":"process"},
         "request":{"schemaVersion":1,"requestId":request_id,"authority":{"kind":"test","id":"desktop-fixture"},"actor":actor,"initiator":initiator,"delegation":null,
         "target":{"device":"fixture-device","platform":"macos","scope":{"kind":"user","account":account}},"operation":{"action":operation.action,"resource":operation.resource.reference},"parameters":selected.parameters()},
         "launch":{"artifact":artifact,"interpreter":{"artifact":{"resource":{"id":"fixture-interpreter","revision":"r1"},"sha256":digest(b"fixed interpreter marker; no interpreter exists")},"profile":{"id":"fixture-only","revision":"r1"}},"argv":[{"kind":"artifactPath"}],"artifactEncoding":"utf8","stdin":{"kind":"closed"},"output":{"format":{"kind":"text"},"stdout":"utf8","stderr":"utf8"},"cwd":"/s1-fixture","env":{}},
         "runAs":{"kind":"user","account":account},"constraints":{"kind":"restricted","network":{"kind":"denied"},"readPaths":[],"writePaths":[],"allowChildProcesses":false,"requireSandbox":true},"budget":{"totalTimeoutMs":60_000,"totalOutputBytes":4096,"maxAttempts":1},"validity":{"notBeforeUnixMs":now,"expiresAtUnixMs":now+300_000},"policy":{"id":"fixture-policy","revision":"r1"},"sessionRequirement":{"kind":"notRequired"}
     });
-    let spec = serde_json::from_value(spec).map_err(|_| error("fixture", "测试计划结构错误"))?;
-    FrozenPlan::freeze(spec, &PLAN_LIMITS).map_err(|_| error("fixture", "测试计划校验失败"))
+    let spec =
+        serde_json::from_value(spec).map_err(|_| error("fixture", "测试执行输入结构错误"))?;
+    FrozenExecution::freeze(spec, &INPUT_LIMITS)
+        .map_err(|_| error("fixture", "测试执行输入校验失败"))
+}
+
+/// Protected S1 classification after exact fixture reconstruction, never tool-description inference.
+pub fn risk(resource: &str) -> Option<execution_admission::RiskLevel> {
+    use execution_admission::RiskLevel::*;
+    match resource {
+        "fixture-parameter-check" => Some(Zero),
+        "fixture-diagnostics" | "fixture-unknown" => Some(One),
+        "fixture-office" | "fixture-long-running" => Some(Two),
+        "fixture-blocked" | "fixture-unsupported" | "fixture-withdrawn" => Some(Three),
+        _ => None,
+    }
 }

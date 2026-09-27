@@ -35,16 +35,16 @@ impl JsonSchema for V1 {
 
 /// The only accepted execution plan version. This is not the Agent wire version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct V3;
-impl Serialize for V3 {
+pub struct V4;
+impl Serialize for V4 {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_u8(3)
+        s.serialize_u8(4)
     }
 }
-impl<'de> Deserialize<'de> for V3 {
+impl<'de> Deserialize<'de> for V4 {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let version = serde_json::Number::deserialize(d)?;
-        if version.as_u64() == Some(3) {
+        if version.as_u64() == Some(4) {
             Ok(Self)
         } else {
             Err(D::Error::custom(
@@ -54,12 +54,12 @@ impl<'de> Deserialize<'de> for V3 {
         }
     }
 }
-impl JsonSchema for V3 {
+impl JsonSchema for V4 {
     fn schema_name() -> std::borrow::Cow<'static, str> {
-        "LocalContractV3".into()
+        "LocalContractV4".into()
     }
     fn json_schema(_: &mut SchemaGenerator) -> Schema {
-        json_schema!({"type":"integer", "const":3})
+        json_schema!({"type":"integer", "const":4})
     }
 }
 
@@ -123,7 +123,6 @@ identifier!(
     "Device reference, not verified registration evidence."
 );
 identifier!(RequestId, Request, "Local execution request identity.");
-identifier!(PlanId, Plan, "Immutable local plan identity.");
 identifier!(
     AttemptId,
     Attempt,

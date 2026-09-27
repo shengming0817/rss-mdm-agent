@@ -1,45 +1,40 @@
 import { mount } from "@vue/test-utils";
 import { expect, test } from "vitest";
 import TaskDetail from "./TaskDetail.vue";
-import preview from "./preview";
+import { executionTask } from "./testing";
 import type { RequestView } from "./types";
 test("an expired prompt stops offering confirmation while business cancellation remains separate", async () => {
   const task: RequestView = {
-    ...preview.requests[0]!,
-    interactions: [
-      {
-        id: "expiry-test",
-        status: "pending",
-        expiresAtUnixMs: 2000,
-        message: "Test notice",
-        options: [],
-        kind: { kind: "userConfirmation", purpose: "continue" },
-      },
-    ],
+    ...executionTask(),
+    confirmation: {
+      status: "pending",
+      expiresAtUnixMs: 2000,
+      message: "Test notice",
+    },
   };
   const wrapper = mount(TaskDetail, {
-    props: { task, item: undefined, disabled: false, now: 1000 },
+    props: { task, disabled: false, now: 1000 },
   });
-  expect(wrapper.findAll("button").some((b) => b.text() === "确认计划")).toBe(
+  expect(wrapper.findAll("button").some((b) => b.text() === "确认并执行")).toBe(
     true,
   );
   await wrapper.setProps({ now: 2000 });
   expect(wrapper.text()).toContain("按本机时间已过期");
-  expect(wrapper.findAll("button").some((b) => b.text() === "确认计划")).toBe(
+  expect(wrapper.findAll("button").some((b) => b.text() === "确认并执行")).toBe(
     false,
   );
 });
 
 test("approval shows the frozen actor, authority and AI account separately from run-as", async () => {
-  const task = structuredClone(preview.requests[0]!);
-  task.status = "approval";
-  task.plan.actor = "request-actor";
-  task.plan.authority = {
+  const task = structuredClone(executionTask());
+  task.status = "confirmation";
+  task.action.actor = "request-actor";
+  task.action.authority = {
     kind: "enterprise",
     id: "authority-a",
     tenant: "tenant-a",
   };
-  task.plan.initiator = {
+  task.action.initiator = {
     kind: "ai",
     provider: "codex",
     osSession: {
@@ -51,9 +46,9 @@ test("approval shows the frozen actor, authority and AI account separately from 
     conversation: "conversation-7",
     toolCall: "tool-call-7",
   };
-  task.plan.runAs = "execution-user";
+  task.action.runAs = "execution-user";
   const wrapper = mount(TaskDetail, {
-    props: { task, item: undefined, disabled: false, now: 1000 },
+    props: { task, disabled: false, now: 1000 },
   });
   const origin = wrapper.get('[aria-label="冻结的请求来源"]');
   for (const value of [
@@ -74,18 +69,66 @@ test("approval shows the frozen actor, authority and AI account separately from 
   expect(wrapper.text()).toContain("execution-user");
   await wrapper
     .findAll("button")
-    .find((b) => b.text() === "批准此测试计划一次")!
+    .find((b) => b.text() === "确认并执行")!
     .trigger("click");
-  expect(wrapper.emitted("approve")).toHaveLength(1);
+  expect(wrapper.emitted("confirm")).toHaveLength(1);
   await wrapper.setProps({
     task: {
       ...task,
-      plan: {
-        ...task.plan,
-        initiator: { kind: "human", osSession: task.plan.initiator.osSession },
+      action: {
+        ...task.action,
+        initiator: {
+          kind: "human",
+          osSession: task.action.initiator.osSession,
+        },
       },
     },
   });
   expect(origin.text()).toContain("人工发起");
   expect(origin.text()).not.toContain("ai-account");
 });
+
+test("exact action summary precedes confirmation and only business cancellation is offered", () => {
+  const wrapper = mount(TaskDetail, {
+    props: {
+      task: executionTask(),
+      disabled: false,
+      now: 1000,
+    },
+  });
+  expect(wrapper.html().indexOf("action-summary")).toBeLessThan(
+    wrapper.html().indexOf("确认并执行"),
+  );
+  expect(wrapper.text()).not.toContain("取消此交互");
+});
+
+test("policy authorization never exposes a self-confirmation control", () => {
+  const task = executionTask();
+  task.status = "approval" as RequestView["status"];
+  const wrapper = mount(TaskDetail, {
+    props: { task, disabled: false, now: 1000 },
+  });
+  expect(wrapper.text()).toContain("等待策略授权");
+  expect(wrapper.findAll("button").some((b) => b.text() === "确认并执行")).toBe(
+    false,
+  );
+});
+
+test.each([
+  [0, "纯计算"],
+  [1, "有界非敏感只读"],
+  [2, "需要用户确认"],
+  [3, "AI 默认阻止"],
+  [null, "无可信分类"],
+] as const)(
+  "risk %s describes its behavior without granting permission",
+  (level, label) => {
+    const task = executionTask();
+    task.action.riskLevel = level;
+    const wrapper = mount(TaskDetail, {
+      props: { task, disabled: false, now: 1000 },
+    });
+    expect(wrapper.text()).toContain(label);
+    expect(wrapper.text()).toContain("风险等级不授予权限");
+  },
+);

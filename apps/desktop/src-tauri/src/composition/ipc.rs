@@ -55,11 +55,9 @@ macro_rules! commands {
 }
 commands! {
     self_service_snapshot(SnapshotQuery) -> Snapshot = snapshot,
-    self_service_preview(Draft) -> PlanView = preview_ui,
-    self_service_submit(Submission) -> RequestView = submit_ui,
-    self_service_cancel(Submission) -> RequestView = cancel_ui,
-    self_service_approve(Submission) -> RequestView = approve_ui,
-    self_service_respond(Reply) -> RequestView = respond_ui,
+    self_service_execute(Draft) -> RequestView = execute_ui,
+    self_service_cancel(ActionRef) -> RequestView = cancel_ui,
+    self_service_confirm(ActionRef) -> RequestView = confirm_ui,
 }
 #[tauri::command]
 pub async fn execution_task_details(
@@ -246,11 +244,9 @@ pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder
         test_users,
         select_test_user,
         self_service_snapshot,
-        self_service_preview,
-        self_service_submit,
+        self_service_execute,
         self_service_cancel,
-        self_service_approve,
-        self_service_respond,
+        self_service_confirm,
         execution_task_details,
         ai_connect,
         ai_receive,
@@ -331,7 +327,7 @@ mod tests {
         .unwrap()
         .deserialize::<serde_json::Value>()
         .unwrap();
-        assert_eq!(snapshot["catalog"].as_array().unwrap().len(), 9);
+        assert_eq!(snapshot["catalog"].as_array().unwrap().len(), 8);
         let service = call(
             &main,
             "local_service_status",
@@ -354,11 +350,9 @@ mod tests {
             "ai_restart_host",
             "ai_export_diagnostics",
             "self_service_snapshot",
-            "self_service_preview",
-            "self_service_submit",
-            "self_service_approve",
+            "self_service_execute",
+            "self_service_confirm",
             "self_service_cancel",
-            "self_service_respond",
             "execution_task_details",
             "save_connection",
             "ai_connect",
@@ -389,11 +383,9 @@ mod tests {
         )
         .is_err());
         for command in [
-            "self_service_preview",
-            "self_service_submit",
-            "self_service_approve",
+            "self_service_execute",
+            "self_service_confirm",
             "self_service_cancel",
-            "self_service_respond",
         ] {
             let error = call(
                 &main,

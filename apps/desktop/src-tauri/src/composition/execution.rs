@@ -34,6 +34,10 @@ fn bad(error: Error) -> ui::ServiceError {
         Error::Denied | Error::Unbound => "denied",
         Error::Conflict => "conflict",
         Error::InvalidInput => "invalidInput",
+        Error::Storage => "storage",
+        Error::Clock => "clock",
+        Error::Capability => "capability",
+        Error::Capacity => "capacity",
         _ => "execution",
     };
     ui::error(code, "受控执行操作未确认；请查询原任务")
@@ -55,6 +59,7 @@ type Job = Box<dyn FnOnce(&mut Owner) + Send>;
 #[derive(Clone)]
 pub struct ExecutionHandle {
     caller: Option<RequestContext>,
+    caller_generation: Option<String>,
     origin: Option<Initiator>,
     trusted_users: Option<Arc<std::sync::Mutex<super::users::Users>>>,
     sender: mpsc::SyncSender<Job>,
@@ -65,7 +70,14 @@ pub struct Owner {
     app: App,
     host: S1Host,
     catalog: FrozenCatalog,
-    started: std::collections::BTreeMap<RequestId, u64>,
+    scheduled: std::collections::BTreeMap<RequestId, Scheduled>,
+}
+#[derive(Clone, Copy)]
+struct Scheduled {
+    at: u64,
+    confirmation_deadline: u64,
+    failures: u8,
+    error: Option<Error>,
 }
 #[derive(Clone)]
 struct S1Runner {
@@ -74,9 +86,9 @@ struct S1Runner {
     unknown: DeterministicTestRunner,
 }
 impl S1Runner {
-    fn select(&self, p: &FrozenPlan) -> &DeterministicTestRunner {
+    fn select(&self, p: &FrozenExecution) -> &DeterministicTestRunner {
         match p.spec().request.operation.resource.id.as_str() {
-            "fixture-maintenance" => &self.wait,
+            "fixture-long-running" => &self.wait,
             "fixture-unknown" => &self.unknown,
             _ => &self.complete,
         }
@@ -90,28 +102,28 @@ impl RunnerPort for S1Runner {
         execution_lifecycle::ExecutionMode::Test
     }
     fn dispatch(&self, permit: AuthorizedDispatch) -> Result<DispatchOutcome, Error> {
-        self.select(permit.plan()).dispatch(permit)
+        self.select(permit.input()).dispatch(permit)
     }
     fn evidence(
         &self,
-        _plan: &execution_contract::FrozenPlan,
+        _plan: &execution_contract::FrozenExecution,
         _attempt: &execution_contract::AttemptId,
     ) -> Result<Option<execution_contract::ProcessEvidence>, execution_app::Error> {
         Ok(None)
     }
     fn acknowledge_capture(
         &self,
-        _: &execution_contract::FrozenPlan,
+        _: &execution_contract::FrozenExecution,
         _: &execution_contract::ProcessEvidence,
     ) -> Result<(), execution_app::Error> {
         Ok(())
     }
-    fn stop(&self, p: &FrozenPlan, a: &AttemptId) -> Result<(), Error> {
+    fn stop(&self, p: &FrozenExecution, a: &AttemptId) -> Result<(), Error> {
         self.select(p).stop(p, a)
     }
     fn observe(
         &self,
-        p: &FrozenPlan,
+        p: &FrozenExecution,
         a: &AttemptId,
         stage: ObservationStage,
         time: u64,
@@ -131,6 +143,19 @@ impl ExecutionHandle {
             actor: ActorId::new(actor).map_err(|_| Error::Denied)?,
         });
         call.origin = None;
+        call.caller_generation = if let Some(users) = &self.trusted_users {
+            let current = users
+                .lock()
+                .map_err(|_| Error::Unavailable)?
+                .current()
+                .map_err(|_| Error::Unbound)?;
+            if current.user.user_id.as_str() != actor {
+                return Err(Error::Denied);
+            }
+            Some(current.generation.to_string())
+        } else {
+            None
+        };
         Ok(call)
     }
 
@@ -157,13 +182,33 @@ impl ExecutionHandle {
             app,
             host,
             catalog: catalog().map_err(|_| Error::Configuration)?,
-            started: Default::default(),
+            scheduled: Default::default(),
         };
         // Fresh runner has no pre-crash facts. Reconcile original attempts; never re-dispatch.
         let mut after = None;
         loop {
             let page = owner.app.service_tasks(after.as_ref(), 128)?;
             for task in page.items {
+                if matches!(
+                    task.status.phase,
+                    TaskPhase::Waiting | TaskPhase::ConfirmationRequired
+                ) {
+                    let status = owner
+                        .app
+                        .resume_initial(&task.status.operation_request_id)?;
+                    let input = owner.app.frozen_input(
+                        &RequestContext {
+                            actor: task.action.actor.clone(),
+                        },
+                        &task.status.operation_request_id,
+                    )?;
+                    owner.schedule_status(
+                        &task.status.operation_request_id,
+                        &status,
+                        execution_sqlite::execution_confirmation(&input).expires_at_unix_ms,
+                        now()?,
+                    );
+                }
                 if matches!(
                     task.status.phase,
                     TaskPhase::Accepted
@@ -207,6 +252,7 @@ impl ExecutionHandle {
             .map_err(|_| Error::Unavailable)?;
         Ok(Self {
             caller: None,
+            caller_generation: None,
             origin: None,
             trusted_users: None,
             sender,
@@ -233,9 +279,28 @@ impl ExecutionHandle {
         }
         let caller = self.caller.clone().ok_or(Error::Unbound)?;
         let (tx, rx) = oneshot::channel();
+        let users = self.trusted_users.clone();
+        let generation = self.caller_generation.clone();
         self.sender
             .try_send(Box::new(move |owner| {
-                let _ = tx.send(action(owner, &caller));
+                let result = (|| {
+                    // Hold the registry lease through synchronous owner authorization/commit.
+                    // Switching users cannot invalidate a generation between this check and intent.
+                    let lease = users
+                        .as_ref()
+                        .map(|u| u.lock().map_err(|_| Error::Unavailable))
+                        .transpose()?;
+                    if let Some(users) = lease.as_ref() {
+                        let current = users.current().map_err(|_| Error::Unbound)?;
+                        if generation.as_deref() != Some(current.generation.as_str())
+                            || caller.actor.as_str() != current.user.user_id.as_str()
+                        {
+                            return Err(Error::Denied);
+                        }
+                    }
+                    action(owner, &caller)
+                })();
+                let _ = tx.send(result);
             }))
             .map_err(|_| Error::Capacity)?;
         tokio::time::timeout(Duration::from_secs(10), rx)
@@ -248,133 +313,167 @@ impl ExecutionHandle {
             .await
             .map_err(bad)
     }
-    pub async fn preview_ui(&self, draft: ui::Draft) -> ui::Result<ui::PlanView> {
+    pub async fn execute_ui(&self, draft: ui::Draft) -> ui::Result<ui::RequestView> {
         self.call(move |o, caller| {
             if draft.instance_id != BINDING {
                 return Err(Error::Denied);
             }
             let selected =
                 selection::select(&o.catalog, &draft).map_err(|_| Error::InvalidInput)?;
-            let p = o.preview(caller, &draft.request_id, selected, fixtures::human())?;
-            o.plan_view(&p, draft.revision)
+            let p = o.resolve(caller, &draft.request_id, selected, fixtures::human())?;
+            o.execute(caller, &p)?;
+            o.request_view(caller, &draft.request_id)
         })
         .await
         .map_err(bad)
     }
-    pub async fn submit_ui(&self, input: ui::Submission) -> ui::Result<ui::RequestView> {
+    pub async fn confirm_ui(&self, input: ui::ActionRef) -> ui::Result<ui::RequestView> {
         self.call(move |o, caller| {
-            o.check_submission(caller, &input)?;
-            o.submit(caller, &input.request_id)?;
+            let frozen = o.check_action(caller, &input)?;
+            let status = o
+                .app
+                .confirm_execution(caller, &input.request_id, &input.digest, true)?;
+            o.schedule_status(
+                &input.request_id,
+                &status,
+                execution_sqlite::execution_confirmation(&frozen).expires_at_unix_ms,
+                now()?,
+            );
             o.request_view(caller, &input.request_id)
         })
         .await
         .map_err(bad)
     }
-    pub async fn cancel_ui(&self, input: ui::Submission) -> ui::Result<ui::RequestView> {
+    pub async fn cancel_ui(&self, input: ui::ActionRef) -> ui::Result<ui::RequestView> {
         self.call(move |o, caller| {
-            o.check_submission(caller, &input)?;
+            o.check_action(caller, &input)?;
             o.app.cancel(caller, &input.request_id)?;
-            o.app.reconcile(&input.request_id)?;
-            o.request_view(caller, &input.request_id)
-        })
-        .await
-        .map_err(bad)
-    }
-    pub async fn approve_ui(&self, input: ui::Submission) -> ui::Result<ui::RequestView> {
-        self.call(move |o, caller| {
-            let p = o.check_submission(caller, &input)?;
-            let current = o.app.status(caller, &input.request_id)?;
-            if current.attempts > 0 {
-                return o.request_view(caller, &input.request_id);
-            }
-            if current.admission != Some(execution_sqlite::AdmissionStatus::ApprovalRequired) {
-                return Err(Error::Denied);
-            }
-            o.host.approve(caller, &p)?;
-            o.app.advance(
-                caller,
-                &input.request_id,
-                &CommandId::new(format!("approve-{}", p.digest().as_str()))?,
-            )?;
-            o.started.insert(input.request_id.clone(), now()?);
-            o.request_view(caller, &input.request_id)
-        })
-        .await
-        .map_err(bad)
-    }
-    pub async fn respond_ui(&self, input: ui::Reply) -> ui::Result<ui::RequestView> {
-        self.call(move |o, caller| {
-            if input.instance_id != BINDING {
-                return Err(Error::Denied);
-            }
-            let command = match input.answer {
-                ui::Answer::Cancel {} => execution_interaction::Command::Cancel {
-                    id: input.command_id.clone(),
-                },
-                ui::Answer::Confirmation { accepted } => execution_interaction::Command::Answer {
-                    id: input.command_id.clone(),
-                    response: execution_interaction::Response::Confirmation { accepted },
-                },
-                _ => return Err(Error::InvalidInput),
-            };
-            o.app.respond(
-                caller,
-                &input.request_id,
-                &CommandId::new(input.command_id.as_str())?,
-                &execution_interaction::Reference::new(input.interaction_id)
-                    .map_err(|_| Error::InvalidInput)?,
-                &command,
-            )?;
+            let status = o.app.reconcile(&input.request_id)?;
+            o.schedule_status(&input.request_id, &status, 0, now()?);
             o.request_view(caller, &input.request_id)
         })
         .await
         .map_err(bad)
     }
     pub async fn details(&self, request: RequestId) -> Result<ExecutionTaskDetails, Error> {
-        self.call(move |o, caller| o.app.task_details(caller, &request))
-            .await
+        self.call(move |o, caller| {
+            let details = o.app.task_details(caller, &request)?;
+            o.schedule_error(&request)?;
+            Ok(details)
+        })
+        .await
     }
     pub async fn cancel_task(&self, request: RequestId) -> Result<ExecutionStatus, Error> {
         self.call(move |o, caller| {
             o.app.cancel(caller, &request)?;
-            o.app.reconcile(&request)
+            let status = o.app.reconcile(&request)?;
+            o.schedule_status(&request, &status, 0, now()?);
+            Ok(status)
         })
         .await
     }
 }
 impl Owner {
+    fn schedule_status(
+        &mut self,
+        request: &RequestId,
+        status: &ExecutionStatus,
+        confirmation_deadline: u64,
+        time: u64,
+    ) {
+        let at = match status.phase {
+            TaskPhase::ConfirmationRequired => Some(confirmation_deadline),
+            TaskPhase::Accepted | TaskPhase::Running | TaskPhase::ExecutionEnded => {
+                Some(time.saturating_add(1500))
+            }
+            _ => None,
+        };
+        self.scheduled.remove(request);
+        if let Some(at) = at {
+            self.scheduled.insert(
+                request.clone(),
+                Scheduled {
+                    at,
+                    confirmation_deadline,
+                    failures: 0,
+                    error: None,
+                },
+            );
+        }
+    }
+    fn schedule_error(&self, request: &RequestId) -> Result<(), Error> {
+        match self.scheduled.get(request).and_then(|s| s.error) {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
+    }
+    fn record_schedule_failure(
+        &mut self,
+        request: RequestId,
+        mut scheduled: Scheduled,
+        error: Error,
+        time: u64,
+    ) {
+        if matches!(
+            error,
+            Error::Unavailable
+                | Error::Capacity
+                | Error::OutcomeUnknown
+                | Error::ConfirmationUnknown
+        ) && scheduled.failures < 3
+        {
+            scheduled.at = time.saturating_add(1500u64 << scheduled.failures);
+            scheduled.failures += 1;
+        } else {
+            scheduled.error = Some(error);
+        }
+        self.scheduled.insert(request, scheduled);
+    }
+    // ref: Rust std/sync/mpsc.rs Receiver::recv_timeout; messages wake the owner immediately.
     fn next_tick(&self) -> Option<Duration> {
-        let now = now().unwrap_or(0);
-        self.started
+        let time = now().ok()?;
+        self.scheduled
             .values()
+            .filter(|s| s.error.is_none())
+            .map(|s| s.at)
             .min()
-            .map(|at| Duration::from_millis(at.saturating_add(1500).saturating_sub(now)))
+            .map(|at| Duration::from_millis(at.saturating_sub(time)))
     }
     fn tick(&mut self) {
         let Ok(time) = now() else {
             return;
         };
         let due: Vec<_> = self
-            .started
+            .scheduled
             .iter()
-            .filter(|(_, at)| time >= at.saturating_add(1500))
-            .map(|(id, _)| id.clone())
+            .filter(|(_, s)| s.error.is_none() && time >= s.at)
+            .map(|(id, s)| (id.clone(), *s))
             .collect();
-        for request in due {
-            self.started.remove(&request);
-            if self.app.reconcile(&request).is_err() {
-                self.started.insert(request, time);
+        for (request, scheduled) in due {
+            self.scheduled.remove(&request);
+            let result = self.app.resume_initial(&request).and_then(|status| {
+                if status.phase == TaskPhase::ConfirmationRequired {
+                    Ok(status)
+                } else {
+                    self.app.reconcile(&request)
+                }
+            });
+            match result {
+                Ok(status) => {
+                    self.schedule_status(&request, &status, scheduled.confirmation_deadline, time)
+                }
+                Err(error) => self.record_schedule_failure(request, scheduled, error, time),
             }
         }
     }
-    fn preview(
+    fn resolve(
         &mut self,
         caller: &RequestContext,
         request: &RequestId,
         selection: SelectedOperation,
         origin: Initiator,
-    ) -> Result<FrozenPlan, Error> {
-        let previous = match self.app.frozen_plan(caller, request) {
+    ) -> Result<FrozenExecution, Error> {
+        let previous = match self.app.frozen_input(caller, request) {
             Ok(p) => Some(p),
             Err(Error::NotFound) => None,
             Err(e) => return Err(e),
@@ -383,15 +482,8 @@ impl Owner {
             .as_ref()
             .map(|p| p.spec().validity.not_before_unix_ms)
             .unwrap_or(now()?);
-        let p = fixtures::freeze(
-            &selection,
-            request,
-            format!("plan-{}", fixtures::digest(request.as_str().as_bytes())),
-            time,
-            &origin,
-            &caller.actor,
-        )
-        .map_err(|_| Error::InvalidInput)?;
+        let p = fixtures::freeze(&selection, request, time, &origin, &caller.actor)
+            .map_err(|_| Error::InvalidInput)?;
         if previous
             .as_ref()
             .is_some_and(|old| old.digest() != p.digest())
@@ -399,7 +491,6 @@ impl Owner {
             return Err(Error::Conflict);
         }
         self.host.validate(&p)?;
-        self.app.register_plan(caller, request, &p)?;
         Ok(p)
     }
     fn check_origin(
@@ -408,56 +499,42 @@ impl Owner {
         request: &RequestId,
         origin: &Initiator,
     ) -> Result<(), Error> {
-        let p = self.app.frozen_plan(caller, request)?;
+        let p = self.app.frozen_input(caller, request)?;
         if !super::origin::same_conversation(origin, &p.spec().request.initiator) {
             return Err(Error::Denied);
         }
         Ok(())
     }
-    fn check_submission(
+    fn check_action(
         &self,
         caller: &RequestContext,
-        input: &ui::Submission,
-    ) -> Result<FrozenPlan, Error> {
+        input: &ui::ActionRef,
+    ) -> Result<FrozenExecution, Error> {
         if input.instance_id != BINDING {
             return Err(Error::Denied);
         }
-        let p = self.app.frozen_plan(caller, &input.request_id)?;
-        if p.spec().plan_id != input.plan_id || p.digest() != &input.digest {
+        let p = self.app.frozen_input(caller, &input.request_id)?;
+        if p.spec().request.request_id != input.request_id || p.digest() != &input.digest {
             return Err(Error::Conflict);
         }
         Ok(p)
     }
-    fn submit(
+    fn execute(
         &mut self,
         caller: &RequestContext,
-        request: &RequestId,
+        p: &FrozenExecution,
     ) -> Result<ExecutionStatus, Error> {
-        let p = self.app.frozen_plan(caller, request)?;
-        let status = self.app.submit(caller, request, &p)?;
-        if status.attempts > 0
-            && p.spec().request.operation.resource.id.as_str() != "fixture-maintenance"
-        {
-            self.started.entry(request.clone()).or_insert(now()?);
-        }
-        if p.spec().request.operation.resource.id.as_str() == "fixture-restart" {
-            self.app.open_interaction(
-                caller,
-                request,
-                execution_interaction::Reference::new(format!(
-                    "notice-{}",
-                    p.spec().plan_id.as_str()
-                ))
-                .map_err(|_| Error::InvalidInput)?,
-                execution_interaction::Kind::UserConfirmation {
-                    purpose: execution_interaction::ConfirmationPurpose::Continue,
-                },
-                p.spec().validity.expires_at_unix_ms,
-            )?;
-        }
+        let request = &p.spec().request.request_id;
+        let status = self.app.request_execution(caller, p)?;
+        self.schedule_status(
+            request,
+            &status,
+            execution_sqlite::execution_confirmation(p).expires_at_unix_ms,
+            now()?,
+        );
         Ok(status)
     }
-    fn plan_view(&self, p: &FrozenPlan, revision: u32) -> Result<ui::PlanView, Error> {
+    fn action_view(&self, p: &FrozenExecution, revision: u32) -> Result<ui::ActionView, Error> {
         let spec = p.spec();
         let item = self
             .catalog
@@ -466,13 +543,14 @@ impl Owner {
             .iter()
             .find(|i| i.operations[0].resource.reference == spec.request.operation.resource)
             .ok_or(Error::NotFound)?;
-        Ok(ui::PlanView {
+        Ok(ui::ActionView {
+            risk_level: fixtures::risk(spec.request.operation.resource.id.as_str())
+                .map(|r| r as u8),
             authority: spec.request.authority.clone(),
             actor: spec.request.actor.clone(),
             initiator: spec.request.initiator.clone(),
             request_id: spec.request.request_id.clone(),
             revision,
-            plan_id: spec.plan_id.clone(),
             digest: p.digest().clone(),
             item_id: item.id.clone(),
             title: item.name.clone(),
@@ -485,10 +563,18 @@ impl Owner {
             permission: "权限与批准由 Rust 受控执行服务裁决".into(),
             parameters: item.operations[0]
                 .parameters
-                .values()
-                .map(|field| ui::ParameterSummary {
+                .iter()
+                .map(|(key, field)| ui::ParameterSummary {
+                    value: spec
+                        .request
+                        .parameters
+                        .get(key.as_str())
+                        .and_then(|v| match v {
+                            InputValue::Literal { value } => Some(value.to_string()),
+                            InputValue::Secret { .. } => None,
+                        }),
                     label: field.title.clone(),
-                    state: "已校验；值不回显",
+                    state: "已校验；敏感引用不回显",
                 })
                 .collect(),
             expires_at_unix_ms: spec.validity.expires_at_unix_ms,
@@ -499,8 +585,9 @@ impl Owner {
         caller: &RequestContext,
         request: &RequestId,
     ) -> Result<ui::RequestView, Error> {
-        let p = self.app.frozen_plan(caller, request)?;
+        let p = self.app.frozen_input(caller, request)?;
         let s = self.app.status(caller, request)?;
+        self.schedule_error(request)?;
         let (status, message) = if s.admission == Some(execution_sqlite::AdmissionStatus::Denied) {
             (
                 ui::RequestStatus::Stopped,
@@ -511,7 +598,7 @@ impl Owner {
         {
             (
                 ui::RequestStatus::Approval,
-                "等待可信测试管理员批准精确计划",
+                "等待策略授权；本人确认不能替代批准",
             )
         } else {
             match s.phase {
@@ -532,41 +619,41 @@ impl Owner {
                 ),
             }
         };
-        let mut interactions = Vec::new();
-        if p.spec().request.operation.resource.id.as_str() == "fixture-restart" {
-            let reference = execution_interaction::Reference::new(format!(
-                "notice-{}",
-                p.spec().plan_id.as_str()
-            ))
-            .map_err(|_| Error::InvalidInput)?;
-            if let Ok(i) = self.app.interaction(caller, request, &reference) {
-                let snapshot = i.snapshot();
-                interactions.push(ui::InteractionView {
-                    id: reference.as_str().into(),
-                    kind: snapshot.spec.kind.clone(),
-                    status: match snapshot.status {
-                        execution_interaction::Status::Pending => ui::InteractionStatus::Pending,
-                        execution_interaction::Status::Answered { .. } => {
-                            ui::InteractionStatus::Answered
-                        }
-                        execution_interaction::Status::Cancelled { .. } => {
-                            ui::InteractionStatus::Cancelled
-                        }
-                        execution_interaction::Status::Expired { .. } => {
-                            ui::InteractionStatus::Expired
-                        }
-                    },
-                    message: "确认已阅读测试提示；不会重启设备，也不形成业务批准",
-                    expires_at_unix_ms: snapshot.spec.expires_at_unix_ms,
-                    options: vec![],
-                });
-            }
-        }
+        let reference = execution_sqlite::execution_confirmation(&p).id;
+        let confirmation = match self.app.interaction(caller, request, &reference) {
+            Ok(i) => Some(ui::ConfirmationView {
+                status: match i.snapshot().status {
+                    execution_interaction::Status::Pending => ui::ConfirmationStatus::Pending,
+                    execution_interaction::Status::Answered { .. } => {
+                        ui::ConfirmationStatus::Answered
+                    }
+                    execution_interaction::Status::Cancelled { .. } => {
+                        ui::ConfirmationStatus::Cancelled
+                    }
+                    execution_interaction::Status::Expired { .. } => {
+                        ui::ConfirmationStatus::Expired
+                    }
+                },
+                message: "确认本次动作；确认不增加权限，也不改变发起来源",
+                expires_at_unix_ms: i.snapshot().spec.expires_at_unix_ms,
+            }),
+            Err(Error::NotFound) => None,
+            Err(e) => return Err(e),
+        };
+        let status = if s.phase == TaskPhase::ConfirmationRequired
+            && confirmation
+                .as_ref()
+                .is_some_and(|c| c.status == ui::ConfirmationStatus::Pending)
+        {
+            ui::RequestStatus::Confirmation
+        } else {
+            status
+        };
         Ok(ui::RequestView {
-            plan: self.plan_view(&p, 1)?,
+            action: self.action_view(&p, 1)?,
             status,
             message,
-            interactions,
+            confirmation,
         })
     }
     fn snapshot(
@@ -589,6 +676,7 @@ impl Owner {
                     .projection(&item.id, &op.id, &fixtures::PARAMETERS)
                     .map_err(|_| Error::Configuration)?;
                 Ok(ui::CatalogView {
+                    risk_level: fixtures::risk(op.resource.reference.id.as_str()).map(|r| r as u8),
                     catalog: self.catalog.reference(),
                     item_id: item.id.clone(),
                     variant_id: op.id.clone(),
@@ -621,16 +709,13 @@ impl Owner {
         let requests = page
             .items
             .iter()
-            .filter(|task| task.status.submitted)
             .map(|task| self.request_view(caller, &task.status.operation_request_id))
             .collect::<Result<_, _>>()?;
         let mut referenced_requests = Vec::new();
         for request in query.request_ids {
             match self.app.status(caller, &request) {
-                Ok(status) if status.submitted => {
-                    referenced_requests.push(self.request_view(caller, &request)?)
-                }
-                Ok(_) | Err(Error::NotFound) => (),
+                Ok(_) => referenced_requests.push(self.request_view(caller, &request)?),
+                Err(Error::NotFound) => (),
                 Err(error) => return Err(error),
             }
         }
@@ -650,19 +735,17 @@ fn operation(s: ExecutionStatus) -> mcp::OperationStatus {
         mode: s.mode,
         process: s.process,
         assessment: s.assessment,
-        submitted: s.submitted,
         cancel_requested: s.cancel_requested,
         operation_request_id: s.operation_request_id,
-        plan: mcp::PlanRef {
-            plan_id: s.plan_id,
-            digest: s.plan_digest,
-        },
+        content_digest: s.content_digest,
         phase: if s.admission == Some(execution_sqlite::AdmissionStatus::Denied) {
             mcp::OperationPhase::Failed
         } else {
             match s.phase {
                 TaskPhase::Accepted => mcp::OperationPhase::Accepted,
-                TaskPhase::Waiting | TaskPhase::ApprovalRequired => mcp::OperationPhase::Waiting,
+                TaskPhase::Waiting
+                | TaskPhase::ApprovalRequired
+                | TaskPhase::ConfirmationRequired => mcp::OperationPhase::Waiting,
                 TaskPhase::Running => mcp::OperationPhase::Running,
                 TaskPhase::OutcomeUnknown => mcp::OperationPhase::OutcomeUnknown,
                 TaskPhase::ExecutionEnded => mcp::OperationPhase::ExecutionEnded,
@@ -731,77 +814,18 @@ impl mcp::ExecutionServicePort for ExecutionHandle {
             reasons: vec![id("s1-test-runner-only")],
         })
     }
-    async fn preview(
+    async fn execute(
         &self,
-        request: mcp::PreviewRequest,
-        _: CancellationToken,
-    ) -> Result<mcp::PlanPreview, mcp::ServiceError> {
-        let origin = self.origin.clone().ok_or(mcp::ServiceError::Denied)?;
-        self.call(move |o, caller| {
-            let p = match request {
-                mcp::PreviewRequest::Catalog(c) => {
-                    o.preview(caller, &c.operation_request_id, c.selection, origin.clone())?
-                }
-                mcp::PreviewRequest::Candidate {
-                    operation_request_id,
-                    candidate,
-                } => {
-                    o.check_origin(caller, &operation_request_id, &origin)?;
-                    let p = o.app.frozen_plan(caller, &operation_request_id)?;
-                    if p.spec().launch.artifact != candidate {
-                        return Err(Error::Conflict);
-                    }
-                    p
-                }
-            };
-            Ok(mcp::PlanPreview {
-                operation_request_id: p.spec().request.request_id.clone(),
-                plan: mcp::PlanRef {
-                    plan_id: p.spec().plan_id.clone(),
-                    digest: p.digest().clone(),
-                },
-                capability: mcp::CapabilityView {
-                    state: mcp::CapabilityState::Supported,
-                    reasons: vec![id("s1-test-runner-only")],
-                },
-            })
-        })
-        .await
-        .map_err(mcp_error)
-    }
-    async fn propose(
-        &self,
-        request: mcp::CandidateRequest,
-        _: CancellationToken,
-    ) -> Result<mcp::CandidateReceipt, mcp::ServiceError> {
-        let origin = self.origin.clone().ok_or(mcp::ServiceError::Denied)?;
-        self.call(move |o, caller| {
-            let mcp::CandidateRequest::Catalog(c) = request else {
-                return Err(Error::Unsupported);
-            };
-            let p = o.preview(caller, &c.operation_request_id, c.selection, origin.clone())?;
-            Ok(mcp::CandidateReceipt {
-                operation_request_id: c.operation_request_id,
-                candidate: p.spec().launch.artifact.clone(),
-            })
-        })
-        .await
-        .map_err(mcp_error)
-    }
-    async fn submit(
-        &self,
-        request: mcp::SubmitRequest,
+        request: mcp::ExecuteRequest,
         _: CancellationToken,
     ) -> Result<mcp::OperationStatus, mcp::ServiceError> {
         let origin = self.origin.clone().ok_or(mcp::ServiceError::Denied)?;
         self.call(move |o, caller| {
-            o.check_origin(caller, &request.operation_request_id, &origin)?;
-            let p = o.app.frozen_plan(caller, &request.operation_request_id)?;
-            if p.spec().plan_id != request.plan.plan_id || p.digest() != &request.plan.digest {
-                return Err(Error::Conflict);
-            }
-            o.submit(caller, &request.operation_request_id)
-                .map(operation)
+            let mcp::ExecuteRequest::Catalog(c) = request else {
+                return Err(Error::Unsupported);
+            };
+            let p = o.resolve(caller, &c.operation_request_id, c.selection, origin)?;
+            o.execute(caller, &p).map(operation)
         })
         .await
         .map_err(mcp_error)
@@ -814,6 +838,7 @@ impl mcp::ExecutionServicePort for ExecutionHandle {
         let origin = self.origin.clone().ok_or(mcp::ServiceError::Denied)?;
         self.call(move |o, caller| {
             o.check_origin(caller, &request.operation_request_id, &origin)?;
+            o.schedule_error(&request.operation_request_id)?;
             o.app
                 .status(caller, &request.operation_request_id)
                 .map(operation)
@@ -830,9 +855,11 @@ impl mcp::ExecutionServicePort for ExecutionHandle {
         self.call(move |o, caller| {
             o.check_origin(caller, &request.operation_request_id, &origin)?;
             o.app.cancel(caller, &request.operation_request_id)?;
+            let status = o.app.reconcile(&request.operation_request_id)?;
+            o.schedule_status(&request.operation_request_id, &status, 0, now()?);
             Ok(mcp::CancelResult {
                 disposition: mcp::CancelDisposition::Requested,
-                operation: operation(o.app.reconcile(&request.operation_request_id)?),
+                operation: operation(status),
             })
         })
         .await
@@ -901,15 +928,14 @@ mod tests {
             fields: Default::default(),
         };
         let selected = selection::select(&o.catalog, &draft).map_err(|_| Error::InvalidInput)?;
-        o.preview(caller, &draft.request_id, selected, origin)?;
-        if submitted {
-            o.submit(caller, &draft.request_id)?;
-        }
+        let p = o.resolve(caller, &draft.request_id, selected, origin)?;
+        o.execute(caller, &p)?;
+        let _ = submitted;
         Ok(())
     }
 
     #[tokio::test]
-    async fn preview_only_page_keeps_continuation_to_submitted_tasks() {
+    async fn waiting_confirmation_requests_are_visible_and_paginated() {
         let (handle, root) = fixture().await;
         handle
             .call(|o, caller| {
@@ -918,7 +944,7 @@ mod tests {
                 }
                 let first = serde_json::to_value(o.snapshot(caller, ui::SnapshotQuery::default())?)
                     .unwrap();
-                assert_eq!(first["requests"].as_array().unwrap().len(), 0);
+                assert_eq!(first["requests"].as_array().unwrap().len(), 128);
                 assert_eq!(first["next"], "page-127");
                 let second = o.snapshot(
                     caller,
@@ -928,7 +954,7 @@ mod tests {
                     },
                 )?;
                 assert_eq!(second.requests.len(), 2);
-                assert_eq!(second.requests[0].plan.request_id.as_str(), "page-128");
+                assert_eq!(second.requests[0].action.request_id.as_str(), "page-128");
                 assert!(second.next.is_none());
                 Ok(())
             })
@@ -957,22 +983,22 @@ mod tests {
                 for (index, origin) in [human, ai].into_iter().enumerate() {
                     add(o, caller, index, true, origin.clone())?;
                     let request = RequestId::new(format!("page-{index:03}")).unwrap();
-                    let p = o.app.frozen_plan(caller, &request)?;
+                    let p = o.app.frozen_input(caller, &request)?;
                     let view = serde_json::to_value(o.request_view(caller, &request)?).unwrap();
-                    assert_eq!(view["status"], "approval");
+                    assert_eq!(view["status"], "confirmation");
                     assert_eq!(
-                        view["plan"]["actor"],
+                        view["action"]["actor"],
                         serde_json::to_value(&p.spec().request.actor).unwrap()
                     );
                     assert_eq!(
-                        view["plan"]["authority"],
+                        view["action"]["authority"],
                         serde_json::to_value(&p.spec().request.authority).unwrap()
                     );
                     assert_eq!(
-                        view["plan"]["initiator"],
+                        view["action"]["initiator"],
                         serde_json::to_value(origin).unwrap()
                     );
-                    assert_eq!(view["plan"]["digest"], p.digest().as_str());
+                    assert_eq!(view["action"]["digest"], p.digest().as_str());
                 }
                 Ok(())
             })
@@ -991,7 +1017,7 @@ mod tests {
                 }
                 let first = o.snapshot(caller, ui::SnapshotQuery::default())?;
                 assert_eq!(first.requests.len(), 128);
-                let selected = first.requests[0].plan.request_id.clone();
+                let selected = first.requests[0].action.request_id.clone();
                 let second = o.snapshot(
                     caller,
                     ui::SnapshotQuery {
@@ -1002,7 +1028,7 @@ mod tests {
                 assert_eq!(second.requests.len(), 2);
                 assert!(second.next.is_none());
                 assert_eq!(second.referenced_requests.len(), 1);
-                assert_eq!(second.referenced_requests[0].plan.request_id, selected);
+                assert_eq!(second.referenced_requests[0].action.request_id, selected);
                 assert_eq!(o.app.status(caller, &selected)?.attempts, 0);
                 assert!(o
                     .snapshot(
@@ -1030,14 +1056,17 @@ mod tests {
                     request_id: RequestId::new("alice-running").unwrap(),
                     revision: 1,
                     catalog: owner.catalog.reference(),
-                    item_id: id("maintenance"),
+                    item_id: id("long-running"),
                     variant_id: id("test"),
                     fields: Default::default(),
                 };
                 let selected =
                     selection::select(&owner.catalog, &draft).map_err(|_| Error::InvalidInput)?;
-                owner.preview(caller, &draft.request_id, selected, fixtures::human())?;
-                owner.submit(caller, &draft.request_id)?;
+                let p = owner.resolve(caller, &draft.request_id, selected, fixtures::human())?;
+                owner.execute(caller, &p)?;
+                owner
+                    .app
+                    .confirm_execution(caller, &draft.request_id, p.digest(), true)?;
                 Ok(())
             })
             .await
@@ -1061,7 +1090,7 @@ mod tests {
         alice
             .call(|owner, caller| {
                 let request = RequestId::new("alice-running").unwrap();
-                let plan = owner.app.frozen_plan(caller, &request)?;
+                let plan = owner.app.frozen_input(caller, &request)?;
                 assert_eq!(plan.spec().request.actor.as_str(), "fixture-actor");
                 assert_eq!(
                     owner.app.status(caller, &request)?.phase,
@@ -1070,7 +1099,7 @@ mod tests {
                 assert_eq!(
                     owner
                         .app
-                        .frozen_plan(caller, &request)?
+                        .frozen_input(caller, &request)?
                         .spec()
                         .request
                         .actor
@@ -1082,6 +1111,151 @@ mod tests {
             .await
             .unwrap();
         alice.close().await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[tokio::test]
+    async fn generation_lease_rejects_queued_work_after_user_switch() {
+        let (handle, root) = fixture().await;
+        let mut users = super::super::users::Users::open(&root).unwrap();
+        let alice = users.select("Alice").unwrap();
+        let registry = Arc::new(std::sync::Mutex::new(users));
+        let stale = handle
+            .clone()
+            .with_trusted_users(registry.clone())
+            .for_caller(alice.user.user_id.as_str())
+            .unwrap();
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        handle
+            .sender
+            .try_send(Box::new(move |_| {
+                entered_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+            }))
+            .unwrap();
+        entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let mutated = Arc::new(AtomicBool::new(false));
+        let flag = mutated.clone();
+        let mut queued = Box::pin(stale.call(move |_, _| {
+            flag.store(true, Ordering::SeqCst);
+            Ok(())
+        }));
+        std::future::poll_fn(|cx| {
+            assert!(std::future::Future::poll(queued.as_mut(), cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        registry.lock().unwrap().select("Bob").unwrap();
+        release_tx.send(()).unwrap();
+        assert_eq!(queued.await.unwrap_err(), Error::Denied);
+        assert!(!mutated.load(Ordering::SeqCst));
+        handle.close().await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[tokio::test]
+    async fn first_intent_resumed_at_startup_reaches_verified_without_another_restart() {
+        let (handle, root) = fixture().await;
+        handle
+            .call(|owner, caller| {
+                add(owner, caller, 0, true, fixtures::human())?;
+                let request = RequestId::new("page-000").unwrap();
+                let input = owner.app.frozen_input(caller, &request)?;
+                let confirmation = execution_sqlite::execution_confirmation(&input);
+                owner.app.respond(
+                    caller,
+                    &request,
+                    &CommandId::new("crash-after-confirmation")?,
+                    &confirmation.id,
+                    &execution_interaction::Command::Answer {
+                        id: execution_interaction::Reference::new("crash-after-confirmation")
+                            .unwrap(),
+                        response: execution_interaction::Response::Confirmation { accepted: true },
+                    },
+                )?;
+                assert_eq!(owner.app.status(caller, &request)?.attempts, 0);
+                owner.scheduled.clear();
+                Ok(())
+            })
+            .await
+            .unwrap();
+        handle.close().await;
+        let restored = ExecutionHandle::start(&root.join("execution.sqlite"))
+            .unwrap()
+            .for_caller("fixture-actor")
+            .unwrap();
+        let request = RequestId::new("page-000").unwrap();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let status = restored.details(request.clone()).await.unwrap().status;
+            assert_eq!(status.attempts, 1);
+            if status.phase == TaskPhase::Verified {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "resumed attempt was not scheduled"
+            );
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        restored.close().await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[tokio::test]
+    async fn pending_confirmation_schedules_only_its_expiry() {
+        let (handle, root) = fixture().await;
+        handle
+            .call(|owner, caller| {
+                add(owner, caller, 0, true, fixtures::human())?;
+                assert!(owner.next_tick().unwrap() > Duration::from_secs(45));
+                Ok(())
+            })
+            .await
+            .unwrap();
+        handle.close().await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn scheduling_failures_back_off_and_stop_with_a_closed_error() {
+        let (handle, root) = fixture().await;
+        handle
+            .call(|owner, _| {
+                let request = RequestId::new("scheduled-failure").unwrap();
+                let mut entry = Scheduled {
+                    at: 1000,
+                    confirmation_deadline: 60000,
+                    failures: 0,
+                    error: None,
+                };
+                for (index, delay) in [1500, 3000, 6000].into_iter().enumerate() {
+                    owner.record_schedule_failure(request.clone(), entry, Error::Unavailable, 1000);
+                    entry = *owner.scheduled.get(&request).unwrap();
+                    assert_eq!(entry.at, 1000 + delay);
+                    assert_eq!(entry.failures, index as u8 + 1);
+                    assert!(entry.error.is_none());
+                }
+                owner.record_schedule_failure(request.clone(), entry, Error::Unavailable, 1000);
+                assert_eq!(owner.schedule_error(&request), Err(Error::Unavailable));
+                assert!(owner.next_tick().is_none());
+                owner.scheduled.clear();
+                owner.record_schedule_failure(
+                    request.clone(),
+                    Scheduled {
+                        at: 1000,
+                        confirmation_deadline: 60000,
+                        failures: 0,
+                        error: None,
+                    },
+                    Error::Storage,
+                    1000,
+                );
+                assert_eq!(owner.schedule_error(&request), Err(Error::Storage));
+                assert!(owner.next_tick().is_none());
+                Ok(())
+            })
+            .await
+            .unwrap();
+        handle.close().await;
         std::fs::remove_dir_all(root).unwrap();
     }
 }

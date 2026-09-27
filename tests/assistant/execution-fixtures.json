@@ -1,6 +1,6 @@
 {
   "approvalRequired": {
-    "plan": {
+    "action": {
       "access": {
         "allowChildProcesses": false,
         "kind": "restricted",
@@ -21,14 +21,11 @@
         "totalOutputBytes": 4096,
         "totalTimeoutMs": 1000
       },
+      "contentDigest": "c2e1db1c69ac01d2611e70a54871edc88dbacf420497b86df00f7572e2d2f85f",
       "execution": { "kind": "process" },
       "initiator": {
-        "kind": "human",
-        "osSession": {
-          "account": { "platform": "linux", "subject": "uid:1000" },
-          "device": "origin-device",
-          "session": "login-1"
-        }
+        "kind": "policy",
+        "policy": { "id": "policy-1", "revision": "1" }
       },
       "interpreter": {
         "artifact": {
@@ -41,14 +38,13 @@
         "action": "diagnose",
         "resource": { "id": "network-tool", "revision": "1" }
       },
-      "planDigest": "b6a08464a809b906cd4849227cbf4aefc4f092e1d1adb7da2961dbfefe39fcf6",
-      "planId": "plan-1",
       "policy": { "id": "policy-1", "revision": "1" },
+      "requestId": "request-1",
       "runAs": {
         "account": { "platform": "linux", "subject": "uid:1000" },
         "kind": "user"
       },
-      "schemaVersion": 3,
+      "schemaVersion": 4,
       "sessionRequirement": { "kind": "notRequired" },
       "target": {
         "device": "device-1",
@@ -66,21 +62,19 @@
       "attemptId": null,
       "attempts": 0,
       "cancelRequested": false,
+      "contentDigest": "c2e1db1c69ac01d2611e70a54871edc88dbacf420497b86df00f7572e2d2f85f",
       "dispatchCause": null,
       "evidence": [],
       "mode": "test",
       "operationRequestId": "request-1",
       "phase": "approvalRequired",
-      "planDigest": "b6a08464a809b906cd4849227cbf4aefc4f092e1d1adb7da2961dbfefe39fcf6",
-      "planId": "plan-1",
       "process": null,
       "software": null,
-      "stopOutcome": null,
-      "submitted": true
+      "stopOutcome": null
     }
   },
   "cancelled": {
-    "plan": {
+    "action": {
       "access": {
         "allowChildProcesses": false,
         "kind": "restricted",
@@ -101,14 +95,11 @@
         "totalOutputBytes": 4096,
         "totalTimeoutMs": 1000
       },
+      "contentDigest": "c2e1db1c69ac01d2611e70a54871edc88dbacf420497b86df00f7572e2d2f85f",
       "execution": { "kind": "process" },
       "initiator": {
-        "kind": "human",
-        "osSession": {
-          "account": { "platform": "linux", "subject": "uid:1000" },
-          "device": "origin-device",
-          "session": "login-1"
-        }
+        "kind": "policy",
+        "policy": { "id": "policy-1", "revision": "1" }
       },
       "interpreter": {
         "artifact": {
@@ -121,14 +112,13 @@
         "action": "diagnose",
         "resource": { "id": "network-tool", "revision": "1" }
       },
-      "planDigest": "b6a08464a809b906cd4849227cbf4aefc4f092e1d1adb7da2961dbfefe39fcf6",
-      "planId": "plan-1",
       "policy": { "id": "policy-1", "revision": "1" },
+      "requestId": "request-1",
       "runAs": {
         "account": { "platform": "linux", "subject": "uid:1000" },
         "kind": "user"
       },
-      "schemaVersion": 3,
+      "schemaVersion": 4,
       "sessionRequirement": { "kind": "notRequired" },
       "target": {
         "device": "device-1",
@@ -146,6 +136,7 @@
       "attemptId": "app-fd5e6aca451fdab554517dcc42aea4609d7c916efc7f7f5102c14914556715fa",
       "attempts": 1,
       "cancelRequested": true,
+      "contentDigest": "c2e1db1c69ac01d2611e70a54871edc88dbacf420497b86df00f7572e2d2f85f",
       "dispatchCause": null,
       "evidence": [
         {
@@ -168,16 +159,13 @@
       "mode": "test",
       "operationRequestId": "request-1",
       "phase": "cancelled",
-      "planDigest": "b6a08464a809b906cd4849227cbf4aefc4f092e1d1adb7da2961dbfefe39fcf6",
-      "planId": "plan-1",
       "process": null,
       "software": null,
-      "stopOutcome": "acknowledged",
-      "submitted": true
+      "stopOutcome": "acknowledged"
     }
   },
   "outcomeUnknown": {
-    "plan": {
+    "action": {
       "access": {
         "allowChildProcesses": false,
         "kind": "restricted",
@@ -198,14 +186,11 @@
         "totalOutputBytes": 4096,
         "totalTimeoutMs": 1000
       },
+      "contentDigest": "c2e1db1c69ac01d2611e70a54871edc88dbacf420497b86df00f7572e2d2f85f",
       "execution": { "kind": "process" },
       "initiator": {
-        "kind": "human",
-        "osSession": {
-          "account": { "platform": "linux", "subject": "uid:1000" },
-          "device": "origin-device",
-          "session": "login-1"
-        }
+        "kind": "policy",
+        "policy": { "id": "policy-1", "revision": "1" }
       },
       "interpreter": {
         "artifact": {
@@ -218,14 +203,13 @@
         "action": "diagnose",
         "resource": { "id": "network-tool", "revision": "1" }
       },
-      "planDigest": "b6a08464a809b906cd4849227cbf4aefc4f092e1d1adb7da2961dbfefe39fcf6",
-      "planId": "plan-1",
       "policy": { "id": "policy-1", "revision": "1" },
+      "requestId": "request-1",
       "runAs": {
         "account": { "platform": "linux", "subject": "uid:1000" },
         "kind": "user"
       },
-      "schemaVersion": 3,
+      "schemaVersion": 4,
       "sessionRequirement": { "kind": "notRequired" },
       "target": {
         "device": "device-1",
@@ -243,21 +227,19 @@
       "attemptId": "app-fd5e6aca451fdab554517dcc42aea4609d7c916efc7f7f5102c14914556715fa",
       "attempts": 1,
       "cancelRequested": false,
+      "contentDigest": "c2e1db1c69ac01d2611e70a54871edc88dbacf420497b86df00f7572e2d2f85f",
       "dispatchCause": "deliveryUnknown",
       "evidence": [],
       "mode": "test",
       "operationRequestId": "request-1",
       "phase": "outcomeUnknown",
-      "planDigest": "b6a08464a809b906cd4849227cbf4aefc4f092e1d1adb7da2961dbfefe39fcf6",
-      "planId": "plan-1",
       "process": null,
       "software": null,
-      "stopOutcome": null,
-      "submitted": true
+      "stopOutcome": null
     }
   },
   "running": {
-    "plan": {
+    "action": {
       "access": {
         "allowChildProcesses": false,
         "kind": "restricted",
@@ -278,14 +260,11 @@
         "totalOutputBytes": 4096,
         "totalTimeoutMs": 1000
       },
+      "contentDigest": "c2e1db1c69ac01d2611e70a54871edc88dbacf420497b86df00f7572e2d2f85f",
       "execution": { "kind": "process" },
       "initiator": {
-        "kind": "human",
-        "osSession": {
-          "account": { "platform": "linux", "subject": "uid:1000" },
-          "device": "origin-device",
-          "session": "login-1"
-        }
+        "kind": "policy",
+        "policy": { "id": "policy-1", "revision": "1" }
       },
       "interpreter": {
         "artifact": {
@@ -298,14 +277,13 @@
         "action": "diagnose",
         "resource": { "id": "network-tool", "revision": "1" }
       },
-      "planDigest": "b6a08464a809b906cd4849227cbf4aefc4f092e1d1adb7da2961dbfefe39fcf6",
-      "planId": "plan-1",
       "policy": { "id": "policy-1", "revision": "1" },
+      "requestId": "request-1",
       "runAs": {
         "account": { "platform": "linux", "subject": "uid:1000" },
         "kind": "user"
       },
-      "schemaVersion": 3,
+      "schemaVersion": 4,
       "sessionRequirement": { "kind": "notRequired" },
       "target": {
         "device": "device-1",
@@ -323,21 +301,19 @@
       "attemptId": "app-fd5e6aca451fdab554517dcc42aea4609d7c916efc7f7f5102c14914556715fa",
       "attempts": 1,
       "cancelRequested": false,
+      "contentDigest": "c2e1db1c69ac01d2611e70a54871edc88dbacf420497b86df00f7572e2d2f85f",
       "dispatchCause": null,
       "evidence": [],
       "mode": "test",
       "operationRequestId": "request-1",
       "phase": "running",
-      "planDigest": "b6a08464a809b906cd4849227cbf4aefc4f092e1d1adb7da2961dbfefe39fcf6",
-      "planId": "plan-1",
       "process": null,
       "software": null,
-      "stopOutcome": null,
-      "submitted": true
+      "stopOutcome": null
     }
   },
   "software": {
-    "plan": {
+    "action": {
       "access": { "kind": "osIdentity" },
       "actor": "actor-1",
       "artifact": {
@@ -350,18 +326,15 @@
         "totalOutputBytes": 4096,
         "totalTimeoutMs": 1000
       },
+      "contentDigest": "24c2c4477b23a3d6db80c2004f5e6ad5b3c208212311d098bc47a8954c106092",
       "execution": {
         "adapter": "pkg",
         "kind": "software",
         "mutation": "install"
       },
       "initiator": {
-        "kind": "human",
-        "osSession": {
-          "account": { "platform": "linux", "subject": "uid:1000" },
-          "device": "origin-device",
-          "session": "login-1"
-        }
+        "kind": "policy",
+        "policy": { "id": "policy-1", "revision": "1" }
       },
       "interpreter": {
         "artifact": {
@@ -374,14 +347,13 @@
         "action": "software.install",
         "resource": { "id": "network-tool", "revision": "1" }
       },
-      "planDigest": "23a88819d2769b858893ad7af5fd313202d0599ca555f05f8ef961a61b16b4f5",
-      "planId": "plan-1",
       "policy": { "id": "policy-1", "revision": "1" },
+      "requestId": "request-1",
       "runAs": {
         "account": { "platform": "macos", "subject": "501" },
         "kind": "user"
       },
-      "schemaVersion": 3,
+      "schemaVersion": 4,
       "sessionRequirement": { "kind": "notRequired" },
       "target": {
         "device": "device-1",
@@ -396,21 +368,19 @@
       "attemptId": "app-fd5e6aca451fdab554517dcc42aea4609d7c916efc7f7f5102c14914556715fa",
       "attempts": 1,
       "cancelRequested": false,
+      "contentDigest": "24c2c4477b23a3d6db80c2004f5e6ad5b3c208212311d098bc47a8954c106092",
       "dispatchCause": null,
       "evidence": [],
       "mode": "test",
       "operationRequestId": "request-1",
       "phase": "running",
-      "planDigest": "23a88819d2769b858893ad7af5fd313202d0599ca555f05f8ef961a61b16b4f5",
-      "planId": "plan-1",
       "process": null,
       "software": "awaitingDetection",
-      "stopOutcome": null,
-      "submitted": true
+      "stopOutcome": null
     }
   },
   "verified": {
-    "plan": {
+    "action": {
       "access": {
         "allowChildProcesses": false,
         "kind": "restricted",
@@ -431,14 +401,11 @@
         "totalOutputBytes": 4096,
         "totalTimeoutMs": 1000
       },
+      "contentDigest": "c2e1db1c69ac01d2611e70a54871edc88dbacf420497b86df00f7572e2d2f85f",
       "execution": { "kind": "process" },
       "initiator": {
-        "kind": "human",
-        "osSession": {
-          "account": { "platform": "linux", "subject": "uid:1000" },
-          "device": "origin-device",
-          "session": "login-1"
-        }
+        "kind": "policy",
+        "policy": { "id": "policy-1", "revision": "1" }
       },
       "interpreter": {
         "artifact": {
@@ -451,14 +418,13 @@
         "action": "diagnose",
         "resource": { "id": "network-tool", "revision": "1" }
       },
-      "planDigest": "b6a08464a809b906cd4849227cbf4aefc4f092e1d1adb7da2961dbfefe39fcf6",
-      "planId": "plan-1",
       "policy": { "id": "policy-1", "revision": "1" },
+      "requestId": "request-1",
       "runAs": {
         "account": { "platform": "linux", "subject": "uid:1000" },
         "kind": "user"
       },
-      "schemaVersion": 3,
+      "schemaVersion": 4,
       "sessionRequirement": { "kind": "notRequired" },
       "target": {
         "device": "device-1",
@@ -476,6 +442,7 @@
       "attemptId": "app-fd5e6aca451fdab554517dcc42aea4609d7c916efc7f7f5102c14914556715fa",
       "attempts": 1,
       "cancelRequested": false,
+      "contentDigest": "c2e1db1c69ac01d2611e70a54871edc88dbacf420497b86df00f7572e2d2f85f",
       "dispatchCause": null,
       "evidence": [
         {
@@ -498,12 +465,9 @@
       "mode": "test",
       "operationRequestId": "request-1",
       "phase": "verified",
-      "planDigest": "b6a08464a809b906cd4849227cbf4aefc4f092e1d1adb7da2961dbfefe39fcf6",
-      "planId": "plan-1",
       "process": null,
       "software": null,
-      "stopOutcome": null,
-      "submitted": true
+      "stopOutcome": null
     }
   }
 }

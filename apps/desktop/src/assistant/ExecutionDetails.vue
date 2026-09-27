@@ -15,11 +15,11 @@ import type {
 } from "./execution-types";
 const props = defineProps<{ details: ExecutionTaskDetails; now: number }>();
 const validity = computed(() =>
-  props.now < props.details.plan.validity.notBeforeUnixMs
-    ? "计划尚未生效"
-    : props.now >= props.details.plan.validity.expiresAtUnixMs
-      ? "计划已过期"
-      : "计划在有效期内",
+  props.now < props.details.action.validity.notBeforeUnixMs
+    ? "动作尚未生效"
+    : props.now >= props.details.action.validity.expiresAtUnixMs
+      ? "动作已过期"
+      : "动作在有效期内",
 );
 const instant = (ms: number) =>
   ms >= -8_640_000_000_000_000 && ms <= 8_640_000_000_000_000
@@ -31,6 +31,8 @@ function phase(value: TaskPhase): string {
       return "等待执行条件";
     case "admissionDenied":
       return "执行准入被拒绝";
+    case "confirmationRequired":
+      return "等待用户确认本次动作";
     case "approvalRequired":
       return "执行服务记录：需要管理员批准";
     case "accepted":
@@ -128,18 +130,28 @@ function stops(value: StopOutcome): string {
   return exhaustive;
 }
 function softwareDiagnostic(value: SoftwareDiagnostic): string {
-  const labels: Record<SoftwareDiagnostic, string> = {
-    cleanupPending: "临时安装文件尚待安全清理，资源占用保留",
-    cleanupUnverified: "无法确认临时目录归属，需要人工核实",
-    awaitingDetection: "等待独立软件检测",
-    restartPending: "安装器要求重启设备；重启后重新核实",
-    detectionUnavailable: "软件检测不可用，请核对设备与读取权限",
-    unrecognizedVersion: "检测到未知软件内容，需要人工核实",
-    detectionBudgetExceeded: "软件检测预算耗尽，等待下一次有界核实",
-    desiredStateObserved: "已观察到目标软件状态；不代表后台活动已终止",
-    desiredStateMissing: "已检测软件状态，尚未达到目标",
-  };
-  return labels[value];
+  switch (value) {
+    case "cleanupPending":
+      return "临时安装文件尚待安全清理，资源占用保留";
+    case "cleanupUnverified":
+      return "无法确认临时目录归属，需要人工核实";
+    case "awaitingDetection":
+      return "等待独立软件检测";
+    case "restartPending":
+      return "安装器要求重启设备；重启后重新核实";
+    case "detectionUnavailable":
+      return "软件检测不可用，请核对设备与读取权限";
+    case "unrecognizedVersion":
+      return "检测到未知软件内容，需要人工核实";
+    case "detectionBudgetExceeded":
+      return "软件检测预算耗尽，等待下一次有界核实";
+    case "desiredStateObserved":
+      return "已观察到目标软件状态；不代表后台活动已终止";
+    case "desiredStateMissing":
+      return "已检测软件状态，尚未达到目标";
+  }
+  const exhaustive: never = value;
+  return exhaustive;
 }
 function assessments(value: EffectAssessment): string {
   switch (value) {
@@ -206,6 +218,42 @@ function cause(value: DispatchCause | null): string {
       ? limits(value.limit)
       : causes(value);
 }
+type SoftwareAction = Extract<
+  ExecutionTaskDetails["action"]["execution"],
+  { kind: "software" }
+>;
+function adapterLabel(value: SoftwareAction["adapter"]): string {
+  switch (value) {
+    case "msi":
+      return "Windows MSI";
+    case "winget":
+      return "WinGet";
+    case "pkg":
+      return "macOS PKG";
+    case "homebrew":
+      return "Homebrew";
+    case "windowsBundle":
+      return "Windows ZIP Bundle";
+    case "macosBundle":
+      return "macOS ZIP Bundle";
+  }
+  const exhaustive: never = value;
+  return exhaustive;
+}
+function mutationLabel(value: SoftwareAction["mutation"]): string {
+  switch (value) {
+    case "install":
+      return "安装";
+    case "upgrade":
+      return "升级";
+    case "downgrade":
+      return "降级";
+    case "uninstall":
+      return "卸载";
+  }
+  const exhaustive: never = value;
+  return exhaustive;
+}
 const text = (value: unknown) => JSON.stringify(value, null, 2);
 </script>
 <template>
@@ -238,8 +286,8 @@ const text = (value: unknown) => JSON.stringify(value, null, 2);
     <p class="plan-validity">
       {{ validity }}（按本机时间判断；实际准入由执行服务核验）。
     </p>
-    <p v-if="validity !== '计划在有效期内'">
-      这是已读取的冻结计划与历史阶段；请重新读取详情，必要时获取新冻结计划。不要据此重复派发。
+    <p v-if="validity !== '动作在有效期内'">
+      这是已读取的冻结动作与历史阶段；请重新读取详情，必要时重新发起新请求。不要据此重复派发。
     </p>
     <p v-if="details.status.mode === 'test'">
       测试结果不代表真实设备变更或生产接线完成。
@@ -247,34 +295,20 @@ const text = (value: unknown) => JSON.stringify(value, null, 2);
     <p v-if="details.status.cancelRequested">
       执行取消已请求；取消意图、停止响应和效果验证分别记录。
     </p>
-    <RequestOrigin :plan="details.plan" />
+    <RequestOrigin :input="details.action" />
     <dl>
       <dt>原始执行请求</dt>
       <dd>{{ details.status.operationRequestId }}</dd>
-      <dt>冻结计划 / 摘要</dt>
-      <dd>{{ details.plan.planId }}<br />{{ details.plan.planDigest }}</dd>
-      <template v-if="details.plan.execution.kind === 'software'">
+      <dt>冻结动作 / 摘要</dt>
+      <dd>
+        {{ details.action.requestId }}<br />{{ details.action.contentDigest }}
+      </dd>
+      <template v-if="details.action.execution.kind === 'software'">
         <dt>软件执行</dt>
         <dd class="software-operation">
-          {{
-            {
-              msi: "Windows MSI",
-              winget: "WinGet",
-              pkg: "macOS PKG",
-              homebrew: "Homebrew",
-              windowsBundle: "Windows ZIP Bundle",
-              macosBundle: "macOS ZIP Bundle",
-            }[details.plan.execution.adapter]
-          }}
+          {{ adapterLabel(details.action.execution.adapter) }}
           ·
-          {{
-            {
-              install: "安装",
-              upgrade: "升级",
-              downgrade: "降级",
-              uninstall: "卸载",
-            }[details.plan.execution.mutation]
-          }}
+          {{ mutationLabel(details.action.execution.mutation) }}
         </dd>
       </template>
       <dt>当前尝试</dt>
@@ -284,44 +318,44 @@ const text = (value: unknown) => JSON.stringify(value, null, 2);
       </dd>
       <dt>目标</dt>
       <dd>
-        <pre>{{ text(details.plan.target) }}</pre>
+        <pre>{{ text(details.action.target) }}</pre>
       </dd>
       <dt>运行身份</dt>
       <dd>
-        <pre>{{ text(details.plan.runAs) }}</pre>
+        <pre>{{ text(details.action.runAs) }}</pre>
       </dd>
       <dt>操作与资源版本</dt>
       <dd>
-        <pre>{{ text(details.plan.operation) }}</pre>
+        <pre>{{ text(details.action.operation) }}</pre>
       </dd>
       <dt>精确制品</dt>
       <dd>
-        <pre>{{ text(details.plan.artifact) }}</pre>
+        <pre>{{ text(details.action.artifact) }}</pre>
       </dd>
       <dt>解释器</dt>
       <dd>
-        <pre>{{ text(details.plan.interpreter) }}</pre>
+        <pre>{{ text(details.action.interpreter) }}</pre>
       </dd>
       <dt>策略版本</dt>
       <dd>
-        <pre>{{ text(details.plan.policy) }}</pre>
+        <pre>{{ text(details.action.policy) }}</pre>
       </dd>
       <dt>用户会话要求</dt>
       <dd>
-        <pre>{{ text(details.plan.sessionRequirement) }}</pre>
+        <pre>{{ text(details.action.sessionRequirement) }}</pre>
       </dd>
       <dt>有效期</dt>
       <dd>
-        生效：{{ instant(details.plan.validity.notBeforeUnixMs) }}<br />
-        到期（不含）：{{ instant(details.plan.validity.expiresAtUnixMs) }}
+        生效：{{ instant(details.action.validity.notBeforeUnixMs) }}<br />
+        到期（不含）：{{ instant(details.action.validity.expiresAtUnixMs) }}
       </dd>
       <dt>累计预算</dt>
       <dd>
-        <pre>{{ text(details.plan.budget) }}</pre>
+        <pre>{{ text(details.action.budget) }}</pre>
       </dd>
       <dt>访问范围</dt>
       <dd>
-        <pre>{{ text(details.plan.access) }}</pre>
+        <pre>{{ text(details.action.access) }}</pre>
       </dd>
       <dt>派发诊断 / 停止响应</dt>
       <dd>

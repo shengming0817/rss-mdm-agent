@@ -117,7 +117,7 @@ fn effect_must_follow_termination_both_live_and_after_restore() {
     impl ObservationVerifier for OldEffect {
         fn verify(
             &self,
-            p: &FrozenPlan,
+            p: &FrozenExecution,
             a: &AttemptId,
             e: &EvidenceRef,
             _: u64,
@@ -201,7 +201,7 @@ fn validity_and_cancel_stop_causes_are_distinct_and_verifier_errors_survive() {
     impl ObservationVerifier for Unavailable {
         fn verify(
             &self,
-            _: &FrozenPlan,
+            _: &FrozenExecution,
             _: &AttemptId,
             _: &EvidenceRef,
             _: u64,
@@ -222,13 +222,13 @@ fn id(s: &str) -> Id {
 fn aid(s: &str) -> AttemptId {
     AttemptId::new(s).unwrap()
 }
-fn plan() -> FrozenPlan {
+fn plan() -> FrozenExecution {
     plan_for(Authority::Test {
         id: id("test-authority"),
     })
 }
-fn plan_for(authority: Authority) -> FrozenPlan {
-    let l = PlanLimits {
+fn plan_for(authority: Authority) -> FrozenExecution {
+    let l = ExecutionLimits {
         max_input_bytes: 65536,
         max_depth: 32,
         max_nodes: 4096,
@@ -239,7 +239,7 @@ fn plan_for(authority: Authority) -> FrozenPlan {
         max_stdin_bytes: 65536,
         max_attempts: 3,
     };
-    let mut p = decode_plan(
+    let mut p = decode_execution(
         include_bytes!("../../execution-contract/tests/fixtures/plan.json"),
         &l,
     )
@@ -247,7 +247,7 @@ fn plan_for(authority: Authority) -> FrozenPlan {
     p.request.authority = authority;
     p.budget.max_attempts = 3;
     p.validity.expires_at_unix_ms = 10000;
-    FrozenPlan::freeze(p, &l).unwrap()
+    FrozenExecution::freeze(p, &l).unwrap()
 }
 fn evidence(n: &str) -> EvidenceRef {
     EvidenceRef {
@@ -267,15 +267,15 @@ struct Verifier {
 impl ObservationVerifier for Verifier {
     fn verify(
         &self,
-        p: &FrozenPlan,
+        p: &FrozenExecution,
         a: &AttemptId,
         e: &EvidenceRef,
         now: u64,
     ) -> Result<ObservationFacts, ObservationError> {
         self.calls.set(self.calls.get() + 1);
         Ok(ObservationFacts {
-            plan_id: p.spec().plan_id.clone(),
-            plan_digest: p.digest().clone(),
+            request_id: p.spec().request.request_id.clone(),
+            content_digest: p.digest().clone(),
             attempt_id: if self.wrong_attempt {
                 aid("wrong")
             } else {
@@ -392,7 +392,7 @@ fn first_commit_yields_dispatch_but_replay_and_restore_do_not() {
     let calls = Cell::new(0);
     action.dispatch(|action| {
         assert_eq!(action.attempt_id(), &aid("a1"));
-        assert_eq!(action.plan_digest(), plan().digest());
+        assert_eq!(action.content_digest(), plan().digest());
         assert_eq!(action.runner(), &id("test-runner"));
         assert_eq!(action.mode(), ExecutionMode::Test);
         assert_eq!(action.committed_revision(), next.snapshot().revision);
@@ -447,7 +447,7 @@ fn terminal_output_cannot_refund_already_accounted_bytes() {
 }
 
 // These are synthetic authenticated facts testing core category rules, not OS evidence.
-fn real_started() -> (FrozenPlan, Execution) {
+fn real_started() -> (FrozenExecution, Execution) {
     let p = plan_for(Authority::Local {
         id: id("local-authority"),
     });
@@ -507,7 +507,7 @@ fn real_observations() -> [(Observation, EvidenceKind); 4] {
         (Observation::Uncertain, EvidenceKind::StateObserved),
     ]
 }
-fn real_state_for(observation: &Observation) -> (FrozenPlan, Execution) {
+fn real_state_for(observation: &Observation) -> (FrozenExecution, Execution) {
     let (p, s) = real_started();
     if matches!(observation, Observation::Effect { .. }) {
         let s = real_observe(
@@ -947,14 +947,14 @@ fn verifier_binding_clock_and_evidence_failures_are_closed() {
     impl ObservationVerifier for BadFacts {
         fn verify(
             &self,
-            p: &FrozenPlan,
+            p: &FrozenExecution,
             a: &AttemptId,
             e: &EvidenceRef,
             _: u64,
         ) -> Result<ObservationFacts, ObservationError> {
             let mut f = ObservationFacts {
-                plan_id: p.spec().plan_id.clone(),
-                plan_digest: p.digest().clone(),
+                request_id: p.spec().request.request_id.clone(),
+                content_digest: p.digest().clone(),
                 attempt_id: a.clone(),
                 evidence: e.clone(),
                 observed_at_unix_ms: 1200,
@@ -965,8 +965,8 @@ fn verifier_binding_clock_and_evidence_failures_are_closed() {
             };
             match self.0 {
                 0 => return Err(ObservationError::Untrusted),
-                1 => f.plan_id = PlanId::new("other").unwrap(),
-                2 => f.plan_digest = Digest::new("ab".repeat(32)).unwrap(),
+                1 => f.request_id = RequestId::new("other").unwrap(),
+                2 => f.content_digest = Digest::new("ab".repeat(32)).unwrap(),
                 3 => f.attempt_id = aid("other"),
                 4 => f.evidence = evidence("other"),
                 5 => f.observed_at_unix_ms = 1099,

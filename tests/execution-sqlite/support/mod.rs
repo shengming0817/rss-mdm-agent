@@ -25,7 +25,7 @@ pub fn operation(s: &str) -> OperationRequestId {
 }
 pub fn limits() -> Limits {
     Limits {
-        plan: PlanLimits {
+        input: ExecutionLimits {
             max_input_bytes: 65_536,
             max_depth: 32,
             max_nodes: 4096,
@@ -52,16 +52,21 @@ pub fn limits() -> Limits {
         busy_timeout_ms: 1000,
     }
 }
-pub fn plan() -> FrozenPlan {
-    FrozenPlan::freeze(
-        decode_plan(
+pub fn plan() -> FrozenExecution {
+    let original = FrozenExecution::freeze(
+        decode_execution(
             include_bytes!("../../../crates/execution-contract/tests/fixtures/plan.json"),
-            &limits().plan,
+            &limits().input,
         )
         .unwrap(),
-        &limits().plan,
+        &limits().input,
     )
-    .unwrap()
+    .unwrap();
+    let mut spec = original.spec().clone();
+    spec.request.initiator = execution_contract::Initiator::Policy {
+        policy: spec.policy.clone(),
+    };
+    FrozenExecution::freeze(spec, &limits().input).unwrap()
 }
 pub struct Database {
     pub root: PathBuf,
@@ -118,7 +123,7 @@ impl Drop for Database {
 }
 #[derive(Clone)]
 pub struct TestHost {
-    pub plan: FrozenPlan,
+    pub plan: FrozenExecution,
     pub now: Cell<u64>,
     pub calls: Cell<u32>,
     pub entries: Vec<TrustedApproval>,
@@ -143,8 +148,8 @@ impl TestHost {
                 definition: ApprovalDefinition {
                     reference: reference(&format!("approval-{n}")),
                     approver: ActorId::new(format!("approver-{n}")).unwrap(),
-                    plan_id: plan.spec().plan_id.clone(),
-                    plan_digest: plan.digest().clone(),
+                    request_id: plan.spec().request.request_id.clone(),
+                    content_digest: plan.digest().clone(),
                     profiles: vec![reference(&format!("profile-{n}"))],
                     validity: plan.spec().validity,
                     max_uses: 1,
@@ -170,7 +175,7 @@ impl TestHost {
         }
     }
     pub fn scope(&self) -> Scope {
-        Scope::from_plan(&self.plan)
+        Scope::from_input(&self.plan)
     }
     pub fn bindings(&self) -> Vec<ProfileApproval> {
         self.entries
@@ -269,7 +274,7 @@ impl Host for TestHost {
     }
     fn admit(
         &self,
-        plan: &FrozenPlan,
+        plan: &FrozenExecution,
         attempt: &AttemptId,
         bindings: &[ProfileApproval],
         approvals: &dyn ApprovalVerifier,
@@ -297,7 +302,11 @@ impl Host for TestHost {
     }
 }
 impl AuthorityVerifier for TestHost {
-    fn verify(&self, _: &FrozenPlan, _: &AttemptId) -> Result<AuthorityFacts, VerificationError> {
+    fn verify(
+        &self,
+        _: &FrozenExecution,
+        _: &AttemptId,
+    ) -> Result<AuthorityFacts, VerificationError> {
         let p = self.plan.spec();
         let rules = if self.entries.is_empty() {
             vec![Rule {
@@ -320,6 +329,8 @@ impl AuthorityVerifier for TestHost {
                 .collect()
         };
         Ok(AuthorityFacts {
+            verified_origin: p.request.initiator.clone(),
+            risk: Some(execution_admission::RiskLevel::One),
             subject: SubjectFacts {
                 authority: p.request.authority.clone(),
                 actor: p.request.actor.clone(),
@@ -353,15 +364,15 @@ impl TestEvidence {
 impl ObservationVerifier for TestEvidence {
     fn verify(
         &self,
-        plan: &FrozenPlan,
+        plan: &FrozenExecution,
         attempt: &AttemptId,
         evidence: &EvidenceRef,
         now: u64,
     ) -> Result<ObservationFacts, ObservationError> {
         self.calls.set(self.calls.get() + 1);
         Ok(ObservationFacts {
-            plan_id: plan.spec().plan_id.clone(),
-            plan_digest: plan.digest().clone(),
+            request_id: plan.spec().request.request_id.clone(),
+            content_digest: plan.digest().clone(),
             attempt_id: attempt.clone(),
             evidence: evidence.clone(),
             observed_at_unix_ms: now,

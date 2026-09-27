@@ -37,22 +37,10 @@ pub trait ExecutionServicePort: Send + Sync + 'static {
         &self,
         wait: CancellationToken,
     ) -> impl Future<Output = Result<CapabilityView, ServiceError>> + Send;
-    /// Freeze/preview without authorizing execution or consuming approval.
-    fn preview(
+    /// Accept one immutable action; return its status or required user confirmation.
+    fn execute(
         &self,
-        request: PreviewRequest,
-        wait: CancellationToken,
-    ) -> impl Future<Output = Result<PlanPreview, ServiceError>> + Send;
-    /// Record an immutable candidate with stable content conflict semantics.
-    fn propose(
-        &self,
-        request: CandidateRequest,
-        wait: CancellationToken,
-    ) -> impl Future<Output = Result<CandidateReceipt, ServiceError>> + Send;
-    /// Atomically accept/replay under the bound identity. No new attempt on duplicate delivery.
-    fn submit(
-        &self,
-        request: SubmitRequest,
+        request: ExecuteRequest,
         wait: CancellationToken,
     ) -> impl Future<Output = Result<OperationStatus, ServiceError>> + Send;
     /// Authorized recovery after response loss, scoped to the trusted namespace.

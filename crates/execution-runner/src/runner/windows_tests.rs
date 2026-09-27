@@ -9,8 +9,8 @@ fn now() -> Result<u64, Error> {
         .unwrap()
         .as_millis() as u64)
 }
-fn limits() -> PlanLimits {
-    execution_app::test_store_limits().plan
+fn limits() -> ExecutionLimits {
+    execution_app::test_store_limits().input
 }
 fn interpreter() -> PathBuf {
     std::env::var_os("RSS_TEST_PWSH7")
@@ -20,7 +20,7 @@ fn interpreter() -> PathBuf {
 static NEXT: AtomicU64 = AtomicU64::new(0);
 struct Fixture {
     root: PathBuf,
-    plan: FrozenPlan,
+    plan: FrozenExecution,
     runner: NativeRunner,
 }
 impl Drop for Fixture {
@@ -73,7 +73,7 @@ fn fixture(script: &str, argv: Vec<LaunchArg>, budget: u64, timeout: u64) -> Fix
         serde_json::json!({"totalTimeoutMs":timeout,"totalOutputBytes":budget,"maxAttempts":1});
     let time = now().unwrap();
     value["validity"] = serde_json::json!({"notBeforeUnixMs":time-1,"expiresAtUnixMs":time+60000});
-    let limits = PlanLimits {
+    let limits = ExecutionLimits {
         max_input_bytes: 65536,
         max_depth: 32,
         max_nodes: 4096,
@@ -84,8 +84,8 @@ fn fixture(script: &str, argv: Vec<LaunchArg>, budget: u64, timeout: u64) -> Fix
         max_stdin_bytes: 65536,
         max_attempts: 3,
     };
-    let plan = FrozenPlan::freeze(
-        decode_plan(&serde_json::to_vec(&value).unwrap(), &limits).unwrap(),
+    let plan = FrozenExecution::freeze(
+        decode_execution(&serde_json::to_vec(&value).unwrap(), &limits).unwrap(),
         &limits,
     )
     .unwrap();
@@ -137,10 +137,10 @@ fn finish(f: &Fixture, id: &AttemptId) -> ProcessEvidence {
     }
 }
 
-fn replan(f: &mut Fixture, change: impl FnOnce(&mut PlanSpec)) {
+fn replan(f: &mut Fixture, change: impl FnOnce(&mut ExecutionInput)) {
     let mut spec = f.plan.spec().clone();
     change(&mut spec);
-    let plan = FrozenPlan::freeze(spec, &limits()).unwrap();
+    let plan = FrozenExecution::freeze(spec, &limits()).unwrap();
     let artifacts = f.runner.artifacts.remove(f.plan.digest().as_str()).unwrap();
     f.runner
         .artifacts
@@ -229,7 +229,7 @@ struct Input(Vec<u8>);
 impl crate::InputResolver for Input {
     fn resolve(
         &self,
-        _: &FrozenPlan,
+        _: &FrozenExecution,
         _: &AttemptId,
         _: &VersionedRef,
         _: u64,

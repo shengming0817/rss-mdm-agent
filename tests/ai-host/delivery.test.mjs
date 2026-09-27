@@ -106,10 +106,10 @@ async function setup(t) {
   };
 }
 const proposal = {
-  name: "execution_submit",
+  name: "execution_execute",
   arguments: {
     operationRequestId: "request",
-    plan: { planId: "plan", digest: "0".repeat(64) },
+    plan: { requestId: "plan", digest: "0".repeat(64) },
   },
 };
 test("delivery survives an ended run and SQLite reopen; unknown never causes blind resend", async (t) => {
@@ -185,7 +185,7 @@ test("exact operation/content conflict is permanent and a hung receiver has a bo
       ...proposal,
       arguments: {
         ...proposal.arguments,
-        plan: { planId: "different", digest: "1".repeat(64) },
+        plan: { requestId: "different", digest: "1".repeat(64) },
       },
     },
     budget(),

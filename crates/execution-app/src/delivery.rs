@@ -16,8 +16,8 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
     ) -> Result<Receipt, Error> {
         let context = Some(caller);
         let execution = self.load(context, request, ExecutionAccess::Interact)?;
-        let plan = execution.plan();
-        let scope = Scope::from_plan(plan);
+        let plan = execution.input();
+        let scope = Scope::from_input(plan);
         let op = operation(plan, "interaction-open", id.as_str())?;
         let spec = Spec {
             id,
@@ -26,7 +26,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             expires_at_unix_ms,
         };
         let host =
-            Host::new(&self.host, &self.binding, &self.config, context).with_plan(Some(plan));
+            Host::new(&self.host, &self.binding, &self.config, context).with_input(Some(plan));
         Ok(self
             .store
             .open_interaction(&op, &scope, &spec, &host)?
@@ -43,7 +43,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         let context = Some(caller);
         let execution = self.load(context, request, ExecutionAccess::Result)?;
         Ok(self.store.interaction(
-            &Scope::from_plan(execution.plan()),
+            &Scope::from_input(execution.input()),
             id,
             &self.adapter(context, None),
         )?)
@@ -60,13 +60,13 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
     ) -> Result<Receipt, Error> {
         let context = Some(caller);
         let execution = self.load(context, request, ExecutionAccess::Interact)?;
-        let plan = execution.plan();
+        let plan = execution.input();
         let op = operation(plan, "interaction-response", operation_id.as_str())?;
         let host =
-            Host::new(&self.host, &self.binding, &self.config, context).with_plan(Some(plan));
+            Host::new(&self.host, &self.binding, &self.config, context).with_input(Some(plan));
         Ok(self
             .store
-            .apply_interaction(&op, &Scope::from_plan(plan), id, command, &host)?
+            .apply_interaction(&op, &Scope::from_input(plan), id, command, &host)?
             .receipt()
             .clone())
     }
@@ -81,7 +81,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         let context = Some(caller);
         let execution = self.load(context, request, ExecutionAccess::Delivery(consumer))?;
         Ok(self.store.pull_results(
-            &Scope::from_plan(execution.plan()),
+            &Scope::from_input(execution.input()),
             consumer,
             limit,
             &self.adapter(context, None),
@@ -99,9 +99,12 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         let context = Some(caller);
         let execution = self.load(context, request, ExecutionAccess::Delivery(consumer))?;
         let host = Host::new(&self.host, &self.binding, &self.config, context);
-        Ok(self
-            .store
-            .confirm(&Scope::from_plan(execution.plan()), consumer, event, &host)?)
+        Ok(self.store.confirm(
+            &Scope::from_input(execution.input()),
+            consumer,
+            event,
+            &host,
+        )?)
     }
     /// Privileged evidence with independent current ReadAudit authorization. Ordinary status or
     /// result delivery rights do not authorize reading policy, approval or actor audit details.
@@ -114,7 +117,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         let context = Some(caller);
         let execution = self.load(context, request, ExecutionAccess::Audit)?;
         Ok(self.store.audit(
-            &Scope::from_plan(execution.plan()),
+            &Scope::from_input(execution.input()),
             operation,
             &self.adapter(context, None),
         )?)

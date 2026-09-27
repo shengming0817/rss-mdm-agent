@@ -42,10 +42,8 @@ fn main() {
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
             "self_service_snapshot",
-            "self_service_preview",
-            "self_service_submit",
-            "self_service_respond",
-            "self_service_approve",
+            "self_service_execute",
+            "self_service_confirm",
             "self_service_cancel",
             "execution_task_details",
             "save_connection",

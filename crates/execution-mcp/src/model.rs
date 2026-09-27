@@ -1,4 +1,4 @@
-use execution_contract::{AttemptId, Digest, ExactArtifactRef, Id, PlanId, RequestId};
+use execution_contract::{AttemptId, Digest, ExactArtifactRef, Id, RequestId};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
@@ -63,28 +63,6 @@ pub(crate) struct CatalogInput {
     pub arguments: Box<RawValue>,
 }
 
-/// Preview either an exact catalog choice or a previously proposed immutable candidate.
-#[derive(Deserialize, JsonSchema)]
-#[serde(
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase",
-    deny_unknown_fields
-)]
-pub(crate) enum PreviewInput {
-    /// Catalog parameters still require C03 validation.
-    Catalog {
-        /// Exact selection.
-        selection: CatalogInput,
-    },
-    /// Candidate ownership and content must be checked by the execution service.
-    Candidate {
-        /// Stable operation identity.
-        operation_request_id: RequestId,
-        /// Exact immutable candidate.
-        candidate: ExactArtifactRef,
-    },
-}
-
 /// Untrusted proposal input; there is no approval, actor or permission field.
 #[derive(Deserialize, JsonSchema)]
 #[serde(
@@ -92,7 +70,7 @@ pub(crate) enum PreviewInput {
     rename_all_fields = "camelCase",
     deny_unknown_fields
 )]
-pub(crate) enum ProposeInput {
+pub(crate) enum ExecuteInput {
     /// A directory operation using the shared parameter grammar.
     Catalog {
         /// Exact selection.
@@ -137,42 +115,11 @@ impl ScriptDraft {
     }
 }
 /// Validated shape for proposal; authorization and artifact ownership remain in the service.
-pub enum CandidateRequest {
+pub enum ExecuteRequest {
     /// Normalized catalog parameters.
     Catalog(Box<CatalogCandidate>),
     /// Bounded original source.
     Script(ScriptDraft),
-}
-/// Service preview input; no model-supplied trusted context.
-pub enum PreviewRequest {
-    /// Shared directory selection.
-    Catalog(Box<CatalogCandidate>),
-    /// Service must verify the exact proposed artifact under its bound subject.
-    Candidate {
-        /// Stable operation identity.
-        operation_request_id: RequestId,
-        /// Immutable candidate.
-        candidate: ExactArtifactRef,
-    },
-}
-
-/// Immutable plan identity projected from the execution service's FrozenPlan.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct PlanRef {
-    /// Execution-contract plan ID.
-    pub plan_id: PlanId,
-    /// Existing C01 canonical digest, never an adapter-specific hash.
-    pub digest: Digest,
-}
-/// Explicit idempotent submission. No retry/attempt or approval policy can be supplied.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct SubmitRequest {
-    /// Stable business identity retained through timeout/reconnect.
-    pub operation_request_id: RequestId,
-    /// Exact previously frozen plan.
-    pub plan: PlanRef,
 }
 /// Authorized lookup/cancellation within the host-bound namespace.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -207,26 +154,6 @@ pub struct CapabilityView {
     /// Static/opaque reason identifiers, not raw backend messages.
     pub reasons: Vec<Id>,
 }
-/// An immutable candidate was recorded; it was not approved or executed.
-#[derive(Debug, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct CandidateReceipt {
-    /// Stable operation identity.
-    pub operation_request_id: RequestId,
-    /// Service-owned candidate identity and exact content hash.
-    pub candidate: ExactArtifactRef,
-}
-/// Safe plan preview; never returns script, secrets, or raw parameters.
-#[derive(Debug, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct PlanPreview {
-    /// Stable operation identity.
-    pub operation_request_id: RequestId,
-    /// C01 plan identity and canonical digest.
-    pub plan: PlanRef,
-    /// Explicit capability information from the service.
-    pub capability: CapabilityView,
-}
 /// Read-only service projection. This crate implements no execution state machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -258,14 +185,12 @@ pub struct OperationStatus {
     pub process: Option<execution_contract::ProcessSummary>,
     /// Independent effect assessment, never inferred from process exit.
     pub assessment: Option<execution_lifecycle::EffectAssessment>,
-    /// Durable initial submission receipt; preview alone is false.
-    pub submitted: bool,
     /// Durable cancellation request, independent of termination/effect status.
     pub cancel_requested: bool,
     /// Original business identity.
     pub operation_request_id: RequestId,
-    /// Original frozen plan.
-    pub plan: PlanRef,
+    /// Canonical digest of the original immutable execution input.
+    pub content_digest: Digest,
     /// Service-owned current phase.
     pub phase: OperationPhase,
     /// Service-owned attempt identity, if an attempt exists.

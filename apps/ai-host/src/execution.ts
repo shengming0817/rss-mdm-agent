@@ -91,19 +91,30 @@ export class ParentTransport implements Transport {
 const methods = new Set([
   "execution_catalog",
   "execution_capabilities",
-  "execution_preview",
-  "execution_propose",
-  "execution_submit",
+  "execution_execute",
   "execution_status",
   "execution_cancel",
 ]);
 function businessId(proposal: DeliveryRequest["body"]["proposal"]): unknown {
   const args = proposal.arguments;
-  const variant = args.catalog ?? args.candidate ?? args.script ?? args;
-  return typeof variant === "object" && variant !== null
-    ? ((variant as any).selection?.operationRequestId ??
-        (variant as any).operationRequestId)
-    : undefined;
+  if (proposal.name === "execution_execute") {
+    const catalog = args.catalog;
+    const script = args.script;
+    if (catalog && typeof catalog === "object" && "selection" in catalog) {
+      const selection = catalog.selection;
+      return selection &&
+        typeof selection === "object" &&
+        "operationRequestId" in selection
+        ? selection.operationRequestId
+        : undefined;
+    }
+    return script &&
+      typeof script === "object" &&
+      "operationRequestId" in script
+      ? script.operationRequestId
+      : undefined;
+  }
+  return args.operationRequestId;
 }
 /** MCP owns validation; this mapper supplies stage identity and reconciles against Rust. */
 export async function connectExecution(
@@ -220,7 +231,7 @@ export async function connectExecution(
       const { name, arguments: args } = request.body.proposal;
       try {
         // These reads and exact immutable registrations are receiver-idempotent and never dispatch.
-        if (!["execution_submit", "execution_cancel"].includes(name))
+        if (!["execution_execute", "execution_cancel"].includes(name))
           return ok({
             state: "committed",
             receipt: receipt(request, await call(request, name, args, b)),
@@ -236,25 +247,6 @@ export async function connectExecution(
             state:
               status.error?.code === "notFound" ? "not_submitted" : "unknown",
           });
-        if (name === "execution_submit") {
-          const plan = args.plan as Record<string, unknown>;
-          if (
-            status.result.plan?.planId !== plan?.planId ||
-            status.result.plan?.digest !== plan?.digest
-          )
-            return ok({
-              state: "committed",
-              receipt: receipt(request, {
-                status: "error",
-                error: { code: "conflict" },
-              }),
-            });
-          if (status.result.submitted !== true)
-            return ok({
-              state:
-                status.result.submitted === false ? "not_submitted" : "unknown",
-            });
-        }
         if (
           name === "execution_cancel" &&
           status.result.cancelRequested !== true &&

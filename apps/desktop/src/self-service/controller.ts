@@ -1,14 +1,12 @@
 import { reactive } from "vue";
 import type {
-  Answer,
   CatalogItem,
   FieldInput,
-  Plan,
-  Reply,
+  Draft,
   RequestView,
   SelfServicePort,
   Snapshot,
-  Submission,
+  ActionRef,
 } from "./types";
 function sameSelection(a: CatalogItem, b: CatalogItem) {
   return (
@@ -59,14 +57,11 @@ export function createController(
     fields: new Map<string, FieldInput>(),
     requestId: "",
     revision: 1,
-    plan: null as Plan | null,
     busy: false,
     error: "",
     uncertain: false,
     accepted: false,
     taskId: "",
-    replying: false,
-    replyUnknown: false,
     after: null as string | null,
     pageHistory: [] as (string | null)[],
     loading: false,
@@ -74,10 +69,10 @@ export function createController(
   let generation = 0;
   let snapshotWrites = 0;
   let refreshSequence = 0;
-  let pendingReply: Reply | null = null;
-  let pendingAction: { kind: "cancel" | "approve"; input: Submission } | null =
+  let pendingExecution: Draft | null = null;
+  let pendingAction: { kind: "cancel" | "confirm"; input: ActionRef } | null =
     null;
-  let errorSource: "snapshot" | "submission" | "reply" | "action" | null = null;
+  let errorSource: "snapshot" | "submission" | "action" | null = null;
   function setError(message: string, source: typeof errorSource = null) {
     state.error = message;
     errorSource = source;
@@ -87,11 +82,11 @@ export function createController(
     const snapshot = state.snapshot;
     if (!snapshot) return;
     snapshot.requests = snapshot.requests.map((r) =>
-      r.plan.requestId === task.plan.requestId ? task : r,
+      r.action.requestId === task.action.requestId ? task : r,
     );
     snapshot.referencedRequests = [task];
-    state.taskId = task.plan.requestId;
-    if (task.plan.requestId === state.requestId) {
+    state.taskId = task.action.requestId;
+    if (task.action.requestId === state.requestId) {
       state.accepted = true;
       state.uncertain = false;
     }
@@ -108,13 +103,10 @@ export function createController(
     ) {
       // A submission in flight or with a lost response retains its frozen retry identity.
       // Catalog expiry cannot tell us whether that request was already accepted.
-      const submitted =
-        state.accepted ||
-        state.uncertain ||
-        (state.busy && state.plan !== null);
+      const submitted = state.accepted || state.uncertain || state.busy;
       if (!submitted) {
         generation++;
-        state.plan = null;
+
         state.busy = false;
       }
       if (!item) {
@@ -140,7 +132,6 @@ export function createController(
         requestIds: [
           state.taskId,
           state.uncertain ? state.requestId : "",
-          pendingReply?.requestId ?? "",
           pendingAction?.input.requestId ?? "",
         ].filter(
           (value, index, ids) => value !== "" && ids.indexOf(value) === index,
@@ -155,16 +146,14 @@ export function createController(
       if (state.snapshot && snapshot.instanceId !== state.snapshot.instanceId) {
         generation++;
         state.fields.clear();
-        state.plan = null;
+
         state.item = null;
         state.requestId = "";
         state.uncertain = false;
         state.busy = false;
-        state.replying = false;
         state.accepted = false;
-        pendingReply = null;
         pendingAction = null;
-        state.replyUnknown = false;
+        pendingExecution = null;
         state.taskId = "";
         after = null;
         history = [];
@@ -177,38 +166,24 @@ export function createController(
       state.pageHistory = history;
       rebindSelection(snapshot);
       const tasks = [...snapshot.requests, ...snapshot.referencedRequests];
-      const task = tasks.find((r) => r.plan.requestId === state.requestId);
+      const task = tasks.find((r) => r.action.requestId === state.requestId);
       if (task) {
         state.accepted = true;
         state.uncertain = false;
         if (errorSource === "submission") setError("");
       }
-      if (pendingReply) {
-        const interaction = tasks
-          .find((r) => r.plan.requestId === pendingReply?.requestId)
-          ?.interactions.find((i) => i.id === pendingReply?.interactionId);
-        if (interaction && interaction.status !== "pending") {
-          pendingReply = null;
-          state.replyUnknown = false;
-          if (errorSource === "reply") setError("");
-        }
-      }
       if (pendingAction) {
         const { kind, input } = pendingAction;
         const current = tasks.find(
           (r) =>
-            r.plan.requestId === input.requestId &&
-            r.plan.planId === input.planId &&
-            r.plan.digest === input.digest,
+            r.action.requestId === input.requestId &&
+            r.action.digest === input.digest,
         );
         if (
           current &&
-          (kind === "approve"
-            ? current.status !== "approval" &&
-              current.status !== "unknownEffect"
-            : ["stopped", "complete", "restartRequired"].includes(
-                current.status,
-              ))
+          (kind === "confirm"
+            ? current.status !== "confirmation"
+            : ["stopped", "complete"].includes(current.status))
         ) {
           pendingAction = null;
           if (errorSource === "action") setError("");
@@ -242,9 +217,10 @@ export function createController(
     state.item = item;
     state.page = "detail";
     state.fields.clear();
-    state.plan = null;
+
     state.requestId = port ? newId() : "";
     state.revision = 1;
+    pendingExecution = null;
     state.accepted = false;
     setError("");
   }
@@ -254,27 +230,27 @@ export function createController(
     else state.fields.set(key, value);
     state.requestId = port ? newId() : "";
     state.revision++;
-    state.plan = null;
+    pendingExecution = null;
+
     generation++;
   }
-  async function prepare() {
+  async function execute() {
     if (
       !port ||
       !state.item ||
       !state.snapshot ||
       state.busy ||
       state.accepted ||
-      state.uncertain ||
-      state.item.availability !== "listed" ||
-      state.item.display.requestability !== "allowed"
+      pendingAction
     )
       return;
-    const token = ++generation;
-    state.busy = true;
-    setError("");
-    state.plan = null;
-    try {
-      const plan = await port.preview({
+    if (!pendingExecution) {
+      if (
+        state.item.availability !== "listed" ||
+        state.item.display.requestability !== "allowed"
+      )
+        return;
+      pendingExecution = {
         instanceId: state.snapshot.instanceId,
         requestId: state.requestId,
         revision: state.revision,
@@ -282,94 +258,51 @@ export function createController(
         itemId: state.item.itemId,
         variantId: state.item.variantId,
         fields: Object.fromEntries(state.fields),
-      });
-      if (token === generation) state.plan = plan;
-    } catch (error) {
-      if (token === generation)
-        setError(
-          serviceError(error)
-            ? error.message
-            : "预览响应未收到，可按原请求重试。",
-        );
-    } finally {
-      if (token === generation) state.busy = false;
+      };
     }
-  }
-  function clearSecrets() {
-    let redacted = false;
-    for (const [key, value] of state.fields) {
-      if (value.kind === "secretReference") {
-        state.fields.delete(key);
-        redacted = true;
-      }
-    }
-    // Redaction changes the next draft, not the frozen plan used by submit retries.
-    if (redacted) state.revision++;
-  }
-  async function submit() {
-    if (
-      !port ||
-      !state.plan ||
-      !state.snapshot ||
-      state.busy ||
-      state.accepted ||
-      pendingAction
-    )
-      return;
     state.busy = true;
-    setError("");
-    const plan = state.plan;
     const token = ++generation;
-    clearSecrets();
+    setError("");
     try {
-      const result = await port.submit({
-        instanceId: state.snapshot.instanceId,
-        requestId: plan.requestId,
-        planId: plan.planId,
-        digest: plan.digest,
-      });
+      const result = await port.execute(pendingExecution);
       if (token !== generation) return;
       record(result);
+      pendingExecution = null;
+      state.fields.clear();
       state.page = "tasks";
     } catch (error) {
       if (token !== generation) return;
       if (rejected(error)) {
-        setError(error.message);
+        pendingExecution = null;
         state.uncertain = false;
-        state.plan = null;
+        setError(error.message);
       } else {
         state.uncertain = true;
-        setError(
-          "提交响应未收到，结果尚不明确。请查询任务或按原请求重试，不要新建重复请求。",
-          "submission",
-        );
+        setError("执行请求结果未确认，请查询或重试原请求。", "submission");
       }
     } finally {
       if (token === generation) state.busy = false;
     }
   }
-  async function act(kind: "cancel" | "approve", task: RequestView) {
+  async function act(kind: "cancel" | "confirm", task: RequestView) {
     if (
       !port ||
       !state.snapshot ||
       state.busy ||
       state.uncertain ||
-      pendingReply ||
-      (kind === "approve" && task.status !== "approval")
+      (kind === "confirm" && task.status !== "confirmation")
     )
       return;
-    const input: Submission = {
+    const input: ActionRef = {
       instanceId: state.snapshot.instanceId,
-      requestId: task.plan.requestId,
-      planId: task.plan.planId,
-      digest: task.plan.digest,
+      requestId: task.action.requestId,
+      digest: task.action.digest,
     };
     if (
       pendingAction &&
       (pendingAction.kind !== kind ||
         pendingAction.input.instanceId !== input.instanceId ||
         pendingAction.input.requestId !== input.requestId ||
-        pendingAction.input.planId !== input.planId ||
         pendingAction.input.digest !== input.digest)
     )
       return;
@@ -379,7 +312,7 @@ export function createController(
     try {
       const result = await (kind === "cancel"
         ? port.cancel(pending.input)
-        : port.approve(pending.input));
+        : port.confirm(pending.input));
       if (state.snapshot?.instanceId !== input.instanceId) return;
       record(result);
       pendingAction = null;
@@ -393,7 +326,7 @@ export function createController(
         setError(
           kind === "cancel"
             ? "取消请求未确认；请查询原任务，不能据此认定已停止。"
-            : "批准未确认；请刷新原任务，不创建新执行请求。",
+            : "动作确认结果未收到；请刷新原任务，不创建新执行请求。",
           "action",
         );
     } finally {
@@ -403,56 +336,8 @@ export function createController(
   async function cancel(task: RequestView) {
     await act("cancel", task);
   }
-  async function approve(task: RequestView) {
-    await act("approve", task);
-  }
-  async function sendReply() {
-    if (!port || !pendingReply || state.replying) return;
-    state.replying = true;
-    setError("");
-    const reply = pendingReply;
-    try {
-      const result = await port.respond(reply);
-      if (state.snapshot?.instanceId !== reply.instanceId) return;
-      record(result);
-      pendingReply = null;
-      state.replyUnknown = false;
-    } catch (error) {
-      if (state.snapshot?.instanceId !== reply.instanceId) return;
-      if (rejected(error)) {
-        setError(error.message);
-        pendingReply = null;
-        state.replyUnknown = false;
-      } else {
-        state.replyUnknown = true;
-        setError("交互回答结果不明，请刷新或重试原回答。", "reply");
-      }
-    } finally {
-      if (state.snapshot?.instanceId === reply.instanceId)
-        state.replying = false;
-    }
-  }
-  async function respond(
-    task: RequestView,
-    interactionId: string,
-    answer: Answer,
-  ) {
-    if (
-      !port ||
-      !state.snapshot ||
-      state.replying ||
-      pendingReply ||
-      pendingAction
-    )
-      return;
-    pendingReply = {
-      instanceId: state.snapshot.instanceId,
-      requestId: task.plan.requestId,
-      interactionId,
-      commandId: newId(),
-      answer,
-    };
-    await sendReply();
+  async function confirm(task: RequestView) {
+    await act("confirm", task);
   }
   function navigate(page: string) {
     state.page = page;
@@ -466,12 +351,9 @@ export function createController(
     previousPage,
     select,
     change,
-    prepare,
-    submit,
-    respond,
-    approve,
+    execute,
+    confirm,
     cancel,
-    retryReply: sendReply,
     navigate,
   };
 }

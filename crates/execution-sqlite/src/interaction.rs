@@ -5,6 +5,26 @@ use execution_interaction::{self as interaction, Command, Interaction, Reference
 use rusqlite::params;
 
 impl Store {
+    /// Read the execution confirmation under the caller's existing operation access.
+    /// Missing is distinct from corrupt/unavailable storage; this does not grant result access.
+    pub fn execution_confirmation_state(
+        &self,
+        input: &execution_contract::FrozenExecution,
+        access: ExecutionAccess<'_>,
+        host: &impl Host,
+    ) -> Result<Option<Interaction>, Error> {
+        let scope = Scope::from_input(input);
+        let tx = self.conn.unchecked_transaction()?;
+        crate::database::ensure_current(&tx, &self.authority, self.limits)?;
+        self.check_scope(&scope)?;
+        access.authorize(&scope, host)?;
+        match load(&tx, &scope, &execution_confirmation(input).id, self.limits) {
+            Ok(state) => Ok(Some(state)),
+            Err(Error::NotFound) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Open an interaction bound to an existing execution scope. Answers are never approvals.
     pub fn open_interaction(
         &mut self,
@@ -65,6 +85,17 @@ impl Store {
         };
         let plan = load_plan(&w.tx, scope, w.limits)?;
         let state = load(&w.tx, scope, id, w.limits)?;
+        if let interaction::Kind::ExecutionAction { digest } = &state.snapshot().spec.kind {
+            if digest.as_str() != plan.digest().as_str() {
+                return Err(Error::Denied);
+            }
+            host.authorize(AccessRequest {
+                access: Access::Execute,
+                scope,
+                consumer: None,
+                interaction: Some((&state.snapshot().spec, command)),
+            })?;
+        }
         host.authorize(AccessRequest {
             access: Access::Interact,
             scope,
@@ -127,7 +158,7 @@ impl Store {
         load(&tx, scope, id, self.limits)
     }
 }
-fn load(
+pub(crate) fn load(
     conn: &rusqlite::Connection,
     scope: &Scope,
     id: &Reference,
@@ -149,4 +180,43 @@ fn load(
         return Err(Error::Corrupt);
     }
     Ok(state)
+}
+
+/// Stable interaction identity for the one product execution confirmation.
+pub fn execution_confirmation(plan: &execution_contract::FrozenExecution) -> Spec {
+    Spec {
+        id: Reference::new(format!("execute-{}", plan.digest().as_str())).expect("bounded digest"),
+        subject: Scope::from_input(plan).interaction_subject(),
+        kind: interaction::Kind::ExecutionAction {
+            digest: Reference::new(plan.digest().as_str()).expect("digest"),
+        },
+        expires_at_unix_ms: plan.spec().validity.expires_at_unix_ms.min(
+            plan.spec()
+                .validity
+                .not_before_unix_ms
+                .saturating_add(60_000),
+        ),
+    }
+}
+pub(crate) fn confirmed(
+    conn: &rusqlite::Connection,
+    plan: &execution_contract::FrozenExecution,
+    limits: Limits,
+    now: u64,
+) -> Result<bool, Error> {
+    let expected = execution_confirmation(plan);
+    let state = match load(conn, &Scope::from_input(plan), &expected.id, limits) {
+        Ok(s) => s,
+        Err(Error::NotFound) => return Ok(false),
+        Err(e) => return Err(e),
+    };
+    Ok(state.snapshot().spec == expected
+        && now < expected.expires_at_unix_ms
+        && matches!(
+            state.snapshot().status,
+            interaction::Status::Answered {
+                response: interaction::Response::Confirmation { accepted: true },
+                ..
+            }
+        ))
 }

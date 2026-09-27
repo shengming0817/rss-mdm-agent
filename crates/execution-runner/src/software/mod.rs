@@ -73,7 +73,7 @@ pub trait SoftwareProbe: Send + Sync {
     /// name writers. A pathname recheck or this runner's advisory lock is not sufficient.
     fn begin_mutation(
         &self,
-        plan: &FrozenPlan,
+        plan: &FrozenExecution,
         attempt: &AttemptId,
         deadline: std::time::Instant,
     ) -> Result<Box<dyn PreparedSoftwareMutation>, Error>;
@@ -81,17 +81,17 @@ pub trait SoftwareProbe: Send + Sync {
     /// a newly acquired advisory lock for the original backend ownership.
     fn recover_mutation(
         &self,
-        plan: &FrozenPlan,
+        plan: &FrozenExecution,
         attempt: &AttemptId,
         deadline: std::time::Instant,
     ) -> Result<Box<dyn SoftwareMutationLease>, Error>;
 
     /// Establish current incoming dependency use for the exact package under the manager lock.
-    fn dependency_use(&self, plan: &FrozenPlan) -> Result<DependencyUse, Error>;
+    fn dependency_use(&self, plan: &FrozenExecution) -> Result<DependencyUse, Error>;
     /// Compare the exact installed/desired version pair using this package ecosystem.
     fn comparison(
         &self,
-        plan: &FrozenPlan,
+        plan: &FrozenExecution,
         installed: &PackageValue,
     ) -> Result<Option<VersionComparison>, Error>;
     /// Independently reconcile installer/delegated work for this attempt. A lock, PID absence,
@@ -99,7 +99,7 @@ pub trait SoftwareProbe: Send + Sync {
     /// Recovery may return proof without reconstructing a historical process exit or output count.
     fn quiescence(
         &self,
-        plan: &FrozenPlan,
+        plan: &FrozenExecution,
         attempt: &AttemptId,
     ) -> Result<Option<execution_contract::EvidenceRef>, Error>;
 }
@@ -210,7 +210,7 @@ pub(crate) fn detect(spec: &SoftwareSpec, control: &PreparationControl) -> Detec
 impl SoftwareArtifacts {
     pub(crate) fn prepare(
         &self,
-        plan: &FrozenPlan,
+        plan: &FrozenExecution,
         attempt: &AttemptId,
         provenance: SoftwareProvenance,
         work_root: &std::path::Path,

@@ -8,91 +8,12 @@
  */
 export type Digest = string;
 /**
- * Immutable local plan identity.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "PlanId".
- */
-export type PlanId = string;
-/**
  * Local execution request identity.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "RequestId".
  */
 export type RequestId = string;
-/**
- * Exact waiting reason. Referenced choices and schemas belong to the caller.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Kind".
- */
-export type Kind =
-  | {
-      kind: "userConfirmation";
-      /**
-       * The bounded purpose of confirmation.
-       */
-      purpose: ConfirmationPurpose;
-    }
-  | {
-      kind: "privacyConsent";
-      /**
-       * Exact privacy scope revision reference.
-       */
-      scope: Reference;
-    }
-  | {
-      kind: "administratorAuthorization";
-      /**
-       * Exact approval request reference.
-       */
-      request: Reference;
-    }
-  | {
-      kind: "parameterInput";
-      /**
-       * Exact schema reference; no schema engine is embedded here.
-       */
-      schema: Reference;
-    }
-  | {
-      kind: "maintenanceWindow";
-      /**
-       * Exact available choices reference.
-       */
-      options: Reference;
-    }
-  | {
-      kind: "restartPrompt";
-      /**
-       * Exact available choices reference.
-       */
-      options: Reference;
-    };
-/**
- * User confirmation cannot stand in for privacy consent or administrator authorization.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "ConfirmationPurpose".
- */
-export type ConfirmationPurpose = "continue" | "closeApplication";
-/**
- * Bounded opaque interaction-owned reference; not a task identity or authority proof.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Reference".
- */
-export type Reference = string;
-/**
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "InteractionStatus".
- */
-export type InteractionStatus =
-  | "pending"
-  | "answered"
-  | "cancelled"
-  | "expired";
 /**
  * Opaque local reference identifier; syntax validity is not authenticity.
  *
@@ -206,14 +127,23 @@ export type DeviceId = string;
 export type Architecture = "x86_64" | "aarch64";
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "ConfirmationStatus".
+ */
+export type ConfirmationStatus =
+  | "pending"
+  | "answered"
+  | "cancelled"
+  | "expired";
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "RequestStatus".
  */
 export type RequestStatus =
   | "waiting"
+  | "confirmation"
   | "approval"
   | "complete"
   | "stopped"
-  | "restartRequired"
   | "unknownEffect";
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -236,32 +166,6 @@ export type FieldInput =
       id: string;
       kind: "secretReference";
       revision: string;
-    };
-/**
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Answer".
- */
-export type Answer =
-  | {
-      accepted: boolean;
-      kind: "confirmation";
-    }
-  | {
-      accepted: boolean;
-      kind: "privacyConsent";
-    }
-  | {
-      kind: "choice";
-      selection: string;
-    }
-  | {
-      fields: {
-        [k: string]: FieldInput;
-      };
-      kind: "parameters";
-    }
-  | {
-      kind: "cancel";
     };
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -350,29 +254,26 @@ export type CatalogKind = "software" | "script" | "tool";
 export type ServiceMode = "fixture" | "s1";
 
 export interface SelfServiceCommands {
-  self_service_approve: Command3;
   self_service_cancel: Command3;
-  self_service_preview: Command2;
-  self_service_respond: Command4;
+  self_service_confirm: Command3;
+  self_service_execute: Command2;
   self_service_snapshot: Command;
-  self_service_submit: Command3;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "Command3".
  */
 export interface Command3 {
-  input: Submission;
+  input: ActionRef;
   output: RequestView;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Submission".
+ * via the `definition` "ActionRef".
  */
-export interface Submission {
+export interface ActionRef {
   digest: Digest;
   instanceId: string;
-  planId: PlanId;
   requestId: RequestId;
 }
 /**
@@ -380,36 +281,16 @@ export interface Submission {
  * via the `definition` "RequestView".
  */
 export interface RequestView {
-  interactions: Interaction[];
+  action: Action;
+  confirmation: Confirmation | null;
   message: string;
-  plan: Plan;
   status: RequestStatus;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Interaction".
+ * via the `definition` "Action".
  */
-export interface Interaction {
-  expiresAtUnixMs: number;
-  id: string;
-  kind: Kind;
-  message: string;
-  options: Choice[];
-  status: InteractionStatus;
-}
-/**
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Choice".
- */
-export interface Choice {
-  id: string;
-  label: string;
-}
-/**
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Plan".
- */
-export interface Plan {
+export interface Action {
   action: Id;
   actor: ActorId;
   authority: Authority;
@@ -421,10 +302,10 @@ export interface Plan {
   network: string;
   parameters: ParameterSummary[];
   permission: string;
-  planId: PlanId;
   requestId: RequestId;
   resource: ResourceBinding;
   revision: number;
+  riskLevel: number | null;
   runAs: string;
   target: string;
   title: string;
@@ -488,6 +369,7 @@ export interface VersionedRef {
 export interface ParameterSummary {
   label: string;
   state: string;
+  value: string | null;
 }
 /**
  * Immutable resource definition pin scoped by the containing catalog authority.
@@ -531,11 +413,20 @@ export interface ResourceSelector {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Confirmation".
+ */
+export interface Confirmation {
+  expiresAtUnixMs: number;
+  message: string;
+  status: ConfirmationStatus;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "Command2".
  */
 export interface Command2 {
   input: Draft;
-  output: Plan;
+  output: RequestView;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -574,25 +465,6 @@ export interface CatalogRef {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command4".
- */
-export interface Command4 {
-  input: Reply;
-  output: RequestView;
-}
-/**
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Reply".
- */
-export interface Reply {
-  answer: Answer;
-  commandId: Reference;
-  instanceId: string;
-  interactionId: string;
-  requestId: RequestId;
-}
-/**
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "Command".
  */
 export interface Command {
@@ -606,7 +478,7 @@ export interface Command {
 export interface SnapshotQuery {
   after: RequestId | null;
   /**
-   * Independently refresh selection and unresolved submit/reply identities (at most three).
+   * Independently refresh selected and unresolved execution/confirmation identities (at most three).
    *
    * @maxItems 3
    */
@@ -644,6 +516,7 @@ export interface CatalogItem {
   name: string;
   reason: string;
   resource: ResourceBinding;
+  riskLevel: number | null;
   variantId: Id;
 }
 /**

@@ -1,6 +1,6 @@
 //! One bounded IPC owner driving the existing application. Peer identity is never a wire field.
 use execution_app::{AppHost, ExecutionApp, RequestContext, RunnerPort};
-use execution_contract::{PlanLimits, RequestId};
+use execution_contract::{ExecutionLimits, RequestId};
 use serde::{Deserialize, Serialize};
 #[cfg(target_os = "macos")]
 use std::sync::atomic::AtomicBool;
@@ -31,14 +31,14 @@ impl Peer {
         self.session
     }
 }
-/// Local IPC V3 request. Idempotency and authorization still belong to ExecutionApp.
+/// Local IPC V4 request. Idempotency and authorization still belong to ExecutionApp.
 #[derive(Serialize)]
 #[serde(tag = "method", rename_all = "camelCase")]
 pub enum Request {
-    /// Submit an exact V3 frozen plan through the application admission funnel.
-    Submit {
+    /// Execute an exact V4 frozen plan through the application admission funnel.
+    Execute {
         /// Raw bounded JSON retained for duplicate-key and canonical contract checks.
-        plan: Box<serde_json::value::RawValue>,
+        input: Box<serde_json::value::RawValue>,
     },
     /// Read an authorized existing request without execution authority.
     Status {
@@ -60,7 +60,7 @@ struct Envelope {
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 enum Method {
-    Submit,
+    Execute,
     Status,
     Cancel,
 }
@@ -68,13 +68,13 @@ enum Method {
 #[serde(deny_unknown_fields)]
 struct RawRequest {
     method: Method,
-    plan: Option<Box<serde_json::value::RawValue>>,
+    input: Option<Box<serde_json::value::RawValue>>,
     request: Option<RequestId>,
 }
 impl RawRequest {
     fn into_request(self) -> Option<Request> {
-        match (self.method, self.plan, self.request) {
-            (Method::Submit, Some(plan), None) => Some(Request::Submit { plan }),
+        match (self.method, self.input, self.request) {
+            (Method::Execute, Some(plan), None) => Some(Request::Execute { input: plan }),
             (Method::Status, None, Some(request)) => Some(Request::Status { request }),
             (Method::Cancel, None, Some(request)) => Some(Request::Cancel { request }),
             _ => None,
@@ -129,12 +129,12 @@ impl Handler for Unbound {
 pub struct Endpoint<H, R, I> {
     app: ExecutionApp<H, R>,
     ingress: I,
-    limits: PlanLimits,
+    limits: ExecutionLimits,
     cursor: Option<RequestId>,
 }
 impl<H: AppHost, R: RunnerPort, I: Ingress> Endpoint<H, R, I> {
     /// Bind the existing application and trusted ingress; creates no credentials or authority.
-    pub fn new(app: ExecutionApp<H, R>, ingress: I, limits: PlanLimits) -> Self {
+    pub fn new(app: ExecutionApp<H, R>, ingress: I, limits: ExecutionLimits) -> Self {
         Self {
             app,
             ingress,
@@ -149,13 +149,13 @@ impl<H: AppHost + Send, R: RunnerPort + Send, I: Ingress> Handler for Endpoint<H
         let result = (|| {
             let caller = self.ingress.authenticate(peer)?;
             match request {
-                Request::Submit { plan } => {
-                    let spec = execution_contract::decode_plan(plan.get().as_bytes(), &self.limits)
+                Request::Execute { input } => {
+                    let spec =
+                        execution_contract::decode_execution(input.get().as_bytes(), &self.limits)
+                            .map_err(|_| execution_app::Error::InvalidInput)?;
+                    let plan = execution_contract::FrozenExecution::freeze(spec, &self.limits)
                         .map_err(|_| execution_app::Error::InvalidInput)?;
-                    let plan = execution_contract::FrozenPlan::freeze(spec, &self.limits)
-                        .map_err(|_| execution_app::Error::InvalidInput)?;
-                    let request = &plan.spec().request.request_id;
-                    self.app.submit(&caller, request, &plan)
+                    self.app.request_execution(&caller, &plan)
                 }
                 Request::Status { request } => self.app.status(&caller, &request),
                 Request::Cancel { request } => self.app.cancel(&caller, &request),
@@ -191,7 +191,7 @@ pub fn dispatch(handler: &mut dyn Handler, peer: &Peer, bytes: &[u8]) -> Vec<u8>
         Reply::Rejected
     } else {
         match serde_json::from_slice::<Envelope>(bytes) {
-            Ok(e) if e.version == 3 => match e.request.into_request() {
+            Ok(e) if e.version == 4 => match e.request.into_request() {
                 Some(request) => handler.handle(peer, request),
                 None => Reply::Rejected,
             },
@@ -223,8 +223,8 @@ mod tests {
         let mut handler = Unbound;
         for bytes in [
             br#"{"version":1,"request":{"method":"status","request":"r"}}"#.as_slice(),
-            br#"{"version":3,"request":{"method":"status","request":"r"}}"#,
-            br#"{"version":3,"actor":"root","request":{"method":"cancel","request":"r"}}"#,
+            br#"{"version":4,"request":{"method":"status","request":"r"}}"#,
+            br#"{"version":4,"actor":"root","request":{"method":"cancel","request":"r"}}"#,
         ] {
             assert_eq!(
                 dispatch(&mut handler, &peer, bytes),

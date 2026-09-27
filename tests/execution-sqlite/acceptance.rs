@@ -59,7 +59,7 @@ fn execution_by_request_restores_exact_plan_and_checks_current_reader() {
         .execution_by_request(request, ExecutionAccess::Result, &host)
         .unwrap()
         .execution;
-    assert_eq!(restored.plan().digest(), host.plan.digest());
+    assert_eq!(restored.input().digest(), host.plan.digest());
     assert_eq!(restored.snapshot().revision, 1);
     assert_eq!(store.trust_revision(&host.scope(), &host).unwrap(), Some(1));
     let mut denied = host.clone();
@@ -84,7 +84,7 @@ fn execution_by_request_restores_exact_plan_and_checks_current_reader() {
     db.sql()
         .execute(
             "UPDATE executions SET plan=zeroblob(?1)",
-            [limits().plan.max_input_bytes + 1],
+            [limits().input.max_input_bytes + 1],
         )
         .unwrap();
     assert!(matches!(
@@ -311,7 +311,7 @@ fn content_and_subject_conflicts_do_not_mutate_and_historical_event_ids_cannot_b
     let mut other = host.clone();
     let mut spec = other.plan.spec().clone();
     spec.request.actor = ActorId::new("another-actor").unwrap();
-    other.plan = FrozenPlan::freeze(spec, &limits().plan).unwrap();
+    other.plan = FrozenExecution::freeze(spec, &limits().input).unwrap();
     assert_eq!(
         store
             .open_execution(&operation("open"), &other.plan, &other)
@@ -666,7 +666,10 @@ fn prior_schema_is_rejected_without_modifying_the_database() {
     let before = std::fs::read(&db.path).unwrap();
     assert!(matches!(
         Store::open(&db.path, &plan().spec().request.authority, limits()),
-        Err(Error::Schema)
+        Ok(OpenOutcome::UnsupportedSchema {
+            found: 1,
+            supported: 5
+        })
     ));
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
 }
@@ -683,9 +686,9 @@ fn newer_schema_is_diagnostics_only_and_corrupt_database_is_never_reinitialized(
     let before = std::fs::read(&db.path).unwrap();
     assert!(matches!(
         Store::open(&db.path, &plan().spec().request.authority, limits()).unwrap(),
-        OpenOutcome::NewerSchema {
+        OpenOutcome::UnsupportedSchema {
             found: 99,
-            supported: 4
+            supported: 5
         }
     ));
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
@@ -1470,8 +1473,8 @@ fn assert_audit_event(host: &TestHost, audit: &AuditRecord, receipt: &Receipt) {
     assert_eq!(event.event_id, receipt.event_id);
     assert_eq!(event.authority, p.request.authority);
     assert_eq!(event.request_id, p.request.request_id);
-    assert_eq!(event.plan_id, p.plan_id);
-    assert_eq!(&event.plan_digest, host.plan.digest());
+    assert_eq!(event.request_id, p.request.request_id);
+    assert_eq!(&event.content_digest, host.plan.digest());
     assert_eq!(
         (&event.actor, &event.initiator),
         (&p.request.actor, &p.request.initiator)
@@ -1498,8 +1501,8 @@ fn assert_admission_evidence(host: &TestHost, audit: &AuditRecord) {
             valid_until_unix_ms: 2000
         })
     );
-    assert_eq!(admission.plan_id, p.plan_id);
-    assert_eq!(&admission.plan_digest, host.plan.digest());
+    assert_eq!(admission.request_id, p.request.request_id);
+    assert_eq!(&admission.content_digest, host.plan.digest());
     assert_eq!(admission.attempt_id, audit.attempt_id.clone().unwrap());
     assert_eq!(admission.policy, p.policy);
     assert_eq!(admission.delegation, p.request.delegation);
@@ -1894,7 +1897,7 @@ fn oversized_protected_records_fail_closed_at_every_read_entry() {
         ("metadata", "authority", limits().max_record_bytes),
         ("receipts", "body", limits().max_record_bytes),
         ("audits", "body", limits().max_record_bytes),
-        ("executions", "plan", limits().plan.max_input_bytes),
+        ("executions", "plan", limits().input.max_input_bytes),
         (
             "executions",
             "snapshot",
@@ -2247,7 +2250,7 @@ fn process_capture_is_scope_bound_durable_monotonic_and_never_releases_dispatch(
     host.prepare(&mut store);
     let attempt = AttemptId::new("attempt-1").unwrap();
     let mut facts = ProcessEvidence {
-        plan_digest: host.plan.digest().clone(),
+        content_digest: host.plan.digest().clone(),
         attempt_id: attempt.clone(),
         runner: id("test-runner"),
         scope: ProcessScope::ProcessGroup {
@@ -2338,9 +2341,9 @@ fn full_output_budget_is_binary_bounded_and_requires_privileged_read() {
     let mut host = TestHost::new(1);
     let mut spec = host.plan.spec().clone();
     spec.budget.total_output_bytes = 65536;
-    host.plan = FrozenPlan::freeze(spec, &limits().plan).unwrap();
+    host.plan = FrozenExecution::freeze(spec, &limits().input).unwrap();
     for approval in &mut host.entries {
-        approval.definition.plan_digest = host.plan.digest().clone();
+        approval.definition.content_digest = host.plan.digest().clone();
     }
     let mut store = db.create();
     host.prepare(&mut store);
@@ -2354,7 +2357,7 @@ fn full_output_budget_is_binary_bounded_and_requires_privileged_read() {
         )
         .unwrap();
     let facts = ProcessEvidence {
-        plan_digest: host.plan.digest().clone(),
+        content_digest: host.plan.digest().clone(),
         attempt_id: AttemptId::new("attempt-1").unwrap(),
         runner: id("test-runner"),
         scope: ProcessScope::ProcessGroup { owner: 1, group: 2 },
@@ -2419,7 +2422,7 @@ fn process_failure_kind_is_required_durable_and_cannot_be_rewritten() {
     );
     let attempt = AttemptId::new("attempt-1").unwrap();
     let mut facts = ProcessEvidence {
-        plan_digest: host.plan.digest().clone(),
+        content_digest: host.plan.digest().clone(),
         attempt_id: attempt.clone(),
         runner: id("test-runner"),
         scope: ProcessScope::ProcessGroup { owner: 1, group: 2 },
@@ -2471,13 +2474,13 @@ fn process_failure_kind_is_required_durable_and_cannot_be_rewritten() {
 
 fn software_host() -> TestHost {
     let mut host = TestHost::new(0);
-    host.plan = FrozenPlan::freeze(
-        decode_plan(
+    host.plan = FrozenExecution::freeze(
+        decode_execution(
             include_bytes!("../../crates/execution-contract/tests/fixtures/software.json"),
-            &limits().plan,
+            &limits().input,
         )
         .unwrap(),
-        &limits().plan,
+        &limits().input,
     )
     .unwrap();
     host
@@ -2502,7 +2505,7 @@ fn software_claim_and_detection_survive_reopen_without_process_success() {
     let facts = SoftwareEvidence {
         staging: execution_contract::SoftwareStaging::NotRequired {},
         attempt_id: AttemptId::new("attempt-1").unwrap(),
-        plan_digest: host.plan.digest().clone(),
+        content_digest: host.plan.digest().clone(),
         runner: id("test-runner"),
         before: Some(SoftwareState::Absent {}),
         detected: SoftwareState::Present {
@@ -2552,10 +2555,10 @@ fn second_software_request_cannot_steal_unresolved_claim() {
     let mut other = db.open();
     let mut next = software_host();
     let mut plan = next.plan.spec().clone();
-    plan.plan_id = PlanId::new("plan-2").unwrap();
+    plan.request.request_id = RequestId::new("plan-2").unwrap();
     plan.request.request_id = RequestId::new("request-2").unwrap();
     plan.request.actor = ActorId::new("actor-2").unwrap();
-    next.plan = FrozenPlan::freeze(plan, &limits().plan).unwrap();
+    next.plan = FrozenExecution::freeze(plan, &limits().input).unwrap();
     other
         .refresh_trust(&operation("trust2"), &next.scope(), None, &next)
         .unwrap();
@@ -2609,7 +2612,7 @@ fn software_ownership_is_atomic_with_verified_effect_and_cannot_be_rewritten() {
             object: id("stage-object"),
         },
         attempt_id: attempt.clone(),
-        plan_digest: host.plan.digest().clone(),
+        content_digest: host.plan.digest().clone(),
         runner: id("test-runner"),
         before: Some(SoftwareState::Absent {}),
         detected: SoftwareState::Present {
@@ -2666,13 +2669,13 @@ fn software_ownership_is_atomic_with_verified_effect_and_cannot_be_rewritten() {
     assert_eq!(owner.state, Some(facts.detected.clone()));
     let mut alias = software_host();
     let mut spec = alias.plan.spec().clone();
-    spec.plan_id = PlanId::new("alias-plan").unwrap();
+    spec.request.request_id = RequestId::new("alias-plan").unwrap();
     spec.request.request_id = RequestId::new("alias-request").unwrap();
     if let ExecutionSpec::Software { software } = &mut spec.execution {
         software.resource_binding.parent = id("different-parent");
         software.resource_binding.object = Some(id("physical-installed"));
     }
-    alias.plan = FrozenPlan::freeze(spec, &limits().plan).unwrap();
+    alias.plan = FrozenExecution::freeze(spec, &limits().input).unwrap();
     store
         .refresh_trust(&operation("alias-trust"), &alias.scope(), None, &alias)
         .unwrap();
@@ -2734,7 +2737,7 @@ fn restart_pending_survives_service_restart_but_clears_on_new_kernel_boot() {
     let mut facts = SoftwareEvidence {
         staging: execution_contract::SoftwareStaging::NotRequired {},
         attempt_id: AttemptId::new("attempt-1").unwrap(),
-        plan_digest: host.plan.digest().clone(),
+        content_digest: host.plan.digest().clone(),
         runner: id("test-runner"),
         before: Some(SoftwareState::Absent {}),
         detected: SoftwareState::Present {
@@ -2800,7 +2803,7 @@ fn software_evidence_rejects_mismatched_attempt_and_oversized_blob() {
     let facts = SoftwareEvidence {
         staging: execution_contract::SoftwareStaging::NotRequired {},
         attempt_id: AttemptId::new("attempt-1").unwrap(),
-        plan_digest: host.plan.digest().clone(),
+        content_digest: host.plan.digest().clone(),
         runner: id("test-runner"),
         before: Some(SoftwareState::Absent {}),
         detected: SoftwareState::Absent {},
@@ -2841,9 +2844,9 @@ fn simultaneous_software_requests_have_one_committed_resource_owner() {
     first.prepare(&mut store);
     let mut second = software_host();
     let mut spec = second.plan.spec().clone();
-    spec.plan_id = PlanId::new("other-plan").unwrap();
+    spec.request.request_id = RequestId::new("other-plan").unwrap();
     spec.request.request_id = RequestId::new("other-request").unwrap();
-    second.plan = FrozenPlan::freeze(spec, &limits().plan).unwrap();
+    second.plan = FrozenExecution::freeze(spec, &limits().input).unwrap();
     store
         .refresh_trust(&operation("other-trust"), &second.scope(), None, &second)
         .unwrap();

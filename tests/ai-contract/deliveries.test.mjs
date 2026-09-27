@@ -34,7 +34,7 @@ async function setup() {
       operationId: "submit-request",
       target: "execution",
       proposal: {
-        name: "execution_submit",
+        name: "execution_execute",
         arguments: { operationRequestId: "request" },
       },
     },
