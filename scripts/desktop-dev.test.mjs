@@ -39,6 +39,7 @@ function fixture(t) {
     "tests/assistant/execution-fixtures.json",
     "scripts/bundle-ai-host.mjs",
     "scripts/ai-host-artifacts.mjs",
+    "scripts/cargo-target.mjs",
     "scripts/desktop-dev-runtime.mjs",
     "scripts/verify-ai-host-runtime.mjs",
   ])
@@ -71,6 +72,7 @@ test("fingerprint includes dirty Host, adapter, contract, lock, Node and added/d
     "package.json",
     "crates/execution-app/src/lib.rs",
     "scripts/check-execution-bindings.mjs",
+    "scripts/cargo-target.mjs",
   ]) {
     const before = developmentFingerprint(root);
     write(path, "changed");
@@ -188,7 +190,11 @@ test("invalid override fails before Tauri starts with actionable stage diagnosti
 
 test("release stage rejects development, absent and unknown manifest kinds", (t) => {
   const { root, write } = fixture(t);
-  for (const name of ["stage-desktop-runtime.mjs", "ai-host-artifacts.mjs"]) {
+  for (const name of [
+    "stage-desktop-runtime.mjs",
+    "ai-host-artifacts.mjs",
+    "cargo-target.mjs",
+  ]) {
     write(`scripts/${name}`, readFileSync(new URL(name, import.meta.url)));
   }
   symlinkSync(

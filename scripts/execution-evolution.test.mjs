@@ -12,12 +12,15 @@ import {
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { cargoTargetDir } from "./cargo-target.mjs";
 const git = process.platform === "win32" ? "git" : "/usr/bin/git";
 
 // Mutate real public structs and compile the production authorization libraries. A text-pattern
 // assertion or a compile_fail example would not prove that production uses the guard.
 test("new execution fields require an explicit admission/capability decision", () => {
   const root = fileURLToPath(new URL("../", import.meta.url));
+  const target = join(cargoTargetDir(root), "execution-evolution");
+  assert.equal(dirname(target), cargoTargetDir(root));
   const dir = mkdtempSync(join(tmpdir(), "execution-evolution-"));
   try {
     const files = execFileSync(
@@ -38,8 +41,17 @@ test("new execution fields require an explicit admission/capability decision", (
       mkdirSync(dirname(join(dir, file)), { recursive: true });
       copyFileSync(join(root, file), join(dir, file));
     }
-    const check = (name) =>
-      spawnSync(
+    const check = (name) => {
+      const env = {
+        ...process.env,
+        CARGO_TARGET_DIR: target,
+        RUSTFLAGS: "",
+        CARGO_ENCODED_RUSTFLAGS: "",
+        RUSTC_WRAPPER: "",
+        RUSTC_WORKSPACE_WRAPPER: "",
+      };
+      delete env.CARGO_BUILD_TARGET_DIR;
+      return spawnSync(
         "cargo",
         [
           "check",
@@ -54,16 +66,10 @@ test("new execution fields require an explicit admission/capability decision", (
           cwd: dir,
           encoding: "utf8",
           maxBuffer: 16 * 1024 * 1024,
-          env: {
-            ...process.env,
-            CARGO_TARGET_DIR: join(root, "target", "execution-evolution"),
-            RUSTFLAGS: "",
-            CARGO_ENCODED_RUSTFLAGS: "",
-            RUSTC_WRAPPER: "",
-            RUSTC_WORKSPACE_WRAPPER: "",
-          },
+          env,
         },
       );
+    };
     for (const consumer of ["execution-admission", "execution-capability"]) {
       const baseline = check(consumer);
       assert.equal(baseline.status, 0, baseline.stderr);

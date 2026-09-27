@@ -1,5 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { cargoTargetDir } from "./cargo-target.mjs";
 import { serviceChecks, verifyLocalService } from "./verify-local-service.mjs";
 const healthy = {
   phase: "connected",
@@ -94,7 +97,13 @@ test("native policy is the only candidate authority and stale PASS is invalidate
     assert.equal(receipt.helperVersion, "0.1.0");
     assert.equal(receipt.permissionCheck, "passed");
     assert.equal(calls.length, 4);
-    assert.match(calls[0].program, /target\/release\/rss-local-service$/);
+    assert.equal(
+      calls[0].program,
+      join(
+        cargoTargetDir(fileURLToPath(new URL("../", import.meta.url))),
+        "release/rss-local-service",
+      ),
+    );
     assert.deepEqual(calls[0].args, ["--verification-candidate"]);
     assert.equal(calls[1].program, candidate.executable);
     assert.equal(calls[2].program, candidate.negative);

@@ -16,6 +16,7 @@ import { runCI } from "./ci.mjs";
 import { steps } from "./ci-steps.mjs";
 import {
   planSteps,
+  runCommand,
   executeSteps,
   prepareEvidence,
   publishPlan,
@@ -25,6 +26,27 @@ const impact = (rustPackages = [], nodePackages = []) => ({
   rustPackages,
   nodePackages,
   packages: [...rustPackages, ...nodePackages],
+});
+const withoutBuildLease = (source = process.env) => {
+  const env = { ...source };
+  for (const key of [
+    "_AGENT_BUILD_LEASE",
+    "CARGO_TARGET_DIR",
+    "CARGO_BUILD_TARGET_DIR",
+  ])
+    delete env[key];
+  return env;
+};
+
+test("managed gate rejects a forged lease before starting a child", async () => {
+  await assert.rejects(
+    runCommand(process.execPath, ["-e", "process.exit(0)"], {
+      env: { ...process.env, _AGENT_BUILD_LEASE: "{}" },
+      cwd: process.cwd(),
+      stdio: "inherit",
+    }),
+    /invalid build lease/,
+  );
 });
 
 test("docs execute runner/docs only and never invoke skipped test commands", async () => {
@@ -106,21 +128,40 @@ test("formal Make targets cannot inherit preview mode", () => {
   const root = mkdtempSync(join(tmpdir(), "agent-make-"));
   try {
     cpSync(new URL("../Makefile", import.meta.url), join(root, "Makefile"));
+    execFileSync("/usr/bin/git", ["init", "-q", root]);
+    mkdirSync(join(root, "scripts"));
+    cpSync(
+      new URL("./build-run.py", import.meta.url),
+      join(root, "scripts/build-run.py"),
+    );
+    const pool = join(root, "pool");
+    const home = join(root, "home");
+    mkdirSync(home);
     writeFileSync(join(root, "node"), '#!/bin/sh\nprintf "%s" "$CI_PLAN"\n', {
       mode: 0o755,
     });
-    for (const target of ["ci", "ci-full", "ci-plan"]) {
+    const childEnv = {
+      ...process.env,
+      PATH: `${root}:${process.env.PATH}`,
+      HOME: home,
+      AGENT_TARGET_POOL_ROOT: pool,
+      CI_PLAN: "1",
+    };
+    for (const key of [
+      "_AGENT_BUILD_LEASE",
+      "CARGO_TARGET_DIR",
+      "CARGO_BUILD_TARGET_DIR",
+    ])
+      delete childEnv[key];
+    for (const target of ["ci-plan", "ci", "ci-full"]) {
       const result = spawnSync("make", ["-s", target], {
         cwd: root,
         encoding: "utf8",
-        env: {
-          ...process.env,
-          PATH: `${root}:${process.env.PATH}`,
-          CI_PLAN: "1",
-        },
+        env: childEnv,
       });
       assert.equal(result.status, 0, result.stderr);
       assert.equal(result.stdout, target === "ci-plan" ? "1" : "0");
+      if (target === "ci-plan") assert.equal(existsSync(pool), false);
     }
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -206,7 +247,10 @@ function lifecycleFixture(
   );
   return {
     root,
-    env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+    env: withoutBuildLease({
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH}`,
+    }),
     head: git("rev-parse", "HEAD"),
     read: () =>
       JSON.parse(
@@ -362,6 +406,8 @@ test("real spawn failure is recorded and later gates still run", async () => {
       },
     ],
     process.cwd(),
+    undefined,
+    { env: withoutBuildLease() },
   );
   assert.equal(results[0].outcome, "failed");
   assert.match(results[0].error, /ENOENT/);

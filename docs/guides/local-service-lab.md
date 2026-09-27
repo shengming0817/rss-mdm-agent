@@ -30,7 +30,7 @@ Windows 管理员 Windows PowerShell 5.1（Desktop edition，使用原子创建�
 
 脚本注册虚拟服务账号，设置目录与查询 ACL。固定 SHA-256 来自管理员安装产物；不以未验证的签名链代替固定映像身份。
 
-获准普通用户打开桌面设置中的“本机安全服务”，应显示已连接/statusOnly。运行 `node scripts/verify-local-service.mjs`；verifier 调用当前 checkout 中已构建的 `target/release/rss-local-service`（Windows 带 `.exe`）读取安装 policy。原生代码从 OS 获取固定位置，验证目录链与文件权限后读取策略，并核验产品授权的映像身份；JS 随后执行正向查询、独立进程负例与再次正向查询。调用者不能另传 policy 或程序路径；helper 缺失或任一步失败均写入失败结果，不回退到 JS 直接读取。回执记录实际 policy 路径、运行版本和权限结果。
+获准普通用户打开桌面设置中的“本机安全服务”，应显示已连接/statusOnly。运行 `node scripts/verify-local-service.mjs`；verifier 从当前 checkout 的有效 Cargo target 目录读取已构建的 `release/rss-local-service`（默认 `target/release`，Windows 带 `.exe`），再读取安装 policy。原生代码从 OS 获取固定位置，验证目录链与文件权限后读取策略，并核验产品授权的映像身份；JS 随后执行正向查询、独立进程负例与再次正向查询。调用者不能另传 policy 或程序路径；helper 缺失或任一步失败均写入失败结果，不回退到 JS 直接读取。回执记录实际 policy 路径、运行版本和权限结果。
 
 policy 来源修复以自动化回归和 Windows target 编译检查交付，不要求 Windows 实机验收作为该修复的完成门槛。下面的平台实验仍可按需运行；未执行的场景不得记为通过。
 

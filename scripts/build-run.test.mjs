@@ -1,0 +1,424 @@
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const runner = new URL("./build-run.py", import.meta.url).pathname;
+const onlyMac = { skip: process.platform !== "darwin" };
+
+function fixture() {
+  const root = mkdtempSync(join(tmpdir(), "agent-build-run-"));
+  const pool = join(root, "pool");
+  const home = join(root, "home");
+  mkdirSync(home);
+  const worktree = (name) => {
+    const path = join(root, name);
+    mkdirSync(path);
+    execFileSync("/usr/bin/git", ["init", "-q", path]);
+    return path;
+  };
+  const env = {
+    ...process.env,
+    HOME: home,
+    AGENT_TARGET_POOL_ROOT: pool,
+    AGENT_TARGET_POOL_N: "1",
+  };
+  for (const key of [
+    "CARGO_TARGET_DIR",
+    "CARGO_BUILD_TARGET_DIR",
+    "RUSTC_WRAPPER",
+    "RUSTC_WORKSPACE_WRAPPER",
+    "CARGO_BUILD_RUSTC_WRAPPER",
+    "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER",
+    "_AGENT_BUILD_LEASE",
+  ])
+    delete env[key];
+  const run = (cwd, code, extra = {}) =>
+    spawnSync("python3", [runner, "--", process.execPath, "-e", code], {
+      cwd,
+      env: { ...env, ...extra },
+      encoding: "utf8",
+      timeout: 10000,
+    });
+  return {
+    root,
+    pool,
+    env,
+    worktree,
+    run,
+    close: () => rmSync(root, { recursive: true, force: true }),
+  };
+}
+
+async function holder(f, cwd) {
+  const ready = join(f.root, `ready-${Date.now()}-${Math.random()}`);
+  const child = spawn(
+    "python3",
+    [
+      runner,
+      "--",
+      process.execPath,
+      "-e",
+      `require('fs').writeFileSync(${JSON.stringify(ready)}, process.env.CARGO_TARGET_DIR); setTimeout(() => {}, 30000)`,
+    ],
+    { cwd, env: f.env, stdio: ["ignore", "ignore", "pipe"] },
+  );
+  const deadline = Date.now() + 5000;
+  while (!existsSync(ready) && child.exitCode === null && Date.now() < deadline)
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.ok(existsSync(ready), "holder did not acquire its slot");
+  return {
+    child,
+    target: readFileSync(ready, "utf8"),
+    done: new Promise((resolve) => child.once("close", resolve)),
+  };
+}
+
+test(
+  "sticky worktree reuses a slot; reassignment wipes old Rust artifacts",
+  onlyMac,
+  () => {
+    const f = fixture();
+    try {
+      const first = f.worktree("first");
+      const second = f.worktree("second");
+      const code =
+        "const fs=require('fs'); const p=process.env.CARGO_TARGET_DIR; fs.writeFileSync(p+'/artifact','old'); console.log(p)";
+      const initial = f.run(first, code);
+      assert.equal(initial.status, 0, initial.stderr);
+      const target = initial.stdout.trim();
+      const again = f.run(first, "console.log(process.env.CARGO_TARGET_DIR)");
+      assert.equal(again.status, 0, again.stderr);
+      assert.equal(again.stdout.trim(), target);
+      assert.ok(existsSync(join(target, "artifact")));
+      const reassigned = f.run(
+        second,
+        "console.log(process.env.CARGO_TARGET_DIR)",
+      );
+      assert.equal(reassigned.status, 0, reassigned.stderr);
+      assert.equal(reassigned.stdout.trim(), target);
+      assert.equal(existsSync(join(target, "artifact")), false);
+    } finally {
+      f.close();
+    }
+  },
+);
+
+test(
+  "Node descendants inherit the Rust target and same worktree cannot overlap",
+  onlyMac,
+  async () => {
+    const f = fixture();
+    let held;
+    try {
+      const first = f.worktree("first");
+      const second = f.worktree("second");
+      held = await holder(f, first);
+      const same = f.run(first, "process.exit(0)");
+      assert.equal(same.status, 2);
+      assert.match(same.stderr, /worktree busy/);
+      const full = f.run(second, "process.exit(0)");
+      assert.equal(full.status, 2);
+      assert.match(full.stderr, /pool full/);
+      held.child.kill("SIGTERM");
+      assert.equal(await held.done, 143);
+      held = null;
+      assert.equal(f.run(first, "process.exit(0)").status, 0);
+    } finally {
+      if (held) {
+        held.child.kill("SIGTERM");
+        await held.done;
+      }
+      f.close();
+    }
+  },
+);
+
+test(
+  "different worktrees run concurrently until the finite pool is full",
+  onlyMac,
+  async () => {
+    const f = fixture();
+    f.env.AGENT_TARGET_POOL_N = "2";
+    const held = [];
+    try {
+      const first = f.worktree("first");
+      const second = f.worktree("second");
+      const third = f.worktree("third");
+      held.push(await holder(f, first), await holder(f, second));
+      assert.notEqual(held[0].target, held[1].target);
+      const full = f.run(third, "process.exit(0)");
+      assert.equal(full.status, 2);
+      assert.match(full.stderr, /pool full/);
+    } finally {
+      for (const item of held) item.child.kill("SIGTERM");
+      await Promise.all(held.map((item) => item.done));
+      f.close();
+    }
+  },
+);
+
+test(
+  "allocator waits for metadata lock when free slots remain",
+  onlyMac,
+  async () => {
+    const f = fixture();
+    let locker;
+    try {
+      const work = f.worktree("work");
+      assert.equal(f.run(work, "process.exit(0)").status, 0);
+      const ready = join(f.root, "allocator-ready");
+      locker = spawn(
+        "python3",
+        [
+          "-c",
+          `import fcntl, pathlib, time; p=pathlib.Path(${JSON.stringify(join(f.pool, ".pool.lock"))}); h=p.open('r+'); fcntl.flock(h, fcntl.LOCK_EX); pathlib.Path(${JSON.stringify(ready)}).touch(); time.sleep(.5)`,
+        ],
+        { stdio: "ignore" },
+      );
+      const deadline = Date.now() + 5000;
+      while (!existsSync(ready) && Date.now() < deadline)
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.ok(existsSync(ready));
+      const result = f.run(work, "process.exit(0)");
+      assert.equal(result.status, 0, result.stderr);
+    } finally {
+      if (locker?.exitCode === null) locker.kill("SIGTERM");
+      f.close();
+    }
+  },
+);
+
+test(
+  "a crashed CI runner cannot leave an unlocked live gate",
+  onlyMac,
+  async () => {
+    const f = fixture();
+    let launcher, gatePid;
+    try {
+      const work = f.worktree("work");
+      const gateReady = join(f.root, "gate-ready");
+      const runnerReady = join(f.root, "runner-ready");
+      const moduleUrl = new URL("./ci-plan.mjs", import.meta.url).href;
+      const gateCode = `require('fs').writeFileSync(${JSON.stringify(gateReady)}, String(process.pid)); setInterval(() => {}, 1000)`;
+      const script = join(f.root, "runner.mjs");
+      writeFileSync(
+        script,
+        `import {runCommand} from ${JSON.stringify(moduleUrl)}; import {writeFileSync} from 'node:fs'; writeFileSync(${JSON.stringify(runnerReady)}, String(process.pid)); await runCommand(process.execPath, ['-e', ${JSON.stringify(gateCode)}], {env:process.env, stdio:'inherit'});`,
+      );
+      launcher = spawn("python3", [runner, "--", process.execPath, script], {
+        cwd: work,
+        env: f.env,
+        stdio: "ignore",
+      });
+      const done = new Promise((resolve) => launcher.once("close", resolve));
+      const deadline = Date.now() + 5000;
+      while (
+        (!existsSync(gateReady) || !existsSync(runnerReady)) &&
+        Date.now() < deadline
+      )
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.ok(existsSync(gateReady) && existsSync(runnerReady));
+      gatePid = Number(readFileSync(gateReady, "utf8"));
+      process.kill(Number(readFileSync(runnerReady, "utf8")), "SIGKILL");
+      assert.equal(await done, 137);
+      let gateAlive = true;
+      try {
+        process.kill(gatePid, 0);
+      } catch (error) {
+        if (error.code === "ESRCH") gateAlive = false;
+        else throw error;
+      }
+      assert.equal(
+        gateAlive,
+        false,
+        "gate survived after its lease was released",
+      );
+      assert.equal(f.run(work, "process.exit(0)").status, 0);
+    } finally {
+      if (gatePid) {
+        try {
+          process.kill(gatePid, "SIGKILL");
+        } catch (error) {
+          if (error.code !== "ESRCH") throw error;
+        }
+      }
+      if (launcher?.exitCode === null) launcher.kill("SIGTERM");
+      f.close();
+    }
+  },
+);
+
+test(
+  "a live gate keeps both locks after both supervisors are killed",
+  onlyMac,
+  async () => {
+    const f = fixture();
+    let launcher, runnerPid, gatePid;
+    try {
+      const work = f.worktree("work");
+      const gateReady = join(f.root, "gate-double-kill");
+      const runnerReady = join(f.root, "runner-double-kill");
+      const moduleUrl = new URL("./ci-plan.mjs", import.meta.url).href;
+      const gateCode = `require('fs').writeFileSync(${JSON.stringify(gateReady)}, String(process.pid)); setInterval(() => {}, 1000)`;
+      const script = join(f.root, "double-kill.mjs");
+      writeFileSync(
+        script,
+        `import {runCommand} from ${JSON.stringify(moduleUrl)}; import {writeFileSync} from 'node:fs'; writeFileSync(${JSON.stringify(runnerReady)}, String(process.pid)); await runCommand(process.execPath, ['-e', ${JSON.stringify(gateCode)}], {env:process.env, stdio:'inherit'});`,
+      );
+      launcher = spawn("python3", [runner, "--", process.execPath, script], {
+        cwd: work,
+        env: f.env,
+        stdio: "ignore",
+      });
+      const deadline = Date.now() + 5000;
+      while (
+        (!existsSync(gateReady) || !existsSync(runnerReady)) &&
+        Date.now() < deadline
+      )
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.ok(existsSync(gateReady) && existsSync(runnerReady));
+      runnerPid = Number(readFileSync(runnerReady, "utf8"));
+      gatePid = Number(readFileSync(gateReady, "utf8"));
+      launcher.kill("SIGKILL");
+      process.kill(runnerPid, "SIGKILL");
+      await new Promise((resolve) => launcher.once("close", resolve));
+      const competing = f.run(work, "process.exit(0)");
+      assert.equal(competing.status, 2, competing.stderr);
+      assert.match(competing.stderr, /worktree busy/);
+      const other = f.worktree("other");
+      const full = f.run(other, "process.exit(0)");
+      assert.equal(full.status, 2, full.stderr);
+      assert.match(full.stderr, /pool full/);
+    } finally {
+      if (gatePid) {
+        try {
+          process.kill(gatePid, "SIGTERM");
+        } catch (error) {
+          if (error.code !== "ESRCH") throw error;
+        }
+      }
+      if (runnerPid) {
+        try {
+          process.kill(runnerPid, "SIGKILL");
+        } catch (error) {
+          if (error.code !== "ESRCH") throw error;
+        }
+      }
+      if (launcher?.exitCode === null) launcher.kill("SIGKILL");
+      f.close();
+    }
+  },
+);
+
+test(
+  "allocator reports prolonged metadata contention within a bound",
+  onlyMac,
+  async () => {
+    const f = fixture();
+    let locker;
+    try {
+      const work = f.worktree("work");
+      assert.equal(f.run(work, "process.exit(0)").status, 0);
+      const ready = join(f.root, "allocator-timeout-ready");
+      locker = spawn(
+        "python3",
+        [
+          "-c",
+          `import fcntl, pathlib, time; p=pathlib.Path(${JSON.stringify(join(f.pool, ".pool.lock"))}); h=p.open('r+'); fcntl.flock(h, fcntl.LOCK_EX); pathlib.Path(${JSON.stringify(ready)}).touch(); time.sleep(4)`,
+        ],
+        { stdio: "ignore" },
+      );
+      const deadline = Date.now() + 5000;
+      while (!existsSync(ready) && Date.now() < deadline)
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.ok(existsSync(ready));
+      const start = Date.now();
+      const result = f.run(work, "process.exit(0)");
+      assert.equal(result.status, 2, result.stderr);
+      assert.match(result.stderr, /allocator busy/);
+      assert.ok(Date.now() - start < 3000, "allocator wait was unbounded");
+    } finally {
+      if (locker?.exitCode === null) locker.kill("SIGTERM");
+      f.close();
+    }
+  },
+);
+
+test("pool size above the supported fd budget is rejected", onlyMac, () => {
+  const f = fixture();
+  try {
+    const work = f.worktree("work");
+    const result = f.run(work, "process.exit(0)", {
+      AGENT_TARGET_POOL_N: "33",
+    });
+    assert.equal(result.status, 2, result.stderr);
+    assert.match(result.stderr, /AGENT_TARGET_POOL_N/);
+    assert.equal(existsSync(f.pool), false);
+  } finally {
+    f.close();
+  }
+});
+
+test(
+  "unowned pool and symlink slot are rejected without deleting outside data",
+  onlyMac,
+  () => {
+    const f = fixture();
+    try {
+      const work = f.worktree("work");
+      mkdirSync(f.pool);
+      writeFileSync(join(f.pool, "important"), "retain");
+      const unowned = f.run(work, "process.exit(0)");
+      assert.equal(unowned.status, 2);
+      assert.match(unowned.stderr, /unmarked nonempty/);
+      assert.ok(existsSync(join(f.pool, "important")));
+      rmSync(f.pool, { recursive: true });
+      assert.equal(f.run(work, "process.exit(0)").status, 0);
+      const outside = join(f.root, "outside");
+      mkdirSync(outside);
+      writeFileSync(join(outside, "important"), "retain");
+      rmSync(join(f.pool, "slot-0"), { recursive: true });
+      symlinkSync(outside, join(f.pool, "slot-0"), "dir");
+      const linked = f.run(work, "process.exit(0)");
+      assert.equal(linked.status, 2);
+      assert.match(linked.stderr, /symlink slot/);
+      assert.ok(existsSync(join(outside, "important")));
+    } finally {
+      f.close();
+    }
+  },
+);
+
+test(
+  "managed CI rejects external target and wrapper overrides",
+  onlyMac,
+  () => {
+    const f = fixture();
+    try {
+      const work = f.worktree("work");
+      for (const extra of [
+        { CARGO_TARGET_DIR: join(f.root, "explicit") },
+        { CARGO_BUILD_TARGET_DIR: join(f.root, "explicit") },
+        { RUSTC_WRAPPER: "/tmp/wrapper" },
+        { AGENT_TARGET_POOL_N: "off" },
+      ]) {
+        const result = f.run(work, "process.exit(0)", extra);
+        assert.equal(result.status, 2, result.stderr);
+      }
+      assert.equal(existsSync(f.pool), false);
+    } finally {
+      f.close();
+    }
+  },
+);

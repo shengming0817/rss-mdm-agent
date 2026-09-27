@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { verifyRuntimeIntegrity } from "./ai-host-artifacts.mjs";
+import { cargoTargetDir } from "./cargo-target.mjs";
 if (process.platform !== "win32" || process.arch !== "x64")
   throw new Error("Windows x64 staging requires its native build.");
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -28,7 +29,7 @@ const output = join(root, ".local-ci-runs/windows-lab-desktop");
 rmSync(output, { recursive: true, force: true });
 mkdirSync(output, { recursive: true });
 const executable = join(output, "rss-mdm-desktop.exe");
-cpSync(join(root, "target/release/rss-mdm-desktop.exe"), executable);
+cpSync(join(cargoTargetDir(root), "release/rss-mdm-desktop.exe"), executable);
 cpSync(runtime, join(output, "ai-host-runtime"), { recursive: true });
 verifyRuntimeIntegrity(
   join(output, "ai-host-runtime"),

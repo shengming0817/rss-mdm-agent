@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve, posix, win32 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { cargoTargetDir } from "./cargo-target.mjs";
 
 function executeProcess(execute, program, args, options) {
   try {
@@ -122,11 +123,10 @@ export function verifyLocalService({
   try {
     if (!["win32", "darwin"].includes(platform))
       throw Error("unsupported platform");
-    const helper = fileURLToPath(
-      new URL(
-        `../target/release/rss-local-service${platform === "win32" ? ".exe" : ""}`,
-        import.meta.url,
-      ),
+    const helper = resolve(
+      cargoTargetDir(fileURLToPath(new URL("../", import.meta.url))),
+      "release",
+      `rss-local-service${platform === "win32" ? ".exe" : ""}`,
     );
     const result = executeProcess(
       execute,

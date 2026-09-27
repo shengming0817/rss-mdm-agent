@@ -36,6 +36,7 @@ export function developmentFingerprint(root) {
     "tests/assistant/execution-fixtures.json",
     "scripts/bundle-ai-host.mjs",
     "scripts/ai-host-artifacts.mjs",
+    "scripts/cargo-target.mjs",
     "scripts/desktop-dev-runtime.mjs",
     "scripts/verify-ai-host-runtime.mjs",
     "apps/ai-host",
