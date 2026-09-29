@@ -52,7 +52,8 @@ const rows = computed(() => {
     messages = new Map(Object.entries(v.messages)),
     tools = new Map(Object.entries(v.tools)),
     interactions = new Map(Object.entries(v.interactions)),
-    surfaces = new Map(Object.entries(v.surfaces));
+    surfaces = new Map(Object.entries(v.surfaces)),
+    deliveries = new Map(Object.entries(v.deliveries));
   return v.timeline.map((item) => ({
     ...item,
     command: commands.get(item.key),
@@ -60,7 +61,7 @@ const rows = computed(() => {
     tool: tools.get(item.key),
     interaction: interactions.get(item.key),
     surface: surfaces.get(item.key),
-    delivery: v.deliveries[item.key],
+    delivery: deliveries.get(item.key),
     surfaceInteraction: interactions.get(
       surfaces.get(item.key)?.interactionId ?? "",
     ),
@@ -132,7 +133,7 @@ const permissions = computed(() =>
 );
 const connectionMenu = ref<HTMLDetailsElement>();
 async function showContextChoices() {
-  if (connectionMenu.value) connectionMenu.value.open = true;
+  connectionMenu.value?.setAttribute("open", "");
   await nextTick();
   connectionMenu.value?.querySelector("select")?.focus();
 }

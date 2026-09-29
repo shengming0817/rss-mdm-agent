@@ -785,7 +785,9 @@ export function createAssistant(
   async function executionDetails(operationId: string, signal: AbortSignal) {
     const session = view.value,
       current = epoch;
-    const delivery = session?.deliveries[operationId];
+    const delivery = Object.entries(session?.deliveries ?? {}).find(
+      ([key]) => key === operationId,
+    )?.[1];
     if (
       !session ||
       !delivery ||

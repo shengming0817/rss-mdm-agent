@@ -232,6 +232,7 @@ export function checkSource(file, source) {
       ],
       "apps/desktop/src/assistant/Assistant.vue": ["JSON"],
       "apps/desktop/src/assistant/ExecutionDetails.vue": ["JSON"],
+      "apps/desktop/src/assistant/ExecutionActivity.vue": ["AbortController"],
       "apps/desktop/src/assistant/QuestionCard.vue": ["JSON"],
     };
     for (const value of assistantGlobals[file] ?? []) globals.add(value);
@@ -566,6 +567,7 @@ export function checkTree(treeRoot = root) {
         'tokio = { workspace = true, features = ["process", "net", "rt-multi-thread"] }',
         "tokio-util.workspace = true",
         "futures-util.workspace = true",
+        'tauri-plugin-wdio-webdriver = { version = "=1.4.0", optional = true }',
         "tauri-build.workspace = true",
         "tauri.workspace = true",
         "serde.workspace = true",
@@ -618,6 +620,23 @@ export function checkTree(treeRoot = root) {
       errors.push(`${path}: unexpected host dependency`);
   }
   const main = read("apps/desktop/src-tauri/src/main.rs");
+  const nativeManifest = read("apps/desktop/src-tauri/Cargo.toml");
+  if (
+    !/^default = \["custom-protocol"\]$/m.test(nativeManifest) ||
+    !/^native-e2e = \["dep:tauri-plugin-wdio-webdriver"\]$/m.test(
+      nativeManifest,
+    ) ||
+    !/#\[cfg\(feature = "native-e2e"\)\]\s*mod native_e2e;/.test(main) ||
+    !/#\[cfg\(feature = "native-e2e"\)\]\s*let builder = native_e2e::configure\(builder, data_root\.as_deref\(\)\)\?;/.test(
+      main,
+    ) ||
+    !/#\[cfg\(all\(feature = "native-e2e", not\(debug_assertions\)\)\)\]\s*compile_error!/.test(
+      main,
+    )
+  )
+    errors.push(
+      "native WebDriver must be opt-in, isolated and excluded from release",
+    );
   if (
     !/\.on_navigation\(navigation::allowed\)/.test(main) ||
     !/\.on_new_window\(\|_, _\| tauri::webview::NewWindowResponse::Deny\)/.test(

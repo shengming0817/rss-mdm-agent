@@ -3,17 +3,11 @@ import { onMounted, onBeforeUnmount, ref } from "vue";
 defineProps<{ label: string }>();
 const emit = defineEmits<{ close: [] }>();
 const dialog = ref<HTMLDialogElement>();
-let previous: HTMLElement | null = null;
 onMounted(() => {
-  previous =
-    document.activeElement instanceof HTMLElement
-      ? document.activeElement
-      : null;
   dialog.value?.showModal();
 });
 onBeforeUnmount(() => {
   dialog.value?.close();
-  if (previous?.isConnected) previous.focus();
 });
 </script>
 <template>

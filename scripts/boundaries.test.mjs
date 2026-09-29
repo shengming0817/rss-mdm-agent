@@ -48,6 +48,18 @@ test("Rust guard excludes explicit test modules while guarding production IPC as
   for (const source of [mock, `#[cfg(feature = "test")] ${mock}`])
     assert.ok(checkRustSources({ [file]: source }).length);
 });
+test("only the native acceptance owner can register the pinned WebDriver plugin", () => {
+  const file = "apps/desktop/src-tauri/src/native_e2e.rs";
+  const source =
+    "fn run() { builder.plugin(tauri_plugin_wdio_webdriver::init_with_port(port)); }";
+  assert.deepEqual(checkRustSources({ [file]: source }), []);
+  for (const [path, code] of [
+    ["apps/desktop/src-tauri/src/main.rs", source],
+    [file, "fn run() { builder.plugin(arbitrary()); }"],
+    [file, "fn run() { builder.invoke_handler(arbitrary()); }"],
+  ])
+    assert.ok(checkRustSources({ [path]: code }).length);
+});
 test("UI boundary rejects prohibited imports and rendering even through alternate syntax", () => {
   for (const source of [
     `import x from '@tauri-apps/api/core'`,
@@ -218,6 +230,26 @@ test("presentation capabilities reject global aliases, computed access and outbo
 test("each host boundary mutation independently fails the tree scan", () => {
   const dir = mkdtempSync(join(tmpdir(), "ui-host-boundaries-"));
   const mutations = [
+    [
+      "apps/desktop/src-tauri/Cargo.toml",
+      (s) =>
+        s.replace(
+          'default = ["custom-protocol"]',
+          'default = ["custom-protocol", "native-e2e"]',
+        ),
+    ],
+    [
+      "apps/desktop/src-tauri/src/main.rs",
+      (s) =>
+        s.replace(
+          '#[cfg(all(feature = "native-e2e", not(debug_assertions)))]',
+          "#[cfg(any())]",
+        ),
+    ],
+    [
+      "apps/desktop/src-tauri/src/main.rs",
+      (s) => s.replaceAll('#[cfg(feature = "native-e2e")]', ""),
+    ],
     [
       "apps/desktop/src-tauri/tauri.conf.json",
       (s) => {
