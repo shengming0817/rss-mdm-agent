@@ -464,12 +464,14 @@ watch(
     <ModalDrawer
       v-if="panel === 'sessions'"
       label="最近对话"
+      side="left"
       @close="panel = undefined"
       ><ConversationList :controller="c" @select="panel = undefined"
     /></ModalDrawer>
     <ModalDrawer
       v-if="panel === 'diagnostics'"
       label="会话详情与诊断"
+      side="right"
       @close="panel = undefined"
     >
       <p>会话编号：{{ s.selected || "尚未创建" }}</p>
@@ -536,6 +538,7 @@ watch(
     <ModalDrawer
       v-if="panel === 'execution' && s.task"
       label="设备操作详情"
+      side="right"
       @close="panel = undefined"
     >
       <ExecutionDetails :details="s.task" :now="clock" />

@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { ref, watch, useId } from "vue";
 import ModalDrawer from "./ModalDrawer.vue";
 const props = defineProps<{ navigationCollapsed?: boolean }>();
 const navigationOpen = ref(false);
+const navigationId = useId();
 watch(
   () => props.navigationCollapsed,
   () => {
@@ -15,15 +16,28 @@ watch(
     <header>
       <button
         v-if="navigationCollapsed"
-        class="navigation-trigger"
+        class="navigation-trigger icon-button"
         aria-label="打开主导航"
+        :aria-expanded="navigationOpen"
+        :aria-controls="navigationId"
         @click="navigationOpen = true"
       >
-        ☰</button
+        <svg
+          viewBox="0 0 24 24"
+          width="20"
+          height="20"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          aria-hidden="true"
+        >
+          <path d="M4 6h16M4 12h16M4 18h16" />
+        </svg></button
       ><slot name="header" />
     </header>
     <div class="body">
-      <aside v-if="!navigationCollapsed">
+      <aside v-if="!navigationCollapsed" class="navigation-panel">
         <div class="navigation-scroll"><slot name="navigation" /></div>
         <div class="navigation-footer"><slot name="navigation-footer" /></div>
       </aside>
@@ -31,10 +45,16 @@ watch(
     </div>
     <ModalDrawer
       v-if="navigationCollapsed && navigationOpen"
+      :id="navigationId"
+      class="navigation-drawer"
       label="主导航"
+      side="left"
       @close="navigationOpen = false"
-      ><div @click="navigationOpen = false">
-        <slot name="navigation" /><slot name="navigation-footer" /></div
+      ><div class="navigation-scroll" @click="navigationOpen = false">
+        <slot name="navigation" />
+      </div>
+      <div class="navigation-footer" @click="navigationOpen = false">
+        <slot name="navigation-footer" /></div
     ></ModalDrawer>
     <footer><slot name="status" /></footer>
   </div>
@@ -68,12 +88,21 @@ footer {
   min-height: 0;
 }
 aside {
-  flex: 0 0 200px;
+  flex: 0 0 var(--navigation-width);
   display: flex;
   flex-direction: column;
   min-height: 0;
   padding: 16px;
   border-right: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+.navigation-drawer {
+  --drawer-width: var(--navigation-width);
+  --drawer-padding: 16px;
+}
+.navigation-drawer[open] {
+  display: flex;
+  flex-direction: column;
 }
 .navigation-scroll {
   overflow: auto;
@@ -94,9 +123,6 @@ main {
 .focused main {
   padding: 0;
   overflow: hidden;
-}
-.navigation-trigger {
-  padding: 8px 12px;
 }
 header :deep(.brand) {
   flex: 1;

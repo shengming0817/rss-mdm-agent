@@ -13,7 +13,7 @@ import {
 describe("text-only presentation", () => {
   it("cycles modal focus in both directions without disabled or hidden controls", async () => {
     const wrapper = mount(ModalDrawer, {
-      props: { label: "最近对话" },
+      props: { label: "最近对话", side: "left" },
       attachTo: document.body,
       slots: {
         default:

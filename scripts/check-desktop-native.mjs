@@ -39,6 +39,8 @@ const result = {
 };
 for (const name of [
   "desktop-native-narrow.png",
+  "desktop-native-navigation.png",
+  "desktop-native-navigation-narrow.png",
   "desktop-native-failed.png",
   "desktop-native.log",
 ])
@@ -426,6 +428,15 @@ try {
     false,
     "first saved connection is already the default",
   );
+  const sidebar = await browser.execute(() => {
+    const el = document.querySelector(".shell aside");
+    const style = getComputedStyle(el);
+    return {
+      width: el.getBoundingClientRect().width,
+      padding: style.padding,
+      background: style.backgroundColor,
+    };
+  });
   await click("开始对话");
   assert.equal(await browser.$(".composer textarea").isDisplayed(), true);
   assert.equal(
@@ -441,6 +452,41 @@ try {
     "secret-cleared",
     "blank-composer",
   );
+  mark("left primary navigation matches the persistent sidebar");
+  await browser.$('[aria-label="打开主导航"]').click();
+  const navigation = await browser.execute(() => {
+    const el = document.querySelector('dialog[aria-label="主导航"]');
+    const rect = el.getBoundingClientRect();
+    const style = getComputedStyle(el);
+    return {
+      left: rect.left,
+      width: rect.width,
+      padding: style.padding,
+      background: style.backgroundColor,
+      footerAtBottom:
+        el.querySelector(".navigation-footer").getBoundingClientRect().bottom >
+        innerHeight - 40,
+    };
+  });
+  assert.equal(navigation.left, 0);
+  assert.equal(navigation.footerAtBottom, true);
+  assert.deepEqual(
+    {
+      width: navigation.width,
+      padding: navigation.padding,
+      background: navigation.background,
+    },
+    sidebar,
+  );
+  await browser.saveScreenshot(join(reports, "desktop-native-navigation.png"));
+  key(53);
+  await wait(async () => !(await browser.$("dialog[open]").isExisting()));
+  await wait(() =>
+    browser.execute(
+      () => document.activeElement?.getAttribute("aria-label") === "打开主导航",
+    ),
+  );
+  result.checks.push("left-navigation-consistent-style");
   mark("first send, real tool approval and Rust confirmation");
   await prompt("GOLDEN_INSTALL 安装办公套件");
   await permission(true);
@@ -524,7 +570,31 @@ try {
   result.checks.push("manual-scroll-preserved", "jump-to-latest");
   mark("narrow layout, native focus and scrolling");
   await browser.setWindowSize(600, 680);
+  await browser.$('[aria-label="打开主导航"]').click();
+  assert.equal(
+    await browser.execute(() => {
+      const r = document
+        .querySelector('dialog[aria-label="主导航"]')
+        .getBoundingClientRect();
+      return r.left === 0 && r.right <= innerWidth;
+    }),
+    true,
+  );
+  await browser.saveScreenshot(
+    join(reports, "desktop-native-navigation-narrow.png"),
+  );
+  key(53);
+  await wait(async () => !(await browser.$("dialog[open]").isExisting()));
   await browser.$('[aria-label="打开最近对话"]').click();
+  assert.equal(
+    await browser.execute(
+      () =>
+        document
+          .querySelector('dialog[aria-label="最近对话"]')
+          .getBoundingClientRect().left,
+    ),
+    0,
+  );
   for (let i = 0; i < 14; i++) {
     const previous = await browser.execute(
       () => document.activeElement?.outerHTML,

@@ -50,8 +50,73 @@ try {
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(fixture.url);
+  const sidebarStyle = await page.locator(".shell aside").evaluate((el) => {
+    const style = getComputedStyle(el);
+    const item = getComputedStyle(
+      el.querySelector('button[aria-current="page"]'),
+    );
+    return {
+      width: el.getBoundingClientRect().width,
+      padding: style.padding,
+      background: style.backgroundColor,
+      itemPadding: item.padding,
+      selectedBackground: item.backgroundColor,
+      selectedColor: item.color,
+    };
+  });
   await page.getByRole("button", { name: "AI 助手", exact: true }).click();
   await page.locator(".composer textarea").waitFor();
+  await page.getByRole("button", { name: "打开主导航", exact: true }).click();
+  const navigation = page.getByRole("dialog", { name: "主导航", exact: true });
+  const drawerStyle = await navigation.evaluate((el) => {
+    const style = getComputedStyle(el);
+    const item = getComputedStyle(
+      el.querySelector('button[aria-current="page"]'),
+    );
+    return {
+      width: el.getBoundingClientRect().width,
+      padding: style.padding,
+      background: style.backgroundColor,
+      itemPadding: item.padding,
+      selectedBackground: item.backgroundColor,
+      selectedColor: item.color,
+    };
+  });
+  assert.equal(
+    (await navigation.boundingBox()).x,
+    0,
+    "primary navigation opens at its left-hand trigger",
+  );
+  assert.deepEqual(
+    drawerStyle,
+    sidebarStyle,
+    "collapsed and persistent navigation share visual treatment",
+  );
+  const navigationFooter = await navigation
+    .getByRole("button", { name: "设置", exact: true })
+    .boundingBox();
+  assert.ok(
+    navigationFooter.y > page.viewportSize().height - 100,
+    "settings stays at the bottom of navigation",
+  );
+  mkdirSync(new URL("../.local-ci-runs/", import.meta.url), {
+    recursive: true,
+  });
+  await page.screenshot({
+    path: fileURLToPath(
+      new URL(
+        "../.local-ci-runs/assistant-navigation-wide.png",
+        import.meta.url,
+      ),
+    ),
+  });
+  await page.keyboard.press("Escape");
+  assert.equal(
+    await page
+      .getByRole("button", { name: "打开主导航", exact: true })
+      .evaluate((el) => el === document.activeElement),
+    true,
+  );
   assert.equal(await page.locator(".assistant-sessions li").count(), 20);
   await page.getByRole("button", { name: "加载更多会话" }).click();
   await page.waitForFunction(
@@ -702,6 +767,31 @@ try {
   );
   await page.getByRole("button", { name: "AI 助手", exact: true }).click();
   assert.equal(await composer.inputValue(), "保留草稿");
+  await page.getByRole("button", { name: "打开主导航", exact: true }).click();
+  const narrowNavigation = await page
+    .getByRole("dialog", { name: "主导航", exact: true })
+    .boundingBox();
+  assert.equal(narrowNavigation.x, 0);
+  assert.equal(narrowNavigation.width, sidebarStyle.width);
+  await page.screenshot({
+    path: fileURLToPath(
+      new URL(
+        "../.local-ci-runs/assistant-navigation-narrow.png",
+        import.meta.url,
+      ),
+    ),
+  });
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "打开最近对话", exact: true }).click();
+  assert.equal(
+    (
+      await page
+        .getByRole("dialog", { name: "最近对话", exact: true })
+        .boundingBox()
+    ).x,
+    0,
+  );
+  await page.keyboard.press("Escape");
   await page.setViewportSize({ width: 1280, height: 900 });
   fixture.disconnect();
   await page
