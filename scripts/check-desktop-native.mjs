@@ -164,6 +164,7 @@ const prompt = async (value) => {
 };
 const selectNext = async (element, value) => {
   await element.click();
+  await wait(() => element.isFocused());
   key(125);
   key(125);
   key(36);
@@ -403,6 +404,7 @@ try {
   mark("account and saved unverified connection");
   await browser.$('[aria-label="测试用户名"]').setValue("Golden Alice");
   await click("进入");
+  await wait(() => browser.$('[aria-label="测试用户名"]').isEnabled());
   await text("个人 AI 连接（0）");
   await (await field("名称")).setValue("Golden Codex");
   await selectNext(await field("认证来源"), "custom_api");
@@ -754,12 +756,14 @@ try {
   await navigate("设置");
   await browser.$('[aria-label="测试用户名"]').setValue("Golden Bob");
   await click("进入");
+  await wait(() => browser.$('[aria-label="测试用户名"]').isEnabled());
   await text("个人 AI 连接（0）");
   await click("稍后配置，前往 AI");
   assert.equal(await visibleText("GOLDEN_INSTALL 安装办公套件"), false);
   await navigate("设置");
   await browser.$('[aria-label="测试用户名"]').setValue("Golden Alice");
   await click("进入");
+  await wait(() => browser.$('[aria-label="测试用户名"]').isEnabled());
   await text("个人 AI 连接（1）");
   await click("删除");
   await click("确认删除");
