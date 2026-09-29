@@ -144,7 +144,7 @@ test("standard ACP prompt waits for terminal, carries text/tool updates, and sup
   );
   await assert.rejects(
     agent.request(extension.list, {
-      schemaVersion: 6,
+      schemaVersion: 7,
       kind: "listRequest",
       query: { limit: 2 },
     }),
@@ -205,10 +205,13 @@ test("product receipt, paged recovery and late delta use only the shared stable 
   const runtime = new RuntimeClient(b);
   t.after(() => runtime.close());
   await runtime.initialize();
-  const view = await runtime.createSession(),
+  const view = await runtime.restore(
+      (await runtime.createSession({ sessionId: crypto.randomUUID() }))
+        .sessionId,
+    ),
     id = view.namespace.sessionId;
   const prompt = {
-    schemaVersion: 6,
+    schemaVersion: 7,
     kind: "command",
     sessionId: id,
     commandId: "product-1",

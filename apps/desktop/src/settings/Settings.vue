@@ -26,9 +26,8 @@ const readyConnection = computed(() =>
 async function newConversation() {
   const c = props.assistant;
   if (!c) return;
-  const previous = c.state.selected;
-  await c.create();
-  if (c.state.selected && c.state.selected !== previous) emit("assistant");
+  c.create();
+  emit("assistant");
 }
 async function confirm() {
   confirming.value = true;
@@ -85,7 +84,7 @@ function keys(event: KeyboardEvent) {
         <h2>AI 连接</h2>
         <template v-if="assistant">
           <p v-if="!readyConnection">
-            首次配置：选择账户入口 → 保存配置 → 测试连接 → 新建对话。
+            首次配置：选择账户入口 → 保存配置 → 测试连接 → 发送第一条消息。
           </p>
           <ConnectionSettings :controller="assistant" :active="active" />
           <button
@@ -96,7 +95,7 @@ function keys(event: KeyboardEvent) {
             "
             @click="newConversation"
           >
-            新建对话并前往 AI
+            开始对话
           </button>
           <button @click="emit('assistant')">稍后配置，前往 AI</button>
           <p v-if="assistant.state.createError" role="alert">

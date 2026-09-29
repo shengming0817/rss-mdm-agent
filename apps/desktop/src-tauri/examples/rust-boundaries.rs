@@ -9,6 +9,7 @@ struct Guard {
     ipc: bool,
     composition: bool,
     main: bool,
+    native_e2e: bool,
     forbidden: bool,
 }
 impl Guard {
@@ -172,7 +173,13 @@ impl<'ast> Visit<'ast> for Guard {
     }
     fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
         let name = call.method.to_string();
-        self.forbidden |= name == "plugin"
+        let native_driver = self.native_e2e
+            && matches!(&*call.receiver, syn::Expr::Path(path) if path.path.is_ident("builder"))
+            && call.args.len() == 1
+            && matches!(&call.args[0], syn::Expr::Call(init)
+                if matches!(&*init.func, syn::Expr::Path(path)
+                    if path.path.segments.iter().map(|p| p.ident.to_string()).collect::<Vec<_>>() == ["tauri_plugin_wdio_webdriver", "init"]));
+        self.forbidden |= (name == "plugin" && !native_driver)
             || (!self.ipc && name == "invoke_handler")
             || (name == "manage"
                 && !(self.main
@@ -196,6 +203,7 @@ fn main() {
             ipc: file.ends_with("/composition/ipc.rs"),
             composition: file.contains("/composition/"),
             main: file.ends_with("/src/main.rs"),
+            native_e2e: file == "apps/desktop/src-tauri/src/native_e2e.rs",
             forbidden: false,
         };
         match syn::parse_file(&source) {

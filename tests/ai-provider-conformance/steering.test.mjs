@@ -21,7 +21,10 @@ for (const provider of engines) {
         f.model.text("steer consumed in the original turn");
       await f.start();
       const { client } = await f.connect();
-      const view = await client.createSession(),
+      const view = await client.restore(
+          (await client.createSession({ sessionId: crypto.randomUUID() }))
+            .sessionId,
+        ),
         id = view.namespace.sessionId;
       const second = (await f.connect()).client;
       await second.restore(id);

@@ -12,6 +12,7 @@ import {
 import {
   withinBudget,
   accessLimits,
+  isId,
   boundedStream,
   boundedJson,
   decode,
@@ -394,7 +395,7 @@ export function createAccessService(options: AccessOptions) {
               continue;
             if (pump.attachmentId) {
               const update: AccessUpdate = {
-                schemaVersion: 6,
+                schemaVersion: 7,
                 kind: "accessUpdate",
                 sessionId: id,
                 attachmentId: pump.attachmentId,
@@ -423,7 +424,7 @@ export function createAccessService(options: AccessOptions) {
             if (pump.attachmentId) {
               try {
                 await peer.connection.client.notify(extension.update, {
-                  schemaVersion: 6,
+                  schemaVersion: 7,
                   kind: "accessUpdate",
                   sessionId: id,
                   attachmentId: pump.attachmentId,
@@ -464,7 +465,7 @@ export function createAccessService(options: AccessOptions) {
         return fail("unavailable");
       if (previous?.attachmentId)
         await peer.connection.client.notify(extension.update, {
-          schemaVersion: 6,
+          schemaVersion: 7,
           kind: "accessUpdate",
           sessionId: id,
           attachmentId: previous.attachmentId,
@@ -521,7 +522,7 @@ export function createAccessService(options: AccessOptions) {
         }
         if (
           !n ||
-          n.contractVersion !== 6 ||
+          n.contractVersion !== 7 ||
           n.acp !== 1 ||
           typeof n.cursorAttach !== "boolean" ||
           typeof n.durableReceipts !== "boolean"
@@ -559,9 +560,36 @@ export function createAccessService(options: AccessOptions) {
     app.onRequest("session/new", async ({ params, signal }) => {
       ready(peer);
       if (params.mcpServers.length) return fail("unsupported_capability");
+      const metadata = params._meta?.[extension.create];
+      let creation = options.sessionOptions;
+      if (metadata !== undefined) {
+        if (!peer.selected) return fail("unsupported_capability");
+        if (
+          !metadata ||
+          typeof metadata !== "object" ||
+          Array.isArray(metadata)
+        )
+          return fail("invalid_input");
+        const input = metadata as Record<string, unknown>;
+        if (
+          Object.keys(input).some(
+            (key) => key !== "sessionId" && key !== "connectionId",
+          ) ||
+          !isId(input.sessionId) ||
+          (input.connectionId !== undefined && !isId(input.connectionId))
+        )
+          return fail("invalid_input");
+        creation = {
+          ...options.sessionOptions,
+          sessionId: input.sessionId as string,
+          ...(input.connectionId === undefined
+            ? {}
+            : { connectionId: input.connectionId as string }),
+        };
+      }
       const created = value(
         await budget(signal, (budget) =>
-          host.createSession(peer.caller, options.sessionOptions, budget),
+          host.createSession(peer.caller, creation, budget),
         ),
       );
       if (!peer.selected) startPump(peer, created.namespace.sessionId, 0);
@@ -643,7 +671,7 @@ export function createAccessService(options: AccessOptions) {
         })
         .join("\n");
       const command = parse("command").parse({
-        schemaVersion: 6,
+        schemaVersion: 7,
         kind: "command",
         sessionId: params.sessionId,
         commandId: crypto.randomUUID(),
@@ -739,7 +767,7 @@ export function createAccessService(options: AccessOptions) {
         await submit(
           peer,
           {
-            schemaVersion: 6,
+            schemaVersion: 7,
             kind: "command",
             sessionId: params.sessionId,
             commandId: crypto.randomUUID(),
@@ -964,7 +992,7 @@ export function createAccessService(options: AccessOptions) {
         return submit(
           peer,
           {
-            schemaVersion: 6,
+            schemaVersion: 7,
             kind: "command",
             sessionId: metadata.sessionId,
             commandId: metadata.commandId,

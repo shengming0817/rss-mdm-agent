@@ -62,7 +62,7 @@ import {
   same,
 } from "./support.js";
 
-function turnFailure(turn: Turn): Failure | undefined {
+export function turnFailure(turn: Turn): Failure | undefined {
   if (!turn.error) return undefined;
   const info = turn.error.codexErrorInfo;
   const status =
@@ -855,7 +855,7 @@ export class CodexAdapter implements ProviderAgentPort {
     decode(
       boundedJson(
         {
-          schemaVersion: 6,
+          schemaVersion: 7,
           kind: "event",
           namespace: this.configuration!.namespace,
           eventId: "validation",

@@ -215,7 +215,10 @@ test("repeated timeout and detach release permission and Host budgets", async (t
     t.after(() => runtime.close());
     await runtime.initialize();
   }
-  const view = await clients[0].createSession();
+  const view = await clients[0].restore(
+    (await clients[0].createSession({ sessionId: crypto.randomUUID() }))
+      .sessionId,
+  );
   const sessionId = view.namespace.sessionId;
   await clients[1].restore(sessionId);
   const caller = new AbortController();

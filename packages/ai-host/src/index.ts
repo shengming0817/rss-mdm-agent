@@ -16,6 +16,7 @@ import { activeStage } from "@rss-mdm-agent/ai-contract";
 import { randomUUID } from "node:crypto";
 import {
   boundedJson,
+  isId,
   decode,
   interactionCatalog,
   type Budget,
@@ -57,9 +58,14 @@ import {
   namespaceKey,
   ok,
 } from "@rss-mdm-agent/ai-contract/transitions";
-import { Deliveries, type DeliveryRouter } from "./delivery.js";
+import {
+  Deliveries,
+  type DeliveryRouter,
+  type DeliveryAuthorizer,
+} from "./delivery.js";
 export type {
   DeliveryRouter,
+  DeliveryAuthorizer,
   DeliveryRequest,
   DeliveryReceipt,
 } from "./delivery.js";
@@ -98,7 +104,10 @@ export interface HostOptions {
   readonly onDiagnostic?: (diagnostic: HostDiagnostic) => void;
   readonly store: SessionStore;
   readonly launchFences: WorkerLaunchFenceStore;
-  readonly delivery: DeliveryRouter | null;
+  readonly delivery: {
+    readonly router: DeliveryRouter;
+    readonly authorize: DeliveryAuthorizer;
+  } | null;
   /** Trusted composition resolves metadata and memory-only worker activation. */
   resolve(
     caller: Caller,
@@ -139,7 +148,7 @@ const budget = (timeoutMs = 30000): Budget => ({
   signal: new AbortController().signal,
 });
 const baseRecord = (record: CommandRecord) => ({
-  schemaVersion: 6 as const,
+  schemaVersion: 7 as const,
   kind: "commandRecord" as const,
   command: record.command,
   receipt: record.receipt,
@@ -232,14 +241,29 @@ export class SessionHost implements HostPort {
     if (options.delivery)
       this.deliveries = new Deliveries(
         options.store,
-        options.delivery,
+        options.delivery.router,
         (n, fn) => this.mailbox(n, fn),
         (n, after) => this.publishSince(n, after),
         this.now,
+        options.delivery.authorize,
+        (namespace, generation) => {
+          const runtime = this.runtimes.get(namespaceKey(namespace));
+          return (
+            !this.closing &&
+            this.callerAvailable(namespace) &&
+            !runtime?.abort.signal.aborted &&
+            runtime?.verified?.binding.generation === generation
+          );
+        },
       );
   }
   static async create(options: HostOptions): Promise<Result<SessionHost>> {
-    if (typeof options.credentialPersistence !== "function")
+    if (
+      typeof options.credentialPersistence !== "function" ||
+      (options.delivery !== null &&
+        (!options.delivery?.router ||
+          typeof options.delivery.authorize !== "function"))
+    )
       return fail("invalid_input");
     if (
       [
@@ -343,7 +367,7 @@ export class SessionHost implements HostPort {
   }
   negotiate(offered: Negotiation): Result<Negotiation> {
     if (this.closed) return fail("unavailable");
-    if (offered.contractVersion !== 6 || offered.acp !== 1)
+    if (offered.contractVersion !== 7 || offered.acp !== 1)
       return fail("unsupported_version");
     if (
       offered.a2ui &&
@@ -652,7 +676,7 @@ export class SessionHost implements HostPort {
       if (b.signal.aborted || this.closing || !this.callerAvailable(caller))
         return fail("unavailable");
       return ok({
-        schemaVersion: 6,
+        schemaVersion: 7,
         kind: "connectionPage",
         connections: [...requireValue(await this.store.connections(caller))],
         preferences: requireValue(await this.store.preferences(caller)),
@@ -817,7 +841,7 @@ export class SessionHost implements HostPort {
           ),
         );
         const command: Command = {
-          schemaVersion: 6,
+          schemaVersion: 7,
           kind: "command",
           sessionId: probe.sessionId,
           commandId: randomUUID(),
@@ -1165,16 +1189,30 @@ export class SessionHost implements HostPort {
   ): Promise<Result<Session>> {
     if (this.closing || b.signal.aborted)
       return Promise.resolve(fail("unavailable"));
+    if (options.sessionId !== undefined && !isId(options.sessionId))
+      return Promise.resolve(fail("invalid_input"));
     const namespace = {
       tenantId: caller.tenantId,
       principalId: caller.principalId,
       authorityId: caller.authorityId,
-      sessionId: randomUUID(),
+      sessionId: options.sessionId ?? randomUUID(),
     };
     return this.result(() =>
       this.admit(namespace, b, async () => {
-        if (Object.keys(options).some((key) => key !== "connectionId"))
+        if (
+          Object.keys(options).some(
+            (key) => key !== "connectionId" && key !== "sessionId",
+          )
+        )
           return fail("invalid_input");
+        if (options.sessionId) {
+          const existing = await this.store.session(namespace);
+          if (existing.ok)
+            return existing.value.status === "retired"
+              ? fail("session_gone")
+              : existing;
+          if (existing.error.code !== "session_gone") return existing;
+        }
         const prefs = requireValue(await this.store.preferences(caller));
         const selected = options.connectionId ?? prefs.defaultConnectionId;
         if (selected) {
@@ -1435,7 +1473,7 @@ export class SessionHost implements HostPort {
     )
       attemptId = undefined;
     return {
-      schemaVersion: 6,
+      schemaVersion: 7,
       kind: "event",
       namespace: session.namespace,
       eventId: randomUUID(),
@@ -1806,7 +1844,7 @@ export class SessionHost implements HostPort {
         append(observed.body);
       } else if (observed.type === "interaction") {
         const row: Interaction = {
-          schemaVersion: 6,
+          schemaVersion: 7,
           kind: "interaction",
           namespace,
           commandId: record.command.commandId,
@@ -2214,7 +2252,7 @@ export class SessionHost implements HostPort {
                 await this.accept(
                   caller,
                   {
-                    schemaVersion: 6,
+                    schemaVersion: 7,
                     kind: "command",
                     sessionId: namespace.sessionId,
                     commandId: randomUUID(),
@@ -2322,7 +2360,7 @@ export class SessionHost implements HostPort {
               this.accept(
                 namespace,
                 {
-                  schemaVersion: 6,
+                  schemaVersion: 7,
                   kind: "command",
                   sessionId,
                   commandId: randomUUID(),

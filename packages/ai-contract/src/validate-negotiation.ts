@@ -384,7 +384,7 @@ const schema31 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -431,7 +431,7 @@ const schema31 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -504,7 +504,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -535,7 +535,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -578,7 +578,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -621,7 +621,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -669,7 +669,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -712,7 +712,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -754,7 +754,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -798,7 +798,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -847,7 +847,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -910,7 +910,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -992,7 +992,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -1063,7 +1063,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -1140,7 +1140,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -1217,7 +1217,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -1295,7 +1295,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -1383,7 +1383,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -1472,7 +1472,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -1577,7 +1577,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -1670,7 +1670,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -1753,7 +1753,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -1823,7 +1823,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -1894,7 +1894,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -1971,7 +1971,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -2061,7 +2061,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -2137,7 +2137,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -2202,7 +2202,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -2262,7 +2262,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -2337,7 +2337,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -2406,7 +2406,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -2465,7 +2465,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -2549,7 +2549,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -2622,7 +2622,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -2703,7 +2703,7 @@ const schema31 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -2764,7 +2764,7 @@ const schema31 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -2858,7 +2858,7 @@ const schema31 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -2939,7 +2939,7 @@ const schema31 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -3089,7 +3089,7 @@ const schema31 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -3212,7 +3212,7 @@ const schema31 = {
       type: "object",
       properties: {
         schemaVersion: {
-          const: 6,
+          const: 7,
           type: "integer",
           description: "Exact product contract version; no legacy readers.",
         },
@@ -3283,7 +3283,7 @@ const schema31 = {
       type: "object",
       properties: {
         schemaVersion: {
-          const: 6,
+          const: 7,
           type: "integer",
           description: "Exact product contract version; no legacy readers.",
         },
@@ -3294,8 +3294,9 @@ const schema31 = {
         },
         items: {
           type: "array",
-          items: { $ref: "#/$defs/Session" },
-          description: "Caller-scoped sessions in this immutable page.",
+          items: { $ref: "#/$defs/SessionListItem" },
+          description:
+            "Caller-scoped conversation summaries in stable recent order.",
         },
         next: {
           $ref: "#/$defs/Id",
@@ -3363,7 +3364,7 @@ const schema31 = {
       type: "object",
       properties: {
         schemaVersion: {
-          const: 6,
+          const: 7,
           type: "integer",
           description: "Exact product contract version; no legacy readers.",
         },
@@ -3390,7 +3391,7 @@ const schema31 = {
       type: "object",
       properties: {
         schemaVersion: {
-          const: 6,
+          const: 7,
           type: "integer",
           description: "Exact product contract version; no legacy readers.",
         },
@@ -3412,7 +3413,7 @@ const schema31 = {
       type: "object",
       properties: {
         schemaVersion: {
-          const: 6,
+          const: 7,
           type: "integer",
           description: "Exact product contract version; no legacy readers.",
         },
@@ -3443,7 +3444,7 @@ const schema31 = {
       type: "object",
       properties: {
         schemaVersion: {
-          const: 6,
+          const: 7,
           type: "integer",
           description: "Exact product contract version; no legacy readers.",
         },
@@ -3470,7 +3471,7 @@ const schema31 = {
       type: "object",
       properties: {
         schemaVersion: {
-          const: 6,
+          const: 7,
           type: "integer",
           description: "Exact product contract version; no legacy readers.",
         },
@@ -3492,7 +3493,7 @@ const schema31 = {
       type: "object",
       properties: {
         schemaVersion: {
-          const: 6,
+          const: 7,
           type: "integer",
           description: "Exact product contract version; no legacy readers.",
         },
@@ -3524,7 +3525,7 @@ const schema31 = {
       type: "object",
       properties: {
         schemaVersion: {
-          const: 6,
+          const: 7,
           type: "integer",
           description: "Exact product contract version; no legacy readers.",
         },
@@ -3562,7 +3563,7 @@ const schema31 = {
       type: "object",
       properties: {
         schemaVersion: {
-          const: 6,
+          const: 7,
           type: "integer",
           description: "Exact product contract version; no legacy readers.",
         },
@@ -3598,7 +3599,7 @@ const schema31 = {
         contractVersion: {
           description: "Exact product contract version.",
           type: "integer",
-          const: 6,
+          const: 7,
         },
         acp: {
           description: "Exact ACP protocol version.",
@@ -3751,7 +3752,7 @@ const schema31 = {
     Connection: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "connection" },
         connectionId: { $ref: "#/$defs/Id" },
         name: { type: "string", minLength: 1, maxLength: 64 },
@@ -3782,7 +3783,7 @@ const schema31 = {
     UserPreferences: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "userPreferences" },
         defaultConnectionId: { $ref: "#/$defs/Id" },
         selectedSessionId: { $ref: "#/$defs/Id" },
@@ -3795,7 +3796,7 @@ const schema31 = {
     TestUser: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "testUser" },
         userId: { $ref: "#/$defs/Id" },
         displayName: { type: "string", minLength: 1, maxLength: 64 },
@@ -3804,12 +3805,12 @@ const schema31 = {
       required: ["schemaVersion", "kind", "userId", "displayName", "nameKey"],
       additionalProperties: false,
       description:
-        "TestUser product wire record; validated against the V6 schema.",
+        "TestUser product wire record; validated against the V7 schema.",
     },
     UserContext: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "userContext" },
         user: { $ref: "#/$defs/TestUser" },
         generation: { $ref: "#/$defs/Id" },
@@ -3823,7 +3824,7 @@ const schema31 = {
     HistoryPreview: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "historyPreview" },
         sessionId: { $ref: "#/$defs/Id" },
         connectionId: { $ref: "#/$defs/Id" },
@@ -3861,7 +3862,7 @@ const schema31 = {
     ConnectionPage: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "connectionPage" },
         connections: {
           type: "array",
@@ -3876,7 +3877,7 @@ const schema31 = {
     ConnectionsRequest: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "connectionsRequest" },
       },
       required: ["schemaVersion", "kind"],
@@ -3885,7 +3886,7 @@ const schema31 = {
     SaveConnectionRequest: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "saveConnectionRequest" },
         connection: { $ref: "#/$defs/ConnectionDraft" },
         expectedRevision: {
@@ -3898,7 +3899,7 @@ const schema31 = {
     PreferencesRequest: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "preferencesRequest" },
         patch: { $ref: "#/$defs/PreferencesPatch" },
       },
@@ -3908,7 +3909,7 @@ const schema31 = {
     SelectConnectionRequest: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "selectConnectionRequest" },
         sessionId: { $ref: "#/$defs/Id" },
         connectionId: { $ref: "#/$defs/Id" },
@@ -3926,7 +3927,7 @@ const schema31 = {
     HistoryRequest: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "historyRequest" },
         sessionId: { $ref: "#/$defs/Id" },
         connectionId: { $ref: "#/$defs/Id" },
@@ -3938,7 +3939,7 @@ const schema31 = {
     TestUserPage: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "testUserPage" },
         users: {
           type: "array",
@@ -3965,7 +3966,7 @@ const schema31 = {
           title: "NativeCallAttach",
           type: "object",
           properties: {
-            schemaVersion: { type: "integer", const: 6 },
+            schemaVersion: { type: "integer", const: 7 },
             kind: { type: "string", const: "nativeCall" },
             id: { $ref: "#/$defs/Counter" },
             method: { type: "string", const: "attach" },
@@ -3987,7 +3988,7 @@ const schema31 = {
           title: "NativeCallSuspend",
           type: "object",
           properties: {
-            schemaVersion: { type: "integer", const: 6 },
+            schemaVersion: { type: "integer", const: 7 },
             kind: { type: "string", const: "nativeCall" },
             id: { $ref: "#/$defs/Counter" },
             method: { type: "string", const: "suspend" },
@@ -4006,7 +4007,7 @@ const schema31 = {
           title: "NativeCallDetach",
           type: "object",
           properties: {
-            schemaVersion: { type: "integer", const: 6 },
+            schemaVersion: { type: "integer", const: 7 },
             kind: { type: "string", const: "nativeCall" },
             id: { $ref: "#/$defs/Counter" },
             method: { type: "string", const: "detach" },
@@ -4025,7 +4026,7 @@ const schema31 = {
           title: "NativeCallSaveConnection",
           type: "object",
           properties: {
-            schemaVersion: { type: "integer", const: 6 },
+            schemaVersion: { type: "integer", const: 7 },
             kind: { type: "string", const: "nativeCall" },
             id: { $ref: "#/$defs/Counter" },
             method: { type: "string", const: "saveConnection" },
@@ -4056,7 +4057,7 @@ const schema31 = {
           title: "NativeCallHealth",
           type: "object",
           properties: {
-            schemaVersion: { type: "integer", const: 6 },
+            schemaVersion: { type: "integer", const: 7 },
             kind: { type: "string", const: "nativeCall" },
             id: { $ref: "#/$defs/Counter" },
             method: { type: "string", const: "health" },
@@ -4074,7 +4075,7 @@ const schema31 = {
           title: "NativeCallOpenCredential",
           type: "object",
           properties: {
-            schemaVersion: { type: "integer", const: 6 },
+            schemaVersion: { type: "integer", const: 7 },
             kind: { type: "string", const: "nativeCall" },
             id: { $ref: "#/$defs/Counter" },
             method: { type: "string", const: "openCredential" },
@@ -4097,7 +4098,7 @@ const schema31 = {
           title: "NativeCallMatchCredential",
           type: "object",
           properties: {
-            schemaVersion: { type: "integer", const: 6 },
+            schemaVersion: { type: "integer", const: 7 },
             kind: { type: "string", const: "nativeCall" },
             id: { $ref: "#/$defs/Counter" },
             method: { type: "string", const: "matchCredential" },
@@ -4120,7 +4121,7 @@ const schema31 = {
           title: "NativeCallCredentialContext",
           type: "object",
           properties: {
-            schemaVersion: { type: "integer", const: 6 },
+            schemaVersion: { type: "integer", const: 7 },
             kind: { type: "string", const: "nativeCall" },
             id: { $ref: "#/$defs/Counter" },
             method: { type: "string", const: "credentialContext" },
@@ -4143,7 +4144,7 @@ const schema31 = {
           title: "NativeReplySuccess",
           type: "object",
           properties: {
-            schemaVersion: { type: "integer", const: 6 },
+            schemaVersion: { type: "integer", const: 7 },
             kind: { type: "string", const: "nativeReply" },
             id: { $ref: "#/$defs/Counter" },
             ok: { const: true, type: "boolean" },
@@ -4156,7 +4157,7 @@ const schema31 = {
           title: "NativeReplyFailure",
           type: "object",
           properties: {
-            schemaVersion: { type: "integer", const: 6 },
+            schemaVersion: { type: "integer", const: 7 },
             kind: { type: "string", const: "nativeReply" },
             id: { $ref: "#/$defs/Counter" },
             ok: { const: false, type: "boolean" },
@@ -4169,7 +4170,7 @@ const schema31 = {
     NativeEvent: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "nativeEvent" },
         channel: { $ref: "#/$defs/Id" },
         message: {},
@@ -4182,7 +4183,7 @@ const schema31 = {
       description:
         "Non-secret AI operation provenance carried only on the desktop-owned execution pipe.",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "executionOrigin" },
         namespace: { $ref: "#/$defs/Namespace" },
         userGeneration: {
@@ -4280,7 +4281,7 @@ const schema31 = {
     HostStatus: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "hostStatus" },
         generation: { $ref: "#/$defs/Counter" },
         phase: {
@@ -4313,7 +4314,7 @@ const schema31 = {
     HostHealth: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "hostHealth" },
         ready: { type: "boolean", const: true },
         protocol: { type: "integer", const: 4 },
@@ -4326,7 +4327,7 @@ const schema31 = {
         "Closed diagnostic frame on the inherited Host diagnostic pipe. Raw stderr and unknown frames never become product diagnostics.",
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "hostProcessDiagnostic" },
         code: {
           type: "string",
@@ -4394,7 +4395,7 @@ const schema31 = {
     TestConnectionRequest: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "testConnectionRequest" },
         connectionId: { $ref: "#/$defs/Id" },
         expectedRevision: { $ref: "#/$defs/Counter" },
@@ -4405,7 +4406,7 @@ const schema31 = {
     DeleteConnectionRequest: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "deleteConnectionRequest" },
         connectionId: { $ref: "#/$defs/Id" },
         expectedRevision: { $ref: "#/$defs/Counter" },
@@ -4522,7 +4523,7 @@ const schema31 = {
     AccountSettings: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "accountSettings" },
         organizations: {
           type: "array",
@@ -4537,7 +4538,7 @@ const schema31 = {
     AccountStatus: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "accountStatus" },
         current: { $ref: "#/$defs/UserContext" },
         failure: { $ref: "#/$defs/AccountFailure" },
@@ -4557,6 +4558,20 @@ const schema31 = {
       required: ["tenantId", "principalId", "authorityId"],
       additionalProperties: false,
     },
+    SessionListItem: {
+      type: "object",
+      properties: {
+        namespace: { $ref: "#/$defs/Namespace" },
+        status: {
+          type: "string",
+          enum: ["active", "recovery_required", "retired"],
+        },
+        title: { type: "string", minLength: 1, maxLength: 32 },
+        lastActivityAtMs: { $ref: "#/$defs/Counter" },
+      },
+      required: ["namespace", "status", "title", "lastActivityAtMs"],
+      additionalProperties: false,
+    },
   },
   $ref: "#/$defs/Negotiation",
 };
@@ -4569,7 +4584,7 @@ const schema32 = {
     contractVersion: {
       description: "Exact product contract version.",
       type: "integer",
-      const: 6,
+      const: 7,
     },
     acp: {
       description: "Exact ACP protocol version.",
@@ -4703,13 +4718,13 @@ function validate21(
               ];
               return false;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               validate21.errors = [
                 {
                   instancePath: instancePath + "/contractVersion",
                   schemaPath: "#/properties/contractVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 },
               ];

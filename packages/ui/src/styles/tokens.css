@@ -20,6 +20,9 @@
   --radius-full: 50%;
 
   --sidebar-width: 320px;
+  --navigation-width: 240px;
+  --drawer-width: 520px;
+  --drawer-padding: 24px;
 
   /* neutral / text */
   --color-bg: #fbfbfc;

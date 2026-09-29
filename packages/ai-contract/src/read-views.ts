@@ -2,6 +2,7 @@ import { boundedJson, ContractError, type Limits } from "./codec.js";
 import type {
   SnapshotPage,
   SessionPage,
+  SessionListItem,
   Event,
   CommandRecord,
   SurfaceState,
@@ -152,7 +153,7 @@ export function readSnapshotPage(
   for (;;) {
     const records = value.records.slice(offset, offset + count);
     const page: SnapshotPage = {
-      schemaVersion: 6,
+      schemaVersion: 7,
       kind: "snapshotPage",
       snapshotId: id,
       pageIndex: index,
@@ -189,17 +190,27 @@ export function readSessionPage(
   views: ReadViews,
   scope: string,
   query: PageQuery,
-  capture: () => Session[],
+  capture: () => SessionListItem[],
   limits: Limits,
 ): Result<SessionPage> {
-  const read = views.read(scope, query, capture);
+  const read = views.read(scope, query, () =>
+    capture().sort(
+      (a, b) =>
+        b.lastActivityAtMs - a.lastActivityAtMs ||
+        (a.namespace.sessionId < b.namespace.sessionId
+          ? -1
+          : a.namespace.sessionId > b.namespace.sessionId
+            ? 1
+            : 0),
+    ),
+  );
   if (!read.ok) return read;
   const { id, offset, index, value } = read.value;
   if (offset > value.length) return fail("cursor_expired");
   let count = Math.min(query.limit, value.length - offset);
   for (;;) {
     const page: SessionPage = {
-      schemaVersion: 6,
+      schemaVersion: 7,
       kind: "sessionPage",
       items: value.slice(offset, offset + count),
       ...(offset + count < value.length
@@ -218,4 +229,26 @@ export function readSessionPage(
       count = Math.floor(count / 2);
     }
   }
+}
+
+/** A read projection of accepted input; never a new persistent session format. */
+export function sessionListItem(
+  session: Session,
+  commands: readonly CommandRecord[],
+): SessionListItem {
+  const first = commands
+    .filter((row) => row.command.input.type === "prompt")
+    .sort((a, b) => a.receipt.acceptedRevision - b.receipt.acceptedRevision)[0];
+  const text =
+    first?.command.input.type === "prompt" ? first.command.input.text : "";
+  return {
+    namespace: session.namespace,
+    status: session.status,
+    title:
+      [...text.replace(/\s+/gu, " ").trim()].slice(0, 32).join("") || "新对话",
+    lastActivityAtMs: commands.reduce(
+      (latest, row) => Math.max(latest, row.receipt.acceptedAtMs),
+      0,
+    ),
+  };
 }

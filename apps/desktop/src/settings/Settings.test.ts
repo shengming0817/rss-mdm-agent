@@ -24,12 +24,13 @@ async function setup() {
     interactions: {},
     surfaces: {},
     tools: {},
+    deliveries: {},
   };
   const client = {
     initialize: async () => ({}),
     connections: async () => ({
       connections: rows,
-      preferences: { schemaVersion: 6, kind: "userPreferences" },
+      preferences: { schemaVersion: 7, kind: "userPreferences" },
     }),
     listSessions: async () => ({ items: [] }),
     observe: () => () => {},
@@ -40,13 +41,15 @@ async function setup() {
       rows = [{ ...rows[0], configRevision: 2, status: "ready" }];
       return rows[0];
     }),
-    createSession: vi.fn().mockResolvedValue(view),
+    createSession: vi
+      .fn()
+      .mockImplementation(async ({ sessionId }) => ({ sessionId })),
     saveConnection: vi.fn(
       async (row: import("@rss-mdm-agent/ai-contract").ConnectionDraft) => {
         rows = [
           {
             ...row,
-            schemaVersion: 6,
+            schemaVersion: 7,
             kind: "connection",
             configRevision: 1,
             status: "unverified",
@@ -62,7 +65,7 @@ async function setup() {
   );
   await c.connect();
   const status: HostStatus = {
-    schemaVersion: 6,
+    schemaVersion: 7,
     kind: "hostStatus",
     generation: 1,
     phase: "ready",
@@ -104,31 +107,24 @@ async function setup() {
     },
   };
 }
-it("first use may defer or validate then create exactly one pending conversation through the settings CTA", async () => {
+it("first use may defer or validate then enter the empty composer without creating a session", async () => {
   const t = await setup();
   try {
-    expect(t.button("新建对话并前往 AI").attributes("disabled")).toBeDefined();
+    expect(t.button("开始对话").attributes("disabled")).toBeDefined();
     await t.button("稍后配置，前往 AI").trigger("click");
     expect(t.wrapper.emitted("assistant")).toHaveLength(1);
     expect(t.client.createSession).not.toHaveBeenCalled();
     await t.fill();
     expect(t.client.saveConnection).toHaveBeenCalledTimes(1);
-    expect(t.button("新建对话并前往 AI").attributes("disabled")).toBeDefined();
+    expect(t.button("开始对话").attributes("disabled")).toBeDefined();
     await t.button("测试连接").trigger("click");
     await flushPromises();
-    expect(
-      t.button("新建对话并前往 AI").attributes("disabled"),
-    ).toBeUndefined();
-    let complete!: (v: SessionView) => void;
-    const view = await t.client.createSession();
-    vi.mocked(t.client.createSession)
-      .mockClear()
-      .mockImplementation(() => new Promise((r) => (complete = r)));
-    await t.button("新建对话并前往 AI").trigger("click");
-    await t.button("新建对话并前往 AI").trigger("click");
-    expect(t.client.createSession).toHaveBeenCalledTimes(1);
-    complete(view);
-    await flushPromises();
+    expect(t.button("开始对话").attributes("disabled")).toBeUndefined();
+    t.c.state.drafts.set("", "草稿保留");
+    await t.button("开始对话").trigger("click");
+    expect(t.client.createSession).not.toHaveBeenCalled();
+    expect(t.c.state.selected).toBe("");
+    expect(t.c.draft.value).toBe("草稿保留");
     expect(t.wrapper.emitted("assistant")).toHaveLength(2);
   } finally {
     t.close();

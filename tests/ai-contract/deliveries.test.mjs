@@ -22,7 +22,7 @@ async function setup() {
   await dispatchCommand(store, session, "command-1", "submitted");
   session = unwrap(await store.session(session.namespace));
   const event = {
-    schemaVersion: 6,
+    schemaVersion: 7,
     kind: "event",
     namespace: session.namespace,
     eventId: "delivery-request",
@@ -40,7 +40,7 @@ async function setup() {
     },
   };
   const delivery = {
-    schemaVersion: 6,
+    schemaVersion: 7,
     kind: "delivery",
     namespace: session.namespace,
     operationId: event.body.operationId,

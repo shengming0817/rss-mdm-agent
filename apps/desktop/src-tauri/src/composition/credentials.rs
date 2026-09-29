@@ -350,7 +350,7 @@ mod tests {
             serde_json::json!({"mode":"guest","tenantId":"local-guest","principalId":"guest","authorityId":"desktop-guest"}),
             serde_json::json!({"mode":"enterprise","tenantId":"tenant","principalId":"principal","authorityId":"authority","organizationId":"org","expiresAtMs":1000}),
         ] {
-            let context = serde_json::from_value(serde_json::json!({"schemaVersion":6,"kind":"userContext","generation":"generation","user":{"schemaVersion":6,"kind":"testUser","userId":"profile","nameKey":"name","displayName":"Name"},"identity":identity})).unwrap();
+            let context = serde_json::from_value(serde_json::json!({"schemaVersion":7,"kind":"userContext","generation":"generation","user":{"schemaVersion":7,"kind":"testUser","userId":"profile","nameKey":"name","displayName":"Name"},"identity":identity})).unwrap();
             let owner = serde_json::to_value(
                 credential_owner(&credential_caller(&context), &draft).unwrap(),
             )

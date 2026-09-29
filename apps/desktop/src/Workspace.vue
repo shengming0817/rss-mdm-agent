@@ -88,9 +88,10 @@ onBeforeUnmount(assistant.dispose);
     :controller="controller"
   />
   <Assistant
-    v-show="page === 'assistant'"
+    v-if="page === 'assistant'"
     :controller="assistant"
     @settings="emit('navigate', 'settings')"
+    @tasks="emit('navigate', 'tasks')"
   />
   <Settings
     v-show="page === 'settings'"

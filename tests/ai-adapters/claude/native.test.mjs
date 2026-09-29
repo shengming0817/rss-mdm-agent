@@ -23,7 +23,7 @@ const budget = (ms = 15000) => ({
   signal: AbortSignal.timeout(ms),
 });
 const command = (id, text = "Exercise the fixed native SDK fixture.") => ({
-  schemaVersion: 6,
+  schemaVersion: 7,
   kind: "command",
   sessionId: "native-fixture",
   commandId: id,

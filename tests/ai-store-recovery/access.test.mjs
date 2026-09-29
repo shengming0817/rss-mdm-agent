@@ -139,3 +139,53 @@ test("SQLite verified restart preserves renderable surface history while revokin
     false,
   );
 });
+
+test("session summaries derive bounded first-prompt titles and freeze recent order across writes and reopen", async (t) => {
+  const h = harness(t),
+    path = join(h.directory, "summaries.sqlite");
+  let store = unwrap(h.open(path));
+  const a = fixtureSession(),
+    b = fixtureSession();
+  a.namespace.sessionId = "a";
+  b.namespace.sessionId = "b";
+  for (const session of [a, b]) unwrap(await store.create(session));
+  const accept = async (session, id, text, now) => {
+    const head = unwrap(await store.session(session.namespace));
+    const command = {
+      ...fixtureCommand(id),
+      sessionId: session.namespace.sessionId,
+      input: { type: "prompt", policy: "queue_next", text },
+    };
+    unwrap(await store.accept({ ...acceptance(head, command), nowMs: now }));
+  };
+  await accept(a, "a-first", "  首条\n " + "😀".repeat(40), 10);
+  await accept(b, "b-first", "另一个会话", 20);
+  const first = unwrap(await store.listSessions(a.namespace, { limit: 1 }));
+  assert.equal(first.items[0].namespace.sessionId, "b");
+  assert.equal(first.items[0].title, "另一个会话");
+  assert.equal(first.items[0].lastActivityAtMs, 20);
+  assert.deepEqual(Object.keys(first.items[0]).sort(), [
+    "lastActivityAtMs",
+    "namespace",
+    "status",
+    "title",
+  ]);
+  await accept(a, "a-second", "不改标题", 30);
+  const continuation = unwrap(
+    await store.listSessions(a.namespace, {
+      limit: 1,
+      continuation: first.next,
+    }),
+  );
+  assert.equal(continuation.items[0].lastActivityAtMs, 10);
+  assert.equal(continuation.items[0].title, "首条 " + "😀".repeat(29));
+  const expected = unwrap(await store.listSessions(a.namespace, { limit: 64 }));
+  assert.equal(expected.items[0].namespace.sessionId, "a");
+  assert.equal(expected.items[0].lastActivityAtMs, 30);
+  unwrap(await store.close(budget()));
+  store = unwrap(h.open(path, "open"));
+  assert.deepEqual(
+    unwrap(await store.listSessions(a.namespace, { limit: 64 })),
+    expected,
+  );
+});

@@ -19,6 +19,7 @@ test("AI boundary gate covers app dependencies, builtins and computed imports", 
   const fixture = mkdtempSync(join(tmpdir(), "rss-ai-boundaries-"));
   t.after(() => rmSync(fixture, { recursive: true, force: true }));
   for (const target of [
+    "packages/execution-bindings",
     "packages/ai-contract",
     "packages/ai-host",
     "packages/ai-access",

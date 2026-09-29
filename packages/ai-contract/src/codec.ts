@@ -129,7 +129,7 @@ export function decode(input: string | Uint8Array, limits: Limits): WireRecord {
     value &&
     typeof value === "object" &&
     "schemaVersion" in value &&
-    value.schemaVersion !== 6
+    value.schemaVersion !== 7
   )
     throw new ContractError("version");
   if (!valid(value)) throw new ContractError("schema");
@@ -151,8 +151,6 @@ function checkContext(value: WireRecord): void {
     )
       throw new ContractError("context");
   }
-  if (value.kind === "sessionPage")
-    for (const session of value.items) checkContext(session);
   if (value.kind === "event" && value.body.type === "command_accepted") {
     checkContext(value.body.command);
     if (

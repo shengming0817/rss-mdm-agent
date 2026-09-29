@@ -52,6 +52,27 @@ import {
   Queue,
   same,
 } from "./support.js";
+/** Internal classification seam; lifecycle handling stays in the adapter. */
+export function assistantFailure(error: string): Failure {
+  const code = ["authentication_failed", "cloud_credential_error"].includes(
+    error,
+  )
+    ? "authentication_required"
+    : error === "model_not_found"
+      ? "unsupported_capability"
+      : error === "invalid_request"
+        ? "invalid_input"
+        : ["rate_limit", "max_output_tokens", "billing_error"].includes(error)
+          ? "limit_exceeded"
+          : [
+                "oauth_org_not_allowed",
+                "account_on_hold",
+                "verification_required",
+              ].includes(error)
+            ? "permission_denied"
+            : "unavailable";
+  return { code, retry: "never" };
+}
 const bridge = "mcp__rss_host__propose";
 interface Turn {
   command: Pick<Command, "sessionId" | "commandId">;
@@ -454,7 +475,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
       decode(
         boundedJson(
           {
-            schemaVersion: 6,
+            schemaVersion: 7,
             kind: "event",
             namespace: this.session?.configuration.namespace,
             eventId: "control-attempt",
@@ -524,7 +545,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
     try {
       c = this.checked(command);
       const attemptEvent = {
-        schemaVersion: 6,
+        schemaVersion: 7,
         kind: "event",
         namespace: this.session?.configuration.namespace,
         eventId: "validate-attempt",
@@ -718,27 +739,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
     if (m.type === "assistant") {
       if (!turn.accepted) return;
       if (m.error) {
-        const code = [
-          "authentication_failed",
-          "cloud_credential_error",
-        ].includes(m.error)
-          ? "authentication_required"
-          : m.error === "model_not_found"
-            ? "unsupported_capability"
-            : m.error === "invalid_request"
-              ? "invalid_input"
-              : ["rate_limit", "max_output_tokens", "billing_error"].includes(
-                    m.error,
-                  )
-                ? "limit_exceeded"
-                : [
-                      "oauth_org_not_allowed",
-                      "account_on_hold",
-                      "verification_required",
-                    ].includes(m.error)
-                  ? "permission_denied"
-                  : "unavailable";
-        turn.failure = { code, retry: "never" };
+        turn.failure = assistantFailure(m.error);
         this.emit(turn, { type: "error", failure: turn.failure });
         return;
       }

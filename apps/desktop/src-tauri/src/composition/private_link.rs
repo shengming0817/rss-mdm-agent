@@ -1,9 +1,15 @@
 //! Fixed V1 Native/Execution lanes over inherited standard pipes.
+use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, DuplexStream};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
 
 include!(concat!(env!("OUT_DIR"), "/private_link_contract.rs"));
+
+struct Incoming {
+    data: Vec<u8>,
+    _capacity: OwnedSemaphorePermit,
+}
 
 pub fn start(
     mut input: impl AsyncRead + Unpin + Send + 'static,
@@ -14,9 +20,11 @@ pub fn start(
     let (execution, execution_peer) = tokio::io::duplex(MAX * 2);
     let mut incoming = Vec::new();
     let mut outgoing = Vec::new();
+    let mut capacities = Vec::new();
     for peer in [native_peer, execution_peer] {
         let (mut reader, mut writer) = tokio::io::split(peer);
-        let (tx, mut rx) = mpsc::channel::<Vec<u8>>(2);
+        let (tx, mut rx) = mpsc::channel::<Incoming>(QUEUED_FRAMES);
+        capacities.push(Arc::new(Semaphore::new(QUEUED_BYTES)));
         incoming.push(tx);
         let cancelled = stop.clone();
         tokio::spawn(async move {
@@ -27,7 +35,7 @@ pub fn start(
                         Some(frame) => {
                             tokio::select! {
                                 _ = cancelled.cancelled() => break,
-                                result = writer.write_all(&frame) => if result.is_err() { break; }
+                                result = writer.write_all(&frame.data) => if result.is_err() { break; }
                             }
                         }
                         None => break,
@@ -66,8 +74,16 @@ pub fn start(
                 }
                 let mut data = vec![0; size];
                 input.read_exact(&mut data).await?;
-                incoming[header[4] as usize]
-                    .try_send(data)
+                let lane = header[4] as usize;
+                let capacity = capacities[lane]
+                    .clone()
+                    .try_acquire_many_owned(size as u32)
+                    .map_err(|_| std::io::Error::other("private lane byte budget"))?;
+                incoming[lane]
+                    .try_send(Incoming {
+                        data,
+                        _capacity: capacity,
+                    })
                     .map_err(|_| std::io::Error::other("private lane full"))?;
             }
         };
@@ -104,6 +120,57 @@ pub fn start(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn coalesced_small_frames_preserve_both_lanes() {
+        let (wire, mut peer) = tokio::io::duplex(MAX * 2);
+        let (read, write) = tokio::io::split(wire);
+        let (mut native, mut execution, stop) = start(read, write);
+        let mut burst = Vec::new();
+        for id in [0u8, 1] {
+            for index in 0..32u8 {
+                burst.extend_from_slice(&MAGIC);
+                burst.push(id);
+                burst.extend_from_slice(&1u32.to_be_bytes());
+                burst.push(index);
+            }
+        }
+        peer.write_all(&burst).await.unwrap();
+        for stream in [&mut native, &mut execution] {
+            let mut received = [0u8; 32];
+            tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                stream.read_exact(&mut received),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert_eq!(received.to_vec(), (0..32u8).collect::<Vec<_>>());
+        }
+        assert!(!stop.is_cancelled());
+        stop.cancel();
+    }
+    #[tokio::test]
+    async fn stalled_lane_still_has_a_byte_budget() {
+        let (wire, mut peer) = tokio::io::duplex(MAX * 2);
+        let (read, write) = tokio::io::split(wire);
+        let (_native, _execution, stop) = start(read, write);
+        let mut frame = Vec::with_capacity(MAX + 9);
+        frame.extend_from_slice(&MAGIC);
+        frame.push(0);
+        frame.extend_from_slice(&(MAX as u32).to_be_bytes());
+        frame.resize(MAX + 9, 1);
+        let producer = tokio::spawn(async move {
+            for _ in 0..8 {
+                if peer.write_all(&frame).await.is_err() {
+                    break;
+                }
+            }
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(2), stop.cancelled())
+            .await
+            .unwrap();
+        producer.await.unwrap();
+    }
     #[tokio::test]
     async fn protocol_rejects_legacy() {
         let (wire, mut peer) = tokio::io::duplex(MAX * 2);

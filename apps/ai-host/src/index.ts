@@ -169,6 +169,7 @@ export async function startLocalApp(
       }),
   );
   const runtimeRoot = dirname(dirname(process.execPath));
+  let permissionAccess: ReturnType<typeof createAccessService> | undefined;
   const created = await createHost({
     workerRuntime: {
       launcher: join(
@@ -180,7 +181,55 @@ export async function startLocalApp(
         .update(readFileSync(join(runtimeRoot, "worker-manifest.json")))
         .digest("hex"),
     },
-    delivery: execution?.router ?? null,
+    delivery: execution
+      ? {
+          router: execution.router,
+          authorize: async (request, budget) => {
+            if (
+              !permissionAccess ||
+              !available(request.namespace) ||
+              budget.signal.aborted
+            )
+              return {
+                ok: false,
+                error: { code: "unavailable", retry: "never" },
+              };
+            const answer = await permissionAccess.requestPermission(
+              request.namespace,
+              {
+                sessionId: request.namespace.sessionId,
+                toolCall: {
+                  toolCallId: request.operationId,
+                  title:
+                    request.proposal.name === "execution_cancel"
+                      ? "允许 AI 请求取消设备操作"
+                      : "允许 AI 请求执行设备操作",
+                  rawInput: request.proposal.arguments,
+                },
+                options: [
+                  { optionId: "allow", kind: "allow_once", name: "允许一次" },
+                  { optionId: "reject", kind: "reject_once", name: "拒绝一次" },
+                ],
+              },
+              budget.signal,
+            );
+            if (
+              budget.signal.aborted ||
+              !available(request.namespace) ||
+              answer.outcome.outcome !== "selected"
+            )
+              return {
+                ok: false,
+                error: { code: "unavailable", retry: "never" },
+              };
+            return {
+              ok: true,
+              value:
+                answer.outcome.optionId === "allow" ? "allowed" : "rejected",
+            };
+          },
+        }
+      : null,
     store,
     launchFences: store,
     onDiagnostic: (diagnostic) =>
@@ -212,6 +261,7 @@ export async function startLocalApp(
   }
   const host = created.value,
     service = createAccessService({ host, sessionOptions: {} });
+  permissionAccess = service;
   const views = new Map<
     string,
     { input: ReadableStreamDefaultController<any>; generation: string }
@@ -240,7 +290,7 @@ export async function startLocalApp(
     async ({ method, data }) => {
       if (method === "health")
         return {
-          schemaVersion: 6,
+          schemaVersion: 7,
           kind: "hostHealth",
           ready: true,
           protocol: 4,

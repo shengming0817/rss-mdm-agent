@@ -30,6 +30,10 @@ it("expires navigation badge, background entry and question card together withou
   vi.setSystemTime(100);
   const wrapper = mount(App);
   try {
+    await wrapper
+      .findAll("button")
+      .find((button) => button.text() === "AI 助手")!
+      .trigger("click");
     const c = wrapper
       .findComponent(Assistant)
       .props("controller") as AssistantController;
@@ -50,6 +54,7 @@ it("expires navigation badge, background entry and question card together withou
         commands: {},
         messages: {},
         tools: {},
+        deliveries: {},
         surfaces: {},
         timeline: [{ kind: "interaction", key: "q", sequence: 1 }],
         interactions: {
@@ -78,18 +83,22 @@ it("expires navigation badge, background entry and question card together withou
       c.state.views.set(id, v);
     }
     await wrapper.vm.$nextTick();
+    await wrapper.get('[aria-label="打开主导航"]').trigger("click");
     expect(wrapper.text()).toContain("AI 助手（待回应 2）");
-    expect(wrapper.find(".assistant .notice").text()).toContain("background");
+    await wrapper.get('dialog[aria-label="主导航"]').trigger("cancel");
+    expect(wrapper.find(".assistant .notice").text()).toContain("新对话");
     expect(
       wrapper.find(".question-card fieldset").attributes("disabled"),
     ).toBeUndefined();
     await vi.advanceTimersByTimeAsync(1001);
+    await wrapper.get('[aria-label="打开主导航"]').trigger("click");
     expect(
       wrapper
         .findAll("button")
         .find((b) => b.text().startsWith("AI 助手"))!
         .text(),
     ).toBe("AI 助手");
+    await wrapper.get('dialog[aria-label="主导航"]').trigger("cancel");
     expect(wrapper.find(".assistant .notice").exists()).toBe(false);
     expect(
       wrapper.find(".question-card fieldset").attributes("disabled"),

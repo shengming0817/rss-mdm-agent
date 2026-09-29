@@ -1,3 +1,4 @@
+// Renderer integration with FakeHost; native application evidence lives in check:desktop-native.
 import { activeStage } from "../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
@@ -11,6 +12,29 @@ import {
 } from "../packages/ai-contract/dist/testing/index.js";
 const fixture = await startFixture();
 let browser, page;
+const title = "第一轮 <img src=x onerror=alert(1)>";
+const diagnostics = async () => {
+  if (
+    !((await page.locator(".conversation-menu").getAttribute("open")) !== null)
+  )
+    await page.locator(".conversation-menu summary").click();
+  await page
+    .getByRole("button", { name: "会话详情与诊断", exact: true })
+    .click();
+};
+const navigate = async (name) => {
+  const dialog = page.locator("dialog[open]");
+  if (await dialog.count()) await page.keyboard.press("Escape");
+  const trigger = page.getByRole("button", { name: "打开主导航", exact: true });
+  if (await trigger.count()) await trigger.click();
+  await (
+    (await page.locator("dialog[open]").count())
+      ? page.locator("dialog[open]")
+      : page
+  )
+    .getByRole("button", { name, exact: true })
+    .click();
+};
 try {
   await fixture.seed();
   browser = await chromium.launch({
@@ -26,8 +50,73 @@ try {
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(fixture.url);
+  const sidebarStyle = await page.locator(".shell aside").evaluate((el) => {
+    const style = getComputedStyle(el);
+    const item = getComputedStyle(
+      el.querySelector('button[aria-current="page"]'),
+    );
+    return {
+      width: el.getBoundingClientRect().width,
+      padding: style.padding,
+      background: style.backgroundColor,
+      itemPadding: item.padding,
+      selectedBackground: item.backgroundColor,
+      selectedColor: item.color,
+    };
+  });
   await page.getByRole("button", { name: "AI 助手", exact: true }).click();
-  await page.getByText("连接：已连接", { exact: true }).waitFor();
+  await page.locator(".composer textarea").waitFor();
+  await page.getByRole("button", { name: "打开主导航", exact: true }).click();
+  const navigation = page.getByRole("dialog", { name: "主导航", exact: true });
+  const drawerStyle = await navigation.evaluate((el) => {
+    const style = getComputedStyle(el);
+    const item = getComputedStyle(
+      el.querySelector('button[aria-current="page"]'),
+    );
+    return {
+      width: el.getBoundingClientRect().width,
+      padding: style.padding,
+      background: style.backgroundColor,
+      itemPadding: item.padding,
+      selectedBackground: item.backgroundColor,
+      selectedColor: item.color,
+    };
+  });
+  assert.equal(
+    (await navigation.boundingBox()).x,
+    0,
+    "primary navigation opens at its left-hand trigger",
+  );
+  assert.deepEqual(
+    drawerStyle,
+    sidebarStyle,
+    "collapsed and persistent navigation share visual treatment",
+  );
+  const navigationFooter = await navigation
+    .getByRole("button", { name: "设置", exact: true })
+    .boundingBox();
+  assert.ok(
+    navigationFooter.y > page.viewportSize().height - 100,
+    "settings stays at the bottom of navigation",
+  );
+  mkdirSync(new URL("../.local-ci-runs/", import.meta.url), {
+    recursive: true,
+  });
+  await page.screenshot({
+    path: fileURLToPath(
+      new URL(
+        "../.local-ci-runs/assistant-navigation-wide.png",
+        import.meta.url,
+      ),
+    ),
+  });
+  await page.keyboard.press("Escape");
+  assert.equal(
+    await page
+      .getByRole("button", { name: "打开主导航", exact: true })
+      .evaluate((el) => el === document.activeElement),
+    true,
+  );
   assert.equal(await page.locator(".assistant-sessions li").count(), 20);
   await page.getByRole("button", { name: "加载更多会话" }).click();
   await page.waitForFunction(
@@ -38,13 +127,18 @@ try {
     0,
     "other caller excluded",
   );
-  await page.getByRole("button", { name: "新建会话", exact: true }).click();
+  await page.locator(".new-conversation").click();
   const composer = page.locator(".composer textarea");
   await composer.waitFor();
   await composer.fill("第一轮 <img src=x onerror=alert(1)>");
   await page.getByRole("button", { name: "发送", exact: true }).click();
   await page.getByText("AI 命令已接收 / 排队中", { exact: true }).waitFor();
-  const sessionId = "fake-session-25",
+  const sessionId = await page.evaluate(
+      async () =>
+        (await window.assistantRuntime.listSessions()).items.find((row) =>
+          row.title.startsWith("第一轮"),
+        ).namespace.sessionId,
+    ),
     command = await fixture.command(sessionId);
   unwrap(
     await fixture.host.advance(
@@ -71,12 +165,10 @@ try {
   await page.getByText("临时片段", { exact: true }).waitFor();
   assert.equal(await composer.isEnabled(), true, "busy run permits editing");
   await composer.fill("排队下一轮");
-  await page.getByRole("button", { name: "发送", exact: true }).click();
+  await page.getByRole("button", { name: "排队发送", exact: true }).click();
   await page.getByText("排队下一轮", { exact: true }).waitFor();
   await composer.fill("改用简短说明");
-  await page
-    .getByRole("button", { name: "引导当前模型运行", exact: true })
-    .click();
+  await page.getByRole("button", { name: "调整当前任务", exact: true }).click();
   await page.getByText("改用简短说明", { exact: true }).waitFor();
   let snapshot = unwrap(
     await readSnapshot(fixture.host.store, { ...fixture.caller, sessionId }),
@@ -88,35 +180,37 @@ try {
   );
   // Keep a draft and active subscriptions across both session and product navigation changes.
   await composer.fill("保留草稿");
-  await page.getByRole("button", { name: "新建会话", exact: true }).click();
-  await page
-    .locator('.assistant-sessions button[aria-current="true"]')
-    .filter({ hasText: "fake-session-26" })
-    .waitFor();
+  await page.locator(".new-conversation").click();
+  assert.equal(await composer.inputValue(), "");
   assert.equal(
     await page.getByText("临时片段", { exact: true }).count(),
     0,
     "a different logical session cannot display the old delta",
   );
   await fixture.question(sessionId, command.commandId, "background-question");
-  await page.getByText("后台会话有待回答提问：", { exact: false }).waitFor();
+  await page.getByText("其他对话需要回应：", { exact: false }).waitFor();
+  assert.equal(
+    await page.getByRole("region", { name: "AI 工具权限请求" }).count(),
+    0,
+  );
+  await page
+    .locator(".notice")
+    .getByRole("button", { name: title, exact: true })
+    .click();
   const permission = fixture.permission(sessionId);
   await page.getByRole("region", { name: "AI 工具权限请求" }).waitFor();
   const other = await browser.newPage();
   await other.goto(fixture.url);
   await other.getByRole("button", { name: "AI 助手", exact: true }).click();
   await other.getByRole("button", { name: "加载更多会话" }).click();
-  await other.getByRole("button", { name: new RegExp(sessionId) }).click();
+  await other.getByRole("button", { name: title }).click();
   await other.getByText("选择下一步", { exact: false }).waitFor();
   await page.getByRole("button", { name: /^允许一次/ }).click();
   assert.deepEqual((await permission.result).outcome, {
     outcome: "selected",
     optionId: "allow",
   });
-  await page
-    .locator(".notice")
-    .getByRole("button", { name: sessionId, exact: true })
-    .click();
+
   assert.equal(await composer.inputValue(), "保留草稿");
   await page.getByRole("button", { name: "继续检查", exact: false }).click();
   await page.getByRole("button", { name: "提交回答", exact: true }).click();
@@ -151,11 +245,11 @@ try {
   let surface = await fixture.surface(sessionId, command.commandId);
   await page.getByText("Choose an option", { exact: true }).waitFor();
   // Real Vue/Lit lifecycle seam with deterministic authoritative projection stimuli.
-  await page.evaluate(() => {
+  await page.evaluate((sessionId) => {
     const api = window.surfaceTest,
       listeners = new Set();
     const state = {
-      view: window.assistantRuntime.getSession("fake-session-25"),
+      view: window.assistantRuntime.getSession(sessionId),
       now: 0,
       attempts: [],
       errors: [],
@@ -195,7 +289,7 @@ try {
             };
           return renderer;
         },
-        sessionId: "fake-session-25",
+        sessionId,
         instanceId: Object.keys(state.view.surfaces)[0],
         now: () => state.now,
         onError: (error) =>
@@ -205,7 +299,7 @@ try {
     };
     state.mount();
     api.interactionTest = state;
-  });
+  }, sessionId);
   const card = page.locator("#interaction-fixture");
   await card.getByRole("button", { name: "Retry card", exact: true }).waitFor();
   await page.evaluate(() => {
@@ -352,7 +446,7 @@ try {
   await degraded.goto(fixture.url);
   await degraded.getByRole("button", { name: "AI 助手", exact: true }).click();
   await degraded.getByRole("button", { name: "加载更多会话" }).click();
-  await degraded.getByRole("button", { name: new RegExp(sessionId) }).click();
+  await degraded.getByRole("button", { name: title }).click();
   await degraded
     .getByRole("button", { name: "Retry card", exact: true })
     .waitFor();
@@ -384,7 +478,7 @@ try {
   await invalid.goto(fixture.url);
   await invalid.getByRole("button", { name: "AI 助手", exact: true }).click();
   await invalid.getByRole("button", { name: "加载更多会话" }).click();
-  await invalid.getByRole("button", { name: new RegExp(sessionId) }).click();
+  await invalid.getByRole("button", { name: title }).click();
   await invalid
     .locator(".question-readonly")
     .getByText("诊断 · 选择下一步", { exact: true })
@@ -407,10 +501,10 @@ try {
   };
   await noA2ui.goto(fixture.url);
   await noA2ui.getByRole("button", { name: "AI 助手", exact: true }).click();
-  await noA2ui.getByText("连接：已连接", { exact: true }).waitFor();
+  await noA2ui.locator(".composer textarea").waitFor();
   fixture.host.negotiate = negotiate;
   await noA2ui.getByRole("button", { name: "加载更多会话" }).click();
-  await noA2ui.getByRole("button", { name: new RegExp(sessionId) }).click();
+  await noA2ui.getByRole("button", { name: title }).click();
   await noA2ui
     .getByText("当前连接不支持交互卡片；普通文本与历史记录仍可读取。", {
       exact: true,
@@ -522,10 +616,8 @@ try {
   await page
     .getByText("卡片已更新", { exact: true })
     .waitFor({ state: "hidden" });
-  await page
-    .getByRole("button", { name: "请求取消 AI 本轮", exact: true })
-    .click();
-  await page.getByText("AI 取消请求：已接收", { exact: false }).waitFor();
+  await page.getByRole("button", { name: "停止本轮", exact: true }).click();
+
   unwrap(
     await fixture.host.advance(fixture.caller, sessionId, command.commandId, [
       { type: "cancel_dispatched", confirmation: "request_only" },
@@ -534,6 +626,8 @@ try {
   await page
     .getByText("取消已发送给模型；等待模型终止事实。", { exact: false })
     .waitFor();
+  await diagnostics();
+  await page.getByText("按执行编号查询", { exact: true }).click();
   // Model/tool claims never write the independently loaded authorized execution result.
   await page
     .getByLabel("执行请求编号", { exact: true })
@@ -556,7 +650,9 @@ try {
         })),
       ),
     );
-    await page.getByText(`稳定历史块 ${offset + 9}`, { exact: true }).waitFor();
+    await page
+      .getByText(`稳定历史块 ${offset + 9}`, { exact: true })
+      .waitFor({ state: "attached" });
   }
   unwrap(
     await fixture.host.advance(fixture.caller, sessionId, command.commandId, [
@@ -602,8 +698,8 @@ try {
       .click();
   }
   await page
-    .getByText("模型本轮结束：completed；设备效果需独立查询", { exact: false })
-    .waitFor();
+    .getByText("设备已成功 <script>alert(1)</script>", { exact: true })
+    .waitFor({ state: "attached" });
   assert.match(
     await page.locator(".execution-details").innerText(),
     /设备效果尚未确认/,
@@ -634,10 +730,10 @@ try {
     await page.locator(".plan-validity").filter({ hasText: note }).waitFor();
   }
   await page.clock.setFixedTime(new Date());
-  await page.getByRole("button", { name: "软件中心", exact: true }).click();
+  await navigate("软件中心");
   await page.getByRole("button", { name: "AI 助手", exact: true }).click();
   assert.equal(await composer.inputValue(), "保留草稿");
-  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await navigate("设置");
   await page
     .getByRole("heading", { name: "数据与诊断", exact: true })
     .waitFor();
@@ -671,9 +767,36 @@ try {
   );
   await page.getByRole("button", { name: "AI 助手", exact: true }).click();
   assert.equal(await composer.inputValue(), "保留草稿");
+  await page.getByRole("button", { name: "打开主导航", exact: true }).click();
+  const narrowNavigation = await page
+    .getByRole("dialog", { name: "主导航", exact: true })
+    .boundingBox();
+  assert.equal(narrowNavigation.x, 0);
+  assert.equal(narrowNavigation.width, sidebarStyle.width);
+  await page.screenshot({
+    path: fileURLToPath(
+      new URL(
+        "../.local-ci-runs/assistant-navigation-narrow.png",
+        import.meta.url,
+      ),
+    ),
+  });
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "打开最近对话", exact: true }).click();
+  assert.equal(
+    (
+      await page
+        .getByRole("dialog", { name: "最近对话", exact: true })
+        .boundingBox()
+    ).x,
+    0,
+  );
+  await page.keyboard.press("Escape");
   await page.setViewportSize({ width: 1280, height: 900 });
   fixture.disconnect();
-  await page.getByText("连接：AI 服务未连接", { exact: true }).waitFor();
+  await page
+    .getByText("AI 服务未连接，草稿已保留。", { exact: true })
+    .waitFor();
   assert.equal(
     await page
       .getByText("设备已成功 <script>alert(1)</script>", { exact: true })
@@ -681,9 +804,9 @@ try {
     true,
     "disconnected history retained",
   );
-  await page.getByRole("button", { name: "连接 AI 服务", exact: true }).click();
+  await page.getByRole("button", { name: "重新连接", exact: true }).click();
   await page.getByRole("button", { name: "加载更多会话" }).click();
-  await page.getByRole("button", { name: new RegExp(sessionId) }).click();
+  await page.getByRole("button", { name: title }).click();
   await page
     .getByText("设备已成功 <script>alert(1)</script>", { exact: true })
     .waitFor();
@@ -713,6 +836,7 @@ try {
     resumes++;
     return resume(...args);
   };
+  await diagnostics();
   await page
     .getByRole("button", { name: "恢复原模型上下文", exact: true })
     .click();
@@ -734,7 +858,10 @@ try {
   await page
     .getByRole("button", { name: "分离当前会话视图", exact: true })
     .click();
-  await page.getByText("连接：当前会话已分离", { exact: true }).waitFor();
+  await page.waitForFunction(
+    (id) => window.assistantRuntime.getSession(id)?.connection === "detached",
+    sessionId,
+  );
   assert.equal(
     await page.locator(".composer button[type=submit]").isDisabled(),
     true,

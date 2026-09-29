@@ -1,16 +1,17 @@
 import { activeStage } from "@rss-mdm-agent/ai-contract";
-import { mount } from "@vue/test-utils";
+import { mount, flushPromises } from "@vue/test-utils";
 import { expect, it } from "vitest";
 import QuestionCard from "./QuestionCard.vue";
 import ExecutionDetails from "./ExecutionDetails.vue";
 import Assistant from "./Assistant.vue";
 import { createAssistant } from "./controller";
 import fixtures from "../../../../tests/assistant/execution-fixtures.json";
-import type { ExecutionTaskDetails } from "./execution-types";
+import type { ExecutionTaskDetails } from "@rss-mdm-agent/execution-bindings/task-details";
 import type { InteractionView, SessionView } from "@rss-mdm-agent/ai-client";
 import { fixtureSession } from "@rss-mdm-agent/ai-contract/testing";
 it("renders permission scope from kind even when provider names contradict it", () => {
   const c = createAssistant(undefined, () => "id");
+  c.state.selected = "session-1";
   c.state.permissions.set("p", {
     id: "p",
     request: {
@@ -141,12 +142,13 @@ it.each(["prompt", "cancel", "respond"] as const)(
         kind === "prompt" ? [{ kind: "prompt", key: "p", sequence: 1 }] : [],
       messages: {},
       tools: {},
+      deliveries: {},
       surfaces: {},
       interactions: {},
       commands: {
         p: {
           command: {
-            schemaVersion: 6,
+            schemaVersion: 7,
             kind: "command",
             sessionId: session.namespace.sessionId,
             commandId: "p",
@@ -175,6 +177,11 @@ it.each(["prompt", "cancel", "respond"] as const)(
     };
     c.state.views.set(session.namespace.sessionId, v);
     const wrapper = mount(Assistant, { props: { controller: c } });
+    expect(wrapper.text()).not.toContain("unavailable");
+    await wrapper
+      .findAll("button")
+      .find((b) => b.text() === "会话详情与诊断")!
+      .trigger("click");
     expect(wrapper.text()).toContain("unavailable");
     expect(wrapper.text()).toContain("先恢复历史并核对");
     expect(wrapper.text()).toContain("不证明模型已终止");
@@ -295,4 +302,85 @@ it("shows software recovery diagnostics without treating detection as final succ
     expect(wrapper.find(".software-operation").text()).toContain("安装");
     wrapper.unmount();
   }
+});
+
+it("starts with an editable composer, readable history and one live conversation log without an execution panel", () => {
+  const c = createAssistant(undefined, () => "id");
+  const session = fixtureSession();
+  c.state.sessions.set(session.namespace.sessionId, {
+    namespace: session.namespace,
+    status: "active",
+    title: "检查网络连接",
+    lastActivityAtMs: 1,
+  });
+  const wrapper = mount(Assistant, { props: { controller: c } });
+  expect(wrapper.get("textarea").attributes("disabled")).toBeUndefined();
+  expect(wrapper.text()).toContain("检查网络连接");
+  expect(wrapper.text()).not.toContain(session.namespace.sessionId);
+  expect(wrapper.findAll('[role="log"]')).toHaveLength(1);
+  expect(wrapper.find(".assistant-execution").exists()).toBe(false);
+  expect(wrapper.find(".execution-activity").exists()).toBe(false);
+  expect(wrapper.text()).not.toContain("收起输入");
+  wrapper.unmount();
+  c.dispose();
+});
+
+it.each([
+  ["authentication_required", "前往连接设置"],
+  ["connection_required", "前往连接设置"],
+  ["context_unavailable", "选择连接与新上下文"],
+])(
+  "routes %s to its recovery action even with a detached view",
+  async (code, action) => {
+    const c = createAssistant(undefined, () => "id");
+    c.state.connection = "connected";
+    c.state.selected = "session-1";
+    c.state.errors.set("session-1", code);
+    const wrapper = mount(Assistant, { props: { controller: c } });
+    const notice = wrapper.get(".conversation-notice");
+    expect(notice.text()).toContain(action);
+    await notice.get("button").trigger("click");
+    if (code === "context_unavailable")
+      expect(wrapper.get(".connection-menu").attributes("open")).toBeDefined();
+    else expect(wrapper.emitted("settings")).toHaveLength(1);
+    wrapper.unmount();
+    c.dispose();
+  },
+);
+it("keeps the specific connection failure actionable", () => {
+  const c = createAssistant(undefined, () => "id");
+  c.state.error = "authentication_required";
+  const wrapper = mount(Assistant, { props: { controller: c } });
+  expect(wrapper.get(".conversation-notice").text()).toContain("认证不可用");
+  expect(wrapper.get(".conversation-notice button").text()).toBe(
+    "前往连接设置",
+  );
+  wrapper.unmount();
+  c.dispose();
+});
+it("follows newly requested permission only when already following the conversation", async () => {
+  const c = createAssistant(undefined, () => "id");
+  c.state.selected = "session-1";
+  const wrapper = mount(Assistant, { props: { controller: c } });
+  const timeline = wrapper.get(".assistant-timeline");
+  Object.defineProperty(timeline.element, "scrollHeight", { value: 1000 });
+  Object.defineProperty(timeline.element, "clientHeight", { value: 200 });
+  const permission = (id: string) => ({
+    id,
+    request: {
+      sessionId: "session-1",
+      toolCall: { toolCallId: id, title: "permission" },
+      options: [],
+    },
+  });
+  c.state.permissions.set("p1", permission("p1"));
+  await flushPromises();
+  expect(timeline.element.scrollTop).toBe(1000);
+  timeline.element.scrollTop = 100;
+  await timeline.trigger("scroll");
+  c.state.permissions.set("p2", permission("p2"));
+  await flushPromises();
+  expect(timeline.element.scrollTop).toBe(100);
+  wrapper.unmount();
+  c.dispose();
 });

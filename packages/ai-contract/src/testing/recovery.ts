@@ -255,7 +255,7 @@ export async function runRecoveryConformance(
     false,
   );
   const accepted: CommandRecord = {
-    schemaVersion: 6,
+    schemaVersion: 7,
     kind: "commandRecord",
     command: rebound.command,
     receipt: rebound.receipt,
@@ -469,7 +469,7 @@ async function failureAndDelivery(store: SessionStore) {
   let head = unwrap(await store.session(initial.namespace));
   const event = unwrap(await store.events(initial.namespace, 0, 1))[0];
   const delivery: import("../wire.js").Delivery = {
-    schemaVersion: 6,
+    schemaVersion: 7,
     kind: "delivery",
     namespace: initial.namespace,
     operationId: "delivery-1",

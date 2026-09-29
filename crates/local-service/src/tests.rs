@@ -51,7 +51,7 @@ fn legacy_unknown_duplicate_and_secret_fields_fail_closed() {
         br#"{"version":1,"version":1,"method":"getServiceStatus","challenge":"x"}"#,
         br#"{"version":1,"method":"getServiceStatus","challenge":"x","secret":"canary"}"#,
         br#"{"version":1,"method":"exec","challenge":"x"}"#,
-        br#"{"schemaVersion":6,"kind":"nativeCall","method":"masterKey"}"#,
+        br#"{"schemaVersion":7,"kind":"nativeCall","method":"masterKey"}"#,
         &[0; 65537],
     ] {
         let mut c = connection(now, "x");

@@ -1,5 +1,9 @@
 // ref: Tauri crates/tauri/src/app.rs@tauri-v2.11.2
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#[cfg(all(feature = "native-e2e", not(debug_assertions)))]
+compile_error!("native-e2e must never be included in a release build");
+#[cfg(feature = "native-e2e")]
+mod native_e2e;
 mod navigation;
 mod startup;
 use rss_mdm_desktop::composition::{ipc, lifecycle::Lifecycle, runtime::DesktopRuntime};
@@ -18,7 +22,10 @@ fn window(app: &tauri::AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 fn run(data_root: Option<std::path::PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
-    let app = ipc::register(tauri::Builder::default())
+    let builder = ipc::register(tauri::Builder::default());
+    #[cfg(feature = "native-e2e")]
+    let builder = native_e2e::configure(builder, data_root.as_deref())?;
+    let app = builder
         .setup(move |app| {
             let root = match &data_root {
                 Some(root) => root.clone(),
@@ -34,9 +41,18 @@ fn run(data_root: Option<std::path::PathBuf>) -> Result<(), Box<dyn std::error::
             } else {
                 ai_session_contract::HostStatusSource::BundledResource
             };
-            let artifact = override_path
-                .map(std::path::PathBuf::from)
-                .unwrap_or(app.path().resource_dir()?.join("ai-host-runtime"));
+            let artifact = match override_path {
+                Some(path) => std::path::PathBuf::from(path),
+                None => app.path().resource_dir()?.join("ai-host-runtime"),
+            };
+            #[cfg(all(feature = "native-e2e", target_os = "macos"))]
+            let runtime = tauri::async_runtime::block_on(DesktopRuntime::start_with_key_backend(
+                &root,
+                &artifact,
+                source,
+                native_e2e::keychain(&root)?,
+            ))?;
+            #[cfg(not(all(feature = "native-e2e", target_os = "macos")))]
             let runtime =
                 tauri::async_runtime::block_on(DesktopRuntime::start(&root, &artifact, source))?;
             eprintln!(

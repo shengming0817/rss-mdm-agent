@@ -211,7 +211,7 @@ export function accountErrorMessage(error: unknown): string {
     try {
       const status = parsed(
         {
-          schemaVersion: 6,
+          schemaVersion: 7,
           kind: "accountStatus",
           failure: { stage, reason, observedAtMs: 0 },
         },

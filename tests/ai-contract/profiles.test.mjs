@@ -10,7 +10,7 @@ const decode = (raw) =>
     maxNodes: 16384,
   });
 const session = {
-  schemaVersion: 6,
+  schemaVersion: 7,
   kind: "session",
   namespace: {
     tenantId: "test",
@@ -30,7 +30,7 @@ test("a product session exists without credentials or a provider context", () =>
 });
 test("connection summaries cannot carry secrets or an owner supplied by a page", () => {
   const row = {
-    schemaVersion: 6,
+    schemaVersion: 7,
     kind: "connection",
     connectionId: "work",
     name: "Work",

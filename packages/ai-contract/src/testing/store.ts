@@ -6,7 +6,12 @@ import {
 import { selectConnection, activateStage } from "../transitions.js";
 import type { StageActivation } from "../ports.js";
 import type { Connection, UserPreferences, PreferencesPatch } from "../wire.js";
-import { ReadViews, readSnapshotPage, readSessionPage } from "../read-views.js";
+import {
+  ReadViews,
+  readSnapshotPage,
+  readSessionPage,
+  sessionListItem,
+} from "../read-views.js";
 import type {
   AcceptCommand,
   Budget,
@@ -359,20 +364,13 @@ export class MemorySessionStore implements SessionStore {
         query,
         () =>
           [...this.states.values()]
-            .map((s) => s.session)
+            .map((s) => sessionListItem(s.session, [...s.commands.values()]))
             .filter(
               (s) =>
                 s.status !== "retired" &&
                 s.namespace.tenantId === caller.tenantId &&
                 s.namespace.principalId === caller.principalId &&
                 s.namespace.authorityId === caller.authorityId,
-            )
-            .sort((a, b) =>
-              a.namespace.sessionId < b.namespace.sessionId
-                ? -1
-                : a.namespace.sessionId > b.namespace.sessionId
-                  ? 1
-                  : 0,
             ),
         fixtureLimits,
       );

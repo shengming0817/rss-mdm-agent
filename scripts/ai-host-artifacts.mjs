@@ -51,6 +51,7 @@ export function run(command, args, cwd) {
 export function packHost(root, directory) {
   const names = [
     "ai-contract",
+    "execution-bindings",
     "ai-store-sqlite",
     "ai-host",
     "ai-access",

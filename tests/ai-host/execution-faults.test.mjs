@@ -49,7 +49,15 @@ const mailbox = () => {
   };
 };
 const owner = (store, router, now = Date.now) =>
-  new Deliveries(store, router, mailbox(), async () => {}, now);
+  new Deliveries(
+    store,
+    router,
+    mailbox(),
+    async () => {},
+    now,
+    async () => ({ ok: true, value: "allowed" }),
+    () => true,
+  );
 const reply = (result) => JSON.parse(unwrap(result).text);
 
 async function crashAfterRustAcceptance(
@@ -199,7 +207,16 @@ test("lost submit receipt recovers the same Rust attempt and keeps process exit 
   assert.equal(
     connection.router.prepare(session.namespace, {
       name: "execution_execute",
-      arguments: { script: { operationRequestId: "script" } },
+      arguments: {
+        script: {
+          operationRequestId: "script",
+          sourceUtf8: "echo fixture",
+          interpreter: {
+            resource: { id: "shell", revision: "1" },
+            sha256: "0".repeat(64),
+          },
+        },
+      },
     }).ok,
     true,
   );

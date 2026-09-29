@@ -140,7 +140,12 @@ try {
             "utf8",
           ),
         ).$defs.HostHealth.properties.protocol.const,
-        contractVersion: 6,
+        contractVersion: JSON.parse(
+          readFileSync(
+            join(root, "packages/ai-contract/schema/runtime.schema.json"),
+            "utf8",
+          ),
+        ).$defs.Negotiation.properties.contractVersion.const,
         behaviorPassed,
         ...(development
           ? { kind: "development", developmentFingerprint: end }

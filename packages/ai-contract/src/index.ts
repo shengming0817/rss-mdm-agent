@@ -1,4 +1,4 @@
-/** V6 product reliability contracts. Data never grants execution authority. */
+/** V7 product reliability contracts. Data never grants execution authority. */
 export type * from "./wire.js";
 export type * from "./ports.js";
 export {

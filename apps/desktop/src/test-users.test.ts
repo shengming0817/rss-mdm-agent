@@ -11,6 +11,8 @@ import {
   type Organization,
 } from "./test-users";
 import Account from "./settings/Account.vue";
+import Workspace from "./Workspace.vue";
+import { createHostSettings } from "./settings/controller";
 
 vi.mock("@tauri-apps/api/core", () => ({
   isTauri: () => true,
@@ -20,16 +22,16 @@ const settingsPage = (
   organizations: Organization[] = [],
   selected?: string,
 ) => ({
-  schemaVersion: 6,
+  schemaVersion: 7,
   kind: "accountSettings",
   organizations,
   ...(selected ? { selected } : {}),
 });
 const current = {
-  schemaVersion: 6 as const,
+  schemaVersion: 7 as const,
   kind: "userContext" as const,
   user: {
-    schemaVersion: 6 as const,
+    schemaVersion: 7 as const,
     kind: "testUser" as const,
     userId: "a",
     displayName: "Alice",
@@ -42,10 +44,32 @@ beforeEach(() => {
   accountNotice.value = "";
   vi.mocked(invoke).mockReset();
 });
+it("closes assistant modals when leaving the page and preserves the conversation draft", async () => {
+  currentUser.value = current;
+  vi.mocked(invoke).mockRejectedValue({ code: "ai_unavailable" });
+  const wrapper = mount(Workspace, {
+    props: { page: "assistant", host: createHostSettings(undefined) },
+  });
+  try {
+    await flushPromises();
+    await wrapper.get(".composer textarea").setValue("继续核对设备状态");
+    await wrapper.get('[aria-label="打开最近对话"]').trigger("click");
+    expect(wrapper.find("dialog").exists()).toBe(true);
+    await wrapper.setProps({ page: "tasks" });
+    expect(wrapper.find("dialog").exists()).toBe(false);
+    await wrapper.setProps({ page: "assistant" });
+    expect(wrapper.find("dialog").exists()).toBe(false);
+    expect(
+      (wrapper.get(".composer textarea").element as HTMLTextAreaElement).value,
+    ).toBe("继续核对设备状态");
+  } finally {
+    wrapper.unmount();
+  }
+});
 it("keeps settings selected when navigation needs an unselected user", async () => {
   vi.mocked(invoke).mockImplementation(async (command) => {
     if (command === "test_users")
-      return { schemaVersion: 6, kind: "testUserPage", users: [] };
+      return { schemaVersion: 7, kind: "testUserPage", users: [] };
     throw { code: "ai_unavailable" };
   });
   const wrapper = mount(App);
@@ -73,7 +97,7 @@ it.each([
     vi.mocked(invoke).mockImplementation(async (command) => {
       if (command === "test_users")
         return {
-          schemaVersion: 6,
+          schemaVersion: 7,
           kind: "testUserPage",
           users: [current.user],
           current,
@@ -112,7 +136,7 @@ it("keeps the current workspace mounted and inert while a switch is pending", as
   vi.mocked(invoke).mockImplementation(async (command) => {
     if (command === "test_users")
       return {
-        schemaVersion: 6,
+        schemaVersion: 7,
         kind: "testUserPage",
         users: [current.user],
         current,
@@ -148,7 +172,7 @@ it("keeps the current workspace mounted and inert while a switch is pending", as
 it("keeps enterprise, test and guest entries visible before selecting a user", async () => {
   vi.mocked(invoke).mockImplementation(async (command) => {
     if (command === "test_users")
-      return { schemaVersion: 6, kind: "testUserPage", users: [] };
+      return { schemaVersion: 7, kind: "testUserPage", users: [] };
     if (command === "account_organizations") return settingsPage();
     throw { code: "ai_unavailable" };
   });
@@ -215,7 +239,7 @@ it("explains enterprise execution limits without invoking a fixture snapshot and
   vi.mocked(invoke).mockImplementation(async (command) => {
     if (command === "test_users")
       return {
-        schemaVersion: 6,
+        schemaVersion: 7,
         kind: "testUserPage",
         users: [],
         current: enterprise,
@@ -223,7 +247,7 @@ it("explains enterprise execution limits without invoking a fixture snapshot and
     if (command === "account_organizations") return settingsPage();
     if (command === "account_status")
       return {
-        schemaVersion: 6,
+        schemaVersion: 7,
         kind: "accountStatus",
         ...(revoked ? {} : { current: enterprise }),
       };
@@ -273,7 +297,7 @@ it("returns keyboard focus to settings after the selected workspace is replaced"
   vi.mocked(invoke).mockImplementation(async (command) => {
     if (command === "test_users")
       return {
-        schemaVersion: 6,
+        schemaVersion: 7,
         kind: "testUserPage",
         users: active ? [active.user] : [],
         current: active,

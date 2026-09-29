@@ -93,31 +93,41 @@ async function setup(t, revision = "1", extras = {}) {
       workerRuntime,
       delivery: extras.admission
         ? {
-            prepare: () => ({
-              ok: true,
-              value: { operationId: "fixture-delivery", target: "fixture" },
-            }),
-            send: async (request, b) => {
-              const saved = unwrap(
-                await store.delivery(request.namespace, "fixture-delivery"),
-              );
-              assert.equal(saved.delivery.status, "reconciliation_required");
-              const reply = await extras.admission.tools.propose(
-                request.body.proposal,
-                b,
-              );
-              return reply.ok
-                ? {
-                    ok: true,
-                    value: {
-                      receiptRef: "fixture-receipt",
-                      reply: reply.value,
-                    },
-                  }
-                : reply;
+            authorize: async () => ({ ok: true, value: "allowed" }),
+            router: {
+              prepare: () => ({
+                ok: true,
+                value: {
+                  operationId: "fixture-delivery",
+                  target: "fixture",
+                  permission: "ask",
+                },
+              }),
+              send: async (request, b) => {
+                const saved = unwrap(
+                  await store.delivery(request.namespace, "fixture-delivery"),
+                );
+                assert.equal(saved.delivery.status, "reconciliation_required");
+                const reply = await extras.admission.tools.propose(
+                  request.body.proposal,
+                  b,
+                );
+                return reply.ok
+                  ? {
+                      ok: true,
+                      value: {
+                        receiptRef: "fixture-receipt",
+                        reply: reply.value,
+                      },
+                    }
+                  : reply;
+              },
+              reconcile: async () => ({
+                ok: true,
+                value: { state: "unknown" },
+              }),
+              acknowledge: async () => ({ ok: true, value: undefined }),
             },
-            reconcile: async () => ({ ok: true, value: { state: "unknown" } }),
-            acknowledge: async () => ({ ok: true, value: undefined }),
           }
         : null,
       store,
@@ -145,7 +155,7 @@ async function setup(t, revision = "1", extras = {}) {
     await openFixture(host, store, caller, options, budget()),
   );
   const command = (id, text = "hold") => ({
-    schemaVersion: 6,
+    schemaVersion: 7,
     kind: "command",
     sessionId: session.namespace.sessionId,
     commandId: id,
@@ -338,7 +348,7 @@ test("standard ACP queued input outlives the request budget and executes in FIFO
     await f.host.cancel(
       caller,
       {
-        schemaVersion: 6,
+        schemaVersion: 7,
         kind: "command",
         sessionId: session.namespace.sessionId,
         commandId: "release-long-run",
@@ -600,7 +610,10 @@ test("real Host and A04 recover the same stable client projection after detach",
   });
   const selected = await client.initialize();
   assert.equal(selected.durableReceipts, true);
-  const view = await client.createSession(),
+  const view = await client.restore(
+      (await client.createSession({ sessionId: crypto.randomUUID() }))
+        .sessionId,
+    ),
     id = view.namespace.sessionId;
   const command = { ...f.command("protocol", "quick"), sessionId: id };
   assert.equal((await client.submit(command)).kind, "receipt");

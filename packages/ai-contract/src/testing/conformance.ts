@@ -42,7 +42,7 @@ export const fixtureCaller: Caller = {
 export function fixtureSession(): Session {
   return startStage(
     {
-      schemaVersion: 6,
+      schemaVersion: 7,
       kind: "session",
       namespace: { ...fixtureCaller, sessionId: "session-1" },
       revision: 0,
@@ -77,7 +77,7 @@ export function fixtureSession(): Session {
 }
 export function fixtureCommand(id = "command-1"): Command {
   return {
-    schemaVersion: 6,
+    schemaVersion: 7,
     kind: "command",
     sessionId: "session-1",
     commandId: id,
@@ -364,7 +364,7 @@ export async function seedInteraction(
     { nativeRunId: "run-1", nativeRequestId: "parent-request-1" },
   );
   const interaction: import("../wire.js").Interaction = {
-    schemaVersion: 6,
+    schemaVersion: 7,
     kind: "interaction",
     category: "question",
     namespace: session.namespace,
@@ -599,7 +599,7 @@ async function runStoreBoundaries(
       await readSnapshot(store, s.namespace),
     ).events.find((e) => e.eventId === input.eventId)!;
     const row: import("../wire.js").Delivery = {
-      schemaVersion: 6,
+      schemaVersion: 7,
       kind: "delivery",
       namespace: s.namespace,
       operationId: `delivery-${i}`,
@@ -698,7 +698,7 @@ export async function terminalCommit(
     certainty: "submitted",
   };
   const next: CommandRecord = {
-    schemaVersion: 6,
+    schemaVersion: 7,
     kind: "commandRecord",
     command: record.command,
     receipt: record.receipt,
@@ -733,7 +733,7 @@ export function commandCommit(
   const events = bodies.map(
     (body, i) =>
       ({
-        schemaVersion: 6,
+        schemaVersion: 7,
         kind: "event",
         namespace: session.namespace,
         eventId: `change-${session.revision}-${record.command.commandId}-${i}`,
@@ -784,7 +784,7 @@ export async function dispatchCommand(
     certainty: "intent",
   };
   const preparing: CommandRecord = {
-    schemaVersion: 6,
+    schemaVersion: 7,
     kind: "commandRecord",
     command: record.command,
     receipt: record.receipt,
@@ -875,7 +875,7 @@ export function surfaceCommit(
       ],
     };
   const event: Event = {
-    schemaVersion: 6,
+    schemaVersion: 7,
     kind: "event",
     namespace: session.namespace,
     eventId: `surface-${surface.surfaceInstanceId}-${surface.revision}`,
@@ -1058,7 +1058,7 @@ export function interactionEvent(
   row: import("../wire.js").Interaction,
 ): import("../wire.js").Event {
   return {
-    schemaVersion: 6,
+    schemaVersion: 7,
     kind: "event",
     namespace: session.namespace,
     eventId: `interaction-${row.interactionId}-${row.status}`,
@@ -1107,7 +1107,7 @@ async function runCallbackConformance(store: SessionStore): Promise<void> {
     },
   };
   const row: import("../wire.js").Interaction = {
-    schemaVersion: 6,
+    schemaVersion: 7,
     kind: "interaction",
     namespace: seeded.session.namespace,
     commandId: observation.commandId,
@@ -1235,11 +1235,11 @@ export function fixtureDispatchedRecord(
   namespace = fixtureSession().namespace,
 ): CommandRecord {
   return {
-    schemaVersion: 6,
+    schemaVersion: 7,
     kind: "commandRecord",
     command,
     receipt: {
-      schemaVersion: 6,
+      schemaVersion: 7,
       kind: "receipt",
       stageId: binding.generation,
       namespace,
@@ -1280,7 +1280,7 @@ async function runPreferencesConformance(store: SessionStore): Promise<void> {
   const session = fixtureSession();
   unwrap(await store.create(session));
   const connection: Connection = {
-    schemaVersion: 6,
+    schemaVersion: 7,
     kind: "connection",
     connectionId: "personal",
     name: "Personal",
@@ -1305,7 +1305,7 @@ async function runPreferencesConformance(store: SessionStore): Promise<void> {
       .then(unwrap),
   ]);
   const expected = {
-    schemaVersion: 6,
+    schemaVersion: 7,
     kind: "userPreferences",
     selectedSessionId: session.namespace.sessionId,
     defaultConnectionId: connection.connectionId,
@@ -1341,7 +1341,7 @@ async function runPreferencesConformance(store: SessionStore): Promise<void> {
     }),
   );
   assert.deepEqual(unwrap(await store.preferences(fixtureCaller)), {
-    schemaVersion: 6,
+    schemaVersion: 7,
     kind: "userPreferences",
     selectedSessionId: session.namespace.sessionId,
   });

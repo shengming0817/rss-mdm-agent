@@ -5,3 +5,5 @@ export { default as MessageStream } from "./components/MessageStream.vue";
 export { default as MessageComposer } from "./components/MessageComposer.vue";
 export { default as StatusList } from "./components/StatusList.vue";
 export type { MessageItem, NavigationItem, StatusItem } from "./types";
+
+export { default as ModalDrawer } from "./components/ModalDrawer.vue";

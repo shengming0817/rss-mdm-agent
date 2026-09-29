@@ -62,7 +62,7 @@ export class FakeHost implements HostPort {
   ) {}
   negotiate(offered: Negotiation): Result<Negotiation> {
     if (this.closed) return fail("unavailable");
-    if (offered.contractVersion !== 6 || offered.acp !== 1)
+    if (offered.contractVersion !== 7 || offered.acp !== 1)
       return fail("unsupported_version");
     if (
       offered.a2ui &&
@@ -81,7 +81,7 @@ export class FakeHost implements HostPort {
       prefs = await this.store.preferences(caller);
     return rows.ok && prefs.ok
       ? ok({
-          schemaVersion: 6,
+          schemaVersion: 7,
           kind: "connectionPage",
           connections: [...rows.value],
           preferences: prefs.value,
@@ -185,11 +185,26 @@ export class FakeHost implements HostPort {
     budget: Budget,
   ): Promise<Result<Session>> {
     if (this.closed || budget.signal.aborted) return fail("unavailable");
-    if (Object.keys(options).some((key) => key !== "connectionId"))
+    if (
+      Object.keys(options).some(
+        (key) => key !== "connectionId" && key !== "sessionId",
+      )
+    )
       return fail("invalid_input");
     if (options.connectionId === "missing-connection")
       return fail("connection_required");
-    const namespace = { ...caller, sessionId: `fake-session-${++this.next}` };
+    const namespace = {
+      ...caller,
+      sessionId: options.sessionId ?? `fake-session-${++this.next}`,
+    };
+    if (options.sessionId) {
+      const existing = await this.store.session(namespace);
+      if (existing.ok)
+        return existing.value.status === "retired"
+          ? fail("session_gone")
+          : existing;
+      if (existing.error.code !== "session_gone") return existing;
+    }
     const session = productSession(namespace, options.connectionId ?? "cfg");
     const created = await this.store.create(session);
     return created.ok ? ok(session) : created;
@@ -461,7 +476,7 @@ export class FakeHost implements HostPort {
     const events: Event[] = bodies.map(
       (body, index) =>
         ({
-          schemaVersion: 6,
+          schemaVersion: 7,
           kind: "event",
           namespace,
           eventId: `script-${s.lastSequence + index + 1}`,
@@ -481,7 +496,7 @@ export class FakeHost implements HostPort {
         if (row.commandId === commandId && row.status === "pending") {
           interactions.push({ ...row, status: "unavailable" });
           events.push({
-            schemaVersion: 6,
+            schemaVersion: 7,
             kind: "event",
             namespace,
             eventId: `script-${s.lastSequence + events.length + 1}`,
@@ -512,7 +527,7 @@ export class FakeHost implements HostPort {
           };
           surfaces.push(surface);
           events.push({
-            schemaVersion: 6,
+            schemaVersion: 7,
             kind: "event",
             namespace,
             eventId: `script-${s.lastSequence + events.length + 1}`,
@@ -529,7 +544,7 @@ export class FakeHost implements HostPort {
       : [];
     if (terminal)
       events.push({
-        schemaVersion: 6,
+        schemaVersion: 7,
         kind: "event",
         namespace,
         eventId: `script-proof-${s.revision}`,
@@ -554,7 +569,7 @@ export class FakeHost implements HostPort {
       commands: terminal
         ? [
             {
-              schemaVersion: 6,
+              schemaVersion: 7,
               kind: "commandRecord",
               command: record.command,
               receipt: record.receipt,
@@ -585,7 +600,7 @@ export class FakeHost implements HostPort {
     if (!found.ok) return found;
     let s = found.value;
     const interaction: Interaction = {
-      schemaVersion: 6,
+      schemaVersion: 7,
       kind: "interaction",
       category: "question",
       namespace,
@@ -609,7 +624,7 @@ export class FakeHost implements HostPort {
       interactions: [interaction],
       events: [
         {
-          schemaVersion: 6,
+          schemaVersion: 7,
           kind: "event",
           namespace,
           eventId: `question-${interactionId}`,

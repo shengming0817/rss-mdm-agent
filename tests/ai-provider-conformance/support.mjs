@@ -51,7 +51,7 @@ export async function until(check, label = "condition", timeoutMs = 15000) {
 }
 export function command(sessionId, commandId, text = "hello") {
   return {
-    schemaVersion: 6,
+    schemaVersion: 7,
     kind: "command",
     sessionId,
     commandId,
@@ -194,7 +194,7 @@ export async function configuration(
       profile,
     },
     connection: {
-      schemaVersion: 6,
+      schemaVersion: 7,
       kind: "connection",
       connectionId: "local",
       name: "Native fixture",
@@ -260,7 +260,11 @@ export async function executionGeneration(directory) {
   }
   assert.fail("execution user generation unavailable");
 }
-export async function clientAt(parent, generation = "fixture-generation") {
+export async function clientAt(
+  parent,
+  generation = "fixture-generation",
+  options = {},
+) {
   const channel = `fixture-view-${++parent.next}`;
   const readable = new ReadableStream({
     start(input) {
@@ -275,11 +279,11 @@ export async function clientAt(parent, generation = "fixture-generation") {
   await parent.control.call("attach", {
     channel,
     context: {
-      schemaVersion: 6,
+      schemaVersion: 7,
       kind: "userContext",
       generation,
       user: {
-        schemaVersion: 6,
+        schemaVersion: 7,
         kind: "testUser",
         userId: "fixture-actor",
         displayName: "Fixture",
@@ -287,7 +291,7 @@ export async function clientAt(parent, generation = "fixture-generation") {
       },
     },
   });
-  const client = new RuntimeClient({ readable, writable });
+  const client = new RuntimeClient({ readable, writable }, options);
   await client.initialize();
   return {
     client,

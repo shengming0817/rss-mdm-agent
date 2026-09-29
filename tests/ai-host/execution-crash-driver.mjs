@@ -26,7 +26,7 @@ await dispatchCommand(
   store,
   unwrap(await store.session(session.namespace)),
   command.commandId,
-  "unknown",
+  "submitted",
 );
 const current = unwrap(await store.session(session.namespace));
 let tail = Promise.resolve();
@@ -47,6 +47,9 @@ const deliveries = new Deliveries(
     return task;
   },
   async () => {},
+  Date.now,
+  async () => ({ ok: true, value: "allowed" }),
+  () => true,
 );
 unwrap(
   await deliveries.propose(

@@ -1,3 +1,4 @@
+import { assistantFailure } from "../../../packages/ai-adapters/claude/dist/adapter.js";
 import {
   fixtureAttempt,
   fixtureDispatchedRecord,
@@ -945,7 +946,7 @@ test("duplicate option labels are denied before a provider callback is admitted"
   }
 });
 
-for (const [error, expected] of [
+const assistantErrors = [
   ["authentication_failed", "authentication_required"],
   ["cloud_credential_error", "authentication_required"],
   ["model_not_found", "unsupported_capability"],
@@ -959,8 +960,23 @@ for (const [error, expected] of [
   ["overloaded", "unavailable"],
   ["server_error", "unavailable"],
   ["unknown", "unavailable"],
-]) {
-  test(`Claude ${error} is one closed failure and cannot be followed by successful content`, async () => {
+];
+test("Claude error mapping is closed and independent of lifecycle", () => {
+  for (const [error, expected] of assistantErrors)
+    assert.deepEqual(
+      assistantFailure(error),
+      { code: expected, retry: "never" },
+      error,
+    );
+  assert.deepEqual(assistantFailure("future_error"), {
+    code: "unavailable",
+    retry: "never",
+  });
+});
+{
+  const error = "authentication_failed",
+    expected = "authentication_required";
+  test("Claude failed lifecycle deduplicates failures, rejects late success and content, and redacts CANARY", async () => {
     const h = harness(),
       b = await create(h),
       c = fixtureCommand();

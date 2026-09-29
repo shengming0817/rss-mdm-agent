@@ -968,7 +968,7 @@ mod tests {
         let script = artifact.join("node_modules/@rss-mdm-agent/ai-host-app/dist/cli.js");
         std::fs::create_dir_all(script.parent().unwrap()).unwrap();
         std::fs::write(script, mode).unwrap();
-        let manifest = json!({"status":"passed","desktopProtocol":4,"contractVersion":6,
+        let manifest = json!({"status":"passed","desktopProtocol":4,"contractVersion":7,
             "verification":{"platform":if cfg!(windows){"win32"}else{"darwin"},"arch":if cfg!(windows){"x64"}else{"arm64"}},
             "runtimeTreeSha256":super::super::runtime_package::digest(&artifact).unwrap()});
         std::fs::write(
@@ -1040,7 +1040,10 @@ mod tests {
             serde_json::to_value(runtime.status()).unwrap()["diagnostic"]["code"],
             "host_exited"
         );
-        std::fs::write(artifact.join("manifest.json"), r#"{"desktopProtocol":0}"#).unwrap();
+        let path = artifact.join("manifest.json");
+        let mut previous: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        previous["contractVersion"] = Value::from(6);
+        std::fs::write(path, serde_json::to_vec(&previous).unwrap()).unwrap();
         let generation = runtime.epoch();
         let failed = runtime.restart(generation).await;
         assert_eq!(

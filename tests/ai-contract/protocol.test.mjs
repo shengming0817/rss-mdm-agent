@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { test } from "node:test";
-import { resolveSurfaceAction } from "../../packages/ai-contract/dist/index.js";
+import {
+  resolveSurfaceAction,
+  parseNegotiation,
+} from "../../packages/ai-contract/dist/index.js";
 import {
   fixtureCaller,
   fixtures,
@@ -18,6 +21,20 @@ import {
 const require = createRequire(
   new URL("../../packages/ai-contract/package.json", import.meta.url),
 );
+test("the previous contract cannot negotiate the new session-list response", () => {
+  const previousVersion = 6;
+  assert.throws(() =>
+    parseNegotiation(
+      {
+        contractVersion: previousVersion,
+        acp: 1,
+        durableReceipts: true,
+        cursorAttach: true,
+      },
+      fixtureLimits,
+    ),
+  );
+});
 const { Ajv2020 } = require("ajv/dist/2020.js");
 const acp = require("@agentclientprotocol/sdk/schema/schema.json");
 const validator = new Ajv2020({
@@ -123,7 +140,7 @@ test("official A2UI action binds exact surface/run/revision; payload claims gran
 test("negotiation permits basic ACP without A2UI and rejects unselected versions", () => {
   const host = new FakeHost();
   const basic = {
-    contractVersion: 6,
+    contractVersion: 7,
     acp: 1,
     durableReceipts: false,
     cursorAttach: false,

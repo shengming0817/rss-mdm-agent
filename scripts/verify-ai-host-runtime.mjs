@@ -108,9 +108,12 @@ for (const signal of ["SIGTERM", "SIGINT"]) {
     peer = nativePeer(link.lane("native"));
     const view = await clientAt(peer, await executionGeneration(directory));
     client = view.client;
-    const session = await client.createSession();
+    const session = await client.restore(
+      (await client.createSession({ sessionId: crypto.randomUUID() }))
+        .sessionId,
+    );
     await client.submit({
-      schemaVersion: 6,
+      schemaVersion: 7,
       kind: "command",
       commandId: "bundled",
       sessionId: session.namespace.sessionId,

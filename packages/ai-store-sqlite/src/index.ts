@@ -19,6 +19,7 @@ import {
   ReadViews,
   readSnapshotPage,
   readSessionPage,
+  sessionListItem,
 } from "@rss-mdm-agent/ai-contract/read-views";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import {
@@ -1091,7 +1092,15 @@ class SqliteSessionStore implements SessionStore, WorkerLaunchFenceStore {
               session.namespace.authorityId !== caller.authorityId
             )
               throw new SchemaError();
-            return session;
+            return sessionListItem(
+              session,
+              this.#rows(
+                `SELECT json FROM commands WHERE ${whereScope}`,
+                nsValues(session.namespace),
+              ).map((row) =>
+                this.#decode<CommandRecord>(row.json, "commandRecord"),
+              ),
+            );
           }),
         {
           ...defaultLimits,

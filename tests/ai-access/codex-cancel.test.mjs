@@ -31,7 +31,7 @@ const binding = {
 };
 const session = startStage(
   {
-    schemaVersion: 6,
+    schemaVersion: 7,
     kind: "session",
     namespace,
     revision: 1,
@@ -52,10 +52,10 @@ const session = startStage(
   }),
 );
 const prompt = (commandId, policy, state, dispatch) => ({
-  schemaVersion: 6,
+  schemaVersion: 7,
   kind: "commandRecord",
   command: {
-    schemaVersion: 6,
+    schemaVersion: 7,
     kind: "command",
     sessionId: namespace.sessionId,
     commandId,
@@ -68,7 +68,7 @@ const prompt = (commandId, policy, state, dispatch) => ({
     },
   },
   receipt: {
-    schemaVersion: 6,
+    schemaVersion: 7,
     kind: "receipt",
     namespace,
     commandId,

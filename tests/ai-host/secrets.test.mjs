@@ -13,7 +13,7 @@ import { unwrap } from "../../packages/ai-contract/dist/testing/index.js";
 const caller = { tenantId: "t", principalId: "alice", authorityId: "a" };
 const budget = { timeoutMs: 1000, signal: new AbortController().signal };
 const row = (revision = 1) => ({
-  schemaVersion: 6,
+  schemaVersion: 7,
   kind: "connection",
   connectionId: "one",
   configRevision: revision,

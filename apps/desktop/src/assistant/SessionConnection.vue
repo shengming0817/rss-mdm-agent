@@ -4,7 +4,9 @@ import type { HistoryPreview } from "@rss-mdm-agent/ai-contract";
 import { operationMessage, type AssistantController } from "./controller";
 const props = defineProps<{ controller: AssistantController }>();
 const c = props.controller;
-const rows = computed(() => c.state.connections);
+const rows = computed(() =>
+  c.state.connections.filter((row) => row.status === "ready"),
+);
 const busy = ref(false),
   error = ref("");
 const historyMode = ref("none"),
@@ -12,7 +14,7 @@ const historyMode = ref("none"),
   preview = ref<HistoryPreview>();
 let historyRequest = 0;
 const selected = computed(() =>
-  c.connectionReady.value ? (c.view.value?.selectedConnectionId ?? "") : "",
+  c.connectionReady.value ? (c.selectedConnectionId.value ?? "") : "",
 );
 const labels = new Map([
   ["codex", "Codex"],
@@ -45,7 +47,11 @@ watch(
 );
 async function choose(id: string, fresh = false) {
   await run(async () => {
-    if (!c.runtime.value || !c.state.selected) return;
+    if (!c.runtime.value) return;
+    if (!c.state.selected) {
+      c.state.blankConnectionId = id;
+      return;
+    }
     c.state.history.delete(c.state.selected);
     preview.value = undefined;
     historyMode.value = "none";
@@ -80,27 +86,28 @@ async function history() {
 <template>
   <section class="connections" aria-label="会话连接">
     <fieldset :disabled="c.state.connection !== 'connected'">
-      <template v-if="c.view.value">
-        <p v-if="!c.connectionReady.value" role="status">
-          当前会话需要选择可用连接。删除连接不会删除历史。
-        </p>
-        <label
-          >本会话连接
-          <select
-            :value="selected"
-            :disabled="busy"
-            @change="choose(($event.target as HTMLSelectElement).value)"
-          >
-            <option value="" disabled>请选择连接</option>
-            <option
-              v-for="row in rows"
-              :key="row.connectionId"
-              :value="row.connectionId"
-            >
-              {{ row.name }} · {{ labels.get(row.provider) }}
-            </option>
-          </select></label
+      <p v-if="!c.connectionReady.value" role="status">
+        当前会话需要选择可用连接。删除连接不会删除历史。
+      </p>
+      <label
+        >本会话连接
+        <select
+          :value="selected"
+          :disabled="busy || c.state.opening"
+          @change="choose(($event.target as HTMLSelectElement).value)"
         >
+          <option value="" disabled>请选择连接</option>
+          <option
+            v-for="row in rows"
+            :key="row.connectionId"
+            :value="row.connectionId"
+          >
+            {{ row.name }} · {{ labels.get(row.provider) }}
+          </option>
+        </select></label
+      >
+      <details v-if="c.view.value">
+        <summary>上下文与历史</summary>
         <button
           :disabled="busy || !selected || c.busy.value"
           @click="choose(selected, true)"
@@ -145,7 +152,7 @@ async function history() {
             确认带入这些文本</button
           ><span v-if="c.state.history.has(c.state.selected)"> 已确认</span>
         </div>
-      </template>
+      </details>
     </fieldset>
     <p v-if="busy" role="status">正在处理连接…</p>
     <p v-if="error" role="alert">{{ error }}</p>
@@ -153,10 +160,7 @@ async function history() {
 </template>
 <style scoped>
 .connections {
-  padding: 16px;
-  border: 1px solid #d6e0df;
-  border-radius: 10px;
-  margin: 16px 0;
+  padding: 12px 0;
 }
 .connections p {
   color: #536765;

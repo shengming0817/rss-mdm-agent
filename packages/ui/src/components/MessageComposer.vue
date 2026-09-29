@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { ref } from "vue";
 const props = withDefaults(
   defineProps<{
     modelValue: string;
@@ -8,9 +7,11 @@ const props = withDefaults(
     canCancel?: boolean;
     canSubmit?: boolean;
     placeholder?: string;
+    submitLabel?: string;
   }>(),
   {
     placeholder: "输入消息…",
+    submitLabel: "发送",
     disabled: false,
     busy: false,
     canCancel: false,
@@ -22,17 +23,9 @@ const emit = defineEmits<{
   submit: [text: string];
   cancel: [];
 }>();
-const collapsed = ref(false);
 function submit() {
   const text = props.modelValue.trim();
-  if (
-    !text ||
-    props.disabled ||
-    props.busy ||
-    !props.canSubmit ||
-    collapsed.value
-  )
-    return;
+  if (!text || props.disabled || props.busy || !props.canSubmit) return;
   emit("submit", text);
 }
 function keydown(event: KeyboardEvent) {
@@ -54,43 +47,32 @@ function input(event: Event) {
   <form class="rss-ui composer" @submit.prevent="submit">
     <div class="toolbar">
       <button
-        type="button"
-        :aria-expanded="!collapsed"
-        @click="collapsed = !collapsed"
-      >
-        {{ collapsed ? "展开输入" : "收起输入" }}
-      </button>
-      <button
         v-if="canCancel"
         type="button"
         data-action="cancel"
         :disabled="disabled"
         @click="!disabled && emit('cancel')"
       >
-        取消
+        停止本轮
       </button>
       <button
         type="submit"
-        :disabled="
-          disabled || busy || !canSubmit || collapsed || !modelValue.trim()
-        "
+        :disabled="disabled || busy || !canSubmit || !modelValue.trim()"
       >
-        发送
+        {{ submitLabel }}
       </button>
     </div>
-    <template v-if="!collapsed">
-      <label
-        >消息<textarea
-          :value="modelValue"
-          :disabled="disabled || busy"
-          :placeholder="placeholder"
-          rows="3"
-          @input="input"
-          @keydown="keydown"
-        />
-      </label>
-      <p>Enter 发送 · Shift+Enter 换行</p>
-    </template>
+    <label
+      >消息<textarea
+        :value="modelValue"
+        :disabled="disabled"
+        :placeholder="placeholder"
+        rows="3"
+        @input="input"
+        @keydown="keydown"
+      />
+    </label>
+    <p>Enter 发送 · Shift+Enter 换行</p>
   </form>
 </template>
 <style scoped>
@@ -125,6 +107,7 @@ textarea {
   display: block;
   width: 100%;
   resize: vertical;
+  box-sizing: border-box;
   min-height: 80px;
   max-height: 250px;
   margin-top: 6px;

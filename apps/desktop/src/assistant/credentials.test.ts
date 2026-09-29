@@ -11,7 +11,7 @@ vi.mock("../test-users", () => ({
 }));
 beforeEach(() => vi.mocked(saveNativeConnection).mockReset());
 const existing: Connection = {
-  schemaVersion: 6,
+  schemaVersion: 7,
   kind: "connection",
   connectionId: "custom",
   configRevision: 1,
@@ -31,7 +31,7 @@ async function setup(rows: Connection[] = []) {
     initialize: async () => ({}),
     connections: async () => ({
       connections: rows,
-      preferences: { schemaVersion: 6, kind: "userPreferences" },
+      preferences: { schemaVersion: 7, kind: "userPreferences" },
     }),
     listSessions: async () => ({ items: [] }),
     observe: () => () => {},

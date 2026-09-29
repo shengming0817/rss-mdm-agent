@@ -27,7 +27,7 @@ export async function runHostConformance(
 async function runHostScenarios(host: HostPort): Promise<void> {
   unwrap(
     host.negotiate({
-      contractVersion: 6,
+      contractVersion: 7,
       acp: 1,
       durableReceipts: true,
       cursorAttach: true,
