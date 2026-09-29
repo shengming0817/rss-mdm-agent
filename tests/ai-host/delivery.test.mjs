@@ -217,8 +217,13 @@ test("hung deliveries cannot starve ready operations or later pages", async (t) 
       budget(),
     );
   f.advance();
-  f.router.reconcile = async (request) =>
-    request.body.operationId.endsWith("hung")
+  const calls = new Map();
+  f.router.reconcile = async (request) => {
+    calls.set(
+      request.body.operationId,
+      (calls.get(request.body.operationId) ?? 0) + 1,
+    );
+    return request.body.operationId.endsWith("hung")
       ? new Promise(() => {})
       : ok({
           state: "committed",
@@ -227,6 +232,7 @@ test("hung deliveries cannot starve ready operations or later pages", async (t) 
             reply: { disposition: "returned", text: "ready" },
           },
         });
+  };
   f.router.acknowledge = async () => ok();
   const recovered = await owner.recover(budget(50));
   assert.equal(recovered.ok, false);
@@ -247,7 +253,87 @@ test("hung deliveries cannot starve ready operations or later pages", async (t) 
     "delivered",
   );
   assert.equal(f.count().send, 5);
+  // Wrap all recovery pages repeatedly, then retry the exact proposal. The original
+  // router ignored abort and still owns the operation despite every wait expiring.
+  for (let i = 0; i < 4; i++) await owner.recover(budget(20));
+  await owner.propose(
+    f.session.namespace,
+    activeStage(f.session).binding.generation,
+    "command-1",
+    {
+      ...proposal,
+      arguments: { ...proposal.arguments, operationRequestId: "a-hung" },
+    },
+    budget(20),
+  );
+  for (const id of ["a-hung", "c-hung", "d-hung"])
+    assert.equal(calls.get(id), 1, id);
 });
+
+for (const stage of ["send", "reconcile", "acknowledge"]) {
+  test(`${stage} retains single flight until the actual call settles, not its waiter`, async (t) => {
+    const f = await setup(t),
+      owner = f.owner();
+    const receipt = {
+      receiptRef: "rust-receipt",
+      reply: { disposition: "returned", text: "done" },
+    };
+    let calls = 0,
+      release;
+    f.router.send = async () => ok(receipt);
+    f.router.reconcile = async () => ok({ state: "committed", receipt });
+    f.router.acknowledge = async () => ok();
+    f.router[stage] = () => {
+      calls++;
+      return new Promise((resolve) => {
+        release = resolve;
+      });
+    };
+    if (stage === "reconcile") {
+      f.router.send = async () => ({
+        ok: false,
+        error: { code: "unavailable", retry: "reconcile_first" },
+      });
+    }
+    const propose = (ms = 30) =>
+      owner.propose(
+        f.session.namespace,
+        activeStage(f.session).binding.generation,
+        "command-1",
+        proposal,
+        budget(ms),
+      );
+    assert.equal((await propose()).ok, false);
+    if (stage === "reconcile") assert.equal((await propose()).ok, false);
+    assert.equal(calls, 1);
+    f.advance();
+    await owner.recover(budget(20));
+    await propose(20);
+    assert.equal(calls, 1);
+    const joined = propose(1000);
+    release(
+      stage === "send"
+        ? ok(receipt)
+        : stage === "reconcile"
+          ? ok({ state: "committed", receipt })
+          : ok(),
+    );
+    await joined;
+    // A real settlement releases ownership even when the first budget has expired.
+    f.router[stage] = async () =>
+      stage === "send"
+        ? ok(receipt)
+        : stage === "reconcile"
+          ? ok({ state: "committed", receipt })
+          : ok();
+    assert.equal((await propose(1000)).ok, true);
+    assert.equal(
+      unwrap(await f.store().delivery(f.session.namespace, "submission"))
+        .delivery.status,
+      "delivered",
+    );
+  });
+}
 
 test("new tool intent waits once outside the mailbox; reject never persists and approve rechecks the live command", async (t) => {
   const f = await setup(t);

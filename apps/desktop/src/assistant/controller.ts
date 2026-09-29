@@ -1,3 +1,4 @@
+import { operationRequestId } from "@rss-mdm-agent/execution-bindings";
 import type { Connection, HistoryPreview } from "@rss-mdm-agent/ai-contract";
 import { computed, markRaw, reactive, shallowRef } from "vue";
 import {
@@ -8,7 +9,7 @@ import {
   type Command,
   type SessionPage,
 } from "@rss-mdm-agent/ai-client";
-import type { ExecutionTaskDetails } from "./execution-types";
+import type { ExecutionTaskDetails } from "@rss-mdm-agent/execution-bindings/task-details";
 
 type PermissionRequest = Parameters<
   NonNullable<ClientOptions["requestPermission"]>
@@ -83,6 +84,7 @@ export function operationMessage(code: string): string {
     invalid_input: "连接配置或输入无效，请检查后重试。",
     unsupported_capability:
       "当前认证来源或能力不可用，请选择已有 API 配置或自定义 API。",
+    preference_not_saved: "当前对话选择尚未保存，重启后可能回到上次的对话。",
     limit_exceeded: "历史内容超过 64 KiB。请改用最近 N 轮，并缩小带入范围。",
     cancelled: "",
   };
@@ -120,7 +122,7 @@ export function createAssistant(
     opening: false,
     connections: [] as Connection[],
     preferences: {
-      schemaVersion: 6,
+      schemaVersion: 7,
       kind: "userPreferences",
     } as import("@rss-mdm-agent/ai-contract").UserPreferences,
     sessions: new Map<string, SessionItem>(),
@@ -130,6 +132,9 @@ export function createAssistant(
     pending: new Map<string, Pending>(),
     sending: new Set<string>(),
     errors: new Map<string, string>(),
+    preferenceSave: undefined as
+      | { sessionId: string; saving: boolean; failed: boolean }
+      | undefined,
     permissions: new Map<string, PermissionView>(),
     task: undefined as ExecutionTaskDetails | undefined,
     taskError: "",
@@ -141,6 +146,7 @@ export function createAssistant(
   let selectionVersion = 0,
     blankChosen = false;
   let openingTask: Promise<void> | undefined;
+  let preferenceTask = Promise.resolve();
   let creation:
     | {
         sessionId: string;
@@ -392,6 +398,11 @@ export function createAssistant(
   }
   async function connect() {
     const current = ++epoch;
+    preferenceTask = Promise.resolve();
+    if (state.preferenceSave?.saving) {
+      state.preferenceSave.saving = false;
+      state.preferenceSave.failed = true;
+    }
     connectionOwner?.abort();
     detailsOwner?.abort();
     const owner = new AbortController();
@@ -517,16 +528,41 @@ export function createAssistant(
       if (current === epoch) state.listing = false;
     }
   }
-  async function remember(id: string) {
+  function remember(id: string) {
     const client = runtime.value,
-      current = epoch;
-    if (!client) return;
-    try {
-      if (current === epoch)
+      current = epoch,
+      selection = selectionVersion;
+    if (!client || state.connection !== "connected") return Promise.resolve();
+    const live = () =>
+      current === epoch &&
+      selection === selectionVersion &&
+      state.selected === id;
+    state.preferenceSave = {
+      sessionId: id,
+      saving: true,
+      failed:
+        state.preferenceSave?.sessionId === id && state.preferenceSave.failed,
+    };
+    // Serialize selection writes; an older save must not complete after a newer one.
+    preferenceTask = preferenceTask.then(async () => {
+      if (!live()) return;
+      try {
         await client.savePreferences({ selectedSessionId: { set: id } });
-    } catch {
-      if (current === epoch) state.errors.set(id, "preference_not_saved");
-    }
+        if (live()) state.preferenceSave = undefined;
+      } catch {
+        if (live())
+          state.preferenceSave = { sessionId: id, saving: false, failed: true };
+      }
+    });
+    return preferenceTask;
+  }
+  function retryPreference() {
+    if (
+      state.preferenceSave?.failed &&
+      !state.preferenceSave.saving &&
+      state.preferenceSave.sessionId === state.selected
+    )
+      return remember(state.selected);
   }
   async function select(id: string) {
     if (!state.sessions.has(id)) return;
@@ -555,6 +591,7 @@ export function createAssistant(
     selectionVersion++;
     blankChosen = true;
     state.selected = "";
+    state.preferenceSave = undefined;
     state.task = undefined;
     state.taskError = "";
     state.createError = "";
@@ -683,7 +720,7 @@ export function createAssistant(
       return;
     state.pending.set(id, {
       command: {
-        schemaVersion: 6,
+        schemaVersion: 7,
         kind: "command",
         sessionId: id,
         commandId,
@@ -795,14 +832,11 @@ export function createAssistant(
       !services?.taskDetails
     )
       throw new ClientError("unavailable");
-    const args = delivery.proposal.arguments;
-    const catalog = args.catalog as
-      | { selection?: { operationRequestId?: unknown } }
-      | undefined;
-    const script = args.script as { operationRequestId?: unknown } | undefined;
-    const requestId =
-      catalog?.selection?.operationRequestId ?? script?.operationRequestId;
-    if (typeof requestId !== "string") throw new ClientError("invalid_input");
+    const requestId = operationRequestId(
+      delivery.proposal.name,
+      delivery.proposal.arguments,
+    );
+    if (!requestId) throw new ClientError("invalid_input");
     const owner = new AbortController();
     const abort = () => owner.abort();
     signal.addEventListener("abort", abort, { once: true });
@@ -863,7 +897,7 @@ export function createAssistant(
     state.taskLoading = false;
     state.task = undefined;
     state.connections = [];
-    state.preferences = { schemaVersion: 6, kind: "userPreferences" };
+    state.preferences = { schemaVersion: 7, kind: "userPreferences" };
     state.sessions.clear();
     state.views.clear();
     state.drafts.clear();
@@ -871,6 +905,7 @@ export function createAssistant(
     state.history.clear();
     state.sending.clear();
     state.errors.clear();
+    state.preferenceSave = undefined;
     state.selected = "";
     creation = undefined;
     openingTask = undefined;
@@ -913,6 +948,7 @@ export function createAssistant(
     respond,
     answerable,
     retry,
+    retryPreference,
     restore,
     detach,
     permission,

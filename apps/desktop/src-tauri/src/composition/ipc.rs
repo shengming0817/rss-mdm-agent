@@ -16,7 +16,7 @@ fn decode_connection(
     input: serde_json::Value,
     expected: Option<u64>,
 ) -> Result<ai_session_contract::ConnectionDraft> {
-    let bytes = serde_json::to_vec(&serde_json::json!({"schemaVersion":6,"kind":"saveConnectionRequest","connection":input,"expectedRevision":expected})).map_err(|_| error("input", "无效连接"))?;
+    let bytes = serde_json::to_vec(&serde_json::json!({"schemaVersion":7,"kind":"saveConnectionRequest","connection":input,"expectedRevision":expected})).map_err(|_| error("input", "无效连接"))?;
     let record = ai_session_contract::decode(
         &bytes,
         &ai_session_contract::Limits {

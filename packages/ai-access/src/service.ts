@@ -395,7 +395,7 @@ export function createAccessService(options: AccessOptions) {
               continue;
             if (pump.attachmentId) {
               const update: AccessUpdate = {
-                schemaVersion: 6,
+                schemaVersion: 7,
                 kind: "accessUpdate",
                 sessionId: id,
                 attachmentId: pump.attachmentId,
@@ -424,7 +424,7 @@ export function createAccessService(options: AccessOptions) {
             if (pump.attachmentId) {
               try {
                 await peer.connection.client.notify(extension.update, {
-                  schemaVersion: 6,
+                  schemaVersion: 7,
                   kind: "accessUpdate",
                   sessionId: id,
                   attachmentId: pump.attachmentId,
@@ -465,7 +465,7 @@ export function createAccessService(options: AccessOptions) {
         return fail("unavailable");
       if (previous?.attachmentId)
         await peer.connection.client.notify(extension.update, {
-          schemaVersion: 6,
+          schemaVersion: 7,
           kind: "accessUpdate",
           sessionId: id,
           attachmentId: previous.attachmentId,
@@ -522,7 +522,7 @@ export function createAccessService(options: AccessOptions) {
         }
         if (
           !n ||
-          n.contractVersion !== 6 ||
+          n.contractVersion !== 7 ||
           n.acp !== 1 ||
           typeof n.cursorAttach !== "boolean" ||
           typeof n.durableReceipts !== "boolean"
@@ -671,7 +671,7 @@ export function createAccessService(options: AccessOptions) {
         })
         .join("\n");
       const command = parse("command").parse({
-        schemaVersion: 6,
+        schemaVersion: 7,
         kind: "command",
         sessionId: params.sessionId,
         commandId: crypto.randomUUID(),
@@ -767,7 +767,7 @@ export function createAccessService(options: AccessOptions) {
         await submit(
           peer,
           {
-            schemaVersion: 6,
+            schemaVersion: 7,
             kind: "command",
             sessionId: params.sessionId,
             commandId: crypto.randomUUID(),
@@ -992,7 +992,7 @@ export function createAccessService(options: AccessOptions) {
         return submit(
           peer,
           {
-            schemaVersion: 6,
+            schemaVersion: 7,
             kind: "command",
             sessionId: metadata.sessionId,
             commandId: metadata.commandId,

@@ -99,7 +99,7 @@ export class RuntimeClient {
   async initialize(): Promise<Negotiation> {
     return this.boundary(async () => {
       const offered: Negotiation = {
-        contractVersion: 6,
+        contractVersion: 7,
         acp: 1,
         durableReceipts: true,
         cursorAttach: true,
@@ -122,7 +122,7 @@ export class RuntimeClient {
       }
       if (
         response.protocolVersion !== 1 ||
-        selected?.contractVersion !== 6 ||
+        selected?.contractVersion !== 7 ||
         !selected.cursorAttach
       )
         throw new ClientError("negotiation_failed");
@@ -155,7 +155,7 @@ export class RuntimeClient {
       this.ready();
       return parse(
         await this.connection.agent.request(extension.connections, {
-          schemaVersion: 6,
+          schemaVersion: 7,
           kind: "connectionsRequest",
         }),
         "connectionPage",
@@ -170,7 +170,7 @@ export class RuntimeClient {
       this.ready();
       return parse(
         await this.connection.agent.request(extension.saveConnection, {
-          schemaVersion: 6,
+          schemaVersion: 7,
           kind: "saveConnectionRequest",
           connection,
           expectedRevision,
@@ -187,7 +187,7 @@ export class RuntimeClient {
       this.ready();
       return parse(
         await this.connection.agent.request(extension.testConnection, {
-          schemaVersion: 6,
+          schemaVersion: 7,
           kind: "testConnectionRequest",
           connectionId,
           expectedRevision,
@@ -204,7 +204,7 @@ export class RuntimeClient {
       this.ready();
       return parse(
         await this.connection.agent.request(extension.deleteConnection, {
-          schemaVersion: 6,
+          schemaVersion: 7,
           kind: "deleteConnectionRequest",
           connectionId,
           expectedRevision,
@@ -220,7 +220,7 @@ export class RuntimeClient {
       this.ready();
       return parse(
         await this.connection.agent.request(extension.preferences, {
-          schemaVersion: 6,
+          schemaVersion: 7,
           kind: "preferencesRequest",
           patch: preferences,
         }),
@@ -237,7 +237,7 @@ export class RuntimeClient {
       this.ready();
       parse(
         await this.connection.agent.request(extension.selectConnection, {
-          schemaVersion: 6,
+          schemaVersion: 7,
           kind: "selectConnectionRequest",
           sessionId,
           connectionId,
@@ -257,7 +257,7 @@ export class RuntimeClient {
       this.ready();
       return parse(
         await this.connection.agent.request(extension.history, {
-          schemaVersion: 6,
+          schemaVersion: 7,
           kind: "historyRequest",
           sessionId,
           connectionId,
@@ -290,7 +290,7 @@ export class RuntimeClient {
       this.ready();
       return parse(
         await this.connection.agent.request(extension.list, {
-          schemaVersion: 6,
+          schemaVersion: 7,
           kind: "listRequest",
           query,
         }),
@@ -315,7 +315,7 @@ export class RuntimeClient {
           if (index >= 4096) throw new ClientError("resync_required");
           const page = parse(
             await this.connection.agent.request(extension.snapshot, {
-              schemaVersion: 6,
+              schemaVersion: 7,
               kind: "snapshotRequest",
               sessionId,
               query: {
@@ -351,7 +351,7 @@ export class RuntimeClient {
         this.views.set(sessionId, view);
         view.connection = "attached";
         await this.connection.agent.request(extension.attach, {
-          schemaVersion: 6,
+          schemaVersion: 7,
           kind: "attachRequest",
           sessionId,
           attachmentId,
@@ -383,7 +383,7 @@ export class RuntimeClient {
       }
       if (attachmentId && !this.connection.signal.aborted)
         await this.connection.agent.request(extension.detach, {
-          schemaVersion: 6,
+          schemaVersion: 7,
           kind: "detachRequest",
           sessionId,
           attachmentId,
@@ -424,7 +424,7 @@ export class RuntimeClient {
       await this.detach(sessionId);
       parse(
         await this.connection.agent.request(extension.resume, {
-          schemaVersion: 6,
+          schemaVersion: 7,
           kind: "resumeRequest",
           sessionId,
         }),

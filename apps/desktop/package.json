@@ -16,7 +16,8 @@
     "@tauri-apps/api": "2.11.1",
     "@rss-mdm-agent/ai-client": "workspace:*",
     "@rss-mdm-agent/ai-ui-bridge": "workspace:*",
-    "@rss-mdm-agent/ai-contract": "workspace:*"
+    "@rss-mdm-agent/ai-contract": "workspace:*",
+    "@rss-mdm-agent/execution-bindings": "workspace:*"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.11.2"

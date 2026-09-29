@@ -1,5 +1,6 @@
 import { mount, flushPromises } from "@vue/test-utils";
 import SessionConnection from "./SessionConnection.vue";
+import Assistant from "./Assistant.vue";
 import ConnectionSettings from "../settings/ConnectionSettings.vue";
 import { activeStage } from "@rss-mdm-agent/ai-contract";
 import { describe, expect, it, vi } from "vitest";
@@ -12,7 +13,7 @@ import {
 import { createAssistant, operationMessage } from "./controller";
 import { fixtureSession } from "@rss-mdm-agent/ai-contract/testing";
 import fixtures from "../../../../tests/assistant/execution-fixtures.json";
-import type { ExecutionTaskDetails } from "./execution-types";
+import type { ExecutionTaskDetails } from "@rss-mdm-agent/execution-bindings/task-details";
 function setup(now = () => 100) {
   let next = 0,
     listener: (view: SessionView) => void = () => {},
@@ -37,16 +38,16 @@ function setup(now = () => 100) {
   view.connection = "attached";
   const submit = vi.fn().mockResolvedValue({ kind: "receipt" });
   const client = {
-    initialize: vi.fn().mockResolvedValue({ contractVersion: 6, acp: 1 }),
+    initialize: vi.fn().mockResolvedValue({ contractVersion: 7, acp: 1 }),
     connections: vi.fn().mockResolvedValue({
       preferences: {
-        schemaVersion: 6,
+        schemaVersion: 7,
         kind: "userPreferences",
         defaultConnectionId: "config-1",
       },
       connections: [
         {
-          schemaVersion: 6,
+          schemaVersion: 7,
           kind: "connection",
           connectionId: "config-1",
           name: "Fixture",
@@ -61,7 +62,7 @@ function setup(now = () => 100) {
     }),
     savePreferences: vi
       .fn()
-      .mockResolvedValue({ schemaVersion: 6, kind: "userPreferences" }),
+      .mockResolvedValue({ schemaVersion: 7, kind: "userPreferences" }),
     listSessions: vi.fn().mockResolvedValue({
       items: [
         {
@@ -110,13 +111,93 @@ function setup(now = () => 100) {
   };
 }
 describe("assistant application ownership", () => {
+  it("keeps a failed selection save actionable through restore and retries only that selection", async () => {
+    const t = setup();
+    const catalog = await t.client.connections();
+    vi.mocked(t.client.savePreferences)
+      .mockImplementation(async (patch) => {
+        if (patch.selectedSessionId && "set" in patch.selectedSessionId)
+          catalog.preferences.selectedSessionId = patch.selectedSessionId.set;
+        return catalog.preferences;
+      })
+      .mockRejectedValueOnce(new Error("offline"));
+    vi.mocked(t.client.connections).mockImplementation(async () =>
+      structuredClone(catalog),
+    );
+    await t.c.connect();
+    await t.c.select("session-1");
+    await flushPromises();
+    const wrapper = mount(Assistant, { props: { controller: t.c } });
+    const notice = () => wrapper.get(".conversation-notice");
+    expect(notice().text()).toContain("重试保存当前选择");
+    await t.c.restore();
+    expect(notice().text()).toContain("重试保存当前选择");
+    const saves = vi.mocked(t.client.savePreferences).mock.calls.length;
+    const restores = vi.mocked(t.client.restore).mock.calls.length;
+    await notice().get("button").trigger("click");
+    await flushPromises();
+    expect(t.client.savePreferences).toHaveBeenCalledTimes(saves + 1);
+    expect(t.client.savePreferences).toHaveBeenLastCalledWith({
+      selectedSessionId: { set: "session-1" },
+    });
+    expect(t.client.restore).toHaveBeenCalledTimes(restores);
+    expect(t.submit).not.toHaveBeenCalled();
+    expect(wrapper.text()).not.toContain("重试保存当前选择");
+    wrapper.unmount();
+    t.c.dispose();
+    await t.c.connect();
+    expect(t.c.state.selected).toBe("session-1");
+    t.c.dispose();
+  });
+  it("orders selection saves and ignores a stale failure after a new selection or connection", async () => {
+    const t = setup();
+    await t.c.connect();
+    let reject!: (error: Error) => void;
+    vi.mocked(t.client.savePreferences).mockImplementationOnce(
+      () =>
+        new Promise((_, fail) => {
+          reject = fail;
+        }),
+    );
+    await t.c.select("session-1");
+    await flushPromises();
+    t.c.state.sessions.set("session-2", {
+      ...t.c.state.sessions.get("session-1")!,
+      namespace: { ...t.view.namespace, sessionId: "session-2" },
+    });
+    await t.c.select("session-2");
+    await flushPromises();
+    expect(t.client.savePreferences).toHaveBeenCalledTimes(1);
+    reject(new Error("old save failed"));
+    await flushPromises();
+    expect(t.client.savePreferences).toHaveBeenLastCalledWith({
+      selectedSessionId: { set: "session-2" },
+    });
+    expect(t.c.state.preferenceSave).toBeUndefined();
+    vi.mocked(t.client.savePreferences).mockImplementationOnce(
+      () =>
+        new Promise((_, fail) => {
+          reject = fail;
+        }),
+    );
+    await t.c.select("session-1");
+    await flushPromises();
+    await t.c.connect();
+    await t.c.retryPreference();
+    expect(t.c.state.preferenceSave).toBeUndefined();
+    reject(new Error("previous client failed"));
+    await flushPromises();
+    expect(t.c.state.preferenceSave).toBeUndefined();
+    expect(t.submit).not.toHaveBeenCalled();
+    t.c.dispose();
+  });
   it("queues through Host while provider capabilities independently gate steer, cancel and resume", async () => {
     const t = setup();
     await t.c.connect();
     await t.c.select("session-1");
     t.view.commands.p = {
       command: {
-        schemaVersion: 6,
+        schemaVersion: 7,
         kind: "command",
         sessionId: "session-1",
         commandId: "p",
@@ -527,7 +608,7 @@ it("aborts an in-flight connection on disposal and suppresses its late permissio
 it("connection panel sends exactly the confirmed preview once and never includes unconfirmed history", async () => {
   const t = setup();
   const preview = {
-    schemaVersion: 6 as const,
+    schemaVersion: 7 as const,
     kind: "historyPreview" as const,
     sessionId: "session-1",
     connectionId: "config-1",
@@ -609,7 +690,7 @@ it("drops a history preview that completes after the selected session changed", 
   t.c.state.selected = "session-2";
   await wrapper.vm.$nextTick();
   finish({
-    schemaVersion: 6,
+    schemaVersion: 7,
     kind: "historyPreview",
     sessionId: "session-1",
     connectionId: "config-1",
@@ -656,9 +737,9 @@ it("deleting the selected connection preserves history and immediately disables 
       wrapper.get('button[aria-label="将连接 Fixture 设为默认"]'),
     ).toBeTruthy();
     vi.mocked(t.client.connections).mockResolvedValue({
-      schemaVersion: 6,
+      schemaVersion: 7,
       kind: "connectionPage",
-      preferences: { schemaVersion: 6, kind: "userPreferences" },
+      preferences: { schemaVersion: 7, kind: "userPreferences" },
       connections: [],
     });
     await deleteButton.trigger("click");
@@ -1023,7 +1104,17 @@ it("execution cards require a Host delivery and matching Rust conversation and t
       name: "execution_execute",
       arguments: {
         catalog: {
-          selection: { operationRequestId: details.status.operationRequestId },
+          selection: {
+            operationRequestId: details.status.operationRequestId,
+            catalog: {
+              authority: { kind: "test", id: "fixture" },
+              identity: { id: "catalog", revision: "1" },
+              digest: "0".repeat(64),
+            },
+            itemId: "item",
+            variantId: "variant",
+            arguments: {},
+          },
         },
       },
     },
@@ -1042,6 +1133,16 @@ it("execution cards require a Host delivery and matching Rust conversation and t
     },
   } as Extract<ExecutionTaskDetails["action"]["initiator"], { kind: "ai" }>;
   await expect(t.c.executionDetails("op", signal)).resolves.toEqual(details);
+  // An ambiguous union is not an execution request, even if one field has an ID.
+  t.view.deliveries.op.proposal.arguments.script = {
+    operationRequestId: "other",
+  };
+  t.emit();
+  t.taskDetails.mockClear();
+  await expect(t.c.executionDetails("op", signal)).rejects.toThrow();
+  expect(t.taskDetails).not.toHaveBeenCalled();
+  delete t.view.deliveries.op.proposal.arguments.script;
+  t.emit();
   details.action.initiator.toolCall = "forged";
   await expect(t.c.executionDetails("op", signal)).rejects.toThrow();
   t.c.dispose();

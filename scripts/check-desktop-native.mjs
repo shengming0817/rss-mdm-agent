@@ -27,6 +27,7 @@ import { verifyRuntimeIntegrity } from "./ai-host-artifacts.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const reports = join(root, ".local-ci-runs");
+const nonce = randomBytes(16).toString("hex");
 mkdirSync(reports, { recursive: true });
 const result = {
   status: "running",
@@ -238,7 +239,6 @@ try {
   await new Promise((resolve) => reserved.listen(0, "127.0.0.1", resolve));
   const port = reserved.address().port;
   await new Promise((resolve) => reserved.close(resolve));
-  const nonce = randomBytes(16).toString("hex");
   const env = {
     ...process.env,
     RSS_NATIVE_E2E_NONCE: nonce,
@@ -290,7 +290,7 @@ try {
     assert.equal(child.exitCode, null, logs.slice(-3000));
     return receipt && hostStatus;
   }, 600000);
-  assert.equal(receipt.nonce, nonce);
+  assert.equal(receipt.nonceSha256, sha256(nonce));
   assert.equal(receipt.port, port);
   assert.equal(receipt.dataRootSha256, sha256(directory));
   assert.equal(hostStatus.phase, "ready");
@@ -357,11 +357,22 @@ try {
     dataRootSha256: receipt.dataRootSha256,
     driverPort: port,
   };
+  for (const authorization of [undefined, `Bearer ${"0".repeat(32)}`]) {
+    const response = await fetch(`http://127.0.0.1:${port}/status`, {
+      headers: authorization ? { authorization } : {},
+    });
+    assert.equal(
+      response.status,
+      401,
+      "WebDriver must reject missing/wrong run capability",
+    );
+  }
   browser = await remote({
     hostname: "127.0.0.1",
     port,
     path: "/",
     logLevel: "silent",
+    headers: { Authorization: `Bearer ${nonce}` },
     connectionRetryCount: 0,
     connectionRetryTimeout: 30000,
     capabilities: {
@@ -370,6 +381,25 @@ try {
     },
   });
   await browser.setTimeout({ implicit: 0, script: 15000 });
+  for (const authorization of [undefined, `Bearer ${"0".repeat(32)}`]) {
+    const response = await fetch(
+      `http://127.0.0.1:${port}/session/${browser.sessionId}/execute/sync`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(authorization ? { authorization } : {}),
+        },
+        body: JSON.stringify({ script: "return document.title", args: [] }),
+      },
+    );
+    assert.equal(
+      response.status,
+      401,
+      "existing sessions also require the run capability",
+    );
+  }
+  result.checks.push("webdriver-per-request-authentication");
   mark("account and saved unverified connection");
   await browser.$('[aria-label="测试用户名"]').setValue("Golden Alice");
   await click("进入");
@@ -812,6 +842,7 @@ try {
 } catch (error) {
   result.status = cancelled ? "cancelled" : "failed";
   const detail = String(error)
+    .replaceAll(nonce, "[redacted-capability]")
     .replaceAll(fixture?.secret ?? "<none>", "[redacted]")
     .replaceAll(directory ?? "<none>", "[isolated-data]")
     .replaceAll(root, "[worktree]")
@@ -875,6 +906,7 @@ try {
   writeFileSync(
     join(reports, "desktop-native.log"),
     logs
+      .replaceAll(nonce, "[redacted-capability]")
       .replaceAll(fixture?.secret ?? "<none>", "[redacted]")
       .replaceAll(directory ?? "<none>", "[isolated-data]"),
   );

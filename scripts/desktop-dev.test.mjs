@@ -36,7 +36,6 @@ function fixture(t) {
     "rust-toolchain.toml",
     "crates/execution-app/src/lib.rs",
     "scripts/check-execution-bindings.mjs",
-    "apps/desktop/src/assistant/execution-types.ts",
     "tests/assistant/execution-fixtures.json",
     "scripts/bundle-ai-host.mjs",
     "scripts/ai-host-artifacts.mjs",
@@ -47,6 +46,7 @@ function fixture(t) {
     write(path, "{}");
   for (const path of [
     "apps/ai-host",
+    "packages/execution-bindings",
     "packages/ai-host",
     "packages/ai-contract",
     "packages/ai-store-sqlite",
@@ -67,6 +67,7 @@ test("fingerprint includes dirty Host, adapter, contract, lock, Node and added/d
   assert.equal(developmentFingerprint(root), first);
   for (const path of [
     "apps/ai-host/src/index.ts",
+    "packages/execution-bindings/src/index.ts",
     "packages/ai-adapters/codex/src/index.ts",
     "packages/ai-contract/schema/runtime.schema.json",
     "pnpm-lock.yaml",

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:rss-mdm-agent:ai-runtime:6",
+  "$id": "urn:rss-mdm-agent:ai-runtime:7",
   "title": "WireRecord",
   "description": "Product reliability records only. No record authenticates a caller, grants approval or proves business execution. Standard ACP/A2UI schemas retain their upstream owners.",
   "oneOf": [
@@ -466,7 +466,7 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 6,
+          "const": 7,
           "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
         },
         "kind": {
@@ -507,7 +507,7 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 6,
+          "const": 7,
           "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
         },
         "kind": {
@@ -571,7 +571,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6,
+              "const": 7,
               "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
             },
             "kind": {
@@ -601,7 +601,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6,
+              "const": 7,
               "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
             },
             "kind": {
@@ -642,7 +642,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6,
+              "const": 7,
               "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
             },
             "kind": {
@@ -683,7 +683,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6,
+              "const": 7,
               "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
             },
             "kind": {
@@ -729,7 +729,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6,
+              "const": 7,
               "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
             },
             "kind": {
@@ -770,7 +770,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6,
+              "const": 7,
               "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
             },
             "kind": {
@@ -811,7 +811,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6,
+              "const": 7,
               "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
             },
             "kind": {
@@ -853,7 +853,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6,
+              "const": 7,
               "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
             },
             "kind": {
@@ -899,7 +899,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6,
+              "const": 7,
               "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
             },
             "kind": {
@@ -958,7 +958,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6,
+              "const": 7,
               "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
             },
             "kind": {
@@ -1031,7 +1031,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6,
+              "const": 7,
               "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
             },
             "kind": {
@@ -1094,7 +1094,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6,
+              "const": 7,
               "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
             },
             "kind": {
@@ -1163,7 +1163,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6,
+              "const": 7,
               "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
             },
             "kind": {
@@ -1231,7 +1231,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6,
+              "const": 7,
               "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
             },
             "kind": {
@@ -1300,7 +1300,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6,
+              "const": 7,
               "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
             },
             "kind": {
@@ -1377,7 +1377,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6,
+              "const": 7,
               "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
             },
             "kind": {
@@ -1455,7 +1455,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6,
+              "const": 7,
               "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
             },
             "kind": {
@@ -1547,7 +1547,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6,
+              "const": 7,
               "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
             },
             "kind": {
@@ -1629,7 +1629,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6,
+              "const": 7,
               "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
             },
             "kind": {
@@ -1702,7 +1702,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6,
+              "const": 7,
               "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
             },
             "kind": {
@@ -1765,7 +1765,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6,
+              "const": 7,
               "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
             },
             "kind": {
@@ -1828,7 +1828,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6,
+              "const": 7,
               "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
             },
             "kind": {
@@ -1896,7 +1896,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6,
+              "const": 7,
               "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
             },
             "kind": {
@@ -1976,7 +1976,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6,
+              "const": 7,
               "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
             },
             "kind": {
@@ -2044,7 +2044,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6,
+              "const": 7,
               "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
             },
             "kind": {
@@ -2102,7 +2102,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6,
+              "const": 7,
               "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
             },
             "kind": {
@@ -2156,7 +2156,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6,
+              "const": 7,
               "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
             },
             "kind": {
@@ -2224,7 +2224,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6,
+              "const": 7,
               "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
             },
             "kind": {
@@ -2287,7 +2287,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6,
+              "const": 7,
               "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
             },
             "kind": {
@@ -2341,7 +2341,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6,
+              "const": 7,
               "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
             },
             "kind": {
@@ -2417,7 +2417,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6,
+              "const": 7,
               "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
             },
             "kind": {
@@ -2495,7 +2495,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6,
+              "const": 7,
               "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
             },
             "kind": {
@@ -2576,7 +2576,7 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 6,
+          "const": 7,
           "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
         },
         "kind": {
@@ -2637,7 +2637,7 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 6,
+          "const": 7,
           "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
         },
         "kind": {
@@ -2718,7 +2718,7 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 6,
+          "const": 7,
           "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
         },
         "kind": {
@@ -2792,7 +2792,7 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 6,
+          "const": 7,
           "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
         },
         "kind": {
@@ -2920,7 +2920,7 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 6,
+          "const": 7,
           "description": "Exact product wire version; Earlier versions are rejected without migration or fallback."
         },
         "kind": {
@@ -3034,7 +3034,7 @@
       "type": "object",
       "properties": {
         "schemaVersion": {
-          "const": 6,
+          "const": 7,
           "type": "integer",
           "description": "Exact product contract version; no legacy readers."
         },
@@ -3110,7 +3110,7 @@
       "type": "object",
       "properties": {
         "schemaVersion": {
-          "const": 6,
+          "const": 7,
           "type": "integer",
           "description": "Exact product contract version; no legacy readers."
         },
@@ -3198,7 +3198,7 @@
       "type": "object",
       "properties": {
         "schemaVersion": {
-          "const": 6,
+          "const": 7,
           "type": "integer",
           "description": "Exact product contract version; no legacy readers."
         },
@@ -3223,7 +3223,7 @@
       "type": "object",
       "properties": {
         "schemaVersion": {
-          "const": 6,
+          "const": 7,
           "type": "integer",
           "description": "Exact product contract version; no legacy readers."
         },
@@ -3244,7 +3244,7 @@
       "type": "object",
       "properties": {
         "schemaVersion": {
-          "const": 6,
+          "const": 7,
           "type": "integer",
           "description": "Exact product contract version; no legacy readers."
         },
@@ -3279,7 +3279,7 @@
       "type": "object",
       "properties": {
         "schemaVersion": {
-          "const": 6,
+          "const": 7,
           "type": "integer",
           "description": "Exact product contract version; no legacy readers."
         },
@@ -3304,7 +3304,7 @@
       "type": "object",
       "properties": {
         "schemaVersion": {
-          "const": 6,
+          "const": 7,
           "type": "integer",
           "description": "Exact product contract version; no legacy readers."
         },
@@ -3325,7 +3325,7 @@
       "type": "object",
       "properties": {
         "schemaVersion": {
-          "const": 6,
+          "const": 7,
           "type": "integer",
           "description": "Exact product contract version; no legacy readers."
         },
@@ -3361,7 +3361,7 @@
       "type": "object",
       "properties": {
         "schemaVersion": {
-          "const": 6,
+          "const": 7,
           "type": "integer",
           "description": "Exact product contract version; no legacy readers."
         },
@@ -3396,7 +3396,7 @@
       "type": "object",
       "properties": {
         "schemaVersion": {
-          "const": 6,
+          "const": 7,
           "type": "integer",
           "description": "Exact product contract version; no legacy readers."
         },
@@ -3435,7 +3435,7 @@
         "contractVersion": {
           "description": "Exact product contract version.",
           "type": "integer",
-          "const": 6
+          "const": 7
         },
         "acp": {
           "description": "Exact ACP protocol version.",
@@ -3617,7 +3617,7 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 6
+          "const": 7
         },
         "kind": {
           "type": "string",
@@ -3679,7 +3679,7 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 6
+          "const": 7
         },
         "kind": {
           "type": "string",
@@ -3701,7 +3701,7 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 6
+          "const": 7
         },
         "kind": {
           "type": "string",
@@ -3723,14 +3723,14 @@
       },
       "required": ["schemaVersion", "kind", "userId", "displayName", "nameKey"],
       "additionalProperties": false,
-      "description": "TestUser product wire record; validated against the V6 schema."
+      "description": "TestUser product wire record; validated against the V7 schema."
     },
     "UserContext": {
       "type": "object",
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 6
+          "const": 7
         },
         "kind": {
           "type": "string",
@@ -3755,7 +3755,7 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 6
+          "const": 7
         },
         "kind": {
           "type": "string",
@@ -3815,7 +3815,7 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 6
+          "const": 7
         },
         "kind": {
           "type": "string",
@@ -3840,7 +3840,7 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 6
+          "const": 7
         },
         "kind": {
           "type": "string",
@@ -3855,7 +3855,7 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 6
+          "const": 7
         },
         "kind": {
           "type": "string",
@@ -3883,7 +3883,7 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 6
+          "const": 7
         },
         "kind": {
           "type": "string",
@@ -3901,7 +3901,7 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 6
+          "const": 7
         },
         "kind": {
           "type": "string",
@@ -3931,7 +3931,7 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 6
+          "const": 7
         },
         "kind": {
           "type": "string",
@@ -3957,7 +3957,7 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 6
+          "const": 7
         },
         "kind": {
           "type": "string",
@@ -3999,7 +3999,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6
+              "const": 7
             },
             "kind": {
               "type": "string",
@@ -4036,7 +4036,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6
+              "const": 7
             },
             "kind": {
               "type": "string",
@@ -4070,7 +4070,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6
+              "const": 7
             },
             "kind": {
               "type": "string",
@@ -4104,7 +4104,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6
+              "const": 7
             },
             "kind": {
               "type": "string",
@@ -4161,7 +4161,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6
+              "const": 7
             },
             "kind": {
               "type": "string",
@@ -4190,7 +4190,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6
+              "const": 7
             },
             "kind": {
               "type": "string",
@@ -4230,7 +4230,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6
+              "const": 7
             },
             "kind": {
               "type": "string",
@@ -4270,7 +4270,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6
+              "const": 7
             },
             "kind": {
               "type": "string",
@@ -4308,7 +4308,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6
+              "const": 7
             },
             "kind": {
               "type": "string",
@@ -4332,7 +4332,7 @@
           "properties": {
             "schemaVersion": {
               "type": "integer",
-              "const": 6
+              "const": 7
             },
             "kind": {
               "type": "string",
@@ -4356,7 +4356,7 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 6
+          "const": 7
         },
         "kind": {
           "type": "string",
@@ -4376,7 +4376,7 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 6
+          "const": 7
         },
         "kind": {
           "type": "string",
@@ -4502,7 +4502,7 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 6
+          "const": 7
         },
         "kind": {
           "type": "string",
@@ -4550,7 +4550,7 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 6
+          "const": 7
         },
         "kind": {
           "type": "string",
@@ -4574,7 +4574,7 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 6
+          "const": 7
         },
         "kind": {
           "type": "string",
@@ -4674,7 +4674,7 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 6
+          "const": 7
         },
         "kind": {
           "type": "string",
@@ -4695,7 +4695,7 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 6
+          "const": 7
         },
         "kind": {
           "type": "string",
@@ -4878,7 +4878,7 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 6
+          "const": 7
         },
         "kind": {
           "type": "string",
@@ -4903,7 +4903,7 @@
       "properties": {
         "schemaVersion": {
           "type": "integer",
-          "const": 6
+          "const": 7
         },
         "kind": {
           "type": "string",

@@ -54,7 +54,7 @@ test("control preempts queued output and a blocked physical writer stays bounded
 
 test("legacy, unknown version and oversized framing closes before dispatch", () => {
   for (const bytes of [
-    Buffer.from('{"schemaVersion":6}\n'),
+    Buffer.from('{"schemaVersion":7}\n'),
     Buffer.from([82, 83, 83, 0, 0, 0, 0, 1, 0]),
     Buffer.from([82, 83, 83, 1, 0, 255, 255, 255, 255]),
   ]) {

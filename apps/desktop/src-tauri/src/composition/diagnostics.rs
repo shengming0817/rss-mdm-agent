@@ -80,7 +80,7 @@ mod tests {
     use super::*;
     #[test]
     fn export_is_an_explicit_projection_and_rejects_secret_fields() {
-        let value = serde_json::json!({"schemaVersion":6,"kind":"hostStatus","generation":99,"phase":"failed","source":"development_override","version":"0.1.0","recent":[{"stage":"host_process","code":"host_exited","action":"restart_host","atMs":1}]});
+        let value = serde_json::json!({"schemaVersion":7,"kind":"hostStatus","generation":99,"phase":"failed","source":"development_override","version":"0.1.0","recent":[{"stage":"host_process","code":"host_exited","action":"restart_host","atMs":1}]});
         let status: ai_session_contract::HostStatus =
             serde_json::from_value(value.clone()).unwrap();
         let output: serde_json::Value =

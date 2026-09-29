@@ -5,7 +5,7 @@ import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { resolveConnection } from "../../apps/ai-host/dist/connection.js";
 const connection = (provider) => ({
-  schemaVersion: 6,
+  schemaVersion: 7,
   kind: "connection",
   connectionId: "one",
   configRevision: 1,

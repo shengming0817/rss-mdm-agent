@@ -8,7 +8,9 @@ const appExternalDependencies = {
   yaml: "2.9.1",
 };
 const allowed = {
+  "packages/execution-bindings": [],
   "apps/ai-host": [
+    "@rss-mdm-agent/execution-bindings",
     "@rss-mdm-agent/ai-contract",
     "@rss-mdm-agent/ai-host",
     "@rss-mdm-agent/ai-store-sqlite",

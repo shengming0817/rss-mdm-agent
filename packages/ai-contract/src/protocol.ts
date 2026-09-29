@@ -136,7 +136,7 @@ export async function resolveSurfaceAction(
     decode(
       boundedJson(
         {
-          schemaVersion: 6,
+          schemaVersion: 7,
           kind: "command",
           sessionId: metadata.sessionId,
           commandId: metadata.commandId,

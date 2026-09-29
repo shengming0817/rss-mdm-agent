@@ -12,6 +12,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { stepResult } from "./ci-result.mjs";
 const npm = (name) => `@rss-mdm-agent/${name}`;
 const groups = {
+  "native driver authentication": ["desktop"],
   "desktop native acceptance syntax": ["desktop"],
   "desktop model fixture syntax": ["desktop"],
   "AI generated contracts": ["ai-contract"],

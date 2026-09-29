@@ -143,7 +143,11 @@ const notice = computed(() => {
   const error =
     s.connection !== "connected"
       ? s.error
-      : s.errors.get(s.selected) || s.createError;
+      : s.errors.get(s.selected) ||
+        s.createError ||
+        (s.preferenceSave?.sessionId === s.selected && s.preferenceSave.failed
+          ? "preference_not_saved"
+          : "");
   if (
     [
       "authentication_required",
@@ -167,6 +171,8 @@ const notice = computed(() => {
       text: "上条消息是否已接收仍待确认，草稿已保留。",
       action: "retry",
     };
+  if (error === "preference_not_saved")
+    return { text: operationMessage(error), action: "preference" };
   if (error)
     return {
       text: operationMessage(error),
@@ -437,6 +443,13 @@ watch(
             @click="c.retry()"
           >
             重试原消息
+          </button>
+          <button
+            v-else-if="notice.action === 'preference'"
+            :disabled="s.preferenceSave?.saving"
+            @click="c.retryPreference()"
+          >
+            重试保存当前选择
           </button>
           <button v-else :disabled="s.opening" @click="c.restore()">
             重新读取

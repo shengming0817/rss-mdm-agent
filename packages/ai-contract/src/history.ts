@@ -50,7 +50,7 @@ export function historyPreview(
     })
     .join("\n\n");
   const value = {
-    schemaVersion: 6 as const,
+    schemaVersion: 7 as const,
     kind: "historyPreview" as const,
     sessionId: session.namespace.sessionId,
     connectionId: connection.connectionId,

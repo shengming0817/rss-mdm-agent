@@ -134,17 +134,15 @@ export class Deliveries {
             this.live(namespace, generation, commandId, deadline),
           );
           if (permission === "ask") {
-            const answer = await deadline.wait(() =>
-              this.authorize(
-                {
-                  namespace,
-                  generation,
-                  commandId,
-                  operationId,
-                  proposal: structuredClone(proposal),
-                },
-                deadline.budget(),
-              ),
+            const answer = await this.authorize(
+              {
+                namespace,
+                generation,
+                commandId,
+                operationId,
+                proposal: structuredClone(proposal),
+              },
+              deadline.budget(),
             );
             if (!answer.ok) return answer;
             if (answer.value === "rejected")
@@ -169,7 +167,7 @@ export class Deliveries {
             if (replay) return replay;
             deadline.check();
             const event: DeliveryRequest = {
-              schemaVersion: 6,
+              schemaVersion: 7,
               kind: "event",
               namespace,
               eventId: randomUUID(),
@@ -184,7 +182,7 @@ export class Deliveries {
               },
             };
             const delivery: Delivery = {
-              schemaVersion: 6,
+              schemaVersion: 7,
               kind: "delivery",
               namespace,
               operationId,
@@ -312,25 +310,34 @@ export class Deliveries {
     const existing = this.active.get(key);
     if (existing && existing.fingerprint !== fingerprint)
       return Promise.resolve(fail("content_conflict"));
-    const deadline = new Deadline(budget);
-    const task = deadline
-      .wait(() => (existing ? existing.task : action(deadline)))
-      .catch((error: unknown) =>
-        error instanceof Error &&
-        ["content_conflict", "stale_binding"].includes(error.message)
-          ? fail<ToolReply>(
-              error.message as "content_conflict" | "stale_binding",
-            )
-          : fail<ToolReply>("unavailable", "reconcile_first"),
-      )
-      .finally(() => deadline.dispose());
+    const failure = (error: unknown): Result<ToolReply> =>
+      error instanceof Error &&
+      ["content_conflict", "stale_binding"].includes(error.message)
+        ? fail<ToolReply>(error.message as "content_conflict" | "stale_binding")
+        : fail<ToolReply>("unavailable", "reconcile_first");
+    let operation = existing?.task;
     if (!existing) {
+      // ref: golang/sync singleflight.go doCall: ownership ends with fn, not a waiter.
+      // Abort is advisory: a router or authorizer may still be doing work afterwards.
+      const owner = new Deadline(budget);
+      const task = Promise.resolve()
+        .then(() => {
+          owner.check();
+          return action(owner);
+        })
+        .catch(failure)
+        .finally(() => {
+          owner.dispose();
+          if (this.active.get(key)?.task === task) this.active.delete(key);
+        });
       this.active.set(key, { fingerprint, task });
-      void task.finally(() => {
-        if (this.active.get(key)?.task === task) this.active.delete(key);
-      });
+      operation = task;
     }
-    return task;
+    const waiter = new Deadline(budget);
+    return waiter
+      .wait(() => operation!)
+      .catch(failure)
+      .finally(() => waiter.dispose());
   }
   private async attempt(
     stored: Stored,
@@ -387,7 +394,7 @@ export class Deliveries {
         return;
       const session = value(await this.store.session(namespace));
       const event: Event = {
-        schemaVersion: 6,
+        schemaVersion: 7,
         kind: "event",
         namespace,
         eventId: randomUUID(),

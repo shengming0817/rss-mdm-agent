@@ -8,7 +8,7 @@ export async function openFixture(host, store, caller, options, budget) {
       await store.saveConnection(
         caller,
         {
-          schemaVersion: 6,
+          schemaVersion: 7,
           kind: "connection",
           connectionId,
           name: connectionId,

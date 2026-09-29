@@ -235,7 +235,7 @@ async function main() {
       const sent = await adapter.dispatch(
         binding,
         {
-          schemaVersion: 6,
+          schemaVersion: 7,
           kind: "command",
           sessionId: configuration.namespace.sessionId,
           commandId: id,
@@ -317,7 +317,7 @@ async function main() {
         resumed,
         startStage(
           {
-            schemaVersion: 6,
+            schemaVersion: 7,
             kind: "session",
             namespace: configuration.namespace,
             revision: 0,

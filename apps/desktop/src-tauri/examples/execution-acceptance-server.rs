@@ -35,20 +35,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .open(&users_path)?
             .write_all(
                 serde_json::to_vec(&json!({
-                "schemaVersion": 6,
+                "schemaVersion": 7,
                 "kind": "testUserPage",
                 "users": [{
-                    "schemaVersion": 6,
+                    "schemaVersion": 7,
                     "kind": "testUser",
                     "userId": "fixture-actor",
                     "displayName": "Fixture",
                     "nameKey": "fixture"
                 }],
                 "current": {
-                    "schemaVersion": 6,
+                    "schemaVersion": 7,
                     "kind": "userContext",
                     "user": {
-                        "schemaVersion": 6,
+                        "schemaVersion": 7,
                         "kind": "testUser",
                         "userId": "fixture-actor",
                         "displayName": "Fixture",

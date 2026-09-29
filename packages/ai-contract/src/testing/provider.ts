@@ -210,11 +210,11 @@ export async function runProviderConformance(
             throw new Error("expected unknown");
           assert.ok(submission.correlationId);
           const record: CommandRecord = {
-            schemaVersion: 6,
+            schemaVersion: 7,
             kind: "commandRecord",
             command,
             receipt: {
-              schemaVersion: 6,
+              schemaVersion: 7,
               kind: "receipt",
               stageId: binding.generation,
               namespace: configuration.namespace,
@@ -323,7 +323,7 @@ export async function runProviderConformance(
                     : binding,
                 );
                 const context = {
-                  schemaVersion: 6,
+                  schemaVersion: 7,
                   namespace: fixtureSession().namespace,
                   commandId: command.commandId,
                   generation: observation.binding.generation,

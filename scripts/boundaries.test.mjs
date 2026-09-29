@@ -51,11 +51,15 @@ test("Rust guard excludes explicit test modules while guarding production IPC as
 test("only the native acceptance owner can register the pinned WebDriver plugin", () => {
   const file = "apps/desktop/src-tauri/src/native_e2e.rs";
   const source =
-    "fn run() { builder.plugin(tauri_plugin_wdio_webdriver::init_with_port(port)); }";
+    "fn run() { builder.plugin(tauri_plugin_wdio_webdriver::init(socket, capability)); }";
   assert.deepEqual(checkRustSources({ [file]: source }), []);
   for (const [path, code] of [
     ["apps/desktop/src-tauri/src/main.rs", source],
     [file, "fn run() { builder.plugin(arbitrary()); }"],
+    [
+      file,
+      "fn run() { builder.plugin(tauri_plugin_wdio_webdriver::init_with_port(port)); }",
+    ],
     [file, "fn run() { builder.invoke_handler(arbitrary()); }"],
   ])
     assert.ok(checkRustSources({ [path]: code }).length);
@@ -190,7 +194,7 @@ test("tree scan covers desktop files and both production manifests", () => {
     assert.ok(errors.includes("UI production dependencies must be Vue only"));
     assert.ok(
       errors.includes(
-        "desktop production dependencies must be UI, public AI contract/client/bridge, Vue and pinned Tauri core only",
+        "desktop production dependencies must be UI, public AI contract/client/bridge, generated execution bindings, Vue and pinned Tauri core only",
       ),
     );
   } finally {

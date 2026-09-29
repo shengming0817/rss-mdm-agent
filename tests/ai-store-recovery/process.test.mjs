@@ -229,7 +229,7 @@ for (const scenario of [
         observerGeneration: "crash-third",
       });
       const accepted = {
-        schemaVersion: 6,
+        schemaVersion: 7,
         kind: "commandRecord",
         command: record.command,
         receipt: record.receipt,

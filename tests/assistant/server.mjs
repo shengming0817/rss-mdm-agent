@@ -34,7 +34,7 @@ export async function startFixture() {
     await host.store.saveConnection(
       fixtureCaller,
       {
-        schemaVersion: 6,
+        schemaVersion: 7,
         kind: "connection",
         connectionId: "cfg",
         name: "Browser fixture",

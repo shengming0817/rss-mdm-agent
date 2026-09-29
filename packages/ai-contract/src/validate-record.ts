@@ -21,7 +21,7 @@ export const validate = validate20;
 export default validate20;
 const schema31 = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
-  $id: "urn:rss-mdm-agent:ai-runtime:6",
+  $id: "urn:rss-mdm-agent:ai-runtime:7",
   title: "WireRecord",
   description:
     "Product reliability records only. No record authenticates a caller, grants approval or proves business execution. Standard ACP/A2UI schemas retain their upstream owners.",
@@ -445,7 +445,7 @@ const schema31 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -492,7 +492,7 @@ const schema31 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -565,7 +565,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -596,7 +596,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -639,7 +639,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -682,7 +682,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -730,7 +730,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -773,7 +773,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -815,7 +815,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -859,7 +859,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -908,7 +908,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -971,7 +971,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -1053,7 +1053,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -1124,7 +1124,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -1201,7 +1201,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -1278,7 +1278,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -1356,7 +1356,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -1444,7 +1444,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -1533,7 +1533,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -1638,7 +1638,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -1731,7 +1731,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -1814,7 +1814,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -1884,7 +1884,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -1955,7 +1955,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -2032,7 +2032,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -2122,7 +2122,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -2198,7 +2198,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -2263,7 +2263,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -2323,7 +2323,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -2398,7 +2398,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -2467,7 +2467,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -2526,7 +2526,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -2610,7 +2610,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -2683,7 +2683,7 @@ const schema31 = {
           properties: {
             schemaVersion: {
               type: "integer",
-              const: 6,
+              const: 7,
               description:
                 "Exact product wire version; Earlier versions are rejected without migration or fallback.",
             },
@@ -2764,7 +2764,7 @@ const schema31 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -2825,7 +2825,7 @@ const schema31 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -2919,7 +2919,7 @@ const schema31 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -3000,7 +3000,7 @@ const schema31 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -3150,7 +3150,7 @@ const schema31 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -3273,7 +3273,7 @@ const schema31 = {
       type: "object",
       properties: {
         schemaVersion: {
-          const: 6,
+          const: 7,
           type: "integer",
           description: "Exact product contract version; no legacy readers.",
         },
@@ -3344,7 +3344,7 @@ const schema31 = {
       type: "object",
       properties: {
         schemaVersion: {
-          const: 6,
+          const: 7,
           type: "integer",
           description: "Exact product contract version; no legacy readers.",
         },
@@ -3425,7 +3425,7 @@ const schema31 = {
       type: "object",
       properties: {
         schemaVersion: {
-          const: 6,
+          const: 7,
           type: "integer",
           description: "Exact product contract version; no legacy readers.",
         },
@@ -3452,7 +3452,7 @@ const schema31 = {
       type: "object",
       properties: {
         schemaVersion: {
-          const: 6,
+          const: 7,
           type: "integer",
           description: "Exact product contract version; no legacy readers.",
         },
@@ -3474,7 +3474,7 @@ const schema31 = {
       type: "object",
       properties: {
         schemaVersion: {
-          const: 6,
+          const: 7,
           type: "integer",
           description: "Exact product contract version; no legacy readers.",
         },
@@ -3505,7 +3505,7 @@ const schema31 = {
       type: "object",
       properties: {
         schemaVersion: {
-          const: 6,
+          const: 7,
           type: "integer",
           description: "Exact product contract version; no legacy readers.",
         },
@@ -3532,7 +3532,7 @@ const schema31 = {
       type: "object",
       properties: {
         schemaVersion: {
-          const: 6,
+          const: 7,
           type: "integer",
           description: "Exact product contract version; no legacy readers.",
         },
@@ -3554,7 +3554,7 @@ const schema31 = {
       type: "object",
       properties: {
         schemaVersion: {
-          const: 6,
+          const: 7,
           type: "integer",
           description: "Exact product contract version; no legacy readers.",
         },
@@ -3586,7 +3586,7 @@ const schema31 = {
       type: "object",
       properties: {
         schemaVersion: {
-          const: 6,
+          const: 7,
           type: "integer",
           description: "Exact product contract version; no legacy readers.",
         },
@@ -3624,7 +3624,7 @@ const schema31 = {
       type: "object",
       properties: {
         schemaVersion: {
-          const: 6,
+          const: 7,
           type: "integer",
           description: "Exact product contract version; no legacy readers.",
         },
@@ -3660,7 +3660,7 @@ const schema31 = {
         contractVersion: {
           description: "Exact product contract version.",
           type: "integer",
-          const: 6,
+          const: 7,
         },
         acp: {
           description: "Exact ACP protocol version.",
@@ -3813,7 +3813,7 @@ const schema31 = {
     Connection: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "connection" },
         connectionId: { $ref: "#/$defs/Id" },
         name: { type: "string", minLength: 1, maxLength: 64 },
@@ -3844,7 +3844,7 @@ const schema31 = {
     UserPreferences: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "userPreferences" },
         defaultConnectionId: { $ref: "#/$defs/Id" },
         selectedSessionId: { $ref: "#/$defs/Id" },
@@ -3857,7 +3857,7 @@ const schema31 = {
     TestUser: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "testUser" },
         userId: { $ref: "#/$defs/Id" },
         displayName: { type: "string", minLength: 1, maxLength: 64 },
@@ -3866,12 +3866,12 @@ const schema31 = {
       required: ["schemaVersion", "kind", "userId", "displayName", "nameKey"],
       additionalProperties: false,
       description:
-        "TestUser product wire record; validated against the V6 schema.",
+        "TestUser product wire record; validated against the V7 schema.",
     },
     UserContext: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "userContext" },
         user: { $ref: "#/$defs/TestUser" },
         generation: { $ref: "#/$defs/Id" },
@@ -3885,7 +3885,7 @@ const schema31 = {
     HistoryPreview: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "historyPreview" },
         sessionId: { $ref: "#/$defs/Id" },
         connectionId: { $ref: "#/$defs/Id" },
@@ -3923,7 +3923,7 @@ const schema31 = {
     ConnectionPage: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "connectionPage" },
         connections: {
           type: "array",
@@ -3938,7 +3938,7 @@ const schema31 = {
     ConnectionsRequest: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "connectionsRequest" },
       },
       required: ["schemaVersion", "kind"],
@@ -3947,7 +3947,7 @@ const schema31 = {
     SaveConnectionRequest: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "saveConnectionRequest" },
         connection: { $ref: "#/$defs/ConnectionDraft" },
         expectedRevision: {
@@ -3960,7 +3960,7 @@ const schema31 = {
     PreferencesRequest: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "preferencesRequest" },
         patch: { $ref: "#/$defs/PreferencesPatch" },
       },
@@ -3970,7 +3970,7 @@ const schema31 = {
     SelectConnectionRequest: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "selectConnectionRequest" },
         sessionId: { $ref: "#/$defs/Id" },
         connectionId: { $ref: "#/$defs/Id" },
@@ -3988,7 +3988,7 @@ const schema31 = {
     HistoryRequest: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "historyRequest" },
         sessionId: { $ref: "#/$defs/Id" },
         connectionId: { $ref: "#/$defs/Id" },
@@ -4000,7 +4000,7 @@ const schema31 = {
     TestUserPage: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "testUserPage" },
         users: {
           type: "array",
@@ -4027,7 +4027,7 @@ const schema31 = {
           title: "NativeCallAttach",
           type: "object",
           properties: {
-            schemaVersion: { type: "integer", const: 6 },
+            schemaVersion: { type: "integer", const: 7 },
             kind: { type: "string", const: "nativeCall" },
             id: { $ref: "#/$defs/Counter" },
             method: { type: "string", const: "attach" },
@@ -4049,7 +4049,7 @@ const schema31 = {
           title: "NativeCallSuspend",
           type: "object",
           properties: {
-            schemaVersion: { type: "integer", const: 6 },
+            schemaVersion: { type: "integer", const: 7 },
             kind: { type: "string", const: "nativeCall" },
             id: { $ref: "#/$defs/Counter" },
             method: { type: "string", const: "suspend" },
@@ -4068,7 +4068,7 @@ const schema31 = {
           title: "NativeCallDetach",
           type: "object",
           properties: {
-            schemaVersion: { type: "integer", const: 6 },
+            schemaVersion: { type: "integer", const: 7 },
             kind: { type: "string", const: "nativeCall" },
             id: { $ref: "#/$defs/Counter" },
             method: { type: "string", const: "detach" },
@@ -4087,7 +4087,7 @@ const schema31 = {
           title: "NativeCallSaveConnection",
           type: "object",
           properties: {
-            schemaVersion: { type: "integer", const: 6 },
+            schemaVersion: { type: "integer", const: 7 },
             kind: { type: "string", const: "nativeCall" },
             id: { $ref: "#/$defs/Counter" },
             method: { type: "string", const: "saveConnection" },
@@ -4118,7 +4118,7 @@ const schema31 = {
           title: "NativeCallHealth",
           type: "object",
           properties: {
-            schemaVersion: { type: "integer", const: 6 },
+            schemaVersion: { type: "integer", const: 7 },
             kind: { type: "string", const: "nativeCall" },
             id: { $ref: "#/$defs/Counter" },
             method: { type: "string", const: "health" },
@@ -4136,7 +4136,7 @@ const schema31 = {
           title: "NativeCallOpenCredential",
           type: "object",
           properties: {
-            schemaVersion: { type: "integer", const: 6 },
+            schemaVersion: { type: "integer", const: 7 },
             kind: { type: "string", const: "nativeCall" },
             id: { $ref: "#/$defs/Counter" },
             method: { type: "string", const: "openCredential" },
@@ -4159,7 +4159,7 @@ const schema31 = {
           title: "NativeCallMatchCredential",
           type: "object",
           properties: {
-            schemaVersion: { type: "integer", const: 6 },
+            schemaVersion: { type: "integer", const: 7 },
             kind: { type: "string", const: "nativeCall" },
             id: { $ref: "#/$defs/Counter" },
             method: { type: "string", const: "matchCredential" },
@@ -4182,7 +4182,7 @@ const schema31 = {
           title: "NativeCallCredentialContext",
           type: "object",
           properties: {
-            schemaVersion: { type: "integer", const: 6 },
+            schemaVersion: { type: "integer", const: 7 },
             kind: { type: "string", const: "nativeCall" },
             id: { $ref: "#/$defs/Counter" },
             method: { type: "string", const: "credentialContext" },
@@ -4205,7 +4205,7 @@ const schema31 = {
           title: "NativeReplySuccess",
           type: "object",
           properties: {
-            schemaVersion: { type: "integer", const: 6 },
+            schemaVersion: { type: "integer", const: 7 },
             kind: { type: "string", const: "nativeReply" },
             id: { $ref: "#/$defs/Counter" },
             ok: { const: true, type: "boolean" },
@@ -4218,7 +4218,7 @@ const schema31 = {
           title: "NativeReplyFailure",
           type: "object",
           properties: {
-            schemaVersion: { type: "integer", const: 6 },
+            schemaVersion: { type: "integer", const: 7 },
             kind: { type: "string", const: "nativeReply" },
             id: { $ref: "#/$defs/Counter" },
             ok: { const: false, type: "boolean" },
@@ -4231,7 +4231,7 @@ const schema31 = {
     NativeEvent: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "nativeEvent" },
         channel: { $ref: "#/$defs/Id" },
         message: {},
@@ -4244,7 +4244,7 @@ const schema31 = {
       description:
         "Non-secret AI operation provenance carried only on the desktop-owned execution pipe.",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "executionOrigin" },
         namespace: { $ref: "#/$defs/Namespace" },
         userGeneration: {
@@ -4342,7 +4342,7 @@ const schema31 = {
     HostStatus: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "hostStatus" },
         generation: { $ref: "#/$defs/Counter" },
         phase: {
@@ -4375,7 +4375,7 @@ const schema31 = {
     HostHealth: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "hostHealth" },
         ready: { type: "boolean", const: true },
         protocol: { type: "integer", const: 4 },
@@ -4388,7 +4388,7 @@ const schema31 = {
         "Closed diagnostic frame on the inherited Host diagnostic pipe. Raw stderr and unknown frames never become product diagnostics.",
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "hostProcessDiagnostic" },
         code: {
           type: "string",
@@ -4456,7 +4456,7 @@ const schema31 = {
     TestConnectionRequest: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "testConnectionRequest" },
         connectionId: { $ref: "#/$defs/Id" },
         expectedRevision: { $ref: "#/$defs/Counter" },
@@ -4467,7 +4467,7 @@ const schema31 = {
     DeleteConnectionRequest: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "deleteConnectionRequest" },
         connectionId: { $ref: "#/$defs/Id" },
         expectedRevision: { $ref: "#/$defs/Counter" },
@@ -4584,7 +4584,7 @@ const schema31 = {
     AccountSettings: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "accountSettings" },
         organizations: {
           type: "array",
@@ -4599,7 +4599,7 @@ const schema31 = {
     AccountStatus: {
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "accountStatus" },
         current: { $ref: "#/$defs/UserContext" },
         failure: { $ref: "#/$defs/AccountFailure" },
@@ -4638,7 +4638,7 @@ const schema31 = {
 const schema331 = {
   type: "object",
   properties: {
-    schemaVersion: { type: "integer", const: 6 },
+    schemaVersion: { type: "integer", const: 7 },
     kind: { type: "string", const: "connectionsRequest" },
   },
   required: ["schemaVersion", "kind"],
@@ -4647,7 +4647,7 @@ const schema331 = {
 const schema381 = {
   type: "object",
   properties: {
-    schemaVersion: { type: "integer", const: 6 },
+    schemaVersion: { type: "integer", const: 7 },
     kind: { type: "string", const: "hostHealth" },
     ready: { type: "boolean", const: true },
     protocol: { type: "integer", const: 4 },
@@ -4660,7 +4660,7 @@ const schema382 = {
     "Closed diagnostic frame on the inherited Host diagnostic pipe. Raw stderr and unknown frames never become product diagnostics.",
   type: "object",
   properties: {
-    schemaVersion: { type: "integer", const: 6 },
+    schemaVersion: { type: "integer", const: 7 },
     kind: { type: "string", const: "hostProcessDiagnostic" },
     code: {
       type: "string",
@@ -4682,7 +4682,7 @@ const schema32 = {
   properties: {
     schemaVersion: {
       type: "integer",
-      const: 6,
+      const: 7,
       description:
         "Exact product wire version; Earlier versions are rejected without migration or fallback.",
     },
@@ -4849,7 +4849,7 @@ const schema36 = {
 const schema38 = {
   type: "object",
   properties: {
-    schemaVersion: { type: "integer", const: 6 },
+    schemaVersion: { type: "integer", const: 7 },
     kind: { type: "string", const: "historyPreview" },
     sessionId: { $ref: "#/$defs/Id" },
     connectionId: { $ref: "#/$defs/Id" },
@@ -4970,13 +4970,13 @@ function validate23(
               ];
               return false;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               validate23.errors = [
                 {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 },
               ];
@@ -7094,13 +7094,13 @@ function validate21(
               ];
               return false;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               validate21.errors = [
                 {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 },
               ];
@@ -7391,7 +7391,7 @@ const schema55 = {
   properties: {
     schemaVersion: {
       type: "integer",
-      const: 6,
+      const: 7,
       description:
         "Exact product wire version; Earlier versions are rejected without migration or fallback.",
     },
@@ -7924,13 +7924,13 @@ function validate29(
               ];
               return false;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               validate29.errors = [
                 {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 },
               ];
@@ -8454,7 +8454,7 @@ const schema67 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -8485,7 +8485,7 @@ const schema67 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -8528,7 +8528,7 @@ const schema67 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -8571,7 +8571,7 @@ const schema67 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -8619,7 +8619,7 @@ const schema67 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -8662,7 +8662,7 @@ const schema67 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -8704,7 +8704,7 @@ const schema67 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -8748,7 +8748,7 @@ const schema67 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -8797,7 +8797,7 @@ const schema67 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -9988,12 +9988,12 @@ function validate33(
               }
               errors++;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               const err3 = {
                 instancePath: instancePath + "/schemaVersion",
                 schemaPath: "#/oneOf/0/properties/schemaVersion/const",
                 keyword: "const",
-                params: { allowedValue: 6 },
+                params: { allowedValue: 7 },
                 message: "must be equal to constant",
               };
               if (vErrors === null) {
@@ -10235,12 +10235,12 @@ function validate33(
               }
               errors++;
             }
-            if (6 !== data5) {
+            if (7 !== data5) {
               const err12 = {
                 instancePath: instancePath + "/schemaVersion",
                 schemaPath: "#/oneOf/1/properties/schemaVersion/const",
                 keyword: "const",
-                params: { allowedValue: 6 },
+                params: { allowedValue: 7 },
                 message: "must be equal to constant",
               };
               if (vErrors === null) {
@@ -10511,12 +10511,12 @@ function validate33(
                 }
                 errors++;
               }
-              if (6 !== data11) {
+              if (7 !== data11) {
                 const err21 = {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/oneOf/2/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 };
                 if (vErrors === null) {
@@ -10790,12 +10790,12 @@ function validate33(
                   }
                   errors++;
                 }
-                if (6 !== data17) {
+                if (7 !== data17) {
                   const err30 = {
                     instancePath: instancePath + "/schemaVersion",
                     schemaPath: "#/oneOf/3/properties/schemaVersion/const",
                     keyword: "const",
-                    params: { allowedValue: 6 },
+                    params: { allowedValue: 7 },
                     message: "must be equal to constant",
                   };
                   if (vErrors === null) {
@@ -11116,12 +11116,12 @@ function validate33(
                     }
                     errors++;
                   }
-                  if (6 !== data24) {
+                  if (7 !== data24) {
                     const err41 = {
                       instancePath: instancePath + "/schemaVersion",
                       schemaPath: "#/oneOf/4/properties/schemaVersion/const",
                       keyword: "const",
-                      params: { allowedValue: 6 },
+                      params: { allowedValue: 7 },
                       message: "must be equal to constant",
                     };
                     if (vErrors === null) {
@@ -11395,12 +11395,12 @@ function validate33(
                       }
                       errors++;
                     }
-                    if (6 !== data30) {
+                    if (7 !== data30) {
                       const err50 = {
                         instancePath: instancePath + "/schemaVersion",
                         schemaPath: "#/oneOf/5/properties/schemaVersion/const",
                         keyword: "const",
-                        params: { allowedValue: 6 },
+                        params: { allowedValue: 7 },
                         message: "must be equal to constant",
                       };
                       if (vErrors === null) {
@@ -11672,13 +11672,13 @@ function validate33(
                         }
                         errors++;
                       }
-                      if (6 !== data36) {
+                      if (7 !== data36) {
                         const err59 = {
                           instancePath: instancePath + "/schemaVersion",
                           schemaPath:
                             "#/oneOf/6/properties/schemaVersion/const",
                           keyword: "const",
-                          params: { allowedValue: 6 },
+                          params: { allowedValue: 7 },
                           message: "must be equal to constant",
                         };
                         if (vErrors === null) {
@@ -12019,13 +12019,13 @@ function validate33(
                           }
                           errors++;
                         }
-                        if (6 !== data42) {
+                        if (7 !== data42) {
                           const err72 = {
                             instancePath: instancePath + "/schemaVersion",
                             schemaPath:
                               "#/oneOf/7/properties/schemaVersion/const",
                             keyword: "const",
-                            params: { allowedValue: 6 },
+                            params: { allowedValue: 7 },
                             message: "must be equal to constant",
                           };
                           if (vErrors === null) {
@@ -12815,13 +12815,13 @@ function validate33(
                             }
                             errors++;
                           }
-                          if (6 !== data53) {
+                          if (7 !== data53) {
                             const err99 = {
                               instancePath: instancePath + "/schemaVersion",
                               schemaPath:
                                 "#/oneOf/8/properties/schemaVersion/const",
                               keyword: "const",
-                              params: { allowedValue: 6 },
+                              params: { allowedValue: 7 },
                               message: "must be equal to constant",
                             };
                             if (vErrors === null) {
@@ -13291,7 +13291,7 @@ const schema84 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -13372,7 +13372,7 @@ const schema84 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -13442,7 +13442,7 @@ const schema84 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -13518,7 +13518,7 @@ const schema84 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -13594,7 +13594,7 @@ const schema84 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -13671,7 +13671,7 @@ const schema84 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -13757,7 +13757,7 @@ const schema84 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -13844,7 +13844,7 @@ const schema84 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -13947,7 +13947,7 @@ const schema84 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -14034,7 +14034,7 @@ const schema84 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -14116,7 +14116,7 @@ const schema84 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -14185,7 +14185,7 @@ const schema84 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -14254,7 +14254,7 @@ const schema84 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -14330,7 +14330,7 @@ const schema84 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -14419,7 +14419,7 @@ const schema84 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -14494,7 +14494,7 @@ const schema84 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -14558,7 +14558,7 @@ const schema84 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -14617,7 +14617,7 @@ const schema84 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -14691,7 +14691,7 @@ const schema84 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -14759,7 +14759,7 @@ const schema84 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -14817,7 +14817,7 @@ const schema84 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -14900,7 +14900,7 @@ const schema84 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -14972,7 +14972,7 @@ const schema84 = {
       properties: {
         schemaVersion: {
           type: "integer",
-          const: 6,
+          const: 7,
           description:
             "Exact product wire version; Earlier versions are rejected without migration or fallback.",
         },
@@ -15064,7 +15064,7 @@ const schema168 = {
   properties: {
     schemaVersion: {
       type: "integer",
-      const: 6,
+      const: 7,
       description:
         "Exact product wire version; Earlier versions are rejected without migration or fallback.",
     },
@@ -15257,13 +15257,13 @@ function validate82(
               ];
               return false;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               validate82.errors = [
                 {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 },
               ];
@@ -16347,12 +16347,12 @@ function validate61(
               }
               errors++;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               const err3 = {
                 instancePath: instancePath + "/schemaVersion",
                 schemaPath: "#/oneOf/0/properties/schemaVersion/const",
                 keyword: "const",
-                params: { allowedValue: 6 },
+                params: { allowedValue: 7 },
                 message: "must be equal to constant",
               };
               if (vErrors === null) {
@@ -17203,12 +17203,12 @@ function validate61(
               }
               errors++;
             }
-            if (6 !== data12) {
+            if (7 !== data12) {
               const err40 = {
                 instancePath: instancePath + "/schemaVersion",
                 schemaPath: "#/oneOf/1/properties/schemaVersion/const",
                 keyword: "const",
-                params: { allowedValue: 6 },
+                params: { allowedValue: 7 },
                 message: "must be equal to constant",
               };
               if (vErrors === null) {
@@ -17851,12 +17851,12 @@ function validate61(
                 }
                 errors++;
               }
-              if (6 !== data22) {
+              if (7 !== data22) {
                 const err67 = {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/oneOf/2/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 };
                 if (vErrors === null) {
@@ -18615,12 +18615,12 @@ function validate61(
                   }
                   errors++;
                 }
-                if (6 !== data33) {
+                if (7 !== data33) {
                   const err100 = {
                     instancePath: instancePath + "/schemaVersion",
                     schemaPath: "#/oneOf/3/properties/schemaVersion/const",
                     keyword: "const",
-                    params: { allowedValue: 6 },
+                    params: { allowedValue: 7 },
                     message: "must be equal to constant",
                   };
                   if (vErrors === null) {
@@ -19388,12 +19388,12 @@ function validate61(
                     }
                     errors++;
                   }
-                  if (6 !== data44) {
+                  if (7 !== data44) {
                     const err133 = {
                       instancePath: instancePath + "/schemaVersion",
                       schemaPath: "#/oneOf/4/properties/schemaVersion/const",
                       keyword: "const",
-                      params: { allowedValue: 6 },
+                      params: { allowedValue: 7 },
                       message: "must be equal to constant",
                     };
                     if (vErrors === null) {
@@ -20177,12 +20177,12 @@ function validate61(
                       }
                       errors++;
                     }
-                    if (6 !== data55) {
+                    if (7 !== data55) {
                       const err166 = {
                         instancePath: instancePath + "/schemaVersion",
                         schemaPath: "#/oneOf/5/properties/schemaVersion/const",
                         keyword: "const",
-                        params: { allowedValue: 6 },
+                        params: { allowedValue: 7 },
                         message: "must be equal to constant",
                       };
                       if (vErrors === null) {
@@ -21173,13 +21173,13 @@ function validate61(
                         }
                         errors++;
                       }
-                      if (6 !== data68) {
+                      if (7 !== data68) {
                         const err206 = {
                           instancePath: instancePath + "/schemaVersion",
                           schemaPath:
                             "#/oneOf/6/properties/schemaVersion/const",
                           keyword: "const",
-                          params: { allowedValue: 6 },
+                          params: { allowedValue: 7 },
                           message: "must be equal to constant",
                         };
                         if (vErrors === null) {
@@ -22173,13 +22173,13 @@ function validate61(
                           }
                           errors++;
                         }
-                        if (6 !== data81) {
+                        if (7 !== data81) {
                           const err245 = {
                             instancePath: instancePath + "/schemaVersion",
                             schemaPath:
                               "#/oneOf/7/properties/schemaVersion/const",
                             keyword: "const",
-                            params: { allowedValue: 6 },
+                            params: { allowedValue: 7 },
                             message: "must be equal to constant",
                           };
                           if (vErrors === null) {
@@ -23392,13 +23392,13 @@ function validate61(
                             }
                             errors++;
                           }
-                          if (6 !== data96) {
+                          if (7 !== data96) {
                             const err288 = {
                               instancePath: instancePath + "/schemaVersion",
                               schemaPath:
                                 "#/oneOf/8/properties/schemaVersion/const",
                               keyword: "const",
-                              params: { allowedValue: 6 },
+                              params: { allowedValue: 7 },
                               message: "must be equal to constant",
                             };
                             if (vErrors === null) {
@@ -24544,13 +24544,13 @@ function validate61(
                               }
                               errors++;
                             }
-                            if (6 !== data109) {
+                            if (7 !== data109) {
                               const err329 = {
                                 instancePath: instancePath + "/schemaVersion",
                                 schemaPath:
                                   "#/oneOf/9/properties/schemaVersion/const",
                                 keyword: "const",
-                                params: { allowedValue: 6 },
+                                params: { allowedValue: 7 },
                                 message: "must be equal to constant",
                               };
                               if (vErrors === null) {
@@ -25583,13 +25583,13 @@ function validate61(
                                 }
                                 errors++;
                               }
-                              if (6 !== data121) {
+                              if (7 !== data121) {
                                 const err366 = {
                                   instancePath: instancePath + "/schemaVersion",
                                   schemaPath:
                                     "#/oneOf/10/properties/schemaVersion/const",
                                   keyword: "const",
-                                  params: { allowedValue: 6 },
+                                  params: { allowedValue: 7 },
                                   message: "must be equal to constant",
                                 };
                                 if (vErrors === null) {
@@ -26347,14 +26347,14 @@ function validate61(
                                   }
                                   errors++;
                                 }
-                                if (6 !== data131) {
+                                if (7 !== data131) {
                                   const err393 = {
                                     instancePath:
                                       instancePath + "/schemaVersion",
                                     schemaPath:
                                       "#/oneOf/11/properties/schemaVersion/const",
                                     keyword: "const",
-                                    params: { allowedValue: 6 },
+                                    params: { allowedValue: 7 },
                                     message: "must be equal to constant",
                                   };
                                   if (vErrors === null) {
@@ -27134,14 +27134,14 @@ function validate61(
                                     }
                                     errors++;
                                   }
-                                  if (6 !== data141) {
+                                  if (7 !== data141) {
                                     const err420 = {
                                       instancePath:
                                         instancePath + "/schemaVersion",
                                       schemaPath:
                                         "#/oneOf/12/properties/schemaVersion/const",
                                       keyword: "const",
-                                      params: { allowedValue: 6 },
+                                      params: { allowedValue: 7 },
                                       message: "must be equal to constant",
                                     };
                                     if (vErrors === null) {
@@ -28073,14 +28073,14 @@ function validate61(
                                       }
                                       errors++;
                                     }
-                                    if (6 !== data152) {
+                                    if (7 !== data152) {
                                       const err451 = {
                                         instancePath:
                                           instancePath + "/schemaVersion",
                                         schemaPath:
                                           "#/oneOf/13/properties/schemaVersion/const",
                                         keyword: "const",
-                                        params: { allowedValue: 6 },
+                                        params: { allowedValue: 7 },
                                         message: "must be equal to constant",
                                       };
                                       if (vErrors === null) {
@@ -29159,14 +29159,14 @@ function validate61(
                                         }
                                         errors++;
                                       }
-                                      if (6 !== data164) {
+                                      if (7 !== data164) {
                                         const err484 = {
                                           instancePath:
                                             instancePath + "/schemaVersion",
                                           schemaPath:
                                             "#/oneOf/14/properties/schemaVersion/const",
                                           keyword: "const",
-                                          params: { allowedValue: 6 },
+                                          params: { allowedValue: 7 },
                                           message: "must be equal to constant",
                                         };
                                         if (vErrors === null) {
@@ -30191,14 +30191,14 @@ function validate61(
                                           }
                                           errors++;
                                         }
-                                        if (6 !== data175) {
+                                        if (7 !== data175) {
                                           const err515 = {
                                             instancePath:
                                               instancePath + "/schemaVersion",
                                             schemaPath:
                                               "#/oneOf/15/properties/schemaVersion/const",
                                             keyword: "const",
-                                            params: { allowedValue: 6 },
+                                            params: { allowedValue: 7 },
                                             message:
                                               "must be equal to constant",
                                           };
@@ -31113,14 +31113,14 @@ function validate61(
                                             }
                                             errors++;
                                           }
-                                          if (6 !== data184) {
+                                          if (7 !== data184) {
                                             const err542 = {
                                               instancePath:
                                                 instancePath + "/schemaVersion",
                                               schemaPath:
                                                 "#/oneOf/16/properties/schemaVersion/const",
                                               keyword: "const",
-                                              params: { allowedValue: 6 },
+                                              params: { allowedValue: 7 },
                                               message:
                                                 "must be equal to constant",
                                             };
@@ -31899,7 +31899,7 @@ function validate61(
                                               }
                                               errors++;
                                             }
-                                            if (6 !== data192) {
+                                            if (7 !== data192) {
                                               const err565 = {
                                                 instancePath:
                                                   instancePath +
@@ -31907,7 +31907,7 @@ function validate61(
                                                 schemaPath:
                                                   "#/oneOf/17/properties/schemaVersion/const",
                                                 keyword: "const",
-                                                params: { allowedValue: 6 },
+                                                params: { allowedValue: 7 },
                                                 message:
                                                   "must be equal to constant",
                                               };
@@ -33971,7 +33971,7 @@ function validate61(
                                                 }
                                                 errors++;
                                               }
-                                              if (6 !== data207) {
+                                              if (7 !== data207) {
                                                 const err614 = {
                                                   instancePath:
                                                     instancePath +
@@ -33979,7 +33979,7 @@ function validate61(
                                                   schemaPath:
                                                     "#/oneOf/18/properties/schemaVersion/const",
                                                   keyword: "const",
-                                                  params: { allowedValue: 6 },
+                                                  params: { allowedValue: 7 },
                                                   message:
                                                     "must be equal to constant",
                                                 };
@@ -35197,7 +35197,7 @@ function validate61(
                                                   }
                                                   errors++;
                                                 }
-                                                if (6 !== data217) {
+                                                if (7 !== data217) {
                                                   const err645 = {
                                                     instancePath:
                                                       instancePath +
@@ -35205,7 +35205,7 @@ function validate61(
                                                     schemaPath:
                                                       "#/oneOf/19/properties/schemaVersion/const",
                                                     keyword: "const",
-                                                    params: { allowedValue: 6 },
+                                                    params: { allowedValue: 7 },
                                                     message:
                                                       "must be equal to constant",
                                                   };
@@ -36109,7 +36109,7 @@ function validate61(
                                                     }
                                                     errors++;
                                                   }
-                                                  if (6 !== data225) {
+                                                  if (7 !== data225) {
                                                     const err668 = {
                                                       instancePath:
                                                         instancePath +
@@ -36118,7 +36118,7 @@ function validate61(
                                                         "#/oneOf/20/properties/schemaVersion/const",
                                                       keyword: "const",
                                                       params: {
-                                                        allowedValue: 6,
+                                                        allowedValue: 7,
                                                       },
                                                       message:
                                                         "must be equal to constant",
@@ -37662,7 +37662,7 @@ function validate61(
                                                       }
                                                       errors++;
                                                     }
-                                                    if (6 !== data237) {
+                                                    if (7 !== data237) {
                                                       const err704 = {
                                                         instancePath:
                                                           instancePath +
@@ -37671,7 +37671,7 @@ function validate61(
                                                           "#/oneOf/21/properties/schemaVersion/const",
                                                         keyword: "const",
                                                         params: {
-                                                          allowedValue: 6,
+                                                          allowedValue: 7,
                                                         },
                                                         message:
                                                           "must be equal to constant",
@@ -39593,7 +39593,7 @@ function validate61(
                                                         }
                                                         errors++;
                                                       }
-                                                      if (6 !== data251) {
+                                                      if (7 !== data251) {
                                                         const err747 = {
                                                           instancePath:
                                                             instancePath +
@@ -39602,7 +39602,7 @@ function validate61(
                                                             "#/oneOf/22/properties/schemaVersion/const",
                                                           keyword: "const",
                                                           params: {
-                                                            allowedValue: 6,
+                                                            allowedValue: 7,
                                                           },
                                                           message:
                                                             "must be equal to constant",
@@ -41365,7 +41365,7 @@ const schema220 = {
   properties: {
     schemaVersion: {
       type: "integer",
-      const: 6,
+      const: 7,
       description:
         "Exact product wire version; Earlier versions are rejected without migration or fallback.",
     },
@@ -43402,13 +43402,13 @@ function validate94(
               ];
               return false;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               validate94.errors = [
                 {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 },
               ];
@@ -43917,7 +43917,7 @@ const schema249 = {
   properties: {
     schemaVersion: {
       type: "integer",
-      const: 6,
+      const: 7,
       description:
         "Exact product wire version; Earlier versions are rejected without migration or fallback.",
     },
@@ -44094,13 +44094,13 @@ function validate105(
               ];
               return false;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               validate105.errors = [
                 {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 },
               ];
@@ -44845,7 +44845,7 @@ const schema259 = {
   properties: {
     schemaVersion: {
       type: "integer",
-      const: 6,
+      const: 7,
       description:
         "Exact product wire version; Earlier versions are rejected without migration or fallback.",
     },
@@ -45006,13 +45006,13 @@ function validate108(
               ];
               return false;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               validate108.errors = [
                 {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 },
               ];
@@ -45588,7 +45588,7 @@ const schema265 = {
   properties: {
     schemaVersion: {
       type: "integer",
-      const: 6,
+      const: 7,
       description:
         "Exact product wire version; Earlier versions are rejected without migration or fallback.",
     },
@@ -45732,13 +45732,13 @@ function validate112(
               ];
               return false;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               validate112.errors = [
                 {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 },
               ];
@@ -46297,7 +46297,7 @@ const schema273 = {
   type: "object",
   properties: {
     schemaVersion: {
-      const: 6,
+      const: 7,
       type: "integer",
       description: "Exact product contract version; no legacy readers.",
     },
@@ -46447,13 +46447,13 @@ function validate114(
               ];
               return false;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               validate114.errors = [
                 {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 },
               ];
@@ -47006,7 +47006,7 @@ const schema278 = {
   type: "object",
   properties: {
     schemaVersion: {
-      const: 6,
+      const: 7,
       type: "integer",
       description: "Exact product contract version; no legacy readers.",
     },
@@ -47383,13 +47383,13 @@ function validate121(
               ];
               return false;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               validate121.errors = [
                 {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 },
               ];
@@ -47575,7 +47575,7 @@ const schema282 = {
   type: "object",
   properties: {
     schemaVersion: {
-      const: 6,
+      const: 7,
       type: "integer",
       description: "Exact product contract version; no legacy readers.",
     },
@@ -47898,13 +47898,13 @@ function validate126(
               ];
               return false;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               validate126.errors = [
                 {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 },
               ];
@@ -48065,7 +48065,7 @@ const schema286 = {
   type: "object",
   properties: {
     schemaVersion: {
-      const: 6,
+      const: 7,
       type: "integer",
       description: "Exact product contract version; no legacy readers.",
     },
@@ -48162,13 +48162,13 @@ function validate130(
               ];
               return false;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               validate130.errors = [
                 {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 },
               ];
@@ -48261,7 +48261,7 @@ const schema287 = {
   type: "object",
   properties: {
     schemaVersion: {
-      const: 6,
+      const: 7,
       type: "integer",
       description: "Exact product contract version; no legacy readers.",
     },
@@ -48375,13 +48375,13 @@ function validate133(
               ];
               return false;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               validate133.errors = [
                 {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 },
               ];
@@ -48649,7 +48649,7 @@ const schema291 = {
   type: "object",
   properties: {
     schemaVersion: {
-      const: 6,
+      const: 7,
       type: "integer",
       description: "Exact product contract version; no legacy readers.",
     },
@@ -48757,13 +48757,13 @@ function validate135(
               ];
               return false;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               validate135.errors = [
                 {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 },
               ];
@@ -48969,7 +48969,7 @@ const schema294 = {
   type: "object",
   properties: {
     schemaVersion: {
-      const: 6,
+      const: 7,
       type: "integer",
       description: "Exact product contract version; no legacy readers.",
     },
@@ -49070,13 +49070,13 @@ function validate137(
               ];
               return false;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               validate137.errors = [
                 {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 },
               ];
@@ -49214,7 +49214,7 @@ const schema296 = {
   type: "object",
   properties: {
     schemaVersion: {
-      const: 6,
+      const: 7,
       type: "integer",
       description: "Exact product contract version; no legacy readers.",
     },
@@ -49329,13 +49329,13 @@ function validate139(
               ];
               return false;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               validate139.errors = [
                 {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 },
               ];
@@ -49517,7 +49517,7 @@ const schema298 = {
   type: "object",
   properties: {
     schemaVersion: {
-      const: 6,
+      const: 7,
       type: "integer",
       description: "Exact product contract version; no legacy readers.",
     },
@@ -50352,13 +50352,13 @@ function validate142(
               ];
               return false;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               validate142.errors = [
                 {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 },
               ];
@@ -50587,7 +50587,7 @@ const schema305 = {
   type: "object",
   properties: {
     schemaVersion: {
-      const: 6,
+      const: 7,
       type: "integer",
       description: "Exact product contract version; no legacy readers.",
     },
@@ -50701,13 +50701,13 @@ function validate147(
               ];
               return false;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               validate147.errors = [
                 {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 },
               ];
@@ -50973,7 +50973,7 @@ validate147.evaluated = {
 const schema309 = {
   type: "object",
   properties: {
-    schemaVersion: { type: "integer", const: 6 },
+    schemaVersion: { type: "integer", const: 7 },
     kind: { type: "string", const: "connection" },
     connectionId: { $ref: "#/$defs/Id" },
     name: { type: "string", minLength: 1, maxLength: 64 },
@@ -51631,13 +51631,13 @@ function validate149(
               ];
               return false;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               validate149.errors = [
                 {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 },
               ];
@@ -52734,7 +52734,7 @@ validate149.evaluated = {
 const schema316 = {
   type: "object",
   properties: {
-    schemaVersion: { type: "integer", const: 6 },
+    schemaVersion: { type: "integer", const: 7 },
     kind: { type: "string", const: "userPreferences" },
     defaultConnectionId: { $ref: "#/$defs/Id" },
     selectedSessionId: { $ref: "#/$defs/Id" },
@@ -52827,13 +52827,13 @@ function validate154(
               ];
               return false;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               validate154.errors = [
                 {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 },
               ];
@@ -53040,7 +53040,7 @@ validate154.evaluated = {
 const schema319 = {
   type: "object",
   properties: {
-    schemaVersion: { type: "integer", const: 6 },
+    schemaVersion: { type: "integer", const: 7 },
     kind: { type: "string", const: "testUser" },
     userId: { $ref: "#/$defs/Id" },
     displayName: { type: "string", minLength: 1, maxLength: 64 },
@@ -53048,7 +53048,7 @@ const schema319 = {
   },
   required: ["schemaVersion", "kind", "userId", "displayName", "nameKey"],
   additionalProperties: false,
-  description: "TestUser product wire record; validated against the V6 schema.",
+  description: "TestUser product wire record; validated against the V7 schema.",
 };
 function validate156(
   data,
@@ -53137,13 +53137,13 @@ function validate156(
               ];
               return false;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               validate156.errors = [
                 {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 },
               ];
@@ -53379,7 +53379,7 @@ validate156.evaluated = {
 const schema321 = {
   type: "object",
   properties: {
-    schemaVersion: { type: "integer", const: 6 },
+    schemaVersion: { type: "integer", const: 7 },
     kind: { type: "string", const: "userContext" },
     user: { $ref: "#/$defs/TestUser" },
     generation: { $ref: "#/$defs/Id" },
@@ -54413,13 +54413,13 @@ function validate158(
               ];
               return false;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               validate158.errors = [
                 {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 },
               ];
@@ -54602,7 +54602,7 @@ validate158.evaluated = {
 const schema330 = {
   type: "object",
   properties: {
-    schemaVersion: { type: "integer", const: 6 },
+    schemaVersion: { type: "integer", const: 7 },
     kind: { type: "string", const: "connectionPage" },
     connections: {
       type: "array",
@@ -54699,13 +54699,13 @@ function validate164(
               ];
               return false;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               validate164.errors = [
                 {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 },
               ];
@@ -54858,7 +54858,7 @@ validate164.evaluated = {
 const schema332 = {
   type: "object",
   properties: {
-    schemaVersion: { type: "integer", const: 6 },
+    schemaVersion: { type: "integer", const: 7 },
     kind: { type: "string", const: "saveConnectionRequest" },
     connection: { $ref: "#/$defs/ConnectionDraft" },
     expectedRevision: {
@@ -55846,13 +55846,13 @@ function validate168(
               ];
               return false;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               validate168.errors = [
                 {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 },
               ];
@@ -56072,7 +56072,7 @@ validate168.evaluated = {
 const schema337 = {
   type: "object",
   properties: {
-    schemaVersion: { type: "integer", const: 6 },
+    schemaVersion: { type: "integer", const: 7 },
     kind: { type: "string", const: "preferencesRequest" },
     patch: { $ref: "#/$defs/PreferencesPatch" },
   },
@@ -56579,13 +56579,13 @@ function validate172(
               ];
               return false;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               validate172.errors = [
                 {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 },
               ];
@@ -56677,7 +56677,7 @@ validate172.evaluated = {
 const schema341 = {
   type: "object",
   properties: {
-    schemaVersion: { type: "integer", const: 6 },
+    schemaVersion: { type: "integer", const: 7 },
     kind: { type: "string", const: "selectConnectionRequest" },
     sessionId: { $ref: "#/$defs/Id" },
     connectionId: { $ref: "#/$defs/Id" },
@@ -56779,13 +56779,13 @@ function validate179(
               ];
               return false;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               validate179.errors = [
                 {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 },
               ];
@@ -57010,7 +57010,7 @@ validate179.evaluated = {
 const schema344 = {
   type: "object",
   properties: {
-    schemaVersion: { type: "integer", const: 6 },
+    schemaVersion: { type: "integer", const: 7 },
     kind: { type: "string", const: "historyRequest" },
     sessionId: { $ref: "#/$defs/Id" },
     connectionId: { $ref: "#/$defs/Id" },
@@ -57105,13 +57105,13 @@ function validate181(
               ];
               return false;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               validate181.errors = [
                 {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 },
               ];
@@ -57373,7 +57373,7 @@ validate181.evaluated = {
 const schema347 = {
   type: "object",
   properties: {
-    schemaVersion: { type: "integer", const: 6 },
+    schemaVersion: { type: "integer", const: 7 },
     kind: { type: "string", const: "testUserPage" },
     users: {
       type: "array",
@@ -57469,13 +57469,13 @@ function validate183(
               ];
               return false;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               validate183.errors = [
                 {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 },
               ];
@@ -57640,7 +57640,7 @@ const schema349 = {
       title: "NativeCallAttach",
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "nativeCall" },
         id: { $ref: "#/$defs/Counter" },
         method: { type: "string", const: "attach" },
@@ -57662,7 +57662,7 @@ const schema349 = {
       title: "NativeCallSuspend",
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "nativeCall" },
         id: { $ref: "#/$defs/Counter" },
         method: { type: "string", const: "suspend" },
@@ -57681,7 +57681,7 @@ const schema349 = {
       title: "NativeCallDetach",
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "nativeCall" },
         id: { $ref: "#/$defs/Counter" },
         method: { type: "string", const: "detach" },
@@ -57700,7 +57700,7 @@ const schema349 = {
       title: "NativeCallSaveConnection",
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "nativeCall" },
         id: { $ref: "#/$defs/Counter" },
         method: { type: "string", const: "saveConnection" },
@@ -57731,7 +57731,7 @@ const schema349 = {
       title: "NativeCallHealth",
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "nativeCall" },
         id: { $ref: "#/$defs/Counter" },
         method: { type: "string", const: "health" },
@@ -57749,7 +57749,7 @@ const schema349 = {
       title: "NativeCallOpenCredential",
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "nativeCall" },
         id: { $ref: "#/$defs/Counter" },
         method: { type: "string", const: "openCredential" },
@@ -57772,7 +57772,7 @@ const schema349 = {
       title: "NativeCallMatchCredential",
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "nativeCall" },
         id: { $ref: "#/$defs/Counter" },
         method: { type: "string", const: "matchCredential" },
@@ -57795,7 +57795,7 @@ const schema349 = {
       title: "NativeCallCredentialContext",
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "nativeCall" },
         id: { $ref: "#/$defs/Counter" },
         method: { type: "string", const: "credentialContext" },
@@ -58216,12 +58216,12 @@ function validate188(
               }
               errors++;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               const err3 = {
                 instancePath: instancePath + "/schemaVersion",
                 schemaPath: "#/oneOf/0/properties/schemaVersion/const",
                 keyword: "const",
-                params: { allowedValue: 6 },
+                params: { allowedValue: 7 },
                 message: "must be equal to constant",
               };
               if (vErrors === null) {
@@ -58667,12 +58667,12 @@ function validate188(
               }
               errors++;
             }
-            if (6 !== data7) {
+            if (7 !== data7) {
               const err22 = {
                 instancePath: instancePath + "/schemaVersion",
                 schemaPath: "#/oneOf/1/properties/schemaVersion/const",
                 keyword: "const",
-                params: { allowedValue: 6 },
+                params: { allowedValue: 7 },
                 message: "must be equal to constant",
               };
               if (vErrors === null) {
@@ -59030,12 +59030,12 @@ function validate188(
                 }
                 errors++;
               }
-              if (6 !== data13) {
+              if (7 !== data13) {
                 const err37 = {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/oneOf/2/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 };
                 if (vErrors === null) {
@@ -59461,12 +59461,12 @@ function validate188(
                   }
                   errors++;
                 }
-                if (6 !== data19) {
+                if (7 !== data19) {
                   const err56 = {
                     instancePath: instancePath + "/schemaVersion",
                     schemaPath: "#/oneOf/3/properties/schemaVersion/const",
                     keyword: "const",
-                    params: { allowedValue: 6 },
+                    params: { allowedValue: 7 },
                     message: "must be equal to constant",
                   };
                   if (vErrors === null) {
@@ -60333,12 +60333,12 @@ function validate188(
                     }
                     errors++;
                   }
-                  if (6 !== data29) {
+                  if (7 !== data29) {
                     const err88 = {
                       instancePath: instancePath + "/schemaVersion",
                       schemaPath: "#/oneOf/4/properties/schemaVersion/const",
                       keyword: "const",
-                      params: { allowedValue: 6 },
+                      params: { allowedValue: 7 },
                       message: "must be equal to constant",
                     };
                     if (vErrors === null) {
@@ -60658,12 +60658,12 @@ function validate188(
                       }
                       errors++;
                     }
-                    if (6 !== data34) {
+                    if (7 !== data34) {
                       const err102 = {
                         instancePath: instancePath + "/schemaVersion",
                         schemaPath: "#/oneOf/5/properties/schemaVersion/const",
                         keyword: "const",
-                        params: { allowedValue: 6 },
+                        params: { allowedValue: 7 },
                         message: "must be equal to constant",
                       };
                       if (vErrors === null) {
@@ -61244,13 +61244,13 @@ function validate188(
                         }
                         errors++;
                       }
-                      if (6 !== data43) {
+                      if (7 !== data43) {
                         const err123 = {
                           instancePath: instancePath + "/schemaVersion",
                           schemaPath:
                             "#/oneOf/6/properties/schemaVersion/const",
                           keyword: "const",
-                          params: { allowedValue: 6 },
+                          params: { allowedValue: 7 },
                           message: "must be equal to constant",
                         };
                         if (vErrors === null) {
@@ -61690,13 +61690,13 @@ function validate188(
                           }
                           errors++;
                         }
-                        if (6 !== data51) {
+                        if (7 !== data51) {
                           const err138 = {
                             instancePath: instancePath + "/schemaVersion",
                             schemaPath:
                               "#/oneOf/7/properties/schemaVersion/const",
                             keyword: "const",
-                            params: { allowedValue: 6 },
+                            params: { allowedValue: 7 },
                             message: "must be equal to constant",
                           };
                           if (vErrors === null) {
@@ -62110,7 +62110,7 @@ const schema369 = {
       title: "NativeReplySuccess",
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "nativeReply" },
         id: { $ref: "#/$defs/Counter" },
         ok: { const: true, type: "boolean" },
@@ -62123,7 +62123,7 @@ const schema369 = {
       title: "NativeReplyFailure",
       type: "object",
       properties: {
-        schemaVersion: { type: "integer", const: 6 },
+        schemaVersion: { type: "integer", const: 7 },
         kind: { type: "string", const: "nativeReply" },
         id: { $ref: "#/$defs/Counter" },
         ok: { const: false, type: "boolean" },
@@ -62233,12 +62233,12 @@ function validate199(
               }
               errors++;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               const err3 = {
                 instancePath: instancePath + "/schemaVersion",
                 schemaPath: "#/oneOf/0/properties/schemaVersion/const",
                 keyword: "const",
-                params: { allowedValue: 6 },
+                params: { allowedValue: 7 },
                 message: "must be equal to constant",
               };
               if (vErrors === null) {
@@ -62497,12 +62497,12 @@ function validate199(
               }
               errors++;
             }
-            if (6 !== data4) {
+            if (7 !== data4) {
               const err15 = {
                 instancePath: instancePath + "/schemaVersion",
                 schemaPath: "#/oneOf/1/properties/schemaVersion/const",
                 keyword: "const",
-                params: { allowedValue: 6 },
+                params: { allowedValue: 7 },
                 message: "must be equal to constant",
               };
               if (vErrors === null) {
@@ -62726,7 +62726,7 @@ validate199.evaluated = { dynamicProps: true, dynamicItems: false };
 const schema372 = {
   type: "object",
   properties: {
-    schemaVersion: { type: "integer", const: 6 },
+    schemaVersion: { type: "integer", const: 7 },
     kind: { type: "string", const: "nativeEvent" },
     channel: { $ref: "#/$defs/Id" },
     message: {},
@@ -62819,13 +62819,13 @@ function validate201(
               ];
               return false;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               validate201.errors = [
                 {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 },
               ];
@@ -63105,7 +63105,7 @@ const schema374 = {
   description:
     "Non-secret AI operation provenance carried only on the desktop-owned execution pipe.",
   properties: {
-    schemaVersion: { type: "integer", const: 6 },
+    schemaVersion: { type: "integer", const: 7 },
     kind: { type: "string", const: "executionOrigin" },
     namespace: { $ref: "#/$defs/Namespace" },
     userGeneration: {
@@ -63219,13 +63219,13 @@ function validate204(
               ];
               return false;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               validate204.errors = [
                 {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 },
               ];
@@ -63519,7 +63519,7 @@ validate204.evaluated = {
 const schema377 = {
   type: "object",
   properties: {
-    schemaVersion: { type: "integer", const: 6 },
+    schemaVersion: { type: "integer", const: 7 },
     kind: { type: "string", const: "hostStatus" },
     generation: { $ref: "#/$defs/Counter" },
     phase: {
@@ -63965,13 +63965,13 @@ function validate208(
               ];
               return false;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               validate208.errors = [
                 {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 },
               ];
@@ -64303,7 +64303,7 @@ validate208.evaluated = {
 const schema383 = {
   type: "object",
   properties: {
-    schemaVersion: { type: "integer", const: 6 },
+    schemaVersion: { type: "integer", const: 7 },
     kind: { type: "string", const: "testConnectionRequest" },
     connectionId: { $ref: "#/$defs/Id" },
     expectedRevision: { $ref: "#/$defs/Counter" },
@@ -64396,13 +64396,13 @@ function validate213(
               ];
               return false;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               validate213.errors = [
                 {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 },
               ];
@@ -64600,7 +64600,7 @@ validate213.evaluated = {
 const schema386 = {
   type: "object",
   properties: {
-    schemaVersion: { type: "integer", const: 6 },
+    schemaVersion: { type: "integer", const: 7 },
     kind: { type: "string", const: "deleteConnectionRequest" },
     connectionId: { $ref: "#/$defs/Id" },
     expectedRevision: { $ref: "#/$defs/Counter" },
@@ -64693,13 +64693,13 @@ function validate215(
               ];
               return false;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               validate215.errors = [
                 {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 },
               ];
@@ -64897,7 +64897,7 @@ validate215.evaluated = {
 const schema389 = {
   type: "object",
   properties: {
-    schemaVersion: { type: "integer", const: 6 },
+    schemaVersion: { type: "integer", const: 7 },
     kind: { type: "string", const: "accountSettings" },
     organizations: {
       type: "array",
@@ -65006,13 +65006,13 @@ function validate217(
               ];
               return false;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               validate217.errors = [
                 {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 },
               ];
@@ -65324,7 +65324,7 @@ validate217.evaluated = {
 const schema391 = {
   type: "object",
   properties: {
-    schemaVersion: { type: "integer", const: 6 },
+    schemaVersion: { type: "integer", const: 7 },
     kind: { type: "string", const: "accountStatus" },
     current: { $ref: "#/$defs/UserContext" },
     failure: { $ref: "#/$defs/AccountFailure" },
@@ -65651,13 +65651,13 @@ function validate219(
               ];
               return false;
             }
-            if (6 !== data0) {
+            if (7 !== data0) {
               validate219.errors = [
                 {
                   instancePath: instancePath + "/schemaVersion",
                   schemaPath: "#/properties/schemaVersion/const",
                   keyword: "const",
-                  params: { allowedValue: 6 },
+                  params: { allowedValue: 7 },
                   message: "must be equal to constant",
                 },
               ];
@@ -65779,7 +65779,7 @@ function validate20(
     dynamicAnchors = {},
   } = {},
 ) {
-  /*# sourceURL="urn:rss-mdm-agent:ai-runtime:6" */ let vErrors = null;
+  /*# sourceURL="urn:rss-mdm-agent:ai-runtime:7" */ let vErrors = null;
   let errors = 0;
   const evaluated0 = validate20.evaluated;
   if (evaluated0.dynamicProps) {
@@ -66628,7 +66628,7 @@ function validate20(
                                                               }
                                                               errors++;
                                                             }
-                                                            if (6 !== data0) {
+                                                            if (7 !== data0) {
                                                               const err3 = {
                                                                 instancePath:
                                                                   instancePath +
@@ -66638,7 +66638,7 @@ function validate20(
                                                                 keyword:
                                                                   "const",
                                                                 params: {
-                                                                  allowedValue: 6,
+                                                                  allowedValue: 7,
                                                                 },
                                                                 message:
                                                                   "must be equal to constant",
@@ -67304,7 +67304,7 @@ function validate20(
                                                                                 errors++;
                                                                               }
                                                                               if (
-                                                                                6 !==
+                                                                                7 !==
                                                                                 data2
                                                                               ) {
                                                                                 const err10 =
@@ -67318,7 +67318,7 @@ function validate20(
                                                                                       "const",
                                                                                     params:
                                                                                       {
-                                                                                        allowedValue: 6,
+                                                                                        allowedValue: 7,
                                                                                       },
                                                                                     message:
                                                                                       "must be equal to constant",
@@ -67848,7 +67848,7 @@ function validate20(
                                                                                   errors++;
                                                                                 }
                                                                                 if (
-                                                                                  6 !==
+                                                                                  7 !==
                                                                                   data6
                                                                                 ) {
                                                                                   const err21 =
@@ -67862,7 +67862,7 @@ function validate20(
                                                                                         "const",
                                                                                       params:
                                                                                         {
-                                                                                          allowedValue: 6,
+                                                                                          allowedValue: 7,
                                                                                         },
                                                                                       message:
                                                                                         "must be equal to constant",

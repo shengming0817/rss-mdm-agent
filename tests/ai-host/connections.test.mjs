@@ -30,7 +30,7 @@ const unwrap = (result) => {
   return result.value;
 };
 const connection = (id) => ({
-  schemaVersion: 6,
+  schemaVersion: 7,
   kind: "connection",
   connectionId: id,
   name: id,
@@ -100,7 +100,7 @@ test("real Host lazily opens phases, drains accepted work before switching, and 
   assert.equal(opened, 0);
   assert.deepEqual(empty.stages, []);
   const command = (id, text = "quick") => ({
-    schemaVersion: 6,
+    schemaVersion: 7,
     kind: "command",
     sessionId: empty.namespace.sessionId,
     commandId: id,
@@ -292,10 +292,10 @@ test("real Host lazily opens phases, drains accepted work before switching, and 
     beforeDelete,
   );
   await suspendNativeCaller(host, {
-    schemaVersion: 6,
+    schemaVersion: 7,
     kind: "userContext",
     user: {
-      schemaVersion: 6,
+      schemaVersion: 7,
       kind: "testUser",
       userId: "alice",
       displayName: "Alice",
@@ -346,7 +346,7 @@ test("switching test users cancels queued model work and keeps the old user's re
   unwrap(await store.saveConnection(caller, connection("one"), null));
   const session = unwrap(await host.createSession(caller, {}, budget()));
   const command = (commandId, text) => ({
-    schemaVersion: 6,
+    schemaVersion: 7,
     kind: "command",
     sessionId: session.namespace.sessionId,
     commandId,
@@ -474,7 +474,7 @@ test("ordinary runtime snapshot cleanup is retained and retried after a failure"
     await host.submit(
       caller,
       {
-        schemaVersion: 6,
+        schemaVersion: 7,
         kind: "command",
         sessionId: session.namespace.sessionId,
         commandId: "quick",
@@ -839,7 +839,7 @@ test("user fence settles persistent offline queues across pages and propagates d
   for (const session of sessions) {
     unwrap(await store.create(session));
     const command = {
-      schemaVersion: 6,
+      schemaVersion: 7,
       kind: "command",
       sessionId: session.namespace.sessionId,
       commandId: "queued",
@@ -904,10 +904,10 @@ test("user fence settles persistent offline queues across pages and propagates d
   );
   store.suspend = suspend;
   await suspendNativeCaller(host, {
-    schemaVersion: 6,
+    schemaVersion: 7,
     kind: "userContext",
     user: {
-      schemaVersion: 6,
+      schemaVersion: 7,
       kind: "testUser",
       userId: "alice",
       displayName: "Alice",
@@ -1069,14 +1069,14 @@ test("controlled connection verification requires the dedicated harmless tool ca
 
 test("enterprise and guest callers use native identity, never display name or provider identity", async () => {
   const user = {
-    schemaVersion: 6,
+    schemaVersion: 7,
     kind: "testUser",
     userId: "legacy",
     displayName: "same",
     nameKey: "same",
   };
   const context = {
-    schemaVersion: 6,
+    schemaVersion: 7,
     kind: "userContext",
     user,
     generation: "one",

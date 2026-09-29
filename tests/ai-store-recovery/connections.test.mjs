@@ -9,7 +9,7 @@ import { unwrap } from "../../packages/ai-contract/dist/testing/index.js";
 const a = { tenantId: "test", principalId: "alice", authorityId: "desktop" };
 const b = { ...a, principalId: "bob" };
 const connection = (id) => ({
-  schemaVersion: 6,
+  schemaVersion: 7,
   kind: "connection",
   connectionId: id,
   name: id,

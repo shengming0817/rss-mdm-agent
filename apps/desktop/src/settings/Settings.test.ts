@@ -30,7 +30,7 @@ async function setup() {
     initialize: async () => ({}),
     connections: async () => ({
       connections: rows,
-      preferences: { schemaVersion: 6, kind: "userPreferences" },
+      preferences: { schemaVersion: 7, kind: "userPreferences" },
     }),
     listSessions: async () => ({ items: [] }),
     observe: () => () => {},
@@ -49,7 +49,7 @@ async function setup() {
         rows = [
           {
             ...row,
-            schemaVersion: 6,
+            schemaVersion: 7,
             kind: "connection",
             configRevision: 1,
             status: "unverified",
@@ -65,7 +65,7 @@ async function setup() {
   );
   await c.connect();
   const status: HostStatus = {
-    schemaVersion: 6,
+    schemaVersion: 7,
     kind: "hostStatus",
     generation: 1,
     phase: "ready",

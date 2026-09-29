@@ -18,7 +18,7 @@ pnpm desktop:build       # 自动打包 Node/依赖、stage、构建 .app
 
 普通 Cargo/schema 检查使用基础 Tauri 配置，不依赖运行包；发布构建显式合并 `tauri.bundle.conf.json`。打包脚本先校验固定 Node archive、锁定部署依赖、真实 SDK 生命周期，再将通过的当前候选复制到被忽略的 resources 目录。macOS bundle 通过 `bundle.macOS.files` 整目录复制 runtime，以保留 pnpm 依赖符号链接；普通 resources 文件枚举会漏掉这些链接，不能用于该 runtime。发布应用只从自身资源目录启动 AI Host。缺失或不可用的 AI 不影响 Rust 任务读取，也不会降级为虚构对话。
 
-第一次启动在应用数据目录 `test-users` 创建私有用户注册表、Host 路径配置、AI 库与设备 journal。用户在底部“设置”选择测试名称，再保存个人连接后单独测试；无凭据也能进入空白对话、保留草稿和读取已有历史。旧 `s1/client.json` 不读取、不迁移。连接来源、版本和认证约束见 [AI Host](../../apps/ai-host/README.md)。
+第一次启动在应用数据目录 `test-users` 创建私有用户注册表、Host 路径配置、AI 库与设备 journal。用户在底部“设置”选择测试名称，再保存个人连接后单独测试；无凭据也能进入空白对话、保留草稿和读取已有历史。旧 `s1/client.json` 不读取、不迁移。AI 会话协议和数据库格式升级后明确拒绝旧格式，保留旧文件，不自动迁移或重建；开发验收用 `--test-data-dir <新的绝对目录>` 选择全新目录，旧历史不能直接导入。连接来源、版本和认证约束见 [AI Host](../../apps/ai-host/README.md)。
 
 切换测试用户会卸载旧工作区，原生 IPC 检查捕获的 generation；迟到返回不能进入新用户视图。原有设备任务的 actor 不变，模型队列被取消；取消未确认时保留未知结果。重选已有名称保持稳定 ID，重启恢复上次选择并换新 generation。
 
@@ -76,7 +76,7 @@ macOS 的正式 `make ci` / `make ci-full` 对整个 Node 与 Rust 检查过程�
 
 日常原生验收运行 `pnpm check:desktop-native`，入口从仓库根启动 `pnpm dev`，直接加载产品 main 和真实 WKWebView。当前限定 macOS arm64，需要保持桌面解锁，并给运行终端及 System Events 辅助功能权限；锁屏或缺少权限会失败。重新编译后 macOS 可能要求授予应用钥匙串访问权限；只在系统弹窗授权，脚本最多等待两分钟，不自动批准，也不接收系统密码。使用固定 Codex 0.155.0、本地 Responses 协议夹具和合成 API Key，不读取个人 Codex 配置，不连接云端模型。覆盖保存未验证配置、测试失败重试、首次消息创建会话、读工具、执行/取消的一次性允许与拒绝、独立 Rust 动作确认、可信执行卡、原生键盘和窄窗口、关闭重开、Host 重启、用户隔离及凭据删除。
 
-驱动使用固定 `webdriverio@9.32.0` 与 `tauri-plugin-wdio-webdriver@1.4.0` 的标准 WebDriver 接口。`native-e2e` 只允许调试构建，并要求显式 nonce、动态 loopback 端口和隔离 `--test-data-dir`；release 携带该 feature 会编译失败。脚本核对主进程与监听端口归属，不调用 WebView 内部 IPC、不替换业务回复。Tab、Shift+Tab、Escape 和应用菜单操作由 macOS System Events 发出；WebDriver 键盘事件不能替代这些证据。不要在验收期间修改源码或并发启动同一 worktree 的开发服务。
+驱动使用固定 `webdriverio@9.32.0` 与 `tauri-plugin-wdio-webdriver@1.4.0` 的标准 WebDriver 接口。`native-e2e` 只允许调试构建，并要求显式 nonce、动态 loopback 端口和隔离 `--test-data-dir`；release 携带该 feature 会编译失败。脚本核对主进程与监听端口归属；固定的 [本地上游补丁](../../vendor/tauri-plugin-wdio-webdriver/NOTICE.md) 对每个请求校验运行凭据，缺失或错误凭据一律拒绝，启动日志仅记录凭据摘要。脚本不调用 WebView 内部 IPC、不替换业务回复。Tab、Shift+Tab、Escape 和应用菜单操作由 macOS System Events 发出；WebDriver 键盘事件不能替代这些证据。不要在验收期间修改源码或并发启动同一 worktree 的开发服务。
 
 `.local-ci-runs/desktop-native.json` 记录实际模式、源码/锁文件/运行包摘要、进程归属与完成项，截图和脱敏日志在同目录。失败回执不能解释为通过。该路径证明真实 CLI、WebView 与 S1 接缝，不证明真实模型能力或设备 OS 效果。
 

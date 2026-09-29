@@ -6,7 +6,7 @@ import ExecutionDetails from "./ExecutionDetails.vue";
 import Assistant from "./Assistant.vue";
 import { createAssistant } from "./controller";
 import fixtures from "../../../../tests/assistant/execution-fixtures.json";
-import type { ExecutionTaskDetails } from "./execution-types";
+import type { ExecutionTaskDetails } from "@rss-mdm-agent/execution-bindings/task-details";
 import type { InteractionView, SessionView } from "@rss-mdm-agent/ai-client";
 import { fixtureSession } from "@rss-mdm-agent/ai-contract/testing";
 it("renders permission scope from kind even when provider names contradict it", () => {
@@ -148,7 +148,7 @@ it.each(["prompt", "cancel", "respond"] as const)(
       commands: {
         p: {
           command: {
-            schemaVersion: 6,
+            schemaVersion: 7,
             kind: "command",
             sessionId: session.namespace.sessionId,
             commandId: "p",

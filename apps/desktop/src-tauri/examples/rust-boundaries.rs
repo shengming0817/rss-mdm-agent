@@ -178,7 +178,7 @@ impl<'ast> Visit<'ast> for Guard {
             && call.args.len() == 1
             && matches!(&call.args[0], syn::Expr::Call(init)
                 if matches!(&*init.func, syn::Expr::Path(path)
-                    if path.path.segments.iter().map(|p| p.ident.to_string()).collect::<Vec<_>>() == ["tauri_plugin_wdio_webdriver", "init_with_port"]));
+                    if path.path.segments.iter().map(|p| p.ident.to_string()).collect::<Vec<_>>() == ["tauri_plugin_wdio_webdriver", "init"]));
         self.forbidden |= (name == "plugin" && !native_driver)
             || (!self.ipc && name == "invoke_handler")
             || (name == "manage"

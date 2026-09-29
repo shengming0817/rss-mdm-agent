@@ -32,7 +32,6 @@ export function developmentFingerprint(root) {
     "rust-toolchain.toml",
     "crates",
     "scripts/check-execution-bindings.mjs",
-    "apps/desktop/src/assistant/execution-types.ts",
     "tests/assistant/execution-fixtures.json",
     "scripts/bundle-ai-host.mjs",
     "scripts/ai-host-artifacts.mjs",
@@ -40,6 +39,7 @@ export function developmentFingerprint(root) {
     "scripts/desktop-dev-runtime.mjs",
     "scripts/verify-ai-host-runtime.mjs",
     "apps/ai-host",
+    "packages/execution-bindings",
     "packages/ai-host",
     "packages/ai-contract",
     "packages/ai-store-sqlite",
@@ -67,7 +67,13 @@ export function verifyDevelopmentRuntime(root, directory) {
   if (
     manifest.status !== "passed" ||
     manifest.desktopProtocol !== protocol ||
-    manifest.contractVersion !== 6 ||
+    manifest.contractVersion !==
+      JSON.parse(
+        readFileSync(
+          join(root, "packages/ai-contract/schema/runtime.schema.json"),
+          "utf8",
+        ),
+      ).$defs.Negotiation.properties.contractVersion.const ||
     manifest.node?.version !== node.version ||
     manifest.node?.archiveSha256 !== node.sha256 ||
     manifest.node?.target !== node.target ||

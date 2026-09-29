@@ -86,7 +86,12 @@ export function checkSource(file, source) {
     : ["vue"];
   if (nativeAdapters.has(file)) allowed.push("@tauri-apps/api/core");
   if (assistant)
-    allowed.push("@rss-mdm-agent/ai-client", "@rss-mdm-agent/ai-ui-bridge");
+    allowed.push(
+      "@rss-mdm-agent/ai-client",
+      "@rss-mdm-agent/ai-ui-bridge",
+      "@rss-mdm-agent/execution-bindings",
+      "@rss-mdm-agent/execution-bindings/task-details",
+    );
   const descriptor = extname(file) === ".vue" ? parse(source).descriptor : null;
   if (descriptor) {
     const template = descriptor.template?.content ?? "";
@@ -454,13 +459,13 @@ export function checkTree(treeRoot = root) {
     Object.keys(desktop.dependencies ?? {})
       .sort()
       .join() !==
-      "@rss-mdm-agent/ai-client,@rss-mdm-agent/ai-contract,@rss-mdm-agent/ai-ui-bridge,@rss-mdm-agent/ui,@tauri-apps/api,vue" ||
+      "@rss-mdm-agent/ai-client,@rss-mdm-agent/ai-contract,@rss-mdm-agent/ai-ui-bridge,@rss-mdm-agent/execution-bindings,@rss-mdm-agent/ui,@tauri-apps/api,vue" ||
     desktop.dependencies?.["@tauri-apps/api"] !== "2.11.1" ||
     Object.keys(desktop.optionalDependencies ?? {}).length ||
     Object.keys(desktop.peerDependencies ?? {}).length
   )
     errors.push(
-      "desktop production dependencies must be UI, public AI contract/client/bridge, Vue and pinned Tauri core only",
+      "desktop production dependencies must be UI, public AI contract/client/bridge, generated execution bindings, Vue and pinned Tauri core only",
     );
   const config = JSON.parse(read("apps/desktop/src-tauri/tauri.conf.json"));
   const capabilityFiles = files(
@@ -567,7 +572,7 @@ export function checkTree(treeRoot = root) {
         'tokio = { workspace = true, features = ["process", "net", "rt-multi-thread"] }',
         "tokio-util.workspace = true",
         "futures-util.workspace = true",
-        'tauri-plugin-wdio-webdriver = { version = "=1.4.0", optional = true }',
+        'tauri-plugin-wdio-webdriver = { path = "../../../vendor/tauri-plugin-wdio-webdriver", version = "=1.4.0", optional = true }',
         "tauri-build.workspace = true",
         "tauri.workspace = true",
         "serde.workspace = true",

@@ -72,7 +72,7 @@ test("delivery is atomically tied to the event, content and stable operation ide
   const head = unwrap(await store.session(initial.namespace)),
     event = unwrap(await store.events(initial.namespace, 0, 1))[0];
   const delivery = {
-    schemaVersion: 6,
+    schemaVersion: 7,
     kind: "delivery",
     namespace: initial.namespace,
     operationId: "operation-1",
@@ -195,7 +195,7 @@ test("schema creation is transactional and partial/newer/foreign files are not r
   const bytes = readFileSync(newer);
   assert.equal(h.open(newer, "open").error.code, "unsupported_version");
   assert.deepEqual(readFileSync(newer), bytes);
-  for (const version of [4, 5]) {
+  for (const version of [4, 5, 6]) {
     const legacy = new DatabaseSync(newer);
     legacy.exec(
       `PRAGMA user_version=${version}; UPDATE schema_meta SET version=${version}`,

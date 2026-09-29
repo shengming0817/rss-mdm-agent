@@ -4,7 +4,7 @@ import { ConfigurationError } from "./configuration.js";
 import type { HostProcessDiagnostic } from "@rss-mdm-agent/ai-contract";
 const diagnostic = (code: HostProcessDiagnostic["code"]) => {
   const frame: HostProcessDiagnostic = {
-    schemaVersion: 6,
+    schemaVersion: 7,
     kind: "hostProcessDiagnostic",
     code,
   };

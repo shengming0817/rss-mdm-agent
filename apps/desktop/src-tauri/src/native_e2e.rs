@@ -20,15 +20,19 @@ pub fn configure(
     if port == 0 {
         return Err("native-e2e requires an explicit port".into());
     }
-    // Fail closed on an occupied port; runner additionally verifies listener ownership.
+    let mut capability = [0_u8; 16];
+    for (index, byte) in capability.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&nonce[index * 2..index * 2 + 2], 16)?;
+    }
+    // Keep ownership across plugin setup; there is no check-then-bind race.
     let socket = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port))?;
-    drop(socket);
+    socket.set_nonblocking(true)?;
     eprintln!(
         "RSS_NATIVE_E2E {}",
         serde_json::json!({
-            "pid": std::process::id(), "nonce": nonce, "port": port,
+            "pid": std::process::id(), "nonceSha256": format!("{:x}", Sha256::digest(nonce.as_bytes())), "port": port,
             "dataRootSha256": format!("{:x}", Sha256::digest(root.as_os_str().as_encoded_bytes()))
         })
     );
-    Ok(builder.plugin(tauri_plugin_wdio_webdriver::init_with_port(port)))
+    Ok(builder.plugin(tauri_plugin_wdio_webdriver::init(socket, capability)))
 }

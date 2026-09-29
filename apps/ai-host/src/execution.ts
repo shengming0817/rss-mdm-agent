@@ -1,3 +1,4 @@
+import { operationRequestId } from "@rss-mdm-agent/execution-bindings";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import {
   ReadBuffer,
@@ -95,27 +96,6 @@ const methods = new Set([
   "execution_status",
   "execution_cancel",
 ]);
-function businessId(proposal: DeliveryRequest["body"]["proposal"]): unknown {
-  const args = proposal.arguments;
-  if (proposal.name === "execution_execute") {
-    const catalog = args.catalog;
-    const script = args.script;
-    if (catalog && typeof catalog === "object" && "selection" in catalog) {
-      const selection = catalog.selection;
-      return selection &&
-        typeof selection === "object" &&
-        "operationRequestId" in selection
-        ? selection.operationRequestId
-        : undefined;
-    }
-    return script &&
-      typeof script === "object" &&
-      "operationRequestId" in script
-      ? script.operationRequestId
-      : undefined;
-  }
-  return args.operationRequestId;
-}
 /** MCP owns validation; this mapper supplies stage identity and reconciles against Rust. */
 export async function connectExecution(
   input: Readable,
@@ -154,7 +134,7 @@ export async function connectExecution(
     )
       throw new Error("execution origin unavailable");
     const origin: ExecutionOrigin = {
-      schemaVersion: 6,
+      schemaVersion: 7,
       kind: "executionOrigin",
       namespace: request.namespace,
       userGeneration,
@@ -203,7 +183,9 @@ export async function connectExecution(
         "execution_capabilities",
         "execution_status",
       ].includes(proposal.name);
-      const id = read ? randomUUID() : businessId(proposal);
+      const id = read
+        ? randomUUID()
+        : operationRequestId(proposal.name, proposal.arguments);
       if (!isId(id)) return fail("invalid_input");
       const operationId = createHash("sha256")
         .update(JSON.stringify([namespace, proposal.name, id]))
@@ -243,7 +225,12 @@ export async function connectExecution(
         const status = await call(
           request,
           "execution_status",
-          { operationRequestId: businessId(request.body.proposal) },
+          {
+            operationRequestId: operationRequestId(
+              request.body.proposal.name,
+              request.body.proposal.arguments,
+            ),
+          },
           b,
         );
         if (status.status === "error")

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
 import type { AssistantController } from "./controller";
-import type { ExecutionTaskDetails } from "./execution-types";
+import type { ExecutionTaskDetails } from "@rss-mdm-agent/execution-bindings/task-details";
 const props = defineProps<{
   controller: AssistantController;
   operationId: string;

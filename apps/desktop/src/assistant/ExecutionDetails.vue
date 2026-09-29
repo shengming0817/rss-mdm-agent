@@ -12,7 +12,7 @@ import type {
   SoftwareDiagnostic,
   DispatchCause,
   LimitReason,
-} from "./execution-types";
+} from "@rss-mdm-agent/execution-bindings/task-details";
 const props = defineProps<{ details: ExecutionTaskDetails; now: number }>();
 const validity = computed(() =>
   props.now < props.details.action.validity.notBeforeUnixMs

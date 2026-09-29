@@ -27,11 +27,16 @@ test("new execution fields require an explicit admission/capability decision", (
       git,
       [
         "ls-files",
+        "--cached",
+        "--others",
+        "--exclude-standard",
+        "--",
         "Cargo.toml",
         "Cargo.lock",
         "rust-toolchain.toml",
         "crates",
         "apps/desktop/src-tauri",
+        "vendor",
       ],
       { cwd: root, encoding: "utf8" },
     )

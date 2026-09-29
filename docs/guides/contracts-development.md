@@ -12,7 +12,7 @@ node scripts/check-execution-bindings.mjs --write
 node scripts/check-self-service-bindings.mjs --write
 ```
 
-执行契约的 schema/golden 从 crate examples 生成；只在有意改变契约时更新 golden，不能用重生成掩盖编码漂移。Rust 公共 API 说明由 rustdoc 持有，Cargo 测试与 Clippy 按受影响 crate 运行。共享绑定变更沿真实调用关系验证。
+执行契约的 schema/golden 从 crate examples 生成；只在有意改变契约时更新 golden，不能用重生成掩盖编码漂移。Rust 公共 API 说明由 rustdoc 持有，Cargo 测试与 Clippy 按受影响 crate 运行。共享绑定变更沿真实调用关系验证。执行请求、工具定义和详情类型统一生成到 `execution-bindings`，Host 与桌面共用经校验的业务 ID 提取入口。AI 契约生成检查会对比 `CI_BASE`（默认 `origin/develop`）的共同基线：结构变化必须提升统一协议版本，记录版本、协商与运行包保持一致；描述性文案调整除外。
 
 Schema 描述结构，不能替代动态预算、可信主体验证或 provider 恢复准入。新建和恢复均须重新核验当前 provider 配置与工具能力，原生历史不继承旧进程权限。不支持的格式明确拒绝，不增加兼容 reader、双写或迁移旁路。
 

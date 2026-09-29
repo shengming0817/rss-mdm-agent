@@ -290,7 +290,7 @@ export async function startLocalApp(
     async ({ method, data }) => {
       if (method === "health")
         return {
-          schemaVersion: 6,
+          schemaVersion: 7,
           kind: "hostHealth",
           ready: true,
           protocol: 4,

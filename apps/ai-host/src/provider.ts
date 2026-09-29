@@ -1,4 +1,4 @@
-import definitions from "./execution-tools.json" with { type: "json" };
+import definitions from "@rss-mdm-agent/execution-bindings/tools" with { type: "json" };
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";

@@ -7,8 +7,8 @@ test("real workspace resolves all metadata and source/test bridges", () => {
   const graph = loadGraph(fileURLToPath(new URL("../", import.meta.url)));
   assert.ok(graph.rust.has("rss-mdm-desktop"));
   for (const [path, owner] of [
-    ["apps/ai-host/src/execution-tools.json", "execution-mcp"],
-    ["apps/desktop/src/assistant/execution-types.ts", "execution-app"],
+    ["packages/execution-bindings/src/tools.json", "execution-mcp"],
+    ["packages/execution-bindings/src/task-details.ts", "execution-app"],
     ["tests/assistant/execution-fixtures.json", "execution-app"],
   ])
     assert.ok(

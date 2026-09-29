@@ -192,7 +192,7 @@ test(
           nativeDirectory: join(root, "native"),
         },
         connection: {
-          schemaVersion: 6,
+          schemaVersion: 7,
           kind: "connection",
           connectionId: "custom",
           configRevision: 1,

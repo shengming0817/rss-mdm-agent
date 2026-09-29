@@ -57,7 +57,7 @@ export function nativeAssistant(): AssistantServices | undefined {
     async taskDetails(requestId, signal) {
       if (signal.aborted) throw new ClientError("request_failed");
       const result = await invoke<
-        import("./execution-types").ExecutionTaskDetails
+        import("@rss-mdm-agent/execution-bindings/task-details").ExecutionTaskDetails
       >("execution_task_details", { requestId, generation });
       if (generation !== userGeneration())
         throw new ClientError("request_failed");
