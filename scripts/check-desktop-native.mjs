@@ -615,8 +615,12 @@ try {
   menu("显示窗口");
   await wait(async () => (await browser.getWindowHandles()).length === 1);
   await browser.switchToWindow((await browser.getWindowHandles())[0]);
+  mark("restore conversation in reopened window");
+  await text("当前用户：Golden Alice");
+  await wait(async () => !(await visibleText("正在读取或切换账户…")));
   await navigate("AI 助手");
   await text("GOLDEN_INSTALL 安装办公套件");
+  mark("restart Host through settings");
   await navigate("设置");
   await click("重启 AI Host");
   await click("确认重启");
@@ -625,9 +629,17 @@ try {
     return pid && pid !== initialHostPid;
   });
   result.owner.restartedHostPid = hostPid();
+  mark("reuse native credential after Host restart");
   await text("AI Host：已就绪");
+  await wait(
+    async () =>
+      await browser
+        .$('//button[normalize-space(.)="重启 AI Host"]')
+        .isEnabled(),
+  );
   await click("测试连接");
   await text("Golden Codex · Codex · 可用");
+  mark("restore history and create a new provider session after restart");
   await navigate("AI 助手");
   await text("GOLDEN_INSTALL 安装办公套件");
   await browser.$(".assistant-sessions .new-conversation").click();
