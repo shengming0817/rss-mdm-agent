@@ -45,6 +45,14 @@ fn run(data_root: Option<std::path::PathBuf>) -> Result<(), Box<dyn std::error::
                 Some(path) => std::path::PathBuf::from(path),
                 None => app.path().resource_dir()?.join("ai-host-runtime"),
             };
+            #[cfg(all(feature = "native-e2e", target_os = "macos"))]
+            let runtime = tauri::async_runtime::block_on(DesktopRuntime::start_with_key_backend(
+                &root,
+                &artifact,
+                source,
+                native_e2e::keychain(&root)?,
+            ))?;
+            #[cfg(not(all(feature = "native-e2e", target_os = "macos")))]
             let runtime =
                 tauri::async_runtime::block_on(DesktopRuntime::start(&root, &artifact, source))?;
             eprintln!(

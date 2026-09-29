@@ -36,3 +36,48 @@ pub fn configure(
     );
     Ok(builder.plugin(tauri_plugin_wdio_webdriver::init(socket, capability)))
 }
+
+// ref: security-framework 3.5.1 os/macos/passwords.rs temp_keychain_setup.
+// The real OS credential store belongs to this run, never to the developer's login keychain.
+// The harness deletes it through Security.framework after the owned process has exited.
+#[cfg(target_os = "macos")]
+pub fn keychain(
+    root: &Path,
+) -> Result<impl rss_mdm_desktop::composition::credentials::KeyBackend, Box<dyn std::error::Error>>
+{
+    use rss_mdm_desktop::composition::credentials::{KeyBackend, KeyUnavailable};
+    use security_framework::os::macos::keychain::{
+        CreateOptions, KeychainUserInteractionLock, SecKeychain,
+    };
+    struct Isolated {
+        keychain: SecKeychain,
+        _noninteractive: KeychainUserInteractionLock,
+    }
+    const SERVICE: &str = "RSS MDM Agent native-e2e";
+    const ACCOUNT: &str = "connection-master-key";
+    impl KeyBackend for Isolated {
+        fn read(&self) -> Result<Option<Vec<u8>>, KeyUnavailable> {
+            match self.keychain.find_generic_password(SERVICE, ACCOUNT) {
+                Ok((key, _)) => Ok(Some(key.to_owned())),
+                Err(error) if error.code() == -25300 => Ok(None),
+                Err(_) => Err(KeyUnavailable),
+            }
+        }
+        fn create(&self, key: &[u8]) -> Result<(), KeyUnavailable> {
+            self.keychain
+                .add_generic_password(SERVICE, ACCOUNT, key)
+                .map_err(|_| KeyUnavailable)
+        }
+    }
+    native_process::private_storage::directory(root)?;
+    let noninteractive = SecKeychain::disable_user_interaction()?;
+    let password = zeroize::Zeroizing::new(uuid::Uuid::new_v4().to_string());
+    let keychain = CreateOptions::new()
+        .password(&password)
+        .prompt_user(false)
+        .create(root.join("native-e2e.keychain"))?;
+    Ok(Isolated {
+        keychain,
+        _noninteractive: noninteractive,
+    })
+}

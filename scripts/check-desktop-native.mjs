@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
 import { once } from "node:events";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -36,6 +37,7 @@ const result = {
   credentials: "synthetic-loopback-only",
   provider: "codex-0.155.0",
   executor: "S1 deterministic test runner",
+  keychain: "isolated noninteractive macOS file keychain",
   checks: [],
 };
 for (const name of [
@@ -61,7 +63,15 @@ let directory,
   hostStatus,
   logs = "",
   stage = "preflight",
-  spawnError;
+  spawnError,
+  keychainState;
+const systemKeychains = () =>
+  ["default-keychain", "list-keychains"].map((command) =>
+    execFileSync("/usr/bin/security", [command, "-d", "user"], {
+      encoding: "utf8",
+      timeout: 10000,
+    }).trim(),
+  );
 const signalRoot = (signal) => {
   if (!child?.pid) return;
   try {
@@ -211,6 +221,7 @@ try {
   result.source = sourceEvidence(root);
   assert.equal(process.platform, "darwin");
   assert.equal(process.arch, "arm64");
+  keychainState = systemKeychains();
   assert.equal(
     execFileSync(
       "/usr/bin/swift",
@@ -296,6 +307,12 @@ try {
   assert.equal(receipt.dataRootSha256, sha256(directory));
   assert.equal(hostStatus.phase, "ready");
   assert.equal(hostStatus.source, "development_override");
+  assert.ok(
+    ["native-e2e.keychain", "native-e2e.keychain-db"].some((name) =>
+      existsSync(join(directory, name)),
+    ),
+    "native acceptance must own an isolated OS keychain",
+  );
   await wait(() => {
     try {
       return (
@@ -415,33 +432,13 @@ try {
   await browser.$('input[type="password"]').setValue(fixture.secret);
   mark("save connection through native credential owner");
   await click("保存配置");
-  const keychainPending = () => {
-    try {
-      return script(
-        'tell application "System Events"\n if not (exists process "SecurityAgent") then return ""\n tell process "SecurityAgent"\n if (count of windows) is 0 then return ""\n return value of every static text of window 1\n end tell\nend tell',
-      ).includes("RSS MDM Agent");
-    } catch {
-      return false;
-    }
-  };
   await wait(
     async () =>
-      (await visibleText("Golden Codex · Codex · 未验证")) || keychainPending(),
+      (await visibleText("Golden Codex · Codex · 未验证")) ||
+      (await visibleText("AI Host 不可用，配置尚未保存")),
   );
-  if (keychainPending()) {
-    mark("waiting for human macOS Keychain authorization");
-    await wait(() => !keychainPending(), 120000);
-    await wait(
-      async () =>
-        (await visibleText("Golden Codex · Codex · 未验证")) ||
-        (await visibleText("AI Host 不可用，配置尚未保存")),
-    );
-    if (!(await visibleText("Golden Codex · Codex · 未验证"))) {
-      await browser.$('input[type="password"]').setValue(fixture.secret);
-      await click("保存配置");
-    }
-  }
-  await text("Golden Codex · Codex · 未验证");
+  assert.equal(await visibleText("Golden Codex · Codex · 未验证"), true);
+  result.checks.push("noninteractive-isolated-keychain");
   assert.equal(
     await browser.$('input[type="password"]').isExisting(),
     false,
@@ -906,6 +903,27 @@ try {
     result.status = cancelled ? "cancelled" : "failed";
     process.exitCode = 1;
   }
+  let keychainClean = cleanupComplete;
+  if (directory && cleanupComplete) {
+    try {
+      const path = ["native-e2e.keychain", "native-e2e.keychain-db"]
+        .map((name) => join(directory, name))
+        .find(existsSync);
+      if (path)
+        execFileSync("/usr/bin/security", ["delete-keychain", path], {
+          timeout: 10000,
+          stdio: "pipe",
+        });
+      assert.deepEqual(systemKeychains(), keychainState);
+      result.keychainCleanup =
+        "removed; default keychain and search list unchanged";
+    } catch {
+      keychainClean = false;
+      result.cleanup = "isolated-keychain-cleanup-unconfirmed";
+      result.status = cancelled ? "cancelled" : "failed";
+      process.exitCode = 1;
+    }
+  }
   writeReport();
   writeFileSync(
     join(reports, "desktop-native.log"),
@@ -914,6 +932,6 @@ try {
       .replaceAll(fixture?.secret ?? "<none>", "[redacted]")
       .replaceAll(directory ?? "<none>", "[isolated-data]"),
   );
-  if (directory && cleanupComplete)
+  if (directory && cleanupComplete && keychainClean)
     rmSync(directory, { recursive: true, force: true });
 }

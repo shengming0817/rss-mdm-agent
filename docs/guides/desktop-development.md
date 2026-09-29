@@ -74,7 +74,7 @@ macOS 的正式 `make ci` / `make ci-full` 对整个 Node 与 Rust 检查过程�
 
 来源：Tauri `crates/tauri/src/app.rs` / `webview/webview_window.rs` @ 2.11.2；runtime-wry `src/lib.rs` @ 2.11.4（最后窗口销毁与 ExitRequested）；rmcp `src/model/meta.rs` @ 3.4.0（request metadata）；MCP TypeScript SDK `client/index.ts` / `shared/stdio.ts` @ 1.30.0。
 
-日常原生验收运行 `pnpm check:desktop-native`，入口从仓库根启动 `pnpm dev`，直接加载产品 main 和真实 WKWebView。当前限定 macOS arm64，需要保持桌面解锁，并给运行终端及 System Events 辅助功能权限；锁屏或缺少权限会失败。重新编译后 macOS 可能要求授予应用钥匙串访问权限；只在系统弹窗授权，脚本最多等待两分钟，不自动批准，也不接收系统密码。使用固定 Codex 0.155.0、本地 Responses 协议夹具和合成 API Key，不读取个人 Codex 配置，不连接云端模型。覆盖保存未验证配置、测试失败重试、首次消息创建会话、读工具、执行/取消的一次性允许与拒绝、独立 Rust 动作确认、可信执行卡、原生键盘和窄窗口、关闭重开、Host 重启、用户隔离及凭据删除。
+自动回归由本地 CI 的单元、协议、SQLite、adapter 和浏览器检查承担，不要求系统授权弹窗。`pnpm check:desktop-native` 是额外的 S1 桌面端到端验收，从仓库根启动 `pnpm dev`，加载产品 main 和真实 WKWebView。当前限定 macOS arm64，需要已解锁的测试桌面及终端、System Events 辅助功能权限；环境不满足直接失败。该调试入口每次创建独立的真实 macOS 文件钥匙串，使用随机测试密码并禁止系统交互，不访问个人登录钥匙串的应用主密钥。退出后删除自有钥匙串，并核对默认钥匙串和搜索列表没有遗留变化。正式签名应用对个人钥匙串的授权属于独立的系统集成验收，此路径不证明该授权行为。使用固定 Codex 0.155.0、本地 Responses 协议夹具和合成 API Key，不读取个人 Codex 配置，不连接云端模型。覆盖保存未验证配置、测试失败重试、首次消息创建会话、读工具、执行/取消的一次性允许与拒绝、独立 Rust 动作确认、可信执行卡、原生键盘和窄窗口、关闭重开、Host 重启、用户隔离及凭据删除。
 
 驱动使用固定 `webdriverio@9.32.0` 与 `tauri-plugin-wdio-webdriver@1.4.0` 的标准 WebDriver 接口。`native-e2e` 只允许调试构建，并要求显式 nonce、动态 loopback 端口和隔离 `--test-data-dir`；release 携带该 feature 会编译失败。脚本核对主进程与监听端口归属；固定的 [本地上游补丁](../../vendor/tauri-plugin-wdio-webdriver/NOTICE.md) 对每个请求校验运行凭据，缺失或错误凭据一律拒绝，启动日志仅记录凭据摘要。脚本不调用 WebView 内部 IPC、不替换业务回复。Tab、Shift+Tab、Escape 和应用菜单操作由 macOS System Events 发出；WebDriver 键盘事件不能替代这些证据。不要在验收期间修改源码或并发启动同一 worktree 的开发服务。
 
