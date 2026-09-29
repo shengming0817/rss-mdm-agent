@@ -41,9 +41,10 @@ fn run(data_root: Option<std::path::PathBuf>) -> Result<(), Box<dyn std::error::
             } else {
                 ai_session_contract::HostStatusSource::BundledResource
             };
-            let artifact = override_path
-                .map(std::path::PathBuf::from)
-                .unwrap_or(app.path().resource_dir()?.join("ai-host-runtime"));
+            let artifact = match override_path {
+                Some(path) => std::path::PathBuf::from(path),
+                None => app.path().resource_dir()?.join("ai-host-runtime"),
+            };
             let runtime =
                 tauri::async_runtime::block_on(DesktopRuntime::start(&root, &artifact, source))?;
             eprintln!(
