@@ -900,6 +900,56 @@ it("first creation finishing after navigation never changes selection or sends i
   t.c.dispose();
 });
 
+it.each(["pending", "finished"])(
+  "explicit new conversation discards the %s previous first-send intent",
+  async (completion) => {
+    const t = setup();
+    await t.c.connect();
+    t.c.draft.value = "old draft";
+    let finish!: (value: { sessionId: string }) => void;
+    vi.mocked(t.client.createSession).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    vi.mocked(t.client.restore).mockImplementation(async (id) => ({
+      ...structuredClone(t.view),
+      namespace: { ...t.view.namespace, sessionId: id },
+    }));
+    const old = t.c.prompt();
+    await flushPromises();
+    const previous = vi.mocked(t.client.createSession).mock.calls[0][0];
+    await t.c.select("session-1");
+    if (completion === "finished") {
+      finish({ sessionId: previous.sessionId });
+      await old;
+    }
+    t.c.create();
+    t.c.state.connections.push({
+      ...t.c.state.connections[0],
+      connectionId: "config-2",
+    });
+    t.c.state.blankConnectionId = "config-2";
+    t.c.draft.value = "new conversation";
+    await t.c.prompt();
+    if (completion === "pending") {
+      finish({ sessionId: previous.sessionId });
+      await old;
+    }
+    expect(t.client.createSession).toHaveBeenCalledTimes(2);
+    const fresh = vi.mocked(t.client.createSession).mock.calls[1][0];
+    expect(fresh.sessionId).not.toBe(previous.sessionId);
+    expect(fresh.connectionId).toBe("config-2");
+    expect(t.submit).toHaveBeenCalledTimes(1);
+    expect(t.submit.mock.calls[0][0].sessionId).toBe(fresh.sessionId);
+    expect(t.submit.mock.calls[0][0].input.text).toBe("new conversation");
+    expect(t.c.state.selected).toBe(fresh.sessionId);
+    expect(t.c.state.opening).toBe(false);
+    t.c.dispose();
+  },
+);
+
 it("restores a known first session after attachment failure without creating again", async () => {
   const t = setup();
   await t.c.connect();

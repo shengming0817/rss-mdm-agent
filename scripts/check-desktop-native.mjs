@@ -8,6 +8,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -42,10 +43,12 @@ for (const name of [
   "desktop-native.log",
 ])
   rmSync(join(reports, name), { force: true });
-writeFileSync(
-  join(reports, "desktop-native.json"),
-  JSON.stringify(result, null, 2),
-);
+const writeReport = () => {
+  const path = join(reports, "desktop-native.json");
+  writeFileSync(path + ".tmp", JSON.stringify(result, null, 2));
+  renameSync(path + ".tmp", path);
+};
+writeReport();
 let directory,
   child,
   exited,
@@ -56,14 +59,37 @@ let directory,
   logs = "",
   stage = "preflight",
   spawnError;
+const signalRoot = (signal) => {
+  if (!child?.pid) return;
+  try {
+    process.kill(-child.pid, signal);
+  } catch (error) {
+    if (!["ESRCH", "EPERM"].includes(error.code)) throw error;
+  }
+};
+const rootAlive = () => {
+  if (!child?.pid) return false;
+  try {
+    process.kill(-child.pid, 0);
+    return true;
+  } catch (error) {
+    if (error.code === "EPERM") return true;
+    if (error.code !== "ESRCH") throw error;
+    return false;
+  }
+};
 let cancelled = false;
 for (const signal of ["SIGINT", "SIGTERM"])
   process.on(signal, () => {
     cancelled = true;
     spawnError = new Error("native acceptance cancelled");
+    // The dev wrapper owns Tauri/Vite/main and their bounded process-group shutdown.
+    signalRoot("SIGTERM");
   });
 const mark = (value) => {
   stage = value;
+  result.stage = value;
+  writeReport();
   console.log(`[native] ${value}`);
 };
 const wait = async (check, timeout = 60000) => {
@@ -189,8 +215,12 @@ try {
     "true",
     "System Events accessibility permission is required",
   );
-  assert.equal(result.source.node, "v24.14.1");
-  assert.equal(result.source.pnpm, "11.4.0");
+  const packageManifest = JSON.parse(readFileSync(join(root, "package.json")));
+  assert.equal(result.source.node, `v${packageManifest.engines.node}`);
+  assert.equal(
+    result.source.pnpm,
+    packageManifest.packageManager.split("@")[1],
+  );
   fixture = await startModelFixture();
   directory = realpathSync(mkdtempSync("/tmp/rss-native-"));
   const reserved = createServer();
@@ -218,8 +248,10 @@ try {
       "--test-data-dir",
       directory,
     ],
-    { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] },
+    { cwd: root, env, detached: true, stdio: ["ignore", "pipe", "pipe"] },
   );
+  result.devPid = child.pid;
+  writeReport();
   child.on("error", (error) => {
     spawnError = error;
   });
@@ -338,7 +370,34 @@ try {
   await browser.$(".connection-form summary").click();
   await selectNext(await field("工具"), "controlled_tools");
   await browser.$('input[type="password"]').setValue(fixture.secret);
+  mark("save connection through native credential owner");
   await click("保存配置");
+  const keychainPending = () => {
+    try {
+      return script(
+        'tell application "System Events" to tell process "SecurityAgent" to get value of every static text of window 1',
+      ).includes("RSS MDM Agent");
+    } catch {
+      return false;
+    }
+  };
+  await wait(
+    async () =>
+      (await visibleText("Golden Codex · Codex · 未验证")) || keychainPending(),
+  );
+  if (keychainPending()) {
+    mark("waiting for human macOS Keychain authorization");
+    await wait(() => !keychainPending(), 120000);
+    await wait(
+      async () =>
+        (await visibleText("Golden Codex · Codex · 未验证")) ||
+        (await visibleText("AI Host 不可用，配置尚未保存")),
+    );
+    if (!(await visibleText("Golden Codex · Codex · 未验证"))) {
+      await browser.$('input[type="password"]').setValue(fixture.secret);
+      await click("保存配置");
+    }
+  }
   await text("Golden Codex · Codex · 未验证");
   assert.equal(
     await browser.$('input[type="password"]').isExisting(),
@@ -416,6 +475,7 @@ try {
   await prompt("GOLDEN_CANCEL_ALLOW 允许取消请求");
   await permission(true);
   await text("完成 CANCEL_ALLOW");
+  await wait(() => task()?.snapshot.cancelRequested === true);
   await prompt("GOLDEN_READ 读取状态");
   await text("完成 READ");
   assert.equal(
@@ -494,6 +554,13 @@ try {
       return r.bottom <= innerHeight && r.left >= 0 && r.right <= innerWidth;
     }),
     true,
+  );
+  assert.equal(
+    await browser.execute(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+    true,
+    "native page has no horizontal overflow",
   );
   await browser.saveScreenshot(join(reports, "desktop-native-narrow.png"));
   await browser.setWindowSize(1100, 760);
@@ -630,12 +697,15 @@ try {
   result.status = "passed";
 } catch (error) {
   result.status = cancelled ? "cancelled" : "failed";
-  result.failure = { stage, code: "native_golden_path_failed" };
+  const detail = String(error)
+    .replaceAll(fixture?.secret ?? "<none>", "[redacted]")
+    .replaceAll(directory ?? "<none>", "[isolated-data]")
+    .replaceAll(root, "[worktree]")
+    .slice(0, 2048);
+  result.failure = { stage, code: "native_golden_path_failed", detail };
   result.modelFacts = fixture?.facts;
-  console.error(
-    `Native acceptance failed at ${stage}: ${String(error).replaceAll(fixture?.secret ?? "<none>", "[redacted]")}`,
-  );
-  if (browser) {
+  console.error(`Native acceptance failed at ${stage}: ${detail}`);
+  if (browser && !cancelled) {
     try {
       await browser.saveScreenshot(join(reports, "desktop-native-failed.png"));
       console.error((await browser.$("body").getText()).slice(-3500));
@@ -643,34 +713,57 @@ try {
   }
   process.exitCode = 1;
 } finally {
-  await browser?.deleteSession().catch(() => {});
-  if (child && child.exitCode === null && child.signalCode === null) {
+  if (browser && !cancelled)
+    await Promise.race([browser.deleteSession().catch(() => {}), delay(5000)]);
+  if (rootAlive()) {
     if (receipt?.pid) {
       try {
         menu("退出 RSS MDM Agent");
       } catch {}
     }
     await Promise.race([exited.catch(() => {}), delay(7000)]);
-    if (child.exitCode === null && child.signalCode === null) {
-      child.kill("SIGTERM");
+    if (rootAlive()) {
+      signalRoot("SIGTERM");
       await Promise.race([exited.catch(() => {}), delay(7000)]);
     }
-    if (child.exitCode === null && child.signalCode === null) {
-      child.kill("SIGKILL");
+    if (rootAlive()) {
+      signalRoot("SIGKILL");
       await Promise.race([exited.catch(() => {}), delay(1000)]);
       result.cleanup = "forced-wrapper-stop";
     }
   }
-  await fixture?.close();
-  writeFileSync(
-    join(reports, "desktop-native.json"),
-    JSON.stringify(result, null, 2),
-  );
+  await Promise.race([fixture?.close(), delay(2000)]);
+  const owned = [
+    receipt?.pid,
+    result.owner?.hostPid,
+    result.owner?.restartedHostPid,
+  ].filter(Boolean);
+  const alive = () =>
+    owned.filter((pid) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch (error) {
+        if (error.code !== "ESRCH") throw error;
+        return false;
+      }
+    });
+  const cleanupDeadline = Date.now() + 7000;
+  while ((alive().length || rootAlive()) && Date.now() < cleanupDeadline)
+    await delay(100);
+  const cleanupComplete = alive().length === 0 && !rootAlive();
+  if (!cleanupComplete) {
+    result.cleanup = "owned-processes-still-present";
+    result.status = cancelled ? "cancelled" : "failed";
+    process.exitCode = 1;
+  }
+  writeReport();
   writeFileSync(
     join(reports, "desktop-native.log"),
     logs
       .replaceAll(fixture?.secret ?? "<none>", "[redacted]")
       .replaceAll(directory ?? "<none>", "[isolated-data]"),
   );
-  if (directory) rmSync(directory, { recursive: true, force: true });
+  if (directory && cleanupComplete)
+    rmSync(directory, { recursive: true, force: true });
 }

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { once } from "node:events";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
@@ -494,3 +495,60 @@ test("preparation admits only verified passed development provenance", (t) => {
       /provenance mismatch/,
     );
 });
+
+test(
+  "cancelling the preparation process group releases its lock without launching Tauri",
+  { skip: process.platform === "win32", timeout: 10000 },
+  async (t) => {
+    const { root, write } = fixture(t);
+    write(
+      "scripts/desktop-dev.mjs",
+      readFileSync(new URL("desktop-dev.mjs", import.meta.url), "utf8"),
+    );
+    write(
+      "scripts/desktop-dev-runtime.mjs",
+      `
+    import { spawnSync } from 'node:child_process';
+    import { writeFileSync } from 'node:fs';
+    export function ensureDevelopmentRuntime(root) {
+      writeFileSync(root + '/preparing', 'ready');
+      const result = spawnSync(process.execPath, ['-e', 'setInterval(()=>{},1000)']);
+      if (result.status !== 0) throw Error('preparation stopped');
+      return '/runtime';
+    }
+    export const verifyDevelopmentRuntime = ensureDevelopmentRuntime;
+  `,
+    );
+    write(
+      "scripts/desktop-dev-process.mjs",
+      `
+    import { writeFileSync } from 'node:fs';
+    export async function runDesktop(root) { writeFileSync(root + '/launched', 'unexpected'); return 0; }
+  `,
+    );
+    const child = spawn(
+      process.execPath,
+      [join(root, "scripts/desktop-dev.mjs")],
+      { detached: true, stdio: "ignore" },
+    );
+    const exited = once(child, "exit");
+    t.after(() => {
+      try {
+        process.kill(-child.pid, "SIGKILL");
+      } catch (error) {
+        if (error.code !== "ESRCH") throw error;
+      }
+    });
+    const deadline = Date.now() + 5000;
+    while (!existsSync(join(root, "preparing"))) {
+      assert.equal(child.exitCode, null);
+      assert.ok(Date.now() < deadline);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    process.kill(-child.pid, "SIGTERM");
+    const [code] = await exited;
+    assert.notEqual(code, 0);
+    assert.equal(existsSync(join(root, ".cache/desktop-dev.lock")), false);
+    assert.equal(existsSync(join(root, "launched")), false);
+  },
+);

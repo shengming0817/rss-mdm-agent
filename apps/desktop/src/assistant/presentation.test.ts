@@ -1,5 +1,5 @@
 import { activeStage } from "@rss-mdm-agent/ai-contract";
-import { mount } from "@vue/test-utils";
+import { mount, flushPromises } from "@vue/test-utils";
 import { expect, it } from "vitest";
 import QuestionCard from "./QuestionCard.vue";
 import ExecutionDetails from "./ExecutionDetails.vue";
@@ -321,6 +321,66 @@ it("starts with an editable composer, readable history and one live conversation
   expect(wrapper.find(".assistant-execution").exists()).toBe(false);
   expect(wrapper.find(".execution-activity").exists()).toBe(false);
   expect(wrapper.text()).not.toContain("收起输入");
+  wrapper.unmount();
+  c.dispose();
+});
+
+it.each([
+  ["authentication_required", "前往连接设置"],
+  ["connection_required", "前往连接设置"],
+  ["context_unavailable", "选择连接与新上下文"],
+])(
+  "routes %s to its recovery action even with a detached view",
+  async (code, action) => {
+    const c = createAssistant(undefined, () => "id");
+    c.state.connection = "connected";
+    c.state.selected = "session-1";
+    c.state.errors.set("session-1", code);
+    const wrapper = mount(Assistant, { props: { controller: c } });
+    const notice = wrapper.get(".conversation-notice");
+    expect(notice.text()).toContain(action);
+    await notice.get("button").trigger("click");
+    if (code === "context_unavailable")
+      expect(wrapper.get(".connection-menu").attributes("open")).toBeDefined();
+    else expect(wrapper.emitted("settings")).toHaveLength(1);
+    wrapper.unmount();
+    c.dispose();
+  },
+);
+it("keeps the specific connection failure actionable", () => {
+  const c = createAssistant(undefined, () => "id");
+  c.state.error = "authentication_required";
+  const wrapper = mount(Assistant, { props: { controller: c } });
+  expect(wrapper.get(".conversation-notice").text()).toContain("认证不可用");
+  expect(wrapper.get(".conversation-notice button").text()).toBe(
+    "前往连接设置",
+  );
+  wrapper.unmount();
+  c.dispose();
+});
+it("follows newly requested permission only when already following the conversation", async () => {
+  const c = createAssistant(undefined, () => "id");
+  c.state.selected = "session-1";
+  const wrapper = mount(Assistant, { props: { controller: c } });
+  const timeline = wrapper.get(".assistant-timeline");
+  Object.defineProperty(timeline.element, "scrollHeight", { value: 1000 });
+  Object.defineProperty(timeline.element, "clientHeight", { value: 200 });
+  const permission = (id: string) => ({
+    id,
+    request: {
+      sessionId: "session-1",
+      toolCall: { toolCallId: id, title: "permission" },
+      options: [],
+    },
+  });
+  c.state.permissions.set("p1", permission("p1"));
+  await flushPromises();
+  expect(timeline.element.scrollTop).toBe(1000);
+  timeline.element.scrollTop = 100;
+  await timeline.trigger("scroll");
+  c.state.permissions.set("p2", permission("p2"));
+  await flushPromises();
+  expect(timeline.element.scrollTop).toBe(100);
   wrapper.unmount();
   c.dispose();
 });

@@ -548,6 +548,10 @@ export function createAssistant(
     }
   }
   function create() {
+    // An explicit new conversation ends the previous blank page's retry identity.
+    creation = undefined;
+    openingTask = undefined;
+    state.opening = false;
     selectionVersion++;
     blankChosen = true;
     state.selected = "";
@@ -576,20 +580,21 @@ export function createAssistant(
     });
     state.opening = true;
     state.createError = "";
-    const task = (async () => {
+    let task!: Promise<void>;
+    task = (async () => {
       try {
         if (!intent.created) {
           const result = await client.createSession({
             sessionId: intent.sessionId,
             connectionId: intent.connectionId,
           });
-          if (current !== epoch) return;
+          if (current !== epoch || creation !== intent) return;
           if (result.sessionId !== intent.sessionId)
             throw new ClientError("invalid_response");
           intent.created = true;
         }
         const next = await client.restore(intent.sessionId);
-        if (current !== epoch) return;
+        if (current !== epoch || creation !== intent) return;
         if (next.namespace.sessionId !== intent.sessionId)
           throw new ClientError("invalid_response");
         recordView(next);
@@ -612,9 +617,14 @@ export function createAssistant(
           intent.commandId,
         );
       } catch (error) {
-        if (current === epoch) state.createError = fail(error);
+        if (
+          current === epoch &&
+          creation === intent &&
+          selectedAtStart === selectionVersion
+        )
+          state.createError = fail(error);
       } finally {
-        if (current === epoch) state.opening = false;
+        if (current === epoch && openingTask === task) state.opening = false;
       }
     })().finally(() => {
       if (openingTask === task) openingTask = undefined;

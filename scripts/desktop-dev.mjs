@@ -11,6 +11,15 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 let stage = "AI Host preparation",
   locked = false;
 const lock = join(root, ".cache/desktop-dev.lock");
+let interrupted = false;
+const stopPreparation = () => {
+  interrupted = true;
+};
+const preparationSignals = ["SIGINT", "SIGTERM", "SIGHUP"];
+for (const signal of preparationSignals) process.on(signal, stopPreparation);
+const releaseSignals = () => {
+  for (const signal of preparationSignals) process.off(signal, stopPreparation);
+};
 try {
   mkdirSync(join(root, ".cache"), { recursive: true });
   try {
@@ -36,8 +45,12 @@ try {
       root,
       join(root, ".local-ci-runs/ai-host-dev-runtime"),
     );
+  // Let a group signal observed during synchronous preparation settle before launch.
+  await new Promise(setImmediate);
+  if (interrupted) throw new Error("preparation cancelled");
   rmSync(lock, { recursive: true });
   locked = false;
+  releaseSignals();
   stage = "Tauri startup";
   process.exitCode = await runDesktop(root, directory, process.argv.slice(2));
 } catch (error) {
@@ -46,5 +59,6 @@ try {
   );
   process.exitCode = 1;
 } finally {
+  releaseSignals();
   if (locked) rmSync(lock, { recursive: true, force: true });
 }

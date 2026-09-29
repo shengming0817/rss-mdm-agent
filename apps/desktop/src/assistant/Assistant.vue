@@ -130,13 +130,35 @@ const permissions = computed(() =>
     (item) => item.request.sessionId === s.selected,
   ),
 );
+const connectionMenu = ref<HTMLDetailsElement>();
+async function showContextChoices() {
+  if (connectionMenu.value) connectionMenu.value.open = true;
+  await nextTick();
+  connectionMenu.value?.querySelector("select")?.focus();
+}
 const notice = computed(() => {
+  if (s.connection === "connecting")
+    return { text: "正在连接 AI 服务…", action: "connect" };
+  const error =
+    s.connection !== "connected"
+      ? s.error
+      : s.errors.get(s.selected) || s.createError;
+  if (
+    [
+      "authentication_required",
+      "connection_required",
+      "unsupported_capability",
+    ].includes(error ?? "")
+  )
+    return { text: operationMessage(error!), action: "settings" };
+  if (error === "context_unavailable")
+    return {
+      text: operationMessage(error),
+      action: s.connection === "connected" ? "context" : "connect",
+    };
   if (s.connection !== "connected")
     return {
-      text:
-        s.connection === "connecting"
-          ? "正在连接 AI 服务…"
-          : "AI 服务未连接，草稿已保留。",
+      text: error ? operationMessage(error) : "AI 服务未连接，草稿已保留。",
       action: "connect",
     };
   if (s.pending.has(s.selected))
@@ -144,10 +166,10 @@ const notice = computed(() => {
       text: "上条消息是否已接收仍待确认，草稿已保留。",
       action: "retry",
     };
-  if (s.createError)
+  if (error)
     return {
-      text: operationMessage(s.createError),
-      action: s.createError === "connection_required" ? "settings" : "first",
+      text: operationMessage(error),
+      action: s.createError ? "first" : "restore",
     };
   if (!c.connectionReady.value)
     return {
@@ -156,15 +178,13 @@ const notice = computed(() => {
     };
   if (view.value && view.value.connection !== "attached")
     return { text: "连接已中断，重新读取会话后继续。", action: "restore" };
-  const error = s.errors.get(s.selected);
-  return error
-    ? { text: operationMessage(error), action: "restore" }
-    : undefined;
+  return undefined;
 });
 watch(
   () => [
     s.selected,
     view.value?.cursor,
+    permissions.value.map((permission) => permission.id).join("\0"),
     Object.values(view.value?.messages ?? {})
       .map((row) => row.text)
       .join(""),
@@ -199,7 +219,7 @@ watch(
           最近对话
         </button>
         <h1>{{ title }}</h1>
-        <details class="connection-menu">
+        <details ref="connectionMenu" class="connection-menu">
           <summary>{{ connectionName }}</summary>
           <SessionConnection :controller="c" /><button
             @click="
@@ -394,6 +414,12 @@ watch(
             @click="$emit('settings')"
           >
             前往连接设置
+          </button>
+          <button
+            v-else-if="notice.action === 'context'"
+            @click="showContextChoices"
+          >
+            选择连接与新上下文
           </button>
           <button
             v-else-if="notice.action === 'first'"
