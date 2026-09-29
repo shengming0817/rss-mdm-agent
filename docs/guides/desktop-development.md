@@ -18,7 +18,7 @@ pnpm desktop:build       # 自动打包 Node/依赖、stage、构建 .app
 
 普通 Cargo/schema 检查使用基础 Tauri 配置，不依赖运行包；发布构建显式合并 `tauri.bundle.conf.json`。打包脚本先校验固定 Node archive、锁定部署依赖、真实 SDK 生命周期，再将通过的当前候选复制到被忽略的 resources 目录。macOS bundle 通过 `bundle.macOS.files` 整目录复制 runtime，以保留 pnpm 依赖符号链接；普通 resources 文件枚举会漏掉这些链接，不能用于该 runtime。发布应用只从自身资源目录启动 AI Host。缺失或不可用的 AI 不影响 Rust 任务读取，也不会降级为虚构对话。
 
-第一次启动在应用数据目录 `test-users` 创建私有用户注册表、Host 路径配置、AI 库与设备 journal。用户在底部“设置”选择测试名称，再保存个人连接后单独测试；无凭据也能创建空产品会话和读取已有历史。旧 `s1/client.json` 不读取、不迁移。连接来源、版本和认证约束见 [AI Host](../../apps/ai-host/README.md)。
+第一次启动在应用数据目录 `test-users` 创建私有用户注册表、Host 路径配置、AI 库与设备 journal。用户在底部“设置”选择测试名称，再保存个人连接后单独测试；无凭据也能进入空白对话、保留草稿和读取已有历史。旧 `s1/client.json` 不读取、不迁移。连接来源、版本和认证约束见 [AI Host](../../apps/ai-host/README.md)。
 
 切换测试用户会卸载旧工作区，原生 IPC 检查捕获的 generation；迟到返回不能进入新用户视图。原有设备任务的 actor 不变，模型队列被取消；取消未确认时保留未知结果。重选已有名称保持稳定 ID，重启恢复上次选择并换新 generation。
 
@@ -74,15 +74,21 @@ macOS 的正式 `make ci` / `make ci-full` 对整个 Node 与 Rust 检查过程�
 
 来源：Tauri `crates/tauri/src/app.rs` / `webview/webview_window.rs` @ 2.11.2；runtime-wry `src/lib.rs` @ 2.11.4（最后窗口销毁与 ExitRequested）；rmcp `src/model/meta.rs` @ 3.4.0（request metadata）；MCP TypeScript SDK `client/index.ts` / `shared/stdio.ts` @ 1.30.0。
 
-无凭据发布资源验收使用 `pnpm bundle:ai-host && pnpm check:desktop-bundle`。入口构建实际 `.app`，在隔离 HOME 下启动生产 main，禁用 runtime override，核验完整 runtime 树与 Native 输出的 health 握手结果；结果写入 `.local-ci-runs/desktop-bundle.json`。此 smoke 只证明启动与资源定位，使用隔离进程组清理，不作为优雅退出证据。
+日常原生验收运行 `pnpm check:desktop-native`，入口从仓库根启动 `pnpm dev`，直接加载产品 main 和真实 WKWebView。当前限定 macOS arm64，需要保持桌面解锁，并给运行终端及 System Events 辅助功能权限；锁屏或缺少权限会失败。使用固定 Codex 0.155.0、本地 Responses 协议夹具和合成 API Key，不读取个人 Codex 配置，不连接云端模型。覆盖保存未验证配置、测试失败重试、首次消息创建会话、读工具、执行/取消的一次性允许与拒绝、独立 Rust 动作确认、可信执行卡、原生键盘和窄窗口、关闭重开、Host 重启、用户隔离及凭据删除。
 
-真实 macOS arm64 桌面验收单独运行 `pnpm bundle:ai-host && pnpm check:desktop-native`，消费构建后的 runtime 和现有 Codex 配置。实际 WebView 验收覆盖首次配置、关闭/重开、用户隔离、授权历史、Host-only 重启、设备任务事实保持，以及重启后的真实新对话。结果写入 `.local-ci-runs/desktop-native.json`，记录配置模式与运行结果；不属于无凭据 CI，不证明真实 OS 效果。
+驱动使用固定 `webdriverio@9.32.0` 与 `tauri-plugin-wdio-webdriver@1.4.0` 的标准 WebDriver 接口。`native-e2e` 只允许调试构建，并要求显式 nonce、动态 loopback 端口和隔离 `--test-data-dir`；release 携带该 feature 会编译失败。脚本核对主进程与监听端口归属，不调用 WebView 内部 IPC、不替换业务回复。Tab、Shift+Tab、Escape 和应用菜单操作由 macOS System Events 发出；WebDriver 键盘事件不能替代这些证据。不要在验收期间修改源码或并发启动同一 worktree 的开发服务。
 
-真实验收不指定模型，由官方工具从本机已有配置解析默认模型；复用已有用户登录，不修改用户配置或静默换模型。默认模型仍须通过受控工具探针；需要 code-mode host 的模型不会自动降级为其他模型。回执记录 `official_configuration_default`，不猜测模型名称。
+`.local-ci-runs/desktop-native.json` 记录实际模式、源码/锁文件/运行包摘要、进程归属与完成项，截图和脱敏日志在同目录。失败回执不能解释为通过。该路径证明真实 CLI、WebView 与 S1 接缝，不证明真实模型能力或设备 OS 效果。
+
+发布资源验收使用 `pnpm bundle:ai-host && pnpm check:desktop-bundle`。入口构建实际 release `.app`，使用隔离数据目录启动生产 main，禁用 runtime override，不包含原生驱动，核验完整 runtime 树与 Native health 握手；结果写入 `.local-ci-runs/desktop-bundle.json`，绑定源码、锁文件和 runtime manifest。此 smoke 只证明启动与资源定位，使用隔离进程组清理，优雅退出由日常原生验收验证。
+
+真实模型仍单独运行 `pnpm smoke:codex`，按 [AI Host](../../apps/ai-host/README.md) 的显式配置入口选择认证、端点与模型；它保留跨轮上下文证据，不由本地协议夹具替代。真实模型、原生 WebView 和 release 资源启动是三份不同范围的回执。
+
+来源：WebdriverIO `desktop-mobile/packages/tauri-plugin-webdriver` @ `wdio-tauri-service@v1.4.0` (`aef40049a9c566e72de4ffd08e08197ff32386ed`)；[Tauri WebDriver 指南](https://v2.tauri.app/develop/tests/webdriver/)。
 
 ## 设置、诊断和 AI 恢复
 
-设置入口始终可达，未选择用户或 AI Host 不可用时仍可查看诊断与关于。账户区域区分网络不可用、限流、账号/授权失效及服务响应不兼容；成功进入新的账户后清除旧原因。首次路径是选择账户入口、保存配置、测试连接、新建对话；“稍后配置”保留空产品会话和自助入口。常规与通知仅说明已有行为，不提供无底层服务的开关。
+设置入口始终可达，未选择用户或 AI Host 不可用时仍可查看诊断与关于。账户区域区分网络不可用、限流、账号/授权失效及服务响应不兼容；成功进入新的账户后清除旧原因。首次路径是选择账户入口、保存配置、测试连接、发送首条消息；“开始对话”与“稍后配置”都只进入本地空白页，首条消息才创建产品会话。常规与通知仅说明已有行为，不提供无底层服务的开关。
 
 Native 长期持有用户、一个设备执行服务和应用主密钥访问 owner；Host 进程可以单独替换。启动前核验关键文件、平台和契约版本，配置、存储和恢复完成后的私有 health 应答才表示 ready。运行包不匹配直接拒绝；release 构建忽略开发 override。关闭/回收旧 Host 后才启动新代，worker fence 未解决时禁止重复 worker。
 
@@ -107,10 +113,15 @@ pnpm check:assistant
 
 打开 fixture 打印的 loopback 地址；它加载实际产品 App，使用同进程 FakeHost、实际 Rust/SQLite S1 样本，不连接真实模型或执行 OS 操作。macOS 默认使用系统 Chrome，其它环境通过 `AI_BROWSER_PATH` 指定 Chromium。测试失败不会降级为静态渲染。
 
-手工体验设备执行时，进入 AI 页，在设备执行面板的“执行请求编号”中输入 `request-1`，读取 S1 授权详情；该请求仅存在于 fixture。
+手工体验设备执行时，进入 AI 页，在“更多 → 会话详情与诊断 → 按执行编号查询”的“执行请求编号”中输入 `request-1`，读取 S1 授权详情；该请求仅存在于 fixture。
 
 导航切换保留会话控制器与草稿；用户工作区销毁才清空缓存和回调。同用户重连保留已加载历史和未知命令身份，清理旧权限回调与订阅，在权威恢复完成前只读，不自动提交。当前会话先恢复，其余按选择恢复。
 
-个人连接从“设置 → AI 连接”先保存配置，再单独测试连接。保存不发送模型请求；测试可能产生费用，失败仍可编辑保存。AI 页面保留当前会话连接选择、新上下文和明确的历史带入预览。API 密钥在表单密码框填写，支持粘贴与显示/隐藏，提交或离开设置页后清空；provider、端点或凭据种类变化必须重新输入。切换会话后丢弃旧历史预览结果，切换连接等待旧队列完成。
+个人连接从“设置 → AI 连接”先保存配置，再单独测试连接。保存不发送模型请求；测试可能产生费用，失败仍可编辑保存。AI 页以消息时间线和常驻输入框为主；最近对话显示首条问题的摘要，按活动时间排序，窄窗口改用抽屉。顶部只选择已就绪连接，新上下文和历史带入预览放在连接菜单内。首次创建和发送分别使用稳定身份；未知结果只核对原请求，创建期间编辑草稿或切换会话不会后台发送。运行中可编辑、排队发送；仅提供方支持时显示“调整当前任务”。API 密钥在表单密码框填写，支持粘贴与显示/隐藏，提交或离开设置页后清空；provider、端点或凭据种类变化必须重新输入。切换会话后丢弃旧历史预览结果，切换连接等待旧队列完成。
 
 AI 文本不能覆盖设备任务事实；执行详情来自 Rust 的授权读取。普通回答与 A2UI 动作均不能签发批准。未知接纳重试保留原命令和期限，回执不等于模型终态。过期、旧 generation 和删除卡片禁止继续提交；渲染失败保留只读内容。
+
+新的 `execution_execute` 与 `execution_cancel` 在 Host 投递前请求“允许一次 / 拒绝一次”；三个读工具不询问。相同待决提案共用一次询问，已有持久投递恢复不重问。许可过期、会话/命令结束或用户切换后不能写新执行意图。该许可仅允许 AI 发起请求，Rust 仍独立验证设备授权和具体动作确认。时间线的设备卡只从 Host 投递事件定位，再核对 Rust 返回的请求、会话和工具身份；模型文字不能生成可信设备卡。
+
+交互参考复核基于 Codex 与 Claude 官方使用文档，未声称实机体验：
+[Codex/ChatGPT 项目与对话](https://learn.chatgpt.com/docs/projects)、[队列与 steer 设置](https://learn.chatgpt.com/docs/reference/settings)、[批准与沙箱](https://learn.chatgpt.com/docs/agent-approvals-security)、[Claude Desktop 导航](https://academy.claude.com/tutorials/navigating-the-claude-desktop-app)、[Claude 连接器](https://support.claude.com/en/articles/11176164-use-connectors-to-extend-claude-s-capabilities)。借鉴聊天入口、连接设置和动作许可分层；本产品的设备执行权威仍在 Rust。

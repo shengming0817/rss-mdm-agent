@@ -1865,11 +1865,17 @@ export interface SessionPage {
    */
   kind: "sessionPage";
   /**
-   * Caller-scoped sessions in this immutable page.
+   * Caller-scoped conversation summaries in stable recent order.
    */
-  items: Session[];
+  items: SessionListItem[];
   /** Opaque continuation; absent at end of the read view. */
   next?: Id;
+}
+export interface SessionListItem {
+  namespace: Namespace;
+  status: "active" | "recovery_required" | "retired";
+  title: string;
+  lastActivityAtMs: Counter;
 }
 export interface SnapshotRequest {
   /**

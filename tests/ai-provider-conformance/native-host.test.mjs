@@ -23,7 +23,10 @@ for (const provider of engines) {
       await f.start();
       const first = await f.connect(),
         second = await f.connect();
-      const view = await first.client.createSession(),
+      const view = await first.client.restore(
+          (await first.client.createSession({ sessionId: crypto.randomUUID() }))
+            .sessionId,
+        ),
         id = view.namespace.sessionId;
       let { session } = unwrap(
         await f.app.host.snapshotPage(

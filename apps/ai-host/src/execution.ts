@@ -208,7 +208,11 @@ export async function connectExecution(
       const operationId = createHash("sha256")
         .update(JSON.stringify([namespace, proposal.name, id]))
         .digest("hex");
-      return ok({ operationId, target: "rust-execution" });
+      return ok({
+        operationId,
+        target: "rust-execution",
+        permission: read ? "none" : "ask",
+      });
     },
     send: async (request, b) => {
       try {

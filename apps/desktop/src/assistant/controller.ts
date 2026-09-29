@@ -91,7 +91,7 @@ export function operationMessage(code: string): string {
     "操作未确认，请重新读取后重试。"
   );
 }
-type SessionItem = Pick<SessionPage["items"][number], "namespace" | "status">;
+type SessionItem = SessionPage["items"][number];
 type Pending = { command: Command; draft?: string };
 export function createAssistant(
   services: AssistantServices | undefined,
@@ -110,6 +110,7 @@ export function createAssistant(
     mode: "live" as "s1" | "live",
     a2ui: false,
     selected: "",
+    blankConnectionId: undefined as string | undefined,
     error: "",
     listError: "",
     createError: "",
@@ -137,6 +138,34 @@ export function createAssistant(
   let epoch = 0,
     taskEpoch = 0,
     stop = () => {};
+  let selectionVersion = 0,
+    blankChosen = false;
+  let openingTask: Promise<void> | undefined;
+  let creation:
+    | {
+        sessionId: string;
+        commandId: string;
+        connectionId: string;
+        created: boolean;
+      }
+    | undefined;
+  const sessions = computed(() =>
+    [...state.sessions.values()].sort(
+      (a, b) =>
+        b.lastActivityAtMs - a.lastActivityAtMs ||
+        a.namespace.sessionId.localeCompare(b.namespace.sessionId),
+    ),
+  );
+  function recordView(next: SessionView) {
+    state.views.set(next.namespace.sessionId, next);
+    state.sessions.set(next.namespace.sessionId, {
+      title: "新对话",
+      lastActivityAtMs: 0,
+      ...state.sessions.get(next.namespace.sessionId),
+      namespace: next.namespace,
+      status: next.sessionStatus,
+    });
+  }
   const callbacks = new Map<string, (response: PermissionResponse) => void>();
   const view = computed(() => state.views.get(state.selected));
   const draft = computed({
@@ -170,20 +199,26 @@ export function createAssistant(
         ),
     ),
   );
+  const selectedConnectionId = computed(() =>
+    state.selected
+      ? view.value?.selectedConnectionId
+      : (state.blankConnectionId ?? state.preferences.defaultConnectionId),
+  );
   const connectionReady = computed(() =>
     state.connections.some(
       (row) =>
-        row.connectionId === view.value?.selectedConnectionId &&
+        row.connectionId === selectedConnectionId.value &&
         row.status === "ready",
     ),
   );
-  const canSend = computed(
-    () =>
-      live(view.value) &&
-      connectionReady.value &&
-      !(busy.value && view.value?.connectionPending) &&
-      !state.pending.has(state.selected) &&
-      !state.sending.has(state.selected),
+  const canSend = computed(() =>
+    !state.selected
+      ? state.connection === "connected" && !state.opening
+      : live(view.value) &&
+        connectionReady.value &&
+        !(busy.value && view.value?.connectionPending) &&
+        !state.pending.has(state.selected) &&
+        !state.sending.has(state.selected),
   );
   const canSteer = computed(
     () =>
@@ -278,11 +313,16 @@ export function createAssistant(
         0,
       ),
   );
-  const background = computed(() =>
-    [...actionableIds.value]
-      .filter(([id, ids]) => id !== state.selected && ids.length > 0)
-      .map(([id]) => id),
-  );
+  const background = computed(() => [
+    ...new Set([
+      ...[...actionableIds.value]
+        .filter(([id, ids]) => id !== state.selected && ids.length > 0)
+        .map(([id]) => id),
+      ...[...state.permissions.values()]
+        .map((item) => item.request.sessionId)
+        .filter((id) => id !== state.selected),
+    ]),
+  ]);
   const fail = (error: unknown) =>
     error instanceof ClientError ? error.code : "request_failed";
   function clearPermissions() {
@@ -372,6 +412,7 @@ export function createAssistant(
     state.createError = "";
     state.listing = false;
     state.opening = false;
+    openingTask = undefined;
     state.connection = services ? "connecting" : "disconnected";
     if (!services) return;
     let candidate: RuntimeClient | undefined;
@@ -405,11 +446,7 @@ export function createAssistant(
       state.a2ui = !!negotiated.a2ui;
       stop = connected.runtime.observe((next) => {
         if (current === epoch) {
-          state.views.set(next.namespace.sessionId, next);
-          state.sessions.set(next.namespace.sessionId, {
-            namespace: next.namespace,
-            status: next.sessionStatus,
-          });
+          recordView(next);
         }
       });
       let transportClosed = false;
@@ -425,18 +462,16 @@ export function createAssistant(
       if (current !== epoch) return;
       state.connections = catalog.connections;
       state.preferences = catalog.preferences;
-      const selected = state.selected || catalog.preferences.selectedSessionId;
+      const selected =
+        state.selected ||
+        (!blankChosen && catalog.preferences.selectedSessionId);
       if (selected) {
         const id = selected;
         try {
           const next = await connected.runtime.restore(id);
           if (current === epoch) {
             state.selected = id;
-            state.views.set(id, next);
-            state.sessions.set(id, {
-              namespace: next.namespace,
-              status: next.sessionStatus,
-            });
+            recordView(next);
           }
         } catch (error) {
           if (current === epoch) state.errors.set(id, fail(error));
@@ -470,7 +505,7 @@ export function createAssistant(
       if (current !== epoch) return;
       for (const item of page.items)
         state.sessions.set(item.namespace.sessionId, {
-          namespace: item.namespace,
+          ...item,
           status:
             state.views.get(item.namespace.sessionId)?.sessionStatus ??
             item.status,
@@ -495,6 +530,7 @@ export function createAssistant(
   }
   async function select(id: string) {
     if (!state.sessions.has(id)) return;
+    selectionVersion++;
     state.selected = id;
     if (!runtime.value || state.connection !== "connected") return;
     void remember(id);
@@ -511,24 +547,80 @@ export function createAssistant(
       if (current === epoch) state.errors.set(id, fail(error));
     }
   }
-  async function create() {
-    if (!runtime.value || state.connection !== "connected" || state.opening)
-      return;
-    const current = epoch;
+  function create() {
+    selectionVersion++;
+    blankChosen = true;
+    state.selected = "";
+    state.task = undefined;
+    state.taskError = "";
+    state.createError = "";
+  }
+  function firstPrompt(): Promise<void> {
+    if (openingTask) return openingTask;
+    const client = runtime.value,
+      current = epoch,
+      selectedAtStart = selectionVersion,
+      text = draft.value;
+    if (!client || state.connection !== "connected" || !text.trim())
+      return Promise.resolve();
+    if (!creation && !connectionReady.value) {
+      state.createError = "connection_required";
+      return Promise.resolve();
+    }
+    blankChosen = true;
+    const intent = (creation ??= {
+      sessionId: identity(),
+      commandId: identity(),
+      connectionId: selectedConnectionId.value!,
+      created: false,
+    });
     state.opening = true;
     state.createError = "";
-    try {
-      const next = await runtime.value.createSession();
-      if (current !== epoch) return;
-      state.views.set(next.namespace.sessionId, next);
-      state.selected = next.namespace.sessionId;
-      await remember(next.namespace.sessionId);
-      await list(false);
-    } catch (error) {
-      if (current === epoch) state.createError = fail(error);
-    } finally {
-      if (current === epoch) state.opening = false;
-    }
+    const task = (async () => {
+      try {
+        if (!intent.created) {
+          const result = await client.createSession({
+            sessionId: intent.sessionId,
+            connectionId: intent.connectionId,
+          });
+          if (current !== epoch) return;
+          if (result.sessionId !== intent.sessionId)
+            throw new ClientError("invalid_response");
+          intent.created = true;
+        }
+        const next = await client.restore(intent.sessionId);
+        if (current !== epoch) return;
+        if (next.namespace.sessionId !== intent.sessionId)
+          throw new ClientError("invalid_response");
+        recordView(next);
+        if (
+          state.selected ||
+          selectedAtStart !== selectionVersion ||
+          draft.value !== text
+        )
+          return;
+        state.selected = intent.sessionId;
+        selectionVersion++;
+        state.drafts.set(intent.sessionId, text);
+        state.drafts.delete("");
+        creation = undefined;
+        void remember(intent.sessionId);
+        await send(
+          { type: "prompt", text: text.trim(), policy: "queue_next" },
+          text,
+          now() + 60_000,
+          intent.commandId,
+        );
+      } catch (error) {
+        if (current === epoch) state.createError = fail(error);
+      } finally {
+        if (current === epoch) state.opening = false;
+      }
+    })().finally(() => {
+      if (openingTask === task) openingTask = undefined;
+    });
+    openingTask = task;
+    return task;
   }
   async function retry(id = state.selected) {
     const pending = state.pending.get(id),
@@ -550,6 +642,7 @@ export function createAssistant(
       state.history.delete(id);
       if (pending.draft !== undefined && state.drafts.get(id) === pending.draft)
         state.drafts.set(id, "");
+      void list(false);
     } catch (error) {
       if (current !== epoch) return;
       const code = fail(error);
@@ -573,6 +666,7 @@ export function createAssistant(
     input: Command["input"],
     originalDraft?: string,
     expiry = now() + 60_000,
+    commandId = identity(),
   ) {
     const id = state.selected;
     if (!live(view.value) || state.pending.has(id) || state.sending.has(id))
@@ -582,7 +676,7 @@ export function createAssistant(
         schemaVersion: 6,
         kind: "command",
         sessionId: id,
-        commandId: identity(),
+        commandId,
         expiresAtMs: expiry,
         input,
       },
@@ -591,6 +685,7 @@ export function createAssistant(
     await retry(id);
   }
   async function prompt(policy: "queue_next" | "steer" = "queue_next") {
+    if (!state.selected && policy === "queue_next") return firstPrompt();
     if (
       !(policy === "steer" ? canSteer.value : canSend.value) ||
       !draft.value.trim()
@@ -677,6 +772,49 @@ export function createAssistant(
       if (current === epoch) state.errors.set(id, fail(error));
     }
   }
+  async function executionDetails(operationId: string, signal: AbortSignal) {
+    const session = view.value,
+      current = epoch;
+    const delivery = session?.deliveries[operationId];
+    if (
+      !session ||
+      !delivery ||
+      delivery.proposal.name !== "execution_execute" ||
+      !services?.taskDetails
+    )
+      throw new ClientError("unavailable");
+    const args = delivery.proposal.arguments;
+    const catalog = args.catalog as
+      | { selection?: { operationRequestId?: unknown } }
+      | undefined;
+    const script = args.script as { operationRequestId?: unknown } | undefined;
+    const requestId =
+      catalog?.selection?.operationRequestId ?? script?.operationRequestId;
+    if (typeof requestId !== "string") throw new ClientError("invalid_input");
+    const owner = new AbortController();
+    const abort = () => owner.abort();
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) owner.abort();
+    try {
+      const result = await bounded(owner, () =>
+        services.taskDetails!(requestId, owner.signal),
+      );
+      const origin = result.action.initiator;
+      if (
+        current !== epoch ||
+        signal.aborted ||
+        state.selected !== session.namespace.sessionId ||
+        result.status.operationRequestId !== requestId ||
+        origin.kind !== "ai" ||
+        origin.conversation !== session.namespace.sessionId ||
+        origin.toolCall !== operationId
+      )
+        throw new ClientError("unavailable");
+      return result;
+    } finally {
+      signal.removeEventListener("abort", abort);
+    }
+  }
   async function taskDetails(id: string) {
     const current = ++taskEpoch;
     detailsOwner?.abort();
@@ -722,6 +860,8 @@ export function createAssistant(
     state.sending.clear();
     state.errors.clear();
     state.selected = "";
+    creation = undefined;
+    openingTask = undefined;
   }
   async function refreshConnections() {
     const client = runtime.value,
@@ -734,6 +874,8 @@ export function createAssistant(
   }
   return {
     state,
+    sessions,
+    selectedConnectionId,
     runtime,
     refreshConnections,
     view,
@@ -763,6 +905,7 @@ export function createAssistant(
     detach,
     permission,
     taskDetails,
+    executionDetails,
     dispose,
   };
 }

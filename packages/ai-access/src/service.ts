@@ -12,6 +12,7 @@ import {
 import {
   withinBudget,
   accessLimits,
+  isId,
   boundedStream,
   boundedJson,
   decode,
@@ -559,9 +560,36 @@ export function createAccessService(options: AccessOptions) {
     app.onRequest("session/new", async ({ params, signal }) => {
       ready(peer);
       if (params.mcpServers.length) return fail("unsupported_capability");
+      const metadata = params._meta?.[extension.create];
+      let creation = options.sessionOptions;
+      if (metadata !== undefined) {
+        if (!peer.selected) return fail("unsupported_capability");
+        if (
+          !metadata ||
+          typeof metadata !== "object" ||
+          Array.isArray(metadata)
+        )
+          return fail("invalid_input");
+        const input = metadata as Record<string, unknown>;
+        if (
+          Object.keys(input).some(
+            (key) => key !== "sessionId" && key !== "connectionId",
+          ) ||
+          !isId(input.sessionId) ||
+          (input.connectionId !== undefined && !isId(input.connectionId))
+        )
+          return fail("invalid_input");
+        creation = {
+          ...options.sessionOptions,
+          sessionId: input.sessionId as string,
+          ...(input.connectionId === undefined
+            ? {}
+            : { connectionId: input.connectionId as string }),
+        };
+      }
       const created = value(
         await budget(signal, (budget) =>
-          host.createSession(peer.caller, options.sessionOptions, budget),
+          host.createSession(peer.caller, creation, budget),
         ),
       );
       if (!peer.selected) startPump(peer, created.namespace.sessionId, 0);

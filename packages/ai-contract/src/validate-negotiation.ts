@@ -3294,8 +3294,9 @@ const schema31 = {
         },
         items: {
           type: "array",
-          items: { $ref: "#/$defs/Session" },
-          description: "Caller-scoped sessions in this immutable page.",
+          items: { $ref: "#/$defs/SessionListItem" },
+          description:
+            "Caller-scoped conversation summaries in stable recent order.",
         },
         next: {
           $ref: "#/$defs/Id",
@@ -4555,6 +4556,20 @@ const schema31 = {
         authorityId: { $ref: "#/$defs/Id" },
       },
       required: ["tenantId", "principalId", "authorityId"],
+      additionalProperties: false,
+    },
+    SessionListItem: {
+      type: "object",
+      properties: {
+        namespace: { $ref: "#/$defs/Namespace" },
+        status: {
+          type: "string",
+          enum: ["active", "recovery_required", "retired"],
+        },
+        title: { type: "string", minLength: 1, maxLength: 32 },
+        lastActivityAtMs: { $ref: "#/$defs/Counter" },
+      },
+      required: ["namespace", "status", "title", "lastActivityAtMs"],
       additionalProperties: false,
     },
   },

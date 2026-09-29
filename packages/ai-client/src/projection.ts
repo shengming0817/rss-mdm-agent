@@ -53,7 +53,7 @@ export interface CommandView {
   >["confirmation"];
 }
 export interface TimelineItem {
-  kind: "prompt" | "message" | "tool" | "interaction" | "surface";
+  kind: "prompt" | "message" | "tool" | "interaction" | "surface" | "delivery";
   key: string;
   sequence: number;
 }
@@ -76,6 +76,17 @@ export interface SessionView {
   >;
   interactions: Record<string, InteractionView>;
   surfaces: Record<string, SurfaceState>;
+  deliveries: Record<
+    string,
+    {
+      commandId: string;
+      proposal: Extract<
+        Event["body"],
+        { type: "delivery_requested" }
+      >["proposal"];
+      recorded: boolean;
+    }
+  >;
   tools: Record<
     string,
     {
@@ -127,6 +138,7 @@ export function emptyView(session: Session, cursor: number): SessionView {
     interactions: Object.create(null),
     surfaces: Object.create(null),
     tools: Object.create(null),
+    deliveries: Object.create(null),
   };
 }
 function order(
@@ -222,6 +234,18 @@ function event(view: SessionView, e: Event): void {
       stable: true,
     };
     order(view, "message", key, e.sequence);
+  } else if (body.type === "delivery_requested") {
+    if (body.target === "rust-execution") {
+      view.deliveries[body.operationId] = {
+        commandId: e.commandId,
+        proposal: structuredClone(body.proposal),
+        recorded: false,
+      };
+      order(view, "delivery", body.operationId, e.sequence);
+    }
+  } else if (body.type === "delivery_recorded") {
+    const delivery = view.deliveries[body.operationId];
+    if (delivery) delivery.recorded = true;
   } else if (body.type === "tool_proposal") {
     if (settled) return;
     const key = messageKey(e.commandId, body.proposalId);

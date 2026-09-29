@@ -96,7 +96,7 @@ describe("composer intent", () => {
       expect(wrapper.emitted("submit")).toBeUndefined();
     },
   );
-  it("collapse prevents submission; cancel requires explicit availability", async () => {
+  it("keeps input visible and editable during submission; cancel requires explicit availability", async () => {
     const wrapper = mount(MessageComposer, {
       props: { modelValue: "hello", busy: true, canCancel: true },
     });
@@ -104,8 +104,10 @@ describe("composer intent", () => {
     expect(wrapper.emitted("cancel")).toEqual([[]]);
     await wrapper.setProps({ canCancel: false, busy: false });
     expect(wrapper.find('[data-action="cancel"]').exists()).toBe(false);
-    await wrapper.get("[aria-expanded]").trigger("click");
-    expect(wrapper.find("textarea").exists()).toBe(false);
+    expect(wrapper.find("[aria-expanded]").exists()).toBe(false);
+    expect(wrapper.find("textarea").exists()).toBe(true);
+    await wrapper.setProps({ busy: true });
+    expect(wrapper.find("textarea").attributes("disabled")).toBeUndefined();
     await wrapper.get("form").trigger("submit");
     expect(wrapper.emitted("submit")).toBeUndefined();
   });

@@ -108,7 +108,7 @@ onBeforeUnmount(() => {
 });
 </script>
 <template>
-  <AppShell>
+  <AppShell :navigation-collapsed="page === 'assistant'">
     <template #header
       ><div class="brand">
         <div>
@@ -146,7 +146,11 @@ onBeforeUnmount(() => {
         :active-id="page"
         @select="navigate"
     /></template>
-    <div ref="content" :inert="loading ? true : undefined">
+    <div
+      ref="content"
+      :class="{ 'assistant-content': page === 'assistant' }"
+      :inert="loading ? true : undefined"
+    >
       <Workspace
         v-if="!nativeTestMode || currentUser"
         :key="currentUser?.generation ?? 'browser-preview'"
@@ -201,3 +205,10 @@ onBeforeUnmount(() => {
     >
   </AppShell>
 </template>
+
+<style scoped>
+.assistant-content {
+  height: 100%;
+  min-height: 0;
+}
+</style>

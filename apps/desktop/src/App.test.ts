@@ -50,6 +50,7 @@ it("expires navigation badge, background entry and question card together withou
         commands: {},
         messages: {},
         tools: {},
+        deliveries: {},
         surfaces: {},
         timeline: [{ kind: "interaction", key: "q", sequence: 1 }],
         interactions: {
@@ -79,7 +80,7 @@ it("expires navigation badge, background entry and question card together withou
     }
     await wrapper.vm.$nextTick();
     expect(wrapper.text()).toContain("AI 助手（待回应 2）");
-    expect(wrapper.find(".assistant .notice").text()).toContain("background");
+    expect(wrapper.find(".assistant .notice").text()).toContain("新对话");
     expect(
       wrapper.find(".question-card fieldset").attributes("disabled"),
     ).toBeUndefined();

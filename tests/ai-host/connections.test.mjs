@@ -1156,3 +1156,59 @@ test("enterprise and guest callers use native identity, never display name or pr
     ),
   );
 });
+
+test("session creation replays a caller-owned identity without rebinding or duplicating", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "rss-create-intent-"));
+  const store = unwrap(
+    openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
+  );
+  const host = unwrap(
+    await createHost({
+      credentialPersistence: fixturePersistence(store),
+      workerRuntime,
+      store,
+      launchFences: store,
+      delivery: null,
+      resolve: async () => {
+        throw new Error("creation must not launch a provider");
+      },
+    }),
+  );
+  t.after(async () => {
+    await host.close(budget());
+    await rm(root, { recursive: true, force: true });
+  });
+  const intent = { sessionId: "first-send-identity" };
+  const sessions = await Promise.all([
+    host.createSession(caller, intent, budget()),
+    host.createSession(caller, intent, budget()),
+  ]);
+  const first = unwrap(sessions[0]);
+  assert.equal(first.namespace.sessionId, intent.sessionId);
+  assert.deepEqual(unwrap(sessions[1]), first);
+  const other = { ...caller, principalId: "bob" };
+  assert.equal(
+    unwrap(await host.createSession(other, intent, budget())).namespace
+      .principalId,
+    "bob",
+  );
+  assert.equal(
+    unwrap(await host.listSessions(caller, { limit: 64 }, budget())).items
+      .length,
+    1,
+  );
+  assert.deepEqual(
+    unwrap(
+      await host.createSession(
+        caller,
+        { ...intent, connectionId: "not-a-rebind" },
+        budget(),
+      ),
+    ),
+    first,
+  );
+  assert.equal(
+    (await host.createSession(caller, { sessionId: "" }, budget())).error.code,
+    "invalid_input",
+  );
+});

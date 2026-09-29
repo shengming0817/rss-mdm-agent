@@ -162,7 +162,10 @@ for (const provider of engines) {
       f.model.text("continued");
       await f.start();
       let peer = await f.connect();
-      const view = await peer.client.createSession(),
+      const view = await peer.client.restore(
+          (await peer.client.createSession({ sessionId: crypto.randomUUID() }))
+            .sessionId,
+        ),
         id = view.namespace.sessionId;
       const input = command(id, "original", "Remember A06_SESSION_NONCE");
       const receipt = await peer.client.submit(input);

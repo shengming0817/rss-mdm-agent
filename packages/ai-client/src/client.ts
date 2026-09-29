@@ -9,6 +9,7 @@ import {
 } from "@agentclientprotocol/sdk";
 import {
   accessLimits,
+  isId,
   boundedStream,
   boundedJson,
   decode,
@@ -266,14 +267,22 @@ export class RuntimeClient {
       );
     });
   }
-  async createSession(): Promise<SessionView> {
+  async createSession(options: {
+    sessionId: string;
+    connectionId?: string;
+  }): Promise<{ sessionId: string }> {
     return this.boundary(async () => {
       this.ready();
-      const result = await this.connection.agent.request("session/new", {
+      if (
+        !isId(options.sessionId) ||
+        (options.connectionId !== undefined && !isId(options.connectionId))
+      )
+        throw new ClientError("invalid_input");
+      return this.connection.agent.request("session/new", {
         cwd: "/",
         mcpServers: [],
+        _meta: { [extension.create]: options },
       });
-      return this.restore(result.sessionId);
     });
   }
   async listSessions(query: PageQuery = { limit: 64 }): Promise<SessionPage> {

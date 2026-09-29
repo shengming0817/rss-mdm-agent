@@ -238,12 +238,6 @@ fn context(v: &Value) -> Result<(), ContractError> {
                         || stage["configRevision"].as_u64() == Some(0)
                 })
         }
-        Some("sessionPage") => {
-            for session in v["items"].as_array().into_iter().flatten() {
-                context(session)?;
-            }
-            false
-        }
         Some("snapshotPage") => {
             context(&v["session"])?;
             let mut invalid = v["cursor"] != v["session"]["lastSequence"];

@@ -11,8 +11,14 @@ fn main() {
     let max = contract["maxFrameBytes"]
         .as_u64()
         .expect("private-link max frame");
+    let queued_bytes = contract["maxQueuedBytes"]
+        .as_u64()
+        .expect("private-link queue bytes");
+    let queued_frames = contract["maxQueuedFrames"]
+        .as_u64()
+        .expect("private-link queue frames");
     let generated = format!(
-        "const MAGIC: [u8; 4] = [{}, {}, {}, {version}];\nconst MAX: usize = {max};\n",
+        "const MAGIC: [u8; 4] = [{}, {}, {}, {version}];\nconst MAX: usize = {max};\nconst QUEUED_BYTES: usize = {queued_bytes};\nconst QUEUED_FRAMES: usize = {queued_frames};\n",
         magic[0].as_u64().expect("magic byte"),
         magic[1].as_u64().expect("magic byte"),
         magic[2].as_u64().expect("magic byte"),

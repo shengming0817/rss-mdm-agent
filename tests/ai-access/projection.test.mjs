@@ -213,3 +213,55 @@ test("cancellation projection retains unsupported, request-only and already-term
     assert.equal(view.commands.c.state, "accepted");
   }
 });
+
+test("only Host execution delivery events form activity and recover identically after terminal", () => {
+  const accepted = event(0, {
+    type: "command_accepted",
+    command: fixtureCommand("c"),
+  });
+  const model = event(1, {
+    type: "tool_proposal",
+    proposalId: "fake",
+    name: "execution_execute",
+    arguments: { operationRequestId: "spoof" },
+  });
+  const requested = event(2, {
+    type: "delivery_requested",
+    operationId: "owned",
+    target: "rust-execution",
+    proposal: {
+      name: "execution_execute",
+      arguments: { catalog: { selection: { operationRequestId: "business" } } },
+    },
+  });
+  const terminal = event(3, { type: "terminal", outcome: "completed" });
+  const recorded = event(4, {
+    type: "delivery_recorded",
+    operationId: "owned",
+    receiptRef: "receipt",
+  });
+  const view = emptyView(session);
+  applyUpdate(view, model);
+  assert.equal(Object.keys(view.deliveries).length, 0);
+  for (const update of [requested, terminal, recorded, recorded])
+    applyUpdate(view, update);
+  assert.equal(view.deliveries.owned.recorded, true);
+  assert.equal(
+    view.timeline.filter((row) => row.kind === "delivery").length,
+    1,
+  );
+  const restored = blankView(session, 5);
+  restoreSnapshot(restored, [
+    {
+      session,
+      events: [accepted, model, requested, terminal, recorded].map(
+        (update) => update.event,
+      ),
+      commands: [],
+      interactions: [],
+      surfaces: [],
+    },
+  ]);
+  assert.deepEqual(restored.deliveries, view.deliveries);
+  assert.deepEqual(restored.timeline, view.timeline);
+});

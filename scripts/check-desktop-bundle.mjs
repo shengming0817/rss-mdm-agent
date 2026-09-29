@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   realpathSync,
   rmSync,
@@ -15,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { run, verifyRuntimeIntegrity } from "./ai-host-artifacts.mjs";
 import { cargoTargetDir } from "./cargo-target.mjs";
+import { sourceEvidence, sha256 } from "./native-evidence.mjs";
 
 export async function checkDesktopBundle(root, runtimeTreeSha256) {
   run("pnpm", ["stage:desktop-runtime"], root);
@@ -26,7 +28,6 @@ export async function checkDesktopBundle(root, runtimeTreeSha256) {
       "exec",
       "tauri",
       "build",
-      "--debug",
       "--config",
       "src-tauri/tauri.bundle.conf.json",
       "--config",
@@ -36,31 +37,28 @@ export async function checkDesktopBundle(root, runtimeTreeSha256) {
   );
   const bundle = join(
     cargoTargetDir(root),
-    "debug/bundle/macos/RSS MDM Agent.app/Contents",
+    "release/bundle/macos/RSS MDM Agent.app/Contents",
   );
   verifyRuntimeIntegrity(
     join(bundle, "Resources/ai-host-runtime"),
     runtimeTreeSha256,
   );
-  // A short, private home also keeps the macOS Unix socket path within sockaddr_un.
-  const isolatedHome = realpathSync(mkdtempSync("/tmp/rss-b-"));
-  const data = join(
-    isolatedHome,
-    "Library/Application Support/com.rss.mdmagent/test-users",
-  );
-  const env = {
-    ...process.env,
-    HOME: isolatedHome,
-    CFFIXED_USER_HOME: isolatedHome,
-  };
+  // A short, isolated data root keeps Unix sockets within sockaddr_un.
+  const isolatedData = realpathSync(mkdtempSync("/tmp/rss-b-"));
+  const data = isolatedData;
+  const env = { ...process.env };
   delete env.RSS_AI_HOST_RUNTIME;
   delete env.CODEX_HOME;
-  const child = spawn(join(bundle, "MacOS/rss-mdm-desktop"), [], {
-    cwd: isolatedHome,
-    env,
-    detached: true,
-    stdio: ["ignore", "ignore", "pipe"],
-  });
+  const child = spawn(
+    join(bundle, "MacOS/rss-mdm-desktop"),
+    ["--test-data-dir", data],
+    {
+      cwd: isolatedData,
+      env,
+      detached: true,
+      stdio: ["ignore", "ignore", "pipe"],
+    },
+  );
   let status,
     buffer = "";
   child.stderr.setEncoding("utf8");
@@ -119,6 +117,8 @@ export async function checkDesktopBundle(root, runtimeTreeSha256) {
     assert.equal(child.signalCode, null);
     return {
       productionEntrypoint: true,
+      buildProfile: "release",
+      nativeDriver: false,
       resourceOverride: false,
       bundledHostReady: true,
       runtimeTreeSha256,
@@ -141,7 +141,7 @@ export async function checkDesktopBundle(root, runtimeTreeSha256) {
       }
       await exited.catch(() => {});
     }
-    rmSync(isolatedHome, { recursive: true, force: true });
+    rmSync(isolatedData, { recursive: true, force: true });
   }
 }
 
@@ -151,24 +151,34 @@ if (
 ) {
   const root = fileURLToPath(new URL("../", import.meta.url));
 
-  const manifest = JSON.parse(
-    readFileSync(
-      join(root, ".local-ci-runs/ai-host-runtime/manifest.json"),
-      "utf8",
-    ),
-  );
-  if (manifest.status !== "passed")
-    throw new Error("Build the runtime before checking the bundle");
-  run("pnpm", ["build"], root);
-  let result, failure;
+  const report = join(root, ".local-ci-runs/desktop-bundle.json");
+  mkdirSync(join(root, ".local-ci-runs"), { recursive: true });
+  const evidence = {
+    status: "running",
+    mode: "release-bundle-startup",
+    credentials: "none",
+  };
+  writeFileSync(report, JSON.stringify(evidence, null, 2));
   try {
-    result = await checkDesktopBundle(root, manifest.runtimeTreeSha256);
+    evidence.source = sourceEvidence(root);
+    const manifestBytes = readFileSync(
+      join(root, ".local-ci-runs/ai-host-runtime/manifest.json"),
+    );
+    evidence.runtimeManifestSha256 = sha256(manifestBytes);
+    const manifest = JSON.parse(manifestBytes);
+    assert.equal(manifest.status, "passed", "Build the runtime first");
+    run("pnpm", ["build"], root);
+    evidence.result = await checkDesktopBundle(
+      root,
+      manifest.runtimeTreeSha256,
+    );
+    assert.deepEqual(sourceEvidence(root), evidence.source);
+    evidence.status = "passed";
   } catch {
-    failure = "bundle_startup_failed";
+    evidence.status = "failed";
+    evidence.failure = "bundle_startup_failed";
+    process.exitCode = 1;
+  } finally {
+    writeFileSync(report, JSON.stringify(evidence, null, 2));
   }
-  writeFileSync(
-    join(root, ".local-ci-runs/desktop-bundle.json"),
-    JSON.stringify({ credentials: "none", result, failure }, null, 2),
-  );
-  if (failure) throw new Error(failure);
 }

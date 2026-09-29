@@ -52,6 +52,11 @@ export async function startFixture() {
       null,
     ),
   );
+  unwrap(
+    await host.store.savePreferences(fixtureCaller, {
+      defaultConnectionId: { set: "cfg" },
+    }),
+  );
   const service = createAccessService({
     host,
     now: Date.now,

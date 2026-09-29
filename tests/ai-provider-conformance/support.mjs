@@ -260,7 +260,11 @@ export async function executionGeneration(directory) {
   }
   assert.fail("execution user generation unavailable");
 }
-export async function clientAt(parent, generation = "fixture-generation") {
+export async function clientAt(
+  parent,
+  generation = "fixture-generation",
+  options = {},
+) {
   const channel = `fixture-view-${++parent.next}`;
   const readable = new ReadableStream({
     start(input) {
@@ -287,7 +291,7 @@ export async function clientAt(parent, generation = "fixture-generation") {
       },
     },
   });
-  const client = new RuntimeClient({ readable, writable });
+  const client = new RuntimeClient({ readable, writable }, options);
   await client.initialize();
   return {
     client,

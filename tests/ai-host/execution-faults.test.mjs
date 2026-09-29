@@ -49,7 +49,15 @@ const mailbox = () => {
   };
 };
 const owner = (store, router, now = Date.now) =>
-  new Deliveries(store, router, mailbox(), async () => {}, now);
+  new Deliveries(
+    store,
+    router,
+    mailbox(),
+    async () => {},
+    now,
+    async () => ({ ok: true, value: "allowed" }),
+    () => true,
+  );
 const reply = (result) => JSON.parse(unwrap(result).text);
 
 async function crashAfterRustAcceptance(

@@ -66,6 +66,8 @@ export interface ControlledToolVerifier {
   >;
 }
 export interface SessionOptions {
+  /** Caller-scoped creation identity, reused after an unknown session/new outcome. */
+  readonly sessionId?: Id;
   readonly connectionId?: Id;
 }
 export interface ConnectionOptions {

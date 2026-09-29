@@ -1,3 +1,4 @@
+import { turnFailure } from "../../../packages/ai-adapters/codex/dist/adapter.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { spawnSync } from "node:child_process";
@@ -1014,63 +1015,81 @@ const failures = [
     ].map(([httpStatusCode, code]) => [{ [tag]: { httpStatusCode } }, code]),
   ),
 ];
+test("Codex error mapping is closed and independent of lifecycle", () => {
+  for (const [info, expected] of failures)
+    assert.deepEqual(
+      turnFailure({ error: { codexErrorInfo: info } }),
+      { code: expected, retry: "never" },
+      JSON.stringify(info),
+    );
+  assert.deepEqual(
+    turnFailure({ error: { codexErrorInfo: { futureError: {} } } }),
+    { code: "unavailable", retry: "never" },
+  );
+  assert.equal(turnFailure({ error: null }), undefined);
+});
 for (const path of ["live", "before_ack"]) {
-  for (const [info, expected] of failures) {
-    test(`closed Codex failure ${path} ${JSON.stringify(info)}`, async (t) => {
-      const s = await setup(t),
-        command = fixtureCommand("failure"),
-        attempt = s.attempt("failure");
-      const error = {
-        message: "CANARY_RAW_AUTH",
-        codexErrorInfo: info,
-        additionalDetails: null,
-      };
-      if (path === "before_ack")
-        s.fault(async (method, params) => {
-          if (method !== "turn/start") return;
-          const failed = {
-            ...turn("failed-turn", params.clientUserMessageId, "failed"),
-            error,
-          };
-          s.thread.turns.push(failed);
-          s.emit("turn/completed", { threadId: s.thread.id, turn: failed });
-          await new Promise(setImmediate);
-          return { turn: failed };
-        });
-      const submitted = await s.adapter.dispatch(
-        s.admitted.binding,
-        command,
-        attempt,
-        budget(),
-      );
-      if (path === "live") {
-        assert.equal(submitted.certainty, "submitted");
-        Object.assign(s.thread.turns[0], { status: "failed", error });
-        s.emit("turn/completed", {
-          threadId: s.thread.id,
-          turn: s.thread.turns[0],
-        });
-        s.emit("turn/completed", {
-          threadId: s.thread.id,
-          turn: s.thread.turns[0],
-        });
-      } else assert.equal(submitted.certainty, "submitted");
-      const events = [];
-      for await (const event of s.adapter.observe(
-        s.admitted.binding,
-        budget(),
-      )) {
-        events.push(event);
-        if (event.body?.type === "terminal") break;
-      }
-      assert.deepEqual(
-        events
-          .filter((e) => e.body?.type === "error")
-          .map((e) => e.body.failure),
-        [{ code: expected, retry: "never" }],
-      );
-      assert.equal(events.at(-1).body.outcome, "failed");
-      assert.equal(JSON.stringify(events).includes("CANARY"), false);
+  const info = "unauthorized",
+    expected = "authentication_required";
+  test(`Codex failed lifecycle ${path} keeps certainty, deduplicates and rejects late success`, async (t) => {
+    const s = await setup(t),
+      command = fixtureCommand("failure"),
+      attempt = s.attempt("failure");
+    const error = {
+      message: "CANARY_RAW_AUTH",
+      codexErrorInfo: info,
+      additionalDetails: null,
+    };
+    if (path === "before_ack")
+      s.fault(async (method, params) => {
+        if (method !== "turn/start") return;
+        const failed = {
+          ...turn("failed-turn", params.clientUserMessageId, "failed"),
+          error,
+        };
+        s.thread.turns.push(failed);
+        s.emit("turn/completed", { threadId: s.thread.id, turn: failed });
+        await new Promise(setImmediate);
+        return { turn: failed };
+      });
+    const submitted = await s.adapter.dispatch(
+      s.admitted.binding,
+      command,
+      attempt,
+      budget(),
+    );
+    if (path === "live") {
+      assert.equal(submitted.certainty, "submitted");
+      Object.assign(s.thread.turns[0], { status: "failed", error });
+      s.emit("turn/completed", {
+        threadId: s.thread.id,
+        turn: s.thread.turns[0],
+      });
+      s.emit("turn/completed", {
+        threadId: s.thread.id,
+        turn: s.thread.turns[0],
+      });
+    } else assert.equal(submitted.certainty, "submitted");
+    s.emit("item/agentMessage/delta", {
+      threadId: s.thread.id,
+      turnId: submitted.binding.nativeRunId,
+      itemId: "late-message",
+      delta: "CANARY_LATE_CONTENT",
     });
-  }
+    s.emit("turn/completed", {
+      threadId: s.thread.id,
+      turn: { ...s.thread.turns[0], status: "completed", error: null },
+    });
+    const events = [];
+    for await (const event of s.adapter.observe(s.admitted.binding, budget())) {
+      events.push(event);
+      if (event.body?.type === "terminal") break;
+    }
+    assert.deepEqual(
+      events.filter((e) => e.body?.type === "error").map((e) => e.body.failure),
+      [{ code: expected, retry: "never" }],
+    );
+    assert.equal(events.at(-1).body.outcome, "failed");
+    assert.equal(JSON.stringify(events).includes("CANARY"), false);
+  });
 }

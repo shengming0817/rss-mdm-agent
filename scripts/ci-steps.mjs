@@ -34,12 +34,12 @@ export const steps = [
   [
     "desktop native acceptance syntax",
     "node",
-    ["--check", "tests/desktop/native-flow.js"],
+    ["--check", "scripts/check-desktop-native.mjs"],
   ],
   [
-    "desktop credential acceptance syntax",
+    "desktop model fixture syntax",
     "node",
-    ["--check", "tests/desktop/custom-connection-flow.js"],
+    ["--check", "tests/desktop/model-fixture.mjs"],
   ],
   ["AI generated contracts", "pnpm", ["check:ai-contract"]],
   ["AI contract conformance", "pnpm", ["test:ai-contract"]],

@@ -151,8 +151,6 @@ function checkContext(value: WireRecord): void {
     )
       throw new ContractError("context");
   }
-  if (value.kind === "sessionPage")
-    for (const session of value.items) checkContext(session);
   if (value.kind === "event" && value.body.type === "command_accepted") {
     checkContext(value.body.command);
     if (

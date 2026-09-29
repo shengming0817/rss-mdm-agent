@@ -41,7 +41,7 @@ worker 的 activation 数据通过既有私有管道传入，包含该次启动�
 
 `pnpm test:ai-host` 覆盖真实 SQLite、worker 进程、取消、阶段和交付恢复；`pnpm test:ai-acceptance` 使用固定 SDK/native 进程和本地模型协议服务。加密测试注入测试主密钥，不访问用户 Keychain。
 
-`node scripts/check-native-credentials.mjs` 验证真实 WebView 表单 → Rust 加密 → SQLite 保存 → 独立测试失败与重试 → Host 重启恢复 → 删除。验收程序注入主密钥 backend，脚本不调用系统钥匙串命令。它使用实际构建的 runtime，输出 `.local-ci-runs/native-credentials.json`，证明本地接缝而非云端认证。
+`pnpm check:desktop-native` 从根 `pnpm dev` 启动真实产品 WebView，以固定 Codex CLI、本地协议夹具和合成凭据验证表单 → Rust 加密 → SQLite 保存 → 测试失败重试 → Host 重启 → 删除，并验证一次性工具许可和独立 Rust 动作确认。该入口使用实际系统密钥 backend，不读取个人 AI 配置；输出 `.local-ci-runs/desktop-native.json`。范围与前置条件见[桌面开发](../../docs/guides/desktop-development.md)。
 
 `node scripts/check-connection-sources.mjs` 把当前用户已有配置目录交给官方 Codex/Claude，发送最小真实模型请求。两个来源均须完成探针；目录缺失记 partial，认证或能力失败仍判失败。报告不包含账号、目录或秘密，该入口不纳入无凭据 CI。平台窗口验收见[桌面指南](../../docs/guides/desktop-development.md)。
 

@@ -22,7 +22,10 @@ for (const provider of engines) {
       else release = f.model.hold();
       await f.start();
       const { client } = await f.connect();
-      const view = await client.createSession(),
+      const view = await client.restore(
+          (await client.createSession({ sessionId: crypto.randomUUID() }))
+            .sessionId,
+        ),
         id = view.namespace.sessionId;
       await client.submit(command(id, "long"));
       await until(
@@ -106,7 +109,10 @@ test(
     f.model.hold();
     await f.start();
     let { client } = await f.connect();
-    const view = await client.createSession(),
+    const view = await client.restore(
+        (await client.createSession({ sessionId: crypto.randomUUID() }))
+          .sessionId,
+      ),
       id = view.namespace.sessionId;
     const prompt = command(id, "held");
     const original = await client.submit(prompt);

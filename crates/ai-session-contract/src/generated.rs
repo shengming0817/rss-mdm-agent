@@ -12814,12 +12814,138 @@ impl ::std::convert::TryFrom<::std::string::String> for SessionKind {
         value.parse()
     }
 }
+#[doc = "`SessionListItem`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct SessionListItem {
+    #[serde(rename = "lastActivityAtMs")]
+    #[doc = "`last_activity_at_ms` member; see its generated type and parent schema."]
+    pub last_activity_at_ms: Counter,
+    #[doc = "`namespace` member; see its generated type and parent schema."]
+    pub namespace: Namespace,
+    #[doc = "`status` member; see its generated type and parent schema."]
+    pub status: SessionListItemStatus,
+    #[doc = "`title` member; see its generated type and parent schema."]
+    pub title: SessionListItemTitle,
+}
+#[doc = "`SessionListItemStatus`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum SessionListItemStatus {
+    #[serde(rename = "active")]
+    #[doc = "`Active` alternative; see the parent type's schema contract."]
+    Active,
+    #[serde(rename = "recovery_required")]
+    #[doc = "`RecoveryRequired` alternative; see the parent type's schema contract."]
+    RecoveryRequired,
+    #[serde(rename = "retired")]
+    #[doc = "`Retired` alternative; see the parent type's schema contract."]
+    Retired,
+}
+impl ::std::fmt::Display for SessionListItemStatus {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Active => f.write_str("active"),
+            Self::RecoveryRequired => f.write_str("recovery_required"),
+            Self::Retired => f.write_str("retired"),
+        }
+    }
+}
+impl ::std::str::FromStr for SessionListItemStatus {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "active" => Ok(Self::Active),
+            "recovery_required" => Ok(Self::RecoveryRequired),
+            "retired" => Ok(Self::Retired),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for SessionListItemStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for SessionListItemStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`SessionListItemTitle`"]
+#[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct SessionListItemTitle(
+    #[doc = "`` member; see its generated type and parent schema."] ::std::string::String,
+);
+impl ::std::ops::Deref for SessionListItemTitle {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<SessionListItemTitle> for ::std::string::String {
+    fn from(value: SessionListItemTitle) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for SessionListItemTitle {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() > 32usize {
+            return Err("longer than 32 characters".into());
+        }
+        if value.chars().count() < 1usize {
+            return Err("shorter than 1 characters".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for SessionListItemTitle {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for SessionListItemTitle {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for SessionListItemTitle {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
+}
 #[doc = "`SessionPage`"]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct SessionPage {
-    #[doc = "Caller-scoped sessions in this immutable page."]
-    pub items: ::std::vec::Vec<Session>,
+    #[doc = "Caller-scoped conversation summaries in stable recent order."]
+    pub items: ::std::vec::Vec<SessionListItem>,
     #[doc = "Closed record discriminator."]
     pub kind: SessionPageKind,
     #[doc = "Opaque continuation; absent at end of the read view."]
@@ -16539,6 +16665,21 @@ impl std::fmt::Debug for Session {
 impl std::fmt::Debug for SessionKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(stringify!(SessionKind), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for SessionListItem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(SessionListItem), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for SessionListItemStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(SessionListItemStatus), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for SessionListItemTitle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(SessionListItemTitle), "([redacted])"))
     }
 }
 impl std::fmt::Debug for SessionPage {

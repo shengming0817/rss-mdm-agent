@@ -21,7 +21,10 @@ for (const provider of ["claude", "deepseek"]) {
       await f.start();
       const a = await f.connect(),
         b = await f.connect();
-      const view = await a.client.createSession(),
+      const view = await a.client.restore(
+          (await a.client.createSession({ sessionId: crypto.randomUUID() }))
+            .sessionId,
+        ),
         id = view.namespace.sessionId;
       await b.client.restore(id);
       await a.client.submit(command(id, "question-1"));

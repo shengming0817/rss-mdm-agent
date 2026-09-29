@@ -1,13 +1,41 @@
+<script setup lang="ts">
+import { ref, watch } from "vue";
+import ModalDrawer from "./ModalDrawer.vue";
+const props = defineProps<{ navigationCollapsed?: boolean }>();
+const navigationOpen = ref(false);
+watch(
+  () => props.navigationCollapsed,
+  () => {
+    navigationOpen.value = false;
+  },
+);
+</script>
 <template>
-  <div class="rss-ui shell">
-    <header><slot name="header" /></header>
+  <div class="rss-ui shell" :class="{ focused: navigationCollapsed }">
+    <header>
+      <button
+        v-if="navigationCollapsed"
+        class="navigation-trigger"
+        aria-label="打开主导航"
+        @click="navigationOpen = true"
+      >
+        ☰</button
+      ><slot name="header" />
+    </header>
     <div class="body">
-      <aside>
+      <aside v-if="!navigationCollapsed">
         <div class="navigation-scroll"><slot name="navigation" /></div>
         <div class="navigation-footer"><slot name="navigation-footer" /></div>
       </aside>
       <main><slot /></main>
     </div>
+    <ModalDrawer
+      v-if="navigationCollapsed && navigationOpen"
+      label="主导航"
+      @close="navigationOpen = false"
+      ><div @click="navigationOpen = false">
+        <slot name="navigation" /><slot name="navigation-footer" /></div
+    ></ModalDrawer>
     <footer><slot name="status" /></footer>
   </div>
 </template>
@@ -26,6 +54,9 @@ footer {
   background: var(--color-surface);
 }
 header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
   border-bottom: 1px solid var(--color-border);
 }
 footer {
@@ -59,6 +90,16 @@ main {
   min-height: 0;
   overflow: auto;
   padding: 24px;
+}
+.focused main {
+  padding: 0;
+  overflow: hidden;
+}
+.navigation-trigger {
+  padding: 8px 12px;
+}
+header :deep(.brand) {
+  flex: 1;
 }
 @media (max-width: 640px) {
   .body {

@@ -2,15 +2,18 @@
 // Text interpolation intentionally keeps untrusted content inert.
 import type { MessageItem } from "../types";
 
-defineProps<{ items: readonly MessageItem[] }>();
+withDefaults(
+  defineProps<{ items: readonly MessageItem[]; announce?: boolean }>(),
+  { announce: true },
+);
 </script>
 
 <template>
   <div
     class="rss-ui stream"
-    role="log"
+    :role="announce ? 'log' : undefined"
     aria-label="消息"
-    aria-live="polite"
+    :aria-live="announce ? 'polite' : undefined"
     aria-relevant="additions text"
   >
     <template v-for="item in items" :key="item.id">

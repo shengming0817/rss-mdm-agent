@@ -96,13 +96,34 @@ for (const provider of engines) {
         process.stdin.on("error", () => {});
       }
       let peer;
+      const permissions = [];
+      let permissionKind = "allow_once";
       try {
         peer = await clientAt(
           nativePeer(link.lane("native")),
           await executionGeneration(f.directory),
+          {
+            requestPermission: async (request) => {
+              permissions.push(request);
+              return {
+                outcome: {
+                  outcome: "selected",
+                  optionId: request.options.find(
+                    (option) => option.kind === permissionKind,
+                  ).optionId,
+                },
+              };
+            },
+          },
         );
         if (provider !== "codex") {
-          const empty = await peer.client.createSession();
+          const empty = await peer.client.restore(
+            (
+              await peer.client.createSession({
+                sessionId: crypto.randomUUID(),
+              })
+            ).sessionId,
+          );
           await assert.rejects(
             peer.client.submit(command(empty.namespace.sessionId, "rejected")),
             /unsupported_capability/,
@@ -122,7 +143,13 @@ for (const provider of engines) {
           }
           return;
         }
-        const view = await peer.client.createSession(),
+        const view = await peer.client.restore(
+            (
+              await peer.client.createSession({
+                sessionId: crypto.randomUUID(),
+              })
+            ).sessionId,
+          ),
           id = view.namespace.sessionId;
 
         f.model.replies.push((res) => {
@@ -165,7 +192,10 @@ for (const provider of engines) {
           res.end();
         });
         f.model.text("catalog read");
-        await peer.client.submit(command(id, "catalog"));
+        await peer.client.submit(
+          command(id, "catalog", "GOLDEN_INSTALL 安装办公套件"),
+        );
+        await peer.client.listSessions({ limit: 20 });
         await until(
           () =>
             peer.client.getSession(id)?.commands.catalog?.state === "terminal",
@@ -184,6 +214,93 @@ for (const provider of engines) {
         const result = JSON.parse(proposals[0].result.text);
         assert.equal(result.status, "ok");
         assert.ok(result.result, "actual Rust catalog must be returned");
+        assert.equal(
+          permissions.length,
+          0,
+          "catalog reads never ask permission",
+        );
+        for (const [commandId, choice] of [
+          ["allow-execute", "allow_once"],
+          ["deny-execute", "reject_once"],
+        ]) {
+          permissionKind = choice;
+          f.model.replies.push((res) => {
+            const events = [
+              { type: "response.created", response: { id: commandId } },
+              {
+                type: "response.output_item.done",
+                output_index: 0,
+                item: {
+                  type: "function_call",
+                  call_id: commandId,
+                  name: "propose",
+                  namespace: "mcp__rss_host",
+                  arguments: JSON.stringify({
+                    name: "execution_execute",
+                    arguments: {
+                      catalog: {
+                        selection: {
+                          operationRequestId: commandId,
+                          catalog: result.result.catalog,
+                          itemId: "office",
+                          variantId: "test",
+                          arguments: { edition: "standard" },
+                        },
+                      },
+                    },
+                  }),
+                },
+              },
+              {
+                type: "response.completed",
+                response: {
+                  id: commandId,
+                  usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+                },
+              },
+            ];
+            res.writeHead(200, { "content-type": "text/event-stream" });
+            for (const event of events)
+              res.write(
+                `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`,
+              );
+            res.end();
+          });
+          f.model.text("execution decision recorded");
+          await peer.client.submit(command(id, commandId));
+          await until(
+            () =>
+              peer.client.getSession(id)?.commands[commandId]?.state ===
+              "terminal",
+            commandId,
+          );
+          assert.equal(
+            peer.client.getSession(id).commands[commandId].outcome,
+            "completed",
+            stderr,
+          );
+          const request = permissions.at(-1);
+          assert.deepEqual(
+            request.options.map((option) => option.kind),
+            ["allow_once", "reject_once"],
+          );
+          assert.equal(
+            request.toolCall.rawInput.catalog.selection.operationRequestId,
+            commandId,
+          );
+          const tool = Object.values(peer.client.getSession(id).tools).find(
+            (tool) =>
+              tool.toolCallId === commandId ||
+              (tool.name === "execution_execute" &&
+                tool.commandId === commandId),
+          );
+          assert.ok(tool, "execution result is observable");
+          assert.equal(
+            tool.result.disposition,
+            choice === "allow_once" ? "returned" : "rejected",
+          );
+        }
+        assert.equal(permissions.length, 2);
         peer.close();
         assert.equal(await stop(app), 0, stderr);
         const store = unwrap(

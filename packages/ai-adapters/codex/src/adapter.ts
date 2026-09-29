@@ -62,7 +62,7 @@ import {
   same,
 } from "./support.js";
 
-function turnFailure(turn: Turn): Failure | undefined {
+export function turnFailure(turn: Turn): Failure | undefined {
   if (!turn.error) return undefined;
   const info = turn.error.codexErrorInfo;
   const status =

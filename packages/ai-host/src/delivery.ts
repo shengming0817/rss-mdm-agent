@@ -39,7 +39,11 @@ export interface DeliveryRouter {
   prepare(
     namespace: Namespace,
     proposal: Proposal,
-  ): Result<{ operationId: string; target: string }>;
+  ): Result<{
+    operationId: string;
+    target: string;
+    permission: "none" | "ask";
+  }>;
   send(
     request: DeliveryRequest,
     budget: Budget,
@@ -60,6 +64,16 @@ export interface DeliveryRouter {
     budget: Budget,
   ): Promise<Result<void>>;
 }
+export type DeliveryAuthorizer = (
+  request: {
+    namespace: Namespace;
+    generation: string;
+    commandId: string;
+    operationId: string;
+    proposal: Proposal;
+  },
+  budget: Budget,
+) => Promise<Result<"allowed" | "rejected">>;
 type Stored = { delivery: Delivery; event: Event };
 const value = <T>(result: Result<T>): T => {
   if (!result.ok) throw new Error(result.error.code);
@@ -67,7 +81,10 @@ const value = <T>(result: Result<T>): T => {
 };
 /** One Host owner's durable outbox. No receiver business state is cached here. */
 export class Deliveries {
-  private readonly active = new Map<string, Promise<Result<ToolReply>>>();
+  private readonly active = new Map<
+    string,
+    { fingerprint: string; task: Promise<Result<ToolReply>> }
+  >();
   private recoveryAfter?: string;
   constructor(
     private readonly store: SessionStore,
@@ -77,7 +94,12 @@ export class Deliveries {
       fn: () => Promise<T>,
     ) => Promise<T>,
     private readonly changed: (n: Namespace, after: number) => Promise<void>,
-    private readonly now = Date.now,
+    private readonly now: () => number,
+    private readonly authorize: DeliveryAuthorizer,
+    private readonly current: (
+      namespace: Namespace,
+      generation: string,
+    ) => boolean,
   ) {}
   async propose(
     namespace: Namespace,
@@ -87,71 +109,143 @@ export class Deliveries {
     budget: Budget,
   ): Promise<Result<ToolReply>> {
     try {
-      boundedJson(proposal, defaultLimits);
+      proposal = JSON.parse(boundedJson(proposal, defaultLimits)) as Proposal;
       const prepared = this.router.prepare(namespace, proposal);
       if (!prepared.ok) return prepared;
-      const { operationId, target } = prepared.value;
-      if (!isId(operationId) || !isId(target)) return fail("invalid_input");
-      const stored = await this.mailbox(namespace, async () => {
-        const session = value(await this.store.session(namespace));
-        if (
-          activeStage(session).binding.generation !== generation ||
-          session.status !== "active"
-        )
-          throw new Error("stale_binding");
-        const existing = value(
-          await this.store.delivery(namespace, operationId),
-        );
-        if (existing) {
-          if (
-            existing.event.body.type !== "delivery_requested" ||
-            existing.delivery.target !== target ||
-            boundedJson(existing.event.body.proposal, defaultLimits) !==
-              boundedJson(proposal, defaultLimits)
-          )
-            throw new Error("content_conflict");
-          return existing;
-        }
-        const event: DeliveryRequest = {
-          schemaVersion: 6,
-          kind: "event",
-          namespace,
-          eventId: randomUUID(),
-          sequence: session.lastSequence + 1,
-          generation,
-          commandId,
-          body: {
-            type: "delivery_requested",
-            operationId,
-            target,
-            proposal: structuredClone(proposal),
-          },
-        };
-        const delivery: Delivery = {
-          schemaVersion: 6,
-          kind: "delivery",
-          namespace,
-          operationId,
-          eventId: event.eventId,
-          target,
-          contentHash: deliveryFingerprint(event, target, defaultLimits),
-          retry: "reconcile_first",
-          status: "pending",
-          attempts: 0,
-          nextAttemptAtMs: this.now(),
-        };
-        await this.commit(session, delivery, [event]);
-        return { delivery, event };
-      });
-      return await this.deliver(stored, budget);
-    } catch (error) {
+      const { operationId, target, permission } = prepared.value;
       if (
-        error instanceof Error &&
-        ["content_conflict", "stale_binding"].includes(error.message)
+        !isId(operationId) ||
+        !isId(target) ||
+        !["none", "ask"].includes(permission)
       )
-        return fail(error.message as "content_conflict" | "stale_binding");
+        return fail("invalid_input");
+      const fingerprint = boundedJson({ target, proposal }, defaultLimits);
+      return await this.coordinate(
+        namespace,
+        operationId,
+        fingerprint,
+        budget,
+        async (deadline) => {
+          const existing = await this.mailbox(namespace, () =>
+            this.existing(namespace, operationId, fingerprint),
+          );
+          if (existing) return this.attempt(existing, deadline.budget());
+          await this.mailbox(namespace, () =>
+            this.live(namespace, generation, commandId, deadline),
+          );
+          if (permission === "ask") {
+            const answer = await deadline.wait(() =>
+              this.authorize(
+                {
+                  namespace,
+                  generation,
+                  commandId,
+                  operationId,
+                  proposal: structuredClone(proposal),
+                },
+                deadline.budget(),
+              ),
+            );
+            if (!answer.ok) return answer;
+            if (answer.value === "rejected")
+              return ok({
+                disposition: "rejected",
+                text: "用户拒绝本次 AI 工具调用。",
+              });
+            if (answer.value !== "allowed") return fail("unavailable");
+          }
+          const stored = await this.mailbox(namespace, async () => {
+            const session = await this.live(
+              namespace,
+              generation,
+              commandId,
+              deadline,
+            );
+            const replay = await this.existing(
+              namespace,
+              operationId,
+              fingerprint,
+            );
+            if (replay) return replay;
+            deadline.check();
+            const event: DeliveryRequest = {
+              schemaVersion: 6,
+              kind: "event",
+              namespace,
+              eventId: randomUUID(),
+              sequence: session.lastSequence + 1,
+              generation,
+              commandId,
+              body: {
+                type: "delivery_requested",
+                operationId,
+                target,
+                proposal,
+              },
+            };
+            const delivery: Delivery = {
+              schemaVersion: 6,
+              kind: "delivery",
+              namespace,
+              operationId,
+              eventId: event.eventId,
+              target,
+              contentHash: deliveryFingerprint(event, target, defaultLimits),
+              retry: "reconcile_first",
+              status: "pending",
+              attempts: 0,
+              nextAttemptAtMs: this.now(),
+            };
+            await this.commit(session, delivery, [event]);
+            return { delivery, event };
+          });
+          // Already inside the operation's single flight: calling deliver here would await itself.
+          return this.attempt(stored, deadline.budget());
+        },
+      );
+    } catch {
       return fail("unavailable", "reconcile_first");
     }
+  }
+  private async existing(
+    namespace: Namespace,
+    operationId: string,
+    fingerprint: string,
+  ): Promise<Stored | undefined> {
+    const stored = value(await this.store.delivery(namespace, operationId));
+    if (
+      stored &&
+      (stored.event.body.type !== "delivery_requested" ||
+        boundedJson(
+          {
+            target: stored.delivery.target,
+            proposal: stored.event.body.proposal,
+          },
+          defaultLimits,
+        ) !== fingerprint)
+    )
+      throw new Error("content_conflict");
+    return stored ?? undefined;
+  }
+  private async live(
+    namespace: Namespace,
+    generation: string,
+    commandId: string,
+    deadline: Deadline,
+  ): Promise<Session> {
+    const session = value(await this.store.session(namespace));
+    const command = value(await this.store.command(namespace, commandId));
+    deadline.check();
+    if (
+      !this.current(namespace, generation) ||
+      session.status !== "active" ||
+      activeStage(session).binding.generation !== generation ||
+      command.command.input.type !== "prompt" ||
+      !["running", "dispatching"].includes(command.state) ||
+      command.dispatch?.observerGeneration !== generation
+    )
+      throw new Error("stale_binding");
+    return session;
   }
   async recover(budget: Budget): Promise<Result<void>> {
     const deadline = new Deadline(budget);
@@ -191,16 +285,51 @@ export class Deliveries {
     }
   }
   private deliver(stored: Stored, budget: Budget): Promise<Result<ToolReply>> {
-    const key = `${namespaceKey(stored.delivery.namespace)}:${stored.delivery.operationId}`;
+    if (stored.event.body.type !== "delivery_requested")
+      return Promise.resolve(fail("invalid_input"));
+    return this.coordinate(
+      stored.delivery.namespace,
+      stored.delivery.operationId,
+      boundedJson(
+        {
+          target: stored.delivery.target,
+          proposal: stored.event.body.proposal,
+        },
+        defaultLimits,
+      ),
+      budget,
+      (deadline) => this.attempt(stored, deadline.budget()),
+    );
+  }
+  private coordinate(
+    namespace: Namespace,
+    operationId: string,
+    fingerprint: string,
+    budget: Budget,
+    action: (deadline: Deadline) => Promise<Result<ToolReply>>,
+  ): Promise<Result<ToolReply>> {
+    const key = `${namespaceKey(namespace)}:${operationId}`;
     const existing = this.active.get(key);
-    if (existing) return existing;
+    if (existing && existing.fingerprint !== fingerprint)
+      return Promise.resolve(fail("content_conflict"));
     const deadline = new Deadline(budget);
     const task = deadline
-      .wait(() => this.attempt(stored, deadline.budget()))
-      .catch(() => fail<ToolReply>("unavailable", "reconcile_first"))
+      .wait(() => (existing ? existing.task : action(deadline)))
+      .catch((error: unknown) =>
+        error instanceof Error &&
+        ["content_conflict", "stale_binding"].includes(error.message)
+          ? fail<ToolReply>(
+              error.message as "content_conflict" | "stale_binding",
+            )
+          : fail<ToolReply>("unavailable", "reconcile_first"),
+      )
       .finally(() => deadline.dispose());
-    this.active.set(key, task);
-    void task.finally(() => this.active.delete(key));
+    if (!existing) {
+      this.active.set(key, { fingerprint, task });
+      void task.finally(() => {
+        if (this.active.get(key)?.task === task) this.active.delete(key);
+      });
+    }
     return task;
   }
   private async attempt(

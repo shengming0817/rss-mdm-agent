@@ -185,11 +185,26 @@ export class FakeHost implements HostPort {
     budget: Budget,
   ): Promise<Result<Session>> {
     if (this.closed || budget.signal.aborted) return fail("unavailable");
-    if (Object.keys(options).some((key) => key !== "connectionId"))
+    if (
+      Object.keys(options).some(
+        (key) => key !== "connectionId" && key !== "sessionId",
+      )
+    )
       return fail("invalid_input");
     if (options.connectionId === "missing-connection")
       return fail("connection_required");
-    const namespace = { ...caller, sessionId: `fake-session-${++this.next}` };
+    const namespace = {
+      ...caller,
+      sessionId: options.sessionId ?? `fake-session-${++this.next}`,
+    };
+    if (options.sessionId) {
+      const existing = await this.store.session(namespace);
+      if (existing.ok)
+        return existing.value.status === "retired"
+          ? fail("session_gone")
+          : existing;
+      if (existing.error.code !== "session_gone") return existing;
+    }
     const session = productSession(namespace, options.connectionId ?? "cfg");
     const created = await this.store.create(session);
     return created.ok ? ok(session) : created;

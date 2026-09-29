@@ -44,7 +44,8 @@ async function setup(t) {
     reply: { disposition: "returned", text: "untrusted business reply" },
   };
   const router = {
-    prepare: () => ok({ operationId: "submission", target: "rust" }),
+    prepare: () =>
+      ok({ operationId: "submission", target: "rust", permission: "ask" }),
     send: async () => {
       send++;
       return {
@@ -72,7 +73,7 @@ async function setup(t) {
     },
   };
   let mailbox = Promise.resolve();
-  const owner = () =>
+  const owner = (authorize = async () => ok("allowed")) =>
     new Deliveries(
       store,
       router,
@@ -83,6 +84,8 @@ async function setup(t) {
       },
       async () => {},
       () => time,
+      authorize,
+      () => true,
     );
   return {
     session,
@@ -197,7 +200,11 @@ test("hung deliveries cannot starve ready operations or later pages", async (t) 
   const f = await setup(t),
     owner = f.owner();
   f.router.prepare = (_, p) =>
-    ok({ operationId: p.arguments.operationRequestId, target: "rust" });
+    ok({
+      operationId: p.arguments.operationRequestId,
+      target: "rust",
+      permission: "ask",
+    });
   for (const id of ["a-hung", "b-ready", "c-hung", "d-hung", "e-ready"])
     await owner.propose(
       f.session.namespace,
@@ -240,4 +247,100 @@ test("hung deliveries cannot starve ready operations or later pages", async (t) 
     "delivered",
   );
   assert.equal(f.count().send, 5);
+});
+
+test("new tool intent waits once outside the mailbox; reject never persists and approve rechecks the live command", async (t) => {
+  const f = await setup(t);
+  let answer,
+    asked = 0;
+  const owner = f.owner(() => {
+    asked++;
+    return new Promise((resolve) => {
+      answer = resolve;
+    });
+  });
+  const propose = (input = proposal) =>
+    owner.propose(
+      f.session.namespace,
+      activeStage(f.session).binding.generation,
+      "command-1",
+      input,
+      budget(),
+    );
+  const first = propose(),
+    duplicate = propose();
+  for (let i = 0; i < 50 && !answer; i++)
+    await new Promise((r) => setTimeout(r, 1));
+  assert.equal(asked, 1);
+  assert.equal(
+    unwrap(await f.store().delivery(f.session.namespace, "submission")),
+    null,
+  );
+  assert.equal(
+    (await propose({ ...proposal, arguments: { changed: true } })).error.code,
+    "content_conflict",
+  );
+  answer(ok("rejected"));
+  assert.equal(unwrap(await first).disposition, "rejected");
+  assert.deepEqual(await duplicate, await first);
+  assert.equal(f.count().send, 0);
+  assert.equal(
+    unwrap(await f.store().delivery(f.session.namespace, "submission")),
+    null,
+  );
+  answer = undefined;
+  const stale = propose();
+  for (let i = 0; i < 50 && !answer; i++)
+    await new Promise((r) => setTimeout(r, 1));
+  const head = unwrap(await f.store().session(f.session.namespace));
+  const command = unwrap(await f.store().command(head.namespace, "command-1"));
+  unwrap(await f.store().commit(await terminalCommit(head, command)));
+  answer(ok("allowed"));
+  assert.equal((await stale).error.code, "stale_binding");
+  assert.equal(f.count().send, 0);
+});
+
+test("permission timeout never writes intent; a durable exact retry and recovery do not ask again", async (t) => {
+  const f = await setup(t);
+  const hung = f.owner(() => new Promise(() => {}));
+  assert.equal(
+    (
+      await hung.propose(
+        f.session.namespace,
+        activeStage(f.session).binding.generation,
+        "command-1",
+        proposal,
+        budget(20),
+      )
+    ).ok,
+    false,
+  );
+  assert.equal(
+    unwrap(await f.store().delivery(f.session.namespace, "submission")),
+    null,
+  );
+  let asked = 0;
+  const owner = f.owner(async () => {
+    asked++;
+    return ok("allowed");
+  });
+  await owner.propose(
+    f.session.namespace,
+    activeStage(f.session).binding.generation,
+    "command-1",
+    proposal,
+    budget(),
+  );
+  await owner.propose(
+    f.session.namespace,
+    activeStage(f.session).binding.generation,
+    "command-1",
+    proposal,
+    budget(),
+  );
+  f.state("committed");
+  f.advance();
+  await owner.recover(budget());
+  assert.equal(asked, 1);
+  assert.equal(f.count().send, 1);
 });
