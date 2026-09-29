@@ -7,9 +7,45 @@ import {
   MessageStream,
   MessageComposer,
   StatusList,
+  ModalDrawer,
 } from "../src";
 
 describe("text-only presentation", () => {
+  it("cycles modal focus in both directions without disabled or hidden controls", async () => {
+    const wrapper = mount(ModalDrawer, {
+      props: { label: "最近对话" },
+      attachTo: document.body,
+      slots: {
+        default:
+          '<button disabled>disabled</button><button style="display:none">hidden</button><input aria-label="search"><button>last</button>',
+      },
+    });
+    try {
+      const first = wrapper.get('[aria-label="关闭最近对话"]');
+      const search = wrapper.get("input");
+      const last = wrapper.findAll("button").at(-1)!;
+      // happy-dom has no layout; provide visible boxes only for these controls.
+      for (const control of [first, search, last])
+        vi.spyOn(control.element, "getClientRects").mockReturnValue({
+          length: 1,
+        } as DOMRectList);
+      vi.spyOn(
+        wrapper.get("[style]").element,
+        "getClientRects",
+      ).mockReturnValue({ length: 0 } as DOMRectList);
+      (first.element as HTMLElement).focus();
+      await first.trigger("keydown", { key: "Tab" });
+      expect(document.activeElement).toBe(search.element);
+      await search.trigger("keydown", { key: "Tab", shiftKey: true });
+      expect(document.activeElement).toBe(first.element);
+      await first.trigger("keydown", { key: "Tab", shiftKey: true });
+      expect(document.activeElement).toBe(last.element);
+      await last.trigger("keydown", { key: "Tab" });
+      expect(document.activeElement).toBe(first.element);
+    } finally {
+      wrapper.unmount();
+    }
+  });
   it("can block sending while retaining an editable busy-run draft", async () => {
     const wrapper = mount(MessageComposer, {
       props: { modelValue: "next round", canSubmit: false },

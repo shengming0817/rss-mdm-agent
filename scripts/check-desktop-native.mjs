@@ -110,7 +110,7 @@ const script = (source) =>
   }).trim();
 const native = (source) =>
   script(
-    `tell application "System Events"\n tell (first application process whose unix id is ${receipt.pid})\n set frontmost to true\n if (count of windows) > 0 then perform action "AXRaise" of window 1\n delay 0.2\n ${source}\n end tell\nend tell`,
+    `tell application "System Events"\n tell (first application process whose unix id is ${receipt.pid})\n set frontmost to true\n if (count of windows) > 0 then perform action "AXRaise" of window 1\n repeat 10 times\n if frontmost then exit repeat\n set frontmost to true\n delay 0.1\n end repeat\n delay 0.2\n ${source}\n end tell\nend tell`,
   );
 const key = (code, shift = false) => {
   assert.equal(
@@ -147,7 +147,16 @@ const navigate = async (name) => {
   await click(name);
 };
 const prompt = async (value) => {
+  await browser.$(".composer textarea").click();
   await browser.$(".composer textarea").setValue(value);
+  assert.equal(
+    await browser.execute(
+      () =>
+        document.activeElement === document.querySelector(".composer textarea"),
+    ),
+    true,
+    "composer must own keyboard focus before native Enter",
+  );
   key(36);
 };
 const selectNext = async (element, value) => {
@@ -375,7 +384,7 @@ try {
   const keychainPending = () => {
     try {
       return script(
-        'tell application "System Events" to tell process "SecurityAgent" to get value of every static text of window 1',
+        'tell application "System Events"\n if not (exists process "SecurityAgent") then return ""\n tell process "SecurityAgent"\n if (count of windows) is 0 then return ""\n return value of every static text of window 1\n end tell\nend tell',
       ).includes("RSS MDM Agent");
     } catch {
       return false;
@@ -467,6 +476,7 @@ try {
   );
   await click("查看设备操作");
   await click("前往任务确认动作");
+  await wait(async () => !(await browser.$("dialog[open]").isExisting()));
   await click("刷新任务");
   await browser.$(".task-list .task-row").click();
   await click("确认并执行");
@@ -516,13 +526,17 @@ try {
   await browser.setWindowSize(600, 680);
   await browser.$('[aria-label="打开最近对话"]').click();
   for (let i = 0; i < 14; i++) {
+    const previous = await browser.execute(
+      () => document.activeElement?.outerHTML,
+    );
     key(48, i >= 7);
-    assert.equal(
-      await browser.execute(() =>
-        Boolean(document.activeElement?.closest("dialog[open]")),
+    await wait(() =>
+      browser.execute(
+        (previous) =>
+          Boolean(document.activeElement?.closest("dialog[open]")) &&
+          document.activeElement?.outerHTML !== previous,
+        previous,
       ),
-      true,
-      "native Tab/Shift-Tab focus stays in modal",
     );
   }
   key(53);
@@ -533,13 +547,31 @@ try {
     ),
     "打开最近对话",
   );
+  await browser.$(".composer textarea").setValue("保留键盘验收草稿");
   await browser.$(".composer textarea").click();
-  key(48);
   assert.equal(
-    await browser.execute(() => document.activeElement?.tagName),
-    "BUTTON",
-    "native Tab traverses composer controls",
+    await browser.$('.composer button[type="submit"]').isEnabled(),
+    true,
+    "draft enables native send control",
   );
+  // ref: wry@0.55.1 src/wkwebview/mod.rs enables tabFocusesLinks.
+  // System Events enqueues key input; wait for WKWebView to process it.
+  key(48, true);
+  await wait(() =>
+    browser.execute(
+      () =>
+        document.activeElement ===
+        document.querySelector('.composer button[type="submit"]'),
+    ),
+  );
+  key(48);
+  await wait(() =>
+    browser.execute(
+      () =>
+        document.activeElement === document.querySelector(".composer textarea"),
+    ),
+  );
+  await browser.$(".composer textarea").setValue("");
   assert.equal(
     await browser.execute(
       () => document.querySelectorAll('[role="log"]').length,

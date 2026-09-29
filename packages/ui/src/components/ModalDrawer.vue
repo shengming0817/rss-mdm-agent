@@ -3,6 +3,31 @@ import { onMounted, onBeforeUnmount, ref } from "vue";
 defineProps<{ label: string }>();
 const emit = defineEmits<{ close: [] }>();
 const dialog = ref<HTMLDialogElement>();
+// ref: WAI-ARIA APG dialog-modal keyboard interaction. WebKit's native Tab
+// sequence depends on macOS keyboard settings; keep this modal sequence explicit.
+function keys(event: KeyboardEvent) {
+  if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey)
+    return;
+  const controls = [
+    ...(dialog.value?.querySelectorAll<HTMLElement>(
+      "button,input,select,textarea,summary,[tabindex]",
+    ) ?? []),
+  ].filter(
+    (el) =>
+      el.tabIndex >= 0 &&
+      !el.matches(":disabled") &&
+      el.getClientRects().length,
+  );
+  event.preventDefault();
+  const index = controls.findIndex((el) => el === event.target);
+  const next =
+    index < 0
+      ? event.shiftKey
+        ? controls.length - 1
+        : 0
+      : (index + (event.shiftKey ? -1 : 1) + controls.length) % controls.length;
+  controls.at(next)?.focus();
+}
 onMounted(() => {
   dialog.value?.showModal();
 });
@@ -16,6 +41,7 @@ onBeforeUnmount(() => {
     class="rss-ui drawer"
     :aria-label="label"
     @cancel.prevent="emit('close')"
+    @keydown="keys"
   >
     <header>
       <h2>{{ label }}</h2>

@@ -58,11 +58,18 @@ function propose(response, callId, name, args) {
     },
   ]);
 }
-// MCP output varies only in transport wrapping; find the Rust catalog in textual content.
+// Codex adds timing metadata and can truncate the middle of a large catalog.
+// The reference precedes items; consume only that intact Rust-issued object.
 function catalogFrom(value) {
   if (typeof value === "string") {
     try {
-      return catalogFrom(JSON.parse(value));
+      const reference = /^\{"result":\{"catalog":(\{.*?\}),"items":/s.exec(
+        value,
+      );
+      if (reference) return JSON.parse(reference[1]);
+      return catalogFrom(
+        JSON.parse(value.replace(/^Wall time: [\d.]+ seconds\nOutput:\n/, "")),
+      );
     } catch {
       return;
     }

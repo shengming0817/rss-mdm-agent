@@ -11,6 +11,8 @@ import {
   type Organization,
 } from "./test-users";
 import Account from "./settings/Account.vue";
+import Workspace from "./Workspace.vue";
+import { createHostSettings } from "./settings/controller";
 
 vi.mock("@tauri-apps/api/core", () => ({
   isTauri: () => true,
@@ -41,6 +43,28 @@ beforeEach(() => {
   currentUser.value = undefined;
   accountNotice.value = "";
   vi.mocked(invoke).mockReset();
+});
+it("closes assistant modals when leaving the page and preserves the conversation draft", async () => {
+  currentUser.value = current;
+  vi.mocked(invoke).mockRejectedValue({ code: "ai_unavailable" });
+  const wrapper = mount(Workspace, {
+    props: { page: "assistant", host: createHostSettings(undefined) },
+  });
+  try {
+    await flushPromises();
+    await wrapper.get(".composer textarea").setValue("继续核对设备状态");
+    await wrapper.get('[aria-label="打开最近对话"]').trigger("click");
+    expect(wrapper.find("dialog").exists()).toBe(true);
+    await wrapper.setProps({ page: "tasks" });
+    expect(wrapper.find("dialog").exists()).toBe(false);
+    await wrapper.setProps({ page: "assistant" });
+    expect(wrapper.find("dialog").exists()).toBe(false);
+    expect(
+      (wrapper.get(".composer textarea").element as HTMLTextAreaElement).value,
+    ).toBe("继续核对设备状态");
+  } finally {
+    wrapper.unmount();
+  }
 });
 it("keeps settings selected when navigation needs an unselected user", async () => {
   vi.mocked(invoke).mockImplementation(async (command) => {
