@@ -461,7 +461,7 @@ function containRemovalFocus(event: KeyboardEvent) {
                 >工具<select v-model="profile">
                   <option value="conversation">仅对话</option>
                   <option v-if="provider === 'codex'" value="controlled_tools">
-                    受控测试工具
+                    受控设备任务
                   </option>
                 </select></label
               >

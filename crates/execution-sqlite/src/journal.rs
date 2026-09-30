@@ -71,19 +71,26 @@ impl Store {
         let (input, execution, _) = crate::execution::load_execution(&tx, scope, self.limits)?;
         let snapshot = execution.snapshot();
         let current_attempt = snapshot.attempt.as_ref().map(|v| v.id.clone());
-        let (process, software) = match &current_attempt {
-            Some(attempt) => (
-                crate::process::capture(&tx, attempt, self.limits)?,
-                crate::software::facts(&tx, attempt, self.limits)?,
-            ),
-            None => (None, None),
-        };
+        let software_progress = current_attempt
+            .as_ref()
+            .map(|attempt| crate::software_progress::read(&tx, attempt, self.limits))
+            .transpose()?
+            .flatten();
+        if software_progress
+            .as_ref()
+            .is_some_and(|p| !p.valid_for(&input))
+        {
+            return Err(Error::Corrupt);
+        }
+        let software_progress = software_progress.map(std::sync::Arc::new);
+        let process = current_attempt
+            .as_ref()
+            .map(|a| crate::process::capture(&tx, a, self.limits))
+            .transpose()?
+            .flatten();
         if process
             .as_ref()
             .is_some_and(|v| v.content_digest != *input.digest())
-            || software
-                .as_ref()
-                .is_some_and(|v| v.content_digest != *input.digest())
         {
             return Err(Error::Corrupt);
         }
@@ -125,7 +132,6 @@ impl Store {
         let observed_at_unix_ms = snapshot.updated_at_unix_ms;
         let input = std::sync::Arc::new(input);
         let process = process.map(std::sync::Arc::new);
-        let software = software.map(std::sync::Arc::new);
         let sql = format!("SELECT {} FROM receipts r WHERE r.scope=?1 AND r.kind!='trust'
             AND NOT EXISTS(SELECT 1 FROM confirmations c WHERE c.scope=r.scope AND c.consumer=?2 AND c.sequence=r.sequence)
             ORDER BY r.sequence LIMIT ?3", bounded_blob("r.body", self.limits.max_record_bytes));
@@ -146,7 +152,7 @@ impl Store {
                     receipt,
                     input: input.clone(),
                     process: process.clone(),
-                    software: software.clone(),
+                    software_progress: software_progress.clone(),
                     current_attempt: current_attempt.clone(),
                     terminal,
                     observed_at_unix_ms,

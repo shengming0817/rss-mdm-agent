@@ -1,15 +1,22 @@
-# Local candidate host only. Production identity/approval/bootstrap remains #2564.
+# Install the sole production service and its per-login physical helper.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][ValidateSet('Install','Remove','Status')][string]$Action,
     [Parameter(Mandatory)][ValidateSet('System','User')][string]$Scope,
-    [string]$Binary
+    [string]$Binary,
+    [string]$Config
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $Name = 'RssExecution'
 $Sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $TaskName = "RssExecution-$Sid"
+$ConfigArgs = ''
+if ($Config) {
+    if (![IO.Path]::IsPathFullyQualified($Config) -or $Config.Contains('"')) { throw 'An absolute deployment path is required' }
+    $ConfigArgs = ' --config "' + $Config + '"'
+}
+$HelperArgs = ($ConfigArgs + ' --user-helper').Trim()
 function Assert-Binary {
     if (!$Binary -or ![IO.Path]::IsPathFullyQualified($Binary) -or $Binary.Contains('"')) { throw 'An absolute binary path is required' }
     $Item = Get-Item -LiteralPath $Binary -Force
@@ -35,7 +42,7 @@ if ($Scope -eq 'System') {
     if ($Action -eq 'Status') { $Service | Select-Object Name,State,StartName,PathName; return }
     if ($Action -eq 'Remove') {
         if (!$Service) { return }
-        if (!$Binary -or $Service.PathName -cne ('"' + $Binary + '"') -or $Service.StartName -ne 'LocalSystem') { throw 'Refusing to remove an unrelated service; supply its exact original binary path' }
+        if (!$Binary -or $Service.PathName -cne ('"' + $Binary + '"' + $ConfigArgs) -or $Service.StartName -ne 'LocalSystem') { throw 'Refusing to remove an unrelated service; supply its exact original binary path' }
         Stop-Service -Name $Name -ErrorAction Stop
         & sc.exe delete $Name
         if ($LASTEXITCODE -ne 0) { throw 'SCM deletion failed' }
@@ -43,7 +50,7 @@ if ($Scope -eq 'System') {
     }
     if ($Service) { throw 'Service already exists; no overwrite or upgrade path' }
     $Path = Assert-Binary
-    New-Service -Name $Name -BinaryPathName ('"' + $Path + '"') -StartupType Manual -DisplayName 'RSS execution candidate' | Out-Null
+    New-Service -Name $Name -BinaryPathName ('"' + $Path + '"' + $ConfigArgs) -StartupType Manual -DisplayName 'RSS Agent execution service' | Out-Null
     try { Start-Service -Name $Name } catch {
         $StartError = $_
         try {
@@ -59,7 +66,7 @@ if ($Scope -eq 'System') {
     if ($Action -eq 'Status') { $Task | Select-Object TaskName,State,Actions,Principal; return }
     if ($Action -eq 'Remove') {
         if (!$Task) { return }
-        if (!$Binary -or $Task.Actions.Count -ne 1 -or $Task.Actions[0].Execute -cne $Binary -or $Task.Actions[0].Arguments -cne '--user' -or $Task.Principal.UserId -ne $Sid) { throw 'Refusing to remove an unrelated task; supply its exact original binary path' }
+        if (!$Binary -or $Task.Actions.Count -ne 1 -or $Task.Actions[0].Execute -cne $Binary -or $Task.Actions[0].Arguments -cne $HelperArgs -or $Task.Principal.UserId -ne $Sid) { throw 'Refusing to remove an unrelated task; supply its exact original binary path' }
         Stop-ScheduledTask -TaskName $TaskName
         Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
         return
@@ -68,7 +75,7 @@ if ($Scope -eq 'System') {
     $Path = Assert-Binary
     $Principal = New-ScheduledTaskPrincipal -UserId $Sid -LogonType Interactive -RunLevel Limited
     $Trigger = New-ScheduledTaskTrigger -AtLogOn -User $Sid
-    $TaskAction = New-ScheduledTaskAction -Execute $Path -Argument '--user'
+    $TaskAction = New-ScheduledTaskAction -Execute $Path -Argument $HelperArgs
     $Settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances Parallel
     Register-ScheduledTask -TaskName $TaskName -Principal $Principal -Trigger $Trigger -Action $TaskAction -Settings $Settings | Out-Null
     try { Start-ScheduledTask -TaskName $TaskName } catch {

@@ -1,15 +1,13 @@
 use crate::{
-    catalog_error::CatalogErrorView,
-    model::{CatalogInput, Empty, ErrorView, ExecuteInput, ToolOutput},
+    model::{Empty, ErrorView, ToolOutput},
     transport::OriginalArguments,
     *,
 };
-use execution_contract::Id;
+use execution_contract::{BackendSelection, BackendTask, TaskSubmission};
 use rmcp::{model::*, service::RequestContext, ErrorData, RoleServer, ServerHandler};
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
-use service_catalog::{CatalogError, CatalogItem, CatalogRef};
 use std::{borrow::Cow, sync::Arc};
 use tokio_util::sync::CancellationToken;
 
@@ -18,43 +16,12 @@ pub(crate) struct Handler<S> {
     pub limits: McpLimits,
 }
 
-#[derive(Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-struct CatalogView {
-    catalog: CatalogRef,
-    items: Vec<ItemView>,
-}
-#[derive(Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-struct ItemView {
-    item: CatalogItem,
-    parameters: Vec<ParameterView>,
-}
-#[derive(Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-struct ParameterView {
-    variant_id: Id,
-    input_schema: Value,
-}
-
 pub(crate) struct Failure {
     code: ServiceError,
-    catalog: Option<CatalogErrorView>,
 }
 impl From<ServiceError> for Failure {
     fn from(code: ServiceError) -> Self {
-        Self {
-            code,
-            catalog: None,
-        }
-    }
-}
-impl From<CatalogError> for Failure {
-    fn from(error: CatalogError) -> Self {
-        Self {
-            code: ServiceError::InvalidInput,
-            catalog: Some(error.into()),
-        }
+        Self { code }
     }
 }
 fn decode<T: DeserializeOwned>(raw: &str) -> Result<T, Failure> {
@@ -75,7 +42,7 @@ fn schema<T: JsonSchema>() -> Arc<serde_json::Map<String, Value>> {
 // bind schemas and dispatch to that owner without repeating wire-name lists.
 #[derive(Clone, Copy)]
 pub(crate) enum ToolKind {
-    Catalog,
+    Tasks,
     Capabilities,
     Execute,
     Status,
@@ -88,7 +55,7 @@ enum Effect {
 }
 impl ToolKind {
     const ALL: [Self; 5] = [
-        Self::Catalog,
+        Self::Tasks,
         Self::Capabilities,
         Self::Execute,
         Self::Status,
@@ -97,9 +64,9 @@ impl ToolKind {
 
     fn descriptor(self) -> (&'static str, &'static str, Effect) {
         match self {
-            Self::Catalog => ("execution_catalog", "Authorized directory and shared parameter schemas. Visibility does not authorize execution.", Effect::ReadOnly),
+            Self::Tasks => ("execution_tasks", "Verified backend tasks. Select the exact task, attempt and revision; presence never authorizes execution.", Effect::ReadOnly),
             Self::Capabilities => ("execution_capabilities", "Current bound-context capabilities. Unknown is not supported.", Effect::ReadOnly),
-            Self::Execute => ("execution_execute", "Request one exact action. Keep operationRequestId on retry; query status after an unknown outcome. User confirmation is handled by the trusted desktop.", Effect::MayPersist),
+            Self::Execute => ("execution_execute", "Propose an exact backend task. The desktop user must confirm installation. Query the returned original request; never choose another attempt after response loss.", Effect::MayPersist),
             Self::Status => ("execution_status", "Authorized lookup by the original operationRequestId.", Effect::ReadOnly),
             Self::Cancel => ("execution_cancel", "Request business cancellation; receipt does not prove termination or rollback.", Effect::MayPersist),
         }
@@ -117,9 +84,9 @@ impl ToolKind {
     }
     fn definition(self) -> Tool {
         match self {
-            Self::Catalog => tool::<Empty, CatalogView>(self),
+            Self::Tasks => tool::<Empty, Vec<BackendTask>>(self),
             Self::Capabilities => tool::<Empty, CapabilityView>(self),
-            Self::Execute => tool::<ExecuteInput, OperationStatus>(self),
+            Self::Execute => tool::<BackendSelection, TaskSubmission>(self),
             Self::Status => tool::<OperationRequest, OperationStatus>(self),
             Self::Cancel => tool::<OperationRequest, CancelResult>(self),
         }
@@ -152,10 +119,7 @@ fn result<T: Serialize>(r: Result<T, Failure>, max: usize) -> Result<CallToolRes
     let output = match r {
         Ok(result) => ToolOutput::Ok { result },
         Err(f) => ToolOutput::Error {
-            error: ErrorView {
-                code: f.code,
-                catalog_reason: f.catalog,
-            },
+            error: ErrorView { code: f.code },
         },
     };
     let bytes = crate::output::encode(&output, max)
@@ -167,99 +131,19 @@ fn result<T: Serialize>(r: Result<T, Failure>, max: usize) -> Result<CallToolRes
     Ok(r)
 }
 impl<S: ExecutionServicePort> Handler<S> {
-    async fn selection(
-        &self,
-        input: CatalogInput,
-        wait: CancellationToken,
-    ) -> Result<CatalogCandidate, Failure> {
-        let c = self
-            .service
-            .catalog(Some(input.catalog.clone()), wait)
-            .await?;
-        // Serialization of RawValue preserves numeric tokens. C03 remains the only
-        // owner of catalog numeric/secret/default normalization and validation.
-        #[derive(Serialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Selection<'a> {
-            catalog: &'a CatalogRef,
-            item_id: &'a Id,
-            variant_id: &'a Id,
-            arguments: &'a serde_json::value::RawValue,
-        }
-        let bytes = crate::output::encode(
-            &Selection {
-                catalog: &input.catalog,
-                item_id: &input.item_id,
-                variant_id: &input.variant_id,
-                arguments: &input.arguments,
-            },
-            self.limits.catalog.max_bytes,
-        )?;
-        let selection = c.select(&bytes, &self.limits.catalog, &self.limits.parameters)?;
-        Ok(CatalogCandidate {
-            operation_request_id: input.operation_request_id,
-            selection,
-        })
-    }
-    async fn catalog(&self, raw: &str, wait: CancellationToken) -> Result<CatalogView, Failure> {
+    async fn tasks(&self, raw: &str, wait: CancellationToken) -> Result<Vec<BackendTask>, Failure> {
         let _: Empty = decode(raw)?;
-        let c = self.service.catalog(None, wait).await?;
-        if c.snapshot().items.len() > self.limits.catalog.max_collection_items {
+        let tasks = self.service.tasks(wait).await?;
+        if tasks.len() > 128 {
             return Err(ServiceError::Limit.into());
         }
-        let mut items = Vec::new();
-        for item in c
-            .snapshot()
-            .items
-            .iter()
-            .filter(|item| item.ai_discoverable)
-        {
-            let mut parameters = Vec::new();
-            for op in &item.operations {
-                let p = c.projection(&item.id, &op.id, &self.limits.parameters)?;
-                parameters.push(ParameterView {
-                    variant_id: op.id.clone(),
-                    input_schema: p.input_schema().clone(),
-                });
-            }
-            items.push(ItemView {
-                item: item.clone(),
-                parameters,
-            });
-        }
-        Ok(CatalogView {
-            catalog: c.reference(),
-            items,
-        })
+        Ok(tasks)
     }
-    async fn execute(
-        &self,
-        raw: &str,
-        wait: CancellationToken,
-    ) -> Result<OperationStatus, Failure> {
-        let request = match decode::<ExecuteInput>(raw)? {
-            ExecuteInput::Catalog { selection } => {
-                ExecuteRequest::Catalog(Box::new(self.selection(selection, wait.clone()).await?))
-            }
-            ExecuteInput::Script {
-                operation_request_id,
-                source_utf8,
-                interpreter,
-            } => {
-                if source_utf8.is_empty()
-                    || source_utf8.contains('\0')
-                    || source_utf8.len() > self.limits.parameters.max_bytes
-                {
-                    return Err(ServiceError::InvalidInput.into());
-                }
-                ExecuteRequest::Script(ScriptDraft {
-                    operation_request_id,
-                    source_utf8,
-                    interpreter,
-                })
-            }
-        };
-        Ok(self.service.execute(request, wait).await?)
+    async fn execute(&self, raw: &str, wait: CancellationToken) -> Result<TaskSubmission, Failure> {
+        Ok(self
+            .service
+            .execute(decode::<BackendSelection>(raw)?, wait)
+            .await?)
     }
     pub(crate) async fn call(
         &self,
@@ -274,7 +158,7 @@ impl<S: ExecutionServicePort> Handler<S> {
         let kind = ToolKind::from_name(name)
             .ok_or_else(|| ErrorData::invalid_params("unknown tool", None))?;
         match kind {
-            ToolKind::Catalog => result(self.catalog(raw, wait).await, max),
+            ToolKind::Tasks => result(self.tasks(raw, wait).await, max),
             ToolKind::Capabilities => {
                 let r = async {
                     let _: Empty = decode(raw)?;

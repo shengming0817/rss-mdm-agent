@@ -107,7 +107,10 @@ pub fn input(profile: ScriptProfile) -> ScriptPlanInput {
         run_as: RunAs::User {
             account: account.clone(),
         },
-        session_requirement: SessionRequirement::ActiveUser { account },
+        session_requirement: SessionRequirement::ActiveUser {
+            account,
+            session: Id::new("10").unwrap(),
+        },
         constraints: IsolationPolicy::Restricted {
             network: NetworkAccess::Denied {},
             read_paths: vec!["/workspace".into()],

@@ -26,6 +26,96 @@ pub struct ExecutionApp<H, R> {
     pub(crate) config: Configuration,
 }
 impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
+    /// Bounded pre-execution history for the same authenticated actor.
+    pub fn backend_requests(
+        &self,
+        caller: &RequestContext,
+    ) -> Result<Vec<execution_contract::BackendRequest>, Error> {
+        if self.host.service_binding()? != self.binding {
+            return Err(Error::Unbound);
+        }
+        Ok(self.store.backend_requests(
+            &caller.actor,
+            &Host::new(&self.host, &self.binding, &self.config, Some(caller)),
+        )?)
+    }
+    /// Read an authenticated caller's preparation record from the sole journal.
+    pub fn backend_request(
+        &self,
+        caller: &RequestContext,
+        request: &RequestId,
+    ) -> Result<Option<execution_contract::BackendRequest>, Error> {
+        if self.host.service_binding()? != self.binding {
+            return Err(Error::Unbound);
+        }
+        let scope = Scope {
+            authority: self.binding.authority.clone(),
+            actor: caller.actor.clone(),
+            request_id: request.clone(),
+        };
+        Ok(self.store.backend_request(
+            &scope,
+            &Host::new(&self.host, &self.binding, &self.config, Some(caller)),
+        )?)
+    }
+    /// Persist preparation only. This never performs admission or dispatches a runner.
+    pub fn record_backend_request(
+        &mut self,
+        caller: &RequestContext,
+        expected: Option<&execution_contract::BackendRequest>,
+        next: &execution_contract::BackendRequest,
+    ) -> Result<(), Error> {
+        if self.host.service_binding()? != self.binding {
+            return Err(Error::Unbound);
+        }
+        let scope = Scope {
+            authority: self.binding.authority.clone(),
+            actor: caller.actor.clone(),
+            request_id: next.offer.request.clone(),
+        };
+        let host = Host::new(&self.host, &self.binding, &self.config, Some(caller));
+        Ok(self
+            .store
+            .record_backend_request(&scope, expected, next, &host)?)
+    }
+    /// Assemble the production journal with an independently authenticated host and real runner.
+    /// The host must verify registration, OS identity and protected policy before returning its
+    /// binding. Opening storage does not authorize a task; all ordinary per-operation gates remain.
+    pub fn start_production(
+        path: &Path,
+        startup: ProductionStartup,
+        host: H,
+        runner: R,
+        config: AppConfig,
+        limits: execution_sqlite::Limits,
+    ) -> Result<Self, Error> {
+        let config = Configuration::new(config)?;
+        let binding = host.service_binding()?;
+        if matches!(binding.authority, Authority::Test { .. })
+            || runner.mode() != ExecutionMode::Real
+        {
+            return Err(Error::Unbound);
+        }
+        host.reliable_now()?;
+        let store = match startup {
+            ProductionStartup::Create => {
+                Store::initialize_production(path, binding.authority.clone(), limits)?
+            }
+            ProductionStartup::Open => match Store::open(path, &binding.authority, limits)? {
+                OpenOutcome::Ready(store) => *store,
+                OpenOutcome::UnsupportedSchema { found, supported } => {
+                    return Err(Error::UnsupportedSchema { found, supported });
+                }
+            },
+        };
+        Ok(Self {
+            store,
+            host,
+            runner,
+            binding,
+            config,
+        })
+    }
     /// Explicit bootstrap/open modes. S1 rejects production without touching storage; it never
     /// selects a fixture authority as fallback. Open never creates or repairs a missing database.
     pub fn start(
@@ -37,13 +127,6 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
     ) -> Result<Self, Error> {
         let config = Configuration::new(config)?;
         let binding = host.service_binding()?;
-        if startup == Startup::Production {
-            return Err(if matches!(binding.authority, Authority::Test { .. }) {
-                Error::Unbound
-            } else {
-                Error::Unsupported
-            });
-        }
         if !matches!(binding.authority, Authority::Test { .. })
             || runner.mode() != ExecutionMode::Test
         {
@@ -61,7 +144,6 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                     }
                 }
             }
-            Startup::Production => unreachable!(),
         };
         Ok(Self {
             store,
@@ -178,7 +260,20 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                 _ => return self.cancel(caller, request),
             }
         }
-        self.advance(caller, request, &CommandId::initial_attempt())
+        match self.advance(caller, request, &CommandId::initial_attempt()) {
+            Err(Error::Conflict) => {
+                // An identical first submission can commit while preflight is outside the
+                // transaction. Return only that exact original intent; never mint a retry.
+                let current =
+                    self.status_for(Some(caller), request, ExecutionAccess::Submission)?;
+                if current.attempt_id.as_ref() == Some(&attempt) {
+                    Ok(current)
+                } else {
+                    Err(Error::Conflict)
+                }
+            }
+            result => result,
+        }
     }
     /// Confirm the exact persisted action through a trusted caller; never change its origin.
     pub fn confirm_execution(
@@ -375,14 +470,10 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             Some(cause)
         } else {
             match self.runner.dispatch(AuthorizedDispatch {
-                software_ownership: if execution.input().spec().execution.software().is_some() {
-                    Some(self.store.software_ownership(
-                        &Scope::from_input(execution.input()),
-                        &self.adapter(None, Some(execution.input())),
-                    )?)
-                } else {
-                    None
-                },
+                ownership: self.store.software_ownership(
+                    &Scope::from_input(execution.input()),
+                    &self.adapter(None, Some(execution.input())),
+                )?,
                 issued: std::time::Instant::now(),
                 allowance: execution
                     .allowance(self.host.reliable_now()?)
@@ -477,29 +568,56 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             return Ok(());
         };
         let scope = Scope::from_input(execution.input());
+        if let Some(previous) = self.store.software_progress(
+            &scope,
+            &active.id,
+            &self.adapter(None, Some(execution.input())),
+        )? {
+            if let Some(facts) = self
+                .runner
+                .recover_software_progress(execution.input(), &previous)?
+            {
+                let host = Host::new(&self.host, &self.binding, &self.config, None)
+                    .with_input(Some(execution.input()));
+                self.store.record_software_progress(&scope, &facts, &host)?;
+            }
+        }
+        if !execution.snapshot().cancel_requested && active.termination.is_none() {
+            if let Some(progress) = self.store.software_progress(
+                &scope,
+                &active.id,
+                &self.adapter(None, Some(execution.input())),
+            )? {
+                if matches!(
+                    progress.checkpoints.last(),
+                    Some(execution_contract::SoftwareCheckpoint::Complete { .. })
+                ) && !progress.complete(execution.input())
+                {
+                    let allowance = execution
+                        .allowance(self.host.reliable_now()?)
+                        .map_err(|_| Error::Clock)?;
+                    if allowance.remaining_timeout_ms > 0 && allowance.remaining_output_bytes > 0 {
+                        self.runner.resume_software(crate::SoftwareResume {
+                            ownership: self.store.software_ownership(
+                                &scope,
+                                &self.adapter(None, Some(execution.input())),
+                            )?,
+                            plan: execution.input().clone(),
+                            progress,
+                            allowance,
+                        })?;
+                    }
+                }
+            }
+        }
         let host = Host::new(&self.host, &self.binding, &self.config, None)
             .with_input(Some(execution.input()));
-        let previous = self.store.software_evidence(&scope, &active.id, &host)?;
-        let observation = crate::SoftwareObservation {
-            deadline: std::time::Instant::now() + std::time::Duration::from_secs(1),
-            previous: previous.as_ref(),
-            quiescent: active.termination.is_some(),
-            finalized: active.assessment.as_ref().is_some_and(|a| {
-                matches!(
-                    a.observation,
-                    Observation::Effect {
-                        assessment: execution_lifecycle::EffectAssessment::Satisfied
-                            | execution_lifecycle::EffectAssessment::NoEffect
-                            | execution_lifecycle::EffectAssessment::NotSatisfied
-                    }
-                )
-            }),
-        };
-        if let Some(facts) =
-            self.runner
-                .software_evidence(execution.input(), &active.id, observation)?
+        if let Some(facts) = self
+            .runner
+            .software_progress(execution.input(), &active.id)?
         {
-            self.store.record_software(&scope, &facts, &host)?;
+            let receipt = self.store.record_software_progress(&scope, &facts, &host)?;
+            self.runner.acknowledge_software_progress(receipt)?;
         }
         Ok(())
     }
@@ -513,17 +631,45 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             .snapshot()
             .attempt
             .as_ref()
-            .ok_or(Error::Conflict)?;
+            .ok_or(Error::Conflict)?
+            .clone();
         self.collect_software(execution)?;
         let live = self.runner.evidence(execution.input(), &active.id)?;
         let had_live = live.is_some();
         let capture = match live {
             Some(facts) => Some(facts),
-            None => self.store.runner_evidence(
-                &Scope::from_input(execution.input()),
-                &active.id,
-                &self.adapter(None, Some(execution.input())),
-            )?,
+            None => {
+                let stored = self.store.runner_evidence(
+                    &Scope::from_input(execution.input()),
+                    &active.id,
+                    &self.adapter(None, Some(execution.input())),
+                )?;
+                if stored.as_ref().is_some_and(|f| f.finished) {
+                    stored
+                } else {
+                    let progress = self.store.software_progress(
+                        &Scope::from_input(execution.input()),
+                        &active.id,
+                        &self.adapter(None, Some(execution.input())),
+                    )?;
+                    progress
+                        .filter(|progress| progress.complete(execution.input()))
+                        .and_then(|progress| {
+                            progress.checkpoints.iter().rev().find_map(|c| match c {
+                                execution_contract::SoftwareCheckpoint::End {
+                                    process: Some(facts),
+                                    ..
+                                } => {
+                                    let mut facts = *facts.clone();
+                                    facts.total_output_bytes = progress.output_bytes;
+                                    Some(facts)
+                                }
+                                _ => None,
+                            })
+                        })
+                        .or(stored)
+                }
+            }
         };
         if let Some(facts) = &capture {
             let host = Host::new(&self.host, &self.binding, &self.config, None)
@@ -553,6 +699,39 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             if facts.finished {
                 self.collect_software(execution)?;
                 self.runner.acknowledge_capture(execution.input(), facts)?;
+            }
+        }
+        // Step output remains charged even when there is no whole-sequence capture.
+        if let Some(progress) = self.store.software_progress(
+            &Scope::from_input(execution.input()),
+            &active.id,
+            &self.adapter(None, Some(execution.input())),
+        )? {
+            let charged = execution
+                .snapshot()
+                .attempt
+                .as_ref()
+                .ok_or(Error::Conflict)?
+                .output_bytes;
+            if progress.output_bytes > charged {
+                let result = self.command(
+                    None,
+                    execution,
+                    "output",
+                    &progress.output_bytes.to_string(),
+                    Command::Output {
+                        attempt_id: active.id.clone(),
+                        total_bytes: progress.output_bytes,
+                    },
+                    &[],
+                )?;
+                if !matches!(
+                    result.receipt().outcome,
+                    Outcome::Changed | Outcome::Duplicate
+                ) {
+                    return Err(Error::Conflict);
+                }
+                *execution = self.load(None, request, ExecutionAccess::RunnerFact)?;
             }
         }
         Ok((capture, had_live))
@@ -663,52 +842,41 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             let observed = self
                 .runner
                 .observe(execution.input(), &attempt.id, stage, now)?;
-            let software = if stage == ObservationStage::Assessment {
-                self.store
-                    .software_evidence(
-                        &Scope::from_input(execution.input()),
-                        &attempt.id,
-                        &self.adapter(None, Some(execution.input())),
-                    )?
-                    .and_then(|f| {
-                        execution.input().spec().execution.software().map(|s| {
-                            let assessment = if f.restart_required
-                                || matches!(
-                                    f.detected,
-                                    execution_contract::SoftwareState::Unknown { .. }
-                                ) {
-                                execution_lifecycle::EffectAssessment::Unknown
-                            } else if s.satisfied(&f.detected) {
-                                execution_lifecycle::EffectAssessment::Satisfied
-                            } else {
-                                execution_lifecycle::EffectAssessment::NotSatisfied
-                            };
-                            ObservationFacts {
-                                request_id: execution.input().spec().request.request_id.clone(),
-                                content_digest: execution.input().digest().clone(),
-                                attempt_id: attempt.id.clone(),
-                                observed_at_unix_ms: now,
-                                evidence: execution_contract::EvidenceRef {
-                                    reference: execution_contract::VersionedRef {
-                                        id: execution_contract::Id::new(attempt.id.as_str())
-                                            .expect("attempt id"),
-                                        revision: execution_contract::Id::new("software-detection")
-                                            .expect("constant"),
-                                    },
-                                    runner: attempt.runner.clone(),
-                                    kind: if attempt.mode == ExecutionMode::Test {
-                                        execution_contract::EvidenceKind::TestResult
-                                    } else {
-                                        execution_contract::EvidenceKind::StateObserved
-                                    },
-                                },
-                                observation: Observation::Effect { assessment },
-                            }
-                        })
-                    })
-            } else {
-                None
-            };
+            let program = self
+                .store
+                .software_progress(
+                    &Scope::from_input(execution.input()),
+                    &attempt.id,
+                    &self.adapter(None, Some(execution.input())),
+                )?
+                .filter(|p| p.complete(execution.input()))
+                .map(|_| ObservationFacts {
+                    request_id: execution.input().spec().request.request_id.clone(),
+                    content_digest: execution.input().digest().clone(),
+                    attempt_id: attempt.id.clone(),
+                    observed_at_unix_ms: now,
+                    evidence: execution_contract::EvidenceRef {
+                        reference: execution_contract::VersionedRef {
+                            id: execution_contract::Id::new(attempt.id.as_str())
+                                .expect("attempt id"),
+                            revision: execution_contract::Id::new("software-sequence")
+                                .expect("constant"),
+                        },
+                        runner: attempt.runner.clone(),
+                        kind: if attempt.mode == ExecutionMode::Test {
+                            execution_contract::EvidenceKind::TestResult
+                        } else {
+                            execution_contract::EvidenceKind::StateObserved
+                        },
+                    },
+                    observation: if stage == ObservationStage::Termination {
+                        Observation::Quiescent {}
+                    } else {
+                        Observation::Effect {
+                            assessment: execution_lifecycle::EffectAssessment::Satisfied,
+                        }
+                    },
+                });
             let stored =
                 if stage == ObservationStage::Termination && attempt.mode == ExecutionMode::Real {
                     capture.as_ref().and_then(|facts| {
@@ -717,7 +885,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                 } else {
                     None
                 };
-            let Some(facts) = observed.or(stored).or(software) else {
+            let Some(facts) = program.or(observed).or(stored) else {
                 if attempt.termination.is_none()
                     && (!had_live || capture.as_ref().is_some_and(|f| f.finished))
                     && !matches!(attempt.dispatch, DispatchState::Unknown { .. })

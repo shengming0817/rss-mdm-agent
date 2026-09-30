@@ -668,7 +668,7 @@ fn prior_schema_is_rejected_without_modifying_the_database() {
         Store::open(&db.path, &plan().spec().request.authority, limits()),
         Ok(OpenOutcome::UnsupportedSchema {
             found: 1,
-            supported: 5
+            supported: 6
         })
     ));
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
@@ -688,7 +688,7 @@ fn newer_schema_is_diagnostics_only_and_corrupt_database_is_never_reinitialized(
         Store::open(&db.path, &plan().spec().request.authority, limits()).unwrap(),
         OpenOutcome::UnsupportedSchema {
             found: 99,
-            supported: 5
+            supported: 6
         }
     ));
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
@@ -2486,12 +2486,12 @@ fn software_host() -> TestHost {
     host
 }
 #[test]
-fn software_claim_and_detection_survive_reopen_without_process_success() {
+fn software_checkpoints_commit_atomically_and_survive_reopen_without_replay() {
     let db = Database::new();
     let host = software_host();
     let mut store = db.create();
     host.prepare(&mut store);
-    let result = store
+    store
         .apply_command(
             &operation("begin"),
             &host.scope(),
@@ -2500,42 +2500,106 @@ fn software_claim_and_detection_survive_reopen_without_process_success() {
             &host,
         )
         .unwrap();
-    assert_eq!(result.receipt().outcome, Outcome::Changed);
-    assert_eq!(db.count("software_claims"), 2);
-    let facts = SoftwareEvidence {
-        staging: execution_contract::SoftwareStaging::NotRequired {},
+    let mut progress = SoftwareProgress {
         attempt_id: AttemptId::new("attempt-1").unwrap(),
         content_digest: host.plan.digest().clone(),
         runner: id("test-runner"),
-        before: Some(SoftwareState::Absent {}),
-        detected: SoftwareState::Present {
-            version: PackageValue::new("1.0").unwrap(),
-        },
-        restart_required: false,
-        object_identity: None,
-        boot_generation: None,
+        checkpoints: vec![SoftwareCheckpoint::Begin {
+            step: 0,
+            phase: SoftwarePhase::Before,
+        }],
+        elapsed_ms: 1,
+        output_bytes: 0,
     };
-    store.record_software(&host.scope(), &facts, &host).unwrap();
+    db.sql().execute_batch("CREATE TABLE progress_fault(id INTEGER REFERENCES receipts(sequence) DEFERRABLE INITIALLY DEFERRED); CREATE TRIGGER fail_progress AFTER INSERT ON software_progress BEGIN INSERT INTO progress_fault VALUES(-1); END;").unwrap();
+    assert!(matches!(
+        store.record_software_progress(&host.scope(), &progress, &host),
+        Err(Error::OperationCommitUnknown)
+    ));
+    assert_eq!(db.count("software_progress"), 0);
+    db.sql()
+        .execute_batch("DROP TRIGGER fail_progress")
+        .unwrap();
+    let receipt = store
+        .record_software_progress(&host.scope(), &progress, &host)
+        .unwrap();
+    assert_eq!(receipt.facts(), &progress);
     drop(store);
-    let store = db.open();
+    let mut store = db.open();
     assert_eq!(
         store
-            .software_evidence(&host.scope(), &facts.attempt_id, &host)
-            .unwrap(),
-        Some(facts)
-    );
-    assert_eq!(
-        store
-            .software_ownership(&host.scope(), &host)
+            .software_progress(&host.scope(), &progress.attempt_id, &host)
             .unwrap()
-            .ownership,
-        Ownership::UserExisting
+            .as_ref(),
+        Some(&progress)
     );
-    assert_eq!(db.count("software_claims"), 2);
-    assert_eq!(
-        store.execution(&host.scope(), &host).unwrap().phase(),
-        lifecycle::Phase::Starting
-    );
+    let old = progress.clone();
+    progress.checkpoints.push(SoftwareCheckpoint::End {
+        step: 0,
+        phase: SoftwarePhase::Before,
+        process: None,
+        detected: Some(SoftwareState::Unknown {
+            reason: SoftwareDetectionFailure::Unavailable,
+        }),
+        quiescent: false,
+    });
+    store
+        .record_software_progress(&host.scope(), &progress, &host)
+        .unwrap();
+    assert!(matches!(
+        store.record_software_progress(&host.scope(), &old, &host),
+        Err(Error::Conflict)
+    ));
+    progress
+        .checkpoints
+        .push(SoftwareCheckpoint::Complete { step: 0 });
+    assert!(matches!(
+        store.record_software_progress(&host.scope(), &progress, &host),
+        Err(Error::InvalidInput)
+    ));
+    assert_eq!(db.count("attempts"), 1);
+    assert_eq!(db.count("software_claims"), 1);
+}
+#[test]
+fn software_checkpoint_rejects_other_attempt_and_bounded_corrupt_body() {
+    let db = Database::new();
+    let host = software_host();
+    let mut store = db.create();
+    host.prepare(&mut store);
+    store
+        .apply_command(
+            &operation("begin"),
+            &host.scope(),
+            &host.begin(),
+            &[],
+            &host,
+        )
+        .unwrap();
+    let mut progress = SoftwareProgress {
+        attempt_id: AttemptId::new("other-attempt").unwrap(),
+        content_digest: host.plan.digest().clone(),
+        runner: id("test-runner"),
+        checkpoints: vec![],
+        elapsed_ms: 0,
+        output_bytes: 0,
+    };
+    assert!(matches!(
+        store.record_software_progress(&host.scope(), &progress, &host),
+        Err(Error::InvalidInput)
+    ));
+    progress.attempt_id = AttemptId::new("attempt-1").unwrap();
+    store
+        .record_software_progress(&host.scope(), &progress, &host)
+        .unwrap();
+    db.sql()
+        .execute(
+            "UPDATE software_progress SET body=zeroblob(?1)",
+            [limits().max_record_bytes as i64 + 1],
+        )
+        .unwrap();
+    assert!(store
+        .software_progress(&host.scope(), &progress.attempt_id, &host)
+        .is_err());
 }
 #[test]
 fn second_software_request_cannot_steal_unresolved_claim() {
@@ -2588,252 +2652,7 @@ fn second_software_request_cannot_steal_unresolved_claim() {
         Err(Error::Busy)
     ));
     assert_eq!(db.count("attempts"), 1);
-    assert_eq!(db.count("software_claims"), 2);
-}
-
-#[test]
-fn software_ownership_is_atomic_with_verified_effect_and_cannot_be_rewritten() {
-    let db = Database::new();
-    let host = software_host();
-    let mut store = db.create();
-    host.prepare(&mut store);
-    store
-        .apply_command(
-            &operation("begin"),
-            &host.scope(),
-            &host.begin(),
-            &[],
-            &host,
-        )
-        .unwrap();
-    let attempt = AttemptId::new("attempt-1").unwrap();
-    let mut facts = SoftwareEvidence {
-        staging: execution_contract::SoftwareStaging::Pending {
-            object: id("stage-object"),
-        },
-        attempt_id: attempt.clone(),
-        content_digest: host.plan.digest().clone(),
-        runner: id("test-runner"),
-        before: Some(SoftwareState::Absent {}),
-        detected: SoftwareState::Present {
-            version: PackageValue::new("1.0").unwrap(),
-        },
-        restart_required: false,
-        object_identity: Some(id("physical-installed")),
-        boot_generation: None,
-    };
-    db.sql().execute_batch("CREATE TABLE software_commit_fault (id INTEGER REFERENCES receipts(sequence) DEFERRABLE INITIALLY DEFERRED);
-        CREATE TRIGGER fail_software AFTER INSERT ON software_evidence BEGIN INSERT INTO software_commit_fault VALUES(-1); END;").unwrap();
-    assert_eq!(
-        store.record_software(&host.scope(), &facts, &host),
-        Err(Error::OperationCommitUnknown)
-    );
-    assert_eq!(db.count("software_evidence"), 0);
-    db.sql()
-        .execute_batch("DROP TRIGGER fail_software")
-        .unwrap();
-    store.record_software(&host.scope(), &facts, &host).unwrap();
-    let reference_for = |name: &str| EvidenceRef {
-        reference: reference(name),
-        kind: EvidenceKind::TestResult,
-        runner: id("test-runner"),
-    };
-    store
-        .apply_observation(
-            &operation("quiet"),
-            &host.scope(),
-            &observation_event("quiet", 2, attempt.clone(), reference_for("quiet")),
-            &host,
-            &TestEvidence::new(lifecycle::Observation::Quiescent {}),
-        )
-        .unwrap();
-    assert_eq!(db.count("software_claims"), 2);
-    assert_eq!(db.count("software_ownership"), 0);
-    store
-        .apply_observation(
-            &operation("effect"),
-            &host.scope(),
-            &observation_event("effect", 3, attempt, reference_for("effect")),
-            &host,
-            &TestEvidence::new(lifecycle::Observation::Effect {
-                assessment: lifecycle::EffectAssessment::Satisfied,
-            }),
-        )
-        .unwrap();
-    assert_eq!(db.count("software_claims"), 2);
-    facts.staging = execution_contract::SoftwareStaging::Cleaned {};
-    store.record_software(&host.scope(), &facts, &host).unwrap();
-    assert_eq!(db.count("software_claims"), 0);
-    let owner = store.software_ownership(&host.scope(), &host).unwrap();
-    assert_eq!(owner.ownership, Ownership::OrganizationManaged);
-    assert_eq!(owner.state, Some(facts.detected.clone()));
-    let mut alias = software_host();
-    let mut spec = alias.plan.spec().clone();
-    spec.request.request_id = RequestId::new("alias-plan").unwrap();
-    spec.request.request_id = RequestId::new("alias-request").unwrap();
-    if let ExecutionSpec::Software { software } = &mut spec.execution {
-        software.resource_binding.parent = id("different-parent");
-        software.resource_binding.object = Some(id("physical-installed"));
-    }
-    alias.plan = FrozenExecution::freeze(spec, &limits().input).unwrap();
-    store
-        .refresh_trust(&operation("alias-trust"), &alias.scope(), None, &alias)
-        .unwrap();
-    store
-        .open_execution(&operation("alias-open"), &alias.plan, &alias)
-        .unwrap();
-    assert_eq!(
-        store.software_ownership(&alias.scope(), &alias).unwrap(),
-        owner
-    );
-    facts.detected = SoftwareState::Absent {};
-    assert_eq!(
-        store.record_software(&host.scope(), &facts, &host),
-        Err(Error::Conflict)
-    );
-    drop(store);
-    assert_eq!(
-        db.open().software_ownership(&host.scope(), &host).unwrap(),
-        owner
-    );
-    for column in ["authority", "package"] {
-        let sql = db.sql();
-        let original: Vec<u8> = sql
-            .query_row(
-                &format!("SELECT {column} FROM software_ownership"),
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        sql.execute(
-            &format!("UPDATE software_ownership SET {column}=zeroblob(?1)"),
-            [limits().max_record_bytes as i64 + 1],
-        )
-        .unwrap();
-        assert!(db.open().software_ownership(&host.scope(), &host).is_err());
-        sql.execute(
-            &format!("UPDATE software_ownership SET {column}=?1"),
-            [original],
-        )
-        .unwrap();
-    }
-}
-
-#[test]
-fn restart_pending_survives_service_restart_but_clears_on_new_kernel_boot() {
-    let db = Database::new();
-    let host = software_host();
-    let mut store = db.create();
-    host.prepare(&mut store);
-    store
-        .apply_command(
-            &operation("begin"),
-            &host.scope(),
-            &host.begin(),
-            &[],
-            &host,
-        )
-        .unwrap();
-    let mut facts = SoftwareEvidence {
-        staging: execution_contract::SoftwareStaging::NotRequired {},
-        attempt_id: AttemptId::new("attempt-1").unwrap(),
-        content_digest: host.plan.digest().clone(),
-        runner: id("test-runner"),
-        before: Some(SoftwareState::Absent {}),
-        detected: SoftwareState::Present {
-            version: PackageValue::new("1.0").unwrap(),
-        },
-        restart_required: true,
-        object_identity: None,
-        boot_generation: Some(id("boot-a")),
-    };
-    store.record_software(&host.scope(), &facts, &host).unwrap();
-    drop(store);
-    let mut store = db.open();
-    facts.before = None;
-    facts.restart_required = false;
-    store.record_software(&host.scope(), &facts, &host).unwrap();
-    assert!(
-        store
-            .software_evidence(&host.scope(), &facts.attempt_id, &host)
-            .unwrap()
-            .unwrap()
-            .restart_required
-    );
-    facts.boot_generation = None;
-    store.record_software(&host.scope(), &facts, &host).unwrap();
-    assert!(
-        store
-            .software_evidence(&host.scope(), &facts.attempt_id, &host)
-            .unwrap()
-            .unwrap()
-            .restart_required
-    );
-    facts.boot_generation = Some(id("boot-b"));
-    store.record_software(&host.scope(), &facts, &host).unwrap();
-    assert!(
-        !store
-            .software_evidence(&host.scope(), &facts.attempt_id, &host)
-            .unwrap()
-            .unwrap()
-            .restart_required
-    );
-    assert_eq!(
-        db.count("software_claims"),
-        2,
-        "new boot is not by itself a quiescence/effect proof"
-    );
-}
-
-#[test]
-fn software_evidence_rejects_mismatched_attempt_and_oversized_blob() {
-    let db = Database::new();
-    let host = software_host();
-    let mut store = db.create();
-    host.prepare(&mut store);
-    store
-        .apply_command(
-            &operation("begin"),
-            &host.scope(),
-            &host.begin(),
-            &[],
-            &host,
-        )
-        .unwrap();
-    let facts = SoftwareEvidence {
-        staging: execution_contract::SoftwareStaging::NotRequired {},
-        attempt_id: AttemptId::new("attempt-1").unwrap(),
-        content_digest: host.plan.digest().clone(),
-        runner: id("test-runner"),
-        before: Some(SoftwareState::Absent {}),
-        detected: SoftwareState::Absent {},
-        restart_required: false,
-        object_identity: None,
-        boot_generation: None,
-    };
-    store.record_software(&host.scope(), &facts, &host).unwrap();
-    let mut corrupt = facts.clone();
-    corrupt.attempt_id = AttemptId::new("different-attempt").unwrap();
-    db.sql()
-        .execute(
-            "UPDATE software_evidence SET body=?1",
-            [serde_json::to_vec(&corrupt).unwrap()],
-        )
-        .unwrap();
-    assert_eq!(
-        store.software_evidence(&host.scope(), &facts.attempt_id, &host),
-        Err(Error::Corrupt)
-    );
-    db.sql()
-        .execute(
-            "UPDATE software_evidence SET body=zeroblob(?1)",
-            [limits().max_record_bytes + 1],
-        )
-        .unwrap();
-    assert_eq!(
-        store.software_evidence(&host.scope(), &facts.attempt_id, &host),
-        Err(Error::Corrupt)
-    );
+    assert_eq!(db.count("software_claims"), 1);
 }
 
 #[test]
@@ -2904,5 +2723,127 @@ fn simultaneous_software_requests_have_one_committed_resource_owner() {
         1
     );
     assert_eq!(db.count("attempts"), 1);
-    assert_eq!(db.count("software_claims"), 2);
+    assert_eq!(db.count("software_claims"), 1);
+}
+
+#[test]
+fn managed_provenance_follows_committed_steps_and_is_lost_when_detection_changes() {
+    let db = Database::new();
+    let mut host = software_host();
+    let mut input = host.plan.spec().clone();
+    if let ExecutionSpec::SoftwareProgram { program } = &mut input.execution {
+        program.steps.push(program.steps[0].clone());
+    }
+    host.plan = FrozenExecution::freeze(input, &limits().input).unwrap();
+    let mut store = db.create();
+    host.prepare(&mut store);
+    store
+        .apply_command(
+            &operation("begin"),
+            &host.scope(),
+            &host.begin(),
+            &[],
+            &host,
+        )
+        .unwrap();
+    let attempt = AttemptId::new("attempt-1").unwrap();
+    let process = ProcessEvidence {
+        attempt_id: attempt.clone(),
+        content_digest: host.plan.digest().clone(),
+        runner: id("test-runner"),
+        scope: ProcessScope::ProcessGroup { owner: 1, group: 1 },
+        finished: true,
+        exit_code: Some(0),
+        end: ProcessEnd::Exited,
+        failure_kind: ProcessFailureKind::None,
+        quiescent: true,
+        stdout: vec![],
+        stderr: vec![],
+        total_output_bytes: 0,
+        quality: OutputQuality::Complete,
+    };
+    let mut progress = SoftwareProgress {
+        attempt_id: attempt,
+        content_digest: host.plan.digest().clone(),
+        runner: id("test-runner"),
+        elapsed_ms: 2,
+        output_bytes: 0,
+        checkpoints: vec![
+            SoftwareCheckpoint::Begin {
+                step: 0,
+                phase: SoftwarePhase::Before,
+            },
+            SoftwareCheckpoint::End {
+                step: 0,
+                phase: SoftwarePhase::Before,
+                process: None,
+                detected: Some(SoftwareState::Absent {}),
+                quiescent: true,
+            },
+            SoftwareCheckpoint::Begin {
+                step: 0,
+                phase: SoftwarePhase::Mutation,
+            },
+            SoftwareCheckpoint::End {
+                step: 0,
+                phase: SoftwarePhase::Mutation,
+                process: Some(Box::new(process)),
+                detected: None,
+                quiescent: true,
+            },
+            SoftwareCheckpoint::Begin {
+                step: 0,
+                phase: SoftwarePhase::After,
+            },
+            SoftwareCheckpoint::End {
+                step: 0,
+                phase: SoftwarePhase::After,
+                process: None,
+                detected: Some(SoftwareState::Present {
+                    version: PackageValue::new("1.0").unwrap(),
+                }),
+                quiescent: true,
+            },
+            SoftwareCheckpoint::Complete { step: 0 },
+        ],
+    };
+    store
+        .record_software_progress(&host.scope(), &progress, &host)
+        .unwrap();
+    assert_eq!(
+        store
+            .software_ownership(&host.scope(), &host)
+            .unwrap()
+            .len(),
+        2
+    );
+    progress.checkpoints.push(SoftwareCheckpoint::Begin {
+        step: 1,
+        phase: SoftwarePhase::Before,
+    });
+    store
+        .record_software_progress(&host.scope(), &progress, &host)
+        .unwrap();
+    assert_eq!(db.count("software_ownership"), 1);
+    progress.checkpoints.push(SoftwareCheckpoint::End {
+        step: 1,
+        phase: SoftwarePhase::Before,
+        process: None,
+        detected: Some(SoftwareState::Present {
+            version: PackageValue::new("2.0").unwrap(),
+        }),
+        quiescent: true,
+    });
+    store
+        .record_software_progress(&host.scope(), &progress, &host)
+        .unwrap();
+    assert!(store
+        .software_ownership(&host.scope(), &host)
+        .unwrap()
+        .is_empty());
+    store
+        .record_software_progress(&host.scope(), &progress, &host)
+        .unwrap();
+    assert_eq!(db.count("software_ownership"), 0);
+    assert_eq!(db.count("software_claims"), 1);
 }

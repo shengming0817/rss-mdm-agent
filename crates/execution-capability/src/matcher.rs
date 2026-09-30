@@ -137,8 +137,10 @@ pub fn match_capabilities(
         },
     );
     push(Dimension::Interpreter, interpreters(interpreter));
-    if let Some(spec) = execution.software() {
-        push(Dimension::Software, software(&spec.adapter));
+    if let Some(program) = execution.software_program() {
+        for step in &program.steps {
+            push(Dimension::Software, software(&step.adapter));
+        }
     }
     match stdin {
         StandardInput::Closed {} => {}
@@ -169,7 +171,7 @@ pub fn match_capabilities(
     push(Dimension::RunAs, identities(run_as));
     match session_requirement {
         SessionRequirement::NotRequired {} => {}
-        SessionRequirement::ActiveUser { account } => {
+        SessionRequirement::ActiveUser { account, .. } => {
             push(Dimension::UserSession, user_sessions(account))
         }
     }

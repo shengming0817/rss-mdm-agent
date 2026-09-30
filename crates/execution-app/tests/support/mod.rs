@@ -293,10 +293,17 @@ impl AppHost for TestHost {
                 platform: Some(p.request.target.platform),
                 software: inventory(
                     p.execution
-                        .software()
-                        .map(|s| s.adapter)
-                        .into_iter()
-                        .collect(),
+                        .software_program()
+                        .map(|p| {
+                            let mut kinds = vec![];
+                            for s in &p.steps {
+                                if !kinds.contains(&s.adapter) {
+                                    kinds.push(s.adapter);
+                                }
+                            }
+                            kinds
+                        })
+                        .unwrap_or_default(),
                     available,
                 ),
                 interpreters: inventory(vec![p.launch.interpreter.clone()], available),

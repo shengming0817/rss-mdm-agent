@@ -8,10 +8,11 @@ import { parse, compileTemplate } from "vue/compiler-sfc";
 const selfServiceCommands = [
   "self_service_snapshot",
   "self_service_execute",
-  "self_service_confirm",
   "self_service_cancel",
 ];
 const assistantCommands = [
+  "self_service_execute",
+  "self_service_cancel",
   "ai_connect",
   "ai_receive",
   "ai_send",
@@ -36,8 +37,7 @@ const userCommands = [
   "account_save_organization",
 ];
 const compositionCommands = [
-  ...selfServiceCommands,
-  ...assistantCommands,
+  ...new Set([...selfServiceCommands, ...assistantCommands]),
   ...userCommands,
   ...settingsCommands,
 ];
@@ -306,8 +306,10 @@ export function checkSource(file, source) {
           ].includes(file) && name === "../test-users"
         ) &&
         !(
-          file === "apps/desktop/src/assistant/ExecutionDetails.vue" &&
-          name === "../self-service/RequestOrigin.vue"
+          (file === "apps/desktop/src/assistant/ExecutionDetails.vue" &&
+            name === "../self-service/RequestOrigin.vue") ||
+          (file === "apps/desktop/src/self-service/TaskDetail.vue" &&
+            name === "../assistant/ExecutionDetails.vue")
         ) &&
         !resolve(dirname(resolve(root, file)), name)
           .replaceAll("\\", "/")
@@ -609,6 +611,9 @@ export function checkTree(treeRoot = root) {
         'objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSAlert", "NSButton", "NSControl", "NSSecureTextField", "NSTextField", "NSView", "NSResponder", "NSWindow", "NSApplication", "NSSavePanel", "NSPanel"] }',
         'objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSString", "NSGeometry", "NSURL"] }',
         'execution-app = { path = "../../../crates/execution-app" }',
+        'execution-runner = { path = "../../../crates/execution-runner" }',
+        'execution-interaction = { path = "../../../crates/execution-interaction" }',
+        "rusqlite.workspace = true",
         'execution-sqlite = { path = "../../../crates/execution-sqlite" }',
         'execution-mcp = { path = "../../../crates/execution-mcp" }',
         'execution-admission = { path = "../../../crates/execution-admission" }',
@@ -631,9 +636,7 @@ export function checkTree(treeRoot = root) {
         "schemars.workspace = true",
         'syn = { version = "=2.0.119", features = ["full", "visit"] }',
         'proc-macro2 = "=1.0.107"',
-        'service-catalog = { path = "../../../crates/service-catalog" }',
         'execution-contract = { path = "../../../crates/execution-contract" }',
-        'execution-interaction = { path = "../../../crates/execution-interaction" }',
         'tauri = { workspace = true, features = ["test"] }',
       ],
     ],

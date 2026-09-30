@@ -1,298 +1,169 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted } from "vue";
 import type { Controller } from "./controller";
-import type { Decision, RequestView } from "./types";
-import ParameterForm from "./ParameterForm.vue";
 import TaskDetail from "./TaskDetail.vue";
 const props = defineProps<{ controller: Controller }>();
 const c = props.controller;
 const s = c.state;
-const items = computed(
-  () =>
-    s.snapshot?.catalog.filter((item) =>
-      s.page === "software"
-        ? item.kind === "software"
-        : item.kind !== "software",
-    ) ?? [],
-);
 const task = computed(() =>
-  [
-    ...(s.snapshot?.requests ?? []),
-    ...(s.snapshot?.referencedRequests ?? []),
-  ].find((item) => item.action.requestId === s.taskId),
+  s.snapshot?.selected?.kind === "execution"
+    ? s.snapshot.selected.value
+    : s.snapshot?.requests.find((t) => t.action.requestId === s.taskId),
 );
-function decision(value: Decision): string {
-  switch (value) {
-    case "allowed":
-      return "允许";
-    case "unknown":
-      return "未知，需核实";
-    case "missingCapability":
-      return "缺少能力";
-    case "unsupportedTarget":
-      return "目标不适用";
-    case "unresolvedResource":
-      return "资源未解析";
-    case "blocked":
-      return "受限";
-  }
-}
-function status(value: RequestView["status"]): string {
-  switch (value) {
-    case "waiting":
-      return "等待交互";
-    case "approval":
-      return "等待策略授权";
-    case "confirmation":
-      return "等待动作确认";
-    case "complete":
-      return "测试流程完成";
-    case "stopped":
-      return "流程停止";
-    case "unknownEffect":
-      return "效果未知";
-  }
-}
-const now = ref(Date.now());
 let polling: ReturnType<typeof setInterval>;
 onMounted(() => {
-  polling = setInterval(() => {
-    now.value = Date.now();
-    if (!s.busy && !s.loading) void c.refresh();
-  }, 1500);
   void c.refresh();
+  polling = setInterval(() => {
+    if (!s.busy) void c.refresh();
+  }, 2000);
 });
-onUnmounted(() => clearInterval(polling));
+onUnmounted(() => {
+  clearInterval(polling);
+  c.dispose();
+});
+
+function operationLabel(value: string) {
+  switch (value) {
+    case "install":
+      return "安装";
+    case "uninstall":
+      return "卸载";
+    case "detect":
+      return "检测";
+    default:
+      return "未知操作";
+  }
+}
+function stateLabel(value: string) {
+  switch (value) {
+    case "proposed":
+      return "等待本人确认";
+    case "selected":
+      return "已确认";
+    case "submitting":
+      return "准备执行";
+    case "failed":
+      return "准备失败；没有创建新尝试";
+    case "cancelled":
+      return "已撤销";
+    default:
+      return "状态未知";
+  }
+}
+function failureLabel(value: string) {
+  switch (value) {
+    case "preparationFailed":
+      return "本机条件或后台 Start 未满足";
+    case "interrupted":
+      return "服务中断，未重新执行";
+    case "expired":
+      return "原任务已过期";
+    case "revoked":
+      return "后台授权已撤销";
+    default:
+      return "状态未知";
+  }
+}
 </script>
 <template>
   <div class="self-service">
-    <div v-if="s.error" class="error" role="alert">{{ s.error }}</div>
-    <div v-if="!s.snapshot" class="empty-state">
-      <h1>正在连接桌面测试服务</h1>
-      <p>服务不可用时不会切换为演示成功。</p>
-      <button @click="c.refresh()">重试连接</button>
-    </div>
-    <template v-else-if="s.page === 'home'">
-      <section class="hero">
-        <span class="eyebrow">YOUR EVERYDAY TOOLS</span>
-        <h1>工作所需，<br />从这里开始。</h1>
-        <p>
-          查找软件、使用工具，并在一个地方跟进请求。<br />无需启用
-          AI，也能完成自助测试流程。
-        </p>
-        <div class="actions">
-          <button @click="c.navigate('software')">浏览软件</button
-          ><button class="secondary" @click="c.navigate('tools')">
-            打开工具中心
-          </button>
-        </div>
-      </section>
-      <div class="overview-grid">
-        <article>
-          <span class="card-index">01 / SOFTWARE</span>
-          <h2>按需申请软件</h2>
-          <p>先了解版本、适用条件和权限，再确认动作。</p>
-        </article>
-        <article>
-          <span class="card-index">02 / TOOLS</span>
-          <h2>清晰填写参数</h2>
-          <p>目录提供同一套表单规则，敏感输入不会出现在摘要中。</p>
-        </article>
-        <article>
-          <span class="card-index">03 / REQUESTS</span>
-          <h2>随时查看进展</h2>
-          <p>确认、隐私同意和管理员批准各自独立。</p>
-        </article>
-      </div>
-      <p class="notice">
-        这是 S1
-        受控测试服务，不修改设备。关闭窗口或退出不会取消已登记任务；重开后可查询持久状态。
-      </p>
-    </template>
-    <template v-else-if="s.page === 'software' || s.page === 'tools'">
-      <div class="page-heading">
-        <div>
-          <span class="eyebrow">SELF SERVICE</span>
-          <h1>{{ s.page === "software" ? "软件中心" : "工具中心" }}</h1>
-          <p>选择项目，查看条件与精确动作。</p>
-        </div>
+    <h1>{{ s.page === "tasks" ? "设备任务" : "可用软件与任务" }}</h1>
+    <p v-if="!c.interactive">请在桌面应用中连接本机执行服务。</p>
+    <p v-if="s.error" class="error" role="alert">{{ s.error }}</p>
+    <button :disabled="s.loading" @click="c.refresh">刷新</button>
+    <section v-if="s.snapshot" aria-label="后台任务">
+      <p v-if="!s.snapshot.available.length">当前没有等待操作的后台任务。</p>
+      <article
+        v-for="offer in s.snapshot.available"
+        :key="offer.task + offer.attempt"
+      >
+        <h2>{{ offer.title }}</h2>
+        <p>有效期：{{ new Date(offer.expiresAt * 1000).toLocaleString() }}</p>
         <button
-          class="secondary"
-          :disabled="!c.interactive"
-          @click="c.refresh()"
+          v-if="offer.userInitiated"
+          :disabled="s.busy || s.uncertain"
+          @click="c.select(offer)"
         >
-          刷新目录
+          查看并确认
         </button>
-      </div>
-      <div class="catalog-grid">
-        <article v-for="item in items" :key="item.itemId" class="catalog-card">
-          <span class="card-index"
-            >{{ item.category }} / {{ item.resource.reference.revision }}</span
-          >
-          <h2>{{ item.name }}</h2>
-          <p>{{ item.description }}</p>
-          <dl class="decisions">
-            <dt>可见</dt>
-            <dd>{{ decision(item.display.visibility) }}</dd>
-            <dt>可申请</dt>
-            <dd>{{ decision(item.display.requestability) }}</dd>
-            <dt>可执行</dt>
-            <dd>{{ decision(item.display.executability) }}</dd>
-          </dl>
-          <p v-if="item.availability !== 'listed'" class="notice">
-            {{
-              item.availability === "expired"
-                ? "目录已过期，只能浏览"
-                : "已下架，只能浏览"
-            }}
+        <p v-else>由后台派发，执行服务处理。</p>
+      </article>
+      <section v-if="s.item" aria-label="操作确认">
+        <h2>确认执行 {{ s.item.title }}</h2>
+        <template v-if="s.item.summary.kind === 'software'">
+          <p>操作：{{ operationLabel(s.item.summary.intent) }}</p>
+          <ol>
+            <li v-for="(step, index) in s.item.summary.steps" :key="index">
+              {{ step.package }} {{ step.version }} ·
+              {{ step.identity === "system" ? "系统账号" : "当前用户" }}
+            </li>
+          </ol>
+        </template>
+        <p v-else>
+          后台固定脚本 ·
+          {{ s.item.summary.identity === "system" ? "系统账号" : "当前用户" }}
+        </p>
+        <button :disabled="s.busy || s.uncertain" @click="c.confirm">
+          确认并执行
+        </button>
+        <button :disabled="s.busy" @click="s.item = null">返回</button>
+      </section>
+      <section aria-label="准备中的请求">
+        <article
+          v-for="pending in s.snapshot.preparations"
+          :key="pending.offer.request"
+        >
+          <strong>{{ pending.offer.title }}</strong>
+          <p>
+            {{ stateLabel(pending.state)
+            }}<span v-if="pending.failure">
+              ·
+              {{ failureLabel(pending.failure) }}</span
+            >
           </p>
           <button
-            class="secondary"
-            :disabled="s.busy || s.uncertain"
-            @click="c.select(item)"
+            v-if="pending.state === 'proposed'"
+            @click="c.select(pending.offer)"
           >
-            查看详情
+            查看并确认
+          </button>
+          <button
+            v-if="!['failed', 'cancelled'].includes(pending.state)"
+            :disabled="s.busy"
+            @click="c.cancel(pending.offer.request)"
+          >
+            撤销请求
           </button>
         </article>
-      </div>
-    </template>
-    <template v-else-if="s.page === 'detail' && s.item">
-      <button
-        class="text-button"
-        @click="c.navigate(s.item.kind === 'software' ? 'software' : 'tools')"
-      >
-        ← 返回目录
-      </button>
-      <h1>{{ s.item.name }}</h1>
-      <p>{{ s.item.reason }}</p>
-      <dl class="decisions">
-        <dt>可见</dt>
-        <dd>{{ decision(s.item.display.visibility) }}</dd>
-        <dt>可申请</dt>
-        <dd>{{ decision(s.item.display.requestability) }}</dd>
-        <dt>可执行</dt>
-        <dd>{{ decision(s.item.display.executability) }}</dd>
-      </dl>
-      <p v-if="!c.interactive" class="notice">
-        浏览器仅展示页面，请在桌面应用中填写并提交测试请求。
-      </p>
-      <form novalidate @submit.prevent="c.execute">
-        <ParameterForm
-          :fields="s.item.fields"
-          :values="s.fields"
-          :disabled="
-            !c.interactive ||
-            s.busy ||
-            s.accepted ||
-            s.uncertain ||
-            s.item.display.requestability !== 'allowed'
-          "
-          prefix="draft"
-          @change="c.change"
-        />
-        <div class="actions">
-          <button
-            :disabled="
-              !c.interactive ||
-              s.busy ||
-              s.accepted ||
-              s.uncertain ||
-              s.item.display.requestability !== 'allowed'
-            "
-          >
-            {{ s.busy ? "处理中…" : "检查并执行" }}</button
-          ><button
-            type="button"
-            class="secondary"
-            :disabled="!c.interactive || s.busy || s.uncertain"
-            @click="c.select(s.item, true)"
-          >
-            新建请求
-          </button>
-        </div>
-      </form>
-      <button v-if="s.uncertain" class="secondary" @click="c.refresh()">
-        查询原请求
-      </button>
-    </template>
-    <template v-else-if="s.page === 'tasks'">
-      <div v-if="s.uncertain" class="notice">
-        提交结果尚不明确，可查询或重试原请求。
-        <button :disabled="s.busy" @click="c.execute">按原请求重试提交</button>
-      </div>
-      <div class="page-heading">
-        <div>
-          <span class="eyebrow">REQUESTS</span>
-          <h1>请求与任务</h1>
-          <p>交互提示与任务结果分别记录。</p>
-        </div>
+      </section>
+      <section aria-label="执行记录">
         <button
-          class="secondary"
-          :disabled="!c.interactive"
-          @click="c.refresh()"
+          v-for="record in s.snapshot.requests"
+          :key="record.action.requestId"
+          @click="s.taskId = record.action.requestId"
         >
-          刷新任务
+          {{ record.action.operation.resource.id }} · {{ record.status.phase }}
         </button>
-      </div>
-      <p v-if="s.snapshot.requests.length === 0" class="empty-state">
-        {{
-          s.snapshot.next || s.after
-            ? "本页暂无已提交请求，可继续翻页。"
-            : "暂无请求。先从软件或工具目录开始。"
-        }}
-      </p>
-      <div class="task-layout">
-        <div class="task-list">
-          <button
-            v-for="request in s.snapshot.requests"
-            :key="request.action.requestId"
-            class="task-row secondary"
-            :aria-pressed="s.taskId === request.action.requestId"
-            @click="s.taskId = request.action.requestId"
-          >
-            <strong>{{ request.action.title }}</strong
-            ><span>{{ status(request.status) }}</span
-            ><small class="identifier">{{ request.action.requestId }}</small>
-          </button>
-          <nav class="actions" aria-label="任务分页">
-            <button
-              class="secondary"
-              :disabled="s.loading || !s.pageHistory.length"
-              @click="c.previousPage()"
-            >
-              上一页
-            </button>
-            <span>第 {{ s.pageHistory.length + 1 }} 页</span>
-            <button
-              class="secondary"
-              :disabled="s.loading || !s.snapshot.next"
-              @click="c.nextPage()"
-            >
-              下一页
-            </button>
-          </nav>
-        </div>
-        <TaskDetail
-          v-if="task"
-          :key="task.action.requestId"
-          :task="task"
-          :now="now"
-          :disabled="!c.interactive || s.busy"
-          @confirm="task && c.confirm(task)"
-          @cancel="task && c.cancel(task)"
-        />
-      </div>
-    </template>
-    <template v-else-if="s.page === 'help'"
-      ><h1>设备与帮助</h1>
-      <p>{{ s.snapshot.targetLabel }}</p>
-      <p>这是固定的模拟目标，不代表当前电脑的身份、权限或适用性。</p>
-      <p>
-        关闭窗口不会取消任务。S1 任务与会话分别保存在本地，重开后可查询原请求。
-      </p>
-      <p>
-        测试批准仅授权精确的 S1 动作；当前没有真实安装、脚本执行或企业权限。
-      </p></template
-    >
+        <button v-if="s.previous.length" :disabled="s.loading" @click="c.first">
+          首页
+        </button>
+        <button
+          v-if="s.previous.length"
+          :disabled="s.loading"
+          @click="c.previous"
+        >
+          上一页
+        </button>
+        <button v-if="s.snapshot.next" :disabled="s.loading" @click="c.next">
+          下一页
+        </button>
+      </section>
+      <TaskDetail
+        v-if="task"
+        :task="task"
+        :disabled="s.busy"
+        @cancel="c.cancel(task.action.requestId)"
+      />
+    </section>
   </div>
 </template>

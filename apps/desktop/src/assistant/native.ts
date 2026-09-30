@@ -52,12 +52,26 @@ export function nativeAssistant(): AssistantServices | undefined {
         }),
         options,
       );
-      return { runtime, mode: "s1" };
+      return { runtime, mode: "live" };
+    },
+    async confirmTask(task) {
+      const { request, attempt, revision } = task;
+      await invoke("self_service_execute", {
+        generation,
+        input: { request, task: task.task, attempt, revision },
+      });
+      if (generation !== userGeneration())
+        throw new ClientError("request_failed");
+    },
+    async cancelTask(requestId) {
+      await invoke("self_service_cancel", { generation, input: { requestId } });
+      if (generation !== userGeneration())
+        throw new ClientError("request_failed");
     },
     async taskDetails(requestId, signal) {
       if (signal.aborted) throw new ClientError("request_failed");
       const result = await invoke<
-        import("@rss-mdm-agent/execution-bindings/task-details").ExecutionTaskDetails
+        import("@rss-mdm-agent/execution-bindings/task-details").BackendTaskView
       >("execution_task_details", { requestId, generation });
       if (generation !== userGeneration())
         throw new ClientError("request_failed");

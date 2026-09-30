@@ -80,3 +80,7 @@ pub(crate) fn file_identity(_: &File) -> Result<Id, Error> {
 pub(crate) fn open_observed_file(_: &Path) -> Result<File, Error> {
     Err(Error::Unsupported)
 }
+
+pub(crate) fn grant_read(_: &Path, _: &str) -> Result<(), Error> {
+    Err(Error::Unsupported)
+}

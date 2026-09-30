@@ -1,0 +1,42 @@
+[package]
+name = "agent-service"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "rss-execution-service"
+path = "src/main.rs"
+
+[dependencies]
+agent-client = { path = "../../crates/agent-client" }
+execution-interaction = { path = "../../crates/execution-interaction" }
+execution-app = { path = "../../crates/execution-app" }
+execution-contract = { path = "../../crates/execution-contract" }
+execution-admission = { path = "../../crates/execution-admission" }
+execution-approval = { path = "../../crates/execution-approval" }
+execution-capability = { path = "../../crates/execution-capability" }
+execution-lifecycle = { path = "../../crates/execution-lifecycle" }
+execution-sqlite = { path = "../../crates/execution-sqlite" }
+execution-runner = { path = "../../crates/execution-runner" }
+native-process = { path = "../../crates/native-process" }
+local-service = { path = "../../crates/local-service" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+url.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "net"] }
+uuid = { version = "=1.26.0", features = ["v4", "serde"] }
+base64 = "=0.23.1"
+zeroize = "=1.8.2"
+
+[target.'cfg(unix)'.dependencies]
+libc = "=0.2.189"
+
+[dev-dependencies]
+axum = "=0.8.9"
+ring = "=0.17.14"
+rusqlite.workspace = true

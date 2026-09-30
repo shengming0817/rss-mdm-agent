@@ -28,7 +28,7 @@ fn duplicate_parameters_and_untrusted_fields_are_rejected() {
     for input in [
         source.replace("\"host\": {", "\"host\": {}, \"host\": {"),
         source.replacen("{", "{\"authorized\":true,", 1),
-        source.replacen("\"schemaVersion\": 4", "\"schemaVersion\": 1", 1),
+        source.replacen("\"schemaVersion\": 5", "\"schemaVersion\": 1", 1),
     ] {
         assert!(decode_execution(input.as_bytes(), &limits()).is_err());
     }
@@ -431,4 +431,11 @@ fn original_v3_bytes_are_rejected_without_legacy_identity_aliases() {
     let mut current = fixture();
     current["planId"] = serde_json::json!("old-plan");
     assert!(decode_execution(&serde_json::to_vec(&current).unwrap(), &limits()).is_err());
+}
+
+#[test]
+fn v4_is_rejected_without_reinterpreting_current_input() {
+    let mut value = fixture();
+    value["schemaVersion"] = 4.into();
+    assert!(decode_execution(&serde_json::to_vec(&value).unwrap(), &limits()).is_err());
 }

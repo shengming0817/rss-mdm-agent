@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local launchd mechanism setup. Unbound services cannot execute submitted work."""
+"""Install the system execution service or the current login process helper."""
 import argparse
 import os
 from pathlib import Path
@@ -23,6 +23,7 @@ def main():
     parser.add_argument('action', choices=['install', 'remove', 'status'])
     parser.add_argument('--scope', choices=['system', 'user'], required=True)
     parser.add_argument('--binary', type=Path)
+    parser.add_argument('--config', type=Path)
     args = parser.parse_args()
     system = args.scope == 'system'
     if system and os.geteuid() != 0:
@@ -40,6 +41,17 @@ def main():
     binary = args.binary
     if binary is None or not binary.is_absolute():
         raise RuntimeError('an absolute installation path is required')
+    program = [str(binary)]
+    if args.config is not None:
+        if not args.config.is_absolute():
+            raise RuntimeError('an absolute protected deployment path is required')
+        for path in [args.config, *args.config.parents]:
+            metadata = path.lstat()
+            if stat.S_ISLNK(metadata.st_mode) or metadata.st_uid != 0 or metadata.st_mode & 0o022:
+                raise RuntimeError('unprotected deployment configuration')
+        program += ['--config', str(args.config)]
+    if not system:
+        program += ['--user-helper']
     if args.action == 'install':
         if binary.is_symlink() or not binary.is_file():
             raise RuntimeError('a regular service binary is required')
@@ -62,9 +74,9 @@ def main():
             created = True
             with os.fdopen(descriptor, 'wb') as stream:
                 os.fchmod(stream.fileno(), 0o600)
-                plistlib.dump({'Label': label, 'ProgramArguments': [str(binary)],
+                plistlib.dump({'Label': label, 'ProgramArguments': program,
                               'MachServices': {label: True}, 'RunAtLoad': True,
-                              'KeepAlive': False, 'ExitTimeOut': 5,
+                              'KeepAlive': False, 'ExitTimeOut': 10,
                               'ProcessType': 'Background'}, stream)
                 stream.flush()
                 os.fsync(stream.fileno())
@@ -84,7 +96,7 @@ def main():
     else:
         with plist.open('rb') as stream:
             current = plistlib.load(stream)
-        if current.get('ProgramArguments') != [str(binary)] or current.get('Label') != label:
+        if current.get('ProgramArguments') != program or current.get('Label') != label:
             raise RuntimeError('refusing to remove another installation')
         if registered(endpoint):
             subprocess.run(['/bin/launchctl', 'bootout', endpoint], check=True)

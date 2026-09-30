@@ -46,7 +46,7 @@ fn fixture(script: &str, argv: Vec<LaunchArg>, budget: u64, timeout: u64) -> Fix
     .unwrap();
     value["request"]["target"] = serde_json::json!({"device":"mechanism-device","platform":"windows","scope":{"kind":"device"}});
     value["runAs"] = serde_json::json!({"kind":"user","account":{"platform":"windows","subject":crate::windows::token_identity().unwrap().0}});
-    value["sessionRequirement"] = serde_json::json!({"kind":"notRequired"});
+    value["sessionRequirement"] = serde_json::json!({"kind":"activeUser", "account":value["runAs"]["account"].clone(), "session":crate::host::current_session_binding().unwrap()});
     value["constraints"] = serde_json::json!({"kind":"osIdentity"});
     value["launch"]["artifact"]["sha256"] =
         format!("{:x}", Sha256::digest(script.as_bytes())).into();
@@ -90,10 +90,11 @@ fn fixture(script: &str, argv: Vec<LaunchArg>, budget: u64, timeout: u64) -> Fix
     )
     .unwrap();
     let artifacts = Artifacts {
+        program: Vec::new(),
+        delegate: None,
         interpreter: interpreter(),
         content,
         work_root: root.clone(),
-        software: None,
         controlled_input: None,
         fixture_owned: true,
     };
@@ -116,8 +117,7 @@ fn start(f: &Fixture, cap: u64, time: u64) -> AttemptId {
                     deadline_unix_ms: now().unwrap() + time,
                     remaining_timeout_ms: time,
                     remaining_output_bytes: cap
-                },
-                None
+                }
             )
             .unwrap(),
         DispatchOutcome::Accepted
@@ -141,9 +141,19 @@ fn replan(f: &mut Fixture, change: impl FnOnce(&mut ExecutionInput)) {
     let mut spec = f.plan.spec().clone();
     change(&mut spec);
     let plan = FrozenExecution::freeze(spec, &limits()).unwrap();
-    let artifacts = f.runner.artifacts.remove(f.plan.digest().as_str()).unwrap();
+    let artifacts = f
+        .runner
+        .artifacts
+        .entries
+        .lock()
+        .unwrap()
+        .remove(f.plan.digest().as_str())
+        .unwrap();
     f.runner
         .artifacts
+        .entries
+        .lock()
+        .unwrap()
         .insert(plan.digest().as_str().into(), artifacts);
     f.plan = plan;
 }
@@ -268,6 +278,9 @@ fn windows_controlled_stdin_and_early_close_quality() {
         Arc::get_mut(
             f.runner
                 .artifacts
+                .entries
+                .lock()
+                .unwrap()
                 .get_mut(f.plan.digest().as_str())
                 .unwrap(),
         )
@@ -373,7 +386,7 @@ fn windows_capture_is_durable_and_reopened_attempt_does_not_launch() {
         AppConfig::test_defaults(1),
     )
     .unwrap();
-    app.submit(&caller, request, &f.plan).unwrap();
+    app.request_execution(&caller, &f.plan).unwrap();
     let until = Instant::now() + Duration::from_secs(20);
     loop {
         let status = app.reconcile(request).unwrap();
@@ -415,7 +428,7 @@ fn windows_capture_is_durable_and_reopened_attempt_does_not_launch() {
         AppConfig::test_defaults(1),
     )
     .unwrap();
-    let recovered = app.submit(&caller, request, &f.plan).unwrap();
+    let recovered = app.request_execution(&caller, &f.plan).unwrap();
     assert_eq!(recovered.attempts, 1);
     assert_eq!(
         app.status(&caller, request)

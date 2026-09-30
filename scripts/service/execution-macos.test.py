@@ -33,6 +33,10 @@ class Installation(unittest.TestCase):
             folder = home / 'Library/LaunchAgents'
             plist = folder / 'com.rss-mdm.agent.execution.user.plist'
             self.assertEqual(plist.stat().st_mode & 0o777, 0o600)
+            with plist.open('rb') as stream:
+                config = plistlib.load(stream)
+            self.assertEqual(config['ProgramArguments'], ['/bin/sh', '--user-helper'])
+            self.assertEqual(config['ExitTimeOut'], 10)
             self.assertEqual(folder.stat().st_mode & 0o777, 0o700)
             self.assertEqual((home / 'Library').stat().st_mode & 0o777, 0o700)
             self.assertTrue(any(command[1] == 'bootstrap' for command in calls))
@@ -55,7 +59,7 @@ class Installation(unittest.TestCase):
             label = 'com.rss-mdm.agent.execution.user'
             plist = folder / (label + '.plist')
             with plist.open('wb') as stream:
-                plistlib.dump({'Label': label, 'ProgramArguments': ['/missing/rss-execution-service']}, stream)
+                plistlib.dump({'Label': label, 'ProgramArguments': ['/missing/rss-execution-service', '--user-helper']}, stream)
             self.invoke(home, ['remove', '--scope', 'user', '--binary', '/missing/rss-execution-service'], lambda *args, **kwargs: SimpleNamespace(returncode=113))
             self.assertFalse(plist.exists())
 
@@ -86,7 +90,7 @@ class Installation(unittest.TestCase):
             folder=home / 'Library/LaunchAgents'; folder.mkdir(parents=True)
             plist=folder / 'com.rss-mdm.agent.execution.user.plist'
             with plist.open('wb') as stream:
-                plistlib.dump({'Label':'com.rss-mdm.agent.execution.user','ProgramArguments':['/missing/service']},stream)
+                plistlib.dump({'Label':'com.rss-mdm.agent.execution.user','ProgramArguments':['/missing/service', '--user-helper']},stream)
             with self.assertRaises(module.subprocess.CalledProcessError):
                 self.invoke(home,['remove','--scope','user','--binary','/missing/service'],lambda *args,**kwargs:SimpleNamespace(returncode=5))
             self.assertTrue(plist.exists())

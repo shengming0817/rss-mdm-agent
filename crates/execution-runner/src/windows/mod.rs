@@ -63,11 +63,14 @@ pub(crate) fn token_identity() -> Result<(String, u32), Error> {
         return Err(Error::Unbound);
     }
     let token = own(handle)?;
+    token_subject(raw(&token))
+}
+pub(crate) fn token_subject(token: HANDLE) -> Result<(String, u32), Error> {
     let mut buffer = vec![0usize; 128];
     let mut size = 0;
     if unsafe {
         GetTokenInformation(
-            raw(&token),
+            token,
             TokenUser,
             buffer.as_mut_ptr().cast(),
             (buffer.len() * size_of::<usize>()) as u32,
@@ -81,7 +84,7 @@ pub(crate) fn token_identity() -> Result<(String, u32), Error> {
     let mut session = 0u32;
     if unsafe {
         GetTokenInformation(
-            raw(&token),
+            token,
             TokenSessionId,
             (&mut session as *mut u32).cast(),
             4,
@@ -92,6 +95,39 @@ pub(crate) fn token_identity() -> Result<(String, u32), Error> {
         return Err(Error::Unbound);
     }
     Ok((subject, session))
+}
+pub(crate) fn current_session_binding() -> Result<Id, Error> {
+    let mut handle = null_mut();
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut handle) } == 0 {
+        return Err(Error::Unbound);
+    }
+    let token = own(handle)?;
+    token_session_binding(raw(&token))
+}
+pub(crate) fn token_session_binding(token: HANDLE) -> Result<Id, Error> {
+    let mut statistics: TOKEN_STATISTICS = unsafe { std::mem::zeroed() };
+    let mut size = 0u32;
+    if unsafe {
+        GetTokenInformation(
+            token,
+            TokenStatistics,
+            (&mut statistics as *mut TOKEN_STATISTICS).cast(),
+            size_of::<TOKEN_STATISTICS>() as u32,
+            &mut size,
+        )
+    } == 0
+    {
+        return Err(Error::Unbound);
+    }
+    let (_, session) = token_subject(token)?;
+    Id::new(format!(
+        "{}/{}/{:x}-{:x}",
+        boot_generation()?.as_str(),
+        session,
+        statistics.AuthenticationId.HighPart,
+        statistics.AuthenticationId.LowPart
+    ))
+    .map_err(|_| Error::Unbound)
 }
 pub(crate) fn security(text: &str) -> Result<Local, Error> {
     let mut value = null_mut();
@@ -123,6 +159,44 @@ pub(crate) fn nonce() -> Result<String, Error> {
     }
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
+pub(crate) fn active_user_session() -> Result<(String, u32), Error> {
+    let mut sessions = null_mut();
+    let mut count = 0;
+    if unsafe { WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE, 0, 1, &mut sessions, &mut count) }
+        == 0
+    {
+        return Err(Error::Unavailable);
+    }
+    if sessions.is_null() || count > 4096 {
+        if !sessions.is_null() {
+            unsafe {
+                WTSFreeMemory(sessions.cast());
+            }
+        }
+        return Err(Error::Unavailable);
+    }
+    let selected = unsafe { std::slice::from_raw_parts(sessions, count as usize) }
+        .iter()
+        .filter(|entry| entry.SessionId != 0 && entry.State == WTSActive)
+        .map(|entry| entry.SessionId)
+        .collect::<Vec<_>>();
+    unsafe {
+        WTSFreeMemory(sessions.cast());
+    }
+    if selected.len() != 1 {
+        return Err(Error::Unbound);
+    }
+    let mut token = null_mut();
+    if unsafe { WTSQueryUserToken(selected[0], &mut token) } == 0 {
+        return Err(Error::Unavailable);
+    }
+    let token = own(token)?;
+    let identity = token_subject(raw(&token))?;
+    if identity.1 != selected[0] || identity.0 == "S-1-5-18" {
+        return Err(Error::Denied);
+    }
+    Ok(identity)
+}
 pub(crate) fn identity(run_as: &RunAs, session: &SessionRequirement) -> Result<(), Error> {
     let (subject, current) = token_identity()?;
     match run_as {
@@ -135,8 +209,9 @@ pub(crate) fn identity(run_as: &RunAs, session: &SessionRequirement) -> Result<(
                 && current != 0 => {}
         _ => return Err(Error::Unbound),
     }
-    if let SessionRequirement::ActiveUser { account } = session {
-        if account.platform != Platform::Windows
+    if let SessionRequirement::ActiveUser { account, session } = session {
+        if session != &current_session_binding()?
+            || account.platform != Platform::Windows
             || account.subject.as_str() != subject
             || current == 0
         {

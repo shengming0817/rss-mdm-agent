@@ -2,7 +2,7 @@
 
 桌面自助服务与人/AI 共用的受控执行客户端。本仓拥有 UI、AI 适配、本地执行核心与 Agent 平台实现；企业身份、策略、资源发布和 Agent wire 由 rss-mdm 持有。
 
-当前桌面装配 Rust 持久执行服务、S1 测试执行器与独立 AI Host；另有 macOS/Windows S2 statusOnly 安全服务候选。测试执行与状态查询不代表真实脚本、软件安装或企业接线完成。Linux 是宿主设计维度，不扩大服务端受管平台承诺。
+生产执行由 `apps/agent-service` 统一装配通信、OS 凭据、认证 IPC 和唯一执行 journal。桌面与 AI 引用已验签的后台任务，测试执行器保留在测试装配；后台决定企业授权和来源，客户端校验设备、材料和实际 OS 执行条件。平台验收以 PR 的实际运行记录为准，Windows 编译不等于实机验证。
 
 - [产品需求](docs/product/rss-mdm-agent-prd.md)与[文档导航](docs/README.md)。
 - [桌面开发与操作](docs/guides/desktop-development.md)、[安全服务实验室](docs/guides/local-service-lab.md)。

@@ -23,6 +23,7 @@ static STOP: OnceLock<&'static AtomicBool> = OnceLock::new();
 static HANDLER: Mutex<Option<Box<dyn Handler>>> = Mutex::new(None);
 static STATUS: AtomicPtr<c_void> = AtomicPtr::new(null_mut());
 static FAILED: AtomicBool = AtomicBool::new(false);
+static CLIENT_SUBJECTS: OnceLock<Vec<String>> = OnceLock::new();
 fn stopping() -> bool {
     STOP.get().is_none_or(|s| s.load(Ordering::Acquire))
 }
@@ -110,6 +111,11 @@ pub fn run(
     {
         return Err(Error::Unbound);
     }
+    let policy = handler.peer_policy().ok_or(Error::Unbound)?;
+    policy.validate()?;
+    CLIENT_SUBJECTS
+        .set(policy.subjects)
+        .map_err(|_| Error::Conflict)?;
     STOP.set(stop_flag).map_err(|_| Error::Conflict)?;
     if !system {
         if unsafe { SetConsoleCtrlHandler(Some(console), 1) } == 0 {
@@ -139,16 +145,86 @@ pub fn run(
 fn endpoint(system: bool) -> Result<(String, String), Error> {
     let (subject, session) = token_identity()?;
     Ok(if system {
-        (
-            r"\\.\pipe\rss-mdm-execution-system-v2".into(),
-            "D:P(A;;GA;;;SY)(A;;GA;;;BA)".into(),
-        )
+        (r"\\.\pipe\rss-mdm-execution-system-v5".into(), {
+            let mut sddl = String::from("D:P(A;;GA;;;SY)(A;;GA;;;BA)");
+            if let Some(subjects) = CLIENT_SUBJECTS.get() {
+                for subject in subjects {
+                    if !subject.starts_with("S-1-")
+                        || !subject
+                            .bytes()
+                            .all(|b| b.is_ascii_digit() || b == b'S' || b == b'-')
+                    {
+                        return Err(Error::Configuration);
+                    }
+                    sddl.push_str(&format!("(A;;0x0012019b;;;{subject})"));
+                }
+            }
+            sddl
+        })
     } else {
         (
-            format!(r"\\.\pipe\rss-mdm-execution-{subject}-{session}-v2"),
+            format!(r"\\.\pipe\rss-mdm-execution-{subject}-{session}-v5"),
             format!("D:P(A;;GA;;;{subject})(A;;GA;;;SY)"),
         )
     })
+}
+
+fn peer_token(peer: &crate::host::Peer) -> Result<std::os::windows::io::OwnedHandle, Error> {
+    use windows_sys::Win32::Security::*;
+    if unsafe { ImpersonateNamedPipeClient(peer.native_handle() as HANDLE) } == 0 {
+        return Err(Error::Denied);
+    }
+    struct Revert;
+    impl Drop for Revert {
+        fn drop(&mut self) {
+            unsafe {
+                RevertToSelf();
+            }
+        }
+    }
+    let _revert = Revert;
+    let mut handle = null_mut();
+    if unsafe { OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, 1, &mut handle) } == 0 {
+        return Err(Error::Denied);
+    }
+    own(handle)
+}
+pub(crate) fn session_binding(peer: &crate::host::Peer) -> Result<Id, Error> {
+    super::token_session_binding(raw(&peer_token(peer)?))
+}
+pub(crate) fn authenticate(
+    peer: &crate::host::Peer,
+    policy: &crate::host::PeerPolicy,
+) -> Result<String, Error> {
+    let token = peer_token(peer)?;
+    let (subject, session) = super::token_subject(raw(&token))?;
+    if !policy.subjects.contains(&subject)
+        || session != peer.session()
+        || (policy.interactive && session == 0)
+    {
+        return Err(Error::Denied);
+    }
+    let process = own(unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, peer.pid()) })?;
+    let mut path = vec![0u16; 32768];
+    let mut size = path.len() as u32;
+    if unsafe { QueryFullProcessImageNameW(raw(&process), 0, path.as_mut_ptr(), &mut size) } == 0 {
+        return Err(Error::Denied);
+    }
+    let path = std::path::PathBuf::from(
+        String::from_utf16(&path[..size as usize]).map_err(|_| Error::Denied)?,
+    );
+    if !policy
+        .images
+        .iter()
+        .any(|image| image.verify(&path).is_ok())
+    {
+        return Err(Error::Denied);
+    }
+    let mut exit = 0;
+    if unsafe { GetExitCodeProcess(raw(&process), &mut exit) } == 0 || exit != 259 {
+        return Err(Error::Denied);
+    }
+    Ok(subject)
 }
 fn listener(name: &str, sddl: &str) -> Result<NamedPipeServer, Error> {
     let descriptor = security(sddl)?;
@@ -303,7 +379,7 @@ async fn call(pipe: &mut NamedPipeServer, owner: &OwnerThread) -> Result<(), Err
     }
     let connection = own(connection)?;
     let size = pipe.read_u32_le().await.map_err(|_| Error::Unavailable)? as usize;
-    if size == 0 || size > 65536 {
+    if size == 0 || size > host::FRAME_LIMIT {
         return Err(Error::InvalidInput);
     }
     let mut bytes = vec![0; size];
@@ -323,7 +399,7 @@ async fn call(pipe: &mut NamedPipeServer, owner: &OwnerThread) -> Result<(), Err
         })
         .map_err(|_| Error::Capacity)?;
     let reply = received.await.map_err(|_| Error::Unavailable)?;
-    if reply.len() > 65536 {
+    if reply.len() > host::FRAME_LIMIT {
         return Err(Error::Unavailable);
     }
     pipe.write_u32_le(reply.len() as u32)
@@ -391,8 +467,46 @@ fn drive(handler: Box<dyn Handler>, system: bool) -> Result<(), Error> {
     outcome.and(owner.finish())
 }
 /// Read-only mechanism probe. No production admission context is constructed.
-pub fn query(bytes: &[u8], system: bool) -> Result<Vec<u8>, Error> {
-    if bytes.len() > 65536 {
+pub fn query_trusted(
+    bytes: &[u8],
+    system: bool,
+    policy: &crate::host::PeerPolicy,
+) -> Result<Vec<u8>, Error> {
+    let (name, _) = endpoint(system)?;
+    query_at(bytes, system.then_some(0), name, policy)
+}
+/// Address a helper by an OS-derived subject/session; verify its live token and installed image.
+pub fn query_session(
+    bytes: &[u8],
+    subject: &str,
+    session: u32,
+    policy: &crate::host::PeerPolicy,
+) -> Result<Vec<u8>, Error> {
+    if token_identity()? != ("S-1-5-18".into(), 0)
+        || session == 0
+        || policy.subjects != [subject]
+        || !subject.starts_with("S-1-")
+        || !subject
+            .bytes()
+            .all(|b| b.is_ascii_digit() || b == b'S' || b == b'-')
+    {
+        return Err(Error::Denied);
+    }
+    query_at(
+        bytes,
+        Some(session),
+        format!(r"\\.\pipe\rss-mdm-execution-{subject}-{session}-v5"),
+        policy,
+    )
+}
+fn query_at(
+    bytes: &[u8],
+    expected_session: Option<u32>,
+    name: String,
+    policy: &crate::host::PeerPolicy,
+) -> Result<Vec<u8>, Error> {
+    policy.validate()?;
+    if bytes.len() > host::FRAME_LIMIT {
         return Err(Error::InvalidInput);
     }
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -400,11 +514,46 @@ pub fn query(bytes: &[u8], system: bool) -> Result<Vec<u8>, Error> {
         .build()
         .map_err(|_| Error::Unavailable)?;
     runtime.block_on(async {
-        let (name, _) = endpoint(system)?;
         tokio::time::timeout(Duration::from_secs(5), async {
             let mut client = ClientOptions::new()
+                .security_qos_flags(SECURITY_IDENTIFICATION)
                 .open(name)
                 .map_err(|_| Error::Unavailable)?;
+            let pipe = client.as_raw_handle();
+            let mut pid = 0;
+            if unsafe { GetNamedPipeServerProcessId(pipe, &mut pid) } == 0 {
+                return Err(Error::Denied);
+            }
+            let process = own(unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) })?;
+            let mut handle = null_mut();
+            if unsafe { OpenProcessToken(raw(&process), TOKEN_QUERY, &mut handle) } == 0 {
+                return Err(Error::Denied);
+            }
+            let token = own(handle)?;
+            let (subject, session) = super::token_subject(raw(&token))?;
+            if !policy.subjects.contains(&subject)
+                || expected_session.is_some_and(|expected| session != expected)
+            {
+                return Err(Error::Denied);
+            }
+            let mut path = vec![0u16; 32768];
+            let mut len = path.len() as u32;
+            if unsafe { QueryFullProcessImageNameW(raw(&process), 0, path.as_mut_ptr(), &mut len) }
+                == 0
+            {
+                return Err(Error::Denied);
+            }
+            let path = std::path::PathBuf::from(
+                String::from_utf16(&path[..len as usize]).map_err(|_| Error::Denied)?,
+            );
+            if !policy
+                .images
+                .iter()
+                .any(|image| image.verify(&path).is_ok())
+            {
+                return Err(Error::Denied);
+            }
+
             client
                 .write_u32_le(bytes.len() as u32)
                 .await
@@ -414,7 +563,7 @@ pub fn query(bytes: &[u8], system: bool) -> Result<Vec<u8>, Error> {
                 .await
                 .map_err(|_| Error::Unavailable)?;
             let size = client.read_u32_le().await.map_err(|_| Error::Unavailable)? as usize;
-            if size > 65536 {
+            if size > host::FRAME_LIMIT {
                 return Err(Error::InvalidInput);
             }
             let mut reply = vec![0; size];

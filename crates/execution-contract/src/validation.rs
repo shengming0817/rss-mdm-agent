@@ -282,7 +282,7 @@ pub(crate) fn validate_plan(p: &ExecutionInput, l: &ExecutionLimits) -> Result<(
         ));
     }
     let platform = p.request.target.platform;
-    if matches!(&p.session_requirement, crate::SessionRequirement::ActiveUser { account } if account.platform != platform)
+    if matches!(&p.session_requirement, crate::SessionRequirement::ActiveUser { account, .. } if account.platform != platform)
     {
         return Err(ContractError::new(
             ErrorKind::InconsistentContext,
@@ -372,7 +372,7 @@ pub(crate) fn validate_plan(p: &ExecutionInput, l: &ExecutionLimits) -> Result<(
         }
     }
     environment(p)?;
-    software(p)?;
+    software(p, l)?;
     if let IsolationPolicy::Restricted {
         network: NetworkAccess::Allowlist { destinations },
         ..
@@ -488,114 +488,109 @@ pub(crate) fn typed_value<T: serde::de::DeserializeOwned>(
     serde_json::from_value(value).map_err(ContractError::from_serde)
 }
 
-fn software(p: &ExecutionInput) -> Result<(), ContractError> {
+fn software(p: &ExecutionInput, limits: &ExecutionLimits) -> Result<(), ContractError> {
     let invalid =
         || ContractError::new(ErrorKind::InconsistentContext, Field::Plan, Rule::Mismatch);
-    let action = p.request.operation.action.as_str();
-    let Some(s) = p.execution.software() else {
-        return if action.starts_with("software.") {
-            Err(invalid())
-        } else {
-            Ok(())
-        };
-    };
-    let profile = p.launch.interpreter.profile.id.as_str();
-    let prefix: Vec<crate::LaunchArg> = match (s.adapter.platform(), profile) {
-        (Platform::Windows, "native-pwsh7-file") => {
-            ["-NoLogo", "-NoProfile", "-NonInteractive", "-File"]
-                .into_iter()
-                .map(|s| crate::LaunchArg::Literal { value: s.into() })
-                .chain(std::iter::once(crate::LaunchArg::ArtifactPath {}))
-                .collect()
-        }
-        (Platform::Macos, "native-posix-sh-file") => vec![crate::LaunchArg::ArtifactPath {}],
-        (Platform::Macos, "native-bash-file") => vec![
-            crate::LaunchArg::Literal {
-                value: "--noprofile".into(),
-            },
-            crate::LaunchArg::Literal {
-                value: "--norc".into(),
-            },
-            crate::LaunchArg::ArtifactPath {},
-        ],
-        _ => return Err(invalid()),
-    };
-    if p.launch.argv != prefix {
-        return Err(invalid());
-    }
-    if s.installer.manager != s.package.manager
-        || !s.installer.can_detect
-        || !s.installer.operations.contains(&s.mutation)
-        || s.installer.restart == crate::RestartBehavior::Automatic
-        || (!s.adapter.is_bundle()
-            && s.installer.upgrade_strategy != crate::UpgradeStrategy::InPlace)
-        || s.installer
-            .operations
-            .iter()
-            .enumerate()
-            .any(|(i, v)| s.installer.operations[..i].contains(v))
-    {
-        return Err(invalid());
-    }
-    let expected = match s.mutation {
-        crate::MutationKind::Install => "software.install",
-        crate::MutationKind::Upgrade => "software.upgrade",
-        crate::MutationKind::Downgrade => "software.downgrade",
-        crate::MutationKind::Uninstall => "software.uninstall",
-    };
-    if action != expected
-        || !p.request.parameters.is_empty()
-        || s.adapter.platform() != p.request.target.platform
-        || s.bundle.is_some() != s.adapter.is_bundle()
-        || (s.detection.max_bytes == 0 || s.detection.max_bytes > 256 * 1024 * 1024)
-        || s.detection.versions.is_empty()
-        || s.detection.versions.len() > 32
-        || !matches!(p.launch.stdin, crate::StandardInput::Closed {})
-        || !p.launch.env.is_empty()
-        || s.source.as_str().starts_with('-')
-        || s.resource.as_str().starts_with('-')
-        || (matches!(
-            s.adapter,
-            crate::SoftwareKind::Homebrew | crate::SoftwareKind::Winget
-        ) && !matches!(p.run_as, RunAs::User { .. }))
-    {
-        return Err(invalid());
-    }
-    match (&s.desired, s.mutation) {
-        (crate::DesiredState::Absent, crate::MutationKind::Uninstall)
-            if s.uninstall.as_ref() == Some(&p.launch.artifact) => {}
-        (crate::DesiredState::Present { artifact, version }, k)
-            if k != crate::MutationKind::Uninstall
-                && artifact == &s.payload
-                && s.detection.versions.iter().any(|v| &v.version == version) => {}
-        _ => return Err(invalid()),
-    }
-    if s.detection.versions.iter().enumerate().any(|(i, v)| {
-        s.detection.versions[..i]
-            .iter()
-            .any(|x| x.version == v.version || x.sha256 == v.sha256)
-    }) {
-        return Err(invalid());
-    }
-    path(
-        &s.detection.path,
-        p.request.target.platform,
-        Field::ReadPaths,
-    )?;
-    if let Some(b) = s.bundle {
-        if b.archive_bytes > 4 * 1024 * 1024 * 1024
-            || b.file_bytes > 1024 * 1024 * 1024
-            || b.expanded_bytes > 8 * 1024 * 1024 * 1024
-            || b.archive_bytes == 0
-            || b.files == 0
-            || b.files > 100000
-            || b.file_bytes == 0
-            || b.expanded_bytes < b.file_bytes
-            || b.depth == 0
-            || b.depth > 64
+    if let Some(program) = p.execution.software_program() {
+        if program.steps.is_empty()
+            || program.steps.len() > 32
+            || p.launch.interpreter.profile.id.as_str() != "native-software-sequence"
+            || p.request.operation.action.as_str()
+                != match program.intent {
+                    crate::SoftwareOperation::Install => "software.install",
+                    crate::SoftwareOperation::Uninstall => "software.uninstall",
+                    crate::SoftwareOperation::Detect => "software.detect",
+                }
+            || !p.request.parameters.is_empty()
         {
             return Err(invalid());
         }
+        let invocation = |command: &crate::SoftwareInvocation| -> Result<(), ContractError> {
+            if command.timeout_ms == 0
+                || command.timeout_ms > 86_400_000
+                || command.output_bytes == 0
+                || command.output_bytes > 1_048_576
+            {
+                return Err(invalid());
+            }
+            let mut input = p.clone();
+            input.execution = crate::ExecutionSpec::Process {};
+            input.request.operation.action = crate::Id::new("native.step").expect("constant");
+            input.launch = command.launch.clone();
+            input.run_as = command.run_as.clone();
+            input.session_requirement = command.session_requirement.clone();
+            input.budget.total_timeout_ms = command.timeout_ms.min(p.budget.total_timeout_ms);
+            input.budget.total_output_bytes = command.output_bytes.min(p.budget.total_output_bytes);
+            validate_plan(&input, limits)
+        };
+        for step in &program.steps {
+            if step.adapter.platform() != p.request.target.platform
+                || !matches!(step.architecture.as_str(), "aarch64" | "x86_64")
+                || step.adapter.is_bundle() != step.bundle.is_some()
+                || step.adapter.is_bundle() != step.bundle_limits.is_some()
+                || matches!(
+                    step.adapter,
+                    crate::SoftwareKind::Winget | crate::SoftwareKind::Homebrew
+                ) != step.export_identity.is_some()
+                || (program.intent == crate::SoftwareOperation::Uninstall
+                    && step.uninstall.is_none())
+            {
+                return Err(invalid());
+            }
+            invocation(&step.install)?;
+            if let Some(command) = &step.uninstall {
+                invocation(command)?;
+            }
+            match &step.detection {
+                crate::SoftwareDetector::MsiProduct {
+                    product_code,
+                    version,
+                } => {
+                    if step.adapter.platform() != Platform::Windows
+                        || product_code.len() != 38
+                        || !product_code.starts_with('{')
+                        || !product_code.ends_with('}')
+                        || product_code[1..37].bytes().enumerate().any(|(i, b)| {
+                            if [8, 13, 18, 23].contains(&i) {
+                                b != b'-'
+                            } else {
+                                !b.is_ascii_hexdigit()
+                            }
+                        })
+                        || version != &step.version
+                    {
+                        return Err(invalid());
+                    }
+                }
+                crate::SoftwareDetector::PkgReceipt { receipt, version } => {
+                    if step.adapter.platform() != Platform::Macos
+                        || receipt.is_empty()
+                        || receipt.len() > 1024
+                        || receipt.starts_with('-')
+                        || receipt.chars().any(char::is_control)
+                        || version != &step.version
+                    {
+                        return Err(invalid());
+                    }
+                }
+                crate::SoftwareDetector::Script {
+                    invocation: command,
+                } => invocation(command)?,
+            }
+            if let Some(bundle) = &step.bundle {
+                if bundle.platform != p.request.target.platform
+                    || bundle.architecture != step.architecture
+                    || bundle.entries.is_empty()
+                    || bundle.entries.len() > 4096
+                {
+                    return Err(invalid());
+                }
+            }
+        }
+        return Ok(());
+    }
+    if p.request.operation.action.as_str().starts_with("software.") {
+        return Err(invalid());
     }
     Ok(())
 }

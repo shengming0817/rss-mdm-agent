@@ -16,10 +16,8 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-const CATALOG: &[u8] = include_bytes!("../../service-catalog/tests/fixtures/catalog.json");
-const PLAN: &[u8] = include_bytes!("../../execution-contract/tests/fixtures/plan.json");
 fn service() -> Arc<TestService> {
-    Arc::new(TestService::new(CATALOG, PLAN))
+    Arc::new(TestService::new())
 }
 struct Wire {
     input: WriteHalf<DuplexStream>,
@@ -89,8 +87,8 @@ impl Wire {
 fn call(id: u64, name: &str, args: Value) -> Value {
     json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":name,"arguments":args}})
 }
-fn selection(s: &TestService, id: &str, args: Value) -> Value {
-    json!({"operationRequestId":id,"catalog":s.catalog.reference(),"itemId":"diagnostics","variantId":"network-check","arguments":args})
+fn selection(_: &TestService, id: &str, _: Value) -> Value {
+    json!({"task":"test-task","attempt":"test-attempt","revision":"a".repeat(64),"request":id})
 }
 fn value(reply: &Value) -> &Value {
     &reply["result"]["structuredContent"]["result"]
@@ -99,11 +97,11 @@ fn error(reply: &Value) -> &Value {
     &reply["result"]["structuredContent"]["error"]
 }
 async fn action_input(_: &mut Wire, s: &TestService, id: &str) -> Value {
-    json!({"catalog":{"selection":selection(s,id,json!({"host":"example.invalid"}))}})
+    selection(s, id, json!({}))
 }
 
 #[tokio::test]
-async fn discovery_schemas_and_shared_parameter_projection() {
+async fn discovery_exposes_backend_references_and_rejects_old_script_and_catalog_inputs() {
     let s = service();
     let mut w = Wire::open(s.clone(), limits()).await;
     w.send(json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}))
@@ -111,196 +109,24 @@ async fn discovery_schemas_and_shared_parameter_projection() {
     let list = w.recv().await;
     let tools = list["result"]["tools"].as_array().unwrap();
     assert_eq!(tools.len(), 5);
-    assert!(tools
-        .iter()
-        .all(|t| !t["name"].as_str().unwrap().contains("approve")));
     for tool in tools {
-        assert_eq!(tool["inputSchema"]["type"], "object", "{}", tool["name"]);
-        assert_eq!(tool["outputSchema"]["type"], "object", "{}", tool["name"]);
         jsonschema::draft202012::new(&tool["inputSchema"]).unwrap();
         jsonschema::draft202012::new(&tool["outputSchema"]).unwrap();
     }
-    let catalog = w.call(3, "execution_catalog", json!({})).await;
-    let expected = s
-        .catalog
-        .projection(
-            &execution_contract::Id::new("diagnostics").unwrap(),
-            &execution_contract::Id::new("network-check").unwrap(),
-            &limits().parameters,
-        )
-        .unwrap();
-    assert_eq!(
-        &value(&catalog)["items"][0]["parameters"][0]["inputSchema"],
-        expected.input_schema()
-    );
-    assert!(jsonschema::draft202012::is_valid(
-        &tools[0]["outputSchema"],
-        &catalog["result"]["structuredContent"]
-    ));
-    let schema = &tools
-        .iter()
-        .find(|t| t["name"] == "execution_execute")
-        .unwrap()["inputSchema"];
-    assert!(!jsonschema::draft202012::is_valid(
-        schema,
-        &json!({"plan":{}})
-    ));
-    let p = action_input(&mut w, &s, "same-rules").await;
-    let mut human_wire = selection(&s, "same-rules", json!({"host":"example.invalid"}));
-    human_wire
-        .as_object_mut()
-        .unwrap()
-        .remove("operationRequestId");
-    let selected = s
-        .catalog
-        .select(
-            &serde_json::to_vec(&human_wire).unwrap(),
-            &limits().catalog,
-            &limits().parameters,
-        )
-        .unwrap();
-    let human = s
-        .execute(
-            ExecuteRequest::Catalog(Box::new(CatalogCandidate {
-                operation_request_id: execution_contract::RequestId::new("same-rules").unwrap(),
-                selection: selected,
-            })),
-            CancellationToken::new(),
-        )
-        .await
-        .unwrap();
-    let result = w.call(10, "execution_execute", p).await;
-    assert_eq!(
-        value(&result)["contentDigest"],
-        serde_json::to_value(human.content_digest).unwrap()
-    );
-    w.close().await;
-}
-
-#[tokio::test]
-async fn raw_numbers_are_not_rounded_before_the_catalog_validates_them() {
-    let s = service();
-    let mut w = Wire::open(s.clone(), limits()).await;
-    for (i, numeric) in ["1.0000000000000001", "9007199254740990.9", "1e-999"]
-        .iter()
-        .enumerate()
-    {
-        let input = call(
-            i as u64 + 20,
-            "execution_execute",
-            json!({"catalog":{"selection":selection(&s,"bad-number",json!({"host":"example.invalid","count":"NUMBER"}))}}),
-        );
-        w.raw(&input.to_string().replace("\"NUMBER\"", numeric))
-            .await;
-        let reply = w.recv().await;
-        assert_eq!(error(&reply)["code"], "invalidInput", "{reply}");
-        assert_eq!(
-            error(&reply)["catalogReason"],
-            json!({"kind":"invalidArguments","rule":"roundedNumber"})
-        );
-        assert!(!reply.to_string().contains(numeric));
-    }
-    for (i, args) in [
-        json!({"host":7}),
-        json!({"host":"example.invalid","count":99}),
-        json!({"host":"example.invalid","actor":"admin"}),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let r = w
-            .call(
-                30 + i as u64,
-                "execution_execute",
-                json!({"catalog":{"selection":selection(&s,"bad",args)}}),
-            )
-            .await;
-        assert_eq!(error(&r)["code"], "invalidInput");
-    }
-    w.close().await;
-}
-
-#[tokio::test]
-async fn catalog_diagnostics_are_structured_closed_and_match_output_schemas() {
-    let s = service();
-    let mut w = Wire::open(s.clone(), limits()).await;
-    w.send(json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}))
-        .await;
-    let list = w.recv().await;
-    let tools = list["result"]["tools"].as_array().unwrap();
-    for (args, rule) in [
-        (json!({}), "required"),
-        (json!({"host":7}), "type"),
-        (json!({"host":"example.invalid","count":99}), "range"),
-        (
-            json!({"host":"example.invalid","private":"diagnostic-canary"}),
-            "unknownParameter",
-        ),
+    let tasks = w.call(3, "execution_tasks", json!({})).await;
+    assert_eq!(value(&tasks)[0]["task"], "test-task");
+    for old in [
+        json!({"script":{"sourceUtf8":"private-script","operationRequestId":"new","interpreter":{}}}),
+        json!({"catalog":{"selection":{}}}),
+        json!({"task":"test-task","attempt":"test-attempt","revision":"a".repeat(64),"request":"r","approved":true}),
     ] {
-        let reply = w
-            .call(
-                3,
-                "execution_execute",
-                json!({"catalog":{"selection":selection(&s,"invalid",args)}}),
-            )
-            .await;
-        assert_eq!(
-            error(&reply)["catalogReason"],
-            json!({"kind":"invalidArguments","rule":rule})
-        );
-        assert!(!reply.to_string().contains("diagnostic-canary"));
-        for tool in tools {
-            assert!(jsonschema::draft202012::is_valid(
-                &tool["outputSchema"],
-                &reply["result"]["structuredContent"]
-            ));
-        }
+        let reply = w.call(4, "execution_execute", old).await;
+        assert_eq!(error(&reply)["code"], "invalidInput");
+        assert!(!reply.to_string().contains("private-script"));
     }
-    let mut missing = selection(&s, "missing", json!({"host":"example.invalid"}));
-    missing["itemId"] = json!("unknown-item-canary");
-    let reply = w
-        .call(
-            4,
-            "execution_execute",
-            json!({"catalog":{"selection":missing}}),
-        )
-        .await;
-    assert_eq!(error(&reply)["catalogReason"], json!({"kind":"notFound"}));
-    assert!(!reply.to_string().contains("unknown-item-canary"));
-    for tool in tools {
-        let schema = jsonschema::draft202012::new(&tool["outputSchema"]).unwrap();
-        assert!(schema.is_valid(&reply["result"]["structuredContent"]));
-        for invalid in [
-            json!("InvalidArguments(RoundedNumber)"),
-            json!({"kind":"unrecognized"}),
-            json!({"kind":"invalidArguments"}),
-            json!({"kind":"invalidArguments","rule":"parameterTitle"}),
-            json!({"kind":"invalidArguments","rule":"required","raw":"diagnostic-canary"}),
-            json!({"kind":"limitExceeded","coordinate":"raw-field-name"}),
-            json!({"kind":"notFound","rule":"required"}),
-        ] {
-            let output =
-                json!({"status":"error","error":{"code":"invalidInput","catalogReason":invalid}});
-            assert!(!schema.is_valid(&output), "schema accepted {output}");
-        }
-    }
-    w.close().await;
-
-    let mut l = limits();
-    l.parameters.max_parameters = 1;
-    let mut w = Wire::open(s, l).await;
-    let reply = w.call(2, "execution_catalog", json!({})).await;
-    assert_eq!(
-        error(&reply)["catalogReason"],
-        json!({"kind":"limitExceeded","coordinate":"parameters"})
-    );
-    assert!(jsonschema::draft202012::is_valid(
-        &tools[0]["outputSchema"],
-        &reply["result"]["structuredContent"]
-    ));
+    assert_eq!(s.attempts.load(Ordering::SeqCst), 0);
     w.close().await;
 }
-
 #[tokio::test]
 async fn trusted_context_cannot_be_forged_and_query_authorization_is_rechecked() {
     let s = service();
@@ -308,7 +134,7 @@ async fn trusted_context_cannot_be_forged_and_query_authorization_is_rechecked()
     let p = action_input(&mut w, &s, "owned").await;
     let args = p.clone();
     let accepted = w.call(20, "execution_execute", args.clone()).await;
-    assert_eq!(value(&accepted)["phase"], "accepted");
+    assert_eq!(value(&accepted)["confirmationRequired"], true);
     for key in [
         "actor",
         "tenant",
@@ -327,11 +153,11 @@ async fn trusted_context_cannot_be_forged_and_query_authorization_is_rechecked()
     let mut msg = call(22, "execution_execute", args);
     msg["params"]["_meta"] = json!({"actor":"admin","approved":true});
     w.send(msg).await;
-    assert_eq!(value(&w.recv().await)["phase"], "accepted");
+    assert_eq!(value(&w.recv().await)["confirmationRequired"], true);
     assert_eq!(s.attempts.load(Ordering::SeqCst), 1);
     s.denied.store(true, Ordering::SeqCst);
     for name in [
-        "execution_catalog",
+        "execution_tasks",
         "execution_capabilities",
         "execution_status",
         "execution_cancel",
@@ -371,11 +197,11 @@ async fn accepted_response_loss_reconnect_and_concurrent_retry_preserve_one_atte
     }
     for _ in 30..34 {
         let r = w.recv().await;
-        assert_eq!(value(&r)["attemptId"], "test-attempt");
-        assert_eq!(value(&r)["phase"], "accepted");
+        assert_eq!(value(&r)["request"], "retry");
+        assert_eq!(value(&r)["confirmationRequired"], true);
     }
     let mut conflict = args.clone();
-    conflict["catalog"]["selection"]["arguments"]["host"] = json!("other.invalid");
+    conflict["attempt"] = json!("other-attempt");
     assert_eq!(
         error(&w.call(40, "execution_execute", conflict).await)["code"],
         "conflict"
@@ -391,7 +217,7 @@ async fn bound_namespace_prevents_cross_actor_tenant_device_and_delegation_repla
     let p = action_input(&mut w, &s, "same-id").await;
     w.call(20, "execution_execute", p.clone()).await;
     for dimension in ["authority", "actor", "tenant", "device", "delegation"] {
-        let mut other = TestService::new(CATALOG, PLAN);
+        let mut other = TestService::new();
         let field = match dimension {
             "authority" => &mut other.namespace.authority,
             "actor" => &mut other.namespace.actor,
@@ -459,33 +285,6 @@ async fn protocol_cancellation_releases_wait_and_does_not_cancel_business_operat
         .await;
     assert_eq!(value(&cancelled)["disposition"], "requested");
     assert_eq!(value(&cancelled)["operation"]["phase"], "accepted");
-    w.close().await;
-}
-
-#[tokio::test]
-async fn script_candidates_are_immutable_bounded_and_never_echoed() {
-    let s = service();
-    let mut w = Wire::open(s, limits()).await;
-    let interpreter =
-        json!({"resource":{"id":"test-interpreter","revision":"1"},"sha256":"b".repeat(64)});
-    let args = json!({"script":{"operationRequestId":"script","sourceUtf8":"sensitive-script-source","interpreter":interpreter}});
-    let candidate = w.call(20, "execution_execute", args.clone()).await;
-    assert_eq!(candidate["result"]["isError"], false);
-    assert!(!candidate.to_string().contains("sensitive-script-source"));
-    let duplicate = w.call(21, "execution_execute", args.clone()).await;
-    assert_eq!(value(&candidate), value(&duplicate));
-    let mut changed = args.clone();
-    changed["script"]["sourceUtf8"] = json!("changed");
-    assert_eq!(
-        error(&w.call(22, "execution_execute", changed).await)["code"],
-        "conflict"
-    );
-    let mut large = args;
-    large["script"]["sourceUtf8"] = json!("x".repeat(limits().parameters.max_bytes + 1));
-    assert_eq!(
-        error(&w.call(24, "execution_execute", large).await)["code"],
-        "invalidInput"
-    );
     w.close().await;
 }
 
@@ -626,16 +425,9 @@ async fn stale_catalog_and_terminal_test_evidence_remain_distinct() {
     let s = service();
     let mut w = Wire::open(s.clone(), limits()).await;
     let mut stale = selection(&s, "stale", json!({"host":"example.invalid"}));
-    stale["catalog"]["digest"] = json!("b".repeat(64));
+    stale["revision"] = json!("b".repeat(64));
     assert_eq!(
-        error(
-            &w.call(
-                2,
-                "execution_execute",
-                json!({"catalog":{"selection":stale}})
-            )
-            .await
-        )["code"],
+        error(&w.call(2, "execution_execute", stale).await)["code"],
         "expired"
     );
     let p = action_input(&mut w, &s, "terminal").await;
@@ -757,8 +549,8 @@ async fn every_tool_advertises_and_times_out_according_to_its_effects() {
     let p = action_input(&mut w, &s, "original-id").await;
     let submit = p.clone();
     assert_eq!(
-        value(&w.call(11, "execution_execute", submit.clone()).await)["phase"],
-        "accepted"
+        value(&w.call(11, "execution_execute", submit.clone()).await)["confirmationRequired"],
+        true
     );
     w.send(json!({"jsonrpc":"2.0","id":12,"method":"tools/list","params":{}}))
         .await;
@@ -766,7 +558,7 @@ async fn every_tool_advertises_and_times_out_according_to_its_effects() {
     let tools = list["result"]["tools"].as_array().unwrap();
     let operation = json!({"operationRequestId":"original-id"});
     let cases = [
-        ("execution_catalog", json!({}), true, "unavailable"),
+        ("execution_tasks", json!({}), true, "unavailable"),
         ("execution_capabilities", json!({}), true, "unavailable"),
         ("execution_status", operation.clone(), true, "unavailable"),
         ("execution_execute", submit, false, "outcomeUnknown"),
@@ -853,10 +645,8 @@ async fn sdk_tracing_never_receives_raw_tool_arguments_metadata_or_cancel_reason
     );
     request["params"]["_meta"] = json!({"private":"metadata-log-canary"});
     w.send(request).await;
-    assert_eq!(w.recv().await["result"]["isError"], false);
-    let reply = w.call(3, "execution_execute", json!({"catalog":{"selection":selection(
-        &s, "log-secret", json!({"host":"example.invalid","credential":{"kind":"secret","reference":{"id":"secret-log-canary","revision":"1"}}})
-    )}})).await;
+    assert_eq!(w.recv().await["result"]["isError"], true);
+    let reply = w.call(3, "execution_execute", json!({"task":"test-task","attempt":"test-attempt","revision":"a".repeat(64),"request":"log-secret","credential":"secret-log-canary"})).await;
     assert!(reply["result"].is_object());
     s.capability_delay_ms.store(1000, Ordering::SeqCst);
     w.send(call(4, "execution_capabilities", json!({}))).await;

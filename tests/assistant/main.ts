@@ -54,7 +54,7 @@ const services: AssistantServices = {
       { signal },
     );
     if (!response.ok) throw new Error("fixture read denied");
-    return response.json();
+    return { kind: "execution", value: await response.json() };
   },
 };
 createApp(App, { assistantServices: services }).mount("#app");

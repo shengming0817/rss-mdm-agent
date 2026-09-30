@@ -1,5 +1,4 @@
-//! S1 desktop composition. Test authority and test runner are explicit; no OS execution.
-mod authority;
+//! Desktop IPC and AI composition; execution belongs to the installed system service.
 pub mod execution;
 pub mod ipc;
 pub mod lifecycle;

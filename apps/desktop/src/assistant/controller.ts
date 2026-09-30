@@ -9,7 +9,11 @@ import {
   type Command,
   type SessionPage,
 } from "@rss-mdm-agent/ai-client";
-import type { ExecutionTaskDetails } from "@rss-mdm-agent/execution-bindings/task-details";
+import type {
+  BackendTaskView,
+  BackendTask,
+  ExecutionTaskDetails,
+} from "@rss-mdm-agent/execution-bindings/task-details";
 
 type PermissionRequest = Parameters<
   NonNullable<ClientOptions["requestPermission"]>
@@ -27,7 +31,10 @@ export interface AssistantServices {
   taskDetails?(
     operationRequestId: string,
     signal: AbortSignal,
-  ): Promise<ExecutionTaskDetails>;
+  ): Promise<BackendTaskView>;
+  /** Explicit human action; models cannot invoke this native presentation callback. */
+  confirmTask?(task: BackendTask): Promise<void>;
+  cancelTask?(request: string): Promise<void>;
 }
 export interface PermissionView {
   id: string;
@@ -845,12 +852,21 @@ export function createAssistant(
       const result = await bounded(owner, () =>
         services.taskDetails!(requestId, owner.signal),
       );
-      const origin = result.action.initiator;
+      const initiator =
+        result.kind === "execution"
+          ? result.value.action.initiator
+          : result.value.trigger;
+      const origin =
+        initiator.kind === "backend" ? initiator.trigger : initiator;
+      const actualRequest =
+        result.kind === "execution"
+          ? result.value.status.operationRequestId
+          : result.value.offer.request;
       if (
         current !== epoch ||
         signal.aborted ||
         state.selected !== session.namespace.sessionId ||
-        result.status.operationRequestId !== requestId ||
+        actualRequest !== requestId ||
         origin.kind !== "ai" ||
         origin.conversation !== session.namespace.sessionId ||
         origin.toolCall !== operationId
@@ -876,7 +892,11 @@ export function createAssistant(
     try {
       const read = services.taskDetails.bind(services);
       const result = await bounded(owner, () => read(id, owner.signal));
-      if (current === taskEpoch) state.task = result;
+      if (current === taskEpoch) {
+        if (result.kind === "execution") state.task = result.value;
+        else
+          state.taskError = "原请求仍在准备阶段，请在设备操作卡片中查看或撤销";
+      }
     } catch {
       if (current === taskEpoch) state.taskError = "无法读取授权执行详情";
     } finally {
@@ -954,6 +974,14 @@ export function createAssistant(
     permission,
     taskDetails,
     executionDetails,
+    async confirmPreparation(task: BackendTask) {
+      if (!services?.confirmTask) throw new ClientError("unavailable");
+      await services.confirmTask(task);
+    },
+    async cancelPreparation(request: string) {
+      if (!services?.cancelTask) throw new ClientError("unavailable");
+      await services.cancelTask(request);
+    },
     dispose,
   };
 }

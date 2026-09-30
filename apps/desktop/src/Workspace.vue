@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, watch } from "vue";
-import { currentUser, nativeTestMode } from "./test-users";
 import { AppShell, NavigationList, Sparkles } from "@rss-mdm-agent/ui";
 import ConversationList from "./assistant/ConversationList.vue";
 import { nativeAssistant } from "./assistant/native";
@@ -28,9 +27,8 @@ const emit = defineEmits<{
   navigate: [id: string];
 }>();
 const newIdentity = () => crypto.randomUUID();
-const enterprise = currentUser.value?.identity?.mode === "enterprise";
 const controller = props.ready
-  ? createController(enterprise ? null : nativePort(), newIdentity, preview)
+  ? createController(nativePort(), preview)
   : undefined;
 const assistant = props.ready
   ? createAssistant(props.assistantServices ?? nativeAssistant(), newIdentity)
@@ -48,8 +46,10 @@ const mode = computed(() =>
     ? "选择使用身份"
     : assistant?.state.mode === "s1"
       ? "S1 受控测试 · 无真实执行"
-      : nativeTestMode
-        ? "AI 服务未连接"
+      : controller?.interactive
+        ? assistant?.state.connection === "connected"
+          ? "后台任务 · 本机执行服务"
+          : "AI 服务未连接 · 本机执行服务"
         : "浏览器只读预览",
 );
 onMounted(() => {
@@ -115,24 +115,8 @@ onBeforeUnmount(() => assistant?.dispose());
       :class="{ 'conversation-content': ready && page === 'assistant' }"
       :inert="busy ? true : undefined"
     >
-      <section
-        v-if="
-          ready && enterprise && page !== 'assistant' && page !== 'settings'
-        "
-        aria-label="企业能力说明"
-      >
-        <h1>企业账户</h1>
-        <p>
-          已登录企业账户，可使用独立的个人 AI
-          工作区。企业设备执行与批准尚未接线。
-        </p>
-        <button @click="emit('navigate', 'assistant')">前往 AI 助手</button>
-        <button @click="emit('navigate', 'settings')">
-          切换测试用户或不登录使用
-        </button>
-      </section>
       <SelfService
-        v-if="controller && !enterprise"
+        v-if="controller"
         v-show="page !== 'assistant' && page !== 'settings'"
         :controller="controller"
       />
@@ -155,7 +139,7 @@ onBeforeUnmount(() => assistant?.dispose());
     </div>
     <template #status
       ><span v-if="busy" role="status">正在读取或切换账户…</span
-      ><span v-else>S1 测试服务 · 无真实设备变更</span></template
+      ><span v-else>后台授权任务 · 状态与效果分别核实</span></template
     >
   </AppShell>
 </template>

@@ -1,10 +1,9 @@
-//! Explicit TEST authority and in-memory service. No runner, database or platform effect.
+//! Explicit test-only service exercising transport and immutable backend-reference semantics.
 use execution_contract::{
-    AttemptId, Authority, Digest, ExactArtifactRef, ExecutionInput, ExecutionLimits,
-    FrozenExecution, Id, RequestId, VersionedRef,
+    AttemptId, BackendIdentity, BackendSelection, BackendTask, BackendTaskSummary, Digest, Id,
+    RequestId, TaskSubmission,
 };
 use execution_mcp::*;
-use service_catalog::{decode_catalog, CatalogLimits, CatalogRef, FrozenCatalog, ParameterLimits};
 use sha2::{Digest as _, Sha256};
 use std::{
     collections::{HashMap, HashSet},
@@ -15,7 +14,6 @@ use std::{
     time::Duration,
 };
 use tokio_util::sync::CancellationToken;
-
 pub fn limits() -> McpLimits {
     McpLimits {
         frame_bytes: 64 * 1024,
@@ -26,38 +24,12 @@ pub fn limits() -> McpLimits {
         session_frames: 4096,
         request_timeout: Duration::from_secs(2),
         io_timeout: Duration::from_secs(5),
-        catalog: CatalogLimits {
-            max_bytes: 64 * 1024,
-            max_depth: 32,
-            max_nodes: 8192,
-            max_string_bytes: 8192,
-            max_collection_items: 128,
-        },
-        parameters: ParameterLimits {
-            max_bytes: 8192,
-            max_string_bytes: 4096,
-            max_parameters: 64,
-        },
-    }
-}
-fn plan_limits() -> ExecutionLimits {
-    ExecutionLimits {
-        max_input_bytes: 64 * 1024,
-        max_depth: 32,
-        max_nodes: 8192,
-        max_string_bytes: 8192,
-        max_collection_items: 128,
-        max_timeout_ms: 10000,
-        max_output_bytes: 65536,
-        max_stdin_bytes: 8192,
-        max_attempts: 4,
     }
 }
 #[derive(Default)]
 pub struct TestStore {
-    plans: HashMap<(TestNamespace, RequestId), FrozenExecution>,
-    candidates: HashMap<(TestNamespace, RequestId), ExactArtifactRef>,
     accepted: HashMap<(TestNamespace, RequestId), OperationStatus>,
+    inputs: HashMap<(TestNamespace, RequestId), BackendSelection>,
     cancellations: HashSet<(TestNamespace, RequestId)>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -71,8 +43,6 @@ pub struct TestNamespace {
 pub struct TestService {
     pub store: Arc<Mutex<TestStore>>,
     pub namespace: TestNamespace,
-    pub catalog: FrozenCatalog,
-    template: ExecutionInput,
     pub bound: AtomicBool,
     pub denied: AtomicBool,
     pub attempts: AtomicUsize,
@@ -90,9 +60,9 @@ impl Drop for WaitGuard<'_> {
     }
 }
 impl TestService {
-    pub fn new(catalog: &[u8], plan: &[u8]) -> Self {
+    pub fn new() -> Self {
         Self {
-            store: Arc::new(Mutex::new(TestStore::default())),
+            store: Default::default(),
             namespace: TestNamespace {
                 authority: "test-authority".into(),
                 tenant: "test-tenant".into(),
@@ -100,8 +70,6 @@ impl TestService {
                 device: "device-1".into(),
                 delegation: "delegation-1".into(),
             },
-            catalog: decode_catalog(catalog, &limits().catalog).unwrap(),
-            template: serde_json::from_slice(plan).unwrap(),
             bound: AtomicBool::new(true),
             denied: AtomicBool::new(false),
             attempts: AtomicUsize::new(0),
@@ -126,57 +94,20 @@ impl TestService {
         (self.namespace.clone(), id.clone())
     }
     pub fn complete_test_result(&self, id: &str) {
-        let key = self.key(&RequestId::new(id).unwrap());
         let mut db = self.store.lock().unwrap();
-        let operation = db.accepted.get_mut(&key).unwrap();
-        operation.phase = OperationPhase::Verified;
-        operation.assessment = Some(execution_lifecycle::EffectAssessment::Satisfied);
-        operation.evidence = vec![Id::new("test-result").unwrap()];
+        let value = db
+            .accepted
+            .get_mut(&self.key(&RequestId::new(id).unwrap()))
+            .unwrap();
+        value.phase = OperationPhase::Verified;
+        value.assessment = Some(execution_lifecycle::EffectAssessment::Satisfied);
+        value.evidence = vec![Id::new("test-result").unwrap()];
     }
     fn capability() -> CapabilityView {
         CapabilityView {
             state: CapabilityState::Supported,
             reasons: vec![Id::new("test-only").unwrap()],
         }
-    }
-    fn freeze(
-        &self,
-        id: RequestId,
-        selection: Option<CatalogCandidate>,
-        candidate: Option<ExactArtifactRef>,
-    ) -> Result<FrozenExecution, ServiceError> {
-        let mut spec = self.template.clone();
-        spec.request.request_id =
-            RequestId::new(id.as_str()).map_err(|_| ServiceError::InvalidInput)?;
-        spec.request.request_id = id.clone();
-        spec.request.authority = Authority::Test {
-            id: Id::new(&self.namespace.authority).map_err(|_| ServiceError::Unbound)?,
-        };
-        if let Some(selected) = selection {
-            if selected.selection.availability(100) != service_catalog::CatalogAvailability::Listed
-            {
-                return Err(ServiceError::Expired);
-            }
-            spec.request.parameters = selected.selection.parameters().clone();
-            spec.request.operation.action = selected.selection.operation().action.clone();
-            spec.request.operation.resource =
-                selected.selection.operation().resource.reference.clone();
-        }
-        if let Some(candidate) = candidate {
-            spec.launch.artifact = candidate;
-        }
-        let plan = FrozenExecution::freeze(spec, &plan_limits())
-            .map_err(|_| ServiceError::InvalidInput)?;
-        let mut db = self.store.lock().unwrap();
-        let key = self.key(&id);
-        if let Some(existing) = db.plans.get(&key) {
-            if existing.digest() != plan.digest() {
-                return Err(ServiceError::Conflict);
-            }
-        } else {
-            db.plans.insert(key, plan.clone());
-        }
-        Ok(plan)
     }
 }
 impl ExecutionServicePort for TestService {
@@ -194,20 +125,24 @@ impl ExecutionServicePort for TestService {
             Err(ServiceError::Unbound)
         }
     }
-    async fn catalog(
-        &self,
-        reference: Option<CatalogRef>,
-        _: CancellationToken,
-    ) -> Result<FrozenCatalog, ServiceError> {
+    async fn tasks(&self, _: CancellationToken) -> Result<Vec<BackendTask>, ServiceError> {
         self.authorize()?;
         tokio::time::sleep(Duration::from_millis(
             self.catalog_delay_ms.load(Ordering::SeqCst) as u64,
         ))
         .await;
-        if reference.is_some_and(|r| r != self.catalog.reference()) {
-            return Err(ServiceError::Expired);
-        }
-        Ok(self.catalog.clone())
+        Ok(vec![BackendTask {
+            summary: BackendTaskSummary::Script {
+                identity: BackendIdentity::System,
+            },
+            task: Id::new("test-task").unwrap(),
+            attempt: Id::new("test-attempt").unwrap(),
+            revision: Digest::new("a".repeat(64)).unwrap(),
+            request: RequestId::new("test-request").unwrap(),
+            title: "Test-only backend offer".into(),
+            expires_at: 9999999999,
+            user_initiated: true,
+        }])
     }
     async fn capabilities(&self, _: CancellationToken) -> Result<CapabilityView, ServiceError> {
         self.authorize()?;
@@ -221,58 +156,54 @@ impl ExecutionServicePort for TestService {
     }
     async fn execute(
         &self,
-        request: ExecuteRequest,
+        request: BackendSelection,
         _: CancellationToken,
-    ) -> Result<OperationStatus, ServiceError> {
+    ) -> Result<TaskSubmission, ServiceError> {
         self.authorize()?;
-        let plan = match request {
-            ExecuteRequest::Catalog(c) => {
-                self.freeze(c.operation_request_id.clone(), Some(*c), None)?
-            }
-            ExecuteRequest::Script(draft) => {
-                let id = draft.operation_request_id().clone();
-                let bytes =
-                    serde_json::to_vec(&(draft.source_utf8(), draft.interpreter())).unwrap();
-                let artifact = ExactArtifactRef {
-                    resource: VersionedRef {
-                        id: Id::new(id.as_str()).unwrap(),
-                        revision: Id::new("1").unwrap(),
-                    },
-                    sha256: Digest::new(format!("{:x}", Sha256::digest(bytes))).unwrap(),
-                };
-                self.freeze(id, None, Some(artifact))?
-            }
-        };
-        let status = {
+        {
             let mut db = self.store.lock().unwrap();
-            let key = self.key(&plan.spec().request.request_id);
-            if let Some(existing) = db.accepted.get(&key) {
-                existing.clone()
+            let key = self.key(&request.request);
+            if let Some(old) = db.inputs.get(&key) {
+                if old != &request {
+                    return Err(ServiceError::Conflict);
+                }
             } else {
+                if request.revision.as_str() != "a".repeat(64) {
+                    return Err(ServiceError::Expired);
+                }
                 self.attempts.fetch_add(1, Ordering::SeqCst);
-                let status = OperationStatus {
-                    mode: execution_lifecycle::ExecutionMode::Test,
-                    assessment: None,
-                    process: None,
-                    cancel_requested: false,
-                    operation_request_id: plan.spec().request.request_id.clone(),
-                    content_digest: plan.digest().clone(),
-                    phase: OperationPhase::Accepted,
-                    attempt_id: Some(AttemptId::new("test-attempt").unwrap()),
-                    evidence: vec![],
-                };
-                db.accepted.insert(key, status.clone());
-                status
+                let digest = Digest::new(format!(
+                    "{:x}",
+                    Sha256::digest(serde_json::to_vec(&request).unwrap())
+                ))
+                .unwrap();
+                db.inputs.insert(key.clone(), request.clone());
+                db.accepted.insert(
+                    key,
+                    OperationStatus {
+                        mode: execution_lifecycle::ExecutionMode::Test,
+                        process: None,
+                        assessment: None,
+                        cancel_requested: false,
+                        operation_request_id: request.request.clone(),
+                        content_digest: digest,
+                        phase: OperationPhase::Accepted,
+                        attempt_id: Some(AttemptId::new("test-attempt").unwrap()),
+                        evidence: vec![],
+                    },
+                );
             }
-        };
-        // Fault seam: committed acceptance is retained even if this future is dropped.
+        }
         self.active_waits.fetch_add(1, Ordering::SeqCst);
-        let _wait = WaitGuard(&self.active_waits);
+        let _guard = WaitGuard(&self.active_waits);
         tokio::time::sleep(Duration::from_millis(
             self.submit_delay_ms.load(Ordering::SeqCst) as u64,
         ))
         .await;
-        Ok(status)
+        Ok(TaskSubmission {
+            request: request.request,
+            confirmation_required: true,
+        })
     }
     async fn status(
         &self,

@@ -104,10 +104,6 @@ fn local_path(path: &Path) -> Result<(), Error> {
 /// Retain every path component without delete/write sharing for the entire invocation.
 pub(crate) struct PathLease(Vec<File>);
 impl PathLease {
-    pub(crate) fn identity(&self) -> Result<Id, Error> {
-        file_identity(self.0.last().ok_or(Error::Unavailable)?)
-    }
-
     pub(crate) fn source(path: &Path, immutable: bool) -> Result<Self, Error> {
         Self::open(path, immutable)
     }
@@ -271,33 +267,42 @@ mod tests {
     }
 }
 
-pub(crate) fn open_directory(path: &Path) -> Result<File, Error> {
-    let mut lease = PathLease::open(path, false)?;
-    let file = lease.0.pop().ok_or(Error::Denied)?;
-    if !file.metadata().map_err(|_| Error::Unavailable)?.is_dir() {
+pub(crate) fn grant_read(path: &Path, subject: &str) -> Result<(), Error> {
+    if token_identity()?.0 != SYSTEM
+        || !subject.starts_with("S-1-")
+        || !subject
+            .bytes()
+            .all(|b| b.is_ascii_digit() || b == b'S' || b == b'-')
+    {
         return Err(Error::Denied);
     }
-    Ok(file)
-}
-pub(crate) fn file_identity(file: &File) -> Result<Id, Error> {
-    let mut info = unsafe { std::mem::zeroed::<BY_HANDLE_FILE_INFORMATION>() };
-    if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
-        return Err(Error::Unavailable);
+    let _lease = PathLease::source(path, true)?;
+    let descriptor = security(&format!(
+        "O:SYD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFX;;;{subject})"
+    ))?;
+    let mut present = 0;
+    let mut defaulted = 0;
+    let mut acl = null_mut();
+    if unsafe { GetSecurityDescriptorDacl(descriptor.0, &mut present, &mut acl, &mut defaulted) }
+        == 0
+        || present == 0
+        || acl.is_null()
+    {
+        return Err(Error::Denied);
     }
-    Id::new(format!(
-        "windows-{:x}-{:x}-{:x}",
-        info.dwVolumeSerialNumber, info.nFileIndexHigh, info.nFileIndexLow
-    ))
-    .map_err(|_| Error::Unavailable)
-}
-pub(crate) fn open_observed_file(path: &Path) -> Result<File, Error> {
-    let file = OpenOptions::new()
-        .read(true)
-        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
-        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
-        .open(path)
-        .map_err(|_| Error::Unavailable)?;
-    let (current, _) = token_identity()?;
-    check(&file, false, true, &current)?;
-    Ok(file)
+    if unsafe {
+        SetNamedSecurityInfoW(
+            wide(path).as_ptr(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            null_mut(),
+            null_mut(),
+            acl,
+            null_mut(),
+        )
+    } != 0
+    {
+        return Err(Error::Denied);
+    }
+    Ok(())
 }

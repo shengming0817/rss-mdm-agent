@@ -11,6 +11,7 @@ impl OutputPolicy for FixtureOutput {
 }
 #[derive(Clone)]
 pub struct CaptureSpec {
+    pub quiescent: bool,
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
     pub quality: execution_contract::OutputQuality,
@@ -56,7 +57,7 @@ impl execution_app::RunnerPort for CapturingRunner {
                     .as_ref()
                     .map_or(execution_contract::ProcessEnd::Exited, |v| v.end),
                 failure_kind: execution_contract::ProcessFailureKind::None,
-                quiescent: true,
+                quiescent: capture.as_ref().is_none_or(|v| v.quiescent),
                 stdout: capture.as_ref().map_or_else(
                     || b"{\"ok\":true,\"message\":\"secret-canary\"}".to_vec(),
                     |v| v.stdout.clone(),
@@ -70,29 +71,53 @@ impl execution_app::RunnerPort for CapturingRunner {
                     .map_or(execution_contract::OutputQuality::Complete, |v| v.quality),
             }))
     }
-    fn software_evidence(
+    fn software_progress(
         &self,
         p: &execution_contract::FrozenExecution,
         a: &execution_contract::AttemptId,
-        _: execution_app::SoftwareObservation<'_>,
-    ) -> Result<Option<execution_contract::SoftwareEvidence>, execution_app::Error> {
-        Ok(
-            (self.ready.load(Ordering::SeqCst) && p.spec().execution.software().is_some()).then(
-                || execution_contract::SoftwareEvidence {
-                    attempt_id: a.clone(),
-                    content_digest: p.digest().clone(),
-                    runner: self.id(),
-                    before: Some(execution_contract::SoftwareState::Absent {}),
-                    detected: execution_contract::SoftwareState::Present {
-                        version: execution_contract::PackageValue::new("1.0").unwrap(),
-                    },
-                    object_identity: None,
-                    restart_required: false,
-                    boot_generation: Some(local::id("test-boot")),
-                    staging: execution_contract::SoftwareStaging::NotRequired {},
-                },
-            ),
-        )
+    ) -> Result<Option<execution_contract::SoftwareProgress>, execution_app::Error> {
+        use execution_contract::*;
+        if !self.ready.load(Ordering::SeqCst) || p.spec().execution.software_program().is_none() {
+            return Ok(None);
+        }
+        let quiet = self
+            .capture
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_none_or(|v| v.quiescent);
+        let mut checkpoints = vec![
+            SoftwareCheckpoint::Begin {
+                step: 0,
+                phase: SoftwarePhase::Before,
+            },
+            SoftwareCheckpoint::End {
+                step: 0,
+                phase: SoftwarePhase::Before,
+                process: None,
+                detected: Some(SoftwareState::Present {
+                    version: PackageValue::new("1.0").unwrap(),
+                }),
+                quiescent: quiet,
+            },
+        ];
+        if quiet {
+            checkpoints.push(SoftwareCheckpoint::Complete { step: 0 });
+        }
+        Ok(Some(SoftwareProgress {
+            attempt_id: a.clone(),
+            content_digest: p.digest().clone(),
+            runner: self.id(),
+            checkpoints,
+            elapsed_ms: 1,
+            output_bytes: 0,
+        }))
+    }
+    fn acknowledge_software_progress(
+        &self,
+        _: execution_app::CommittedSoftwareProgress,
+    ) -> Result<(), execution_app::Error> {
+        Ok(())
     }
     fn acknowledge_capture(
         &self,
@@ -116,6 +141,15 @@ impl execution_app::RunnerPort for CapturingRunner {
         s: execution_app::ObservationStage,
         n: u64,
     ) -> Result<Option<execution_lifecycle::ObservationFacts>, execution_app::Error> {
+        if self
+            .capture
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|v| !v.quiescent)
+        {
+            return Ok(None);
+        }
         let mut value = self.inner.observe(p, a, s, n)?;
         if let Some(facts) = &mut value {
             if let execution_lifecycle::Observation::Exited {
@@ -161,5 +195,19 @@ pub fn adapted_plan(
     spec.run_as = RunAs::System {
         platform: Platform::Macos,
     };
+    if let (
+        ExecutionSpec::SoftwareProgram { program },
+        agent_client::wire::TaskPayload::Software(remote),
+    ) = (&mut spec.execution, offer.payload())
+    {
+        program.definition_digest = execution_contract::Digest::new(
+            remote
+                .definition_digest
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>(),
+        )
+        .unwrap();
+    }
     FrozenExecution::freeze(spec, &execution_app::test_store_limits().input).unwrap()
 }

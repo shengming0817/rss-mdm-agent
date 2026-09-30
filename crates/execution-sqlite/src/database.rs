@@ -4,7 +4,7 @@ use rusqlite::{Connection, OpenFlags, TransactionBehavior};
 use std::path::Path;
 
 // Includes persisted lifecycle records and the journal fingerprint domain, not just DDL.
-pub(crate) const SCHEMA_VERSION: u32 = 5;
+pub(crate) const SCHEMA_VERSION: u32 = 6;
 const APPLICATION_ID: u32 = 0x52534558;
 
 // Only internal schema column names are accepted, never caller-provided SQL.
@@ -47,7 +47,7 @@ impl Store {
         )?)
     }
     /// Explicit S1 bootstrap into a precreated private directory. Existing files are never
-    /// overwritten. Local/enterprise authority bootstrap requires a later product adapter.
+    /// overwritten. Local/enterprise authorities use explicit production bootstrap instead.
     pub fn initialize_test(
         path: &Path,
         authority: Authority,
@@ -57,6 +57,23 @@ impl Store {
         if !matches!(authority, Authority::Test { .. }) {
             return Err(Error::Denied);
         }
+        Self::initialize(path, authority, limits)
+    }
+    /// Explicit production bootstrap selected by the authenticated product host.
+    /// This establishes storage identity only, never registration or execution authority.
+    /// Test namespaces are rejected and existing files are never replaced or migrated.
+    pub fn initialize_production(
+        path: &Path,
+        authority: Authority,
+        limits: Limits,
+    ) -> Result<Self, Error> {
+        limits.validate()?;
+        if matches!(authority, Authority::Test { .. }) {
+            return Err(Error::Denied);
+        }
+        Self::initialize(path, authority, limits)
+    }
+    fn initialize(path: &Path, authority: Authority, limits: Limits) -> Result<Self, Error> {
         protected_path(path, false)?;
         if std::fs::symlink_metadata(path).is_ok() {
             return Err(Error::Storage);
@@ -274,7 +291,6 @@ fn check_metadata(path: &Path, directory: bool) -> Result<(), Error> {
             return Err(Error::Storage);
         }
     }
-    #[cfg(windows)]
     native_process::private_storage::validate(path).map_err(|_| Error::Storage)?;
     Ok(())
 }

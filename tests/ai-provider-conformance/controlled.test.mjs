@@ -165,7 +165,7 @@ for (const provider of engines) {
                 name: "propose",
                 namespace: "mcp__rss_host",
                 arguments: JSON.stringify({
-                  name: "execution_catalog",
+                  name: "execution_tasks",
                   arguments: {},
                 }),
               },
@@ -209,19 +209,28 @@ for (const provider of engines) {
         assert.equal(terminal.commands.catalog.outcome, "completed");
         const proposals = Object.values(terminal.tools);
         assert.equal(proposals.length, 1);
-        assert.equal(proposals[0].name, "execution_catalog");
-        assert.equal(proposals[0].result.disposition, "returned");
+        assert.equal(proposals[0].name, "execution_tasks");
+        assert.equal(
+          proposals[0].result.disposition,
+          "returned",
+          JSON.stringify(proposals[0].result),
+        );
         const result = JSON.parse(proposals[0].result.text);
         assert.equal(result.status, "ok");
-        assert.ok(result.result, "actual Rust catalog must be returned");
+        assert.ok(
+          result.result,
+          "actual Rust task references must be returned",
+        );
         assert.equal(
           permissions.length,
           0,
           "catalog reads never ask permission",
         );
         for (const [commandId, choice] of [
-          ["allow-execute", "allow_once"],
+          // Reject first: once this exact backend request is accepted, replay must return
+          // its original receipt instead of asking a contradictory second permission.
           ["deny-execute", "reject_once"],
+          ["allow-execute", "allow_once"],
         ]) {
           permissionKind = choice;
           f.model.replies.push((res) => {
@@ -237,17 +246,12 @@ for (const provider of engines) {
                   namespace: "mcp__rss_host",
                   arguments: JSON.stringify({
                     name: "execution_execute",
-                    arguments: {
-                      catalog: {
-                        selection: {
-                          operationRequestId: commandId,
-                          catalog: result.result.catalog,
-                          itemId: "office",
-                          variantId: "test",
-                          arguments: { edition: "standard" },
-                        },
-                      },
-                    },
+                    arguments: (({ request, task, attempt, revision }) => ({
+                      request,
+                      task,
+                      attempt,
+                      revision,
+                    }))(result.result[0]),
                   }),
                 },
               },
@@ -285,8 +289,8 @@ for (const provider of engines) {
             ["allow_once", "reject_once"],
           );
           assert.equal(
-            request.toolCall.rawInput.catalog.selection.operationRequestId,
-            commandId,
+            request.toolCall.rawInput.request,
+            result.result[0].request,
           );
           const tool = Object.values(peer.client.getSession(id).tools).find(
             (tool) =>

@@ -218,7 +218,7 @@ test("lost submit receipt recovers the same Rust attempt and keeps process exit 
         },
       },
     }).ok,
-    true,
+    false,
   );
   const request = await crashAfterRustAcceptance(
     t,

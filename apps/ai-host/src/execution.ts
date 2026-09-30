@@ -90,7 +90,7 @@ export class ParentTransport implements Transport {
   }
 }
 const methods = new Set([
-  "execution_catalog",
+  "execution_tasks",
   "execution_capabilities",
   "execution_execute",
   "execution_status",
@@ -179,7 +179,7 @@ export async function connectExecution(
     prepare: (namespace, proposal) => {
       if (!methods.has(proposal.name)) return fail("unsupported_capability");
       const read = [
-        "execution_catalog",
+        "execution_tasks",
         "execution_capabilities",
         "execution_status",
       ].includes(proposal.name);

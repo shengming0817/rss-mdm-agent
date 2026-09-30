@@ -1,5 +1,3 @@
-//! Desktop execution presentation and validated input selection.
-pub(crate) mod fixtures;
+//! Safe backend task presentation. Executable input never comes from desktop form data.
 mod model;
-pub(crate) mod selection;
 pub use model::*;

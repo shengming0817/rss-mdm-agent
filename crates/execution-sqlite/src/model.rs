@@ -425,8 +425,8 @@ pub struct DeliveryEvidence {
     pub input: std::sync::Arc<FrozenExecution>,
     /// Committed process capture for current_attempt, independent of receipt.attempt_id.
     pub process: Option<std::sync::Arc<execution_contract::ProcessEvidence>>,
-    /// Committed independent detector facts for current_attempt in this read snapshot.
-    pub software: Option<std::sync::Arc<execution_contract::SoftwareEvidence>>,
+    /// Ordered phase facts from the same attempt journal, independent of result delivery.
+    pub software_progress: Option<std::sync::Arc<execution_contract::SoftwareProgress>>,
     /// Current journal attempt, independent of a preceding delivery receipt.
     pub current_attempt: Option<AttemptId>,
     /// Authoritative no-process terminal fact, never inferred from missing capture.

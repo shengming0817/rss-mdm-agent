@@ -63,22 +63,26 @@ cargo test -p local-service、Host/desktop 测试及交叉编译只是前置证�
 
 策略格式直接替换，不读取旧策略或自动迁移。升级实验室候选时先卸载服务注册，由管理员处理旧安装文件，再构建并重新安装；保留原 AI 数据，不通过清库规避格式拒绝。
 
-## 执行机制候选（#2476 / #2475）
+## 后台授权执行服务
 
-执行宿主与上述 statusOnly 查询能力独立。构建 `cargo build -p execution-runner --bin rss-execution-service`，然后用
-`python3 scripts/service/execution-macos.py install --scope user --binary <绝对二进制路径>` 注册当前登录用户的 LaunchAgent。
-使用该二进制的 `--probe-user` 发起实际 XPC 查询；当前默认装配必须返回 `{"kind":"rejected"}`。
-结束后运行相同命令并把 `install` 改为 `remove`，移除本次临时安装。已有安装不被覆盖；移除前核对其固定二进制路径。
-系统场景使用 `--scope system` 和 `--probe-system`，需要管理员及 root 拥有的保护安装路径，不复用用户可写的开发目录。
+构建 `cargo build -p agent-service --bin rss-execution-service`。生产服务与 user helper 使用同一二进制；原 execution-runner 二进制装配已删除。系统服务独占凭据和执行 journal，helper 不初始化业务数据库。
 
-候选执行机制支持固定解释器、受控进程、输出及恢复接缝；生产身份和可信批准由 #2564 接线。
-当前 V3 计划和 SQLite schema 4直接替换旧格式。旧库保留并拒绝打开；实验室明确选择新的私有目录初始化，不能删除旧库冒充恢复成功。
-机制详情与本机测试入口见 [execution-runner](../../crates/execution-runner/README.md)。没有运行的系统账号、Windows、签名发布或真机矩阵不得记为已通过。
+由管理员准备受保护的部署 JSON：macOS 默认 `/Library/Application Support/RSS MDM Agent/execution.json`，Windows 为 ProgramData 下同一产品目录的 `execution.json`。格式由 `apps/agent-service/src/deployment.rs` 持有，显式配置 version、HTTPS origin、tenant、signing_keys、enrollment、registration_operation、state_root、service 产物 pin、clients OS 主体/程序 pin、execution 的 work_root/material_root/interpreters/managers/processes，以及每个已登记用户的 helper_work_roots。解释器和包管理器使用完整路径和固定摘要，不使用 PATH 查找。material_root 与 state_root 分离。
 
+首次注册由系统账号运行 `rss-execution-service --config <受保护配置> --initialize`，通过标准输入传入 enrollment secret；秘密不得放入 argv、JSON、日志或 shell 历史。注册重试使用同一配置、注册操作和 OS 秘密。初始化遇到已有不支持的数据库或缺失的原注册状态时拒绝，保留原文件；不能换目录、清库或重新注册来绕过未决任务。
 
-Windows 11 使用 PowerShell 7 运行 `scripts/service/execution-windows.ps1 -Action Install -Scope User -Binary <绝对 exe 路径>`，在当前交互用户会话注册登录 helper。系统候选用 `-Scope System`，需要管理员和受保护安装目录，SCM 以 LocalSystem 启动。两者已有注册均拒绝覆盖。使用二进制 `--probe-user` / `--probe-system` 查询，当前返回 rejected；没有生产执行权限。手动诊断用户 helper 可用 `rss-execution-service.exe --user`，不可用用户进程模拟系统宿主。
+macOS 系统注册：`python3 scripts/service/execution-macos.py install --scope system --binary <root 拥有的绝对产物路径> --config <受保护配置>`，需要管理员执行。用户在自己的 GUI 登录中运行同一安装脚本，改为 `--scope user`；程序参数固定为 `--user-helper`，只注册当前实际 OS 会话。`--config` 可省略以使用默认部署路径。状态查询用 `rss-execution-service --config <配置> --query`，客户端和服务必须互相匹配真实 OS 身份与程序 pin。
 
-`-Action Status` 只读注册状态；卸载使用 `-Action Remove` 并提供原始精确二进制路径，核对服务/任务归属后删除注册，不删除程序、缓存或数据库。用户 helper 是按 SID/session 命名的独立实例，用户注销导致进程退出及 Job 回收。安装器仅用于本地候选，签名安装包及生产可信接线不在此入口实现。
+Windows 使用 PowerShell 7 运行 `scripts/service/execution-windows.ps1 -Action Install -Scope System -Binary <绝对 exe 路径> -Config <受保护配置>`，SCM 使用 LocalSystem。用户 helper 用 `-Scope User`，调度任务以实际登录账号启动。跨会话不继承系统进程句柄，使用认证命名管道派发。
 
+卸载将 install/Install 改为 remove/Remove，并提供原始精确二进制和配置路径。已有注册拒绝覆盖；卸载核对归属，只移除注册，不删除凭据、journal、材料或审计。生产桌面读取默认受保护部署 pin；自定义配置用于显式命令行部署和隔离验收，不作为桌面失败后的回退。
+
+本地执行 V5、IPC V5、SQLite schema 6 拒绝旧格式；远程 Agent V4 保持不变。测试执行器仅用于测试专用装配。macOS 实际运行证据与 Windows 编译结果分别记录，未执行的环境不记为通过。
+
+软件脚本检测器在退出码为 0 且完整捕获 stdout 时读取一个严格 JSON 对象：`{"kind":"absent"}` 或 `{"kind":"present","version":"固定版本"}`。其它输出、截断或无法核实的执行活动保持 Unknown；检测事实与安装进程退出分别记入同一 journal。
 
 执行宿主机制诊断：macOS 可用 `log show --last 10m --predicate 'subsystem == "com.rss-mdm.agent.execution"'` 查看闭合的阶段/失败分类；Windows 在 Application Event Log 查看 source 为 `RSS Execution` 的事件数据（不要求自定义消息资源安装）。日志由 OS 留存，卸载不删除历史。launchd 初始化结果不确定会尝试 bootout；补偿失败保留 plist，需核对 endpoint 后重试 Remove，不直接删配置冒充回收完成。
+
+受控 macOS 接线验收先构建 `agent-service` 的 `rss-execution-service` 和 `controlled-backend` example，再运行 `python3 scripts/service/verify-execution-macos.py --binary <构建产物> --backend <example产物> --output <不存在的本地回执目录>`。入口通过原生管理员授权安装隔离配置，使用真实 HTTPS、系统 Keychain、launchd IPC、系统/用户脚本和固定 PKG；只卸载本次注册，保留凭据、journal、材料和包收据供核查。已有执行服务或 helper 注册时拒绝替换。回执的失败或缺失不能算通过。
+
+材料目录当前最多 8 GiB / 32,768 条目，达到配额时拒绝新材料，重启不清理空间。自动安全回收由 #2588 跟踪；管理员不得清空材料目录或 journal 来绕过未决任务。

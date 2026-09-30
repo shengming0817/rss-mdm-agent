@@ -76,6 +76,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent-service"
+version = "0.1.0"
+dependencies = [
+ "agent-client",
+ "axum",
+ "base64 0.23.1",
+ "execution-admission",
+ "execution-app",
+ "execution-approval",
+ "execution-capability",
+ "execution-contract",
+ "execution-interaction",
+ "execution-lifecycle",
+ "execution-runner",
+ "execution-sqlite",
+ "libc",
+ "local-service",
+ "native-process",
+ "ring",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.20",
+ "tokio",
+ "url",
+ "uuid",
+ "zeroize",
+]
+
+[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1138,7 +1169,6 @@ dependencies = [
  "schemars 1.2.2",
  "serde",
  "serde_json",
- "service-catalog",
  "sha2",
  "thiserror 2.0.20",
  "tokio",
@@ -1159,13 +1189,14 @@ dependencies = [
  "execution-lifecycle",
  "execution-sqlite",
  "libc",
+ "local-service",
  "native-process",
+ "plist",
  "rusqlite",
  "script-plan",
  "serde",
  "serde_json",
  "sha2",
- "software-plan",
  "thiserror 2.0.20",
  "tokio",
  "windows-sys 0.61.2",
@@ -2641,12 +2672,15 @@ dependencies = [
 name = "native-process"
 version = "0.1.0"
 dependencies = [
+ "fs2",
  "libc",
  "schemars 1.2.2",
+ "security-framework",
  "serde",
  "serde_json",
  "sha2",
  "windows-sys 0.61.2",
+ "zeroize",
 ]
 
 [[package]]
@@ -3713,6 +3747,7 @@ dependencies = [
  "execution-interaction",
  "execution-lifecycle",
  "execution-mcp",
+ "execution-runner",
  "execution-sqlite",
  "futures-util",
  "libc",
@@ -3723,11 +3758,11 @@ dependencies = [
  "objc2-foundation",
  "proc-macro2",
  "reqwest",
+ "rusqlite",
  "schemars 1.2.2",
  "security-framework",
  "serde",
  "serde_json",
- "service-catalog",
  "sha2",
  "syn 2.0.119",
  "tauri",
@@ -4353,14 +4388,6 @@ dependencies = [
  "wasm-bindgen",
  "web-sys",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "software-plan"
-version = "0.1.0"
-dependencies = [
- "execution-contract",
- "thiserror 2.0.20",
 ]
 
 [[package]]

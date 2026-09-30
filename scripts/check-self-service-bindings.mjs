@@ -30,7 +30,6 @@ const binding = await compile(schema, "SelfServiceCommands", {
 });
 const generated = await format(
   `${binding}
-export type Decision = CatalogItem["display"]["visibility"];
 export type SelfServicePort = {
   [K in keyof SelfServiceCommands as K extends \`self_service_\${infer M}\` ? M : never]:
     SelfServiceCommands[K]["input"] extends null ? () => Promise<SelfServiceCommands[K]["output"]> :

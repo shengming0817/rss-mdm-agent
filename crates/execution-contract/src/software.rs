@@ -30,158 +30,6 @@ impl std::fmt::Debug for PackageValue {
         f.write_str("PackageValue([redacted])")
     }
 }
-/// Exact package coordinates independent of the installed/desired version.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct PackageIdentity {
-    /// Package-manager implementation/revision; no implicit manager substitution.
-    pub manager: VersionedRef,
-    /// Exact source configuration/revision; no public same-name fallback.
-    pub source: VersionedRef,
-    /// Ecosystem package identifier.
-    pub package: PackageValue,
-    /// Exact architecture selector, never inferred from the planning host.
-    pub architecture: PackageValue,
-    /// Exact variant/channel selector, never a default/latest fallback.
-    pub variant: PackageValue,
-}
-/// Requested state; descriptive only, never an authorization decision.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
-pub enum DesiredState {
-    /// Exact selected version and immutable install payload, resolved by the source owner.
-    Present {
-        /// Ecosystem version, preserved verbatim.
-        version: PackageValue,
-        /// Exact selected package payload.
-        artifact: ExactArtifactRef,
-    },
-    /// Absence of the exact package identity.
-    Absent,
-}
-
-/// Existing software provenance; decisions never rewrite these observed facts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub enum Ownership {
-    /// Pre-existing user software, protected unless explicitly permitted to modify.
-    UserExisting,
-    /// Organization-managed software.
-    OrganizationManaged,
-    /// Introduced as another package's dependency.
-    DependencyIntroduced,
-    /// Ownership has not been established; mutation is blocked.
-    Unknown,
-}
-/// Whether another installed resource currently relies on this package.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub enum DependencyUse {
-    /// Verified not in use as a dependency.
-    Unused,
-    /// Required by another installed resource.
-    InUse,
-    /// Dependency references have not been established.
-    Unknown,
-}
-
-/// Result supplied by the ecosystem's comparator for one exact version pair.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub enum VersionRelation {
-    /// Ecosystem semantics establish equivalence.
-    Equal,
-    /// Installed version precedes the requested version.
-    Older,
-    /// Installed version follows the requested version.
-    Newer,
-    /// Ecosystem semantics do not order these versions.
-    Incomparable,
-}
-
-/// One possible mutation, not a queued workflow step.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub enum MutationKind {
-    /// Install a known-absent package.
-    Install,
-    /// Upgrade according to the ecosystem's ordering.
-    Upgrade,
-    /// Explicitly permitted downgrade.
-    Downgrade,
-    /// Remove the exact observed package.
-    Uninstall,
-}
-/// Preserve installer upgrade semantics; some upgrades remove the existing installation first.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub enum UpgradeStrategy {
-    /// Does not require removing the old installation first.
-    InPlace,
-    /// Requires uninstall permission and dependency safety as well as upgrade capability.
-    UninstallThenInstall,
-}
-/// Restart behavior of the selected installer configuration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub enum RestartBehavior {
-    /// Restart is not required and cannot be initiated by the selected invocation.
-    Never,
-    /// May request a later restart, without initiating it itself.
-    MayRequire,
-    /// May restart immediately; this planner cannot coordinate such execution.
-    Automatic,
-}
-/// Dependency effects declared by the package ecosystem; no dependency solver is implemented here.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub enum DependencyImpact {
-    /// No dependency changes.
-    None,
-    /// Source/installer has declared dependency changes covered by management policy.
-    Declared,
-    /// Effects are unresolved; mutation is blocked.
-    Unknown,
-}
-/// Installer semantics, not proof that the OS can execute or authorize it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct InstallerCapabilities {
-    /// Exact installer/manager binary.
-    pub artifact: ExactArtifactRef,
-    /// Must match PackageIdentity.manager.
-    pub manager: VersionedRef,
-    /// Whether this selected mechanism can independently detect the package state.
-    pub can_detect: bool,
-    /// Unique supported mutation kinds.
-    pub operations: Vec<MutationKind>,
-    /// Upgrade behavior, relevant only for Upgrade/Downgrade.
-    pub upgrade_strategy: UpgradeStrategy,
-    /// Selected configuration's restart semantics.
-    pub restart: RestartBehavior,
-    /// Declared dependency effects of the selected change mechanism.
-    pub dependency_impact: DependencyImpact,
-}
-
-/// Host-supplied resource-management constraints from the bound policy revision.
-/// These booleans are not actor authentication, C07 authorization or approval.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ManagementConstraints {
-    /// Desired absence conflicts with this constraint even if currently absent.
-    pub required: bool,
-    /// Explicitly permit modifying existing user-owned software; no ownership change is inferred.
-    pub allow_modify_user_owned: bool,
-    /// Permit removal, including uninstall-before-upgrade.
-    pub allow_remove: bool,
-    /// Permit downgrade, independently of installer support.
-    pub allow_downgrade: bool,
-    /// Permit a separately coordinated restart if necessary.
-    pub allow_restart: bool,
-    /// Permit the installer's declared dependency effects.
-    pub allow_dependency_changes: bool,
-}
-
 impl TryFrom<String> for PackageValue {
     type Error = ContractError;
     fn try_from(v: String) -> Result<Self, Self::Error> {
@@ -224,26 +72,6 @@ impl SoftwareKind {
         matches!(self, Self::WindowsBundle | Self::MacosBundle)
     }
 }
-/// Independent file state for a declared ecosystem version; not an installer receipt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct SoftwareVersionProof {
-    /// Original ecosystem version.
-    pub version: PackageValue,
-    /// Expected bytes of the independently installed file.
-    pub sha256: Digest,
-}
-/// Bounded independent detection. Unknown bytes are indeterminate, never absent.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct SoftwareDetection {
-    /// Absolute installed file location; checked against the explicit target platform.
-    pub path: String,
-    /// Exact allowed version proofs, with unique versions and hashes.
-    pub versions: Vec<SoftwareVersionProof>,
-    /// Maximum bytes read for one detection.
-    pub max_bytes: u64,
-}
 /// Extraction limits are part of the authorized software description.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -259,85 +87,47 @@ pub struct BundleLimits {
     /// Maximum path component count.
     pub depth: u32,
 }
-/// A declared file in the bundle. Directories are implicit; links are never supported.
+/// A V4 Bundle member. Its portable path is the key in the manifest entry map.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub struct BundleFile {
-    /// Portable slash-separated relative path.
-    pub path: String,
-    /// Exact uncompressed bytes.
-    pub sha256: Digest,
+    /// Exact uncompressed size, including zero-length members.
+    pub length: u64,
+    /// Exact uncompressed SHA-256 bytes, using the producer's manifest representation.
+    pub sha256: [u8; 32],
 }
-/// Exact bundle manifest, embedded once inside the archive as manifest.json.
+/// Exact V4 manifest.json. Package/version/detection belong to the signed action, not a
+/// second archive format. No old manifest aliases or conversion parser are retained.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub struct BundleManifest {
-    /// Exact package coordinate.
-    pub package: PackageIdentity,
-    /// Exact package version.
-    pub version: PackageValue,
-    /// Payload files, excluding this manifest.
-    pub files: Vec<BundleFile>,
-    /// Fixed install.ps1 or install.sh entry.
-    pub install: String,
-    /// Explicit relative uninstall entry, if removal is supported.
-    pub uninstall: Option<String>,
-    /// Independent installed-state detection declaration.
-    pub detection: SoftwareDetection,
-}
-/// Typed software execution facts. These are declarations, never approval or identity.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct SoftwareSpec {
-    /// Closed adapter selection.
-    pub adapter: SoftwareKind,
-    /// Exact source, manager, package, architecture and variant.
-    pub package: PackageIdentity,
-    /// Explicit target state.
-    pub desired: DesiredState,
-    /// One admitted mutation; detection and replanning must agree before launch.
-    pub mutation: MutationKind,
-    /// Original planning snapshot reference.
-    pub snapshot: VersionedRef,
-    /// Immutable package/archive/formula/manifest, also retained for declared uninstall.
-    pub payload: ExactArtifactRef,
-    /// Selected installer capabilities, preserved exactly from the planning snapshot.
-    pub installer: InstallerCapabilities,
-    /// Fixed backend source selector; not a URL or a fallback source.
-    pub source: PackageValue,
-    /// Exact installed resource identity (e.g. MSI product code or fully qualified formula).
-    pub resource: PackageValue,
-    /// Platform-verified directory conflict domain and optional pre-mutation file identity.
-    pub resource_binding: SoftwareResource,
-    /// Absolute installed-state detector.
-    pub detection: SoftwareDetection,
-    /// Removal entry, bound by exact content digest; None means unsupported.
-    pub uninstall: Option<ExactArtifactRef>,
-    /// Resource-management constraints, not execution approval.
-    pub management: ManagementConstraints,
-    /// Exact ecosystem comparison from the planning snapshot; operands rechecked under lock.
-    pub comparison: Option<VersionComparison>,
-    /// Exact bundle extraction bounds, required only for bundle adapters.
-    pub bundle: Option<BundleLimits>,
+    /// The only supported Bundle schema.
+    pub schema: V1,
+    /// Exact target operating system.
+    pub platform: Platform,
+    /// Exact common architecture selector: aarch64 or x86_64.
+    pub architecture: PackageValue,
+    /// Complete declared member set, excluding manifest.json.
+    pub entries: std::collections::BTreeMap<String, BundleFile>,
 }
 /// Closed execution semantics, sharing one launch envelope and canonical plan digest.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub enum ExecutionSpec {
+    /// A backend-ordered software program owned by one journal intent.
+    SoftwareProgram {
+        /// Complete compiled instructions; no local source catalog or enterprise grant.
+        program: Box<SoftwareProgram>,
+    },
     /// Existing bounded script or collection process.
     Process {},
-    /// A software mutation with mandatory independent detection.
-    Software {
-        /// Software semantics cannot be lowered to generic process parameters.
-        software: Box<SoftwareSpec>,
-    },
 }
 impl ExecutionSpec {
-    /// Software descriptor, if this is a software plan.
-    pub fn software(&self) -> Option<&SoftwareSpec> {
+    /// Ordered software instructions, when present.
+    pub fn software_program(&self) -> Option<&SoftwareProgram> {
         match self {
-            Self::Process {} => None,
-            Self::Software { software } => Some(software),
+            Self::SoftwareProgram { program } => Some(program),
+            _ => None,
         }
     }
 }
@@ -359,107 +149,6 @@ pub enum SoftwareState {
         reason: SoftwareDetectionFailure,
     },
 }
-/// Software observations bound to the existing attempt, stored in the same journal.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct SoftwareEvidence {
-    /// Existing attempt identity.
-    pub attempt_id: AttemptId,
-    /// Complete canonical plan digest.
-    pub content_digest: Digest,
-    /// Runner identity.
-    pub runner: Id,
-    /// Detection before mutation, absent when history was lost.
-    pub before: Option<SoftwareState>,
-    /// Latest independent detection, not a terminal assertion.
-    pub detected: SoftwareState,
-    /// Exact observed file identity, absent when no known installed target was observed.
-    pub object_identity: Option<Id>,
-    /// Installer explicitly requested a restart, not an instruction to reboot.
-    pub restart_required: bool,
-    /// Kernel boot generation; retained from the pending restart until a different boot is observed.
-    pub boot_generation: Option<Id>,
-    /// Owned staging cleanup, independent of software effect and installer exit.
-    pub staging: SoftwareStaging,
-}
-impl SoftwareSpec {
-    /// OS-wide manager/resource keys, independent of tenant, source and actor.
-    /// A single device journal must be shared by system/user product helpers.
-    pub fn lock_keys(&self) -> Vec<String> {
-        use sha2::{Digest as _, Sha256};
-        let family = match self.adapter {
-            SoftwareKind::Msi | SoftwareKind::Winget => "windows-installers",
-            SoftwareKind::Pkg => "macos-installer",
-            SoftwareKind::Homebrew => "homebrew",
-            SoftwareKind::WindowsBundle | SoftwareKind::MacosBundle => "rss-bundle",
-        };
-        let mut keys = vec![
-            format!("manager-{family}"),
-            format!(
-                "resource-dir-{:x}",
-                Sha256::digest(self.resource_binding.parent.as_str().as_bytes())
-            ),
-        ];
-        if let Some(object) = &self.resource_binding.object {
-            keys.push(format!(
-                "resource-object-{:x}",
-                Sha256::digest(object.as_str().as_bytes())
-            ));
-        }
-        keys
-    }
-    /// Physical software provenance slot. Use observed installed identity for writes and the
-    /// frozen pre-mutation identity for reads/removals; absent test facts use the parent domain.
-    pub fn ownership_key(&self, object: Option<&Id>) -> String {
-        use sha2::{Digest as _, Sha256};
-        let bytes = serde_json_canonicalizer::to_vec(&(
-            object.unwrap_or(&self.resource_binding.parent),
-            &self.package,
-            &self.resource,
-        ))
-        .expect("closed identity");
-        format!("software-{:x}", Sha256::digest(bytes))
-    }
-    /// Whether independent state satisfies this exact desired state.
-    pub fn satisfied(&self, state: &SoftwareState) -> bool {
-        match (&self.desired, state) {
-            (DesiredState::Absent, SoftwareState::Absent {}) => true,
-            (
-                DesiredState::Present {
-                    version: desired, ..
-                },
-                SoftwareState::Present { version },
-            ) => version == desired,
-            _ => false,
-        }
-    }
-}
-
-/// Comparator identity and exact operands; a result cannot be replayed for another version pair.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct VersionComparison {
-    /// Exact comparator implementation/configuration revision.
-    pub comparator: VersionedRef,
-    /// Must equal the snapshot's installed version.
-    pub installed: PackageValue,
-    /// Must equal the intent's desired version.
-    pub desired: PackageValue,
-    /// Ecosystem result; the core performs no parsing.
-    pub relation: VersionRelation,
-}
-
-/// Protected provenance supplied by the journal, not a deserializable authorization claim.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SoftwareProvenance {
-    /// Owner established by a committed, independently verified installation.
-    pub ownership: Ownership,
-    /// Last verified installed state; mismatches invalidate automatic ownership reuse.
-    pub state: Option<SoftwareState>,
-    /// Last verified file identity; identical bytes at another object do not inherit ownership.
-    pub object_identity: Option<Id>,
-}
-
 /// Closed independent detection failures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -493,43 +182,4 @@ pub enum SoftwareDiagnostic {
     CleanupPending,
     /// Staging object ownership cannot be established; no pathname-based deletion is attempted.
     CleanupUnverified,
-}
-
-/// Physical OS precondition, derived by the platform adapter and verified again before execution.
-/// Directory serialization deliberately covers all names in that directory, including case aliases.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct SoftwareResource {
-    /// Stable volume/directory identity, not a pathname or a tenant-selected lock namespace.
-    pub parent: Id,
-    /// Existing target file identity, or explicit absence at planning time.
-    pub object: Option<Id>,
-}
-
-/// Staging state in the existing software evidence record, never a separate queue.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
-pub enum SoftwareStaging {
-    /// Native manager has no expanded staging tree.
-    NotRequired {},
-    /// Exact owned directory is awaiting quiescence and cleanup.
-    Pending {
-        /// OS object identity of the expanded root.
-        object: Id,
-    },
-    /// Cleanup failed safely; retry only this exact object after quiescence.
-    Failed {
-        /// OS object identity retained for a bounded retry.
-        object: Id,
-    },
-    /// Owned staging has been reclaimed or is absent from its controlled namespace.
-    Cleaned {},
-    /// A stage may exist but there is no trustworthy matching object identity.
-    Unverified {},
-}
-impl SoftwareStaging {
-    /// Whether a staged resource still requires recovery/diagnosis.
-    pub fn pending(&self) -> bool {
-        !matches!(self, Self::NotRequired {} | Self::Cleaned {})
-    }
 }

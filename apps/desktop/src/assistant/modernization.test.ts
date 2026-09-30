@@ -4,8 +4,12 @@ import ExecutionActivity from "./ExecutionActivity.vue";
 import { createAssistant } from "./controller";
 import { taskPresentation } from "./execution-presentation";
 import { copyText } from "./clipboard";
+import { offer } from "../../../../tests/self-service/support";
 import fixtures from "../../../../tests/assistant/execution-fixtures.json";
-import type { ExecutionTaskDetails } from "@rss-mdm-agent/execution-bindings/task-details";
+import type {
+  BackendTaskView,
+  ExecutionTaskDetails,
+} from "@rss-mdm-agent/execution-bindings/task-details";
 
 function task(
   phase: ExecutionTaskDetails["status"]["phase"],
@@ -43,7 +47,7 @@ it("refreshes a card and its open drawer from one authorized snapshot and retain
   c.state.selected = "session";
   const read = vi
     .spyOn(c, "executionDetails")
-    .mockResolvedValue(task("running"));
+    .mockResolvedValue({ kind: "execution", value: task("running") });
   const wrapper = mount(ExecutionActivity, {
     props: {
       controller: c,
@@ -59,7 +63,10 @@ it("refreshes a card and its open drawer from one authorized snapshot and retain
       .findAll("button")
       .find((b) => b.text() === "查看设备操作")!
       .trigger("click");
-    read.mockResolvedValueOnce(task("verified", "satisfied"));
+    read.mockResolvedValueOnce({
+      kind: "execution",
+      value: task("verified", "satisfied"),
+    });
     await wrapper
       .findAll("button")
       .find((b) => b.text() === "刷新执行状态")!
@@ -86,7 +93,7 @@ it("refreshes a card and its open drawer from one authorized snapshot and retain
 
 it("discards a late task read after the view has been hidden", async () => {
   const c = createAssistant(undefined, () => "id");
-  let finish!: (value: ExecutionTaskDetails) => void;
+  let finish!: (value: BackendTaskView) => void;
   vi.spyOn(c, "executionDetails").mockImplementation(
     () =>
       new Promise((resolve) => {
@@ -104,7 +111,7 @@ it("discards a late task read after the view has been hidden", async () => {
   });
   try {
     await wrapper.setProps({ visible: false });
-    finish(task("verified", "satisfied"));
+    finish({ kind: "execution", value: task("verified", "satisfied") });
     await flushPromises();
     expect(wrapper.find(".execution-activity").exists()).toBe(false);
   } finally {
@@ -121,4 +128,62 @@ it("reports clipboard rejection without a native fallback or clipboard read", as
   write.mockResolvedValueOnce(undefined);
   expect(await copyText("code")).toBe(true);
   expect(write.mock.calls).toEqual([["code"], ["code"]]);
+});
+
+it("keeps preparation actions and revocation visible in the modern task card", async () => {
+  const c = createAssistant(undefined, () => "id");
+  const request = offer();
+  const read = vi.spyOn(c, "executionDetails").mockResolvedValue({
+    kind: "pending",
+    value: {
+      offer: request,
+      revision: 1,
+      state: "proposed",
+      failure: null,
+      trigger: { kind: "automatic" },
+    },
+  });
+  const confirm = vi
+    .spyOn(c, "confirmPreparation")
+    .mockResolvedValue(undefined);
+  const wrapper = mount(ExecutionActivity, {
+    props: {
+      controller: c,
+      operationId: "tool",
+      recorded: true,
+      visible: true,
+      now: 1000,
+    },
+  });
+  try {
+    await flushPromises();
+    expect(wrapper.text()).toContain("安装");
+    expect(wrapper.text()).toContain("固定软件 1.0");
+    await wrapper
+      .findAll("button")
+      .find((b) => b.text() === "确认上述操作")!
+      .trigger("click");
+    expect(confirm).toHaveBeenCalledWith(request);
+    read.mockResolvedValueOnce({
+      kind: "pending",
+      value: {
+        offer: request,
+        revision: 2,
+        state: "failed",
+        failure: "revoked",
+        trigger: { kind: "automatic" },
+      },
+    });
+    await wrapper
+      .findAll("button")
+      .find((b) => b.text() === "刷新状态")!
+      .trigger("click");
+    await flushPromises();
+    expect(wrapper.text()).toContain("后台授权已撤销");
+    expect(wrapper.text()).not.toContain("确认上述操作");
+    expect(wrapper.text()).not.toContain("撤销请求");
+  } finally {
+    wrapper.unmount();
+    c.dispose();
+  }
 });

@@ -4,16 +4,17 @@ import { computed } from "vue";
 import RequestOrigin from "../self-service/RequestOrigin.vue";
 import type {
   ExecutionTaskDetails,
-  TaskPhase,
-  ProcessEnd,
-  ProcessFailureKind,
-  OutputQuality,
   StopOutcome,
   EffectAssessment,
   SoftwareDiagnostic,
   DispatchCause,
   LimitReason,
 } from "@rss-mdm-agent/execution-bindings/task-details";
+type TaskPhase = ExecutionTaskDetails["status"]["phase"];
+type ProcessFacts = NonNullable<ExecutionTaskDetails["status"]["process"]>;
+type ProcessEnd = ProcessFacts["end"];
+type ProcessFailureKind = ProcessFacts["failureKind"];
+type OutputQuality = ProcessFacts["quality"];
 const props = defineProps<{ details: ExecutionTaskDetails; now: number }>();
 const validity = computed(() =>
   props.now < props.details.action.validity.notBeforeUnixMs
@@ -171,9 +172,11 @@ function cause(value: DispatchCause | null): string {
 }
 type SoftwareAction = Extract<
   ExecutionTaskDetails["action"]["execution"],
-  { kind: "software" }
+  { kind: "softwareProgram" }
 >;
-function adapterLabel(value: SoftwareAction["adapter"]): string {
+function adapterLabel(
+  value: SoftwareAction["steps"][number]["adapter"],
+): string {
   switch (value) {
     case "msi":
       return "Windows MSI";
@@ -191,19 +194,15 @@ function adapterLabel(value: SoftwareAction["adapter"]): string {
   const exhaustive: never = value;
   return exhaustive;
 }
-function mutationLabel(value: SoftwareAction["mutation"]): string {
+function mutationLabel(value: SoftwareAction["intent"]): string {
   switch (value) {
     case "install":
       return "安装";
-    case "upgrade":
-      return "升级";
-    case "downgrade":
-      return "降级";
     case "uninstall":
       return "卸载";
+    case "detect":
+      return "检测";
   }
-  const exhaustive: never = value;
-  return exhaustive;
 }
 const text = (value: unknown) => JSON.stringify(value, null, 2);
 </script>
@@ -256,12 +255,19 @@ const text = (value: unknown) => JSON.stringify(value, null, 2);
         <dd>
           {{ details.action.requestId }}<br />{{ details.action.contentDigest }}
         </dd>
-        <template v-if="details.action.execution.kind === 'software'">
+        <template v-if="details.action.execution.kind === 'softwareProgram'">
           <dt>软件执行</dt>
           <dd class="software-operation">
-            {{ adapterLabel(details.action.execution.adapter) }}
-            ·
-            {{ mutationLabel(details.action.execution.mutation) }}
+            {{ mutationLabel(details.action.execution.intent) }}
+            <ol>
+              <li
+                v-for="(step, index) in details.action.execution.steps"
+                :key="index"
+              >
+                {{ adapterLabel(step.adapter) }} · {{ step.package }}
+                {{ step.version }}
+              </li>
+            </ol>
           </dd>
         </template>
         <dt>当前尝试</dt>

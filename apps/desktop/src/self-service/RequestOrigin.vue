@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import type { Action } from "./types";
-defineProps<{ input: Pick<Action, "actor" | "authority" | "initiator"> }>();
+import type { FrozenExecutionSummary } from "./types";
+defineProps<{
+  input: Pick<FrozenExecutionSummary, "actor" | "authority" | "initiator">;
+}>();
 </script>
 <template>
   <section class="request-origin" aria-label="冻结的请求来源">
@@ -25,7 +27,9 @@ defineProps<{ input: Pick<Action, "actor" | "authority" | "initiator"> }>();
               : "策略发起"
         }}
       </dd>
-      <template v-if="input.initiator.kind !== 'policy'">
+      <template
+        v-if="input.initiator.kind === 'human' || input.initiator.kind === 'ai'"
+      >
         <dt>来源设备</dt>
         <dd class="identifier">{{ input.initiator.osSession.device }}</dd>
         <dt>来源系统账号</dt>
@@ -55,6 +59,26 @@ defineProps<{ input: Pick<Action, "actor" | "authority" | "initiator"> }>();
           {{ input.initiator.policy.id }} /
           {{ input.initiator.policy.revision }}
         </dd>
+      </template>
+      <template v-if="input.initiator.kind === 'backend'">
+        <dt>后台任务 / 尝试</dt>
+        <dd>{{ input.initiator.task }} / {{ input.initiator.attempt }}</dd>
+        <dt>触发方式</dt>
+        <dd>{{ input.initiator.trigger.kind }}</dd>
+        <template v-if="input.initiator.trigger.kind !== 'automatic'">
+          <dt>系统账号 / 会话</dt>
+          <dd>
+            {{ input.initiator.trigger.osSession.account.subject }} /
+            {{ input.initiator.trigger.osSession.session }}
+          </dd>
+        </template>
+        <template v-if="input.initiator.trigger.kind === 'ai'">
+          <dt>AI 会话 / 调用</dt>
+          <dd>
+            {{ input.initiator.trigger.conversation }} /
+            {{ input.initiator.trigger.toolCall }}
+          </dd>
+        </template>
       </template>
     </dl>
     <p class="muted">

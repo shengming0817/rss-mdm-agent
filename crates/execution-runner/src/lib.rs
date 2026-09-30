@@ -1,6 +1,8 @@
 //! Product OS adapters. No production authority, transport credential or automatic retry.
 #![deny(missing_docs)]
 mod diagnostics;
+/// Authenticated per-login process delegation, without a second journal.
+pub mod helper;
 /// Local IPC envelopes and the sole execution application adapter.
 pub mod host;
 #[cfg(target_os = "macos")]
@@ -10,9 +12,13 @@ mod output;
 mod runner;
 /// Software materialization and independent ecosystem facts.
 pub mod software;
+/// Protected execution-owned artifact publication.
+pub mod staging;
 #[cfg(target_os = "macos")]
 use macos as platform;
-pub use materialize::{Artifacts, InputBytes, InputResolver};
+pub use materialize::{
+    Artifacts, InputBytes, InputResolver, MaterialRegistry, SoftwareStepArtifacts,
+};
 pub use runner::NativeRunner;
 
 #[cfg(target_os = "macos")]

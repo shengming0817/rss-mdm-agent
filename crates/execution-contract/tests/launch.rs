@@ -33,9 +33,9 @@ fn freeze(v: &Value) -> FrozenExecution {
     .unwrap()
 }
 #[test]
-fn complete_launch_requires_v3_and_binds_every_new_requirement() {
+fn complete_launch_requires_v5_and_binds_every_new_requirement() {
     let v = complete();
-    assert_eq!(v["schemaVersion"], 4);
+    assert_eq!(v["schemaVersion"], 5);
     let original = freeze(&v);
     for (pointer, value) in [
         ("/launch/interpreter/profile/revision", json!("2")),

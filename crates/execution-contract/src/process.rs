@@ -14,6 +14,13 @@ use serde::{Deserialize, Serialize};
 pub enum ProcessScope {
     /// The live owner is preparing the admitted attempt; no termination fact is implied.
     Preparing {},
+    /// Dispatch crossed an authenticated user helper, but no OS scope was received.
+    Delegated {
+        /// OS subject to which the original dispatch was sent.
+        subject: Id,
+        /// Exact original login; a new session cannot substitute for it.
+        session: Id,
+    },
     /// The runner rejected preparation before any process could be created.
     NotStarted {},
     /// Cooperative process group. Group absence does not prove escaped descendants are gone.

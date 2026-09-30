@@ -234,7 +234,7 @@ pub fn compile(
     check_environment(profile, &env)?;
     Ok(FrozenExecution::freeze(
         ExecutionInput {
-            schema_version: V4,
+            schema_version: V5,
             execution: execution_contract::ExecutionSpec::Process {},
 
             request,

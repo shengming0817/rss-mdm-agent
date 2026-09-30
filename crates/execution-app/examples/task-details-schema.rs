@@ -3,6 +3,6 @@ fn main() {
     let schema = schemars::generate::SchemaSettings::draft2020_12()
         .for_serialize()
         .into_generator()
-        .into_root_schema_for::<execution_app::ExecutionTaskDetails>();
+        .into_root_schema_for::<execution_app::BackendTaskView>();
     println!("{}", serde_json::to_string_pretty(&schema).unwrap());
 }

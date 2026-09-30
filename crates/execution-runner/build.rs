@@ -8,5 +8,6 @@ fn main() {
             .flag("-mmacosx-version-min=13.0")
             .compile("rss_execution_xpc");
         println!("cargo:rustc-link-lib=framework=Foundation");
+        println!("cargo:rustc-link-lib=framework=CoreGraphics");
     }
 }

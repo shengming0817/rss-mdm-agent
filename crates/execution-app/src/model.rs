@@ -44,7 +44,7 @@ pub enum Error {
     #[error("protected execution storage unavailable")]
     Storage,
     /// Read-only header diagnosis; no application/write handle was created.
-    #[error("execution database schema {found} is unsupported; required schema {supported}; preserve the existing database and explicitly select a new test data directory")]
+    #[error("execution database schema {found} is unsupported; required schema {supported}; preserve the existing database; initialization and automatic migration are disabled")]
     UnsupportedSchema {
         /// Version read without opening a writer.
         found: u32,
@@ -108,12 +108,22 @@ pub enum Startup {
     CreateTest,
     /// Open an existing Test authority database, preserving every task and receipt.
     OpenTest,
-    /// Fails in this S1 build; test identity is never a production fallback.
-    Production,
+}
+
+/// Production storage lifecycle, selected explicitly by the trusted service owner.
+/// Neither opening failure nor registration failure creates a new journal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProductionStartup {
+    /// Publish a new journal without replacing an existing path.
+    Create,
+    /// Open exactly the existing authority and supported schema.
+    Open,
 }
 
 /// Safe presentation of C09 facts, not a second persisted state machine.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "camelCase")]
 pub enum TaskPhase {
     /// Registered without an admitted attempt; no execution permission is implied.
@@ -141,7 +151,9 @@ pub enum TaskPhase {
 }
 
 /// Authorized value-only task projection. Never includes launch, parameters or raw output.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionStatus {
     /// Original reliable business identity.

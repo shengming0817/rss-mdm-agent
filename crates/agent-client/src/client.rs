@@ -49,6 +49,7 @@ impl Offer {
     }
 }
 /// A verified short-lived Start token, not local execution authority.
+#[derive(Clone)]
 pub struct Start {
     pub(crate) signed: wire::SignedTask,
 }
@@ -98,6 +99,46 @@ pub struct Client<S, C> {
     pub(crate) clock: C,
 }
 impl<S: SecretProvider, C: Clock> Client<S, C> {
+    /// Independently supplied deployment configuration, excluding credentials.
+    pub fn configuration(&self) -> &Config {
+        &self.store.cfg
+    }
+    /// Protect known device/enrollment credentials in task results without discarding ordinary output.
+    pub fn output_policy(&self) -> Result<crate::CredentialRedactor, Error> {
+        let enrollment = self
+            .store
+            .get::<Enrollment>("enrollment")?
+            .ok_or(Error::Identity)?;
+        Ok(crate::CredentialRedactor(vec![
+            self.credential()?,
+            self.secrets.resolve(&enrollment.password)?,
+        ]))
+    }
+    /// Bounded retained transport tasks; reading this list does not grant another Start.
+    pub fn pending_tasks(&self, limit: usize) -> Result<Vec<Uuid>, Error> {
+        if limit == 0 || limit > self.store.cfg.limits.pending_tasks {
+            return Err(Error::Capacity);
+        }
+        let mut query = self
+            .store
+            .conn
+            .prepare("SELECT id FROM tasks ORDER BY rowid LIMIT ?1")?;
+        let ids = query
+            .query_map([limit], |r| r.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        ids.into_iter()
+            .map(|s| Uuid::parse_str(&s).map_err(|_| Error::Storage))
+            .collect()
+    }
+    /// Existing journal association, used for recovery and reporting rather than redispatch.
+    pub fn bound_request(
+        &self,
+        task: Uuid,
+    ) -> Result<Option<execution_contract::RequestId>, Error> {
+        self.store
+            .get::<crate::bridge::Binding>(&format!("binding/{task}"))
+            .map(|v| v.map(|b| b.request))
+    }
     /// Create or recover exactly one fixed endpoint/tenant communication namespace.
     pub fn open(
         root: &Path,
