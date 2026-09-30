@@ -1,0 +1,615 @@
+use crate::{
+    store::{decode, encode, hash, Store},
+    wire, *,
+};
+use reqwest::{Method, Response, StatusCode};
+use rusqlite::{params, OptionalExtension};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use std::path::Path;
+use uuid::Uuid;
+/// A verified offer; public callers cannot deserialize or invent this wrapper.
+#[derive(Debug)]
+pub struct Offer {
+    pub(crate) signed: wire::SignedTask,
+}
+impl Offer {
+    /// Complete verified wire payload, preserving software steps and detection.
+    pub fn payload(&self) -> &wire::TaskPayload {
+        &self.signed.payload
+    }
+    /// Stable local request identity across offers; remote attempts do not create new executions.
+    pub fn request_id(&self) -> Result<execution_contract::RequestId, Error> {
+        let bytes = match self.payload() {
+            wire::TaskPayload::Script(v) => encode(&(
+                v.tenant_id,
+                &v.device_id,
+                v.registration_id,
+                v.generation,
+                v.task_id,
+            ))?,
+            wire::TaskPayload::Software(v) => encode(&(
+                v.tenant_id,
+                &v.device_id,
+                v.registration_id,
+                v.generation,
+                v.task_id,
+            ))?,
+            _ => return Err(Error::Unsupported),
+        };
+        execution_contract::RequestId::new(format!("agent-v4-{}", hash(&bytes)))
+            .map_err(|_| Error::Protocol)
+    }
+    /// Exact remote task.
+    pub fn task_id(&self) -> Uuid {
+        self.payload().task_id()
+    }
+    /// Exact remote attempt.
+    pub fn attempt_id(&self) -> Uuid {
+        self.payload().attempt_id()
+    }
+}
+/// A verified short-lived Start token, not local execution authority.
+pub struct Start {
+    pub(crate) signed: wire::SignedTask,
+}
+impl Start {
+    /// Exact verified signed input.
+    pub fn payload(&self) -> &wire::TaskPayload {
+        &self.signed.payload
+    }
+}
+/// One bounded claim and independent cancellation page.
+pub struct Claim {
+    /// At most one accepted offer.
+    pub offer: Option<Offer>,
+    /// Exact remote attempts that must be reconciled/stopped by the host.
+    pub cancellations: Vec<wire::TaskCancellation>,
+}
+#[derive(Serialize, Deserialize, PartialEq)]
+struct Enrollment {
+    operation: Uuid,
+    enrollment: Uuid,
+    password: String,
+    credential: String,
+    capabilities: Vec<wire::Capability>,
+    fingerprint: String,
+}
+/// Explicitly driven V4 client; SQLite transactions never cross HTTP awaits.
+/// A private-root lease permits one driving owner, with no hidden workers.
+pub struct Client<S, C> {
+    pub(crate) store: Store,
+    pub(crate) http: reqwest::Client,
+    pub(crate) secrets: S,
+    pub(crate) clock: C,
+}
+impl<S: SecretProvider, C: Clock> Client<S, C> {
+    /// Create or recover exactly one fixed endpoint/tenant communication namespace.
+    pub fn open(
+        root: &Path,
+        config: Config,
+        mode: OpenMode,
+        secrets: S,
+        clock: C,
+    ) -> Result<Self, Error> {
+        config.validate()?;
+        // ref: reqwest 0.13.5 src/async_impl/client.rs (explicit redirect/TLS/timeouts).
+        let mut builder = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .no_proxy()
+            .connect_timeout(config.limits.connect_timeout)
+            .read_timeout(config.limits.read_timeout)
+            .https_only(config.transport == Transport::Https);
+        if let Some(pem) = &config.ca_pem {
+            builder = builder.add_root_certificate(
+                reqwest::Certificate::from_pem(pem).map_err(|_| Error::Configuration)?,
+            );
+        }
+        let http = builder.build().map_err(|_| Error::Configuration)?;
+        Ok(Self {
+            store: Store::open(root, config, mode)?,
+            http,
+            secrets,
+            clock,
+        })
+    }
+    pub(crate) fn now(&self) -> Result<i64, Error> {
+        self.store.time(self.clock.now()?)
+    }
+    pub(crate) fn active(&self) -> Result<(), Error> {
+        if self.store.get::<bool>("blocked")?.unwrap_or(false) {
+            return Err(Error::Identity);
+        }
+        Ok(())
+    }
+    pub(crate) fn credential(&self) -> Result<wire::Secret, Error> {
+        self.active()?;
+        self.secrets.resolve(&self.store.secret_reference()?)
+    }
+    pub(crate) fn url(&self, path: &str) -> Result<url::Url, Error> {
+        self.store
+            .cfg
+            .origin
+            .join(&format!("api/agent/v4/{path}"))
+            .map_err(|_| Error::Configuration)
+    }
+    pub(crate) async fn checked_response(&self, response: Response) -> Result<Response, Error> {
+        match response.status() {
+            s if s.is_success() => Ok(response),
+            StatusCode::UNAUTHORIZED => {
+                self.store.put("blocked", &true)?;
+                Err(Error::Identity)
+            }
+            StatusCode::FORBIDDEN => Err(Error::Denied),
+            StatusCode::CONFLICT => Err(Error::Conflict),
+            StatusCode::TOO_MANY_REQUESTS => Err(Error::Unavailable),
+            s if s.is_server_error() => Err(Error::Unavailable),
+            _ => Err(Error::Protocol),
+        }
+    }
+    async fn json<T: DeserializeOwned>(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<&[u8]>,
+        authenticated: bool,
+    ) -> Result<T, Error> {
+        self.active()?;
+        self.now()?;
+        let mut request = self
+            .http
+            .request(method, self.url(path)?)
+            .timeout(self.store.cfg.limits.request_timeout);
+        if authenticated {
+            request = request.bearer_auth(self.credential()?.expose());
+        }
+        if let Some(body) = body {
+            request = request
+                .header("content-type", "application/json")
+                .body(body.to_owned());
+        }
+        let mut response = self
+            .checked_response(request.send().await.map_err(|_| Error::Unavailable)?)
+            .await?;
+        if !response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| {
+                v.split(';')
+                    .next()
+                    .is_some_and(|v| v.trim() == "application/json")
+            })
+        {
+            return Err(Error::Protocol);
+        }
+        let max = self.store.cfg.limits.response_bytes;
+        if response.content_length().is_some_and(|n| n > max as u64) {
+            return Err(Error::Capacity);
+        }
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(|_| Error::Unavailable)? {
+            if bytes.len().checked_add(chunk.len()).is_none_or(|n| n > max) {
+                return Err(Error::Capacity);
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        decode(&bytes)
+    }
+    /// Registration replay preserves the operation and protected secret references.
+    /// Use a new private namespace for a new registration; old pending data is preserved.
+    pub async fn register(
+        &mut self,
+        operation: Uuid,
+        enrollment: Uuid,
+        password_reference: &str,
+        credential_reference: &str,
+        capabilities: Vec<wire::Capability>,
+    ) -> Result<wire::RegistrationReceipt, Error> {
+        if password_reference.is_empty()
+            || credential_reference.is_empty()
+            || password_reference.len() > 256
+            || credential_reference.len() > 256
+            || capabilities.contains(&wire::Capability::MdmEnrollmentV4)
+        {
+            return Err(Error::Configuration);
+        }
+        let request = wire::RegistrationRequest::new(
+            operation,
+            enrollment,
+            self.secrets.resolve(password_reference)?,
+            self.secrets.credential(credential_reference)?,
+            capabilities.clone(),
+            self.store.cfg.platform,
+            self.store.cfg.architecture,
+        )?;
+        let body = encode(&request)?;
+        let record = Enrollment {
+            operation,
+            enrollment,
+            password: password_reference.into(),
+            credential: credential_reference.into(),
+            capabilities: capabilities.clone(),
+            fingerprint: hash(&body),
+        };
+        if let Some(old) = self.store.get::<Enrollment>("enrollment")? {
+            if old != record {
+                return Err(Error::Conflict);
+            }
+        } else {
+            self.store.put("enrollment", &record)?;
+        }
+        let receipt: wire::RegistrationReceipt = self
+            .json(Method::POST, "registrations", Some(&body), false)
+            .await?;
+        if receipt.operation_id != operation
+            || receipt.source != wire::ReportSource::AgentBuiltin
+            || receipt.capabilities != capabilities
+        {
+            return Err(Error::Protocol);
+        }
+        if self
+            .store
+            .get::<wire::RegistrationReceipt>("registration")?
+            .is_some_and(|old| old != receipt)
+        {
+            self.store.put("blocked", &true)?;
+            return Err(Error::Identity);
+        }
+        let tx = self.store.conn.unchecked_transaction()?;
+        tx.execute("INSERT INTO state VALUES('registration',?1) ON CONFLICT(key) DO UPDATE SET body=excluded.body",[encode(&receipt)?])?;
+        tx.execute("INSERT INTO state VALUES('credential',?1) ON CONFLICT(key) DO UPDATE SET body=excluded.body",[encode(&credential_reference)?])?;
+        tx.commit()?;
+        Ok(receipt)
+    }
+    /// Current durable registration; no credential is returned.
+    pub fn registration(&self) -> Result<wire::RegistrationReceipt, Error> {
+        self.store.registration()
+    }
+    /// Allocate report identity and sequence in the same transaction as its immutable body.
+    pub fn queue_report(
+        &mut self,
+        body: wire::ReportBody,
+        observed_at: i64,
+    ) -> Result<Uuid, Error> {
+        self.active()?;
+        self.store.registration()?;
+        self.now()?;
+        let tx = self.store.conn.transaction()?;
+        let count: u64 = tx.query_row("SELECT count(*) FROM reports", [], |r| r.get(0))?;
+        if count >= self.store.cfg.limits.pending_reports as u64 {
+            return Err(Error::Capacity);
+        }
+        let sequence: u64 = tx.query_row("SELECT sequence FROM metadata", [], |r| r.get(0))?;
+        let id = Uuid::new_v4();
+        let request = wire::ReportRequest::new(id, sequence, observed_at, body)?;
+        let bytes = request.canonical()?;
+        tx.execute(
+            "INSERT INTO reports VALUES(?1,?2)",
+            params![id.to_string(), bytes],
+        )?;
+        let next = sequence
+            .checked_add(1)
+            .and_then(|v| i64::try_from(v).ok())
+            .ok_or(Error::Capacity)?;
+        tx.execute("UPDATE metadata SET sequence=?1", [next])?;
+        tx.commit()?;
+        Ok(id)
+    }
+    /// One bounded at-least-once batch; only matching durable ACKs remove reports.
+    pub async fn flush_reports(&mut self, limit: usize) -> Result<usize, Error> {
+        if limit == 0 || limit > self.store.cfg.limits.pending_reports {
+            return Err(Error::Configuration);
+        }
+        let reports = {
+            let mut stmt=self.store.conn.prepare("SELECT id,CASE WHEN typeof(body)='blob' AND length(body)<=16384 THEN body END FROM reports ORDER BY rowid LIMIT ?1")?;
+            let rows = stmt
+                .query_map([limit as i64], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            rows
+        };
+        let mut sent = 0;
+        for (id, body) in reports {
+            let ack: wire::ReportAck = self
+                .json(Method::POST, "reports", Some(&body), true)
+                .await?;
+            if ack.report_id.to_string() != id {
+                return Err(Error::Protocol);
+            }
+            self.store
+                .conn
+                .execute("DELETE FROM reports WHERE id=?1", [id])?;
+            sent += 1;
+        }
+        Ok(sent)
+    }
+    /// Persistent intake/projection status is separate from delivery acknowledgement.
+    pub async fn report_status(&self, id: Uuid) -> Result<wire::ReportStatus, Error> {
+        let result: wire::ReportStatus = self
+            .json(Method::GET, &format!("reports/{id}"), None, true)
+            .await?;
+        if result.ack.report_id != id {
+            return Err(Error::Protocol);
+        }
+        Ok(result)
+    }
+    pub(crate) fn verify(
+        &self,
+        signed: &wire::SignedTask,
+        permit: wire::TaskPermit,
+    ) -> Result<(), Error> {
+        self.active()?;
+        let now = self.now()?;
+        let p = &signed.payload;
+        if now >= p.expires_at() {
+            return Err(Error::Expired);
+        }
+        let registration = self.store.registration()?;
+        let key = self
+            .store
+            .cfg
+            .keys
+            .get(&signed.key_id)
+            .ok_or(Error::Untrusted)?;
+        signed
+            .verify(&wire::TaskVerification {
+                key_id: &signed.key_id,
+                public_key: key,
+                tenant_id: self.store.cfg.tenant,
+                device_id: &registration.device_id,
+                platform: self.store.cfg.platform,
+                architecture: self.store.cfg.architecture,
+                registration_id: registration.registration_id,
+                generation: registration.generation,
+                task_id: p.task_id(),
+                attempt_id: p.attempt_id(),
+                permit,
+                now,
+            })
+            .map_err(|_| Error::Untrusted)?;
+        if matches!(p, wire::TaskPayload::Enrollment(_)) {
+            return Err(Error::Unsupported);
+        }
+        Ok(())
+    }
+    /// Receive one offer and cancellation page. Expired offers use a new claim operation.
+    pub async fn claim(&mut self) -> Result<Claim, Error> {
+        let now = self.now()?;
+        if self
+            .store
+            .get::<i64>("claim-expiry")?
+            .is_some_and(|v| now >= v)
+        {
+            self.store
+                .conn
+                .execute("DELETE FROM state WHERE key IN('claim','claim-expiry')", [])?;
+        }
+        let operation = match self.store.get::<Uuid>("claim")? {
+            Some(id) => id,
+            None => {
+                let id = Uuid::new_v4();
+                self.store.put("claim", &id)?;
+                id
+            }
+        };
+        let body = encode(&wire::TaskClaimRequest::new(operation)?)?;
+        let result: wire::TaskClaimResponse = self
+            .json(Method::POST, "tasks/claim", Some(&body), true)
+            .await?;
+        let cancellations = result.cancellations().to_owned();
+        let offer = if let Some(signed) = result.into_task() {
+            self.verify(&signed, wire::TaskPermit::Offer)?;
+            let count: u64 = self
+                .store
+                .conn
+                .query_row("SELECT count(*) FROM tasks", [], |r| r.get(0))?;
+            let task = signed.payload.task_id().to_string();
+            let old:Option<Vec<u8>>=self.store.conn.query_row("SELECT CASE WHEN typeof(body)='blob' AND length(body)<=16777216 THEN body END FROM tasks WHERE id=?1",[&task],|r|r.get(0)).optional()?;
+            if old.is_none() && count >= self.store.cfg.limits.pending_tasks as u64 {
+                return Err(Error::Capacity);
+            }
+            if let Some(old) = old {
+                let old: wire::SignedTask = decode(&old)?;
+                if old.payload.attempt_id() != signed.payload.attempt_id() {
+                    let started:bool=self.store.conn.query_row("SELECT EXISTS(SELECT 1 FROM requests WHERE task=?1 AND key LIKE 'start/%' AND accepted=1)",[&task],|r|r.get(0))?;
+                    if started {
+                        return Err(Error::Conflict);
+                    }
+                } else if old != signed {
+                    return Err(Error::Conflict);
+                }
+            }
+            self.store.conn.execute(
+                "INSERT INTO tasks VALUES(?1,?2) ON CONFLICT(id) DO UPDATE SET body=excluded.body",
+                params![task, encode(&signed)?],
+            )?;
+            self.store
+                .put("claim-expiry", &signed.payload.expires_at())?;
+            Some(Offer { signed })
+        } else {
+            self.store
+                .conn
+                .execute("DELETE FROM state WHERE key IN('claim','claim-expiry')", [])?;
+            None
+        };
+        Ok(Claim {
+            offer,
+            cancellations,
+        })
+    }
+    /// Recover an offer from protected state; signature and current context are rechecked.
+    pub fn offer(&self, task: Uuid) -> Result<Offer, Error> {
+        let body:Vec<u8>=self.store.conn.query_row("SELECT CASE WHEN typeof(body)='blob' AND length(body)<=16777216 THEN body END FROM tasks WHERE id=?1",[task.to_string()],|r|r.get(0))?;
+        let signed = decode(&body)?;
+        self.verify(&signed, wire::TaskPermit::Offer)?;
+        Ok(Offer { signed })
+    }
+    pub(crate) fn event_request(
+        &self,
+        key: &str,
+        task: Uuid,
+        attempt: Uuid,
+        event: wire::TaskEvent,
+        source: Option<&str>,
+    ) -> Result<wire::TaskEventRequest, Error> {
+        let existing:Option<Vec<u8>>=self.store.conn.query_row("SELECT CASE WHEN typeof(body)='blob' AND length(body)<=1114112 THEN body END FROM requests WHERE key=?1",[key],|r|r.get(0)).optional()?;
+        if let Some(bytes) = existing {
+            let req: wire::TaskEventRequest = decode(&bytes)?;
+            if req.attempt_id() != attempt || req.event() != &event {
+                return Err(Error::Conflict);
+            }
+            return Ok(req);
+        }
+        let count: u64 = self
+            .store
+            .conn
+            .query_row("SELECT count(*) FROM requests", [], |r| r.get(0))?;
+        if count >= self.store.cfg.limits.pending_tasks as u64 * 4 {
+            return Err(Error::Capacity);
+        }
+        let request = wire::TaskEventRequest::new(Uuid::new_v4(), attempt, event)?;
+        self.store.conn.execute(
+            "INSERT INTO requests(key,task,source,body) VALUES(?1,?2,?3,?4)",
+            params![key, task.to_string(), source, encode(&request)?],
+        )?;
+        Ok(request)
+    }
+    pub(crate) async fn send_event(
+        &self,
+        task: Uuid,
+        request: &wire::TaskEventRequest,
+    ) -> Result<wire::TaskEventAck, Error> {
+        self.json(
+            Method::POST,
+            &format!("tasks/{task}/events"),
+            Some(&encode(request)?),
+            true,
+        )
+        .await
+    }
+    /// Acknowledgement of an authenticated offer never grants execution.
+    pub async fn received(&mut self, offer: &Offer) -> Result<(), Error> {
+        self.verify(&offer.signed, wire::TaskPermit::Offer)?;
+        let key = format!("received/{}/{}", offer.task_id(), offer.attempt_id());
+        let request = self.event_request(
+            &key,
+            offer.task_id(),
+            offer.attempt_id(),
+            wire::TaskEvent::Received,
+            None,
+        )?;
+        let ack = self.send_event(offer.task_id(), &request).await?;
+        if ack.permit().is_some() {
+            return Err(Error::Protocol);
+        }
+        if ack.cancel_requested() {
+            return Err(Error::Denied);
+        }
+        self.store
+            .conn
+            .execute("UPDATE requests SET accepted=1 WHERE key=?1", [key])?;
+        Ok(())
+    }
+    /// Request Start only after all materials are verified. User-initiated software requires
+    /// an explicit trusted-host call to start_user_initiated, never an automatic boolean.
+    pub async fn request_start(
+        &mut self,
+        offer: &Offer,
+        materials: &Materials,
+    ) -> Result<Start, Error> {
+        if matches!(offer.payload(),wire::TaskPayload::Software(v) if v.start_mode==wire::SoftwareStartMode::UserInitiated)
+        {
+            return Err(Error::Denied);
+        }
+        self.start_inner(offer, materials).await
+    }
+    /// Trusted local interaction endpoint. Host must authenticate and bind the user action.
+    pub async fn start_user_initiated(
+        &mut self,
+        offer: &Offer,
+        materials: &Materials,
+    ) -> Result<Start, Error> {
+        self.start_inner(offer, materials).await
+    }
+    async fn start_inner(&mut self, offer: &Offer, materials: &Materials) -> Result<Start, Error> {
+        self.active()?;
+        self.now()?;
+        let start_key = format!("start/{}/{}", offer.task_id(), offer.attempt_id());
+        let replay: bool = self.store.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM requests WHERE key=?1)",
+            [&start_key],
+            |r| r.get(0),
+        )?;
+        if replay {
+            let stored:Vec<u8>=self.store.conn.query_row("SELECT CASE WHEN typeof(body)='blob' AND length(body)<=16777216 THEN body END FROM tasks WHERE id=?1",[offer.task_id().to_string()],|r|r.get(0))?;
+            if decode::<wire::SignedTask>(&stored)? != offer.signed {
+                return Err(Error::Untrusted);
+            }
+        } else {
+            self.verify(&offer.signed, wire::TaskPermit::Offer)?;
+        }
+        materials.validate(offer)?;
+        let received = format!("received/{}/{}", offer.task_id(), offer.attempt_id());
+        let ok: bool = self.store.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM requests WHERE key=?1 AND accepted=1)",
+            [received],
+            |r| r.get(0),
+        )?;
+        if !ok {
+            return Err(Error::Conflict);
+        }
+        let key = format!("start/{}/{}", offer.task_id(), offer.attempt_id());
+        let request = self.event_request(
+            &key,
+            offer.task_id(),
+            offer.attempt_id(),
+            wire::TaskEvent::Start,
+            None,
+        )?;
+        let ack = self.send_event(offer.task_id(), &request).await?;
+        if ack.cancel_requested() {
+            return Err(Error::Denied);
+        }
+        let signed = ack.into_permit().ok_or(Error::Protocol)?;
+        self.verify(&signed, wire::TaskPermit::Start)?;
+        if !same_input(offer.payload(), &signed.payload) {
+            return Err(Error::Untrusted);
+        }
+        self.store
+            .conn
+            .execute("UPDATE requests SET accepted=1 WHERE key=?1", [key])?;
+        Ok(Start { signed })
+    }
+    /// Revalidate a short-lived permit immediately before the bridge submits to local admission.
+    pub fn validate_start(&self, start: &Start) -> Result<(), Error> {
+        self.verify(&start.signed, wire::TaskPermit::Start)
+    }
+    /// Release completed transport/cache associations only after the host has settled delivery.
+    pub(crate) fn release(&self, task: Uuid) -> Result<(), Error> {
+        let tx = self.store.conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM requests WHERE task=?1", [task.to_string()])?;
+        tx.execute("DELETE FROM cache_refs WHERE task=?1", [task.to_string()])?;
+        tx.execute("DELETE FROM tasks WHERE id=?1", [task.to_string()])?;
+        tx.execute("DELETE FROM state WHERE key IN('claim','claim-expiry')", [])?;
+        tx.commit()?;
+        Ok(())
+    }
+}
+pub(crate) fn same_input(a: &wire::TaskPayload, b: &wire::TaskPayload) -> bool {
+    match (a, b) {
+        (wire::TaskPayload::Script(a), wire::TaskPayload::Script(b)) => {
+            let mut b = b.clone();
+            b.permit = a.permit;
+            b.expires_at = a.expires_at;
+            &b == a
+        }
+        (wire::TaskPayload::Software(a), wire::TaskPayload::Software(b)) => {
+            let mut b = b.clone();
+            b.permit = a.permit;
+            b.expires_at = a.expires_at;
+            &b == a
+        }
+        _ => false,
+    }
+}

@@ -1,0 +1,565 @@
+use agent_client::{Config, Error, Limits, Transport};
+use url::Url;
+use uuid::Uuid;
+
+mod support;
+
+#[tokio::test]
+async fn lost_start_reply_replays_same_request_after_offer_expiry_without_renewing_permit() {
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let offer = client.claim().await.unwrap().offer.unwrap();
+    let materials = client.prepare(&offer).await.unwrap();
+    server.time.set(59);
+    client.received(&offer).await.unwrap();
+    server.data.lock().unwrap().start_failure = true;
+    assert!(matches!(
+        client.request_start(&offer, &materials).await,
+        Err(Error::Unavailable)
+    ));
+    drop(client);
+    server.time.set(62);
+    let mut client = server.client(&root, OpenMode::Existing);
+    let start = client.request_start(&offer, &materials).await.unwrap();
+    let ops = server.data.lock().unwrap().start_ops.clone();
+    assert_eq!(ops.len(), 2);
+    assert_eq!(ops[0], ops[1]);
+    server.time.set(75);
+    assert_eq!(client.validate_start(&start), Err(Error::Expired));
+}
+#[tokio::test]
+async fn material_reader_starts_at_zero_and_revocation_invalidates_held_start() {
+    use std::io::Read;
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let offer = client.claim().await.unwrap().offer.unwrap();
+    let materials = client.prepare(&offer).await.unwrap();
+    let mut bytes = Vec::new();
+    materials.files()[0]
+        .reader()
+        .unwrap()
+        .read_to_end(&mut bytes)
+        .unwrap();
+    assert_eq!(bytes, server.data.lock().unwrap().bytes);
+    client.received(&offer).await.unwrap();
+    let start = client.request_start(&offer, &materials).await.unwrap();
+    client
+        .queue_report(
+            ReportBody::Failed {
+                code: FailureCode::CollectionFailed,
+            },
+            1,
+        )
+        .unwrap();
+    server.data.lock().unwrap().denied = true;
+    assert_eq!(client.flush_reports(1).await, Err(Error::Identity));
+    assert_eq!(client.validate_start(&start), Err(Error::Identity));
+}
+#[tokio::test]
+async fn queue_capacity_clock_rollback_and_namespace_change_fail_closed() {
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut cfg = server.config();
+    cfg.limits.pending_reports = 1;
+    let mut client = Client::open(
+        &root.path,
+        cfg,
+        OpenMode::Create,
+        server.secrets.clone(),
+        server.time.clone(),
+    )
+    .unwrap();
+    server.register(&mut client).await;
+    server.time.set(2);
+    client
+        .queue_report(
+            ReportBody::Failed {
+                code: FailureCode::CollectionFailed,
+            },
+            2,
+        )
+        .unwrap();
+    assert_eq!(
+        client.queue_report(
+            ReportBody::Failed {
+                code: FailureCode::CollectionFailed
+            },
+            2
+        ),
+        Err(Error::Capacity)
+    );
+    server.time.set(1);
+    assert_eq!(client.flush_reports(1).await, Err(Error::Clock));
+    drop(client);
+    let mut cfg = server.config();
+    cfg.tenant = Uuid::new_v4();
+    assert!(matches!(
+        Client::open(
+            &root.path,
+            cfg,
+            OpenMode::Existing,
+            server.secrets.clone(),
+            server.time.clone()
+        ),
+        Err(Error::Identity)
+    ));
+}
+#[cfg(unix)]
+#[tokio::test]
+async fn symlink_partial_never_reads_or_overwrites_external_file() {
+    let server = Server::new().await;
+    let root = Root::new();
+    let external = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let offer = client.claim().await.unwrap().offer.unwrap();
+    server.data.lock().unwrap().content_failure = true;
+    assert!(client.prepare(&offer).await.is_err());
+    let partial = std::fs::read_dir(root.path.join("content"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let target = external.path.join("protected");
+    native_process::private_storage::write_new(&target, b"keep").unwrap();
+    std::fs::remove_file(&partial).unwrap();
+    std::os::unix::fs::symlink(&target, &partial).unwrap();
+    assert!(matches!(client.prepare(&offer).await, Err(Error::Storage)));
+    assert_eq!(std::fs::read(target).unwrap(), b"keep");
+}
+
+use agent_client::{wire::*, Client, ExecutionBridge, OpenMode};
+use sha2::{Digest, Sha256};
+use support::execution::*;
+use support::*;
+
+async fn exercise_bridge(software: bool) {
+    use agent_client::Error;
+    use execution_app::*;
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    if software {
+        server.data.lock().unwrap().software(1, false);
+    }
+    let offer = client.claim().await.unwrap().offer.unwrap();
+    let materials = client.prepare(&offer).await.unwrap();
+    client.received(&offer).await.unwrap();
+    let db = local::Database::new();
+    let mut host = local::TestHost::new();
+    let plan = adapted_plan(software, "device-1", &offer);
+    host.template = plan.clone();
+    let runner = CapturingRunner {
+        inner: DeterministicTestRunner::new(local::id("test-runner"), TestScenario::Complete, 16)
+            .unwrap(),
+        ready: Default::default(),
+    };
+    let mut app = ExecutionApp::start(
+        &db.path,
+        Startup::CreateTest,
+        host.clone(),
+        runner.clone(),
+        AppConfig::test_defaults(1),
+    )
+    .unwrap();
+    let caller = RequestContext {
+        actor: plan.spec().request.actor.clone(),
+    };
+    let bridge = ExecutionBridge::new(local::id("agent-consumer"), FixtureOutput);
+    let prepared = bridge
+        .prepare(&offer, &materials, &app, &caller, &plan)
+        .unwrap();
+    let start = client.request_start(&offer, &materials).await.unwrap();
+    bridge
+        .dispatch(&mut client, start, &materials, &mut app, prepared)
+        .unwrap();
+    assert_eq!(runner.inner.dispatch_count(), 1);
+    app.reconcile(&plan.spec().request.request_id).unwrap();
+    server.data.lock().unwrap().result_failure = true;
+    assert_eq!(
+        bridge
+            .flush(&mut client, offer.task_id(), &mut app, 64)
+            .await,
+        Err(Error::Unavailable)
+    );
+    drop(client);
+    drop(app);
+    let mut client = server.client(&root, OpenMode::Existing);
+    let mut app = ExecutionApp::start(
+        &db.path,
+        Startup::OpenTest,
+        host.clone(),
+        runner.clone(),
+        AppConfig::test_defaults(1),
+    )
+    .unwrap();
+    host.state.lock().unwrap().accesses = Some(vec![execution_sqlite::Access::RunnerFact]);
+    assert_eq!(
+        bridge
+            .flush(&mut client, offer.task_id(), &mut app, 64)
+            .await,
+        Err(Error::Denied)
+    );
+    host.state.lock().unwrap().accesses = None;
+    assert_eq!(
+        bridge
+            .flush(&mut client, offer.task_id(), &mut app, 64)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(runner.inner.dispatch_count(), 1);
+    assert_eq!(
+        bridge
+            .flush(&mut client, offer.task_id(), &mut app, 64)
+            .await
+            .unwrap(),
+        0
+    );
+    let data = server.data.lock().unwrap();
+    assert_eq!(data.results.len(), 1);
+    let result = data.results.values().next().unwrap();
+    assert!(!result.to_string().contains("secret-canary"));
+    if software {
+        assert_eq!(result["event"]["kind"], "software_result");
+        assert_eq!(result["event"]["detection"], "present");
+        assert_eq!(result["event"]["observedVersion"], "1.0");
+        let TaskPayload::Software(spec) = offer.payload() else {
+            panic!()
+        };
+        assert_eq!(
+            result["event"]["definitionDigest"],
+            serde_json::to_value(spec.definition_digest).unwrap()
+        );
+    } else {
+        assert_eq!(result["event"]["kind"], "result");
+        assert_eq!(result["event"]["output"]["ok"], true);
+    }
+}
+#[tokio::test]
+async fn script_bridge_recovers_without_dispatch_and_retries_only_confirmation() {
+    exercise_bridge(false).await;
+}
+#[tokio::test]
+async fn software_bridge_uses_journal_detection_and_remote_definition() {
+    exercise_bridge(true).await;
+}
+
+#[tokio::test]
+async fn register_report_recovery_and_exact_ack() {
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.data.lock().unwrap().registration_failure = true;
+    let operation = Uuid::new_v4();
+    let enrollment = Uuid::new_v4();
+    let capabilities = vec![Capability::InventoryBasicV4, Capability::TaskExecuteV4];
+    assert_eq!(
+        client
+            .register(
+                operation,
+                enrollment,
+                "password",
+                "credential",
+                capabilities.clone()
+            )
+            .await
+            .unwrap_err(),
+        Error::Unavailable
+    );
+    drop(client);
+    let mut client = server.client(&root, OpenMode::Existing);
+    client
+        .register(
+            operation,
+            enrollment,
+            "password",
+            "credential",
+            capabilities.clone(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        client
+            .register(
+                Uuid::new_v4(),
+                enrollment,
+                "password",
+                "credential",
+                capabilities
+            )
+            .await
+            .unwrap_err(),
+        Error::Conflict
+    );
+    let report = client
+        .queue_report(
+            ReportBody::Failed {
+                code: FailureCode::CollectionFailed,
+            },
+            1,
+        )
+        .unwrap();
+    server.data.lock().unwrap().report_failure = true;
+    assert_eq!(client.flush_reports(8).await, Err(Error::Unavailable));
+    drop(client);
+    let mut client = server.client(&root, OpenMode::Existing);
+    server.data.lock().unwrap().bad_ack = true;
+    assert_eq!(client.flush_reports(8).await, Err(Error::Protocol));
+    server.data.lock().unwrap().bad_ack = false;
+    assert_eq!(client.flush_reports(8).await.unwrap(), 1);
+    assert_eq!(client.flush_reports(8).await.unwrap(), 0);
+    let data = server.data.lock().unwrap();
+    assert_eq!(data.reports.len(), 1);
+    assert_eq!(data.reports[&report.to_string()]["sequence"], 0);
+    let bytes = std::fs::read(root.path.join("communication.sqlite")).unwrap();
+    assert!(!bytes
+        .windows(43)
+        .any(|b| b == b"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE"));
+}
+#[tokio::test]
+async fn revoked_identity_blocks_retries_and_clock_rollback_preserves_queue() {
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    client
+        .queue_report(
+            ReportBody::Failed {
+                code: FailureCode::CollectionFailed,
+            },
+            1,
+        )
+        .unwrap();
+    server.time.set(2);
+    server.data.lock().unwrap().denied = true;
+    assert_eq!(client.flush_reports(4).await, Err(Error::Identity));
+    server.data.lock().unwrap().denied = false;
+    assert_eq!(client.flush_reports(4).await, Err(Error::Identity));
+    drop(client);
+    let cfg = server.config();
+    server.time.set(0);
+    let mut client = Client::open(
+        &root.path,
+        cfg,
+        OpenMode::Existing,
+        server.secrets.clone(),
+        server.time.clone(),
+    )
+    .unwrap();
+    assert_eq!(
+        client.queue_report(
+            ReportBody::Failed {
+                code: FailureCode::CollectionFailed
+            },
+            1
+        ),
+        Err(Error::Identity)
+    );
+}
+#[tokio::test]
+async fn offer_materials_start_and_input_tampering() {
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let offer = client.claim().await.unwrap().offer.unwrap();
+    let materials = client.prepare(&offer).await.unwrap();
+    assert_eq!(materials.files().len(), 1);
+    assert!(matches!(
+        client.request_start(&offer, &materials).await,
+        Err(Error::Conflict)
+    ));
+    client.received(&offer).await.unwrap();
+    server.data.lock().unwrap().forged_start = true;
+    assert!(matches!(
+        client.request_start(&offer, &materials).await,
+        Err(Error::Untrusted)
+    ));
+    server.data.lock().unwrap().forged_start = false;
+    let start = client.request_start(&offer, &materials).await.unwrap();
+    server.time.set(17);
+    assert_eq!(client.validate_start(&start), Err(Error::Expired));
+}
+#[tokio::test]
+async fn signature_namespace_and_expiry_are_checked_before_content() {
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    server.data.lock().unwrap().script();
+    {
+        let mut data = server.data.lock().unwrap();
+        let mut payload = data.offer.as_ref().unwrap().payload.clone();
+        if let TaskPayload::Script(v) = &mut payload {
+            v.tenant_id = Uuid::new_v4();
+        }
+        data.offer = Some(data.signed(payload));
+    }
+    assert!(matches!(client.claim().await, Err(Error::Untrusted)));
+    server.data.lock().unwrap().script();
+    let offer = client.claim().await.unwrap().offer.unwrap();
+    server.time.set(61);
+    assert!(matches!(client.prepare(&offer).await, Err(Error::Expired)));
+    assert!(server.data.lock().unwrap().content_calls.is_empty());
+}
+#[tokio::test]
+async fn partial_cache_reopens_and_checks_range_etag_and_reference_cleanup() {
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let offer = client.claim().await.unwrap().offer.unwrap();
+    server.data.lock().unwrap().content_failure = true;
+    assert!(matches!(
+        client.prepare(&offer).await,
+        Err(Error::Unavailable)
+    ));
+    let directory = root.path.join("content");
+    let partial = std::fs::read_dir(&directory)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let bytes = server.data.lock().unwrap().bytes.clone();
+    std::fs::write(&partial, &bytes[..100]).unwrap();
+    drop(client);
+    let mut client = server.client(&root, OpenMode::Existing);
+    let offer = client.offer(offer.task_id()).unwrap();
+    server.data.lock().unwrap().bad_range = true;
+    assert!(matches!(
+        client.prepare(&offer).await,
+        Err(Error::Untrusted)
+    ));
+    server.data.lock().unwrap().bad_range = false;
+    let materials = client.prepare(&offer).await.unwrap();
+    let blob = materials.files()[0].path().to_owned();
+    assert_eq!(
+        Sha256::digest(std::fs::read(blob).unwrap()).as_slice(),
+        Sha256::digest(&bytes).as_slice()
+    );
+    assert!(server
+        .data
+        .lock()
+        .unwrap()
+        .content_calls
+        .iter()
+        .any(|v| v.as_deref() == Some("bytes=100-")));
+    assert_eq!(client.cleanup(128).unwrap(), 0);
+    let sql = rusqlite::Connection::open(root.path.join("communication.sqlite")).unwrap();
+    sql.execute("DELETE FROM cache_refs", []).unwrap();
+    assert_eq!(client.cleanup(128).unwrap(), 0);
+    drop(materials);
+    assert_eq!(client.cleanup(128).unwrap(), 1);
+}
+#[tokio::test]
+async fn cache_budget_corruption_and_complete_file_replacement_fail_before_start() {
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut cfg = server.config();
+    cfg.limits.artifact_bytes = 8;
+    let mut client = Client::open(
+        &root.path,
+        cfg,
+        OpenMode::Create,
+        server.secrets.clone(),
+        server.time.clone(),
+    )
+    .unwrap();
+    server.register(&mut client).await;
+    let offer = client.claim().await.unwrap().offer.unwrap();
+    assert!(matches!(client.prepare(&offer).await, Err(Error::Capacity)));
+    drop(client);
+    let mut client = server.client(&root, OpenMode::Existing);
+    let offer = client.offer(offer.task_id()).unwrap();
+    server.data.lock().unwrap().bad_etag = true;
+    assert!(matches!(
+        client.prepare(&offer).await,
+        Err(Error::Untrusted)
+    ));
+    server.data.lock().unwrap().bad_etag = false;
+    let materials = client.prepare(&offer).await.unwrap();
+    client.received(&offer).await.unwrap();
+    std::fs::write(materials.files()[0].path(), b"changed").unwrap();
+    assert!(matches!(
+        client.request_start(&offer, &materials).await,
+        Err(Error::Untrusted)
+    ));
+    assert!(!server.data.lock().unwrap().started);
+}
+#[tokio::test]
+async fn all_software_steps_are_consumed_and_user_start_is_explicit() {
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    {
+        let mut data = server.data.lock().unwrap();
+        data.software(3, true);
+    }
+    let offer = client.claim().await.unwrap().offer.unwrap();
+    let materials = client.prepare(&offer).await.unwrap();
+    assert_eq!(materials.files().len(), 3);
+    client.received(&offer).await.unwrap();
+    assert!(matches!(
+        client.request_start(&offer, &materials).await,
+        Err(Error::Denied)
+    ));
+    let start = client
+        .start_user_initiated(&offer, &materials)
+        .await
+        .unwrap();
+    assert!(matches!(start.payload(),TaskPayload::Software(v) if v.steps.len()==3));
+}
+#[test]
+fn unsupported_database_and_changed_namespace_are_preserved() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let server = runtime.block_on(Server::new());
+    let root = Root::new();
+    drop(server.client(&root, OpenMode::Create));
+    let path = root.path.join("communication.sqlite");
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.pragma_update(None, "user_version", 9).unwrap();
+    drop(db);
+    let before = std::fs::read(&path).unwrap();
+    assert!(matches!(
+        Client::open(
+            &root.path,
+            server.config(),
+            OpenMode::Existing,
+            server.secrets.clone(),
+            server.time.clone()
+        ),
+        Err(Error::Schema)
+    ));
+    assert_eq!(before, std::fs::read(path).unwrap());
+}
+
+use rss_mdm_agent_wire::{TaskArchitecture, TaskPlatform};
+#[test]
+fn configuration_rejects_untrusted_network_and_unbounded_budgets() {
+    let mut cfg = Config {
+        origin: Url::parse("http://example.com").unwrap(),
+        tenant: Uuid::new_v4(),
+        platform: TaskPlatform::Macos,
+        architecture: TaskArchitecture::Aarch64,
+        keys: Default::default(),
+        limits: Limits::test_defaults(),
+        transport: Transport::Https,
+        ca_pem: None,
+    };
+    assert_eq!(cfg.validate(), Err(Error::Configuration));
+    cfg.origin = Url::parse("http://127.0.0.1:8080").unwrap();
+    cfg.transport = Transport::TestLoopback;
+    cfg.keys.insert("test".into(), vec![1; 32]);
+    assert!(cfg.validate().is_ok());
+    cfg.limits.cache_bytes = 0;
+    assert_eq!(cfg.validate(), Err(Error::Configuration));
+}

@@ -108,6 +108,28 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         Ok(execution)
     }
     /// Accept a single immutable execution. Exact replays continue only before the first intent.
+    /// Check current host binding, creation access, configuration and capabilities without
+    /// opening a journal task or consuming approval. Actual submission still repeats its gates.
+    pub fn prepare_execution(
+        &self,
+        caller: &RequestContext,
+        plan: &FrozenExecution,
+    ) -> Result<(), Error> {
+        self.check_binding(Some(caller), plan)?;
+        let scope = Scope::from_input(plan);
+        self.host.authorize(
+            caller,
+            AccessRequest {
+                access: Access::Create,
+                scope: &scope,
+                consumer: None,
+                interaction: None,
+            },
+        )?;
+        capabilities(&self.host, plan, self.config.active()?)?;
+        Ok(())
+    }
+    /// Accept a single immutable execution. Exact replays continue only before the first intent.
     pub fn request_execution(
         &mut self,
         caller: &RequestContext,

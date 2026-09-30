@@ -415,6 +415,19 @@ pub struct Receipt {
     /// Trusted recorded receipt time.
     pub occurred_at_unix_ms: u64,
 }
+
+/// One authorized read snapshot for a delivery consumer; never grants execution.
+#[derive(Debug)]
+pub struct DeliveryEvidence {
+    /// Exact source event, not a delivery checkpoint.
+    pub receipt: Receipt,
+    /// Immutable local input used to bind evidence.
+    pub input: FrozenExecution,
+    /// Committed process capture for the event's attempt, if available.
+    pub process: Option<execution_contract::ProcessEvidence>,
+    /// Committed independent detector facts for the same attempt.
+    pub software: Option<execution_contract::SoftwareEvidence>,
+}
 /// The first-commit result. DispatchAction is neither serializable nor recoverable.
 #[derive(Debug)]
 pub enum CommitOutcome {

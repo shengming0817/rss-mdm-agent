@@ -54,6 +54,46 @@ pub(crate) struct Write<'a> {
     pub limits: Limits,
 }
 impl Store {
+    /// Read unconfirmed events and their evidence in one SQLite snapshot. Deliver and
+    /// RunnerFact are independently authorized; ordinary result access is insufficient.
+    pub fn delivery_evidence(
+        &self,
+        scope: &Scope,
+        consumer: &Id,
+        limit: usize,
+        host: &impl Host,
+    ) -> Result<Vec<DeliveryEvidence>, Error> {
+        if limit == 0 || limit > self.limits.max_batch {
+            return Err(Error::InvalidInput);
+        }
+        authorize(host, Access::RunnerFact, scope, None)?;
+        let tx = self.read(scope, Access::Deliver, Some(consumer), host)?;
+        let (input, _, _) = crate::execution::load_execution(&tx, scope, self.limits)?;
+        let sql = format!("SELECT {} FROM receipts r WHERE r.scope=?1 AND r.kind!='trust'
+            AND NOT EXISTS(SELECT 1 FROM confirmations c WHERE c.scope=r.scope AND c.consumer=?2 AND c.sequence=r.sequence)
+            ORDER BY r.sequence LIMIT ?3", bounded_blob("r.body", self.limits.max_record_bytes));
+        let mut statement = tx.prepare(&sql)?;
+        let receipts = statement
+            .query_map(params![scope.key(), consumer.as_str(), limit as i64], |r| {
+                r.get::<_, Vec<u8>>(0)
+            })?
+            .map(|r| decode::<Receipt>(&r?, self.limits.max_record_bytes))
+            .collect::<Result<Vec<_>, Error>>()?;
+        receipts.into_iter().map(|receipt| {
+            if receipt.scope != *scope { return Err(Error::Corrupt); }
+            let (process, software) = match &receipt.attempt_id {
+                Some(attempt) => {
+                    let belongs: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM attempts WHERE scope=?1 AND attempt_id=?2)",params![scope.key(),attempt.as_str()],|r|r.get(0))?;
+                    if !belongs { return Err(Error::Corrupt); }
+                    (crate::process::capture(&tx,attempt,self.limits)?,crate::software::facts(&tx,attempt,self.limits)?)
+                },
+                None => (None,None),
+            };
+            if process.as_ref().is_some_and(|v| v.content_digest != *input.digest())
+                || software.as_ref().is_some_and(|v| v.content_digest != *input.digest()) { return Err(Error::Corrupt); }
+            Ok(DeliveryEvidence {receipt,input: input.clone(),process,software})
+        }).collect()
+    }
     pub(crate) fn check_scope(&self, scope: &Scope) -> Result<(), Error> {
         if scope.authority != self.authority {
             return Err(Error::Denied);

@@ -1,5 +1,7 @@
 # 文档导航
 
+- [Agent 通信客户端](../crates/agent-client/README.md)：V4 注册、报告、可信内容、宿主桥接与真实服务端联调。
+
 - [客户端 PRD](product/rss-mdm-agent-prd.md)：客户端需求唯一入口，包含执行等级、传统自助与 AI 交互、责任边界和阶段验收。
 - [稳定规则](rules/README.md)：范围、依赖、验证与文档维护。
 - [Codex工作方式](guides/codex-workflow.md)：项目指令与本地共享技能入口。
