@@ -368,8 +368,6 @@ async function copy(text: string) {
     class="assistant"
     :class="{
       'assistant-context': presentation === 'context',
-      'assistant-with-details':
-        openedOperation && wideDetails && presentation === 'main',
     }"
     aria-label="AI 助手"
   >

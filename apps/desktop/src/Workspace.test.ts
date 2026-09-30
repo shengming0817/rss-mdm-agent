@@ -25,7 +25,17 @@ it("requires explicit conversation selection, keeps one view and preserves stage
   });
   const resource = w.getComponent(SelfService);
   await flushPromises();
-  await resource.get('[data-action="resource-details"]').trigger("click");
+  const resourceTrigger = resource.get('[data-action="resource-details"]');
+  await resourceTrigger.trigger("click");
+  await flushPromises();
+  expect(document.activeElement).toBe(
+    resource.get(".resource-details h3").element,
+  );
+  await resource.get(".resource-details button").trigger("click");
+  await flushPromises();
+  expect(document.activeElement).toBe(resourceTrigger.element);
+  await resourceTrigger.trigger("click");
+  await flushPromises();
   await resource.get('[data-action="ask-ai"]').trigger("click");
   await flushPromises();
   const drawer = w.get('dialog[aria-label="资源上下文 AI"]');

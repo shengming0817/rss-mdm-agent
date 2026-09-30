@@ -318,7 +318,6 @@ onBeforeUnmount(() => {
       ref="workspaceRoot"
       class="workspace-content"
       :class="{
-        'conversation-content': ready && page === 'assistant',
         'context-layout': contextOpen && wide,
       }"
       :inert="busy ? true : undefined"

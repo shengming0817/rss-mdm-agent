@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, onMounted, onUnmounted } from "vue";
+import { computed, nextTick, ref, onMounted, onUnmounted } from "vue";
 import type { Controller } from "./controller";
 import type { BackendTask } from "./types";
 import TaskDetail from "./TaskDetail.vue";
@@ -16,6 +16,20 @@ const emit = defineEmits<{
 const c = props.controller;
 const s = c.state;
 const selectedKey = ref("");
+const resourceHeading = ref<HTMLElement>();
+let resourceTrigger: HTMLElement | undefined;
+async function openResource(item: BackendTask, trigger: HTMLElement) {
+  resourceTrigger = trigger;
+  selectedKey.value = resourceKey(item);
+  await nextTick();
+  resourceHeading.value?.focus({ preventScroll: true });
+  resourceHeading.value?.scrollIntoView({ block: "start" });
+}
+async function closeResource() {
+  selectedKey.value = "";
+  await nextTick();
+  if (resourceTrigger?.isConnected) resourceTrigger.focus();
+}
 const resource = computed(() =>
   s.snapshot?.available.find((item) => resourceKey(item) === selectedKey.value),
 );
@@ -151,7 +165,7 @@ function failureLabel(value: string) {
               data-action="resource-details"
               class="resource-title"
               :aria-pressed="resourceKey(offer) === selectedKey"
-              @click="selectedKey = resourceKey(offer)"
+              @click="openResource(offer, $event.currentTarget as HTMLElement)"
             >
               <span class="resource-icon"
                 ><Package
@@ -182,7 +196,7 @@ function failureLabel(value: string) {
             <button
               type="button"
               class="resource-link"
-              @click="selectedKey = resourceKey(offer)"
+              @click="openResource(offer, $event.currentTarget as HTMLElement)"
             >
               查看资源信息
             </button>
@@ -191,8 +205,8 @@ function failureLabel(value: string) {
       </section>
       <section v-if="resource" class="resource-details" aria-label="资源详情">
         <div class="section-heading">
-          <h3>{{ resource.title }}</h3>
-          <button type="button" @click="selectedKey = ''">关闭详情</button>
+          <h3 ref="resourceHeading" tabindex="-1">{{ resource.title }}</h3>
+          <button type="button" @click="closeResource">关闭详情</button>
         </div>
         <p>
           {{ resource.summary.kind === "software" ? "软件详情" : "脚本详情" }} ·

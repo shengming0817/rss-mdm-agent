@@ -7,8 +7,7 @@ const props = defineProps<{
   contentMode: "conversation" | "page";
   navigationKey: string;
 }>();
-const root = ref<HTMLElement>(),
-  main = ref<HTMLElement>();
+const root = ref<HTMLElement>();
 const compact = ref(false),
   navigationOpen = ref(false);
 const navigationId = useId();
@@ -70,7 +69,7 @@ onBeforeUnmount(() => observer?.disconnect());
         </button>
         <slot name="header" />
       </header>
-      <main ref="main" :class="contentMode"><slot /></main>
+      <main :class="contentMode"><slot /></main>
       <footer class="shell-status"><slot name="status" /></footer>
     </div>
     <ModalDrawer
