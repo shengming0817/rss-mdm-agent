@@ -14,11 +14,11 @@
 4. bridge 消费当前 Start，通过既有 ExecutionApp 的本地准入和唯一 journal 派发；网络许可不代替本地身份或批准。
 5. 执行 owner 驱动 reconcile，bridge 投递 journal 证据；服务端持久确认后才逐事件确认本地结果，最终释放关联和无引用缓存。
 
-Offer 最长 60 秒，Received 不续租；Start 最长 15 秒。下载中断保留部分文件；过期后重新 claim，只有新签名仍声明同样的长度和摘要时复用。已经提交的 Start 请求使用原身份重放，但不能延长原许可。进程重启后使用 recover_start，从冻结请求和完整缓存恢复包装，不对过期 Offer 开放首次 Start 或下载。未知本地执行先核实，不重复派发。
+Offer 最长 60 秒，Received 不续租；Start 最长 15 秒。下载中断保留部分文件；过期后重新 claim，只有新签名仍声明同样的长度和摘要时复用。已经提交的 Start 请求使用原身份重放，但不能延长原许可。进程重启后使用 recover_start，从冻结请求和完整缓存恢复包装，不对过期 Offer 开放首次 Start 或下载。未知本地执行先核实，不重复派发。换 attempt 时原子退休过期 Received 请求及旧缓存关联；任何不确定 Start 或结果结算仍保留并阻断换代。
 
 软件载荷完整保留步骤、检测、精确变体和产物。当前具体 ExecutionBridge 接受可表达为一个本地计划的任务；复合步骤、detect-only 或缺少宿主能力会明确阻塞，平台/复合适配仍由其 owner 持有。未进入本地 journal 的 Offer 可通过 bridge.abandon 精确取消，服务端确认后再释放关联；已有本地执行或未知效果继续由 journal 处理。自选软件的 start_user_initiated 只能由已验证的本地交互入口调用，不暴露为普通 UI/AI 透传操作。
 
-OutputPolicy 必须由可信宿主提供，在结果进入网络前保护输出秘密。生产身份、凭据保护、批准和企业装配归 #2564；当前默认生产执行仍不启用。缓存文件与原始证据仅供可信 Rust 宿主，不投影到 UI/AI。
+OutputPolicy 必须由可信宿主提供，在结果进入网络前保护输出秘密。stdout/stderr 分别严格消费冻结计划的 UTF-8/UTF-16LE 编码；非法编码和字符截断保持原始 journal 证据，网络诊断使用明确的解码失败标记，质量为 Failed/Truncated，不能阻塞结果交付或补成成功。生产身份、凭据保护、批准和企业装配归 #2564；当前默认生产执行仍不启用。缓存文件与原始证据仅供可信 Rust 宿主，不投影到 UI/AI。
 
 ## 验证
 

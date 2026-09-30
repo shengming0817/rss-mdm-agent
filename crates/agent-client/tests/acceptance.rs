@@ -297,6 +297,7 @@ async fn accepted_remote_result_with_failed_local_confirmation_never_resends() {
         inner: DeterministicTestRunner::new(local::id("test-runner"), TestScenario::Complete, 16)
             .unwrap(),
         ready: Default::default(),
+        capture: Default::default(),
     };
     let mut app = ExecutionApp::start(
         &db.path,
@@ -500,6 +501,7 @@ async fn exercise_bridge(software: bool) {
         inner: DeterministicTestRunner::new(local::id("test-runner"), TestScenario::Complete, 16)
             .unwrap(),
         ready: Default::default(),
+        capture: Default::default(),
     };
     let mut app = ExecutionApp::start(
         &db.path,
@@ -970,4 +972,236 @@ async fn drain_delivery<R: execution_app::RunnerPort>(
     for _ in 0..32 {
         bridge.flush(client, task, app, 1).await.unwrap();
     }
+}
+
+#[tokio::test]
+async fn expired_offers_retire_received_requests_with_one_task_budget_after_restart() {
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut config = server.config();
+    config.limits.pending_tasks = 1;
+    let mut client = Client::open(
+        &root.path,
+        config.clone(),
+        OpenMode::Create,
+        server.secrets.clone(),
+        server.time.clone(),
+    )
+    .unwrap();
+    server.register(&mut client).await;
+    let db = local::Database::new();
+    let host = local::TestHost::new();
+    let runner = execution_app::DeterministicTestRunner::new(
+        local::id("test-runner"),
+        execution_app::TestScenario::Wait,
+        16,
+    )
+    .unwrap();
+    let app = execution_app::ExecutionApp::start(
+        &db.path,
+        execution_app::Startup::CreateTest,
+        host,
+        runner,
+        execution_app::AppConfig::test_defaults(1),
+    )
+    .unwrap();
+    let bridge = ExecutionBridge::new(local::id("agent-consumer"), FixtureOutput);
+    for i in 0..8 {
+        let offer = client.claim().await.unwrap().offer.unwrap();
+        let materials = client.prepare(&offer).await.unwrap();
+        client.received(&offer).await.unwrap();
+        drop(materials);
+        drop(client);
+        client = Client::open(
+            &root.path,
+            config.clone(),
+            OpenMode::Existing,
+            server.secrets.clone(),
+            server.time.clone(),
+        )
+        .unwrap();
+        if i == 7 {
+            bridge
+                .abandon(&mut client, offer.task_id(), &app)
+                .await
+                .unwrap();
+        } else {
+            server.time.set(offer.payload().expires_at());
+        }
+    }
+    assert_eq!(client.cleanup(128).unwrap(), 1);
+}
+#[tokio::test]
+async fn offer_rotation_preserves_uncertain_start_and_replays_original_request() {
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let offer = client.claim().await.unwrap().offer.unwrap();
+    let materials = client.prepare(&offer).await.unwrap();
+    client.received(&offer).await.unwrap();
+    server.data.lock().unwrap().start_failure = true;
+    assert!(client.request_start(&offer, &materials).await.is_err());
+    let original_permit = server.data.lock().unwrap().start_permit.clone();
+    drop(materials);
+    drop(client);
+    server.time.set(61);
+    let mut client = server.client(&root, OpenMode::Existing);
+    assert!(matches!(client.claim().await, Err(Error::Conflict)));
+    // The socket fixture answers the durable original request, even after a new Offer.
+    {
+        let mut data = server.data.lock().unwrap();
+        data.attempt = offer.attempt_id();
+        data.start_permit = original_permit;
+    }
+    assert!(matches!(
+        client.recover_start(offer.task_id()).await,
+        Err(Error::Expired)
+    ));
+    let ops = server.data.lock().unwrap().start_ops.clone();
+    assert_eq!(ops.len(), 2);
+    assert_eq!(ops[0], ops[1]);
+}
+#[tokio::test]
+async fn frozen_output_encodings_and_character_truncation_are_delivered() {
+    use execution_contract::{OutputQuality, ProcessEnd, TextEncoding};
+    for (encoding, stdout, stderr, quality, end, expected) in [
+        (
+            TextEncoding::Utf16Le,
+            "{\"ok\":true}"
+                .encode_utf16()
+                .flat_map(u16::to_le_bytes)
+                .collect(),
+            "secret-canary"
+                .encode_utf16()
+                .flat_map(u16::to_le_bytes)
+                .collect(),
+            OutputQuality::Complete,
+            ProcessEnd::Exited,
+            "complete",
+        ),
+        (
+            TextEncoding::Utf8,
+            vec![0xff],
+            b"secret-canary".to_vec(),
+            OutputQuality::Failed,
+            ProcessEnd::Exited,
+            "failed",
+        ),
+        (
+            TextEncoding::Utf8,
+            vec![0xe4, 0xb8],
+            vec![],
+            OutputQuality::Truncated,
+            ProcessEnd::OutputLimit,
+            "truncated",
+        ),
+        (
+            TextEncoding::Utf16Le,
+            vec![b'a', 0, 0x3d, 0xd8],
+            vec![],
+            OutputQuality::Truncated,
+            ProcessEnd::OutputLimit,
+            "truncated",
+        ),
+        (
+            TextEncoding::Utf8,
+            b"{\"ok\":true}".to_vec(),
+            vec![0xff],
+            OutputQuality::Failed,
+            ProcessEnd::Exited,
+            "failed",
+        ),
+        (
+            TextEncoding::Utf16Le,
+            "{\"ok\":true}"
+                .encode_utf16()
+                .flat_map(u16::to_le_bytes)
+                .collect(),
+            vec![0, 0xd8],
+            OutputQuality::Failed,
+            ProcessEnd::Exited,
+            "failed",
+        ),
+        (
+            TextEncoding::Utf16Le,
+            vec![b'a'],
+            vec![],
+            OutputQuality::Failed,
+            ProcessEnd::Exited,
+            "failed",
+        ),
+    ] {
+        check_encoded_result(encoding, stdout, stderr, quality, end, expected).await;
+    }
+}
+async fn check_encoded_result(
+    encoding: execution_contract::TextEncoding,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    quality: execution_contract::OutputQuality,
+    end: execution_contract::ProcessEnd,
+    expected: &str,
+) {
+    use execution_app::*;
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let offer = client.claim().await.unwrap().offer.unwrap();
+    let materials = client.prepare(&offer).await.unwrap();
+    client.received(&offer).await.unwrap();
+    let original = adapted_plan(false, "device-1", &offer);
+    let mut spec = original.spec().clone();
+    spec.launch.output.stdout = encoding;
+    spec.launch.output.stderr = encoding;
+    let plan =
+        execution_contract::FrozenExecution::freeze(spec, &test_store_limits().input).unwrap();
+    let db = local::Database::new();
+    let mut host = local::TestHost::new();
+    host.template = plan.clone();
+    let runner = CapturingRunner {
+        inner: DeterministicTestRunner::new(local::id("test-runner"), TestScenario::Complete, 16)
+            .unwrap(),
+        ready: Default::default(),
+        capture: std::sync::Arc::new(std::sync::Mutex::new(Some(CaptureSpec {
+            stdout,
+            stderr,
+            quality,
+            end,
+        }))),
+    };
+    let mut app = ExecutionApp::start(
+        &db.path,
+        Startup::CreateTest,
+        host,
+        runner.clone(),
+        AppConfig::test_defaults(1),
+    )
+    .unwrap();
+    let caller = RequestContext {
+        actor: plan.spec().request.actor.clone(),
+    };
+    let bridge = ExecutionBridge::new(local::id("agent-consumer"), FixtureOutput);
+    let prepared = bridge
+        .prepare(&offer, &materials, &app, &caller, &plan)
+        .unwrap();
+    let start = client.request_start(&offer, &materials).await.unwrap();
+    bridge
+        .dispatch(&mut client, start, &materials, &mut app, prepared)
+        .unwrap();
+    app.reconcile(&plan.spec().request.request_id).unwrap();
+    drain_delivery(&bridge, &mut client, &mut app, offer.task_id()).await;
+    let data = server.data.lock().unwrap();
+    let result = data.results.values().next().unwrap();
+    assert_eq!(result["event"]["quality"], expected);
+    assert!(!result.to_string().contains("secret-canary"));
+    if expected == "complete" {
+        assert_eq!(result["event"]["output"]["ok"], true);
+    }
+    drop(data);
+    bridge
+        .finish(&mut client, offer.task_id(), &app, &caller)
+        .unwrap();
+    assert_eq!(runner.inner.dispatch_count(), 1);
 }

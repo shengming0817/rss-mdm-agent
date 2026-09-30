@@ -10,9 +10,17 @@ impl OutputPolicy for FixtureOutput {
     }
 }
 #[derive(Clone)]
+pub struct CaptureSpec {
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+    pub quality: execution_contract::OutputQuality,
+    pub end: execution_contract::ProcessEnd,
+}
+#[derive(Clone)]
 pub struct CapturingRunner {
     pub inner: execution_app::DeterministicTestRunner,
     pub ready: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub capture: std::sync::Arc<std::sync::Mutex<Option<CaptureSpec>>>,
 }
 impl execution_app::RunnerPort for CapturingRunner {
     fn id(&self) -> execution_contract::Id {
@@ -33,6 +41,7 @@ impl execution_app::RunnerPort for CapturingRunner {
         p: &execution_contract::FrozenExecution,
         a: &execution_contract::AttemptId,
     ) -> Result<Option<execution_contract::ProcessEvidence>, execution_app::Error> {
+        let capture = self.capture.lock().unwrap();
         Ok(self
             .ready
             .load(Ordering::SeqCst)
@@ -43,13 +52,22 @@ impl execution_app::RunnerPort for CapturingRunner {
                 scope: execution_contract::ProcessScope::ProcessGroup { owner: 1, group: 1 },
                 finished: true,
                 exit_code: Some(0),
-                end: execution_contract::ProcessEnd::Exited,
+                end: capture
+                    .as_ref()
+                    .map_or(execution_contract::ProcessEnd::Exited, |v| v.end),
                 failure_kind: execution_contract::ProcessFailureKind::None,
                 quiescent: true,
-                stdout: b"{\"ok\":true,\"message\":\"secret-canary\"}".to_vec(),
-                stderr: vec![],
-                total_output_bytes: 37,
-                quality: execution_contract::OutputQuality::Complete,
+                stdout: capture.as_ref().map_or_else(
+                    || b"{\"ok\":true,\"message\":\"secret-canary\"}".to_vec(),
+                    |v| v.stdout.clone(),
+                ),
+                stderr: capture.as_ref().map_or_else(Vec::new, |v| v.stderr.clone()),
+                total_output_bytes: capture
+                    .as_ref()
+                    .map_or(37, |v| (v.stdout.len() + v.stderr.len()) as u64),
+                quality: capture
+                    .as_ref()
+                    .map_or(execution_contract::OutputQuality::Complete, |v| v.quality),
             }))
     }
     fn software_evidence(
@@ -104,7 +122,12 @@ impl execution_app::RunnerPort for CapturingRunner {
                 total_output_bytes, ..
             } = &mut facts.observation
             {
-                *total_output_bytes = 37;
+                *total_output_bytes = self
+                    .capture
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .map_or(37, |v| (v.stdout.len() + v.stderr.len()) as u64);
             }
         }
         Ok(value)

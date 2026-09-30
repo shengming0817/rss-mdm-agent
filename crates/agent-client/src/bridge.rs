@@ -407,18 +407,24 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         if process.end == ProcessEnd::Cancelled {
             return Ok(Some(wire::TaskEvent::Cancelled));
         }
+        let output_spec = evidence.input.spec().launch.output;
+        let stdout = decode_stream(&process.stdout, output_spec.stdout);
+        let stderr = decode_stream(&process.stderr, output_spec.stderr);
+        let malformed = stdout.is_none() || stderr.is_none();
         let stdout = self
             .policy
-            .redact(std::str::from_utf8(&process.stdout).map_err(|_| Error::Protocol)?)?;
+            .redact(stdout.as_deref().unwrap_or("stdout decoding failed"))?;
         let stderr = self
             .policy
-            .redact(std::str::from_utf8(&process.stderr).map_err(|_| Error::Protocol)?)?;
+            .redact(stderr.as_deref().unwrap_or("stderr decoding failed"))?;
         let failure = match process.end {
             ProcessEnd::Rejected => Some(wire::TaskFailure::LaunchFailed),
             ProcessEnd::TimedOut => Some(wire::TaskFailure::TimedOut),
             ProcessEnd::OutputLimit => Some(wire::TaskFailure::OutputLimit),
             _ if process.exit_code.is_some_and(|v| v != 0) => Some(wire::TaskFailure::NonZeroExit),
-            _ if process.quality == OutputQuality::Failed => Some(wire::TaskFailure::CaptureFailed),
+            _ if malformed || process.quality == OutputQuality::Failed => {
+                Some(wire::TaskFailure::CaptureFailed)
+            }
             _ => None,
         };
         let diagnostics = wire::TaskDiagnostics::new(
@@ -442,7 +448,9 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
                     OutputQuality::Truncated if failure == Some(wire::TaskFailure::OutputLimit) => {
                         wire::OutputQuality::Truncated
                     }
-                    OutputQuality::Failed if failure.is_some() => wire::OutputQuality::Failed,
+                    _ if malformed || process.quality == OutputQuality::Failed => {
+                        wire::OutputQuality::Failed
+                    }
                     _ => wire::OutputQuality::Partial,
                 };
                 wire::TaskEvent::Result(wire::TaskResult::new(
@@ -534,4 +542,24 @@ fn bound(mut value: String) -> String {
     }
     value.truncate(length);
     value
+}
+
+// Strict decoding follows the frozen stream encoding; original evidence is never rewritten.
+// A diagnostic marker permits failure delivery without inventing replacement text/results.
+fn decode_stream(bytes: &[u8], encoding: execution_contract::TextEncoding) -> Option<String> {
+    match encoding {
+        execution_contract::TextEncoding::Utf8 => {
+            std::str::from_utf8(bytes).ok().map(str::to_owned)
+        }
+        execution_contract::TextEncoding::Utf16Le if bytes.len().is_multiple_of(2) => {
+            String::from_utf16(
+                &bytes
+                    .chunks_exact(2)
+                    .map(|v| u16::from_le_bytes([v[0], v[1]]))
+                    .collect::<Vec<_>>(),
+            )
+            .ok()
+        }
+        _ => None,
+    }
 }

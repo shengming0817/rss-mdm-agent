@@ -360,6 +360,7 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
             )
             .unwrap(),
             ready: Default::default(),
+            capture: Default::default(),
         };
         let mut app = ExecutionApp::start(
             &db.path,

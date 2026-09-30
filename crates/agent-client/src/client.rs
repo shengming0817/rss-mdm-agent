@@ -430,28 +430,34 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
             if old.is_none() && count >= self.store.cfg.limits.pending_tasks as u64 {
                 return Err(Error::Capacity);
             }
+            let tx = self.store.conn.unchecked_transaction()?;
             if let Some(old) = old {
                 let old: wire::SignedTask = decode(&old)?;
                 if old.payload.attempt_id() != signed.payload.attempt_id() {
-                    let started:bool=self.store.conn.query_row("SELECT EXISTS(SELECT 1 FROM requests WHERE task=?1 AND key LIKE 'start/%' AND accepted=1)",[&task],|r|r.get(0))?;
-                    if started {
+                    // A new signed Offer retires only expired Received requests. Any Start,
+                    // source event or other settlement request may still need exact replay.
+                    let unsettled: bool = tx.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM requests WHERE task=?1 AND (key NOT LIKE 'received/%' OR source IS NOT NULL))",
+                        [&task], |r| r.get(0),
+                    )?;
+                    if unsettled || now < old.payload.expires_at() {
                         return Err(Error::Conflict);
                     }
+                    tx.execute("DELETE FROM requests WHERE task=?1 AND key LIKE 'received/%' AND source IS NULL", [&task])?;
+                    tx.execute("DELETE FROM cache_refs WHERE task=?1", [&task])?;
                 } else if old != signed {
                     return Err(Error::Conflict);
                 }
             }
-            self.store.conn.execute(
+            tx.execute(
                 "INSERT INTO tasks VALUES(?1,?2) ON CONFLICT(id) DO UPDATE SET body=excluded.body",
                 params![task, encode(&signed)?],
             )?;
-            self.store.put(
-                "claim",
-                &ClaimState {
-                    operation,
-                    recover_until: signed.payload.expires_at(),
-                },
+            tx.execute(
+                "INSERT INTO state VALUES('claim',?1) ON CONFLICT(key) DO UPDATE SET body=excluded.body",
+                [encode(&ClaimState { operation, recover_until: signed.payload.expires_at() })?],
             )?;
+            tx.commit()?;
             Some(Offer { signed })
         } else {
             self.store
