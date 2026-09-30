@@ -1,5 +1,9 @@
-import fixtures from "../../../../tests/assistant/execution-fixtures.json";
-import type { BackendTask, ExecutionTaskDetails, Snapshot } from "./types";
+import fixtures from "../assistant/execution-fixtures.json";
+import type {
+  BackendTask,
+  ExecutionTaskDetails,
+  Snapshot,
+} from "../../apps/desktop/src/self-service/types";
 export function executionTask(): ExecutionTaskDetails {
   return structuredClone(fixtures.running) as ExecutionTaskDetails;
 }

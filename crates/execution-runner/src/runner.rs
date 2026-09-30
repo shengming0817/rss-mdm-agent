@@ -257,20 +257,20 @@ impl NativeRunner {
             .spawn(move || {
                 if plan.spec().execution.software_program().is_some() {
                     match source {
-                        Some(source) => program::execute(
+                        Some(source) => program::execute(program::ProgramRun {
                             source,
                             plan,
                             attempt,
-                            id,
+                            runner: id,
                             deadline,
-                            allowance.remaining_output_bytes,
-                            start_before,
+                            output_limit: allowance.remaining_output_bytes,
+                            first_start: start_before,
                             cancel,
-                            facts,
+                            capture: facts,
                             progress,
-                            None,
+                            previous: None,
                             ownership,
-                        ),
+                        }),
                         None => publish(
                             &facts,
                             failed(&plan, &attempt, &id, ProcessFailureKind::Unbound),
@@ -281,9 +281,7 @@ impl NativeRunner {
                 if let Some(source) = source.as_ref().filter(|source| source.delegate.is_some()) {
                     run_delegated(
                         source,
-                        &plan,
-                        &attempt,
-                        &id,
+                        (&plan, &attempt, &id),
                         allowance.remaining_output_bytes,
                         deadline,
                         start_before,
@@ -332,9 +330,7 @@ impl NativeRunner {
                 };
                 runtime.block_on(run(
                     materialized,
-                    plan,
-                    attempt,
-                    id,
+                    (plan, attempt, id),
                     (allowance.remaining_output_bytes, deadline),
                     cancel,
                     Captures {
@@ -485,20 +481,20 @@ impl RunnerPort for NativeRunner {
             if std::thread::Builder::new()
                 .name("rss-execution-resume".into())
                 .spawn(move || {
-                    program::execute(
+                    program::execute(program::ProgramRun {
                         source,
                         plan,
                         attempt,
                         runner,
-                        Instant::now() + Duration::from_millis(timeout),
+                        deadline: Instant::now() + Duration::from_millis(timeout),
                         output_limit,
-                        None,
+                        first_start: None,
                         cancel,
-                        facts,
+                        capture: facts,
                         progress,
-                        Some(journal),
+                        previous: Some(journal),
                         ownership,
-                    );
+                    });
                 })
                 .is_err()
             {
@@ -780,9 +776,7 @@ fn fail_running(
 }
 fn run_delegated(
     source: &Artifacts,
-    plan: &FrozenExecution,
-    attempt: &AttemptId,
-    runner: &Id,
+    (plan, attempt, runner): (&FrozenExecution, &AttemptId, &Id),
     cap: u64,
     deadline: Instant,
     start_before: Option<u64>,
@@ -899,9 +893,7 @@ struct Captures {
 }
 async fn run(
     mut materialized: Materialized,
-    plan: FrozenExecution,
-    attempt: AttemptId,
-    id: Id,
+    (plan, attempt, id): (FrozenExecution, AttemptId, Id),
     (cap, deadline): (u64, Instant),
     cancel: Arc<AtomicBool>,
     captures: Captures,

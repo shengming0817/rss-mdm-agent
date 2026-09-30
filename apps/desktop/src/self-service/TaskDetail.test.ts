@@ -1,7 +1,7 @@
 import { mount } from "@vue/test-utils";
 import { expect, test } from "vitest";
 import TaskDetail from "./TaskDetail.vue";
-import { executionTask } from "./testing";
+import { executionTask } from "../../../../tests/self-service/support";
 test("exit and independent effect stay separate and cancellation is a request", async () => {
   const task = executionTask();
   task.status.assessment = null;

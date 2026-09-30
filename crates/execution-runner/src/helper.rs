@@ -436,9 +436,8 @@ impl host::Handler for Helper {
         })();
         serde_json::to_vec(&match reply {
             Ok(reply) => reply,
-            Err(Error::Unavailable | Error::Capacity | Error::Storage | Error::OutcomeUnknown) => {
-                Reply::Unavailable
-            }
+            Err(Error::Capacity) => Reply::Capacity,
+            Err(Error::Unavailable | Error::Storage | Error::OutcomeUnknown) => Reply::Unavailable,
             Err(_) => Reply::Rejected,
         })
         .unwrap_or_else(|_| b"{\"kind\":\"unavailable\"}".to_vec())

@@ -157,6 +157,7 @@ impl<S: SecretProvider> DeviceService<S> {
             return Ok(());
         }
         if self.core.host.revoked.load(Ordering::Acquire) {
+            self.core.revoke_preparations()?;
             self.core.reconcile()?;
             return Ok(());
         }
@@ -269,10 +270,10 @@ impl<S: SecretProvider> DeviceService<S> {
                     Err(error) => return Err(error),
                 }
             } else if self.recovering
-                || !self
+                || self
                     .waiting
                     .as_ref()
-                    .is_some_and(|(offer, _)| offer.task_id() == task)
+                    .is_none_or(|(offer, _)| offer.task_id() != task)
             {
                 // No local intent means no execution may have started. Retire the original
                 // remote attempt only after checking this same authoritative journal; a prior
@@ -547,11 +548,9 @@ impl<S: SecretProvider> DeviceService<S> {
                     offer,
                     materials,
                     payload,
-                    &self.core.host.binding,
-                    &self.core.host.actor,
+                    (&self.core.host.binding, &self.core.host.actor),
                     &self.core.config.interpreters,
-                    work_root,
-                    &content,
+                    (work_root, &content),
                     delegate.clone(),
                 )
             }
@@ -607,6 +606,9 @@ impl<S: SecretProvider> DeviceService<S> {
         eprintln!("agent_drive: {error}");
         if error == Error::Identity {
             self.core.host.revoked.store(true, Ordering::Release);
+            if let Err(error) = self.core.revoke_preparations() {
+                eprintln!("agent_revoke_preparation: {error}");
+            }
             self.core.available = None;
             self.core.selected = None;
             if let Err(error) = self.core.app.stop_active(128) {
@@ -660,6 +662,33 @@ impl Core {
             }
         }
         self.recovery_cursor = page.next;
+        Ok(())
+    }
+    fn revoke_preparations(&mut self) -> Result<(), Error> {
+        let active = self
+            .available
+            .as_ref()
+            .map(|v| v.request.clone())
+            .or_else(|| self.selected.as_ref().map(|v| v.request.clone()));
+        if let Some(request) = active {
+            self.transition(
+                &request,
+                BackendRequestState::Failed,
+                Some(BackendRequestFailure::Revoked),
+            )?;
+        }
+        for record in self.app.backend_requests(&self.caller())? {
+            if !self
+                .app
+                .has_service_execution(&record.offer.request, &self.host.binding.device)?
+            {
+                self.transition(
+                    &record.offer.request,
+                    BackendRequestState::Failed,
+                    Some(BackendRequestFailure::Revoked),
+                )?;
+            }
+        }
         Ok(())
     }
     fn pending(&self, request: &RequestId, subject: &str) -> Result<Option<BackendRequest>, Error> {
@@ -810,7 +839,7 @@ impl Core {
                             BackendRequestState::Failed | BackendRequestState::Cancelled
                         ) {
                             return Ok(Reply::Pending {
-                                value: previous.clone(),
+                                value: Box::new(previous.clone()),
                             });
                         }
                     }
@@ -859,7 +888,9 @@ impl Core {
                 }
                 LocalRequest::Operation(Request::Status { request }) => {
                     if let Some(value) = self.pending(&request, &command.subject)? {
-                        return Ok(Reply::Pending { value });
+                        return Ok(Reply::Pending {
+                            value: Box::new(value),
+                        });
                     }
                     if !self.can_read(&request, &command.subject)? {
                         return Err(Error::Denied);
@@ -870,13 +901,15 @@ impl Core {
                 }
                 LocalRequest::Operation(Request::Details { request }) => {
                     if let Some(value) = self.pending(&request, &command.subject)? {
-                        return Ok(Reply::Pending { value });
+                        return Ok(Reply::Pending {
+                            value: Box::new(value),
+                        });
                     }
                     if !self.can_read(&request, &command.subject)? {
                         return Err(Error::Denied);
                     }
                     Ok(Reply::Details {
-                        value: self.app.task_details(&self.caller(), &request)?,
+                        value: Box::new(self.app.task_details(&self.caller(), &request)?),
                     })
                 }
                 LocalRequest::Operation(Request::Cancel { request }) => {
@@ -887,7 +920,9 @@ impl Core {
                         if self.selected.as_ref().is_some_and(|s| s.request == request) {
                             self.selected = None;
                         }
-                        return Ok(Reply::Pending { value });
+                        return Ok(Reply::Pending {
+                            value: Box::new(value),
+                        });
                     }
                     if !self.can_read(&request, &command.subject)? {
                         return Err(Error::Denied);
@@ -1098,6 +1133,13 @@ fn offered(offer: &Offer) -> Result<execution_contract::BackendTask, Error> {
                                     .as_ref()
                                     .unwrap_or(&step.action.install)
                                     .run_as
+                            } else if p.intent == wire::SoftwareTaskIntent::Detect {
+                                match &step.action.detect {
+                                    wire::SoftwareTaskDetection::Script { command } => {
+                                        command.run_as
+                                    }
+                                    _ => step.action.install.run_as,
+                                }
                             } else {
                                 step.action.install.run_as
                             },

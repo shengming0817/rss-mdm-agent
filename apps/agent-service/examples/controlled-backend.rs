@@ -45,6 +45,7 @@ async fn main() {
                         {
                             let wire::TaskPayload::Script(mut payload) = data.offer.as_ref().unwrap().payload.clone() else { unreachable!() };
                             payload.expires_at += 3600;
+                            if let Some(timeout) = command["timeout"].as_u64() { payload.timeout_seconds = timeout.clamp(1, 300) as u32; }
                             if command["user"].as_bool() == Some(true) { payload.run_as = wire::ExecutionIdentity::LoggedInUser; }
                             data.offer = Some(data.signed(wire::TaskPayload::Script(payload)));
                         }

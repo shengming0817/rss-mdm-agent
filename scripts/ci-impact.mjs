@@ -108,6 +108,7 @@ export const testOwners = [
   ]),
   ["tests/ai-recovery-integration", npm("ai-host-app")],
   ["tests/assistant", npm("desktop")],
+  ["tests/self-service", npm("desktop")],
   ["tests/desktop", npm("desktop")],
   ["tests/execution-sqlite", "execution-sqlite"],
 ];

@@ -358,12 +358,12 @@ pub enum Reply {
     /// Durable preparation, before an execution plan or attempt exists.
     Pending {
         /// Original authenticated local intent.
-        value: execution_contract::BackendRequest,
+        value: Box<execution_contract::BackendRequest>,
     },
     /// Existing safe task details.
     Details {
         /// Authorized details without raw output.
-        value: execution_app::ExecutionTaskDetails,
+        value: Box<execution_app::ExecutionTaskDetails>,
     },
     /// Bounded task page.
     Tasks {

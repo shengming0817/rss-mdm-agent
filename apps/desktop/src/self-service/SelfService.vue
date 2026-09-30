@@ -21,6 +21,49 @@ onUnmounted(() => {
   clearInterval(polling);
   c.dispose();
 });
+
+function operationLabel(value: string) {
+  switch (value) {
+    case "install":
+      return "安装";
+    case "uninstall":
+      return "卸载";
+    case "detect":
+      return "检测";
+    default:
+      return "未知操作";
+  }
+}
+function stateLabel(value: string) {
+  switch (value) {
+    case "proposed":
+      return "等待本人确认";
+    case "selected":
+      return "已确认";
+    case "submitting":
+      return "准备执行";
+    case "failed":
+      return "准备失败；没有创建新尝试";
+    case "cancelled":
+      return "已撤销";
+    default:
+      return "状态未知";
+  }
+}
+function failureLabel(value: string) {
+  switch (value) {
+    case "preparationFailed":
+      return "本机条件或后台 Start 未满足";
+    case "interrupted":
+      return "服务中断，未重新执行";
+    case "expired":
+      return "原任务已过期";
+    case "revoked":
+      return "后台授权已撤销";
+    default:
+      return "状态未知";
+  }
+}
 </script>
 <template>
   <div class="self-service">
@@ -48,13 +91,7 @@ onUnmounted(() => {
       <section v-if="s.item" aria-label="操作确认">
         <h2>确认执行 {{ s.item.title }}</h2>
         <template v-if="s.item.summary.kind === 'software'">
-          <p>
-            操作：{{
-              { install: "安装", uninstall: "卸载", detect: "检测" }[
-                s.item.summary.intent
-              ]
-            }}
-          </p>
+          <p>操作：{{ operationLabel(s.item.summary.intent) }}</p>
           <ol>
             <li v-for="(step, index) in s.item.summary.steps" :key="index">
               {{ step.package }} {{ step.version }} ·
@@ -78,24 +115,10 @@ onUnmounted(() => {
         >
           <strong>{{ pending.offer.title }}</strong>
           <p>
-            {{
-              {
-                proposed: "等待本人确认",
-                selected: "已确认",
-                submitting: "准备执行",
-                failed: "准备失败",
-                cancelled: "已撤销",
-              }[pending.state]
+            {{ stateLabel(pending.state)
             }}<span v-if="pending.failure">
               ·
-              {{
-                {
-                  preparationFailed: "本机条件或后台 Start 未满足",
-                  interrupted: "服务中断，未重新执行",
-                  expired: "原任务已过期",
-                  revoked: "后台授权已撤销",
-                }[pending.failure]
-              }}</span
+              {{ failureLabel(pending.failure) }}</span
             >
           </p>
           <button

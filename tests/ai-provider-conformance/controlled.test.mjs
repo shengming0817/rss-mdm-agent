@@ -210,7 +210,11 @@ for (const provider of engines) {
         const proposals = Object.values(terminal.tools);
         assert.equal(proposals.length, 1);
         assert.equal(proposals[0].name, "execution_tasks");
-        assert.equal(proposals[0].result.disposition, "returned");
+        assert.equal(
+          proposals[0].result.disposition,
+          "returned",
+          JSON.stringify(proposals[0].result),
+        );
         const result = JSON.parse(proposals[0].result.text);
         assert.equal(result.status, "ok");
         assert.ok(
@@ -223,8 +227,10 @@ for (const provider of engines) {
           "catalog reads never ask permission",
         );
         for (const [commandId, choice] of [
-          ["allow-execute", "allow_once"],
+          // Reject first: once this exact backend request is accepted, replay must return
+          // its original receipt instead of asking a contradictory second permission.
           ["deny-execute", "reject_once"],
+          ["allow-execute", "allow_once"],
         ]) {
           permissionKind = choice;
           f.model.replies.push((res) => {

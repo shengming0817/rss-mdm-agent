@@ -199,7 +199,7 @@ onBeforeUnmount(() => {
     <p v-if="loading" role="status">正在读取或切换账户…</p>
     <template #status
       ><div class="footer-note">
-        <span>S1 测试服务 · 无系统副作用 · 独立测试批准</span
+        <span>后台授权任务 · 本机执行服务 · 状态与效果分别核实</span
         ><span>AI 对话与设备执行分别核对</span>
       </div></template
     >

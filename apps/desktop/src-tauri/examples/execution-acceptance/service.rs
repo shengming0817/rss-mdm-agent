@@ -98,7 +98,7 @@ impl ExecutionServicePort for FixtureService {
             revision: s.revision,
             request: s.request,
             title: "Explicit S1 test task".into(),
-            expires_at: i64::MAX,
+            expires_at: 9_999_999_999,
             user_initiated: true,
         }])
     }

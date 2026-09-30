@@ -279,7 +279,7 @@ impl mcp::ExecutionServicePort for ExecutionHandle {
             .map_err(mcp_error)?
         {
             Reply::Status { value } => Ok(operation(value)),
-            Reply::Pending { value } => Ok(pending_operation(value)),
+            Reply::Pending { value } => Ok(pending_operation(*value)),
             _ => Err(mcp::ServiceError::Unavailable),
         }
     }
@@ -296,7 +296,7 @@ impl mcp::ExecutionServicePort for ExecutionHandle {
                 .map_err(mcp_error)?
             {
                 BackendTaskView::Execution { value } => operation(value.status),
-                BackendTaskView::Pending { value } => pending_operation(value),
+                BackendTaskView::Pending { value } => pending_operation(*value),
             },
         })
     }

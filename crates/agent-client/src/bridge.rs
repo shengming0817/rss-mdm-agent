@@ -482,7 +482,9 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
             return Err(Error::Conflict);
         }
         // Authorization is checked immediately before handing the frozen request to transport.
-        app.service_delivery(&binding.request, &self.consumer, 1)?;
+        if !accepted {
+            app.service_delivery(&binding.request, &self.consumer, 1)?;
+        }
         Ok(Some(PendingDelivery {
             task,
             key,

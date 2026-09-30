@@ -17,6 +17,11 @@ fn artifact(bytes: &[u8; 32]) -> Result<ExactArtifactRef, Error> {
         sha256: Digest::new(hex(bytes)).map_err(|_| Error::Protocol)?,
     })
 }
+type CompiledCommand = (
+    SoftwareInvocation,
+    Artifacts,
+    Vec<(PathBuf, ExactArtifactRef)>,
+);
 struct Compiler<'a> {
     config: &'a ExecutionConfig,
     helper: Option<Arc<execution_runner::helper::Connection>>,
@@ -32,14 +37,7 @@ impl Compiler<'_> {
         operation: SoftwareOperation,
         version: &str,
         package: &str,
-    ) -> Result<
-        (
-            SoftwareInvocation,
-            Artifacts,
-            Vec<(PathBuf, ExactArtifactRef)>,
-        ),
-        Error,
-    > {
+    ) -> Result<CompiledCommand, Error> {
         let (run_as, session, work_root, delegate) = match command.run_as {
             wire::ExecutionIdentity::System => (
                 RunAs::System {

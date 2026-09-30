@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { createController } from "./controller";
-import { executionTask, snapshot } from "./testing";
+import {
+  executionTask,
+  snapshot,
+} from "../../../../tests/self-service/support";
 import type { SelfServicePort } from "./types";
 function fixture() {
   const value = snapshot();

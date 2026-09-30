@@ -32,11 +32,9 @@ async fn signed_start_compiles_exactly_and_never_creates_a_local_enterprise_appr
             &offer,
             &materials,
             payload,
-            &binding,
-            &actor,
+            (&binding, &actor),
             &interpreters,
-            &root.path,
-            &root.path.join("exact-source"),
+            (&root.path, &root.path.join("exact-source")),
             None,
         )
     };

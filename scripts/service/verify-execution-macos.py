@@ -149,6 +149,8 @@ subprocess.run(['/usr/bin/python3',%r,'install','--scope','system','--binary',st
         command('result_failure')
         administrator(setup)
         installed = True
+        receipt['artifact'] = json.loads(config.read_text())['service']
+        receipt['sourceHead'] = run('/usr/bin/git', 'rev-parse', 'HEAD').stdout.strip()
         run('/usr/bin/python3', str(installer), 'install', '--scope', 'user', '--binary', str(binary), '--config', str(config))
         helper = True
         def query():
@@ -197,11 +199,13 @@ subprocess.run(['/usr/bin/python3',%r,'install','--scope','system','--binary',st
             assert len(records) == 1 and records[0]['status']['attempts'] == 1
         receipt['scenarios']['final_ipc'] = final
         marker = protected / 'cancel-started'
-        fourth = command('script', body=f"umask 022; printf x > {shlex.quote(str(marker))}; printf '{{\"fixture\":\"cancel\"}}\\n'; /bin/sleep 20\n")
+        cancel_tail = protected / 'cancel-tail'
+        fourth = command('script', body=f"umask 022; printf x > {shlex.quote(str(marker))}; printf '{{\"fixture\":\"cancel\"}}\\n'; /bin/sleep 20; printf x > {shlex.quote(str(cancel_tail))}\n")
         deadline = time.monotonic() + 15
         while not marker.exists():
             assert time.monotonic() < deadline, 'cancellation fixture did not start'
             time.sleep(.2)
+        cancel_started = time.monotonic()
         command('cancel')
         deadline = time.monotonic() + 15
         while True:
@@ -214,16 +218,30 @@ subprocess.run(['/usr/bin/python3',%r,'install','--scope','system','--binary',st
             assert time.monotonic() < deadline, 'cancellation was not recorded'
             time.sleep(.2)
         receipt['scenarios']['cancel_delivery'] = completed(fourth['attempt'], 30)
+        cancelled = [r for r in query()['value']['items'] if r['action']['initiator'].get('attempt') == fourth['attempt']][0]
+        assert cancelled['status']['process']['finished'] is True
+        assert cancelled['status']['process']['end'] == 'cancelled'
+        time.sleep(max(0, cancel_started + 21 - time.monotonic()))
+        assert not cancel_tail.exists(), 'the cancelled shell reached its tail effect'
+        receipt['scenarios']['cancel'] = cancelled
         # Kill the sole service while its original process remains active, then reopen exactly
         # the same journal. The marker must not be appended a second time after recovery.
         counter = protected / 'restart-count'
-        fifth = command('script', body=f"umask 022; printf x >> {shlex.quote(str(counter))}; printf '{{\"fixture\":\"restart\"}}\\n'; /bin/sleep 15\n")
+        process_file = protected / 'restart-pid'
+        finish = protected / 'restart-finish'
+        fifth = command('script', timeout=120, body=f"umask 022; printf '%s' \"$$\" > {shlex.quote(str(process_file))}; printf x >> {shlex.quote(str(counter))}; printf '{{\"fixture\":\"restart\"}}\\n'; i=0; while [ ! -e {shlex.quote(str(finish))} ] && [ \"$i\" -lt 90 ]; do /bin/sleep 1; i=$((i+1)); done\n")
         deadline = time.monotonic() + 15
         while not counter.exists():
             assert time.monotonic() < deadline, 'restart fixture did not start'
             time.sleep(.2)
         restart = lab / 'restart.py'
-        restart.write_text('import plistlib,subprocess\nfrom pathlib import Path\np=plistlib.loads(Path(\"/Library/LaunchDaemons/com.rss-mdm.agent.execution.plist\").read_bytes())\nassert p[\"ProgramArguments\"]==%r\nsubprocess.run([\"/bin/launchctl\",\"kickstart\",\"-k\",\"system/com.rss-mdm.agent.execution\"],check=True)\n' % [str(binary), '--config', str(config)])
+        pid = int(process_file.read_text())
+        original_process = run('/bin/ps', '-p', str(pid), '-o', 'lstart=,uid=,comm=').stdout.strip()
+        assert original_process
+        deadline_utc = time.time() + 45
+        restart.write_text('import os,plistlib,subprocess,time\nfrom pathlib import Path\np=plistlib.loads(Path("/Library/LaunchDaemons/com.rss-mdm.agent.execution.plist").read_bytes())\nassert p["ProgramArguments"]==%r\nassert time.time()<%r, "authorization exceeded the active fixture window"\nactual=subprocess.run(["/bin/ps","-p",%r,"-o","lstart=,uid=,comm="],capture_output=True,text=True,check=True).stdout.strip()\nassert actual==%r, "original process is no longer active"\nos.kill(%r,0)\nsubprocess.run(["/bin/launchctl","kickstart","-k","system/com.rss-mdm.agent.execution"],check=True)\n' % ([str(binary), '--config', str(config)], deadline_utc, str(pid), original_process, pid))
+        # Release only this controlled fixture during cleanup; no restored PID is killed.
+        cleanup.write_text('from pathlib import Path\nPath(%r).write_text("finished")\n' % str(finish) + cleanup.read_text())
         administrator(restart)
         time.sleep(3)
         reopened = query()
@@ -241,14 +259,30 @@ subprocess.run(['/usr/bin/python3',%r,'install','--scope','system','--binary',st
             (lab / 'command-error.txt').write_text((error.stdout or '') + (error.stderr or ''))
         raise
     finally:
-        (lab / 'receipt.json').write_text(json.dumps(receipt, indent=2))
+        cleanup_errors = []
         if helper:
-            run('/usr/bin/python3', str(installer), 'remove', '--scope', 'user', '--binary', str(binary), '--config', str(config))
+            try:
+                run('/usr/bin/python3', str(installer), 'remove', '--scope', 'user', '--binary', str(binary), '--config', str(config))
+            except BaseException as error:
+                cleanup_errors.append(str(error))
         if installed:
-            administrator(cleanup)
+            try:
+                administrator(cleanup)
+            except BaseException as error:
+                cleanup_errors.append(str(error))
         proxy.shutdown()
         backend.stdin.close()
-        backend.wait(timeout=10)
+        try:
+            backend.wait(timeout=10)
+        except BaseException as error:
+            cleanup_errors.append(str(error))
+        if cleanup_errors:
+            receipt['status'] = 'failed'
+            receipt['cleanupErrors'] = cleanup_errors
+        (lab / 'receipt.json').write_text(json.dumps(receipt, indent=2))
+        if cleanup_errors:
+            raise RuntimeError('acceptance cleanup incomplete')
+
 
 
 if __name__ == '__main__':

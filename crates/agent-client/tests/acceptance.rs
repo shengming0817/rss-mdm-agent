@@ -1318,11 +1318,12 @@ async fn root_exit_is_delivered_while_overall_quiescence_stays_unknown() {
             .unwrap(),
         1
     );
-    let data = server.data.lock().unwrap();
-    let result = data.results.values().next().unwrap();
-    assert_eq!(result["event"]["exitCode"], 0);
-    assert_eq!(result["event"]["quality"], "partial");
-    drop(data);
+    {
+        let data = server.data.lock().unwrap();
+        let result = data.results.values().next().unwrap();
+        assert_eq!(result["event"]["exitCode"], 0);
+        assert_eq!(result["event"]["quality"], "partial");
+    }
     assert_eq!(
         bridge.finish(&mut client, offer.task_id(), &app, &caller),
         Err(agent_client::Error::Conflict)
@@ -1384,11 +1385,12 @@ async fn acknowledged_v4_result_is_not_replaced_by_later_local_facts() {
             .unwrap(),
         1
     );
-    let data = server.data.lock().unwrap();
-    let result = data.results.values().next().unwrap();
-    assert_eq!(result["event"]["exitCode"], 0);
-    assert_eq!(result["event"]["quality"], "partial");
-    drop(data);
+    {
+        let data = server.data.lock().unwrap();
+        let result = data.results.values().next().unwrap();
+        assert_eq!(result["event"]["exitCode"], 0);
+        assert_eq!(result["event"]["quality"], "partial");
+    }
     {
         let mut capture = runner.capture.lock().unwrap();
         let facts = capture.as_mut().unwrap();

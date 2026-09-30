@@ -14,6 +14,7 @@ const emit = defineEmits<{ details: [value: ExecutionTaskDetails] }>();
 const details = ref<BackendTaskView>();
 const error = ref("");
 const busy = ref(false);
+let poll: () => Promise<void> = async () => {};
 watch(
   () => [props.operationId, props.recorded, props.controller.state.selected],
   (_, __, cleanup) => {
@@ -39,13 +40,19 @@ watch(
       }
     };
     void refresh();
-    const timer = setInterval(refresh, 2000);
+    poll = refresh;
     cleanup(() => {
       owner.abort();
-      clearInterval(timer);
+      poll = async () => {};
     });
   },
   { immediate: true },
+);
+watch(
+  () => Math.floor(props.controller.clock.value / 2000),
+  () => {
+    void poll();
+  },
 );
 async function act(confirm: boolean) {
   const view = details.value;
@@ -58,6 +65,49 @@ async function act(confirm: boolean) {
     error.value = "操作回执未确认，请查询原请求状态";
   } finally {
     busy.value = false;
+  }
+}
+
+function operationLabel(value: string) {
+  switch (value) {
+    case "install":
+      return "安装";
+    case "uninstall":
+      return "卸载";
+    case "detect":
+      return "检测";
+    default:
+      return "未知操作";
+  }
+}
+function stateLabel(value: string) {
+  switch (value) {
+    case "proposed":
+      return "等待本人确认";
+    case "selected":
+      return "已确认";
+    case "submitting":
+      return "准备执行";
+    case "failed":
+      return "准备失败；没有创建新尝试";
+    case "cancelled":
+      return "已撤销";
+    default:
+      return "状态未知";
+  }
+}
+function failureLabel(value: string) {
+  switch (value) {
+    case "preparationFailed":
+      return "本机条件或后台 Start 未满足";
+    case "interrupted":
+      return "服务中断，未重新执行";
+    case "expired":
+      return "原任务已过期";
+    case "revoked":
+      return "后台授权已撤销";
+    default:
+      return "状态未知";
   }
 }
 </script>
@@ -74,13 +124,7 @@ async function act(confirm: boolean) {
     <template v-else>
       <strong>设备操作 · {{ details.value.offer.title }}</strong>
       <template v-if="details.value.offer.summary.kind === 'software'">
-        <p>
-          操作：{{
-            { install: "安装", uninstall: "卸载", detect: "检测" }[
-              details.value.offer.summary.intent
-            ]
-          }}
-        </p>
+        <p>操作：{{ operationLabel(details.value.offer.summary.intent) }}</p>
         <ol>
           <li
             v-for="(step, index) in details.value.offer.summary.steps"
@@ -92,25 +136,10 @@ async function act(confirm: boolean) {
         </ol>
       </template>
       <p>
-        {{
-          {
-            proposed: "等待本人确认",
-            selected: "已确认",
-            submitting: "准备执行",
-            failed: "准备失败；没有创建新尝试",
-            cancelled: "已撤销",
-          }[details.value.state]
-        }}
+        {{ stateLabel(details.value.state) }}
       </p>
       <p v-if="details.value.failure">
-        {{
-          {
-            preparationFailed: "本机条件或后台 Start 未满足",
-            interrupted: "服务中断，未重新执行",
-            expired: "原任务已过期",
-            revoked: "后台授权已撤销",
-          }[details.value.failure]
-        }}
+        {{ failureLabel(details.value.failure) }}
       </p>
       <button
         v-if="details.value.state === 'proposed'"

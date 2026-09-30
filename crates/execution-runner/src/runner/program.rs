@@ -1,20 +1,35 @@
 use super::*;
 use crate::materialize::Recipe;
 
-pub(super) fn execute(
-    source: Arc<Artifacts>,
-    plan: FrozenExecution,
-    attempt: AttemptId,
-    runner: Id,
-    deadline: Instant,
-    output_limit: u64,
-    first_start: Option<u64>,
-    cancel: Arc<AtomicBool>,
-    capture: Arc<Mutex<Option<ProcessEvidence>>>,
-    progress: Arc<progress::Progress>,
-    previous: Option<SoftwareProgress>,
-    mut ownership: Vec<SoftwareOwnership>,
-) {
+pub(super) struct ProgramRun {
+    pub(super) source: Arc<Artifacts>,
+    pub(super) plan: FrozenExecution,
+    pub(super) attempt: AttemptId,
+    pub(super) runner: Id,
+    pub(super) deadline: Instant,
+    pub(super) output_limit: u64,
+    pub(super) first_start: Option<u64>,
+    pub(super) cancel: Arc<AtomicBool>,
+    pub(super) capture: Arc<Mutex<Option<ProcessEvidence>>>,
+    pub(super) progress: Arc<progress::Progress>,
+    pub(super) previous: Option<SoftwareProgress>,
+    pub(super) ownership: Vec<SoftwareOwnership>,
+}
+pub(super) fn execute(input: ProgramRun) {
+    let ProgramRun {
+        source,
+        plan,
+        attempt,
+        runner,
+        deadline,
+        output_limit,
+        first_start,
+        cancel,
+        capture,
+        progress,
+        previous,
+        mut ownership,
+    } = input;
     let started = Instant::now();
     let mut journal = previous.unwrap_or_else(|| SoftwareProgress {
         attempt_id: attempt.clone(),
@@ -116,15 +131,10 @@ pub(super) fn execute(
                     let facts = invoke(
                         &runtime,
                         material,
-                        &plan,
-                        &attempt,
-                        &runner,
+                        (&plan, &attempt, &runner),
                         command,
-                        index as u32,
-                        phase,
-                        invocation_deadline,
-                        cap,
-                        first.take(),
+                        (index as u32, phase),
+                        (invocation_deadline, cap, first.take()),
                         cancel.clone(),
                     )?;
                     if phase != SoftwarePhase::Mutation {
@@ -327,15 +337,10 @@ pub(super) fn script_detection(facts: &ProcessEvidence) -> SoftwareState {
 fn invoke(
     runtime: &tokio::runtime::Runtime,
     material: &Artifacts,
-    plan: &FrozenExecution,
-    attempt: &AttemptId,
-    runner: &Id,
+    (plan, attempt, runner): (&FrozenExecution, &AttemptId, &Id),
     invocation: &SoftwareInvocation,
-    step: u32,
-    phase: SoftwarePhase,
-    deadline: Instant,
-    cap: u64,
-    first_start: Option<u64>,
+    (step, phase): (u32, SoftwarePhase),
+    (deadline, cap, first_start): (Instant, u64, Option<u64>),
     cancel: Arc<AtomicBool>,
 ) -> Result<ProcessEvidence, Error> {
     if let Some(connection) = &material.delegate {
@@ -420,9 +425,7 @@ fn invoke(
         material.prepare_recipe(plan, attempt, Recipe::invocation(invocation), &control)?;
     runtime.block_on(run(
         prepared,
-        plan.clone(),
-        attempt.clone(),
-        runner.clone(),
+        (plan.clone(), attempt.clone(), runner.clone()),
         (cap, deadline),
         cancel,
         Captures {

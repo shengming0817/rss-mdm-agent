@@ -55,9 +55,7 @@ impl PhysicalInvocation {
                         .map_err(|_| Error::Unavailable)?;
                     runtime.block_on(run(
                         prepared,
-                        plan.clone(),
-                        attempt.clone(),
-                        runner.clone(),
+                        (plan.clone(), attempt.clone(), runner.clone()),
                         (output_bytes, deadline),
                         cancel,
                         Captures {

@@ -372,14 +372,12 @@ impl Artifacts {
                     step.bundle.as_ref().is_some_and(|manifest| {
                         manifest.entries.iter().any(|(name, entry)| {
                             Path::new(&launch.cwd).join(name) == *content_path
-                                && format!(
-                                    "{}",
-                                    entry
-                                        .sha256
-                                        .iter()
-                                        .map(|b| format!("{b:02x}"))
-                                        .collect::<String>()
-                                ) == launch.artifact.sha256.as_str()
+                                && entry
+                                    .sha256
+                                    .iter()
+                                    .map(|b| format!("{b:02x}"))
+                                    .collect::<String>()
+                                    == launch.artifact.sha256.as_str()
                         })
                     })
                 })

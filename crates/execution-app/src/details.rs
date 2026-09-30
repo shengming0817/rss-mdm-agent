@@ -99,6 +99,15 @@ impl FrozenExecutionSummary {
                                         .unwrap_or(&step.install)
                                         .run_as
                                         .clone()
+                                } else if program.intent
+                                    == execution_contract::SoftwareOperation::Detect
+                                {
+                                    match &step.detection {
+                                        execution_contract::SoftwareDetector::Script {
+                                            invocation,
+                                        } => invocation.run_as.clone(),
+                                        _ => step.install.run_as.clone(),
+                                    }
                                 } else {
                                     step.install.run_as.clone()
                                 },
@@ -197,11 +206,11 @@ pub enum BackendTaskView {
     /// Only a user intent exists; there is no execution attempt or execution authorization.
     Pending {
         /// Original offer, caller binding and durable preparation state.
-        value: execution_contract::BackendRequest,
+        value: Box<execution_contract::BackendRequest>,
     },
     /// The original request has entered the execution journal.
     Execution {
         /// Real frozen input projection and lifecycle facts.
-        value: ExecutionTaskDetails,
+        value: Box<ExecutionTaskDetails>,
     },
 }

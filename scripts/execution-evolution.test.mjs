@@ -36,6 +36,7 @@ test("new execution fields require an explicit admission/capability decision", (
         "rust-toolchain.toml",
         "crates",
         "apps/desktop/src-tauri",
+        "apps/agent-service",
         "vendor",
       ],
       { cwd: root, encoding: "utf8" },

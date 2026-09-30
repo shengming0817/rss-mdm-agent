@@ -99,11 +99,9 @@ pub(crate) fn script(
     offer: &Offer,
     materials: &Materials,
     payload: &wire::TaskSpec,
-    binding: &execution_app::ServiceBinding,
-    actor: &ActorId,
+    (binding, actor): (&execution_app::ServiceBinding, &ActorId),
     interpreters: &[Interpreter],
-    work_root: &Path,
-    content_path: &Path,
+    (work_root, content_path): (&Path, &Path),
     delegate: Option<std::sync::Arc<execution_runner::helper::Connection>>,
 ) -> Result<(FrozenExecution, Artifacts), Error> {
     let wire::TaskPayload::Script(original) = offer.payload() else {

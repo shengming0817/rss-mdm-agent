@@ -187,7 +187,7 @@ function keys(event: KeyboardEvent) {
           <p>
             RSS MDM Agent · {{ host.state.status?.version ?? "浏览器预览" }}
           </p>
-          <p>MIT 许可。S1 测试装配，无真实系统执行。</p>
+          <p>MIT 许可。后台授权任务由本机系统服务执行。</p>
           <h3>隐私</h3>
           <p>
             用户、连接和历史保存在本机。API

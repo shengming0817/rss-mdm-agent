@@ -223,7 +223,7 @@ it("selects the normalized saved organization and emits the selected server logi
   wrapper.unmount();
 });
 
-it("explains enterprise execution limits without invoking a fixture snapshot and reports revoked access", async () => {
+it("queries the production execution service without a fixture fallback and reports revoked access", async () => {
   const enterprise = {
     ...current,
     identity: {
@@ -260,10 +260,10 @@ it("explains enterprise execution limits without invoking a fixture snapshot and
     .find((b) => b.text() === "软件中心")!
     .trigger("click");
   await flushPromises();
-  expect(wrapper.text()).toContain("企业设备执行与批准尚未接线");
+  expect(wrapper.text()).toContain("无法读取执行服务；原任务保留");
   expect(
     vi.mocked(invoke).mock.calls.some(([c]) => c === "self_service_snapshot"),
-  ).toBe(false);
+  ).toBe(true);
   revoked = true;
   await refreshAccount();
   await flushPromises();

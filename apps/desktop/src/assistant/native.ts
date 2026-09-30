@@ -52,7 +52,7 @@ export function nativeAssistant(): AssistantServices | undefined {
         }),
         options,
       );
-      return { runtime, mode: "s1" };
+      return { runtime, mode: "live" };
     },
     async confirmTask(task) {
       const { request, attempt, revision } = task;

@@ -18,7 +18,11 @@ impl Guard {
             self.forbidden = true;
         }
         self.forbidden |= !self.composition && parts.windows(2).any(|p| p == ["Command", "new"]);
+        let projection = parts.len() == 2
+            && parts[0] == "execution_app"
+            && ["ExecutionTaskDetails", "BackendTaskView"].contains(&parts[1].as_str());
         self.forbidden |= self.fixture
+            && !projection
             && parts.first().is_some_and(|p| {
                 [
                     "tokio",
