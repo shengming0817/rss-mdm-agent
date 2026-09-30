@@ -1,4 +1,4 @@
-//! Native-only product credentials. HTTP contracts consumed from Identity v2 and MDM v1.
+//! Native-only product credentials. HTTP contracts consumed from Identity v2 authentication and rss-mdm business authorization v1.
 //! HTTP source: rss-identity 88a33594a3e83d38a89c520294671cfa2d0ec8fa (handlers/dto),
 //! rss-mdm 533b4c3df7d7e8ef3cd599becdaeec4db41d854f (authorization/http).
 //! ref: reqwest src/async_impl/{client,response}.rs@v0.13.5.

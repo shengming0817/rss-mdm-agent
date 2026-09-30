@@ -1,4 +1,5 @@
-//! Explicit live integration against a running rss-mdm serve instance and its real PG.
+//! Real-server integration against isolated rss-mdm serve and PostgreSQL.
+//! The live_mdm target uses a controlled Test runner; it does not run against production.
 mod support;
 use agent_client::wire::*;
 use agent_client::*;

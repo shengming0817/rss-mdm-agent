@@ -220,6 +220,8 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
         credential_reference: &str,
         capabilities: Vec<wire::Capability>,
     ) -> Result<wire::RegistrationReceipt, Error> {
+        // Producer-owned MdmEnrollmentV4 opens the standard OS MDM enrollment UI;
+        // it is distinct from this Agent registration and unsupported by this client.
         if password_reference.is_empty()
             || credential_reference.is_empty()
             || password_reference.len() > 256

@@ -24,6 +24,9 @@
 
 ## 权限与协议边界
 
+上游生成的 `ConfigLayerSource` 使用 `type: "mdm"` 表示 Codex 的管理配置来源，与 rss-mdm 服务端的设备注册、任务或业务授权无关。该标识属于固定上游协议，按原值消费；术语说明由此接入文档持有，不手改生成协议，也不将该配置来源当作 RSS 业务权限。
+
+
 启动与恢复都校验配置层、固定版本、真实 cwd、只读且禁止网络的原生 sandbox 以及 required HTTP MCP 的实际连接/目录状态。原生审批策略为 on-request；所有反向审批、动态工具、追问和 elicitation RPC 一律拒绝。内置 shell/exec、文件修改、网络检索、插件、hooks、skills、apps、子代理等入口关闭；官方已有用户配置可以复用，但继承的 MCP 入口由官方 config/read 枚举并关闭，hooks/skills/plugins 和原生执行能力显式禁用，原生 stderr 不输出。子进程 PATH 不继承宿主：Unix 固定为 `/usr/bin:/bin`；Windows 使用私有配置目录下的空搜索路径并禁用默认 cwd 查找（Windows 仍需独立平台证据）。同类 Claude adapter 使用相同搜索边界且通过当前 Node 的绝对路径启动。工作目录存在项目配置层会拒绝准入。
 
 唯一业务提案路径是带 incarnation bearer 的 loopback `rss_host.propose`，实际执行权仍由 Host/Rust 持有；MCP 的 approve 配置仅准许调用这个提案接缝，不签发执行批准。Codex 同时暴露三项原生 MCP resource 辅助工具：list 返回空集合，read 始终拒绝，不能访问工作目录或其他资源。重新准入必须重新连接并核验同一封闭目录，不能只依赖 required 标记或缓存。
