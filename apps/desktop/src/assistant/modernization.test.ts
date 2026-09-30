@@ -1,0 +1,124 @@
+import { mount, flushPromises } from "@vue/test-utils";
+import { expect, it, vi } from "vitest";
+import ExecutionActivity from "./ExecutionActivity.vue";
+import { createAssistant } from "./controller";
+import { taskPresentation } from "./execution-presentation";
+import { copyText } from "./clipboard";
+import fixtures from "../../../../tests/assistant/execution-fixtures.json";
+import type { ExecutionTaskDetails } from "@rss-mdm-agent/execution-bindings/task-details";
+
+function task(
+  phase: ExecutionTaskDetails["status"]["phase"],
+  assessment: ExecutionTaskDetails["status"]["assessment"] = null,
+) {
+  const value = structuredClone(
+    fixtures.outcomeUnknown,
+  ) as ExecutionTaskDetails;
+  value.status.phase = phase;
+  value.status.assessment = assessment;
+  return value;
+}
+
+it.each([
+  ["satisfied", "已核实符合预期"],
+  ["notSatisfied", "已核实未达预期"],
+  ["noEffect", "已核实无效果"],
+  ["unknown", "效果仍需核对"],
+] as const)("distinguishes verified assessment %s", (assessment, label) => {
+  expect(taskPresentation(task("verified", assessment)).label).toBe(label);
+});
+
+it("does not infer success from cancellation requests, process exit or software observation", () => {
+  const value = task("executionEnded", "unknown");
+  value.status.cancelRequested = true;
+  value.status.stopOutcome = "acknowledged";
+  value.status.software = "desiredStateObserved";
+  expect(taskPresentation(value).label).toContain("等待效果验证");
+  expect(taskPresentation(value).stage).toContain("不代表后台活动已终止");
+  expect(taskPresentation(value).cancel).toContain("已请求取消");
+});
+
+it("refreshes a card and its open drawer from one authorized snapshot and retains it on read failure", async () => {
+  const c = createAssistant(undefined, () => "id");
+  c.state.selected = "session";
+  const read = vi
+    .spyOn(c, "executionDetails")
+    .mockResolvedValue(task("running"));
+  const wrapper = mount(ExecutionActivity, {
+    props: {
+      controller: c,
+      operationId: "tool",
+      recorded: true,
+      visible: true,
+      now: 1000,
+    },
+  });
+  try {
+    await flushPromises();
+    await wrapper
+      .findAll("button")
+      .find((b) => b.text() === "查看设备操作")!
+      .trigger("click");
+    read.mockResolvedValueOnce(task("verified", "satisfied"));
+    await wrapper
+      .findAll("button")
+      .find((b) => b.text() === "刷新执行状态")!
+      .trigger("click");
+    await flushPromises();
+    expect(wrapper.get(".task-status").text()).toBe("已核实符合预期");
+    expect(wrapper.get(".execution-phase").text()).toBe("执行结果已核实");
+    read.mockRejectedValueOnce(new Error("offline"));
+    await wrapper
+      .findAll("button")
+      .find((b) => b.text() === "刷新执行状态")!
+      .trigger("click");
+    await flushPromises();
+    expect(wrapper.get(".task-status").text()).toBe("已核实符合预期");
+    expect(wrapper.text()).toContain("当前显示上次已读取记录");
+    expect(read.mock.calls.every(([id]) => id === "tool")).toBe(true);
+    await wrapper.setProps({ visible: false });
+    expect(wrapper.find("dialog").exists()).toBe(false);
+  } finally {
+    wrapper.unmount();
+    c.dispose();
+  }
+});
+
+it("discards a late task read after the view has been hidden", async () => {
+  const c = createAssistant(undefined, () => "id");
+  let finish!: (value: ExecutionTaskDetails) => void;
+  vi.spyOn(c, "executionDetails").mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const wrapper = mount(ExecutionActivity, {
+    props: {
+      controller: c,
+      operationId: "tool",
+      recorded: true,
+      visible: true,
+      now: 1000,
+    },
+  });
+  try {
+    await wrapper.setProps({ visible: false });
+    finish(task("verified", "satisfied"));
+    await flushPromises();
+    expect(wrapper.find(".execution-activity").exists()).toBe(false);
+  } finally {
+    wrapper.unmount();
+    c.dispose();
+  }
+});
+
+it("reports clipboard rejection without a native fallback or clipboard read", async () => {
+  const write = vi
+    .spyOn(navigator.clipboard, "writeText")
+    .mockRejectedValueOnce(new Error("denied"));
+  expect(await copyText("code")).toBe(false);
+  write.mockResolvedValueOnce(undefined);
+  expect(await copyText("code")).toBe(true);
+  expect(write.mock.calls).toEqual([["code"], ["code"]]);
+});

@@ -14,6 +14,10 @@ it("every UI token reference has a scoped definition", () => {
   }).filter((f) => /\.(vue|css)$/.test(f))) {
     const source = readFileSync(resolve(root, file), "utf8");
     for (const match of source.matchAll(/var\((--[\w-]+)/g))
-      expect(definitions.has(match[1]), `${file}: ${match[1]}`).toBe(true);
+      expect(
+        definitions.has(match[1]) ||
+          match[1] === "--reka-popover-content-available-height",
+        `${file}: ${match[1]}`,
+      ).toBe(true);
   }
 });

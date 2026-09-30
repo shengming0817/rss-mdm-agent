@@ -14,12 +14,9 @@ const fixture = await startFixture();
 let browser, page;
 const title = "第一轮 <img src=x onerror=alert(1)>";
 const diagnostics = async () => {
-  if (
-    !((await page.locator(".conversation-menu").getAttribute("open")) !== null)
-  )
-    await page.locator(".conversation-menu summary").click();
+  await page.getByRole("button", { name: "更多", exact: true }).click();
   await page
-    .getByRole("button", { name: "会话详情与诊断", exact: true })
+    .getByRole("menuitem", { name: "会话详情与诊断", exact: true })
     .click();
 };
 const navigate = async (name) => {
@@ -45,7 +42,7 @@ try {
         ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
         : undefined),
   });
-  page = await browser.newPage();
+  page = await browser.newPage({ viewport: { width: 1100, height: 760 } });
   await page.clock.install();
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -66,6 +63,7 @@ try {
   });
   await page.getByRole("button", { name: "AI 助手", exact: true }).click();
   await page.locator(".composer textarea").waitFor();
+  await page.setViewportSize({ width: 480, height: 400 });
   await page.getByRole("button", { name: "打开主导航", exact: true }).click();
   const navigation = page.getByRole("dialog", { name: "主导航", exact: true });
   const drawerStyle = await navigation.evaluate((el) => {
@@ -87,11 +85,8 @@ try {
     0,
     "primary navigation opens at its left-hand trigger",
   );
-  assert.deepEqual(
-    drawerStyle,
-    sidebarStyle,
-    "collapsed and persistent navigation share visual treatment",
-  );
+  assert.equal(drawerStyle.selectedColor, sidebarStyle.selectedColor);
+  assert.equal(drawerStyle.selectedBackground, sidebarStyle.selectedBackground);
   const navigationFooter = await navigation
     .getByRole("button", { name: "设置", exact: true })
     .boundingBox();
@@ -117,10 +112,12 @@ try {
       .evaluate((el) => el === document.activeElement),
     true,
   );
-  assert.equal(await page.locator(".assistant-sessions li").count(), 20);
+  await page.setViewportSize({ width: 1100, height: 760 });
+  await page.locator(".navigation-panel .conversation-list").waitFor();
+  assert.equal(await page.locator(".conversation-list li").count(), 20);
   await page.getByRole("button", { name: "加载更多会话" }).click();
   await page.waitForFunction(
-    () => document.querySelectorAll(".assistant-sessions li").length === 23,
+    () => document.querySelectorAll(".conversation-list li").length === 23,
   );
   assert.equal(
     await page.getByRole("button", { name: /fake-session-24/ }).count(),
@@ -616,7 +613,7 @@ try {
   await page
     .getByText("卡片已更新", { exact: true })
     .waitFor({ state: "hidden" });
-  await page.getByRole("button", { name: "停止本轮", exact: true }).click();
+  await page.getByRole("button", { name: "停止回复", exact: true }).click();
 
   unwrap(
     await fixture.host.advance(fixture.caller, sessionId, command.commandId, [
@@ -654,6 +651,14 @@ try {
       .getByText(`稳定历史块 ${offset + 9}`, { exact: true })
       .waitFor({ state: "attached" });
   }
+  const wideCode = "echo " + "x".repeat(1200);
+  const columns = Array.from({ length: 12 }, (_, n) => `Col ${n}`).join(" | ");
+  const markdown = `# 格式检查\n\n- 一\n- 二\n\n\`\`\`sh\n${wideCode}\n\`\`\`\n\n| ${columns} |\n| ${Array.from({ length: 12 }, () => "---").join(" | ")} |\n| ${columns} |\n\n[说明](https://example.com) ![示例图片](https://example.com/image.png)`;
+  unwrap(
+    await fixture.host.advance(fixture.caller, sessionId, command.commandId, [
+      { type: "text", messageId: "markdown", text: markdown },
+    ]),
+  );
   unwrap(
     await fixture.host.advance(fixture.caller, sessionId, command.commandId, [
       {
@@ -729,6 +734,74 @@ try {
     await page.clock.runFor(1000);
     await page.locator(".plan-validity").filter({ hasText: note }).waitFor();
   }
+  await page.keyboard.press("Escape");
+  const formatted = page
+    .locator(".markdown-message")
+    .filter({ hasText: "格式检查" });
+  await formatted.waitFor();
+  assert.equal(await formatted.locator("li").count(), 2);
+  assert.equal(await formatted.locator("a,img,script").count(), 0);
+  assert.equal(
+    await formatted
+      .locator("pre")
+      .evaluate((el) => el.scrollWidth > el.clientWidth),
+    true,
+  );
+  assert.equal(
+    await formatted
+      .locator(".table-scroll")
+      .evaluate((el) => el.scrollWidth > el.clientWidth),
+    true,
+  );
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async (value) => {
+          window.copiedText = value;
+        },
+      },
+    });
+  });
+  await formatted
+    .getByRole("button", { name: "复制代码", exact: true })
+    .click();
+  await page.getByRole("status").filter({ hasText: "已复制" }).waitFor();
+  assert.equal(await page.evaluate(() => window.copiedText), wideCode + "\n");
+  await page.evaluate(() => {
+    navigator.clipboard.writeText = async () => {
+      throw new Error("denied");
+    };
+  });
+  await formatted
+    .getByRole("button", { name: "复制代码", exact: true })
+    .click();
+  await page
+    .getByText("复制不可用，请选中文本手动复制。", { exact: true })
+    .waitFor();
+  await composer.fill("IME 草稿");
+  await composer.dispatchEvent("compositionstart");
+  await page.keyboard.press("Enter");
+  assert.equal((await composer.inputValue()).trim(), "IME 草稿");
+  await composer.dispatchEvent("compositionend");
+  await composer.fill("保留草稿");
+  const readPosition = await page
+    .locator(".assistant-timeline")
+    .evaluate((el) => {
+      el.scrollTop = 120;
+      el.dispatchEvent(new Event("scroll"));
+      return el.scrollTop;
+    });
+  await navigate("软件中心");
+  await navigate("AI 助手");
+  assert.ok(
+    Math.abs(
+      (await page
+        .locator(".assistant-timeline")
+        .evaluate((el) => el.scrollTop)) - readPosition,
+    ) < 2,
+    "returning to AI preserves history reading position",
+  );
   await page.clock.setFixedTime(new Date());
   await navigate("软件中心");
   await page.getByRole("button", { name: "AI 助手", exact: true }).click();
@@ -743,7 +816,7 @@ try {
       .evaluate((el) => el === document.activeElement),
     true,
   );
-  await page.setViewportSize({ width: 480, height: 760 });
+  await page.setViewportSize({ width: 480, height: 400 });
   assert.equal(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth,
@@ -765,14 +838,14 @@ try {
     await page.evaluate(() => document.activeElement !== document.body),
     true,
   );
-  await page.getByRole("button", { name: "AI 助手", exact: true }).click();
+  await navigate("AI 助手");
   assert.equal(await composer.inputValue(), "保留草稿");
   await page.getByRole("button", { name: "打开主导航", exact: true }).click();
   const narrowNavigation = await page
     .getByRole("dialog", { name: "主导航", exact: true })
     .boundingBox();
   assert.equal(narrowNavigation.x, 0);
-  assert.equal(narrowNavigation.width, sidebarStyle.width);
+  assert.equal(narrowNavigation.width, 280);
   await page.screenshot({
     path: fileURLToPath(
       new URL(
@@ -782,17 +855,29 @@ try {
     ),
   });
   await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "打开最近对话", exact: true }).click();
   assert.equal(
-    (
-      await page
-        .getByRole("dialog", { name: "最近对话", exact: true })
-        .boundingBox()
-    ).x,
+    await page
+      .getByRole("button", { name: "打开最近对话", exact: true })
+      .count(),
     0,
   );
-  await page.keyboard.press("Escape");
+  const inputBox = await composer.boundingBox();
+  assert.ok(
+    inputBox.y >= 0 && inputBox.y + inputBox.height <= 400,
+    "minimum-height composer stays reachable",
+  );
+  await page.screenshot({
+    path: fileURLToPath(
+      new URL("../.local-ci-runs/assistant-480x400.png", import.meta.url),
+    ),
+  });
   await page.setViewportSize({ width: 1280, height: 900 });
+  await page.locator(".navigation-panel .conversation-list").waitFor();
+  await page.screenshot({
+    path: fileURLToPath(
+      new URL("../.local-ci-runs/assistant-1280x900.png", import.meta.url),
+    ),
+  });
   fixture.disconnect();
   await page
     .getByText("AI 服务未连接，草稿已保留。", { exact: true })
@@ -870,7 +955,7 @@ try {
   await page.getByText("稳定历史块 69", { exact: true }).waitFor();
   if (process.env.ASSISTANT_SCREENSHOT) {
     await page
-      .locator(".shell > .body > main")
+      .locator(".shell > .shell-body > main")
       .evaluate((element) => (element.scrollTop = 0));
     await page.screenshot({
       path: process.env.ASSISTANT_SCREENSHOT,

@@ -60,23 +60,23 @@ button {
   width: 100%;
   text-align: left;
   overflow-wrap: anywhere;
-  padding: 10px 12px;
+  padding: 7px 12px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--rss-radius-sm);
   background: transparent;
-  color: var(--color-text);
+  color: var(--rss-color-text);
   cursor: pointer;
 }
 button[aria-current] {
-  background: var(--color-accent-bg);
-  border-color: var(--color-accent);
+  background: var(--rss-color-accent-bg);
+  border-color: var(--rss-color-accent);
 }
 .new-conversation {
-  border-color: var(--color-border-strong);
+  border-color: var(--rss-color-border-strong);
 }
 h2 {
-  font-size: 13px;
-  color: var(--color-text-muted);
-  margin: 24px 12px 8px;
+  font-size: var(--rss-font-size-sm);
+  color: var(--rss-color-text-muted);
+  margin: 20px 12px 8px;
 }
 </style>

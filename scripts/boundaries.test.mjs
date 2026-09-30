@@ -191,7 +191,11 @@ test("tree scan covers desktop files and both production manifests", () => {
       writeFileSync(file, JSON.stringify(pkg));
     }
     const errors = checkTree(dir);
-    assert.ok(errors.includes("UI production dependencies must be Vue only"));
+    assert.ok(
+      errors.includes(
+        "UI production dependencies must be pinned presentation primitives and Markdown parser with Vue peer only",
+      ),
+    );
     assert.ok(
       errors.includes(
         "desktop production dependencies must be UI, public AI contract/client/bridge, generated execution bindings, Vue and pinned Tauri core only",
@@ -528,4 +532,43 @@ test("test-user adapter owns only literal user and native credential commands", 
     'fetch("https://example.invalid");',
   ])
     assert.ok(checkSource(file, source).length, source);
+});
+
+test("modern presentation dependencies are admitted only at their owners", () => {
+  assert.deepEqual(
+    checkSource(
+      "packages/ui/src/internal/markdown.ts",
+      `import MarkdownIt from 'markdown-it'; const parser = new MarkdownIt({html:false});`,
+    ),
+    [],
+  );
+  assert.ok(
+    checkSource(
+      "packages/ui/src/fixture.ts",
+      `import MarkdownIt from 'markdown-it'`,
+    ).length,
+  );
+  assert.deepEqual(
+    checkSource(
+      "apps/desktop/src/assistant/clipboard.ts",
+      `export async function copyText(text: string) { await navigator.clipboard.writeText(text); }`,
+    ),
+    [],
+  );
+  for (const source of [
+    `navigator.clipboard.readText()`,
+    `const write = navigator.clipboard.writeText`,
+    `navigator.sendBeacon('https://example.com')`,
+    `navigator.clipboard['writeText'](text)`,
+  ])
+    assert.ok(
+      checkSource("apps/desktop/src/assistant/clipboard.ts", source).length,
+      source,
+    );
+  assert.ok(
+    checkSource(
+      "apps/desktop/src/assistant/Assistant.vue",
+      `<script setup>navigator.clipboard.writeText(text)</script>`,
+    ).length,
+  );
 });

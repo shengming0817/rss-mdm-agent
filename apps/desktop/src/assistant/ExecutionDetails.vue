@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { executionPhase, softwareStatus } from "./execution-presentation";
 import { computed } from "vue";
 import RequestOrigin from "../self-service/RequestOrigin.vue";
 import type {
@@ -25,32 +26,6 @@ const instant = (ms: number) =>
   ms >= -8_640_000_000_000_000 && ms <= 8_640_000_000_000_000
     ? new Date(ms).toISOString()
     : `${ms} Unix ms（超出本机日期格式范围）`;
-function phase(value: TaskPhase): string {
-  switch (value) {
-    case "waiting":
-      return "等待执行条件";
-    case "admissionDenied":
-      return "执行准入被拒绝";
-    case "confirmationRequired":
-      return "等待用户确认本次动作";
-    case "approvalRequired":
-      return "执行服务记录：需要管理员批准";
-    case "accepted":
-      return "执行意图已记录，尚未确认派发";
-    case "running":
-      return "执行器已接收，设备效果尚未确认";
-    case "outcomeUnknown":
-      return "设备效果未知，需要可信核对";
-    case "executionEnded":
-      return "执行已结束，等待效果验证";
-    case "verified":
-      return "执行结果已核实";
-    case "failedBeforeDispatch":
-      return "可信证据确认派发前失败";
-    case "cancelled":
-      return "可信证据确认取消且无效果";
-  }
-}
 function ends(value: ProcessEnd): string {
   switch (value) {
     case "rejected":
@@ -125,30 +100,6 @@ function stops(value: StopOutcome): string {
       return "停止请求已接收（未确认终止）";
     case "failed":
       return "停止请求未确认";
-  }
-  const exhaustive: never = value;
-  return exhaustive;
-}
-function softwareDiagnostic(value: SoftwareDiagnostic): string {
-  switch (value) {
-    case "cleanupPending":
-      return "临时安装文件尚待安全清理，资源占用保留";
-    case "cleanupUnverified":
-      return "无法确认临时目录归属，需要人工核实";
-    case "awaitingDetection":
-      return "等待独立软件检测";
-    case "restartPending":
-      return "安装器要求重启设备；重启后重新核实";
-    case "detectionUnavailable":
-      return "软件检测不可用，请核对设备与读取权限";
-    case "unrecognizedVersion":
-      return "检测到未知软件内容，需要人工核实";
-    case "detectionBudgetExceeded":
-      return "软件检测预算耗尽，等待下一次有界核实";
-    case "desiredStateObserved":
-      return "已观察到目标软件状态；不代表后台活动已终止";
-    case "desiredStateMissing":
-      return "已检测软件状态，尚未达到目标";
   }
   const exhaustive: never = value;
   return exhaustive;
@@ -262,9 +213,9 @@ const text = (value: unknown) => JSON.stringify(value, null, 2);
       执行服务 ·
       {{ details.status.mode === "test" ? "S1 测试执行器" : "真实执行器" }}
     </h3>
-    <p class="execution-phase">{{ phase(details.status.phase) }}</p>
+    <p class="execution-phase">{{ executionPhase(details.status.phase) }}</p>
     <p v-if="details.status.software" class="software-diagnostic">
-      {{ softwareDiagnostic(details.status.software) }}
+      {{ softwareStatus(details.status.software) }}
     </p>
     <div v-if="details.status.process" class="process-facts">
       <p>
@@ -295,89 +246,92 @@ const text = (value: unknown) => JSON.stringify(value, null, 2);
     <p v-if="details.status.cancelRequested">
       执行取消已请求；取消意图、停止响应和效果验证分别记录。
     </p>
-    <RequestOrigin :input="details.action" />
-    <dl>
-      <dt>原始执行请求</dt>
-      <dd>{{ details.status.operationRequestId }}</dd>
-      <dt>冻结动作 / 摘要</dt>
-      <dd>
-        {{ details.action.requestId }}<br />{{ details.action.contentDigest }}
-      </dd>
-      <template v-if="details.action.execution.kind === 'software'">
-        <dt>软件执行</dt>
-        <dd class="software-operation">
-          {{ adapterLabel(details.action.execution.adapter) }}
-          ·
-          {{ mutationLabel(details.action.execution.mutation) }}
+    <details class="execution-facts">
+      <summary>动作、身份与范围</summary>
+      <RequestOrigin :input="details.action" />
+      <dl>
+        <dt>原始执行请求</dt>
+        <dd>{{ details.status.operationRequestId }}</dd>
+        <dt>冻结动作 / 摘要</dt>
+        <dd>
+          {{ details.action.requestId }}<br />{{ details.action.contentDigest }}
         </dd>
-      </template>
-      <dt>当前尝试</dt>
-      <dd>
-        {{ details.status.attemptId ?? "尚未准入" }} · 共
-        {{ details.status.attempts }} 次
-      </dd>
-      <dt>目标</dt>
-      <dd>
-        <pre>{{ text(details.action.target) }}</pre>
-      </dd>
-      <dt>运行身份</dt>
-      <dd>
-        <pre>{{ text(details.action.runAs) }}</pre>
-      </dd>
-      <dt>操作与资源版本</dt>
-      <dd>
-        <pre>{{ text(details.action.operation) }}</pre>
-      </dd>
-      <dt>精确制品</dt>
-      <dd>
-        <pre>{{ text(details.action.artifact) }}</pre>
-      </dd>
-      <dt>解释器</dt>
-      <dd>
-        <pre>{{ text(details.action.interpreter) }}</pre>
-      </dd>
-      <dt>策略版本</dt>
-      <dd>
-        <pre>{{ text(details.action.policy) }}</pre>
-      </dd>
-      <dt>用户会话要求</dt>
-      <dd>
-        <pre>{{ text(details.action.sessionRequirement) }}</pre>
-      </dd>
-      <dt>有效期</dt>
-      <dd>
-        生效：{{ instant(details.action.validity.notBeforeUnixMs) }}<br />
-        到期（不含）：{{ instant(details.action.validity.expiresAtUnixMs) }}
-      </dd>
-      <dt>累计预算</dt>
-      <dd>
-        <pre>{{ text(details.action.budget) }}</pre>
-      </dd>
-      <dt>访问范围</dt>
-      <dd>
-        <pre>{{ text(details.action.access) }}</pre>
-      </dd>
-      <dt>派发诊断 / 停止响应</dt>
-      <dd>
-        {{ cause(details.status.dispatchCause) }} /
-        {{
-          details.status.stopOutcome === null
-            ? "无"
-            : stops(details.status.stopOutcome)
-        }}
-      </dd>
-      <dt>效果验证</dt>
-      <dd>
-        {{
-          details.status.assessment === null
-            ? "尚未验证"
-            : assessments(details.status.assessment)
-        }}
-      </dd>
-      <dt>终止/效果核验证据引用（仅授权可见）</dt>
-      <dd>
-        <pre>{{ text(details.status.evidence) }}</pre>
-      </dd>
-    </dl>
+        <template v-if="details.action.execution.kind === 'software'">
+          <dt>软件执行</dt>
+          <dd class="software-operation">
+            {{ adapterLabel(details.action.execution.adapter) }}
+            ·
+            {{ mutationLabel(details.action.execution.mutation) }}
+          </dd>
+        </template>
+        <dt>当前尝试</dt>
+        <dd>
+          {{ details.status.attemptId ?? "尚未准入" }} · 共
+          {{ details.status.attempts }} 次
+        </dd>
+        <dt>目标</dt>
+        <dd>
+          <pre>{{ text(details.action.target) }}</pre>
+        </dd>
+        <dt>运行身份</dt>
+        <dd>
+          <pre>{{ text(details.action.runAs) }}</pre>
+        </dd>
+        <dt>操作与资源版本</dt>
+        <dd>
+          <pre>{{ text(details.action.operation) }}</pre>
+        </dd>
+        <dt>精确制品</dt>
+        <dd>
+          <pre>{{ text(details.action.artifact) }}</pre>
+        </dd>
+        <dt>解释器</dt>
+        <dd>
+          <pre>{{ text(details.action.interpreter) }}</pre>
+        </dd>
+        <dt>策略版本</dt>
+        <dd>
+          <pre>{{ text(details.action.policy) }}</pre>
+        </dd>
+        <dt>用户会话要求</dt>
+        <dd>
+          <pre>{{ text(details.action.sessionRequirement) }}</pre>
+        </dd>
+        <dt>有效期</dt>
+        <dd>
+          生效：{{ instant(details.action.validity.notBeforeUnixMs) }}<br />
+          到期（不含）：{{ instant(details.action.validity.expiresAtUnixMs) }}
+        </dd>
+        <dt>累计预算</dt>
+        <dd>
+          <pre>{{ text(details.action.budget) }}</pre>
+        </dd>
+        <dt>访问范围</dt>
+        <dd>
+          <pre>{{ text(details.action.access) }}</pre>
+        </dd>
+        <dt>派发诊断 / 停止响应</dt>
+        <dd>
+          {{ cause(details.status.dispatchCause) }} /
+          {{
+            details.status.stopOutcome === null
+              ? "无"
+              : stops(details.status.stopOutcome)
+          }}
+        </dd>
+        <dt>效果验证</dt>
+        <dd>
+          {{
+            details.status.assessment === null
+              ? "尚未验证"
+              : assessments(details.status.assessment)
+          }}
+        </dd>
+        <dt>终止/效果核验证据引用（仅授权可见）</dt>
+        <dd>
+          <pre>{{ text(details.status.evidence) }}</pre>
+        </dd>
+      </dl>
+    </details>
   </section>
 </template>

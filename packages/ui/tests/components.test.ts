@@ -69,7 +69,7 @@ describe("text-only presentation", () => {
     const stream = mount(MessageStream, {
       props: {
         items: [
-          { id: "a", kind: "assistant", text },
+          { id: "a", kind: "assistant", stable: true, text },
           { id: "r", kind: "reasoning", text },
           { id: "u", kind: "user", text },
         ],
@@ -91,7 +91,7 @@ describe("text-only presentation", () => {
     const stream = mount(MessageStream, { props: { items: [] } });
     expect(stream.findAll("pre")).toHaveLength(0);
     await stream.setProps({
-      items: [{ id: "a", kind: "assistant", text: "new output" }],
+      items: [{ id: "a", kind: "assistant", stable: true, text: "new output" }],
     });
     expect(stream.text()).toContain("new output");
   });
@@ -170,6 +170,11 @@ it("lays out all named slots without querying a host", () => {
     .spyOn(globalThis, "fetch")
     .mockRejectedValue(new Error("unexpected network"));
   const wrapper = mount(AppShell, {
+    props: {
+      navigationEnabled: true,
+      contentMode: "page",
+      navigationKey: "home",
+    },
     slots: {
       header: "Header",
       navigation: "Navigation",
@@ -224,7 +229,7 @@ it("announces appended messages and status updates through stable live regions",
   expect(log.attributes("aria-relevant")).toBe("additions text");
   expect(log.attributes("aria-label")).toBeTruthy();
   await stream.setProps({
-    items: [{ id: "m", kind: "assistant", text: "new output" }],
+    items: [{ id: "m", kind: "assistant", stable: true, text: "new output" }],
   });
   expect(stream.get('[role="log"]').element).toBe(log.element);
   expect(log.text()).toContain("new output");

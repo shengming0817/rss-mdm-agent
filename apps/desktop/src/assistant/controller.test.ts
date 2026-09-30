@@ -127,7 +127,9 @@ describe("assistant application ownership", () => {
     await t.c.connect();
     await t.c.select("session-1");
     await flushPromises();
-    const wrapper = mount(Assistant, { props: { controller: t.c } });
+    const wrapper = mount(Assistant, {
+      props: { controller: t.c, visible: true },
+    });
     const notice = () => wrapper.get(".conversation-notice");
     expect(notice().text()).toContain("重试保存当前选择");
     await t.c.restore();
@@ -626,7 +628,9 @@ it("connection panel sends exactly the confirmed preview once and never includes
   await t.c.select("session-1");
   t.view.selectedConnectionId = "config-1";
   t.emit();
-  const wrapper = mount(SessionConnection, { props: { controller: t.c } });
+  const wrapper = mount(SessionConnection, {
+    props: { controller: t.c, visible: true },
+  });
   try {
     await flushPromises();
     const history = wrapper
@@ -679,7 +683,9 @@ it("drops a history preview that completes after the selected session changed", 
   await t.c.select("session-1");
   t.view.selectedConnectionId = "config-1";
   t.emit();
-  const wrapper = mount(SessionConnection, { props: { controller: t.c } });
+  const wrapper = mount(SessionConnection, {
+    props: { controller: t.c, visible: true },
+  });
   await flushPromises();
   const history = wrapper
     .findAll("label")
@@ -725,7 +731,7 @@ it("deleting the selected connection preserves history and immediately disables 
   const deleteConnection = vi.fn().mockResolvedValue({});
   Object.assign(t.client, { deleteConnection });
   const wrapper = mount(ConnectionSettings, {
-    props: { controller: t.c },
+    props: { controller: t.c, visible: true },
     attachTo: document.body,
   });
   try {
@@ -784,7 +790,9 @@ it("connection revision conflicts invalidate stale edit and delete actions", asy
     .fn()
     .mockRejectedValue(new ClientError("revision_conflict"));
   Object.assign(t.client, { saveConnection, deleteConnection: saveConnection });
-  const wrapper = mount(ConnectionSettings, { props: { controller: t.c } });
+  const wrapper = mount(ConnectionSettings, {
+    props: { controller: t.c, visible: true },
+  });
   try {
     await flushPromises();
     await wrapper.get('button[aria-label="编辑连接 Fixture"]').trigger("click");
@@ -809,7 +817,9 @@ it("connection revision conflicts invalidate stale edit and delete actions", asy
 it("existing configuration cannot become a custom API key and Claude supports configuration reuse", async () => {
   const t = setup();
   await t.c.connect();
-  const wrapper = mount(ConnectionSettings, { props: { controller: t.c } });
+  const wrapper = mount(ConnectionSettings, {
+    props: { controller: t.c, visible: true },
+  });
   try {
     await flushPromises();
     await wrapper

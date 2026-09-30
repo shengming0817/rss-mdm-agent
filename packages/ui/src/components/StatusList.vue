@@ -40,21 +40,21 @@ li {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--color-text-muted);
+  background: var(--rss-color-text-muted);
 }
 .success .dot {
-  background: var(--color-success);
+  background: var(--rss-color-success);
 }
 .warning .dot {
-  background: var(--color-warn);
+  background: var(--rss-color-warn);
 }
 .danger .dot {
-  background: var(--color-danger);
+  background: var(--rss-color-danger);
 }
 strong {
   font-weight: 600;
 }
 li > span:last-child {
-  color: var(--color-text-muted);
+  color: var(--rss-color-text-muted);
 }
 </style>
