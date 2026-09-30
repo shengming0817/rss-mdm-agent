@@ -304,6 +304,7 @@ impl AppHost for TestHost {
                     vec![
                         LaunchIoCapability::ControlledStdin(TextEncoding::Utf8),
                         LaunchIoCapability::CapturedText(TextEncoding::Utf8),
+                        LaunchIoCapability::CapturedText(TextEncoding::Utf16Le),
                     ],
                     available,
                 ),

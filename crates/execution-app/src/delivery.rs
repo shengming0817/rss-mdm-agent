@@ -4,6 +4,54 @@ use execution_interaction::{Command, Interaction, Kind, Reference, Spec};
 use execution_sqlite::{AuditRecord, ExecutionAccess, OperationRequestId, Receipt, Scope};
 
 impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
+    /// Trusted device-owner presence lookup for an unsubmitted remote task. This is not
+    /// exposed to UI/AI and absence is meaningful only in this bound authoritative journal.
+    pub fn has_service_execution(
+        &self,
+        request: &RequestId,
+        device: &execution_contract::DeviceId,
+    ) -> Result<bool, Error> {
+        if self.host.service_binding()? != self.binding {
+            return Err(Error::Unbound);
+        }
+        if &self.binding.device != device {
+            return Err(Error::Denied);
+        }
+        Ok(self.store.contains_request(request)?)
+    }
+    /// Device-owner delivery with independent evidence permission. Not a UI/AI endpoint.
+    pub fn service_delivery(
+        &self,
+        request: &RequestId,
+        consumer: &Id,
+        limit: usize,
+    ) -> Result<Vec<execution_sqlite::DeliveryEvidence>, Error> {
+        let execution = self.load(None, request, ExecutionAccess::Delivery(consumer))?;
+        let result = self.store.delivery_evidence(
+            &Scope::from_input(execution.input()),
+            consumer,
+            limit,
+            &self.adapter(None, None),
+        )?;
+        self.load(None, request, ExecutionAccess::Delivery(consumer))?;
+        Ok(result)
+    }
+    /// Confirm precisely one service-consumer event after durable remote acceptance.
+    pub fn service_confirm(
+        &mut self,
+        request: &RequestId,
+        consumer: &Id,
+        event: &EventId,
+    ) -> Result<(), Error> {
+        let execution = self.load(None, request, ExecutionAccess::Delivery(consumer))?;
+        let host = Host::new(&self.host, &self.binding, &self.config, None);
+        Ok(self.store.confirm(
+            &Scope::from_input(execution.input()),
+            consumer,
+            event,
+            &host,
+        )?)
+    }
     /// Open a bounded interaction bound by the service to the actual stored task. This records a
     /// wait reason only, not authorization or an automatic continuation. Host owns responder rights.
     pub fn open_interaction(

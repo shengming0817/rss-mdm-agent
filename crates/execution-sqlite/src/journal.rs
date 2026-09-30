@@ -54,6 +54,106 @@ pub(crate) struct Write<'a> {
     pub limits: Limits,
 }
 impl Store {
+    /// Read unconfirmed events and their evidence in one SQLite snapshot. Deliver and
+    /// RunnerFact are independently authorized; ordinary result access is insufficient.
+    pub fn delivery_evidence(
+        &self,
+        scope: &Scope,
+        consumer: &Id,
+        limit: usize,
+        host: &impl Host,
+    ) -> Result<Vec<DeliveryEvidence>, Error> {
+        if limit == 0 || limit > self.limits.max_batch {
+            return Err(Error::InvalidInput);
+        }
+        authorize(host, Access::RunnerFact, scope, None)?;
+        let tx = self.read(scope, Access::Deliver, Some(consumer), host)?;
+        let (input, execution, _) = crate::execution::load_execution(&tx, scope, self.limits)?;
+        let snapshot = execution.snapshot();
+        let current_attempt = snapshot.attempt.as_ref().map(|v| v.id.clone());
+        let (process, software) = match &current_attempt {
+            Some(attempt) => (
+                crate::process::capture(&tx, attempt, self.limits)?,
+                crate::software::facts(&tx, attempt, self.limits)?,
+            ),
+            None => (None, None),
+        };
+        if process
+            .as_ref()
+            .is_some_and(|v| v.content_digest != *input.digest())
+            || software
+                .as_ref()
+                .is_some_and(|v| v.content_digest != *input.digest())
+        {
+            return Err(Error::Corrupt);
+        }
+        let admission:Option<Vec<u8>>=tx.query_row(&format!("SELECT {} FROM receipts WHERE scope=?1 AND kind='admission' ORDER BY sequence DESC LIMIT 1",bounded_blob("body",self.limits.max_record_bytes)),[scope.key()],|r|r.get(0)).optional()?;
+        let denied = admission
+            .map(|b| decode::<Receipt>(&b, self.limits.max_record_bytes))
+            .transpose()?
+            .is_some_and(|v| v.admission == Some(AdmissionStatus::Denied));
+        let no_effect = snapshot
+            .attempt
+            .as_ref()
+            .and_then(|v| v.assessment.as_ref())
+            .is_some_and(|v| {
+                matches!(
+                    v.observation,
+                    execution_lifecycle::Observation::Effect {
+                        assessment: execution_lifecycle::EffectAssessment::NoEffect
+                    }
+                )
+            });
+        let terminal = if snapshot.cancel_requested && (current_attempt.is_none() || no_effect) {
+            Some(DeliveryTerminal::Cancelled)
+        } else if snapshot
+            .attempt
+            .as_ref()
+            .and_then(|v| v.termination.as_ref())
+            .is_some_and(|v| {
+                matches!(
+                    v.observation,
+                    execution_lifecycle::Observation::NeverDispatched { .. }
+                )
+            })
+            || (current_attempt.is_none() && denied)
+        {
+            Some(DeliveryTerminal::NeverDispatched)
+        } else {
+            None
+        };
+        let observed_at_unix_ms = snapshot.updated_at_unix_ms;
+        let input = std::sync::Arc::new(input);
+        let process = process.map(std::sync::Arc::new);
+        let software = software.map(std::sync::Arc::new);
+        let sql = format!("SELECT {} FROM receipts r WHERE r.scope=?1 AND r.kind!='trust'
+            AND NOT EXISTS(SELECT 1 FROM confirmations c WHERE c.scope=r.scope AND c.consumer=?2 AND c.sequence=r.sequence)
+            ORDER BY r.sequence LIMIT ?3", bounded_blob("r.body", self.limits.max_record_bytes));
+        let mut statement = tx.prepare(&sql)?;
+        let receipts = statement
+            .query_map(params![scope.key(), consumer.as_str(), limit as i64], |r| {
+                r.get::<_, Vec<u8>>(0)
+            })?
+            .map(|r| decode::<Receipt>(&r?, self.limits.max_record_bytes))
+            .collect::<Result<Vec<_>, Error>>()?;
+        receipts
+            .into_iter()
+            .map(|receipt| {
+                if receipt.scope != *scope {
+                    return Err(Error::Corrupt);
+                }
+                Ok(DeliveryEvidence {
+                    receipt,
+                    input: input.clone(),
+                    process: process.clone(),
+                    software: software.clone(),
+                    current_attempt: current_attempt.clone(),
+                    terminal,
+                    observed_at_unix_ms,
+                })
+            })
+            .collect()
+    }
     pub(crate) fn check_scope(&self, scope: &Scope) -> Result<(), Error> {
         if scope.authority != self.authority {
             return Err(Error::Denied);

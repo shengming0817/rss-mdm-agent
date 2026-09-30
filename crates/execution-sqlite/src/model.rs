@@ -415,6 +415,34 @@ pub struct Receipt {
     /// Trusted recorded receipt time.
     pub occurred_at_unix_ms: u64,
 }
+
+/// One authorized read snapshot for a delivery consumer; never grants execution.
+#[derive(Debug)]
+pub struct DeliveryEvidence {
+    /// Exact source event, not a delivery checkpoint.
+    pub receipt: Receipt,
+    /// Immutable local input used to bind evidence.
+    pub input: std::sync::Arc<FrozenExecution>,
+    /// Committed process capture for current_attempt, independent of receipt.attempt_id.
+    pub process: Option<std::sync::Arc<execution_contract::ProcessEvidence>>,
+    /// Committed independent detector facts for current_attempt in this read snapshot.
+    pub software: Option<std::sync::Arc<execution_contract::SoftwareEvidence>>,
+    /// Current journal attempt, independent of a preceding delivery receipt.
+    pub current_attempt: Option<AttemptId>,
+    /// Authoritative no-process terminal fact, never inferred from missing capture.
+    pub terminal: Option<DeliveryTerminal>,
+    /// Reliable timestamp of the current durable journal facts.
+    pub observed_at_unix_ms: u64,
+}
+
+/// Safe terminal projection proved by the execution journal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeliveryTerminal {
+    /// Cancellation before any attempt, or cancellation with verified NoEffect.
+    Cancelled,
+    /// Persisted admission denial or independently observed NeverDispatched.
+    NeverDispatched,
+}
 /// The first-commit result. DispatchAction is neither serializable nor recoverable.
 #[derive(Debug)]
 pub enum CommitOutcome {

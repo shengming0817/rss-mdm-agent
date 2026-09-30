@@ -1,0 +1,165 @@
+#![allow(dead_code)]
+use agent_client::{Error, OutputPolicy};
+use std::sync::atomic::Ordering;
+#[path = "../../../execution-app/tests/support/mod.rs"]
+pub mod local;
+pub struct FixtureOutput;
+impl OutputPolicy for FixtureOutput {
+    fn redact(&self, text: &str) -> Result<String, Error> {
+        Ok(text.replace("secret-canary", "[redacted]"))
+    }
+}
+#[derive(Clone)]
+pub struct CaptureSpec {
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+    pub quality: execution_contract::OutputQuality,
+    pub end: execution_contract::ProcessEnd,
+}
+#[derive(Clone)]
+pub struct CapturingRunner {
+    pub inner: execution_app::DeterministicTestRunner,
+    pub ready: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub capture: std::sync::Arc<std::sync::Mutex<Option<CaptureSpec>>>,
+}
+impl execution_app::RunnerPort for CapturingRunner {
+    fn id(&self) -> execution_contract::Id {
+        self.inner.id()
+    }
+    fn mode(&self) -> execution_lifecycle::ExecutionMode {
+        execution_lifecycle::ExecutionMode::Test
+    }
+    fn dispatch(
+        &self,
+        p: execution_app::AuthorizedDispatch,
+    ) -> Result<execution_app::DispatchOutcome, execution_app::Error> {
+        self.ready.store(true, Ordering::SeqCst);
+        self.inner.dispatch(p)
+    }
+    fn evidence(
+        &self,
+        p: &execution_contract::FrozenExecution,
+        a: &execution_contract::AttemptId,
+    ) -> Result<Option<execution_contract::ProcessEvidence>, execution_app::Error> {
+        let capture = self.capture.lock().unwrap();
+        Ok(self
+            .ready
+            .load(Ordering::SeqCst)
+            .then(|| execution_contract::ProcessEvidence {
+                content_digest: p.digest().clone(),
+                attempt_id: a.clone(),
+                runner: self.id(),
+                scope: execution_contract::ProcessScope::ProcessGroup { owner: 1, group: 1 },
+                finished: true,
+                exit_code: Some(0),
+                end: capture
+                    .as_ref()
+                    .map_or(execution_contract::ProcessEnd::Exited, |v| v.end),
+                failure_kind: execution_contract::ProcessFailureKind::None,
+                quiescent: true,
+                stdout: capture.as_ref().map_or_else(
+                    || b"{\"ok\":true,\"message\":\"secret-canary\"}".to_vec(),
+                    |v| v.stdout.clone(),
+                ),
+                stderr: capture.as_ref().map_or_else(Vec::new, |v| v.stderr.clone()),
+                total_output_bytes: capture
+                    .as_ref()
+                    .map_or(37, |v| (v.stdout.len() + v.stderr.len()) as u64),
+                quality: capture
+                    .as_ref()
+                    .map_or(execution_contract::OutputQuality::Complete, |v| v.quality),
+            }))
+    }
+    fn software_evidence(
+        &self,
+        p: &execution_contract::FrozenExecution,
+        a: &execution_contract::AttemptId,
+        _: execution_app::SoftwareObservation<'_>,
+    ) -> Result<Option<execution_contract::SoftwareEvidence>, execution_app::Error> {
+        Ok(
+            (self.ready.load(Ordering::SeqCst) && p.spec().execution.software().is_some()).then(
+                || execution_contract::SoftwareEvidence {
+                    attempt_id: a.clone(),
+                    content_digest: p.digest().clone(),
+                    runner: self.id(),
+                    before: Some(execution_contract::SoftwareState::Absent {}),
+                    detected: execution_contract::SoftwareState::Present {
+                        version: execution_contract::PackageValue::new("1.0").unwrap(),
+                    },
+                    object_identity: None,
+                    restart_required: false,
+                    boot_generation: Some(local::id("test-boot")),
+                    staging: execution_contract::SoftwareStaging::NotRequired {},
+                },
+            ),
+        )
+    }
+    fn acknowledge_capture(
+        &self,
+        _: &execution_contract::FrozenExecution,
+        _: &execution_contract::ProcessEvidence,
+    ) -> Result<(), execution_app::Error> {
+        self.ready.store(false, Ordering::SeqCst);
+        Ok(())
+    }
+    fn stop(
+        &self,
+        p: &execution_contract::FrozenExecution,
+        a: &execution_contract::AttemptId,
+    ) -> Result<(), execution_app::Error> {
+        self.inner.stop(p, a)
+    }
+    fn observe(
+        &self,
+        p: &execution_contract::FrozenExecution,
+        a: &execution_contract::AttemptId,
+        s: execution_app::ObservationStage,
+        n: u64,
+    ) -> Result<Option<execution_lifecycle::ObservationFacts>, execution_app::Error> {
+        let mut value = self.inner.observe(p, a, s, n)?;
+        if let Some(facts) = &mut value {
+            if let execution_lifecycle::Observation::Exited {
+                total_output_bytes, ..
+            } = &mut facts.observation
+            {
+                *total_output_bytes = self
+                    .capture
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .map_or(37, |v| (v.stdout.len() + v.stderr.len()) as u64);
+            }
+        }
+        Ok(value)
+    }
+}
+
+pub fn adapted_plan(
+    software: bool,
+    device: &str,
+    offer: &agent_client::Offer,
+) -> execution_contract::FrozenExecution {
+    use execution_contract::*;
+    let original = if software {
+        FrozenExecution::freeze(
+            decode_execution(
+                include_bytes!("../../../execution-contract/tests/fixtures/software.json"),
+                &execution_app::test_store_limits().input,
+            )
+            .unwrap(),
+            &execution_app::test_store_limits().input,
+        )
+        .unwrap()
+    } else {
+        local::plan()
+    };
+    let mut spec = original.spec().clone();
+    spec.request.request_id = offer.request_id().unwrap();
+    spec.request.target.device = DeviceId::new(device).unwrap();
+    spec.request.target.platform = Platform::Macos;
+    spec.request.target.scope = TargetScope::Device {};
+    spec.run_as = RunAs::System {
+        platform: Platform::Macos,
+    };
+    FrozenExecution::freeze(spec, &execution_app::test_store_limits().input).unwrap()
+}

@@ -76,7 +76,7 @@ pub enum Platform {
     Windows,
     /// macOS target/account namespace.
     Macos,
-    /// Linux host/account design namespace; not a claim of MDM-managed Linux support.
+    /// Linux host/account design namespace; does not assert rss-mdm product support for managed Linux devices.
     Linux,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

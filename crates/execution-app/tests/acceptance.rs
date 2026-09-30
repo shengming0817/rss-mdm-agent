@@ -7,6 +7,42 @@ fn command(value: &str) -> CommandId {
 }
 
 #[test]
+fn service_delivery_requires_both_delivery_and_evidence_access() {
+    let db = Database::new();
+    let host = TestHost::new();
+    let runner =
+        DeterministicTestRunner::new(id("test-runner"), TestScenario::Complete, 16).unwrap();
+    let mut app = open(&db, host.clone(), runner, Startup::CreateTest);
+    let p = plan();
+    let request = &p.spec().request.request_id;
+    app.request_execution(&caller(), &p).unwrap();
+    app.reconcile(request).unwrap();
+    let consumer = id("agent-delivery");
+    let items = app.service_delivery(request, &consumer, 64).unwrap();
+    assert!(!items.is_empty());
+    assert!(items.iter().all(|v| v.input.digest() == p.digest()));
+    host.state.lock().unwrap().accesses = Some(vec![execution_sqlite::Access::Deliver]);
+    assert!(matches!(
+        app.service_delivery(request, &consumer, 64),
+        Err(Error::Denied)
+    ));
+    host.state.lock().unwrap().accesses = Some(vec![execution_sqlite::Access::RunnerFact]);
+    assert!(matches!(
+        app.service_delivery(request, &consumer, 64),
+        Err(Error::Denied)
+    ));
+    host.state.lock().unwrap().accesses = None;
+    for item in items {
+        app.service_confirm(request, &consumer, &item.receipt.event_id)
+            .unwrap();
+    }
+    assert!(app
+        .service_delivery(request, &consumer, 64)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
 fn one_shot_request_replay_never_dispatches() {
     let db = Database::new();
     let host = TestHost::new();

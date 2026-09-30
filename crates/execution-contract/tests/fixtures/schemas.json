@@ -368,7 +368,7 @@
           },
           {
             "const": "linux",
-            "description": "Linux host/account design namespace; not a claim of MDM-managed Linux support.",
+            "description": "Linux host/account design namespace; does not assert rss-mdm product support for managed Linux devices.",
             "type": "string"
           }
         ]
@@ -1551,7 +1551,7 @@
           },
           {
             "const": "linux",
-            "description": "Linux host/account design namespace; not a claim of MDM-managed Linux support.",
+            "description": "Linux host/account design namespace; does not assert rss-mdm product support for managed Linux devices.",
             "type": "string"
           }
         ]
