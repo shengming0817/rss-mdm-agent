@@ -423,9 +423,9 @@ pub struct DeliveryEvidence {
     pub receipt: Receipt,
     /// Immutable local input used to bind evidence.
     pub input: std::sync::Arc<FrozenExecution>,
-    /// Committed process capture for the event's attempt, if available.
+    /// Committed process capture for current_attempt, independent of receipt.attempt_id.
     pub process: Option<std::sync::Arc<execution_contract::ProcessEvidence>>,
-    /// Committed independent detector facts for the same attempt.
+    /// Committed independent detector facts for current_attempt in this read snapshot.
     pub software: Option<std::sync::Arc<execution_contract::SoftwareEvidence>>,
     /// Current journal attempt, independent of a preceding delivery receipt.
     pub current_attempt: Option<AttemptId>,

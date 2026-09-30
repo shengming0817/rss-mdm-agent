@@ -666,6 +666,10 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
         tx.execute("DELETE FROM cache_refs WHERE task=?1", [task.to_string()])?;
         tx.execute("DELETE FROM tasks WHERE id=?1", [task.to_string()])?;
         tx.execute("DELETE FROM state WHERE key='claim'", [])?;
+        tx.execute(
+            "DELETE FROM state WHERE key IN(?1,?2)",
+            rusqlite::params![format!("binding/{task}"), format!("projection/{task}")],
+        )?;
         tx.commit()?;
         Ok(())
     }

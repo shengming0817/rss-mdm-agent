@@ -75,6 +75,129 @@ async fn unsupported_and_unsubmitted_started_offers_settle_without_journal_or_ca
     let next = client.claim().await.unwrap().offer.unwrap();
     assert_ne!(next.task_id(), offer.task_id());
 }
+#[tokio::test]
+async fn denied_admission_without_attempt_delivers_and_releases() {
+    use execution_app::*;
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let offer = client.claim().await.unwrap().offer.unwrap();
+    let materials = client.prepare(&offer).await.unwrap();
+    client.received(&offer).await.unwrap();
+    let plan = adapted_plan(false, "device-1", &offer);
+    let db = local::Database::new();
+    let mut host = local::TestHost::new();
+    host.template = plan.clone();
+    let runner =
+        DeterministicTestRunner::new(local::id("test-runner"), TestScenario::Complete, 16).unwrap();
+    let mut app = ExecutionApp::start(
+        &db.path,
+        Startup::CreateTest,
+        host.clone(),
+        runner.clone(),
+        AppConfig::test_defaults(1),
+    )
+    .unwrap();
+    let caller = RequestContext {
+        actor: plan.spec().request.actor.clone(),
+    };
+    let bridge = ExecutionBridge::new(local::id("agent-consumer"), FixtureOutput);
+    let prepared = bridge
+        .prepare(&offer, &materials, &app, &caller, &plan)
+        .unwrap();
+    let start = client.request_start(&offer, &materials).await.unwrap();
+    host.state.lock().unwrap().allow = false;
+    let status = bridge
+        .dispatch(&mut client, start, &materials, &mut app, prepared)
+        .unwrap();
+    assert_eq!(status.phase, TaskPhase::AdmissionDenied);
+    assert!(status.attempt_id.is_none());
+    for _ in 0..32 {
+        bridge
+            .flush(&mut client, offer.task_id(), &mut app, 1)
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        server.data.lock().unwrap().results.values().next().unwrap()["event"]["quality"],
+        "failed"
+    );
+    bridge
+        .finish(&mut client, offer.task_id(), &app, &caller)
+        .unwrap();
+    assert_eq!(runner.dispatch_count(), 0);
+    drop(materials);
+    assert_eq!(client.cleanup(128).unwrap(), 1);
+}
+#[tokio::test]
+async fn reserved_binding_without_journal_can_settle_after_permission_revocation_and_restart() {
+    use execution_app::*;
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let offer = client.claim().await.unwrap().offer.unwrap();
+    let materials = client.prepare(&offer).await.unwrap();
+    client.received(&offer).await.unwrap();
+    let plan = adapted_plan(false, "device-1", &offer);
+    let db = local::Database::new();
+    let mut host = local::TestHost::new();
+    host.template = plan.clone();
+    let runner =
+        DeterministicTestRunner::new(local::id("test-runner"), TestScenario::Complete, 16).unwrap();
+    let mut app = ExecutionApp::start(
+        &db.path,
+        Startup::CreateTest,
+        host.clone(),
+        runner.clone(),
+        AppConfig::test_defaults(1),
+    )
+    .unwrap();
+    let caller = RequestContext {
+        actor: plan.spec().request.actor.clone(),
+    };
+    let bridge = ExecutionBridge::new(local::id("agent-consumer"), FixtureOutput);
+    let prepared = bridge
+        .prepare(&offer, &materials, &app, &caller, &plan)
+        .unwrap();
+    let start = client.request_start(&offer, &materials).await.unwrap();
+    host.state.lock().unwrap().accesses = Some(vec![execution_sqlite::Access::ReadResult]);
+    assert!(bridge
+        .dispatch(&mut client, start, &materials, &mut app, prepared)
+        .is_err());
+    assert!(!app
+        .has_service_execution(
+            &plan.spec().request.request_id,
+            &plan.spec().request.target.device
+        )
+        .unwrap());
+    drop(app);
+    drop(materials);
+    drop(client);
+    server.time.set(72);
+    host.state.lock().unwrap().accesses = None;
+    let app = ExecutionApp::start(
+        &db.path,
+        Startup::OpenTest,
+        host,
+        runner.clone(),
+        AppConfig::test_defaults(1),
+    )
+    .unwrap();
+    let mut client = server.client(&root, OpenMode::Existing);
+    bridge
+        .abandon(&mut client, offer.task_id(), &app)
+        .await
+        .unwrap();
+    assert_eq!(
+        server.data.lock().unwrap().results.values().next().unwrap()["event"]["kind"],
+        "cancelled"
+    );
+    assert_eq!(runner.dispatch_count(), 0);
+    assert_eq!(client.cleanup(128).unwrap(), 1);
+    assert!(client.offer(offer.task_id()).is_err());
+}
 async fn no_process_terminal(cancel: bool) {
     use execution_app::*;
     let server = Server::new().await;

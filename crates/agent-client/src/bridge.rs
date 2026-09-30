@@ -199,12 +199,15 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         let request = offer.request_id()?;
         let device = execution_contract::DeviceId::new(client.registration()?.device_id)
             .map_err(|_| Error::Unsupported)?;
-        if client
-            .store
-            .get::<Binding>(&format!("binding/{task}"))?
-            .is_some()
-            || app.has_service_execution(&request, &device)?
-        {
+        if let Some(binding) = client.store.get::<Binding>(&format!("binding/{task}"))? {
+            if binding.task != task
+                || binding.attempt != offer.attempt_id()
+                || binding.request != request
+            {
+                return Err(Error::Conflict);
+            }
+        }
+        if app.has_service_execution(&request, &device)? {
             return Err(Error::Conflict);
         }
         let key = format!("abandon/{task}/{}", offer.attempt_id());
@@ -508,21 +511,19 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         {
             return Err(Error::Conflict);
         }
-        if !matches!(
+        let terminal = matches!(
             status.phase,
             TaskPhase::Verified | TaskPhase::Cancelled | TaskPhase::FailedBeforeDispatch
-        ) || !app
-            .service_delivery(&binding.request, &self.consumer, 1)?
-            .is_empty()
+        ) || (status.phase == TaskPhase::AdmissionDenied
+            && status.attempt_id.is_none());
+        if !terminal
+            || !app
+                .service_delivery(&binding.request, &self.consumer, 1)?
+                .is_empty()
         {
             return Err(Error::Conflict);
         }
-        client.release(task)?;
-        client.store.conn.execute(
-            "DELETE FROM state WHERE key IN(?1,?2)",
-            params![format!("binding/{task}"), format!("projection/{task}")],
-        )?;
-        Ok(())
+        client.release(task)
     }
 }
 fn bound(mut value: String) -> String {
