@@ -306,8 +306,10 @@ export function checkSource(file, source) {
           ].includes(file) && name === "../test-users"
         ) &&
         !(
-          file === "apps/desktop/src/assistant/ExecutionDetails.vue" &&
-          name === "../self-service/RequestOrigin.vue"
+          (file === "apps/desktop/src/assistant/ExecutionDetails.vue" &&
+            name === "../self-service/RequestOrigin.vue") ||
+          (file === "apps/desktop/src/self-service/TaskDetail.vue" &&
+            name === "../assistant/ExecutionDetails.vue")
         ) &&
         !resolve(dirname(resolve(root, file)), name)
           .replaceAll("\\", "/")

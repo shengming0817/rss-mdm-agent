@@ -449,7 +449,31 @@ impl host::Handler for Helper {
         Ok(())
     }
     fn stop(&mut self) -> Result<(), Error> {
-        self.runner.shutdown()
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        for owner in self.physical.values() {
+            owner
+                .cancel
+                .store(true, std::sync::atomic::Ordering::Release);
+        }
+        let runner = self.runner.shutdown_until(until);
+        loop {
+            let mut ended = true;
+            for owner in self.physical.values() {
+                ended &= owner
+                    .facts
+                    .lock()
+                    .map_err(|_| Error::Unavailable)?
+                    .as_ref()
+                    .is_some_and(|f| f.finished && f.quiescent);
+            }
+            if ended {
+                return runner;
+            }
+            if std::time::Instant::now() >= until {
+                return Err(Error::OutcomeUnknown);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
     }
 }
 
@@ -591,5 +615,62 @@ impl Connection {
             Reply::Prepared => Ok(()),
             _ => Err(Error::InvalidInput),
         }
+    }
+}
+
+#[cfg(test)]
+mod shutdown_tests {
+    use super::*;
+    use crate::host::Handler;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    };
+    #[test]
+    fn shutdown_cancels_every_unresolved_physical_owner_and_does_not_claim_success() {
+        let materials = MaterialRegistry::new(2).unwrap();
+        let mut helper = Helper {
+            physical: Default::default(),
+            retired: Default::default(),
+            clock_watermark: 0,
+            capacity: 2,
+            limits: execution_app::test_store_limits().input,
+            policy: host::PeerPolicy {
+                images: vec![],
+                subjects: vec![],
+                interactive: true,
+            },
+            work_root: PathBuf::new(),
+            subject: "fixture".into(),
+            session: 1,
+            binding: Id::new("fixture").unwrap(),
+            runner: NativeRunner::with_materials(Id::new("fixture").unwrap(), materials.clone(), 2)
+                .unwrap(),
+            materials,
+        };
+        let flags = [
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+        ];
+        for (step, flag) in flags.iter().enumerate() {
+            helper.physical.insert(
+                (
+                    AttemptId::new("attempt").unwrap(),
+                    step as u32,
+                    SoftwarePhase::Mutation,
+                ),
+                crate::runner::invocation::PhysicalInvocation {
+                    digest: Digest::new("ab".repeat(32)).unwrap(),
+                    cancel: flag.clone(),
+                    facts: Arc::new(Mutex::new(None)),
+                },
+            );
+        }
+        let started = std::time::Instant::now();
+        assert!(matches!(helper.stop(), Err(Error::OutcomeUnknown)));
+        assert!(flags.iter().all(|f| f.load(Ordering::Acquire)));
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        helper.physical.clear();
+        assert!(helper.stop().is_ok());
     }
 }

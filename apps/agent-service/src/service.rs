@@ -505,6 +505,16 @@ impl<S: SecretProvider> DeviceService<S> {
             .current
             .lock()
             .map_err(|_| Error::Unavailable)? = None;
+        if result.is_err()
+            && matches!(
+                self.core
+                    .app
+                    .frozen_input(&caller, &plan.spec().request.request_id),
+                Err(execution_app::Error::NotFound)
+            )
+        {
+            self.core.host.materials.retire(&plan)?;
+        }
         result
     }
     fn compile(

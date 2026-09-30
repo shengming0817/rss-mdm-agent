@@ -285,9 +285,7 @@ pub(super) fn execute(input: ProgramRun) {
                     before = Some(state);
                 } else if phase == SoftwarePhase::Mutation {
                     let facts = facts.as_ref().ok_or(Error::OutcomeUnknown)?;
-                    mutation_succeeded = facts.end == ProcessEnd::Exited
-                        && facts.exit_code == Some(0)
-                        && facts.failure_kind == ProcessFailureKind::None;
+                    mutation_succeeded = step.mutation_succeeded(facts);
                     if before.is_none() {
                         return Err(Error::OutcomeUnknown);
                     }

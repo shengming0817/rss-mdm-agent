@@ -100,6 +100,19 @@ pub struct SoftwareProgramStep {
     /// Bounded extraction resources for Bundle only.
     pub bundle_limits: Option<BundleLimits>,
 }
+impl SoftwareProgramStep {
+    /// Installer completion only; independent detection and quiescence still gate the step.
+    /// MSI reboot codes never authorize this client to initiate a reboot.
+    pub fn mutation_succeeded(&self, facts: &ProcessEvidence) -> bool {
+        facts.end == ProcessEnd::Exited
+            && facts.failure_kind == ProcessFailureKind::None
+            && match facts.exit_code {
+                Some(0) => true,
+                Some(3010 | 1641) => self.adapter == SoftwareKind::Msi && self.allow_reboot,
+                _ => false,
+            }
+    }
+}
 /// A single backend attempt and one execution intent, containing every ordered step.
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

@@ -67,7 +67,9 @@ impl NativeRunner {
     }
     /// Stop physical owners without changing journal outcomes or manufacturing quiescence.
     pub fn shutdown(&self) -> Result<(), Error> {
-        let until = Instant::now() + Duration::from_secs(3);
+        self.shutdown_until(Instant::now() + Duration::from_secs(3))
+    }
+    pub(crate) fn shutdown_until(&self, until: Instant) -> Result<(), Error> {
         loop {
             let records = self.records.lock().map_err(|_| Error::Unavailable)?;
             let mut ended = true;

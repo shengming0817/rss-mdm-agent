@@ -166,11 +166,8 @@ impl SoftwareProgress {
                                 return false;
                             }
                             next = SoftwarePhase::After;
-                            mutation_succeeded = process.as_ref().is_some_and(|p| {
-                                p.end == ProcessEnd::Exited
-                                    && p.exit_code == Some(0)
-                                    && p.failure_kind == ProcessFailureKind::None
-                            });
+                            mutation_succeeded =
+                                process.as_ref().is_some_and(|p| spec.mutation_succeeded(p));
                         }
                     }
                     // Unknown activity or detection is a hard boundary: the history may end

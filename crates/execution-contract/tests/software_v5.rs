@@ -126,3 +126,117 @@ fn journal_history_cannot_skip_unknown_steps_or_rewrite_exits() {
     progress.checkpoints.clear();
     assert!(!progress.extends(&begun));
 }
+
+#[test]
+fn msi_reboot_completion_requires_permission_detection_and_quiescence() {
+    use execution_contract::*;
+    for adapter in [SoftwareKind::Msi, SoftwareKind::Pkg] {
+        for allow_reboot in [false, true] {
+            for code in [0, 3010, 1641, 1603] {
+                for observed in [false, true] {
+                    for quiet in [false, true] {
+                        let mut input =
+                            decode_execution(include_bytes!("fixtures/software.json"), &limits())
+                                .unwrap();
+                        let platform = adapter.platform();
+                        input.request.target.platform = platform;
+                        input.run_as = RunAs::System { platform };
+                        if platform == Platform::Windows {
+                            input.launch.cwd = r"C:\workspace".into();
+                        }
+                        let ExecutionSpec::SoftwareProgram { program } = &mut input.execution
+                        else {
+                            unreachable!()
+                        };
+                        program.steps.truncate(1);
+                        let step = &mut program.steps[0];
+                        step.adapter = adapter;
+                        step.allow_reboot = allow_reboot;
+                        step.install.run_as = RunAs::System { platform };
+                        if platform == Platform::Windows {
+                            step.install.launch.cwd = r"C:\workspace".into();
+                        }
+                        if adapter == SoftwareKind::Msi {
+                            step.detection = SoftwareDetector::MsiProduct {
+                                product_code: "{12345678-1234-1234-1234-123456789ABC}".into(),
+                                version: step.version.clone(),
+                            };
+                        }
+                        let version = step.version.clone();
+                        let plan = FrozenExecution::freeze(input, &limits()).unwrap();
+                        let facts = ProcessEvidence {
+                            content_digest: plan.digest().clone(),
+                            attempt_id: AttemptId::new("attempt").unwrap(),
+                            runner: Id::new("runner").unwrap(),
+                            scope: ProcessScope::NotStarted {},
+                            finished: true,
+                            exit_code: Some(code),
+                            end: ProcessEnd::Exited,
+                            failure_kind: ProcessFailureKind::None,
+                            quiescent: quiet,
+                            stdout: vec![],
+                            stderr: vec![],
+                            total_output_bytes: 0,
+                            quality: OutputQuality::Complete,
+                        };
+                        let mut progress = SoftwareProgress {
+                            attempt_id: facts.attempt_id.clone(),
+                            content_digest: plan.digest().clone(),
+                            runner: facts.runner.clone(),
+                            elapsed_ms: 1,
+                            output_bytes: 0,
+                            checkpoints: vec![
+                                SoftwareCheckpoint::Begin {
+                                    step: 0,
+                                    phase: SoftwarePhase::Before,
+                                },
+                                SoftwareCheckpoint::End {
+                                    step: 0,
+                                    phase: SoftwarePhase::Before,
+                                    process: None,
+                                    detected: Some(SoftwareState::Absent {}),
+                                    quiescent: true,
+                                },
+                                SoftwareCheckpoint::Begin {
+                                    step: 0,
+                                    phase: SoftwarePhase::Mutation,
+                                },
+                                SoftwareCheckpoint::End {
+                                    step: 0,
+                                    phase: SoftwarePhase::Mutation,
+                                    process: Some(Box::new(facts)),
+                                    detected: None,
+                                    quiescent: quiet,
+                                },
+                                SoftwareCheckpoint::Begin {
+                                    step: 0,
+                                    phase: SoftwarePhase::After,
+                                },
+                                SoftwareCheckpoint::End {
+                                    step: 0,
+                                    phase: SoftwarePhase::After,
+                                    process: None,
+                                    detected: Some(if observed {
+                                        SoftwareState::Present { version }
+                                    } else {
+                                        SoftwareState::Absent {}
+                                    }),
+                                    quiescent: true,
+                                },
+                            ],
+                        };
+                        assert!(progress.valid_for(&plan));
+                        progress
+                            .checkpoints
+                            .push(SoftwareCheckpoint::Complete { step: 0 });
+                        let success = code == 0
+                            || (adapter == SoftwareKind::Msi
+                                && allow_reboot
+                                && matches!(code, 3010 | 1641));
+                        assert_eq!(progress.valid_for(&plan), success && observed && quiet);
+                    }
+                }
+            }
+        }
+    }
+}

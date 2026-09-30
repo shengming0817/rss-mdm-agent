@@ -6,7 +6,7 @@ test("exit and independent effect stay separate and cancellation is a request", 
   const task = executionTask();
   task.status.assessment = null;
   const wrapper = mount(TaskDetail, { props: { task, disabled: false } });
-  expect(wrapper.text()).toContain("效果核实：未知");
+  expect(wrapper.text()).toContain("结果未知时不要重复派发");
   expect(wrapper.text()).not.toContain("安装成功");
   await wrapper.get("button").trigger("click");
   expect(wrapper.emitted("cancel")).toHaveLength(1);
@@ -41,4 +41,13 @@ test("backend authority and actual AI origin are presented without client approv
   expect(wrapper.findAll("button").map((b) => b.text())).toEqual([
     "请求取消原任务",
   ]);
+});
+
+test("human details expose unavailable detection and mechanism evidence", () => {
+  const task = executionTask();
+  task.status.software = "detectionUnavailable";
+  const wrapper = mount(TaskDetail, { props: { task, disabled: false } });
+  expect(wrapper.text()).toContain("检测");
+  expect(wrapper.find(".software-diagnostic").exists()).toBe(true);
+  expect(wrapper.text()).toContain("不要重复派发");
 });
