@@ -802,6 +802,22 @@ try {
     ) < 2,
     "returning to AI preserves history reading position",
   );
+  await page.locator(".new-conversation").click();
+  await page
+    .locator(".conversation-list")
+    .getByRole("button", { name: title, exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "回到最新消息", exact: true })
+    .waitFor();
+  assert.ok(
+    Math.abs(
+      (await page
+        .locator(".assistant-timeline")
+        .evaluate((el) => el.scrollTop)) - readPosition,
+    ) < 2,
+    "A to B to A restores the historical reading position without following the latest message",
+  );
   await page.clock.setFixedTime(new Date());
   await navigate("软件中心");
   await page.getByRole("button", { name: "AI 助手", exact: true }).click();

@@ -214,9 +214,10 @@ watch(
       .join(""),
   ],
   async (next, previous) => {
-    if (props.visible && (following.value || next[0] !== previous?.[0])) {
+    if (props.visible && following.value && next[0] === previous?.[0]) {
       await nextTick();
-      scrollEnd();
+      if (props.visible && following.value && next[0] === s.selected)
+        scrollEnd();
     }
   },
   { flush: "post" },
