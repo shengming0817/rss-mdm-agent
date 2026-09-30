@@ -1,4 +1,4 @@
-use crate::{ActorId, DeviceId, Digest, EnvironmentKey, Id, NetworkDestination, RequestId, V1, V4};
+use crate::{ActorId, DeviceId, Digest, EnvironmentKey, Id, NetworkDestination, RequestId, V1, V5};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt};
@@ -44,6 +44,15 @@ pub enum Authority {
 )]
 /// Request origin and account provenance; never grants the product actor additional authority.
 pub enum Initiator {
+    /// Backend-authorized task. A local trigger records provenance and supplies no new authority.
+    Backend {
+        /// Exact server task, independently verified by the host.
+        task: Id,
+        /// Exact server execution attempt.
+        attempt: Id,
+        /// Authenticated local trigger or automatic backend dispatch.
+        trigger: BackendTrigger,
+    },
     /// Human origin with explicit OS login provenance.
     Human {
         /// Originating OS account/session reference, separate from requested run-as identity.
@@ -66,6 +75,34 @@ pub enum Initiator {
     Policy {
         /// Exact policy revision associated with this request or audit decision.
         policy: VersionedRef,
+    },
+}
+/// Provenance for a task already authorized by the backend; never a local enterprise approval.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum BackendTrigger {
+    /// Automatic backend assignment.
+    Automatic {},
+    /// An authenticated user selected an offered task in the trusted desktop.
+    Human {
+        /// Actual native account and login session, supplied by ingress.
+        os_session: OsSessionRef,
+    },
+    /// Trusted desktop submitted the user's confirmed AI proposal.
+    Ai {
+        /// Actual native account and login session, supplied by ingress.
+        os_session: OsSessionRef,
+        /// Native AI connection configuration, not a provider identity grant.
+        config: VersionedRef,
+        /// Conversation reference used for audit correlation.
+        conversation: Id,
+        /// Tool request reference used for audit correlation.
+        tool_call: Id,
     },
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -294,6 +331,8 @@ pub enum SessionRequirement {
     ActiveUser {
         /// Exact account whose session is required, not inferred from the initiator.
         account: OsAccountRef,
+        /// Exact native login session; a new login for the same account is not interchangeable.
+        session: Id,
     },
 }
 
@@ -301,8 +340,8 @@ pub enum SessionRequirement {
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExecutionInput {
-    /// Required current V4 discriminator; absent or unsupported versions are rejected.
-    pub schema_version: V4,
+    /// Required current V5 discriminator; absent or unsupported versions are rejected.
+    pub schema_version: V5,
     /// Closed execution semantics, included in the sole canonical digest.
     pub execution: crate::ExecutionSpec,
     /// Original operation intent, retained once as part of the canonical execution input.

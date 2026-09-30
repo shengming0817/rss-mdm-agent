@@ -1,12 +1,12 @@
 use execution_contract::{
     Digest, ExactArtifactRef, ExecutionBudget, FrozenExecution, InterpreterRef, NetworkAccess,
-    Operation, RequestId, RunAs, SessionRequirement, Target, ValidityWindow, VersionedRef, V4,
+    Operation, RequestId, RunAs, SessionRequirement, Target, ValidityWindow, VersionedRef, V5,
 };
 use schemars::JsonSchema;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Safe counts only; individual paths and network destinations remain protected.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "kind",
     rename_all = "camelCase",
@@ -33,7 +33,7 @@ pub enum AccessSummary {
 }
 
 /// Allowlisted view of the immutable plan; no parameters, launch inputs, secrets or audit.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct FrozenExecutionSummary {
     /// Product authority bound to the exact plan.
@@ -43,7 +43,7 @@ pub struct FrozenExecutionSummary {
     /// Human or AI origin, without granting execution permission.
     pub initiator: execution_contract::Initiator,
     /// Version of the frozen execution plan, independent of the AI wire version.
-    pub schema_version: V4,
+    pub schema_version: V5,
     /// Closed execution kind without private software paths or source inputs.
     pub execution: ExecutionSummary,
     /// Exact frozen plan identity.
@@ -81,10 +81,29 @@ impl FrozenExecutionSummary {
             schema_version: p.schema_version,
             execution: match &p.execution {
                 execution_contract::ExecutionSpec::Process {} => ExecutionSummary::Process {},
-                execution_contract::ExecutionSpec::Software { software } => {
-                    ExecutionSummary::Software {
-                        adapter: software.adapter,
-                        mutation: software.mutation,
+                execution_contract::ExecutionSpec::SoftwareProgram { program } => {
+                    ExecutionSummary::SoftwareProgram {
+                        intent: program.intent,
+                        steps: program
+                            .steps
+                            .iter()
+                            .map(|step| SoftwareStepSummary {
+                                adapter: step.adapter,
+                                package: step.package.clone(),
+                                version: step.version.clone(),
+                                run_as: if program.intent
+                                    == execution_contract::SoftwareOperation::Uninstall
+                                {
+                                    step.uninstall
+                                        .as_ref()
+                                        .unwrap_or(&step.install)
+                                        .run_as
+                                        .clone()
+                                } else {
+                                    step.install.run_as.clone()
+                                },
+                            })
+                            .collect(),
                     }
                 }
             },
@@ -124,7 +143,7 @@ impl FrozenExecutionSummary {
 }
 
 /// One authorized record read provides both lifecycle status and frozen plan facts.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionTaskDetails {
     /// Authoritative lifecycle projection.
@@ -133,7 +152,7 @@ pub struct ExecutionTaskDetails {
     pub action: FrozenExecutionSummary,
 }
 /// Bounded authorized task list using the same detail projection as individual reads.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskPage {
     /// Safe frozen facts and current lifecycle state.
@@ -143,16 +162,30 @@ pub struct TaskPage {
 }
 
 /// Safe execution semantics for task presentation; it never grants execution permission.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum ExecutionSummary {
+    /// One ordered backend software task.
+    SoftwareProgram {
+        /// Fixed backend operation.
+        intent: execution_contract::SoftwareOperation,
+        /// Safe step identities, without launch inputs or paths.
+        steps: Vec<SoftwareStepSummary>,
+    },
     /// Existing process or collection execution.
     Process {},
-    /// Software mutation, requiring independent installed-state verification.
-    Software {
-        /// Selected platform adapter.
-        adapter: execution_contract::SoftwareKind,
-        /// Selected mutation.
-        mutation: execution_contract::MutationKind,
-    },
+}
+
+/// Safe software-step projection from the frozen program.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SoftwareStepSummary {
+    /// Selected closed adapter.
+    pub adapter: execution_contract::SoftwareKind,
+    /// Exact backend package.
+    pub package: execution_contract::PackageValue,
+    /// Fixed package version.
+    pub version: execution_contract::PackageValue,
+    /// Actual execution identity for the step.
+    pub run_as: RunAs,
 }

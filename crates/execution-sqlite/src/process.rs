@@ -103,14 +103,25 @@ impl Store {
             if previous == *facts {
                 return Ok(());
             }
+            let incomplete = previous.finished
+                && !previous.quiescent
+                && previous.end == execution_contract::ProcessEnd::Unknown
+                && previous.quality == execution_contract::OutputQuality::Partial;
             if (previous.failure_kind != execution_contract::ProcessFailureKind::None
+                && !(incomplete
+                    && previous.failure_kind
+                        == execution_contract::ProcessFailureKind::Unavailable)
                 && previous.failure_kind != facts.failure_kind)
-                || previous.finished
+                || (previous.finished && !incomplete)
+                || previous
+                    .exit_code
+                    .is_some_and(|exit| facts.exit_code != Some(exit))
                 || previous.content_digest != facts.content_digest
                 || (previous.scope != facts.scope
                     && !matches!(
                         previous.scope,
                         execution_contract::ProcessScope::Preparing {}
+                            | execution_contract::ProcessScope::Delegated { .. }
                     ))
                 || previous.runner != facts.runner
                 || previous.total_output_bytes > facts.total_output_bytes

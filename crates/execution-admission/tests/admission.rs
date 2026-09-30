@@ -310,6 +310,7 @@ fn no_launch_parameter_identity_or_constraint_substitution_is_allowed() {
             }
             15 => {
                 s.session_requirement = SessionRequirement::ActiveUser {
+                    session: Id::new("10").unwrap(),
                     account: OsAccountRef {
                         platform: Platform::Linux,
                         subject: id("user"),

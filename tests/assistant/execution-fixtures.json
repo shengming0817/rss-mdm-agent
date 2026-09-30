@@ -21,7 +21,7 @@
         "totalOutputBytes": 4096,
         "totalTimeoutMs": 1000
       },
-      "contentDigest": "c2e1db1c69ac01d2611e70a54871edc88dbacf420497b86df00f7572e2d2f85f",
+      "contentDigest": "1cc9a573957f1dd48c38d98970a64c4486fde6e4f9c647c884b631e10a07d7ad",
       "execution": { "kind": "process" },
       "initiator": {
         "kind": "policy",
@@ -44,7 +44,7 @@
         "account": { "platform": "linux", "subject": "uid:1000" },
         "kind": "user"
       },
-      "schemaVersion": 4,
+      "schemaVersion": 5,
       "sessionRequirement": { "kind": "notRequired" },
       "target": {
         "device": "device-1",
@@ -62,7 +62,7 @@
       "attemptId": null,
       "attempts": 0,
       "cancelRequested": false,
-      "contentDigest": "c2e1db1c69ac01d2611e70a54871edc88dbacf420497b86df00f7572e2d2f85f",
+      "contentDigest": "1cc9a573957f1dd48c38d98970a64c4486fde6e4f9c647c884b631e10a07d7ad",
       "dispatchCause": null,
       "evidence": [],
       "mode": "test",
@@ -95,7 +95,7 @@
         "totalOutputBytes": 4096,
         "totalTimeoutMs": 1000
       },
-      "contentDigest": "c2e1db1c69ac01d2611e70a54871edc88dbacf420497b86df00f7572e2d2f85f",
+      "contentDigest": "1cc9a573957f1dd48c38d98970a64c4486fde6e4f9c647c884b631e10a07d7ad",
       "execution": { "kind": "process" },
       "initiator": {
         "kind": "policy",
@@ -118,7 +118,7 @@
         "account": { "platform": "linux", "subject": "uid:1000" },
         "kind": "user"
       },
-      "schemaVersion": 4,
+      "schemaVersion": 5,
       "sessionRequirement": { "kind": "notRequired" },
       "target": {
         "device": "device-1",
@@ -136,7 +136,7 @@
       "attemptId": "app-fd5e6aca451fdab554517dcc42aea4609d7c916efc7f7f5102c14914556715fa",
       "attempts": 1,
       "cancelRequested": true,
-      "contentDigest": "c2e1db1c69ac01d2611e70a54871edc88dbacf420497b86df00f7572e2d2f85f",
+      "contentDigest": "1cc9a573957f1dd48c38d98970a64c4486fde6e4f9c647c884b631e10a07d7ad",
       "dispatchCause": null,
       "evidence": [
         {
@@ -186,7 +186,7 @@
         "totalOutputBytes": 4096,
         "totalTimeoutMs": 1000
       },
-      "contentDigest": "c2e1db1c69ac01d2611e70a54871edc88dbacf420497b86df00f7572e2d2f85f",
+      "contentDigest": "1cc9a573957f1dd48c38d98970a64c4486fde6e4f9c647c884b631e10a07d7ad",
       "execution": { "kind": "process" },
       "initiator": {
         "kind": "policy",
@@ -209,7 +209,7 @@
         "account": { "platform": "linux", "subject": "uid:1000" },
         "kind": "user"
       },
-      "schemaVersion": 4,
+      "schemaVersion": 5,
       "sessionRequirement": { "kind": "notRequired" },
       "target": {
         "device": "device-1",
@@ -227,7 +227,7 @@
       "attemptId": "app-fd5e6aca451fdab554517dcc42aea4609d7c916efc7f7f5102c14914556715fa",
       "attempts": 1,
       "cancelRequested": false,
-      "contentDigest": "c2e1db1c69ac01d2611e70a54871edc88dbacf420497b86df00f7572e2d2f85f",
+      "contentDigest": "1cc9a573957f1dd48c38d98970a64c4486fde6e4f9c647c884b631e10a07d7ad",
       "dispatchCause": "deliveryUnknown",
       "evidence": [],
       "mode": "test",
@@ -260,7 +260,7 @@
         "totalOutputBytes": 4096,
         "totalTimeoutMs": 1000
       },
-      "contentDigest": "c2e1db1c69ac01d2611e70a54871edc88dbacf420497b86df00f7572e2d2f85f",
+      "contentDigest": "1cc9a573957f1dd48c38d98970a64c4486fde6e4f9c647c884b631e10a07d7ad",
       "execution": { "kind": "process" },
       "initiator": {
         "kind": "policy",
@@ -283,7 +283,7 @@
         "account": { "platform": "linux", "subject": "uid:1000" },
         "kind": "user"
       },
-      "schemaVersion": 4,
+      "schemaVersion": 5,
       "sessionRequirement": { "kind": "notRequired" },
       "target": {
         "device": "device-1",
@@ -301,7 +301,7 @@
       "attemptId": "app-fd5e6aca451fdab554517dcc42aea4609d7c916efc7f7f5102c14914556715fa",
       "attempts": 1,
       "cancelRequested": false,
-      "contentDigest": "c2e1db1c69ac01d2611e70a54871edc88dbacf420497b86df00f7572e2d2f85f",
+      "contentDigest": "1cc9a573957f1dd48c38d98970a64c4486fde6e4f9c647c884b631e10a07d7ad",
       "dispatchCause": null,
       "evidence": [],
       "mode": "test",
@@ -326,11 +326,18 @@
         "totalOutputBytes": 4096,
         "totalTimeoutMs": 1000
       },
-      "contentDigest": "24c2c4477b23a3d6db80c2004f5e6ad5b3c208212311d098bc47a8954c106092",
+      "contentDigest": "699416bebf64e5c3cafe13a2d5f81b9ab6f056df9f269335b0cdc1441b0036d6",
       "execution": {
-        "adapter": "pkg",
-        "kind": "software",
-        "mutation": "install"
+        "intent": "install",
+        "kind": "softwareProgram",
+        "steps": [
+          {
+            "adapter": "pkg",
+            "package": "org.rss.fixture",
+            "runAs": { "kind": "system", "platform": "macos" },
+            "version": "1.0"
+          }
+        ]
       },
       "initiator": {
         "kind": "policy",
@@ -341,7 +348,7 @@
           "resource": { "id": "test-interpreter", "revision": "1" },
           "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
         },
-        "profile": { "id": "native-posix-sh-file", "revision": "1" }
+        "profile": { "id": "native-software-sequence", "revision": "1" }
       },
       "operation": {
         "action": "software.install",
@@ -349,11 +356,8 @@
       },
       "policy": { "id": "policy-1", "revision": "1" },
       "requestId": "request-1",
-      "runAs": {
-        "account": { "platform": "macos", "subject": "501" },
-        "kind": "user"
-      },
-      "schemaVersion": 4,
+      "runAs": { "kind": "system", "platform": "macos" },
+      "schemaVersion": 5,
       "sessionRequirement": { "kind": "notRequired" },
       "target": {
         "device": "device-1",
@@ -368,7 +372,7 @@
       "attemptId": "app-fd5e6aca451fdab554517dcc42aea4609d7c916efc7f7f5102c14914556715fa",
       "attempts": 1,
       "cancelRequested": false,
-      "contentDigest": "24c2c4477b23a3d6db80c2004f5e6ad5b3c208212311d098bc47a8954c106092",
+      "contentDigest": "699416bebf64e5c3cafe13a2d5f81b9ab6f056df9f269335b0cdc1441b0036d6",
       "dispatchCause": null,
       "evidence": [],
       "mode": "test",
@@ -401,7 +405,7 @@
         "totalOutputBytes": 4096,
         "totalTimeoutMs": 1000
       },
-      "contentDigest": "c2e1db1c69ac01d2611e70a54871edc88dbacf420497b86df00f7572e2d2f85f",
+      "contentDigest": "1cc9a573957f1dd48c38d98970a64c4486fde6e4f9c647c884b631e10a07d7ad",
       "execution": { "kind": "process" },
       "initiator": {
         "kind": "policy",
@@ -424,7 +428,7 @@
         "account": { "platform": "linux", "subject": "uid:1000" },
         "kind": "user"
       },
-      "schemaVersion": 4,
+      "schemaVersion": 5,
       "sessionRequirement": { "kind": "notRequired" },
       "target": {
         "device": "device-1",
@@ -442,7 +446,7 @@
       "attemptId": "app-fd5e6aca451fdab554517dcc42aea4609d7c916efc7f7f5102c14914556715fa",
       "attempts": 1,
       "cancelRequested": false,
-      "contentDigest": "c2e1db1c69ac01d2611e70a54871edc88dbacf420497b86df00f7572e2d2f85f",
+      "contentDigest": "1cc9a573957f1dd48c38d98970a64c4486fde6e4f9c647c884b631e10a07d7ad",
       "dispatchCause": null,
       "evidence": [
         {

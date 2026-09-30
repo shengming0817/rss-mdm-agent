@@ -14,7 +14,8 @@ pub struct Artifact {
     pub cdhash: Option<String>,
 }
 impl Artifact {
-    pub(crate) fn verify(&self, actual: &Path) -> Result<(), Rejected> {
+    /// Verify the protected installed image at its exact administrator-selected path.
+    pub fn verify(&self, actual: &Path) -> Result<(), Rejected> {
         if !self.path.is_absolute() || actual != self.path || self.sha256.len() != 64 {
             return Err(Rejected);
         }
@@ -26,7 +27,7 @@ impl Artifact {
         Ok(())
     }
     #[cfg(target_os = "macos")]
-    pub(crate) fn requirement(&self) -> Result<std::ffi::CString, Rejected> {
+    pub fn requirement(&self) -> Result<std::ffi::CString, Rejected> {
         let cdhash = self.cdhash.as_deref().ok_or(Rejected)?;
         if cdhash.len() != 40 || !cdhash.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err(Rejected);
@@ -104,7 +105,8 @@ pub fn policy_path() -> Result<PathBuf, Rejected> {
         Err(Rejected)
     }
 }
-pub(crate) fn protected(path: &Path) -> Result<(), Rejected> {
+/// Validate the complete administrator-owned path chain without following symlinks/reparse points.
+pub fn protected(path: &Path) -> Result<(), Rejected> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
@@ -184,6 +186,11 @@ fn read_policy(path: &Path) -> Result<(PathBuf, Vec<u8>), Rejected> {
         let _ = path;
         Err(Rejected)
     }
+}
+
+/// Read bounded administrator-owned deployment data through the existing native protection checks.
+pub fn read_protected(path: &Path) -> Result<Vec<u8>, Rejected> {
+    read_policy(path).map(|(_, bytes)| bytes)
 }
 
 #[derive(Serialize)]

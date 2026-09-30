@@ -6,7 +6,7 @@
       "resources/ai-host-runtime": "ai-host-runtime"
     },
     "windows": {
-      "nsis": { "installMode": "perUser" }
+      "nsis": { "installMode": "currentUser" }
     }
   }
 }

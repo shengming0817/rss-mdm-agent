@@ -55,9 +55,8 @@ macro_rules! commands {
 }
 commands! {
     self_service_snapshot(SnapshotQuery) -> Snapshot = snapshot,
-    self_service_execute(Draft) -> RequestView = execute_ui,
-    self_service_cancel(ActionRef) -> RequestView = cancel_ui,
-    self_service_confirm(ActionRef) -> RequestView = confirm_ui,
+    self_service_execute(execution_contract::BackendSelection) -> execution_contract::TaskSubmission = execute_ui,
+    self_service_cancel(ActionRef) -> execution_app::ExecutionStatus = cancel_ui,
 }
 #[tauri::command]
 pub async fn execution_task_details(
@@ -246,7 +245,6 @@ pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder
         self_service_snapshot,
         self_service_execute,
         self_service_cancel,
-        self_service_confirm,
         execution_task_details,
         ai_connect,
         ai_receive,
@@ -318,16 +316,21 @@ mod tests {
         let other = tauri::WebviewWindowBuilder::new(&app, "other", Default::default())
             .build()
             .unwrap();
-        let snapshot = call(
+        // Production has no private S1 catalog or journal fallback. The installed service
+        // may be absent in this ACL test; either response must retain that boundary.
+        match call(
             &main,
             "self_service_snapshot",
             "tauri://localhost",
-            serde_json::json!({"input":{"after":null,"requestIds":[]}}),
-        )
-        .unwrap()
-        .deserialize::<serde_json::Value>()
-        .unwrap();
-        assert_eq!(snapshot["catalog"].as_array().unwrap().len(), 8);
+            serde_json::json!({"input":{"after":null}}),
+        ) {
+            Ok(reply) => {
+                let snapshot = reply.deserialize::<serde_json::Value>().unwrap();
+                assert!(snapshot.get("catalog").is_none());
+                assert!(snapshot["available"].is_array());
+            }
+            Err(error) => assert_ne!(error["code"], "input"),
+        }
         let service = call(
             &main,
             "local_service_status",
@@ -351,7 +354,6 @@ mod tests {
             "ai_export_diagnostics",
             "self_service_snapshot",
             "self_service_execute",
-            "self_service_confirm",
             "self_service_cancel",
             "execution_task_details",
             "save_connection",
@@ -382,11 +384,7 @@ mod tests {
             serde_json::json!({})
         )
         .is_err());
-        for command in [
-            "self_service_execute",
-            "self_service_confirm",
-            "self_service_cancel",
-        ] {
+        for command in ["self_service_execute", "self_service_cancel"] {
             let error = call(
                 &main,
                 command,

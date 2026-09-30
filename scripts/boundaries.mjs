@@ -8,7 +8,6 @@ import { parse, compileTemplate } from "vue/compiler-sfc";
 const selfServiceCommands = [
   "self_service_snapshot",
   "self_service_execute",
-  "self_service_confirm",
   "self_service_cancel",
 ];
 const assistantCommands = [
@@ -563,6 +562,9 @@ export function checkTree(treeRoot = root) {
         'objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSAlert", "NSButton", "NSControl", "NSSecureTextField", "NSTextField", "NSView", "NSResponder", "NSWindow", "NSApplication", "NSSavePanel", "NSPanel"] }',
         'objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSString", "NSGeometry", "NSURL"] }',
         'execution-app = { path = "../../../crates/execution-app" }',
+        'execution-runner = { path = "../../../crates/execution-runner" }',
+        'execution-interaction = { path = "../../../crates/execution-interaction" }',
+        'rusqlite.workspace = true',
         'execution-sqlite = { path = "../../../crates/execution-sqlite" }',
         'execution-mcp = { path = "../../../crates/execution-mcp" }',
         'execution-admission = { path = "../../../crates/execution-admission" }',

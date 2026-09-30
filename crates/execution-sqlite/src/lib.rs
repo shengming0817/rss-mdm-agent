@@ -8,8 +8,10 @@ mod journal;
 mod model;
 mod process;
 mod software;
+mod software_progress;
 mod trust;
 pub use database::{OpenOutcome, Store};
 pub use model::*;
+pub use software_progress::CommittedSoftwareProgress;
 
 pub use interaction::execution_confirmation;

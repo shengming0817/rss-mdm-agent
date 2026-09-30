@@ -65,10 +65,11 @@ fn fixture(script: &str, argv: Vec<LaunchArg>, budget: u64, timeout: u64) -> Fix
     )
     .unwrap();
     let artifacts = Artifacts {
+        program: Vec::new(),
+        delegate: None,
         interpreter: "/bin/sh".into(),
         content,
         work_root: root.clone(),
-        software: None,
         controlled_input: None,
         fixture_owned: true,
     };
@@ -91,8 +92,7 @@ fn start(f: &Fixture, cap: u64, time: u64) -> AttemptId {
                     deadline_unix_ms: now().unwrap() + time,
                     remaining_timeout_ms: time,
                     remaining_output_bytes: cap
-                },
-                None
+                }
             )
             .unwrap(),
         DispatchOutcome::Accepted
@@ -146,8 +146,7 @@ fn argv_is_literal_and_exit_is_not_effect_or_tree_proof() {
                 deadline_unix_ms: now().unwrap() + 1000,
                 remaining_timeout_ms: 1000,
                 remaining_output_bytes: 4096
-            },
-            None
+            }
         )
         .is_err());
 }
@@ -324,7 +323,6 @@ fn acknowledged_final_capture_releases_slots_without_evicting_live_owners() {
                     remaining_timeout_ms: 1000,
                     remaining_output_bytes: 128,
                 },
-                None,
             )
             .unwrap();
         assert!(matches!(
@@ -335,8 +333,7 @@ fn acknowledged_final_capture_releases_slots_without_evicting_live_owners() {
                     deadline_unix_ms: now().unwrap() + 1000,
                     remaining_timeout_ms: 1000,
                     remaining_output_bytes: 128
-                },
-                None
+                }
             ),
             Err(Error::Capacity)
         ));
@@ -359,12 +356,19 @@ fn opened_script_and_cwd_survive_path_replacement() {
         128,
         1000,
     );
-    let source = f.runner.artifacts.get(f.plan.digest().as_str()).unwrap();
+    let source = f
+        .runner
+        .artifacts
+        .entries
+        .lock()
+        .unwrap()
+        .get(f.plan.digest().as_str())
+        .cloned()
+        .unwrap();
     let materialized = source
         .prepare(
             &f.plan,
             &AttemptId::new("object-binding").unwrap(),
-            None,
             &crate::software::PreparationControl::test(),
         )
         .unwrap();
@@ -411,7 +415,14 @@ fn controlled_input_is_bound_once_and_partial_delivery_is_failed() {
         2000,
     );
     let old = f.plan.digest().as_str().to_owned();
-    let source = f.runner.artifacts.remove(&old).unwrap();
+    let source = f
+        .runner
+        .artifacts
+        .entries
+        .lock()
+        .unwrap()
+        .remove(&old)
+        .unwrap();
     let mut source = Arc::try_unwrap(source).ok().unwrap();
     source.controlled_input = Some(Arc::new(Input {
         calls: AtomicU64::new(0),
@@ -430,6 +441,9 @@ fn controlled_input_is_bound_once_and_partial_delivery_is_failed() {
     f.plan = FrozenExecution::freeze(spec, &limits).unwrap();
     f.runner
         .artifacts
+        .entries
+        .lock()
+        .unwrap()
         .insert(f.plan.digest().as_str().into(), Arc::new(source));
     let id = start(&f, 128, 2000);
     let facts = finish(&f, &id);
@@ -441,9 +455,19 @@ fn replan(f: &mut Fixture, change: impl FnOnce(&mut ExecutionInput)) {
     let mut spec = f.plan.spec().clone();
     change(&mut spec);
     let plan = FrozenExecution::freeze(spec, &execution_app::test_store_limits().input).unwrap();
-    let artifacts = f.runner.artifacts.remove(f.plan.digest().as_str()).unwrap();
+    let artifacts = f
+        .runner
+        .artifacts
+        .entries
+        .lock()
+        .unwrap()
+        .remove(f.plan.digest().as_str())
+        .unwrap();
     f.runner
         .artifacts
+        .entries
+        .lock()
+        .unwrap()
         .insert(plan.digest().as_str().into(), artifacts);
     f.plan = plan;
 }
@@ -583,6 +607,9 @@ fn input_binding_limit_encoding_and_platform_guards_refuse_before_spawn() {
         Arc::get_mut(
             f.runner
                 .artifacts
+                .entries
+                .lock()
+                .unwrap()
                 .get_mut(f.plan.digest().as_str())
                 .unwrap(),
         )
@@ -617,6 +644,7 @@ fn input_binding_limit_encoding_and_platform_guards_refuse_before_spawn() {
             }),
             2 => replan(&mut f, |s| {
                 s.session_requirement = SessionRequirement::ActiveUser {
+                    session: Id::new("10").unwrap(),
                     account: OsAccountRef {
                         platform: Platform::Macos,
                         subject: Id::new("4294967294").unwrap(),
@@ -760,7 +788,14 @@ fn cancellation_remains_the_end_reason_when_blocked_stdin_breaks() {
         128,
         5000,
     );
-    let artifacts = f.runner.artifacts.remove(f.plan.digest().as_str()).unwrap();
+    let artifacts = f
+        .runner
+        .artifacts
+        .entries
+        .lock()
+        .unwrap()
+        .remove(f.plan.digest().as_str())
+        .unwrap();
     let mut spec = f.plan.spec().clone();
     spec.launch.stdin = StandardInput::Controlled {
         reference: VersionedRef {
@@ -775,10 +810,16 @@ fn cancellation_remains_the_end_reason_when_blocked_stdin_breaks() {
     f.plan = FrozenExecution::freeze(spec, &limits).unwrap();
     f.runner
         .artifacts
+        .entries
+        .lock()
+        .unwrap()
         .insert(f.plan.digest().as_str().into(), artifacts);
     Arc::get_mut(
         f.runner
             .artifacts
+            .entries
+            .lock()
+            .unwrap()
             .get_mut(f.plan.digest().as_str())
             .unwrap(),
     )
@@ -829,3 +870,121 @@ fn repeated_supervision_errors_do_not_renew_shutdown_time_or_overwrite_first_rea
 }
 
 mod software_tests;
+
+#[test]
+fn material_registry_is_bounded_immutable_and_retains_live_leases() {
+    let f = fixture("exit 0\n", vec![LaunchArg::ArtifactPath {}], 4096, 1000);
+    let mut input = f.plan.spec().clone();
+    input.launch.artifact.sha256 = input.launch.interpreter.artifact.sha256.clone();
+    let plan =
+        FrozenExecution::freeze(input.clone(), &execution_app::test_store_limits().input).unwrap();
+    let source = || Artifacts {
+        program: Vec::new(),
+        delegate: None,
+        interpreter: "/bin/sh".into(),
+        content: "/bin/sh".into(),
+        work_root: f.root.clone(),
+        controlled_input: None,
+        fixture_owned: false,
+    };
+    let registry = crate::MaterialRegistry::new(1).unwrap();
+    registry.register(&plan, source()).unwrap();
+    assert_eq!(registry.register(&plan, source()), Err(Error::Conflict));
+    input.request.request_id = RequestId::new("other-material").unwrap();
+    let other = FrozenExecution::freeze(input, &execution_app::test_store_limits().input).unwrap();
+    assert_eq!(registry.register(&other, source()), Err(Error::Capacity));
+    let lease = registry.get(plan.digest().as_str()).unwrap().unwrap();
+    assert_eq!(registry.retire(&plan), Err(Error::Conflict));
+    drop(lease);
+    registry.retire(&plan).unwrap();
+    registry.register(&other, source()).unwrap();
+    let mut substituted = source();
+    substituted.content = f.root.join("source");
+    registry.retire(&other).unwrap();
+    assert_eq!(registry.register(&other, substituted), Err(Error::Denied));
+}
+
+#[test]
+fn another_login_of_the_same_os_account_is_not_the_bound_session() {
+    let session = crate::host::current_session().unwrap();
+    let account = OsAccountRef {
+        platform: Platform::Macos,
+        subject: Id::new(crate::host::current_subject().unwrap()).unwrap(),
+    };
+    let changed = SessionRequirement::ActiveUser {
+        account: account.clone(),
+        session: Id::new(session.wrapping_add(1).to_string()).unwrap(),
+    };
+    assert_eq!(
+        platform::identity(&RunAs::User { account }, &changed),
+        Err(Error::Unbound)
+    );
+}
+
+#[test]
+fn backend_start_window_bounds_first_spawn_without_truncating_a_started_process() {
+    struct SlowInput;
+    impl crate::InputResolver for SlowInput {
+        fn resolve(
+            &self,
+            _: &FrozenExecution,
+            _: &AttemptId,
+            _: &VersionedRef,
+            _: u64,
+        ) -> Result<crate::InputBytes, Error> {
+            std::thread::sleep(Duration::from_millis(400));
+            Ok(crate::InputBytes::new(vec![]))
+        }
+    }
+    for delayed in [true, false] {
+        let mut f = fixture(
+            "/bin/sleep 0.4; printf ran > marker\n",
+            vec![LaunchArg::ArtifactPath {}],
+            4096,
+            2000,
+        );
+        replan(&mut f, |input| {
+            input.request.initiator = Initiator::Backend {
+                task: Id::new("task").unwrap(),
+                attempt: Id::new("attempt").unwrap(),
+                trigger: BackendTrigger::Automatic {},
+            };
+            input.validity.expires_at_unix_ms =
+                now().unwrap() + 250 + input.budget.total_timeout_ms;
+            if delayed {
+                input.launch.stdin = StandardInput::Controlled {
+                    reference: VersionedRef {
+                        id: Id::new("bounded-input").unwrap(),
+                        revision: Id::new("1").unwrap(),
+                    },
+                    encoding: TextEncoding::Utf8,
+                    max_bytes: 1,
+                };
+            }
+        });
+        if delayed {
+            Arc::get_mut(
+                f.runner
+                    .artifacts
+                    .entries
+                    .lock()
+                    .unwrap()
+                    .get_mut(f.plan.digest().as_str())
+                    .unwrap(),
+            )
+            .unwrap()
+            .controlled_input = Some(Arc::new(SlowInput));
+        }
+        let attempt = start(&f, 4096, 2000);
+        let facts = finish(&f, &attempt);
+        if delayed {
+            assert!(!f.root.join("marker").exists());
+            assert!(matches!(facts.scope, ProcessScope::NotStarted {}));
+            assert_eq!(facts.end, ProcessEnd::TimedOut);
+        } else {
+            assert_eq!(std::fs::read(f.root.join("marker")).unwrap(), b"ran");
+            assert_eq!(facts.exit_code, Some(0));
+            assert_eq!(facts.end, ProcessEnd::Exited);
+        }
+    }
+}

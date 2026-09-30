@@ -31,7 +31,10 @@
                 "type": "string"
               }
             },
-            "required": ["kind", "id"],
+            "required": [
+              "kind",
+              "id"
+            ],
             "type": "object"
           },
           {
@@ -51,7 +54,11 @@
                 "description": "Explicit enterprise tenant reference; local/test authority never fabricates a tenant."
               }
             },
-            "required": ["kind", "id", "tenant"],
+            "required": [
+              "kind",
+              "id",
+              "tenant"
+            ],
             "type": "object"
           },
           {
@@ -67,7 +74,82 @@
                 "type": "string"
               }
             },
-            "required": ["kind", "id"],
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "BackendTrigger": {
+        "description": "Provenance for a task already authorized by the backend; never a local enterprise approval.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "Automatic backend assignment.",
+            "properties": {
+              "kind": {
+                "const": "automatic",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "An authenticated user selected an offered task in the trusted desktop.",
+            "properties": {
+              "kind": {
+                "const": "human",
+                "type": "string"
+              },
+              "osSession": {
+                "$ref": "#/$defs/OsSessionRef",
+                "description": "Actual native account and login session, supplied by ingress."
+              }
+            },
+            "required": [
+              "kind",
+              "osSession"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Trusted desktop submitted the user's confirmed AI proposal.",
+            "properties": {
+              "config": {
+                "$ref": "#/$defs/VersionedRef",
+                "description": "Native AI connection configuration, not a provider identity grant."
+              },
+              "conversation": {
+                "$ref": "#/$defs/Id",
+                "description": "Conversation reference used for audit correlation."
+              },
+              "kind": {
+                "const": "ai",
+                "type": "string"
+              },
+              "osSession": {
+                "$ref": "#/$defs/OsSessionRef",
+                "description": "Actual native account and login session, supplied by ingress."
+              },
+              "toolCall": {
+                "$ref": "#/$defs/Id",
+                "description": "Tool request reference used for audit correlation."
+              }
+            },
+            "required": [
+              "kind",
+              "osSession",
+              "config",
+              "conversation",
+              "toolCall"
+            ],
             "type": "object"
           }
         ]
@@ -84,7 +166,9 @@
                 "type": "string"
               }
             },
-            "required": ["kind"],
+            "required": [
+              "kind"
+            ],
             "type": "object"
           },
           {
@@ -96,7 +180,9 @@
                 "type": "string"
               }
             },
-            "required": ["kind"],
+            "required": [
+              "kind"
+            ],
             "type": "object"
           },
           {
@@ -108,7 +194,9 @@
                 "type": "string"
               }
             },
-            "required": ["kind"],
+            "required": [
+              "kind"
+            ],
             "type": "object"
           },
           {
@@ -120,7 +208,9 @@
                 "type": "string"
               }
             },
-            "required": ["kind"],
+            "required": [
+              "kind"
+            ],
             "type": "object"
           },
           {
@@ -140,7 +230,11 @@
                 "type": "string"
               }
             },
-            "required": ["kind", "attemptId", "evidence"],
+            "required": [
+              "kind",
+              "attemptId",
+              "evidence"
+            ],
             "type": "object"
           }
         ]
@@ -203,7 +297,11 @@
             "description": "Runner reference whose evidence is being recorded, including an explicit fixture runner in tests."
           }
         },
-        "required": ["reference", "kind", "runner"],
+        "required": [
+          "reference",
+          "kind",
+          "runner"
+        ],
         "type": "object"
       },
       "EvidenceRefs": {
@@ -226,6 +324,35 @@
         "oneOf": [
           {
             "additionalProperties": false,
+            "description": "Backend-authorized task. A local trigger records provenance and supplies no new authority.",
+            "properties": {
+              "attempt": {
+                "$ref": "#/$defs/Id",
+                "description": "Exact server execution attempt."
+              },
+              "kind": {
+                "const": "backend",
+                "type": "string"
+              },
+              "task": {
+                "$ref": "#/$defs/Id",
+                "description": "Exact server task, independently verified by the host."
+              },
+              "trigger": {
+                "$ref": "#/$defs/BackendTrigger",
+                "description": "Authenticated local trigger or automatic backend dispatch."
+              }
+            },
+            "required": [
+              "kind",
+              "task",
+              "attempt",
+              "trigger"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
             "description": "Human origin with explicit OS login provenance.",
             "properties": {
               "kind": {
@@ -237,7 +364,10 @@
                 "description": "Originating OS account/session reference, separate from requested run-as identity."
               }
             },
-            "required": ["kind", "osSession"],
+            "required": [
+              "kind",
+              "osSession"
+            ],
             "type": "object"
           },
           {
@@ -292,7 +422,10 @@
                 "description": "Exact policy revision associated with this request or audit decision."
               }
             },
-            "required": ["kind", "policy"],
+            "required": [
+              "kind",
+              "policy"
+            ],
             "type": "object"
           }
         ]
@@ -314,7 +447,10 @@
             "description": "Exact resource ID and revision; no latest-version lookup is performed here."
           }
         },
-        "required": ["action", "resource"],
+        "required": [
+          "action",
+          "resource"
+        ],
         "type": "object"
       },
       "OsAccountRef": {
@@ -330,7 +466,10 @@
             "description": "Opaque stable OS account reference, such as a SID/UID reference, not an authentication credential."
           }
         },
-        "required": ["platform", "subject"],
+        "required": [
+          "platform",
+          "subject"
+        ],
         "type": "object"
       },
       "OsSessionRef": {
@@ -350,7 +489,11 @@
             "description": "Origin OS login/session reference, including an explicit test reference in fixtures."
           }
         },
-        "required": ["device", "account", "session"],
+        "required": [
+          "device",
+          "account",
+          "session"
+        ],
         "type": "object"
       },
       "Platform": {
@@ -397,7 +540,11 @@
             "description": "Device-wide or explicit-user scope as defined by this type."
           }
         },
-        "required": ["device", "platform", "scope"],
+        "required": [
+          "device",
+          "platform",
+          "scope"
+        ],
         "type": "object"
       },
       "TargetScope": {
@@ -412,7 +559,9 @@
                 "type": "string"
               }
             },
-            "required": ["kind"],
+            "required": [
+              "kind"
+            ],
             "type": "object"
           },
           {
@@ -428,7 +577,10 @@
                 "type": "string"
               }
             },
-            "required": ["kind", "account"],
+            "required": [
+              "kind",
+              "account"
+            ],
             "type": "object"
           }
         ]
@@ -446,7 +598,10 @@
             "description": "Exact immutable revision reference; does not resolve or follow a moving alias."
           }
         },
-        "required": ["id", "revision"],
+        "required": [
+          "id",
+          "revision"
+        ],
         "type": "object"
       }
     },
@@ -605,7 +760,10 @@
                 "type": "string"
               }
             },
-            "required": ["kind", "id"],
+            "required": [
+              "kind",
+              "id"
+            ],
             "type": "object"
           },
           {
@@ -625,7 +783,11 @@
                 "description": "Explicit enterprise tenant reference; local/test authority never fabricates a tenant."
               }
             },
-            "required": ["kind", "id", "tenant"],
+            "required": [
+              "kind",
+              "id",
+              "tenant"
+            ],
             "type": "object"
           },
           {
@@ -641,10 +803,114 @@
                 "type": "string"
               }
             },
-            "required": ["kind", "id"],
+            "required": [
+              "kind",
+              "id"
+            ],
             "type": "object"
           }
         ]
+      },
+      "BackendTrigger": {
+        "description": "Provenance for a task already authorized by the backend; never a local enterprise approval.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "Automatic backend assignment.",
+            "properties": {
+              "kind": {
+                "const": "automatic",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "An authenticated user selected an offered task in the trusted desktop.",
+            "properties": {
+              "kind": {
+                "const": "human",
+                "type": "string"
+              },
+              "osSession": {
+                "$ref": "#/$defs/OsSessionRef",
+                "description": "Actual native account and login session, supplied by ingress."
+              }
+            },
+            "required": [
+              "kind",
+              "osSession"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Trusted desktop submitted the user's confirmed AI proposal.",
+            "properties": {
+              "config": {
+                "$ref": "#/$defs/VersionedRef",
+                "description": "Native AI connection configuration, not a provider identity grant."
+              },
+              "conversation": {
+                "$ref": "#/$defs/Id",
+                "description": "Conversation reference used for audit correlation."
+              },
+              "kind": {
+                "const": "ai",
+                "type": "string"
+              },
+              "osSession": {
+                "$ref": "#/$defs/OsSessionRef",
+                "description": "Actual native account and login session, supplied by ingress."
+              },
+              "toolCall": {
+                "$ref": "#/$defs/Id",
+                "description": "Tool request reference used for audit correlation."
+              }
+            },
+            "required": [
+              "kind",
+              "osSession",
+              "config",
+              "conversation",
+              "toolCall"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "BundleFile": {
+        "additionalProperties": false,
+        "description": "A V4 Bundle member. Its portable path is the key in the manifest entry map.",
+        "properties": {
+          "length": {
+            "description": "Exact uncompressed size, including zero-length members.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sha256": {
+            "description": "Exact uncompressed SHA-256 bytes, using the producer's manifest representation.",
+            "items": {
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxItems": 32,
+            "minItems": 32,
+            "type": "array"
+          }
+        },
+        "required": [
+          "length",
+          "sha256"
+        ],
+        "type": "object"
       },
       "BundleLimits": {
         "additionalProperties": false,
@@ -690,62 +956,37 @@
         ],
         "type": "object"
       },
-      "DependencyImpact": {
-        "description": "Dependency effects declared by the package ecosystem; no dependency solver is implemented here.",
-        "oneOf": [
-          {
-            "const": "none",
-            "description": "No dependency changes.",
-            "type": "string"
+      "BundleManifest": {
+        "additionalProperties": false,
+        "description": "Exact V4 manifest.json. Package/version/detection belong to the signed action, not a\nsecond archive format. No old manifest aliases or conversion parser are retained.",
+        "properties": {
+          "architecture": {
+            "$ref": "#/$defs/PackageValue",
+            "description": "Exact common architecture selector: aarch64 or x86_64."
           },
-          {
-            "const": "declared",
-            "description": "Source/installer has declared dependency changes covered by management policy.",
-            "type": "string"
-          },
-          {
-            "const": "unknown",
-            "description": "Effects are unresolved; mutation is blocked.",
-            "type": "string"
-          }
-        ]
-      },
-      "DesiredState": {
-        "description": "Requested state; descriptive only, never an authorization decision.",
-        "oneOf": [
-          {
-            "additionalProperties": false,
-            "description": "Exact selected version and immutable install payload, resolved by the source owner.",
-            "properties": {
-              "artifact": {
-                "$ref": "#/$defs/ExactArtifactRef",
-                "description": "Exact selected package payload."
-              },
-              "kind": {
-                "const": "present",
-                "type": "string"
-              },
-              "version": {
-                "$ref": "#/$defs/PackageValue",
-                "description": "Ecosystem version, preserved verbatim."
-              }
+          "entries": {
+            "additionalProperties": {
+              "$ref": "#/$defs/BundleFile"
             },
-            "required": ["kind", "version", "artifact"],
+            "description": "Complete declared member set, excluding manifest.json.",
             "type": "object"
           },
-          {
-            "additionalProperties": false,
-            "description": "Absence of the exact package identity.",
-            "properties": {
-              "kind": {
-                "const": "absent",
-                "type": "string"
-              }
-            },
-            "required": ["kind"],
-            "type": "object"
+          "platform": {
+            "$ref": "#/$defs/Platform",
+            "description": "Exact target operating system."
+          },
+          "schema": {
+            "$ref": "#/$defs/LocalContractV1",
+            "description": "The only supported Bundle schema."
           }
-        ]
+        },
+        "required": [
+          "schema",
+          "platform",
+          "architecture",
+          "entries"
+        ],
+        "type": "object"
       },
       "DeviceId": {
         "description": "Device reference, not verified registration evidence.",
@@ -774,7 +1015,10 @@
             "description": "Expected content SHA-256. The adapter must verify the actual bytes before use."
           }
         },
-        "required": ["resource", "sha256"],
+        "required": [
+          "resource",
+          "sha256"
+        ],
         "type": "object"
       },
       "ExecutionBudget": {
@@ -800,7 +1044,11 @@
             "type": "integer"
           }
         },
-        "required": ["totalTimeoutMs", "totalOutputBytes", "maxAttempts"],
+        "required": [
+          "totalTimeoutMs",
+          "totalOutputBytes",
+          "maxAttempts"
+        ],
         "type": "object"
       },
       "ExecutionRequest": {
@@ -871,6 +1119,25 @@
         "oneOf": [
           {
             "additionalProperties": false,
+            "description": "A backend-ordered software program owned by one journal intent.",
+            "properties": {
+              "kind": {
+                "const": "softwareProgram",
+                "type": "string"
+              },
+              "program": {
+                "$ref": "#/$defs/SoftwareProgram",
+                "description": "Complete compiled instructions; no local source catalog or enterprise grant."
+              }
+            },
+            "required": [
+              "kind",
+              "program"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
             "description": "Existing bounded script or collection process.",
             "properties": {
               "kind": {
@@ -878,24 +1145,25 @@
                 "type": "string"
               }
             },
-            "required": ["kind"],
+            "required": [
+              "kind"
+            ],
             "type": "object"
+          }
+        ]
+      },
+      "ExistingSoftware": {
+        "description": "Source-authorized handling of existing installations; this is not local approval.",
+        "oneOf": [
+          {
+            "const": "managedOnly",
+            "description": "Existing installations require provenance in this device journal.",
+            "type": "string"
           },
           {
-            "additionalProperties": false,
-            "description": "A software mutation with mandatory independent detection.",
-            "properties": {
-              "kind": {
-                "const": "software",
-                "type": "string"
-              },
-              "software": {
-                "$ref": "#/$defs/SoftwareSpec",
-                "description": "Software semantics cannot be lowered to generic process parameters."
-              }
-            },
-            "required": ["kind", "software"],
-            "type": "object"
+            "const": "allowUserExisting",
+            "description": "The backend explicitly permits modifying an existing user installation.",
+            "type": "string"
           }
         ]
       },
@@ -911,6 +1179,35 @@
         "oneOf": [
           {
             "additionalProperties": false,
+            "description": "Backend-authorized task. A local trigger records provenance and supplies no new authority.",
+            "properties": {
+              "attempt": {
+                "$ref": "#/$defs/Id",
+                "description": "Exact server execution attempt."
+              },
+              "kind": {
+                "const": "backend",
+                "type": "string"
+              },
+              "task": {
+                "$ref": "#/$defs/Id",
+                "description": "Exact server task, independently verified by the host."
+              },
+              "trigger": {
+                "$ref": "#/$defs/BackendTrigger",
+                "description": "Authenticated local trigger or automatic backend dispatch."
+              }
+            },
+            "required": [
+              "kind",
+              "task",
+              "attempt",
+              "trigger"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
             "description": "Human origin with explicit OS login provenance.",
             "properties": {
               "kind": {
@@ -922,7 +1219,10 @@
                 "description": "Originating OS account/session reference, separate from requested run-as identity."
               }
             },
-            "required": ["kind", "osSession"],
+            "required": [
+              "kind",
+              "osSession"
+            ],
             "type": "object"
           },
           {
@@ -977,7 +1277,10 @@
                 "description": "Exact policy revision associated with this request or audit decision."
               }
             },
-            "required": ["kind", "policy"],
+            "required": [
+              "kind",
+              "policy"
+            ],
             "type": "object"
           }
         ]
@@ -997,7 +1300,10 @@
                 "description": "Untrusted literal data; long-lived credentials must be passed as controlled references."
               }
             },
-            "required": ["kind", "value"],
+            "required": [
+              "kind",
+              "value"
+            ],
             "type": "object"
           },
           {
@@ -1013,57 +1319,13 @@
                 "description": "Exact versioned reference. Authenticity and access are checked by its owner."
               }
             },
-            "required": ["kind", "reference"],
+            "required": [
+              "kind",
+              "reference"
+            ],
             "type": "object"
           }
         ]
-      },
-      "InstallerCapabilities": {
-        "additionalProperties": false,
-        "description": "Installer semantics, not proof that the OS can execute or authorize it.",
-        "properties": {
-          "artifact": {
-            "$ref": "#/$defs/ExactArtifactRef",
-            "description": "Exact installer/manager binary."
-          },
-          "canDetect": {
-            "description": "Whether this selected mechanism can independently detect the package state.",
-            "type": "boolean"
-          },
-          "dependencyImpact": {
-            "$ref": "#/$defs/DependencyImpact",
-            "description": "Declared dependency effects of the selected change mechanism."
-          },
-          "manager": {
-            "$ref": "#/$defs/VersionedRef",
-            "description": "Must match PackageIdentity.manager."
-          },
-          "operations": {
-            "description": "Unique supported mutation kinds.",
-            "items": {
-              "$ref": "#/$defs/MutationKind"
-            },
-            "type": "array"
-          },
-          "restart": {
-            "$ref": "#/$defs/RestartBehavior",
-            "description": "Selected configuration's restart semantics."
-          },
-          "upgradeStrategy": {
-            "$ref": "#/$defs/UpgradeStrategy",
-            "description": "Upgrade behavior, relevant only for Upgrade/Downgrade."
-          }
-        },
-        "required": [
-          "artifact",
-          "manager",
-          "canDetect",
-          "operations",
-          "upgradeStrategy",
-          "restart",
-          "dependencyImpact"
-        ],
-        "type": "object"
       },
       "InterpreterRef": {
         "additionalProperties": false,
@@ -1078,7 +1340,10 @@
             "description": "Calling convention identity/revision; matched together with the binary."
           }
         },
-        "required": ["artifact", "profile"],
+        "required": [
+          "artifact",
+          "profile"
+        ],
         "type": "object"
       },
       "IsolationPolicy": {
@@ -1093,7 +1358,9 @@
                 "type": "string"
               }
             },
-            "required": ["kind"],
+            "required": [
+              "kind"
+            ],
             "type": "object"
           },
           {
@@ -1159,7 +1426,10 @@
                 "type": "string"
               }
             },
-            "required": ["kind", "value"],
+            "required": [
+              "kind",
+              "value"
+            ],
             "type": "object"
           },
           {
@@ -1171,7 +1441,9 @@
                 "type": "string"
               }
             },
-            "required": ["kind"],
+            "required": [
+              "kind"
+            ],
             "type": "object"
           }
         ]
@@ -1238,73 +1510,9 @@
         "const": 1,
         "type": "integer"
       },
-      "LocalContractV4": {
-        "const": 4,
+      "LocalContractV5": {
+        "const": 5,
         "type": "integer"
-      },
-      "ManagementConstraints": {
-        "additionalProperties": false,
-        "description": "Host-supplied resource-management constraints from the bound policy revision.\nThese booleans are not actor authentication, C07 authorization or approval.",
-        "properties": {
-          "allowDependencyChanges": {
-            "description": "Permit the installer's declared dependency effects.",
-            "type": "boolean"
-          },
-          "allowDowngrade": {
-            "description": "Permit downgrade, independently of installer support.",
-            "type": "boolean"
-          },
-          "allowModifyUserOwned": {
-            "description": "Explicitly permit modifying existing user-owned software; no ownership change is inferred.",
-            "type": "boolean"
-          },
-          "allowRemove": {
-            "description": "Permit removal, including uninstall-before-upgrade.",
-            "type": "boolean"
-          },
-          "allowRestart": {
-            "description": "Permit a separately coordinated restart if necessary.",
-            "type": "boolean"
-          },
-          "required": {
-            "description": "Desired absence conflicts with this constraint even if currently absent.",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "required",
-          "allowModifyUserOwned",
-          "allowRemove",
-          "allowDowngrade",
-          "allowRestart",
-          "allowDependencyChanges"
-        ],
-        "type": "object"
-      },
-      "MutationKind": {
-        "description": "One possible mutation, not a queued workflow step.",
-        "oneOf": [
-          {
-            "const": "install",
-            "description": "Install a known-absent package.",
-            "type": "string"
-          },
-          {
-            "const": "upgrade",
-            "description": "Upgrade according to the ecosystem's ordering.",
-            "type": "string"
-          },
-          {
-            "const": "downgrade",
-            "description": "Explicitly permitted downgrade.",
-            "type": "string"
-          },
-          {
-            "const": "uninstall",
-            "description": "Remove the exact observed package.",
-            "type": "string"
-          }
-        ]
       },
       "NetworkAccess": {
         "description": "Required network restrictions. Unknown or unenforceable restrictions must be rejected by the runner.",
@@ -1318,7 +1526,9 @@
                 "type": "string"
               }
             },
-            "required": ["kind"],
+            "required": [
+              "kind"
+            ],
             "type": "object"
           },
           {
@@ -1337,7 +1547,10 @@
                 "type": "string"
               }
             },
-            "required": ["kind", "destinations"],
+            "required": [
+              "kind",
+              "destinations"
+            ],
             "type": "object"
           }
         ]
@@ -1362,7 +1575,11 @@
             "description": "Protocol the runner must enforce; HTTPS cannot be silently treated as unrestricted TCP."
           }
         },
-        "required": ["scheme", "host", "port"],
+        "required": [
+          "scheme",
+          "host",
+          "port"
+        ],
         "type": "object"
       },
       "NetworkHost": {
@@ -1409,7 +1626,10 @@
             "description": "Exact resource ID and revision; no latest-version lookup is performed here."
           }
         },
-        "required": ["action", "resource"],
+        "required": [
+          "action",
+          "resource"
+        ],
         "type": "object"
       },
       "OsAccountRef": {
@@ -1425,7 +1645,10 @@
             "description": "Opaque stable OS account reference, such as a SID/UID reference, not an authentication credential."
           }
         },
-        "required": ["platform", "subject"],
+        "required": [
+          "platform",
+          "subject"
+        ],
         "type": "object"
       },
       "OsSessionRef": {
@@ -1445,7 +1668,11 @@
             "description": "Origin OS login/session reference, including an explicit test reference in fixtures."
           }
         },
-        "required": ["device", "account", "session"],
+        "required": [
+          "device",
+          "account",
+          "session"
+        ],
         "type": "object"
       },
       "OutputFormat": {
@@ -1460,7 +1687,9 @@
                 "type": "string"
               }
             },
-            "required": ["kind"],
+            "required": [
+              "kind"
+            ],
             "type": "object"
           },
           {
@@ -1479,7 +1708,10 @@
                 "type": "integer"
               }
             },
-            "required": ["kind", "maxRows"],
+            "required": [
+              "kind",
+              "maxRows"
+            ],
             "type": "object"
           }
         ]
@@ -1501,35 +1733,11 @@
             "description": "Required stdout interpretation; preserve raw bytes on failure."
           }
         },
-        "required": ["format", "stdout", "stderr"],
-        "type": "object"
-      },
-      "PackageIdentity": {
-        "additionalProperties": false,
-        "description": "Exact package coordinates independent of the installed/desired version.",
-        "properties": {
-          "architecture": {
-            "$ref": "#/$defs/PackageValue",
-            "description": "Exact architecture selector, never inferred from the planning host."
-          },
-          "manager": {
-            "$ref": "#/$defs/VersionedRef",
-            "description": "Package-manager implementation/revision; no implicit manager substitution."
-          },
-          "package": {
-            "$ref": "#/$defs/PackageValue",
-            "description": "Ecosystem package identifier."
-          },
-          "source": {
-            "$ref": "#/$defs/VersionedRef",
-            "description": "Exact source configuration/revision; no public same-name fallback."
-          },
-          "variant": {
-            "$ref": "#/$defs/PackageValue",
-            "description": "Exact variant/channel selector, never a default/latest fallback."
-          }
-        },
-        "required": ["manager", "source", "package", "architecture", "variant"],
+        "required": [
+          "format",
+          "stdout",
+          "stderr"
+        ],
         "type": "object"
       },
       "PackageValue": {
@@ -1563,26 +1771,6 @@
         "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
         "type": "string"
       },
-      "RestartBehavior": {
-        "description": "Restart behavior of the selected installer configuration.",
-        "oneOf": [
-          {
-            "const": "never",
-            "description": "Restart is not required and cannot be initiated by the selected invocation.",
-            "type": "string"
-          },
-          {
-            "const": "mayRequire",
-            "description": "May request a later restart, without initiating it itself.",
-            "type": "string"
-          },
-          {
-            "const": "automatic",
-            "description": "May restart immediately; this planner cannot coordinate such execution.",
-            "type": "string"
-          }
-        ]
-      },
       "RunAs": {
         "description": "Requested execution identity; authorization and actual identity switching are external.",
         "oneOf": [
@@ -1599,7 +1787,10 @@
                 "type": "string"
               }
             },
-            "required": ["kind", "account"],
+            "required": [
+              "kind",
+              "account"
+            ],
             "type": "object"
           },
           {
@@ -1615,7 +1806,10 @@
                 "description": "OS namespace of this reference or target; does not assert platform support."
               }
             },
-            "required": ["kind", "platform"],
+            "required": [
+              "kind",
+              "platform"
+            ],
             "type": "object"
           }
         ]
@@ -1632,7 +1826,9 @@
                 "type": "string"
               }
             },
-            "required": ["kind"],
+            "required": [
+              "kind"
+            ],
             "type": "object"
           },
           {
@@ -1646,36 +1842,129 @@
               "kind": {
                 "const": "activeUser",
                 "type": "string"
+              },
+              "session": {
+                "$ref": "#/$defs/Id",
+                "description": "Exact native login session; a new login for the same account is not interchangeable."
               }
             },
-            "required": ["kind", "account"],
+            "required": [
+              "kind",
+              "account",
+              "session"
+            ],
             "type": "object"
           }
         ]
       },
-      "SoftwareDetection": {
+      "SoftwareDetector": {
+        "description": "Independent V4 detection rules; no installer exit is a detection result.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "Query the exact product in the invocation's Windows installation context.",
+            "properties": {
+              "kind": {
+                "const": "msiProduct",
+                "type": "string"
+              },
+              "productCode": {
+                "description": "Canonical braced product GUID.",
+                "type": "string"
+              },
+              "version": {
+                "$ref": "#/$defs/PackageValue",
+                "description": "Expected exact version."
+              }
+            },
+            "required": [
+              "kind",
+              "productCode",
+              "version"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Query the exact macOS package receipt.",
+            "properties": {
+              "kind": {
+                "const": "pkgReceipt",
+                "type": "string"
+              },
+              "receipt": {
+                "description": "Literal receipt identifier.",
+                "type": "string"
+              },
+              "version": {
+                "$ref": "#/$defs/PackageValue",
+                "description": "Expected exact version."
+              }
+            },
+            "required": [
+              "kind",
+              "receipt",
+              "version"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Execute the backend's declared detector under its own cumulative bounds.",
+            "properties": {
+              "invocation": {
+                "$ref": "#/$defs/SoftwareInvocation",
+                "description": "Exact detector invocation."
+              },
+              "kind": {
+                "const": "script",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "invocation"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "SoftwareInvocation": {
         "additionalProperties": false,
-        "description": "Bounded independent detection. Unknown bytes are indeterminate, never absent.",
+        "description": "Exact invocation of a fixed native profile or a declared script.",
         "properties": {
-          "maxBytes": {
-            "description": "Maximum bytes read for one detection.",
+          "launch": {
+            "$ref": "#/$defs/LaunchSpec",
+            "description": "Complete immutable launch inputs, with literal arguments and pinned artifacts."
+          },
+          "outputBytes": {
+            "description": "Shared diagnostic byte budget; observations and recovery do not replenish it.",
             "format": "uint64",
             "minimum": 0,
             "type": "integer"
           },
-          "path": {
-            "description": "Absolute installed file location; checked against the explicit target platform.",
-            "type": "string"
+          "runAs": {
+            "$ref": "#/$defs/RunAs",
+            "description": "Actual execution account selected from the observed OS context."
           },
-          "versions": {
-            "description": "Exact allowed version proofs, with unique versions and hashes.",
-            "items": {
-              "$ref": "#/$defs/SoftwareVersionProof"
-            },
-            "type": "array"
+          "sessionRequirement": {
+            "$ref": "#/$defs/SessionRequirement",
+            "description": "Exact login when a user context is required."
+          },
+          "timeoutMs": {
+            "description": "Shared timeout budget across all uses of this invocation in the attempt.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
           }
         },
-        "required": ["path", "versions", "maxBytes"],
+        "required": [
+          "launch",
+          "runAs",
+          "sessionRequirement",
+          "timeoutMs",
+          "outputBytes"
+        ],
         "type": "object"
       },
       "SoftwareKind": {
@@ -1713,38 +2002,85 @@
           }
         ]
       },
-      "SoftwareResource": {
+      "SoftwareOperation": {
+        "description": "One backend software intent, independent of individual process exit codes.",
+        "oneOf": [
+          {
+            "const": "install",
+            "description": "Install each exact version in the supplied order.",
+            "type": "string"
+          },
+          {
+            "const": "detect",
+            "description": "Independently observe each declared package.",
+            "type": "string"
+          },
+          {
+            "const": "uninstall",
+            "description": "Execute each explicit removal in the supplied order.",
+            "type": "string"
+          }
+        ]
+      },
+      "SoftwareProgram": {
         "additionalProperties": false,
-        "description": "Physical OS precondition, derived by the platform adapter and verified again before execution.\nDirectory serialization deliberately covers all names in that directory, including case aliases.",
+        "description": "A single backend attempt and one execution intent, containing every ordered step.",
         "properties": {
-          "object": {
+          "definitionDigest": {
+            "$ref": "#/$defs/Digest",
+            "description": "Backend digest of the complete V4 step definition."
+          },
+          "intent": {
+            "$ref": "#/$defs/SoftwareOperation",
+            "description": "Fixed operation selected by the backend."
+          },
+          "steps": {
+            "description": "Original ordered prerequisites followed by the requested package.",
+            "items": {
+              "$ref": "#/$defs/SoftwareProgramStep"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "definitionDigest",
+          "intent",
+          "steps"
+        ],
+        "type": "object"
+      },
+      "SoftwareProgramStep": {
+        "additionalProperties": false,
+        "description": "One executable step; dependency selection and ordering have already happened on the server.",
+        "properties": {
+          "adapter": {
+            "$ref": "#/$defs/SoftwareKind",
+            "description": "Closed native adapter selection."
+          },
+          "allowDowngrade": {
+            "description": "Permission for an exact downgrade; unknown comparisons do not imply permission.",
+            "type": "boolean"
+          },
+          "allowReboot": {
+            "description": "Whether a required reboot may be reported for separately authorized handling.",
+            "type": "boolean"
+          },
+          "architecture": {
+            "$ref": "#/$defs/PackageValue",
+            "description": "Common architecture selector from the device-bound backend task."
+          },
+          "bundle": {
             "anyOf": [
               {
-                "$ref": "#/$defs/Id"
+                "$ref": "#/$defs/BundleManifest"
               },
               {
                 "type": "null"
               }
             ],
-            "description": "Existing target file identity, or explicit absence at planning time."
+            "description": "Exact V4 Bundle declaration; never an alternate archive manifest."
           },
-          "parent": {
-            "$ref": "#/$defs/Id",
-            "description": "Stable volume/directory identity, not a pathname or a tenant-selected lock namespace."
-          }
-        },
-        "required": ["parent"],
-        "type": "object"
-      },
-      "SoftwareSpec": {
-        "additionalProperties": false,
-        "description": "Typed software execution facts. These are declarations, never approval or identity.",
-        "properties": {
-          "adapter": {
-            "$ref": "#/$defs/SoftwareKind",
-            "description": "Closed adapter selection."
-          },
-          "bundle": {
+          "bundleLimits": {
             "anyOf": [
               {
                 "$ref": "#/$defs/BundleLimits"
@@ -1753,105 +2089,67 @@
                 "type": "null"
               }
             ],
-            "description": "Exact bundle extraction bounds, required only for bundle adapters."
+            "description": "Bounded extraction resources for Bundle only."
           },
-          "comparison": {
+          "detection": {
+            "$ref": "#/$defs/SoftwareDetector",
+            "description": "Independent detector used under one shared observation budget."
+          },
+          "existing": {
+            "$ref": "#/$defs/ExistingSoftware",
+            "description": "Permission to change existing user installations, supplied by the backend."
+          },
+          "exportIdentity": {
             "anyOf": [
               {
-                "$ref": "#/$defs/VersionComparison"
+                "$ref": "#/$defs/Id"
               },
               {
                 "type": "null"
               }
             ],
-            "description": "Exact ecosystem comparison from the planning snapshot; operands rechecked under lock."
+            "description": "Backend export identity, retained verbatim for WinGet and Homebrew."
           },
-          "desired": {
-            "$ref": "#/$defs/DesiredState",
-            "description": "Explicit target state."
-          },
-          "detection": {
-            "$ref": "#/$defs/SoftwareDetection",
-            "description": "Absolute installed-state detector."
-          },
-          "installer": {
-            "$ref": "#/$defs/InstallerCapabilities",
-            "description": "Selected installer capabilities, preserved exactly from the planning snapshot."
-          },
-          "management": {
-            "$ref": "#/$defs/ManagementConstraints",
-            "description": "Resource-management constraints, not execution approval."
-          },
-          "mutation": {
-            "$ref": "#/$defs/MutationKind",
-            "description": "One admitted mutation; detection and replanning must agree before launch."
+          "install": {
+            "$ref": "#/$defs/SoftwareInvocation",
+            "description": "Frozen install/update invocation."
           },
           "package": {
-            "$ref": "#/$defs/PackageIdentity",
-            "description": "Exact source, manager, package, architecture and variant."
+            "$ref": "#/$defs/PackageValue",
+            "description": "Exact package coordinate, without a local source catalog."
           },
           "payload": {
             "$ref": "#/$defs/ExactArtifactRef",
-            "description": "Immutable package/archive/formula/manifest, also retained for declared uninstall."
-          },
-          "resource": {
-            "$ref": "#/$defs/PackageValue",
-            "description": "Exact installed resource identity (e.g. MSI product code or fully qualified formula)."
-          },
-          "resourceBinding": {
-            "$ref": "#/$defs/SoftwareResource",
-            "description": "Platform-verified directory conflict domain and optional pre-mutation file identity."
-          },
-          "snapshot": {
-            "$ref": "#/$defs/VersionedRef",
-            "description": "Original planning snapshot reference."
-          },
-          "source": {
-            "$ref": "#/$defs/PackageValue",
-            "description": "Fixed backend source selector; not a URL or a fallback source."
+            "description": "Exact primary package, formula, manifest or Bundle bytes."
           },
           "uninstall": {
             "anyOf": [
               {
-                "$ref": "#/$defs/ExactArtifactRef"
+                "$ref": "#/$defs/SoftwareInvocation"
               },
               {
                 "type": "null"
               }
             ],
-            "description": "Removal entry, bound by exact content digest; None means unsupported."
+            "description": "Explicit frozen removal; absence means unsupported."
+          },
+          "version": {
+            "$ref": "#/$defs/PackageValue",
+            "description": "Exact version, also required for uninstall; there is no latest selector."
           }
         },
         "required": [
           "adapter",
           "package",
-          "desired",
-          "mutation",
-          "snapshot",
+          "version",
+          "architecture",
           "payload",
-          "installer",
-          "source",
-          "resource",
-          "resourceBinding",
+          "install",
           "detection",
-          "management"
+          "existing",
+          "allowDowngrade",
+          "allowReboot"
         ],
-        "type": "object"
-      },
-      "SoftwareVersionProof": {
-        "additionalProperties": false,
-        "description": "Independent file state for a declared ecosystem version; not an installer receipt.",
-        "properties": {
-          "sha256": {
-            "$ref": "#/$defs/Digest",
-            "description": "Expected bytes of the independently installed file."
-          },
-          "version": {
-            "$ref": "#/$defs/PackageValue",
-            "description": "Original ecosystem version."
-          }
-        },
-        "required": ["version", "sha256"],
         "type": "object"
       },
       "StandardInput": {
@@ -1866,7 +2164,9 @@
                 "type": "string"
               }
             },
-            "required": ["kind"],
+            "required": [
+              "kind"
+            ],
             "type": "object"
           },
           {
@@ -1892,7 +2192,12 @@
                 "description": "Immutable input reference, not input/credential bytes."
               }
             },
-            "required": ["kind", "reference", "encoding", "maxBytes"],
+            "required": [
+              "kind",
+              "reference",
+              "encoding",
+              "maxBytes"
+            ],
             "type": "object"
           }
         ]
@@ -1914,7 +2219,11 @@
             "description": "Device-wide or explicit-user scope as defined by this type."
           }
         },
-        "required": ["device", "platform", "scope"],
+        "required": [
+          "device",
+          "platform",
+          "scope"
+        ],
         "type": "object"
       },
       "TargetScope": {
@@ -1929,7 +2238,9 @@
                 "type": "string"
               }
             },
-            "required": ["kind"],
+            "required": [
+              "kind"
+            ],
             "type": "object"
           },
           {
@@ -1945,7 +2256,10 @@
                 "type": "string"
               }
             },
-            "required": ["kind", "account"],
+            "required": [
+              "kind",
+              "account"
+            ],
             "type": "object"
           }
         ]
@@ -1961,21 +2275,6 @@
           {
             "const": "utf16Le",
             "description": "UTF-16 little endian text.",
-            "type": "string"
-          }
-        ]
-      },
-      "UpgradeStrategy": {
-        "description": "Preserve installer upgrade semantics; some upgrades remove the existing installation first.",
-        "oneOf": [
-          {
-            "const": "inPlace",
-            "description": "Does not require removing the old installation first.",
-            "type": "string"
-          },
-          {
-            "const": "uninstallThenInstall",
-            "description": "Requires uninstall permission and dependency safety as well as upgrade capability.",
             "type": "string"
           }
         ]
@@ -1997,57 +2296,11 @@
             "type": "integer"
           }
         },
-        "required": ["notBeforeUnixMs", "expiresAtUnixMs"],
+        "required": [
+          "notBeforeUnixMs",
+          "expiresAtUnixMs"
+        ],
         "type": "object"
-      },
-      "VersionComparison": {
-        "additionalProperties": false,
-        "description": "Comparator identity and exact operands; a result cannot be replayed for another version pair.",
-        "properties": {
-          "comparator": {
-            "$ref": "#/$defs/VersionedRef",
-            "description": "Exact comparator implementation/configuration revision."
-          },
-          "desired": {
-            "$ref": "#/$defs/PackageValue",
-            "description": "Must equal the intent's desired version."
-          },
-          "installed": {
-            "$ref": "#/$defs/PackageValue",
-            "description": "Must equal the snapshot's installed version."
-          },
-          "relation": {
-            "$ref": "#/$defs/VersionRelation",
-            "description": "Ecosystem result; the core performs no parsing."
-          }
-        },
-        "required": ["comparator", "installed", "desired", "relation"],
-        "type": "object"
-      },
-      "VersionRelation": {
-        "description": "Result supplied by the ecosystem's comparator for one exact version pair.",
-        "oneOf": [
-          {
-            "const": "equal",
-            "description": "Ecosystem semantics establish equivalence.",
-            "type": "string"
-          },
-          {
-            "const": "older",
-            "description": "Installed version precedes the requested version.",
-            "type": "string"
-          },
-          {
-            "const": "newer",
-            "description": "Installed version follows the requested version.",
-            "type": "string"
-          },
-          {
-            "const": "incomparable",
-            "description": "Ecosystem semantics do not order these versions.",
-            "type": "string"
-          }
-        ]
       },
       "VersionedRef": {
         "additionalProperties": false,
@@ -2062,7 +2315,10 @@
             "description": "Exact immutable revision reference; does not resolve or follow a moving alias."
           }
         },
-        "required": ["id", "revision"],
+        "required": [
+          "id",
+          "revision"
+        ],
         "type": "object"
       }
     },
@@ -2099,8 +2355,8 @@
         "description": "Requested target execution identity, separate from actor and originating login."
       },
       "schemaVersion": {
-        "$ref": "#/$defs/LocalContractV4",
-        "description": "Required current V4 discriminator; absent or unsupported versions are rejected."
+        "$ref": "#/$defs/LocalContractV5",
+        "description": "Required current V5 discriminator; absent or unsupported versions are rejected."
       },
       "sessionRequirement": {
         "$ref": "#/$defs/SessionRequirement",

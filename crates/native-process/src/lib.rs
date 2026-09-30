@@ -9,6 +9,7 @@ use std::{
     time::Duration,
 };
 pub mod private_storage;
+pub mod protected_secret;
 #[cfg(unix)]
 mod unix;
 #[cfg(windows)]

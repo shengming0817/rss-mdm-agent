@@ -34,37 +34,6 @@ pub fn plan() -> FrozenExecution {
     };
     FrozenExecution::freeze(spec, &execution_app::test_store_limits().input).unwrap()
 }
-pub fn caller() -> RequestContext {
-    RequestContext {
-        actor: plan().spec().request.actor.clone(),
-    }
-}
-pub struct Database {
-    pub path: std::path::PathBuf,
-    root: std::path::PathBuf,
-}
-impl Database {
-    pub fn new() -> Self {
-        let root = std::env::temp_dir().canonicalize().unwrap().join(format!(
-            "runner-app-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        native_process::private_storage::directory(&root).unwrap();
-        Self {
-            path: root.join("execution.sqlite"),
-            root,
-        }
-    }
-}
-impl Drop for Database {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.root);
-    }
-}
 #[derive(Clone)]
 pub struct TestHost {
     pub template: FrozenExecution,
@@ -169,10 +138,14 @@ impl AppHost for TestHost {
                 device: p.request.target.device.clone(),
                 source: reference("runner-test-capabilities"),
                 platform: Some(p.request.target.platform),
-                software: execution_capability::Inventory {
-                    complete: true,
-                    entries: vec![],
-                },
+                software: inventory(vec![
+                    SoftwareKind::Msi,
+                    SoftwareKind::Winget,
+                    SoftwareKind::Pkg,
+                    SoftwareKind::Homebrew,
+                    SoftwareKind::MacosBundle,
+                    SoftwareKind::WindowsBundle,
+                ]),
                 interpreters: inventory(vec![p.launch.interpreter.clone()]),
                 launch_io: inventory(vec![
                     LaunchIoCapability::ControlledStdin(TextEncoding::Utf8),
@@ -222,15 +195,19 @@ pub struct TestCarrier(
     pub Arc<std::sync::atomic::AtomicUsize>,
 );
 impl RunnerPort for TestCarrier {
-    fn software_evidence(
+    fn software_progress(
         &self,
         p: &FrozenExecution,
         a: &AttemptId,
-        deadline: execution_app::SoftwareObservation<'_>,
-    ) -> Result<Option<SoftwareEvidence>, Error> {
-        self.0.software_evidence(p, a, deadline)
+    ) -> Result<Option<SoftwareProgress>, Error> {
+        self.0.software_progress(p, a)
     }
-
+    fn acknowledge_software_progress(
+        &self,
+        receipt: execution_app::CommittedSoftwareProgress,
+    ) -> Result<(), Error> {
+        self.0.acknowledge_software_progress(receipt)
+    }
     fn id(&self) -> Id {
         self.0.id()
     }
@@ -251,7 +228,7 @@ impl RunnerPort for TestCarrier {
             }
             self.1.fetch_add(1, Ordering::SeqCst);
             self.0
-                .launch(plan, action.attempt_id(), allowance, ownership)
+                .launch_owned(plan, action.attempt_id(), allowance, ownership)
         })
     }
     fn stop(&self, p: &FrozenExecution, a: &AttemptId) -> Result<(), Error> {

@@ -22,7 +22,7 @@ async fn expired_lost_claim_recovers_after_restart_with_new_operation() {
     assert_ne!(ops[0], ops[1]);
 }
 #[tokio::test]
-async fn unsupported_and_unsubmitted_started_offers_settle_without_journal_or_cache_leaks() {
+async fn mismatched_and_unsubmitted_started_offers_settle_without_journal_or_cache_leaks() {
     use agent_client::Error;
     use execution_app::*;
     let server = Server::new().await;
@@ -52,7 +52,7 @@ async fn unsupported_and_unsubmitted_started_offers_settle_without_journal_or_ca
     };
     assert!(matches!(
         bridge.prepare(&offer, &materials, &app, &caller, &plan),
-        Err(Error::Unsupported)
+        Err(Error::Untrusted)
     ));
     let start = client.request_start(&offer, &materials).await.unwrap();
     bridge
@@ -533,6 +533,21 @@ async fn exercise_bridge(software: bool) {
     );
     drop(client);
     drop(app);
+    // Simulate process death after the journal committed the attempt but before the
+    // transport-side association persisted its local attempt identifier.
+    let conn = rusqlite::Connection::open(root.path.join("communication.sqlite")).unwrap();
+    let key = format!("binding/{}", offer.task_id());
+    let body: Vec<u8> = conn
+        .query_row("SELECT body FROM state WHERE key=?1", [&key], |r| r.get(0))
+        .unwrap();
+    let mut body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    body["local_attempt"] = serde_json::Value::Null;
+    conn.execute(
+        "UPDATE state SET body=?1 WHERE key=?2",
+        rusqlite::params![serde_json::to_vec(&body).unwrap(), key],
+    )
+    .unwrap();
+    drop(conn);
     let mut client = server.client(&root, OpenMode::Existing);
     let mut app = ExecutionApp::start(
         &db.path,
@@ -1165,6 +1180,7 @@ async fn check_encoded_result(
             .unwrap(),
         ready: Default::default(),
         capture: std::sync::Arc::new(std::sync::Mutex::new(Some(CaptureSpec {
+            quiescent: true,
             stdout,
             stderr,
             quality,
@@ -1204,4 +1220,199 @@ async fn check_encoded_result(
         .finish(&mut client, offer.task_id(), &app, &caller)
         .unwrap();
     assert_eq!(runner.inner.dispatch_count(), 1);
+}
+
+#[tokio::test]
+async fn start_window_does_not_replace_the_signed_runtime_budget() {
+    use execution_app::*;
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let offer = client.claim().await.unwrap().offer.unwrap();
+    let materials = client.prepare(&offer).await.unwrap();
+    client.received(&offer).await.unwrap();
+    let start = client.request_start(&offer, &materials).await.unwrap();
+    let mut input = adapted_plan(false, "device-1", &offer).spec().clone();
+    input.validity.expires_at_unix_ms =
+        start.payload().expires_at() as u64 * 1000 + input.budget.total_timeout_ms;
+    let plan =
+        execution_contract::FrozenExecution::freeze(input, &test_store_limits().input).unwrap();
+    let mut host = local::TestHost::new();
+    host.template = plan.clone();
+    let runner =
+        DeterministicTestRunner::new(local::id("test-runner"), TestScenario::Wait, 16).unwrap();
+    let db = local::Database::new();
+    let mut app = ExecutionApp::start(
+        &db.path,
+        Startup::CreateTest,
+        host,
+        runner.clone(),
+        AppConfig::test_defaults(1),
+    )
+    .unwrap();
+    let caller = RequestContext {
+        actor: plan.spec().request.actor.clone(),
+    };
+    let bridge = ExecutionBridge::new(local::id("agent-consumer"), FixtureOutput);
+    let prepared = bridge
+        .prepare(&offer, &materials, &app, &caller, &plan)
+        .unwrap();
+    let status = bridge
+        .dispatch(&mut client, start, &materials, &mut app, prepared)
+        .unwrap();
+    assert_eq!(status.attempts, 1);
+    assert_eq!(runner.dispatch_count(), 1);
+}
+
+#[tokio::test]
+async fn root_exit_is_delivered_while_overall_quiescence_stays_unknown() {
+    use execution_app::*;
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let offer = client.claim().await.unwrap().offer.unwrap();
+    let materials = client.prepare(&offer).await.unwrap();
+    client.received(&offer).await.unwrap();
+    let plan = adapted_plan(false, "device-1", &offer);
+    let db = local::Database::new();
+    let mut host = local::TestHost::new();
+    host.template = plan.clone();
+    let runner = CapturingRunner {
+        inner: DeterministicTestRunner::new(local::id("test-runner"), TestScenario::Complete, 16)
+            .unwrap(),
+        ready: Default::default(),
+        capture: std::sync::Arc::new(std::sync::Mutex::new(Some(CaptureSpec {
+            quiescent: false,
+            stdout: b"{\"ok\":true}".to_vec(),
+            stderr: vec![],
+            quality: execution_contract::OutputQuality::Complete,
+            end: execution_contract::ProcessEnd::Exited,
+        }))),
+    };
+    let mut app = ExecutionApp::start(
+        &db.path,
+        Startup::CreateTest,
+        host,
+        runner.clone(),
+        AppConfig::test_defaults(1),
+    )
+    .unwrap();
+    let caller = RequestContext {
+        actor: plan.spec().request.actor.clone(),
+    };
+    let bridge = ExecutionBridge::new(local::id("agent-consumer"), FixtureOutput);
+    let prepared = bridge
+        .prepare(&offer, &materials, &app, &caller, &plan)
+        .unwrap();
+    let start = client.request_start(&offer, &materials).await.unwrap();
+    bridge
+        .dispatch(&mut client, start, &materials, &mut app, prepared)
+        .unwrap();
+    app.reconcile(&plan.spec().request.request_id).unwrap();
+    assert_eq!(
+        bridge
+            .flush(&mut client, offer.task_id(), &mut app, 64)
+            .await
+            .unwrap(),
+        1
+    );
+    let data = server.data.lock().unwrap();
+    let result = data.results.values().next().unwrap();
+    assert_eq!(result["event"]["exitCode"], 0);
+    assert_eq!(result["event"]["quality"], "partial");
+    drop(data);
+    assert_eq!(
+        bridge.finish(&mut client, offer.task_id(), &app, &caller),
+        Err(agent_client::Error::Conflict)
+    );
+    assert!(client.bound_request(offer.task_id()).unwrap().is_some());
+    assert_eq!(runner.inner.dispatch_count(), 1);
+}
+
+#[tokio::test]
+async fn acknowledged_v4_result_is_not_replaced_by_later_local_facts() {
+    use execution_app::*;
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let offer = client.claim().await.unwrap().offer.unwrap();
+    let materials = client.prepare(&offer).await.unwrap();
+    client.received(&offer).await.unwrap();
+    let plan = adapted_plan(false, "device-1", &offer);
+    let db = local::Database::new();
+    let mut host = local::TestHost::new();
+    host.template = plan.clone();
+    let runner = CapturingRunner {
+        inner: DeterministicTestRunner::new(local::id("test-runner"), TestScenario::Complete, 16)
+            .unwrap(),
+        ready: Default::default(),
+        capture: std::sync::Arc::new(std::sync::Mutex::new(Some(CaptureSpec {
+            quiescent: false,
+            stdout: b"{\"ok\":true}".to_vec(),
+            stderr: vec![],
+            quality: execution_contract::OutputQuality::Partial,
+            end: execution_contract::ProcessEnd::Unknown,
+        }))),
+    };
+    let mut app = ExecutionApp::start(
+        &db.path,
+        Startup::CreateTest,
+        host,
+        runner.clone(),
+        AppConfig::test_defaults(1),
+    )
+    .unwrap();
+    let caller = RequestContext {
+        actor: plan.spec().request.actor.clone(),
+    };
+    let bridge = ExecutionBridge::new(local::id("agent-consumer"), FixtureOutput);
+    let prepared = bridge
+        .prepare(&offer, &materials, &app, &caller, &plan)
+        .unwrap();
+    let start = client.request_start(&offer, &materials).await.unwrap();
+    bridge
+        .dispatch(&mut client, start, &materials, &mut app, prepared)
+        .unwrap();
+    app.reconcile(&plan.spec().request.request_id).unwrap();
+    assert_eq!(
+        bridge
+            .flush(&mut client, offer.task_id(), &mut app, 64)
+            .await
+            .unwrap(),
+        1
+    );
+    let data = server.data.lock().unwrap();
+    let result = data.results.values().next().unwrap();
+    assert_eq!(result["event"]["exitCode"], 0);
+    assert_eq!(result["event"]["quality"], "partial");
+    drop(data);
+    {
+        let mut capture = runner.capture.lock().unwrap();
+        let facts = capture.as_mut().unwrap();
+        facts.quiescent = true;
+        facts.quality = execution_contract::OutputQuality::Complete;
+        facts.end = execution_contract::ProcessEnd::Exited;
+    }
+    runner
+        .ready
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    app.reconcile(&plan.spec().request.request_id).unwrap();
+    for _ in 0..4 {
+        assert_eq!(
+            bridge
+                .flush(&mut client, offer.task_id(), &mut app, 64)
+                .await
+                .unwrap(),
+            0
+        );
+    }
+    assert_eq!(server.data.lock().unwrap().result_calls, 1);
+    assert_eq!(runner.inner.dispatch_count(), 1);
+    let status = app
+        .status(&caller, &plan.spec().request.request_id)
+        .unwrap();
+    assert!(status.process.unwrap().quiescent);
 }

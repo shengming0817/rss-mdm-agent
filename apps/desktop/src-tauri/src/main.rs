@@ -29,7 +29,7 @@ fn run(data_root: Option<std::path::PathBuf>) -> Result<(), Box<dyn std::error::
         .setup(move |app| {
             let root = match &data_root {
                 Some(root) => root.clone(),
-                None => app.path().app_data_dir()?.join("test-users"),
+                None => app.path().app_data_dir()?.join("desktop"),
             };
             let override_path = if cfg!(debug_assertions) {
                 std::env::var_os("RSS_AI_HOST_RUNTIME")
@@ -108,7 +108,11 @@ fn main() -> std::process::ExitCode {
     }
     let data_root = match args.as_slice() {
         [] => None,
-        [flag, path] if flag == "--test-data-dir" && std::path::Path::new(path).is_absolute() => {
+        [flag, path]
+            if cfg!(feature = "native-e2e")
+                && flag == "--test-data-dir"
+                && std::path::Path::new(path).is_absolute() =>
+        {
             Some(std::path::PathBuf::from(path))
         }
         _ => return std::process::ExitCode::FAILURE,

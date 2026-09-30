@@ -30,7 +30,10 @@ fn plan(platform: Platform) -> FrozenExecution {
     p.run_as = RunAs::User {
         account: account.clone(),
     };
-    p.session_requirement = SessionRequirement::ActiveUser { account };
+    p.session_requirement = SessionRequirement::ActiveUser {
+        account,
+        session: Id::new("10").unwrap(),
+    };
     p.launch.cwd = if platform == Platform::Windows {
         "C:\\workspace"
     } else {
@@ -76,7 +79,7 @@ fn snapshot(p: &FrozenExecution) -> EnvironmentSnapshot {
         launch_io: inventory(vec![LaunchIoCapability::CapturedText(TextEncoding::Utf8)]),
         run_as: inventory(vec![s.run_as.clone()]),
         user_sessions: inventory(match &s.session_requirement {
-            SessionRequirement::ActiveUser { account } => vec![account.clone()],
+            SessionRequirement::ActiveUser { account, .. } => vec![account.clone()],
             _ => vec![],
         }),
         isolation: inventory(vec![

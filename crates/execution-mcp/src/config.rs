@@ -1,4 +1,3 @@
-use service_catalog::{CatalogLimits, ParameterLimits};
 use std::time::Duration;
 
 /// Required host limits. No protocol input can raise them.
@@ -21,10 +20,6 @@ pub struct McpLimits {
     pub request_timeout: Duration,
     /// Maximum input idle/partial-frame wait or complete output write.
     pub io_timeout: Duration,
-    /// Existing catalog decoding/selection limits.
-    pub catalog: CatalogLimits,
-    /// Existing shared human/AI parameter limits.
-    pub parameters: ParameterLimits,
 }
 
 impl McpLimits {
@@ -36,21 +31,12 @@ impl McpLimits {
             self.json_nodes,
             self.in_flight,
             self.session_frames,
-            self.catalog.max_bytes,
-            self.catalog.max_depth,
-            self.catalog.max_nodes,
-            self.catalog.max_string_bytes,
-            self.catalog.max_collection_items,
-            self.parameters.max_bytes,
-            self.parameters.max_string_bytes,
-            self.parameters.max_parameters,
         ]
         .into_iter()
         .all(|n| n > 0);
         if !nonzero
             || self.response_bytes < 1024
             || self.json_depth > 64
-            || self.catalog.max_depth > 64
             || self.in_flight > 1024
             || self.request_timeout.is_zero()
             || self.io_timeout.is_zero()

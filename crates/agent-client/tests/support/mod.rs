@@ -75,6 +75,7 @@ impl SecretProvider for Secrets {
     }
 }
 pub struct Data {
+    credential: Option<String>,
     pub tenant: Uuid,
     pub registration: Uuid,
     pub epoch: Uuid,
@@ -225,6 +226,7 @@ impl Server {
         let time = Time(Arc::new(AtomicI64::new(1)));
         let signer = Ed25519KeyPair::from_seed_unchecked(&[7; 32]).unwrap();
         let data = Arc::new(Mutex::new(Data {
+            credential: None,
             tenant: Uuid::new_v4(),
             registration: Uuid::new_v4(),
             epoch: Uuid::new_v4(),
@@ -331,7 +333,10 @@ async fn handler(
     if path != "/api/agent/v4/registrations"
         && (d.denied
             || headers.get("authorization").and_then(|v| v.to_str().ok())
-                != Some("Bearer AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE"))
+                != d.credential
+                    .as_ref()
+                    .map(|v| format!("Bearer {v}"))
+                    .as_deref())
     {
         return StatusCode::UNAUTHORIZED.into_response();
     }
@@ -355,6 +360,11 @@ fn registration_response(d: &mut Data, value: Value) -> Response {
     if d.operation.is_some_and(|old| old != operation) {
         return StatusCode::CONFLICT.into_response();
     }
+    let credential = value["credential"].as_str().unwrap().to_owned();
+    if d.credential.as_ref().is_some_and(|old| old != &credential) {
+        return StatusCode::CONFLICT.into_response();
+    }
+    d.credential = Some(credential);
     d.operation = Some(operation);
     if std::mem::take(&mut d.registration_failure) {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
@@ -412,7 +422,10 @@ fn event_response(d: &mut Data, value: Value) -> Response {
         TaskEvent::Start => start_event(d, operation),
         _ => {
             d.result_calls += 1;
-            if d.results.values().any(|old| old != &value) {
+            if d.results
+                .values()
+                .any(|old| old["attemptId"] == value["attemptId"] && old != &value)
+            {
                 return StatusCode::CONFLICT.into_response();
             }
             d.results.insert(operation, value);

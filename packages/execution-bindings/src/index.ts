@@ -1,8 +1,8 @@
 import validExecute from "./validate-execute.js";
 import validOperation from "./validate-operation.js";
-import type { ExecuteInput } from "./execute-input.js";
+import type { BackendSelection } from "./execute-input.js";
 import type { OperationRequest } from "./operation-request.js";
-export type { ExecuteInput, OperationRequest };
+export type { BackendSelection, OperationRequest };
 
 /** Rust-owned request syntax only. This never grants execution or read authority. */
 export function operationRequestId(
@@ -11,10 +11,8 @@ export function operationRequestId(
 ): string | undefined {
   if (name === "execution_execute") {
     if (!validExecute(input)) return undefined;
-    const request = input as ExecuteInput;
-    return "catalog" in request
-      ? request.catalog.selection.operationRequestId
-      : request.script.operationRequestId;
+    const request = input as BackendSelection;
+    return request.request;
   }
   if (name === "execution_status" || name === "execution_cancel") {
     if (!validOperation(input)) return undefined;

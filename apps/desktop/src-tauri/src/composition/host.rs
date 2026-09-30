@@ -1,7 +1,6 @@
 //! The replaceable AI process. Execution, users and master-key ownership stay in DesktopRuntime.
 // ref: tokio src/process/mod.rs@tokio-1.53.1 (explicit kill/wait rather than drop as exit evidence).
 use super::{control::Control, credentials::MasterKey, execution::ExecutionHandle};
-use crate::self_service::fixtures;
 use execution_mcp::{ExecutionMcp, McpLimits};
 use futures_util::StreamExt;
 #[cfg(test)]
@@ -358,8 +357,6 @@ pub async fn launch(
         session_frames: 100000,
         request_timeout: Duration::from_secs(10),
         io_timeout: Duration::from_secs(3600),
-        catalog: fixtures::CATALOG_LIMITS,
-        parameters: fixtures::PARAMETERS,
     };
     let server = ExecutionMcp::new(Arc::new(execution.clone()), limits).expect("fixed MCP limits");
     let mcp_stop = CancellationToken::new();

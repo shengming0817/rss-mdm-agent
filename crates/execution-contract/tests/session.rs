@@ -31,8 +31,7 @@ fn session_requirement_is_required_and_bound_to_the_plan() {
     );
     v["sessionRequirement"] = json!({"kind":"notRequired"});
     let first = FrozenExecution::freeze(decode(&v).unwrap(), &limits()).unwrap();
-    v["sessionRequirement"] =
-        json!({"kind":"activeUser", "account":{"platform":"linux","subject":"uid:1000"}});
+    v["sessionRequirement"] = json!({"kind":"activeUser","session":"10", "account":{"platform":"linux","subject":"uid:1000"}});
     let active = FrozenExecution::freeze(decode(&v).unwrap(), &limits()).unwrap();
     assert_ne!(first.digest(), active.digest());
     v["sessionRequirement"]["account"]["subject"] = json!("uid:1001");
@@ -45,11 +44,11 @@ fn invalid_session_context_is_rejected_by_decode_and_freeze() {
     use execution_contract::{ErrorKind as K, Field as F, Rule as R};
     for (session, expected) in [
         (
-            json!({"kind":"activeUser","account":{"platform":"windows","subject":"sid-1"}}),
+            json!({"kind":"activeUser","session":"10","account":{"platform":"windows","subject":"sid-1"}}),
             (K::InconsistentContext, F::Session, R::Mismatch),
         ),
         (
-            json!({"kind":"activeUser","account":{"platform":"linux","subject":""}}),
+            json!({"kind":"activeUser","session":"10","account":{"platform":"linux","subject":""}}),
             (K::InvalidValue, F::Identifier, R::Identifier),
         ),
         (
@@ -61,8 +60,7 @@ fn invalid_session_context_is_rejected_by_decode_and_freeze() {
         let error = decode(&v).unwrap_err();
         assert_eq!((error.kind(), error.field(), error.rule()), expected);
     }
-    v["sessionRequirement"] =
-        json!({"kind":"activeUser","account":{"platform":"linux","subject":"uid:1000"}});
+    v["sessionRequirement"] = json!({"kind":"activeUser","session":"10","account":{"platform":"linux","subject":"uid:1000"}});
     let mut p = decode(&v).unwrap();
     p.request.target.platform = execution_contract::Platform::Windows;
     let error = FrozenExecution::freeze(p, &limits()).unwrap_err();
@@ -70,4 +68,17 @@ fn invalid_session_context_is_rejected_by_decode_and_freeze() {
         (error.kind(), error.field(), error.rule()),
         (K::InconsistentContext, F::Session, R::Mismatch)
     );
+}
+
+#[test]
+fn exact_login_session_is_required_and_bound() {
+    let mut value = fixture();
+    value["sessionRequirement"] =
+        json!({"kind":"activeUser","account":{"platform":"linux","subject":"uid:1000"}});
+    assert!(decode(&value).is_err());
+    value["sessionRequirement"]["session"] = json!("10");
+    let original = FrozenExecution::freeze(decode(&value).unwrap(), &limits()).unwrap();
+    value["sessionRequirement"]["session"] = json!("11");
+    let changed = FrozenExecution::freeze(decode(&value).unwrap(), &limits()).unwrap();
+    assert_ne!(original.digest(), changed.digest());
 }

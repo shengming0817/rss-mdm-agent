@@ -58,16 +58,11 @@ function propose(response, callId, name, args) {
     },
   ]);
 }
-// Codex adds timing metadata and can truncate the middle of a large catalog.
-// The reference precedes items; consume only that intact Rust-issued object.
-function catalogFrom(value) {
+// Consume an exact backend reference from the bounded Rust result.
+function taskFrom(value) {
   if (typeof value === "string") {
     try {
-      const reference = /^\{"result":\{"catalog":(\{.*?\}),"items":/s.exec(
-        value,
-      );
-      if (reference) return JSON.parse(reference[1]);
-      return catalogFrom(
+      return taskFrom(
         JSON.parse(value.replace(/^Wall time: [\d.]+ seconds\nOutput:\n/, "")),
       );
     } catch {
@@ -75,10 +70,10 @@ function catalogFrom(value) {
     }
   }
   if (!value || typeof value !== "object") return;
-  if (value.status === "ok" && value.result?.catalog)
-    return value.result.catalog;
+  if (value.status === "ok" && Array.isArray(value.result))
+    return value.result[0];
   for (const child of Object.values(value)) {
-    const found = catalogFrom(child);
+    const found = taskFrom(child);
     if (found) return found;
   }
 }
@@ -139,24 +134,18 @@ export async function startModelFixture() {
       if (scenario === "probe" && !output("probe"))
         return call("probe", "connection_probe", {});
       if (["INSTALL", "DENY"].includes(scenario)) {
-        if (!output("catalog")) return call("catalog", "execution_catalog", {});
-        const catalog = catalogFrom(output("catalog").output);
-        assert.ok(catalog, "Rust catalog unavailable");
-        if (!output("execute"))
+        if (!output("tasks")) return call("tasks", "execution_tasks", {});
+        const task = taskFrom(output("tasks").output);
+        assert.ok(task, "verified backend task unavailable");
+        if (!output("execute")) {
+          const { request, attempt, revision } = task;
           return call("execute", "execution_execute", {
-            catalog: {
-              selection: {
-                operationRequestId:
-                  scenario === "INSTALL"
-                    ? "native-golden-install"
-                    : "native-golden-denied",
-                catalog,
-                itemId: "office",
-                variantId: "test",
-                arguments: { edition: "standard" },
-              },
-            },
+            request,
+            task: task.task,
+            attempt,
+            revision,
           });
+        }
       }
       if (scenario.startsWith("CANCEL") && !output("cancel"))
         return call("cancel", "execution_cancel", {

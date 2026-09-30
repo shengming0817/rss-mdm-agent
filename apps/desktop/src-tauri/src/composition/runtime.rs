@@ -97,8 +97,7 @@ impl DesktopRuntime {
         let users = Arc::new(std::sync::Mutex::new(
             super::users::Users::open(root).map_err(|_| "user registry unavailable")?,
         ));
-        let execution = ExecutionHandle::start(&root.join("execution.sqlite"))?
-            .with_trusted_users(users.clone());
+        let execution = ExecutionHandle::new().with_trusted_users(users.clone());
         let runtime = Self {
             execution,
             users,
@@ -243,16 +242,6 @@ impl DesktopRuntime {
     }
     pub fn execution_for(&self, generation: &str) -> ui::Result<ExecutionHandle> {
         let context = self.current(generation)?;
-        if context
-            .identity
-            .as_ref()
-            .is_some_and(|i| matches!(i, ai_session_contract::AccountIdentity::Enterprise { .. }))
-        {
-            return Err(ui::error(
-                "enterprise_execution_unavailable",
-                "企业执行尚未接线，请使用测试用户入口体验 S1",
-            ));
-        }
         self.execution
             .for_caller(context.user.user_id.as_str())
             .map_err(|_| unavailable())
@@ -687,14 +676,7 @@ mod tests {
                 })
                 .await
                 .unwrap();
-            assert_eq!(
-                runtime
-                    .execution_for(a.generation.as_str())
-                    .err()
-                    .unwrap()
-                    .code,
-                "enterprise_execution_unavailable"
-            );
+            assert!(runtime.execution_for(a.generation.as_str()).is_ok());
             let responses = if fail_b {
                 vec![(401, json!({"code":"invalid_credential"}))]
             } else {

@@ -1,7 +1,7 @@
 [
   {
     "annotations": { "openWorldHint": false, "readOnlyHint": true },
-    "description": "Authorized directory and shared parameter schemas. Visibility does not authorize execution.",
+    "description": "Verified backend tasks. Select the exact task, attempt and revision; presence never authorizes execution.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
@@ -9,300 +9,53 @@
       "title": "Empty",
       "type": "object"
     },
-    "name": "execution_catalog",
+    "name": "execution_tasks",
     "outputSchema": {
       "$defs": {
-        "Architecture": {
-          "description": "Exact architecture selector; support remains a capability-owner decision.",
-          "oneOf": [
-            {
-              "const": "x86_64",
-              "description": "x86-64; backend adapters map their canonical representation explicitly.",
-              "type": "string"
-            },
-            {
-              "const": "aarch64",
-              "description": "ARM64; no implicit architecture fallback.",
-              "type": "string"
-            }
-          ]
-        },
-        "ArgumentRuleView": {
-          "enum": [
-            "object",
-            "unknownParameter",
-            "required",
-            "type",
-            "range",
-            "choice",
-            "secretReference",
-            "roundedNumber"
-          ],
-          "type": "string"
-        },
-        "Authority": {
-          "description": "Separate namespaces: none of these serializable references authenticates its issuer.",
-          "oneOf": [
-            {
-              "additionalProperties": false,
-              "description": "Local authority namespace, established and verified by a later trusted host.",
-              "properties": {
-                "id": {
-                  "$ref": "#/$defs/Id",
-                  "description": "Authority reference in this variant namespace; no proof of issuer authenticity."
-                },
-                "kind": { "const": "local", "type": "string" }
-              },
-              "required": ["kind", "id"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "description": "Enterprise authority with an explicit tenant; verified by the product identity owner.",
-              "properties": {
-                "id": {
-                  "$ref": "#/$defs/Id",
-                  "description": "Authority reference in this variant namespace; no proof of issuer authenticity."
-                },
-                "kind": { "const": "enterprise", "type": "string" },
-                "tenant": {
-                  "$ref": "#/$defs/Id",
-                  "description": "Explicit enterprise tenant reference; local/test authority never fabricates a tenant."
-                }
-              },
-              "required": ["kind", "id", "tenant"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "description": "Explicit test-only authority; cannot issue production or real-platform evidence.",
-              "properties": {
-                "id": {
-                  "$ref": "#/$defs/Id",
-                  "description": "Authority reference in this variant namespace; no proof of issuer authenticity."
-                },
-                "kind": { "const": "test", "type": "string" }
-              },
-              "required": ["kind", "id"],
-              "type": "object"
-            }
-          ]
-        },
-        "CatalogErrorView": {
-          "oneOf": [
-            {
-              "additionalProperties": false,
-              "properties": {
-                "coordinate": { "$ref": "#/$defs/LimitView" },
-                "kind": { "const": "invalidLimits", "type": "string" }
-              },
-              "required": ["kind", "coordinate"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "malformed", "type": "string" }
-              },
-              "required": ["kind"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "duplicateKey", "type": "string" }
-              },
-              "required": ["kind"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "coordinate": { "$ref": "#/$defs/LimitView" },
-                "kind": { "const": "limitExceeded", "type": "string" }
-              },
-              "required": ["kind", "coordinate"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "unsupportedVersion", "type": "string" }
-              },
-              "required": ["kind"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "invalidShape", "type": "string" }
-              },
-              "required": ["kind"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "invalidDefinition", "type": "string" },
-                "rule": { "$ref": "#/$defs/DefinitionRuleView" }
-              },
-              "required": ["kind", "rule"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "referenceMismatch", "type": "string" }
-              },
-              "required": ["kind"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "notFound", "type": "string" }
-              },
-              "required": ["kind"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "invalidArguments", "type": "string" },
-                "rule": { "$ref": "#/$defs/ArgumentRuleView" }
-              },
-              "required": ["kind", "rule"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "encoding", "type": "string" }
-              },
-              "required": ["kind"],
-              "type": "object"
-            }
-          ]
-        },
-        "CatalogItem": {
+        "BackendTask": {
           "additionalProperties": false,
-          "description": "Human and AI share the same item and operations.",
+          "description": "Exact displayed backend offer, without executable input or authorization claims.",
           "properties": {
-            "aiDiscoverable": {
-              "description": "Discovery hint only; false is not a security boundary.",
-              "type": "boolean"
-            },
-            "category": {
-              "description": "Nonempty display category; not a backend group.",
-              "type": "string"
-            },
-            "description": {
-              "description": "Plain-text explanation, not trusted HTML or model instructions.",
-              "type": "string"
-            },
-            "distributionHint": {
-              "$ref": "#/$defs/DistributionHint",
-              "description": "Informational distribution description."
-            },
-            "id": {
+            "attempt": {
               "$ref": "#/$defs/Id",
-              "description": "Item ID unique within the snapshot."
+              "description": "Backend attempt identity; reconnect never allocates a new attempt."
             },
-            "kind": {
-              "$ref": "#/$defs/CatalogKind",
-              "description": "User-facing classification."
+            "expiresAt": {
+              "description": "Exclusive UTC Unix expiry in seconds.",
+              "format": "int64",
+              "type": "integer"
             },
-            "name": {
-              "description": "Nonempty plain-text name.",
+            "request": {
+              "$ref": "#/$defs/RequestId",
+              "description": "Deterministic original execution request used for status after response loss."
+            },
+            "revision": {
+              "$ref": "#/$defs/Digest",
+              "description": "Full signed offer revision."
+            },
+            "task": {
+              "$ref": "#/$defs/Id",
+              "description": "Backend task identity."
+            },
+            "title": {
+              "description": "Safe display text selected by the backend.",
               "type": "string"
             },
-            "operations": {
-              "description": "Nonempty unique operation variants.",
-              "items": { "$ref": "#/$defs/OperationVariant" },
-              "type": "array"
-            },
-            "state": {
-              "$ref": "#/$defs/PublicationState",
-              "description": "Publication fact bound into this snapshot's digest."
+            "userInitiated": {
+              "description": "Requires an explicit local user action before requesting Start.",
+              "type": "boolean"
             }
           },
           "required": [
-            "id",
-            "kind",
-            "name",
-            "description",
-            "category",
-            "aiDiscoverable",
-            "distributionHint",
-            "state",
-            "operations"
+            "task",
+            "attempt",
+            "revision",
+            "request",
+            "title",
+            "expiresAt",
+            "userInitiated"
           ],
           "type": "object"
-        },
-        "CatalogKind": {
-          "description": "Display classification, independent of backend Resource kinds.",
-          "oneOf": [
-            {
-              "const": "software",
-              "description": "Software catalog entry.",
-              "type": "string"
-            },
-            {
-              "const": "script",
-              "description": "Published script entry.",
-              "type": "string"
-            },
-            {
-              "const": "tool",
-              "description": "User-facing tool; may map to a script resource.",
-              "type": "string"
-            }
-          ]
-        },
-        "CatalogRef": {
-          "additionalProperties": false,
-          "description": "Exact catalog content identity. It is neither a signature nor an authorization token.",
-          "properties": {
-            "authority": {
-              "$ref": "#/$defs/Authority",
-              "description": "Complete namespace including enterprise tenant when applicable."
-            },
-            "digest": {
-              "$ref": "#/$defs/Digest",
-              "description": "Computed canonical catalog SHA-256."
-            },
-            "identity": {
-              "$ref": "#/$defs/VersionedRef",
-              "description": "Catalog ID/revision, not resource version or format version."
-            }
-          },
-          "required": ["authority", "identity", "digest"],
-          "type": "object"
-        },
-        "CatalogView": {
-          "properties": {
-            "catalog": { "$ref": "#/$defs/CatalogRef" },
-            "items": {
-              "items": { "$ref": "#/$defs/ItemView" },
-              "type": "array"
-            }
-          },
-          "required": ["catalog", "items"],
-          "type": "object"
-        },
-        "DefinitionRuleView": {
-          "enum": [
-            "timeWindow",
-            "duplicateItem",
-            "display",
-            "operations",
-            "requirements",
-            "parameterTitle",
-            "parameterBounds",
-            "parameterChoices",
-            "parameterDefault"
-          ],
-          "type": "string"
         },
         "Digest": {
           "description": "Lowercase SHA-256 bytes expressed as hex; a digest alone grants no trust.",
@@ -311,37 +64,9 @@
           "pattern": "^[0-9a-f]{64}$",
           "type": "string"
         },
-        "DistributionHint": {
-          "description": "Non-authoritative distribution description.",
-          "oneOf": [
-            {
-              "const": "required",
-              "description": "Organization-required description; does not prohibit or authorize an action.",
-              "type": "string"
-            },
-            {
-              "const": "optional",
-              "description": "Optional self-service description.",
-              "type": "string"
-            },
-            {
-              "const": "request",
-              "description": "Request-first description; does not prove an approval requirement.",
-              "type": "string"
-            }
-          ]
-        },
         "ErrorView": {
           "description": "Protocol error payload; optional catalog diagnostic is produced only from static C03 errors.",
-          "properties": {
-            "catalogReason": {
-              "anyOf": [
-                { "$ref": "#/$defs/CatalogErrorView" },
-                { "type": "null" }
-              ]
-            },
-            "code": { "$ref": "#/$defs/ServiceError" }
-          },
+          "properties": { "code": { "$ref": "#/$defs/ServiceError" } },
           "required": ["code"],
           "type": "object"
         },
@@ -352,316 +77,12 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
           "type": "string"
         },
-        "InteractionRequirement": {
-          "description": "Interaction declaration, not an approval state machine.",
-          "oneOf": [
-            {
-              "const": "none",
-              "description": "No user interaction declared.",
-              "type": "string"
-            },
-            {
-              "const": "userSession",
-              "description": "Requires an interactive user session.",
-              "type": "string"
-            }
-          ]
-        },
-        "ItemView": {
-          "properties": {
-            "item": { "$ref": "#/$defs/CatalogItem" },
-            "parameters": {
-              "items": { "$ref": "#/$defs/ParameterView" },
-              "type": "array"
-            }
-          },
-          "required": ["item", "parameters"],
-          "type": "object"
-        },
-        "LimitView": {
-          "enum": [
-            "bytes",
-            "depth",
-            "nodes",
-            "stringBytes",
-            "collectionItems",
-            "parameters"
-          ],
+        "RequestId": {
+          "description": "Local execution request identity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
           "type": "string"
-        },
-        "OperationVariant": {
-          "additionalProperties": false,
-          "description": "One independently selectable action and resource variant.",
-          "properties": {
-            "action": {
-              "$ref": "#/$defs/Id",
-              "description": "Action interpreted by the authorization/execution owner."
-            },
-            "id": {
-              "$ref": "#/$defs/Id",
-              "description": "Stable variant ID within its catalog item."
-            },
-            "parameters": {
-              "additionalProperties": false,
-              "description": "Single parameter declaration source, keyed by bounded parameter name.",
-              "patternProperties": {
-                "^[A-Za-z0-9][A-Za-z0-9._:/-]*$": {
-                  "$ref": "#/$defs/Parameter"
-                }
-              },
-              "type": "object"
-            },
-            "requirements": {
-              "$ref": "#/$defs/Requirements",
-              "description": "Conditions which do not constitute permission."
-            },
-            "resource": {
-              "$ref": "#/$defs/ResourceBinding",
-              "description": "Complete immutable resource and target selector."
-            }
-          },
-          "required": [
-            "id",
-            "action",
-            "resource",
-            "parameters",
-            "requirements"
-          ],
-          "type": "object"
-        },
-        "Parameter": {
-          "additionalProperties": false,
-          "description": "A field's display metadata and single source of validation semantics.",
-          "properties": {
-            "description": {
-              "description": "Plain-text field help, never model instructions.",
-              "type": "string"
-            },
-            "required": {
-              "description": "Required fields cannot have defaults.",
-              "type": "boolean"
-            },
-            "rule": {
-              "$ref": "#/$defs/ParameterRule",
-              "description": "Closed first-version rules; adding a rule requires updating every projection/validator."
-            },
-            "title": {
-              "description": "Nonempty plain-text field label.",
-              "type": "string"
-            }
-          },
-          "required": ["title", "description", "required", "rule"],
-          "type": "object"
-        },
-        "ParameterRule": {
-          "description": "Supported value grammar. Secret references are the only permitted object-valued parameter.",
-          "oneOf": [
-            {
-              "additionalProperties": false,
-              "description": "Unicode scalar length, with independent host UTF-8 byte limits.",
-              "properties": {
-                "choices": {
-                  "description": "Optional nonempty unique allowed values, all within the length constraints.",
-                  "items": { "type": "string" },
-                  "type": ["array", "null"]
-                },
-                "default": {
-                  "description": "Valid default for an optional field only.",
-                  "type": ["string", "null"]
-                },
-                "maxLength": {
-                  "description": "Inclusive maximum character count.",
-                  "format": "uint32",
-                  "minimum": 0,
-                  "type": "integer"
-                },
-                "minLength": {
-                  "description": "Inclusive minimum character count.",
-                  "format": "uint32",
-                  "minimum": 0,
-                  "type": "integer"
-                },
-                "type": { "const": "string", "type": "string" }
-              },
-              "required": ["type", "minLength", "maxLength"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "description": "Mathematically integral JSON number within the JS safe integer range; no string conversion.",
-              "properties": {
-                "choices": {
-                  "description": "Optional nonempty unique allowed safe integers.",
-                  "items": { "format": "int64", "type": "integer" },
-                  "type": ["array", "null"]
-                },
-                "default": {
-                  "description": "Valid default for an optional field only.",
-                  "format": "int64",
-                  "type": ["integer", "null"]
-                },
-                "maximum": {
-                  "description": "Inclusive safe integer maximum.",
-                  "format": "int64",
-                  "type": "integer"
-                },
-                "minimum": {
-                  "description": "Inclusive safe integer minimum.",
-                  "format": "int64",
-                  "type": "integer"
-                },
-                "type": { "const": "integer", "type": "string" }
-              },
-              "required": ["type", "minimum", "maximum"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "description": "A JSON boolean, never a truthy string or number.",
-              "properties": {
-                "default": {
-                  "description": "Valid default for an optional field only.",
-                  "type": ["boolean", "null"]
-                },
-                "type": { "const": "boolean", "type": "string" }
-              },
-              "required": ["type"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "description": "Exact opaque secret reference; no literal/default/enum or material resolution.",
-              "properties": {
-                "type": { "const": "secretReference", "type": "string" }
-              },
-              "required": ["type"],
-              "type": "object"
-            }
-          ]
-        },
-        "ParameterView": {
-          "properties": {
-            "inputSchema": true,
-            "variantId": { "$ref": "#/$defs/Id" }
-          },
-          "required": ["variantId", "inputSchema"],
-          "type": "object"
-        },
-        "Platform": {
-          "description": "Target OS semantics for validation; an enum value is not a platform support claim.",
-          "oneOf": [
-            {
-              "const": "windows",
-              "description": "Windows target/account namespace.",
-              "type": "string"
-            },
-            {
-              "const": "macos",
-              "description": "macOS target/account namespace.",
-              "type": "string"
-            },
-            {
-              "const": "linux",
-              "description": "Linux host/account design namespace; does not assert rss-mdm product support for managed Linux devices.",
-              "type": "string"
-            }
-          ]
-        },
-        "PublicationState": {
-          "description": "State recorded in this immutable snapshot, not current authorization.",
-          "oneOf": [
-            {
-              "const": "listed",
-              "description": "Was listed in this snapshot.",
-              "type": "string"
-            },
-            {
-              "const": "withdrawn",
-              "description": "Was withdrawn in this snapshot.",
-              "type": "string"
-            }
-          ]
-        },
-        "Requirements": {
-          "additionalProperties": false,
-          "description": "Requirements only. Capability matching, identity binding and enforcement are external.",
-          "properties": {
-            "capabilities": {
-              "description": "Unique opaque required capabilities; no device facts or match algorithm.",
-              "items": { "$ref": "#/$defs/Id" },
-              "type": "array"
-            },
-            "evidence": {
-              "description": "Nonempty unique evidence requirement IDs; not evidence of completion.",
-              "items": { "$ref": "#/$defs/Id" },
-              "type": "array"
-            },
-            "interaction": {
-              "$ref": "#/$defs/InteractionRequirement",
-              "description": "Required interactive context."
-            },
-            "runAs": {
-              "$ref": "#/$defs/RunAsRequirement",
-              "description": "Required execution identity class."
-            }
-          },
-          "required": ["capabilities", "runAs", "interaction", "evidence"],
-          "type": "object"
-        },
-        "ResourceBinding": {
-          "additionalProperties": false,
-          "description": "Immutable resource definition pin scoped by the containing catalog authority.",
-          "properties": {
-            "reference": {
-              "$ref": "#/$defs/VersionedRef",
-              "description": "Owner's resource identity and immutable revision; never a moving alias lookup."
-            },
-            "selector": {
-              "$ref": "#/$defs/ResourceSelector",
-              "description": "Exact variant within that resource version."
-            },
-            "versionDigest": {
-              "$ref": "#/$defs/Digest",
-              "description": "SHA-256 of the owner's resource version definition, NOT file byte SHA-256."
-            }
-          },
-          "required": ["reference", "versionDigest", "selector"],
-          "type": "object"
-        },
-        "ResourceSelector": {
-          "additionalProperties": false,
-          "description": "Exact variant coordinates, not a platform support assertion.",
-          "properties": {
-            "architecture": {
-              "$ref": "#/$defs/Architecture",
-              "description": "Exact target architecture."
-            },
-            "key": {
-              "$ref": "#/$defs/Id",
-              "description": "Opaque resource variant key, separate from catalog operation ID and action."
-            },
-            "platform": {
-              "$ref": "#/$defs/Platform",
-              "description": "Target platform namespace."
-            }
-          },
-          "required": ["platform", "architecture", "key"],
-          "type": "object"
-        },
-        "RunAsRequirement": {
-          "description": "Requested identity class; contains no authenticated account.",
-          "oneOf": [
-            {
-              "const": "targetUser",
-              "description": "Requires the explicitly chosen target user.",
-              "type": "string"
-            },
-            {
-              "const": "system",
-              "description": "Requires system identity; grants no elevation.",
-              "type": "string"
-            }
-          ]
         },
         "ServiceError": {
           "description": "Static safe errors. An implementation must never attach raw backend diagnostics.",
@@ -727,22 +148,6 @@
               "type": "string"
             }
           ]
-        },
-        "VersionedRef": {
-          "additionalProperties": false,
-          "description": "Exact resource/configuration reference. Resolution and authenticity belong to the owner.",
-          "properties": {
-            "id": {
-              "$ref": "#/$defs/Id",
-              "description": "Opaque reference identity; the revision must be supplied separately."
-            },
-            "revision": {
-              "$ref": "#/$defs/Id",
-              "description": "Exact immutable revision reference; does not resolve or follow a moving alias."
-            }
-          },
-          "required": ["id", "revision"],
-          "type": "object"
         }
       },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -750,7 +155,10 @@
       "oneOf": [
         {
           "properties": {
-            "result": { "$ref": "#/$defs/CatalogView" },
+            "result": {
+              "items": { "$ref": "#/$defs/BackendTask" },
+              "type": "array"
+            },
             "status": { "const": "ok", "type": "string" }
           },
           "required": ["status", "result"],
@@ -782,19 +190,6 @@
     "name": "execution_capabilities",
     "outputSchema": {
       "$defs": {
-        "ArgumentRuleView": {
-          "enum": [
-            "object",
-            "unknownParameter",
-            "required",
-            "type",
-            "range",
-            "choice",
-            "secretReference",
-            "roundedNumber"
-          ],
-          "type": "string"
-        },
         "CapabilityState": {
           "description": "Capability projection; an enum is not an execution permit.",
           "oneOf": [
@@ -836,127 +231,9 @@
           "required": ["state", "reasons"],
           "type": "object"
         },
-        "CatalogErrorView": {
-          "oneOf": [
-            {
-              "additionalProperties": false,
-              "properties": {
-                "coordinate": { "$ref": "#/$defs/LimitView" },
-                "kind": { "const": "invalidLimits", "type": "string" }
-              },
-              "required": ["kind", "coordinate"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "malformed", "type": "string" }
-              },
-              "required": ["kind"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "duplicateKey", "type": "string" }
-              },
-              "required": ["kind"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "coordinate": { "$ref": "#/$defs/LimitView" },
-                "kind": { "const": "limitExceeded", "type": "string" }
-              },
-              "required": ["kind", "coordinate"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "unsupportedVersion", "type": "string" }
-              },
-              "required": ["kind"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "invalidShape", "type": "string" }
-              },
-              "required": ["kind"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "invalidDefinition", "type": "string" },
-                "rule": { "$ref": "#/$defs/DefinitionRuleView" }
-              },
-              "required": ["kind", "rule"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "referenceMismatch", "type": "string" }
-              },
-              "required": ["kind"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "notFound", "type": "string" }
-              },
-              "required": ["kind"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "invalidArguments", "type": "string" },
-                "rule": { "$ref": "#/$defs/ArgumentRuleView" }
-              },
-              "required": ["kind", "rule"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "encoding", "type": "string" }
-              },
-              "required": ["kind"],
-              "type": "object"
-            }
-          ]
-        },
-        "DefinitionRuleView": {
-          "enum": [
-            "timeWindow",
-            "duplicateItem",
-            "display",
-            "operations",
-            "requirements",
-            "parameterTitle",
-            "parameterBounds",
-            "parameterChoices",
-            "parameterDefault"
-          ],
-          "type": "string"
-        },
         "ErrorView": {
           "description": "Protocol error payload; optional catalog diagnostic is produced only from static C03 errors.",
-          "properties": {
-            "catalogReason": {
-              "anyOf": [
-                { "$ref": "#/$defs/CatalogErrorView" },
-                { "type": "null" }
-              ]
-            },
-            "code": { "$ref": "#/$defs/ServiceError" }
-          },
+          "properties": { "code": { "$ref": "#/$defs/ServiceError" } },
           "required": ["code"],
           "type": "object"
         },
@@ -965,17 +242,6 @@
           "maxLength": 128,
           "minLength": 1,
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
-          "type": "string"
-        },
-        "LimitView": {
-          "enum": [
-            "bytes",
-            "depth",
-            "nodes",
-            "stringBytes",
-            "collectionItems",
-            "parameters"
-          ],
           "type": "string"
         },
         "ServiceError": {
@@ -1070,134 +336,15 @@
   },
   {
     "annotations": { "openWorldHint": false, "readOnlyHint": false },
-    "description": "Request one exact action. Keep operationRequestId on retry; query status after an unknown outcome. User confirmation is handled by the trusted desktop.",
+    "description": "Propose an exact backend task. The desktop user must confirm installation. Query the returned original request; never choose another attempt after response loss.",
     "inputSchema": {
       "$defs": {
-        "Authority": {
-          "description": "Separate namespaces: none of these serializable references authenticates its issuer.",
-          "oneOf": [
-            {
-              "additionalProperties": false,
-              "description": "Local authority namespace, established and verified by a later trusted host.",
-              "properties": {
-                "id": {
-                  "$ref": "#/$defs/Id",
-                  "description": "Authority reference in this variant namespace; no proof of issuer authenticity."
-                },
-                "kind": { "const": "local", "type": "string" }
-              },
-              "required": ["kind", "id"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "description": "Enterprise authority with an explicit tenant; verified by the product identity owner.",
-              "properties": {
-                "id": {
-                  "$ref": "#/$defs/Id",
-                  "description": "Authority reference in this variant namespace; no proof of issuer authenticity."
-                },
-                "kind": { "const": "enterprise", "type": "string" },
-                "tenant": {
-                  "$ref": "#/$defs/Id",
-                  "description": "Explicit enterprise tenant reference; local/test authority never fabricates a tenant."
-                }
-              },
-              "required": ["kind", "id", "tenant"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "description": "Explicit test-only authority; cannot issue production or real-platform evidence.",
-              "properties": {
-                "id": {
-                  "$ref": "#/$defs/Id",
-                  "description": "Authority reference in this variant namespace; no proof of issuer authenticity."
-                },
-                "kind": { "const": "test", "type": "string" }
-              },
-              "required": ["kind", "id"],
-              "type": "object"
-            }
-          ]
-        },
-        "CatalogInput": {
-          "additionalProperties": false,
-          "description": "Exact catalog selection. The arguments retain original numeric tokens until C03 validates them.",
-          "properties": {
-            "arguments": {
-              "additionalProperties": true,
-              "description": "Original parameter object; schema/rules are obtained from execution_catalog.",
-              "type": "object"
-            },
-            "catalog": {
-              "$ref": "#/$defs/CatalogRef",
-              "description": "Exact catalog identity and digest."
-            },
-            "itemId": {
-              "$ref": "#/$defs/Id",
-              "description": "Catalog item ID."
-            },
-            "operationRequestId": {
-              "$ref": "#/$defs/RequestId",
-              "description": "Stable business identity, independent of the MCP request ID."
-            },
-            "variantId": {
-              "$ref": "#/$defs/Id",
-              "description": "Operation variant ID."
-            }
-          },
-          "required": [
-            "operationRequestId",
-            "catalog",
-            "itemId",
-            "variantId",
-            "arguments"
-          ],
-          "type": "object"
-        },
-        "CatalogRef": {
-          "additionalProperties": false,
-          "description": "Exact catalog content identity. It is neither a signature nor an authorization token.",
-          "properties": {
-            "authority": {
-              "$ref": "#/$defs/Authority",
-              "description": "Complete namespace including enterprise tenant when applicable."
-            },
-            "digest": {
-              "$ref": "#/$defs/Digest",
-              "description": "Computed canonical catalog SHA-256."
-            },
-            "identity": {
-              "$ref": "#/$defs/VersionedRef",
-              "description": "Catalog ID/revision, not resource version or format version."
-            }
-          },
-          "required": ["authority", "identity", "digest"],
-          "type": "object"
-        },
         "Digest": {
           "description": "Lowercase SHA-256 bytes expressed as hex; a digest alone grants no trust.",
           "maxLength": 64,
           "minLength": 64,
           "pattern": "^[0-9a-f]{64}$",
           "type": "string"
-        },
-        "ExactArtifactRef": {
-          "additionalProperties": false,
-          "description": "Resource revision and exact SHA-256 content identity; does not itself verify downloaded bytes.",
-          "properties": {
-            "resource": {
-              "$ref": "#/$defs/VersionedRef",
-              "description": "Exact resource ID and revision; no latest-version lookup is performed here."
-            },
-            "sha256": {
-              "$ref": "#/$defs/Digest",
-              "description": "Expected content SHA-256. The adapter must verify the actual bytes before use."
-            }
-          },
-          "required": ["resource", "sha256"],
-          "type": "object"
         },
         "Id": {
           "description": "Opaque local reference identifier; syntax validity is not authenticity.",
@@ -1212,575 +359,40 @@
           "minLength": 1,
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
           "type": "string"
-        },
-        "VersionedRef": {
-          "additionalProperties": false,
-          "description": "Exact resource/configuration reference. Resolution and authenticity belong to the owner.",
-          "properties": {
-            "id": {
-              "$ref": "#/$defs/Id",
-              "description": "Opaque reference identity; the revision must be supplied separately."
-            },
-            "revision": {
-              "$ref": "#/$defs/Id",
-              "description": "Exact immutable revision reference; does not resolve or follow a moving alias."
-            }
-          },
-          "required": ["id", "revision"],
-          "type": "object"
         }
       },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Untrusted proposal input; there is no approval, actor or permission field.",
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "description": "A directory operation using the shared parameter grammar.",
-          "properties": {
-            "catalog": {
-              "additionalProperties": false,
-              "properties": {
-                "selection": {
-                  "$ref": "#/$defs/CatalogInput",
-                  "description": "Exact selection."
-                }
-              },
-              "required": ["selection"],
-              "type": "object"
-            }
-          },
-          "required": ["catalog"],
-          "type": "object"
+      "additionalProperties": false,
+      "description": "A selection references exact backend content and carries no script or local catalog model.",
+      "properties": {
+        "attempt": {
+          "$ref": "#/$defs/Id",
+          "description": "Original backend attempt."
         },
-        {
-          "additionalProperties": false,
-          "description": "New UTF-8 source. The service creates the immutable artifact; the adapter never writes it.",
-          "properties": {
-            "script": {
-              "additionalProperties": false,
-              "properties": {
-                "interpreter": {
-                  "$ref": "#/$defs/ExactArtifactRef",
-                  "description": "Explicit interpreter identity, subject to service validation."
-                },
-                "operationRequestId": {
-                  "$ref": "#/$defs/RequestId",
-                  "description": "Stable operation identity."
-                },
-                "sourceUtf8": {
-                  "description": "Original UTF-8 script, never executed or echoed.",
-                  "type": "string"
-                }
-              },
-              "required": ["operationRequestId", "sourceUtf8", "interpreter"],
-              "type": "object"
-            }
-          },
-          "required": ["script"],
-          "type": "object"
+        "request": {
+          "$ref": "#/$defs/RequestId",
+          "description": "Original request shown with the offer, used unchanged for recovery."
+        },
+        "revision": {
+          "$ref": "#/$defs/Digest",
+          "description": "Revision shown to the user/model."
+        },
+        "task": {
+          "$ref": "#/$defs/Id",
+          "description": "Backend task identity."
         }
-      ],
-      "title": "ExecuteInput",
+      },
+      "required": ["request", "task", "attempt", "revision"],
+      "title": "BackendSelection",
       "type": "object"
     },
     "name": "execution_execute",
     "outputSchema": {
       "$defs": {
-        "ArgumentRuleView": {
-          "enum": [
-            "object",
-            "unknownParameter",
-            "required",
-            "type",
-            "range",
-            "choice",
-            "secretReference",
-            "roundedNumber"
-          ],
-          "type": "string"
-        },
-        "AttemptId": {
-          "description": "Execution attempt correlation identity.",
-          "maxLength": 128,
-          "minLength": 1,
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
-          "type": "string"
-        },
-        "CatalogErrorView": {
-          "oneOf": [
-            {
-              "additionalProperties": false,
-              "properties": {
-                "coordinate": { "$ref": "#/$defs/LimitView" },
-                "kind": { "const": "invalidLimits", "type": "string" }
-              },
-              "required": ["kind", "coordinate"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "malformed", "type": "string" }
-              },
-              "required": ["kind"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "duplicateKey", "type": "string" }
-              },
-              "required": ["kind"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "coordinate": { "$ref": "#/$defs/LimitView" },
-                "kind": { "const": "limitExceeded", "type": "string" }
-              },
-              "required": ["kind", "coordinate"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "unsupportedVersion", "type": "string" }
-              },
-              "required": ["kind"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "invalidShape", "type": "string" }
-              },
-              "required": ["kind"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "invalidDefinition", "type": "string" },
-                "rule": { "$ref": "#/$defs/DefinitionRuleView" }
-              },
-              "required": ["kind", "rule"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "referenceMismatch", "type": "string" }
-              },
-              "required": ["kind"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "notFound", "type": "string" }
-              },
-              "required": ["kind"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "invalidArguments", "type": "string" },
-                "rule": { "$ref": "#/$defs/ArgumentRuleView" }
-              },
-              "required": ["kind", "rule"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "encoding", "type": "string" }
-              },
-              "required": ["kind"],
-              "type": "object"
-            }
-          ]
-        },
-        "DefinitionRuleView": {
-          "enum": [
-            "timeWindow",
-            "duplicateItem",
-            "display",
-            "operations",
-            "requirements",
-            "parameterTitle",
-            "parameterBounds",
-            "parameterChoices",
-            "parameterDefault"
-          ],
-          "type": "string"
-        },
-        "Digest": {
-          "description": "Lowercase SHA-256 bytes expressed as hex; a digest alone grants no trust.",
-          "maxLength": 64,
-          "minLength": 64,
-          "pattern": "^[0-9a-f]{64}$",
-          "type": "string"
-        },
-        "EffectAssessment": {
-          "description": "Verified assessment of the whole controlled attempt, not text from tool output.",
-          "oneOf": [
-            {
-              "const": "noEffect",
-              "description": "Quiescent attempt has no side effects or pending external work.",
-              "type": "string"
-            },
-            {
-              "const": "satisfied",
-              "description": "Independent target verification confirms the desired state.",
-              "type": "string"
-            },
-            {
-              "const": "notSatisfied",
-              "description": "Target is not satisfied; side effects may nevertheless exist.",
-              "type": "string"
-            },
-            {
-              "const": "unknown",
-              "description": "Effect cannot be established.",
-              "type": "string"
-            }
-          ]
-        },
         "ErrorView": {
           "description": "Protocol error payload; optional catalog diagnostic is produced only from static C03 errors.",
-          "properties": {
-            "catalogReason": {
-              "anyOf": [
-                { "$ref": "#/$defs/CatalogErrorView" },
-                { "type": "null" }
-              ]
-            },
-            "code": { "$ref": "#/$defs/ServiceError" }
-          },
+          "properties": { "code": { "$ref": "#/$defs/ServiceError" } },
           "required": ["code"],
-          "type": "object"
-        },
-        "ExecutionMode": {
-          "description": "Explicit execution provenance; test effects never become real effects.",
-          "oneOf": [
-            {
-              "const": "test",
-              "description": "Explicit fixture runner only.",
-              "type": "string"
-            },
-            {
-              "const": "real",
-              "description": "Real runner, verified by the later production host.",
-              "type": "string"
-            }
-          ]
-        },
-        "Id": {
-          "description": "Opaque local reference identifier; syntax validity is not authenticity.",
-          "maxLength": 128,
-          "minLength": 1,
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
-          "type": "string"
-        },
-        "LimitView": {
-          "enum": [
-            "bytes",
-            "depth",
-            "nodes",
-            "stringBytes",
-            "collectionItems",
-            "parameters"
-          ],
-          "type": "string"
-        },
-        "OperationPhase": {
-          "description": "Read-only service projection. This crate implements no execution state machine.",
-          "oneOf": [
-            {
-              "const": "accepted",
-              "description": "Durable acceptance only.",
-              "type": "string"
-            },
-            {
-              "const": "waiting",
-              "description": "Waiting for policy/approval/user conditions.",
-              "type": "string"
-            },
-            {
-              "const": "running",
-              "description": "Service reports execution underway.",
-              "type": "string"
-            },
-            {
-              "const": "executionEnded",
-              "description": "Execution ended; effects have not necessarily been verified.",
-              "type": "string"
-            },
-            {
-              "const": "outcomeUnknown",
-              "description": "Outcome needs authoritative reconciliation.",
-              "type": "string"
-            },
-            {
-              "const": "verified",
-              "description": "An independent assessment was recorded; inspect mode and assessment.",
-              "type": "string"
-            },
-            {
-              "const": "failed",
-              "description": "Failure known to the execution authority.",
-              "type": "string"
-            },
-            {
-              "const": "cancelled",
-              "description": "Service confirms its business cancellation condition, not rollback.",
-              "type": "string"
-            }
-          ]
-        },
-        "OperationStatus": {
-          "description": "Authorized execution fact projection; accepted is never rewritten to success.",
-          "properties": {
-            "assessment": {
-              "anyOf": [
-                { "$ref": "#/$defs/EffectAssessment" },
-                { "type": "null" }
-              ],
-              "description": "Independent effect assessment, never inferred from process exit."
-            },
-            "attemptId": {
-              "anyOf": [{ "$ref": "#/$defs/AttemptId" }, { "type": "null" }],
-              "description": "Service-owned attempt identity, if an attempt exists."
-            },
-            "cancelRequested": {
-              "description": "Durable cancellation request, independent of termination/effect status.",
-              "type": "boolean"
-            },
-            "contentDigest": {
-              "$ref": "#/$defs/Digest",
-              "description": "Canonical digest of the original immutable execution input."
-            },
-            "evidence": {
-              "description": "Authorized evidence references only.",
-              "items": { "$ref": "#/$defs/Id" },
-              "type": "array"
-            },
-            "mode": {
-              "$ref": "#/$defs/ExecutionMode",
-              "description": "Execution provenance; a verified test result is not a real platform effect."
-            },
-            "operationRequestId": {
-              "$ref": "#/$defs/RequestId",
-              "description": "Original business identity."
-            },
-            "phase": {
-              "$ref": "#/$defs/OperationPhase",
-              "description": "Service-owned current phase."
-            },
-            "process": {
-              "anyOf": [
-                { "$ref": "#/$defs/ProcessSummary" },
-                { "type": "null" }
-              ],
-              "description": "Redacted root process progress; not full-scope termination or effect proof."
-            }
-          },
-          "required": [
-            "mode",
-            "cancelRequested",
-            "operationRequestId",
-            "contentDigest",
-            "phase",
-            "evidence"
-          ],
-          "type": "object"
-        },
-        "OutputQuality": {
-          "description": "Quality of the captured result, independent from the exit code.",
-          "oneOf": [
-            {
-              "const": "complete",
-              "description": "All required output was decoded and structurally valid.",
-              "type": "string"
-            },
-            {
-              "const": "truncated",
-              "description": "Capture was truncated by the output budget.",
-              "type": "string"
-            },
-            {
-              "const": "failed",
-              "description": "Encoding, JSON shape, row bound or process outcome failed.",
-              "type": "string"
-            },
-            {
-              "const": "partial",
-              "description": "A process or pipe is still unaccounted for.",
-              "type": "string"
-            }
-          ]
-        },
-        "ProcessEnd": {
-          "description": "Why a bounded process owner stopped collecting output.",
-          "oneOf": [
-            {
-              "const": "rejected",
-              "description": "Preparation was rejected before any target process started.",
-              "type": "string"
-            },
-            {
-              "const": "exited",
-              "description": "Root process exited; this is not an effect observation.",
-              "type": "string"
-            },
-            {
-              "const": "cancelled",
-              "description": "Explicit cancellation requested.",
-              "type": "string"
-            },
-            {
-              "const": "timedOut",
-              "description": "Remaining wall time exhausted.",
-              "type": "string"
-            },
-            {
-              "const": "outputLimit",
-              "description": "Combined output allowance exhausted.",
-              "type": "string"
-            },
-            {
-              "const": "unknown",
-              "description": "Read, supervision or termination failure.",
-              "type": "string"
-            }
-          ]
-        },
-        "ProcessFailureKind": {
-          "description": "Closed, value-free mechanism diagnosis, independent of cancellation, exit and effect.",
-          "oneOf": [
-            {
-              "const": "none",
-              "description": "No mechanism failure was observed; not a statement of business success.",
-              "type": "string"
-            },
-            {
-              "const": "denied",
-              "description": "An immutable input or artifact did not satisfy access/integrity requirements.",
-              "type": "string"
-            },
-            {
-              "const": "unbound",
-              "description": "The requested OS identity or controlled input binding is absent.",
-              "type": "string"
-            },
-            {
-              "const": "capability",
-              "description": "The declared restriction cannot be enforced.",
-              "type": "string"
-            },
-            {
-              "const": "unsupported",
-              "description": "A profile or encoding is not supported on this platform.",
-              "type": "string"
-            },
-            {
-              "const": "invalidInput",
-              "description": "Supplied input, encoding or configuration is malformed.",
-              "type": "string"
-            },
-            {
-              "const": "capacity",
-              "description": "A materialization, input or owner capacity limit was exceeded.",
-              "type": "string"
-            },
-            {
-              "const": "conflict",
-              "description": "An attempt or immutable resource already has a conflicting owner.",
-              "type": "string"
-            },
-            {
-              "const": "unavailable",
-              "description": "A required platform resource could not be acquired.",
-              "type": "string"
-            },
-            {
-              "const": "runtime",
-              "description": "The owner thread/runtime could not be initialized.",
-              "type": "string"
-            },
-            {
-              "const": "spawn",
-              "description": "The target could not be created or its initial thread resumed.",
-              "type": "string"
-            },
-            {
-              "const": "inputDelivery",
-              "description": "Controlled stdin could not be delivered completely.",
-              "type": "string"
-            },
-            {
-              "const": "capture",
-              "description": "A standard output/error stream could not be read completely.",
-              "type": "string"
-            },
-            {
-              "const": "supervision",
-              "description": "Root process status could not be observed reliably.",
-              "type": "string"
-            },
-            {
-              "const": "outputValidation",
-              "description": "Captured output did not meet its declared encoding or structure.",
-              "type": "string"
-            }
-          ]
-        },
-        "ProcessSummary": {
-          "additionalProperties": false,
-          "description": "Ordinary result projection. No raw output, paths, process identifiers or secrets.",
-          "properties": {
-            "end": {
-              "$ref": "#/$defs/ProcessEnd",
-              "description": "Stop/failure classification."
-            },
-            "exitCode": {
-              "description": "Root exit code, independently from effect or scope quiescence.",
-              "format": "int32",
-              "type": ["integer", "null"]
-            },
-            "failureKind": {
-              "$ref": "#/$defs/ProcessFailureKind",
-              "description": "First mechanism failure. Required even when no failure has occurred."
-            },
-            "finished": {
-              "description": "Root capture completed; not proof of all descendants terminating.",
-              "type": "boolean"
-            },
-            "quality": {
-              "$ref": "#/$defs/OutputQuality",
-              "description": "Capture/decoding quality, not a business success bit."
-            },
-            "quiescent": {
-              "description": "Explicit full-scope proof; false means unproven.",
-              "type": "boolean"
-            },
-            "totalOutputBytes": {
-              "description": "Bytes observed including discarded bytes.",
-              "format": "uint64",
-              "minimum": 0,
-              "type": "integer"
-            }
-          },
-          "required": [
-            "finished",
-            "end",
-            "failureKind",
-            "quiescent",
-            "totalOutputBytes",
-            "quality"
-          ],
           "type": "object"
         },
         "RequestId": {
@@ -1854,6 +466,22 @@
               "type": "string"
             }
           ]
+        },
+        "TaskSubmission": {
+          "additionalProperties": false,
+          "description": "Selection acknowledgement, distinct from persisted execution or effect completion.",
+          "properties": {
+            "confirmationRequired": {
+              "description": "A human still needs to confirm the displayed task in the desktop.",
+              "type": "boolean"
+            },
+            "request": {
+              "$ref": "#/$defs/RequestId",
+              "description": "Original request to query after a timeout or disconnect."
+            }
+          },
+          "required": ["request", "confirmationRequired"],
+          "type": "object"
         }
       },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1861,7 +489,7 @@
       "oneOf": [
         {
           "properties": {
-            "result": { "$ref": "#/$defs/OperationStatus" },
+            "result": { "$ref": "#/$defs/TaskSubmission" },
             "status": { "const": "ok", "type": "string" }
           },
           "required": ["status", "result"],
@@ -1909,134 +537,11 @@
     "name": "execution_status",
     "outputSchema": {
       "$defs": {
-        "ArgumentRuleView": {
-          "enum": [
-            "object",
-            "unknownParameter",
-            "required",
-            "type",
-            "range",
-            "choice",
-            "secretReference",
-            "roundedNumber"
-          ],
-          "type": "string"
-        },
         "AttemptId": {
           "description": "Execution attempt correlation identity.",
           "maxLength": 128,
           "minLength": 1,
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
-          "type": "string"
-        },
-        "CatalogErrorView": {
-          "oneOf": [
-            {
-              "additionalProperties": false,
-              "properties": {
-                "coordinate": { "$ref": "#/$defs/LimitView" },
-                "kind": { "const": "invalidLimits", "type": "string" }
-              },
-              "required": ["kind", "coordinate"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "malformed", "type": "string" }
-              },
-              "required": ["kind"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "duplicateKey", "type": "string" }
-              },
-              "required": ["kind"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "coordinate": { "$ref": "#/$defs/LimitView" },
-                "kind": { "const": "limitExceeded", "type": "string" }
-              },
-              "required": ["kind", "coordinate"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "unsupportedVersion", "type": "string" }
-              },
-              "required": ["kind"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "invalidShape", "type": "string" }
-              },
-              "required": ["kind"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "invalidDefinition", "type": "string" },
-                "rule": { "$ref": "#/$defs/DefinitionRuleView" }
-              },
-              "required": ["kind", "rule"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "referenceMismatch", "type": "string" }
-              },
-              "required": ["kind"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "notFound", "type": "string" }
-              },
-              "required": ["kind"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "invalidArguments", "type": "string" },
-                "rule": { "$ref": "#/$defs/ArgumentRuleView" }
-              },
-              "required": ["kind", "rule"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "encoding", "type": "string" }
-              },
-              "required": ["kind"],
-              "type": "object"
-            }
-          ]
-        },
-        "DefinitionRuleView": {
-          "enum": [
-            "timeWindow",
-            "duplicateItem",
-            "display",
-            "operations",
-            "requirements",
-            "parameterTitle",
-            "parameterBounds",
-            "parameterChoices",
-            "parameterDefault"
-          ],
           "type": "string"
         },
         "Digest": {
@@ -2073,15 +578,7 @@
         },
         "ErrorView": {
           "description": "Protocol error payload; optional catalog diagnostic is produced only from static C03 errors.",
-          "properties": {
-            "catalogReason": {
-              "anyOf": [
-                { "$ref": "#/$defs/CatalogErrorView" },
-                { "type": "null" }
-              ]
-            },
-            "code": { "$ref": "#/$defs/ServiceError" }
-          },
+          "properties": { "code": { "$ref": "#/$defs/ServiceError" } },
           "required": ["code"],
           "type": "object"
         },
@@ -2105,17 +602,6 @@
           "maxLength": 128,
           "minLength": 1,
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
-          "type": "string"
-        },
-        "LimitView": {
-          "enum": [
-            "bytes",
-            "depth",
-            "nodes",
-            "stringBytes",
-            "collectionItems",
-            "parameters"
-          ],
           "type": "string"
         },
         "OperationPhase": {
@@ -2532,19 +1018,6 @@
     "name": "execution_cancel",
     "outputSchema": {
       "$defs": {
-        "ArgumentRuleView": {
-          "enum": [
-            "object",
-            "unknownParameter",
-            "required",
-            "type",
-            "range",
-            "choice",
-            "secretReference",
-            "roundedNumber"
-          ],
-          "type": "string"
-        },
         "AttemptId": {
           "description": "Execution attempt correlation identity.",
           "maxLength": 128,
@@ -2582,116 +1055,6 @@
           "required": ["disposition", "operation"],
           "type": "object"
         },
-        "CatalogErrorView": {
-          "oneOf": [
-            {
-              "additionalProperties": false,
-              "properties": {
-                "coordinate": { "$ref": "#/$defs/LimitView" },
-                "kind": { "const": "invalidLimits", "type": "string" }
-              },
-              "required": ["kind", "coordinate"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "malformed", "type": "string" }
-              },
-              "required": ["kind"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "duplicateKey", "type": "string" }
-              },
-              "required": ["kind"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "coordinate": { "$ref": "#/$defs/LimitView" },
-                "kind": { "const": "limitExceeded", "type": "string" }
-              },
-              "required": ["kind", "coordinate"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "unsupportedVersion", "type": "string" }
-              },
-              "required": ["kind"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "invalidShape", "type": "string" }
-              },
-              "required": ["kind"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "invalidDefinition", "type": "string" },
-                "rule": { "$ref": "#/$defs/DefinitionRuleView" }
-              },
-              "required": ["kind", "rule"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "referenceMismatch", "type": "string" }
-              },
-              "required": ["kind"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "notFound", "type": "string" }
-              },
-              "required": ["kind"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "invalidArguments", "type": "string" },
-                "rule": { "$ref": "#/$defs/ArgumentRuleView" }
-              },
-              "required": ["kind", "rule"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": { "const": "encoding", "type": "string" }
-              },
-              "required": ["kind"],
-              "type": "object"
-            }
-          ]
-        },
-        "DefinitionRuleView": {
-          "enum": [
-            "timeWindow",
-            "duplicateItem",
-            "display",
-            "operations",
-            "requirements",
-            "parameterTitle",
-            "parameterBounds",
-            "parameterChoices",
-            "parameterDefault"
-          ],
-          "type": "string"
-        },
         "Digest": {
           "description": "Lowercase SHA-256 bytes expressed as hex; a digest alone grants no trust.",
           "maxLength": 64,
@@ -2726,15 +1089,7 @@
         },
         "ErrorView": {
           "description": "Protocol error payload; optional catalog diagnostic is produced only from static C03 errors.",
-          "properties": {
-            "catalogReason": {
-              "anyOf": [
-                { "$ref": "#/$defs/CatalogErrorView" },
-                { "type": "null" }
-              ]
-            },
-            "code": { "$ref": "#/$defs/ServiceError" }
-          },
+          "properties": { "code": { "$ref": "#/$defs/ServiceError" } },
           "required": ["code"],
           "type": "object"
         },
@@ -2758,17 +1113,6 @@
           "maxLength": 128,
           "minLength": 1,
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
-          "type": "string"
-        },
-        "LimitView": {
-          "enum": [
-            "bytes",
-            "depth",
-            "nodes",
-            "stringBytes",
-            "collectionItems",
-            "parameters"
-          ],
           "type": "string"
         },
         "OperationPhase": {

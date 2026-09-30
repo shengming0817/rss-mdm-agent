@@ -44,7 +44,7 @@ const files = [
   ["tests/assistant/execution-fixtures.json", fixtures],
 ];
 for (const [name, type, file] of [
-  ["execution_execute", "ExecuteInput", "execute"],
+  ["execution_execute", "BackendSelection", "execute"],
   ["execution_status", "OperationRequest", "operation"],
 ]) {
   const schema = tools.find((tool) => tool.name === name).inputSchema;

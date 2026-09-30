@@ -12,10 +12,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 #[derive(Serialize, Deserialize)]
-struct Binding {
+pub(crate) struct Binding {
     task: Uuid,
     attempt: Uuid,
-    request: RequestId,
+    pub(crate) request: RequestId,
     digest: execution_contract::Digest,
     actor: execution_contract::ActorId,
     local_attempt: Option<execution_contract::AttemptId>,
@@ -31,6 +31,18 @@ pub trait OutputPolicy {
     /// Remove secrets before structured output and diagnostic streams become wire values.
     fn redact(&self, text: &str) -> Result<String, Error>;
 }
+/// Redacts the communication owner's actual credentials while preserving task output.
+/// The secret list is private and never serialized or printed.
+pub struct CredentialRedactor(pub(crate) Vec<wire::Secret>);
+impl OutputPolicy for CredentialRedactor {
+    fn redact(&self, text: &str) -> Result<String, Error> {
+        let mut value = text.to_owned();
+        for secret in &self.0 {
+            value = value.replace(secret.expose(), "[redacted]");
+        }
+        Ok(value)
+    }
+}
 /// Concrete bridge into the existing execution service, never a second executor/journal.
 pub struct ExecutionBridge<P> {
     consumer: Id,
@@ -42,8 +54,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         Self { consumer, policy }
     }
     /// Check materials and current host prerequisites BEFORE requesting a remote Start.
-    /// This concrete bridge represents one local plan; composite software is handed to
-    /// its host owner rather than silently collapsing prerequisites into one installation.
+    /// Scripts and ordered software each bind to one immutable local intent.
     pub fn prepare<H: AppHost, R: RunnerPort>(
         &self,
         offer: &crate::Offer,
@@ -54,31 +65,61 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
     ) -> Result<PreparedExecution, Error> {
         materials.validate(offer)?;
         let (device, platform, run_as, timeout, output) = match offer.payload() {
-            wire::TaskPayload::Script(v) if plan.spec().execution.software().is_none() => (
-                &v.device_id,
-                v.platform,
-                v.run_as,
-                v.timeout_seconds,
-                v.output_bytes,
-            ),
-            wire::TaskPayload::Software(v)
-                if v.steps.len() == 1 && plan.spec().execution.software().is_some() =>
+            wire::TaskPayload::Script(v)
+                if matches!(
+                    plan.spec().execution,
+                    execution_contract::ExecutionSpec::Process {}
+                ) =>
             {
-                let command = match v.intent {
-                    wire::SoftwareTaskIntent::Install => &v.steps[0].action.install,
-                    wire::SoftwareTaskIntent::Uninstall => v.steps[0]
-                        .action
-                        .uninstall
-                        .as_ref()
-                        .ok_or(Error::Unsupported)?,
-                    wire::SoftwareTaskIntent::Detect => return Err(Error::Unsupported),
-                };
                 (
                     &v.device_id,
                     v.platform,
-                    command.run_as,
-                    command.timeout_seconds,
-                    command.output_bytes,
+                    v.run_as,
+                    u64::from(v.timeout_seconds) * 1000,
+                    u64::from(v.output_bytes),
+                )
+            }
+            wire::TaskPayload::Software(v) => {
+                let program = plan
+                    .spec()
+                    .execution
+                    .software_program()
+                    .ok_or(Error::Untrusted)?;
+                let expected = v
+                    .definition_digest
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<String>();
+                if program.definition_digest.as_str() != expected
+                    || program.steps.len() != v.steps.len()
+                {
+                    return Err(Error::Untrusted);
+                }
+                let mut timeout = 0u64;
+                let mut output = 0u64;
+                for step in &v.steps {
+                    let command = match v.intent {
+                        wire::SoftwareTaskIntent::Install => Some(&step.action.install),
+                        wire::SoftwareTaskIntent::Uninstall => {
+                            Some(step.action.uninstall.as_ref().ok_or(Error::Unsupported)?)
+                        }
+                        wire::SoftwareTaskIntent::Detect => None,
+                    };
+                    if let Some(c) = command {
+                        timeout = timeout.saturating_add(u64::from(c.timeout_seconds) * 1000);
+                        output = output.saturating_add(u64::from(c.output_bytes));
+                    }
+                    if let wire::SoftwareTaskDetection::Script { command } = &step.action.detect {
+                        timeout = timeout.saturating_add(u64::from(command.timeout_seconds) * 1000);
+                        output = output.saturating_add(u64::from(command.output_bytes));
+                    }
+                }
+                (
+                    &v.device_id,
+                    v.platform,
+                    wire::ExecutionIdentity::System,
+                    timeout.clamp(1000, 86_400_000),
+                    output.clamp(1024, 1_048_576),
                 )
             }
             _ => return Err(Error::Unsupported),
@@ -104,8 +145,8 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         if p.request.target.device.as_str() != device
             || p.request.target.platform != actual_platform
             || !matches_run_as
-            || p.budget.total_timeout_ms > u64::from(timeout) * 1000
-            || p.budget.total_output_bytes > u64::from(output)
+            || p.budget.total_timeout_ms > timeout
+            || p.budget.total_output_bytes > output
         {
             return Err(Error::Untrusted);
         }
@@ -141,7 +182,13 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
             .map_err(|_| Error::Clock)?
             .checked_mul(1000)
             .ok_or(Error::Clock)?;
-        if plan.spec().validity.expires_at_unix_ms > expiry {
+        // Start expiry bounds the first dispatch. The signed runtime budget remains available
+        // after admission; treating the short Start window as that budget truncates valid work.
+        if plan.spec().validity.expires_at_unix_ms
+            > expiry
+                .checked_add(plan.spec().budget.total_timeout_ms)
+                .ok_or(Error::Clock)?
+        {
             return Err(Error::Expired);
         }
         let original: wire::TaskPayload = decode(&materials.input)?;
@@ -186,6 +233,49 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         binding.local_attempt = status.attempt_id.clone();
         client.store.put(&key, &binding)?;
         Ok(status)
+    }
+    /// Repair only the transport association after an interrupted commit hand-off.
+    /// The journal remains the authority for whether an attempt exists; this never dispatches.
+    pub fn recover_binding<S: SecretProvider, C: Clock, H: AppHost, R: RunnerPort>(
+        &self,
+        client: &mut Client<S, C>,
+        task: Uuid,
+        app: &ExecutionApp<H, R>,
+    ) -> Result<bool, Error> {
+        let key = format!("binding/{task}");
+        let mut binding: Binding = client.store.get(&key)?.ok_or(Error::Conflict)?;
+        let device = execution_contract::DeviceId::new(client.registration()?.device_id)
+            .map_err(|_| Error::Identity)?;
+        if !app.has_service_execution(&binding.request, &device)? {
+            if binding.local_attempt.is_some() {
+                return Err(Error::Conflict);
+            }
+            return Ok(false);
+        }
+        if binding.local_attempt.is_some() {
+            return Ok(true);
+        }
+        let caller = RequestContext {
+            actor: binding.actor.clone(),
+        };
+        let plan = app.frozen_input(&caller, &binding.request)?;
+        let offer = client.stored_offer(task)?;
+        if plan.digest() != &binding.digest
+            || binding.task != task
+            || binding.attempt != offer.attempt_id()
+            || binding.request != offer.request_id()?
+        {
+            return Err(Error::Conflict);
+        }
+        let status = app.status(&caller, &binding.request)?;
+        if binding.local_attempt.is_some() && binding.local_attempt != status.attempt_id {
+            return Err(Error::Conflict);
+        }
+        if binding.local_attempt != status.attempt_id {
+            binding.local_attempt = status.attempt_id;
+            client.store.put(&key, &binding)?;
+        }
+        Ok(true)
     }
     /// Settle an offer that never entered this authoritative journal. Cancellation ACK
     /// precedes releasing associations; any existing local execution remains journal-owned.
@@ -267,6 +357,9 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
     ) -> Result<usize, Error> {
         client.active()?;
         client.now()?;
+        if !self.recover_binding(client, task, app)? {
+            return Err(Error::Conflict);
+        }
         let binding: Binding = client
             .store
             .get(&format!("binding/{task}"))?
@@ -298,10 +391,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
             }
             let candidate = items.iter().rev().find(|v| {
                 v.current_attempt == binding.local_attempt
-                    && (v.terminal.is_some()
-                        || v.process
-                            .as_ref()
-                            .is_some_and(|p| p.finished && p.quiescent))
+                    && (v.terminal.is_some() || v.process.as_ref().is_some_and(|p| p.finished))
             });
             let Some(candidate) = candidate else {
                 return Ok(0);
@@ -309,13 +399,13 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
             let Some(event) = self.project(&offer.payload, candidate)? else {
                 return Ok(0);
             };
-            let projection = hash(&encode(&event)?);
             let events: Vec<_> = items.iter().map(|v| v.receipt.event_id.clone()).collect();
+            // V4 accepts one terminal result per attempt. Later independent local facts
+            // remain in the execution journal but cannot replace an acknowledged wire result.
             if client
                 .store
                 .get::<String>(&format!("projection/{task}"))?
-                .as_deref()
-                == Some(&projection)
+                .is_some()
             {
                 for id in events {
                     app.service_confirm(&binding.request, &self.consumer, &id)?;
@@ -401,10 +491,10 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         let Some(process) = evidence.process.as_ref() else {
             return Ok(None);
         };
-        if !process.finished || !process.quiescent {
+        if !process.finished {
             return Ok(None);
         }
-        if process.end == ProcessEnd::Cancelled {
+        if process.end == ProcessEnd::Cancelled && process.quiescent {
             return Ok(Some(wire::TaskEvent::Cancelled));
         }
         let output_spec = evidence.input.spec().launch.output;
@@ -441,7 +531,9 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
                 let output = serde_json::from_str(&stdout).unwrap_or(serde_json::Value::Null);
                 let quality = match process.quality {
                     OutputQuality::Complete
-                        if process.exit_code == Some(0) && failure.is_none() =>
+                        if process.exit_code == Some(0)
+                            && failure.is_none()
+                            && process.quiescent =>
                     {
                         wire::OutputQuality::Complete
                     }
@@ -461,29 +553,52 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
                 )?)
             }
             wire::TaskPayload::Software(spec) => {
-                let Some(software) = evidence.software.as_ref() else {
+                let Some(progress) = evidence.software_progress.as_ref() else {
                     return Ok(None);
                 };
-                let (detection, version) = match &software.detected {
-                    execution_contract::SoftwareState::Present { version } => (
-                        wire::SoftwareDetectionState::Present,
-                        Some(version.as_str().to_owned()),
-                    ),
-                    execution_contract::SoftwareState::Absent {} => {
-                        (wire::SoftwareDetectionState::Absent, None)
+                let observed = progress.checkpoints.iter().rev().find_map(|c| match c {
+                    execution_contract::SoftwareCheckpoint::End {
+                        detected: Some(state),
+                        ..
+                    } => Some(state),
+                    _ => None,
+                });
+                let (detection, version) = if progress.complete(&evidence.input) {
+                    match observed {
+                        Some(execution_contract::SoftwareState::Present { version }) => (
+                            wire::SoftwareDetectionState::Present,
+                            Some(version.as_str().to_owned()),
+                        ),
+                        Some(execution_contract::SoftwareState::Absent {}) => {
+                            (wire::SoftwareDetectionState::Absent, None)
+                        }
+                        _ => (wire::SoftwareDetectionState::Unknown, None),
                     }
-                    execution_contract::SoftwareState::Unknown { .. } => {
-                        (wire::SoftwareDetectionState::Unknown, None)
-                    }
+                } else {
+                    (wire::SoftwareDetectionState::Unknown, None)
                 };
+                let mutation =
+                    progress
+                        .checkpoints
+                        .iter()
+                        .rev()
+                        .find_map(|checkpoint| match checkpoint {
+                            execution_contract::SoftwareCheckpoint::End {
+                                phase: execution_contract::SoftwarePhase::Mutation,
+                                process: Some(facts),
+                                ..
+                            } => Some(facts),
+                            _ => None,
+                        });
                 let result = wire::SoftwareTaskResult {
                     intent: spec.intent,
-                    installer_exit_code: process.exit_code,
+                    installer_exit_code: mutation.and_then(|f| f.exit_code),
                     detection,
                     definition_digest: spec.definition_digest,
                     observed_version: version,
-                    evidence_digest: Sha256::digest(encode(software.as_ref())?).into(),
-                    reboot_required: software.restart_required,
+                    evidence_digest: Sha256::digest(encode(progress.as_ref())?).into(),
+                    reboot_required: mutation
+                        .is_some_and(|f| matches!(f.exit_code, Some(3010 | 1641))),
                     diagnostics,
                 };
                 result.validate()?;

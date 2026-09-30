@@ -6,7 +6,7 @@ pub(super) fn diagnostic(error: &(dyn Error + 'static)) -> String {
         if let Some(execution_app::Error::UnsupportedSchema { found, supported }) =
             cause.downcast_ref::<execution_app::Error>()
         {
-            return format!("执行数据库格式 {found} 不受支持，当前要求格式 {supported}。旧数据库保持原样；请使用 --test-data-dir <新的绝对目录> 显式选择新测试数据目录后启动。不会迁移、覆盖或清空旧数据。");
+            return format!("执行数据库格式 {found} 不受支持，当前要求格式 {supported}。旧数据库保持原样；执行已停用，请由部署管理员核查原任务与版本。不迁移、覆盖或清空旧数据，也不创建新账本绕过未决任务。");
         }
         current = cause.source();
     }
@@ -73,15 +73,16 @@ mod tests {
         assert!(message.contains("启动失败"));
     }
     #[test]
-    fn schema_diagnostic_names_versions_and_explicit_new_directory_without_raw_paths() {
+    fn schema_diagnostic_preserves_original_journal_without_test_fallback() {
         let error = execution_app::Error::UnsupportedSchema {
             found: 4,
-            supported: 5,
+            supported: 6,
         };
         let message = diagnostic(&error);
         assert!(message.contains("格式 4"));
-        assert!(message.contains("格式 5"));
-        assert!(message.contains("--test-data-dir"));
+        assert!(message.contains("格式 6"));
+        assert!(!message.contains("--test-data-dir"));
+        assert!(message.contains("不创建新账本"));
         assert!(message.contains("旧数据库保持原样"));
     }
 }

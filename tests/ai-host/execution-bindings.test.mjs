@@ -2,60 +2,44 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { operationRequestId } from "../../packages/execution-bindings/dist/index.js";
 
-test("Rust-generated execution requests have one shared checked business identity", () => {
-  const catalog = {
-    catalog: {
-      selection: {
-        operationRequestId: "catalog-request",
-        catalog: {
-          authority: { kind: "test", id: "fixture" },
-          identity: { id: "catalog", revision: "1" },
-          digest: "0".repeat(64),
-        },
-        itemId: "item",
-        variantId: "variant",
-        arguments: {},
-      },
-    },
-  };
-  const script = {
-    script: {
-      operationRequestId: "script-request",
-      sourceUtf8: "echo fixture",
-      interpreter: {
-        resource: { id: "shell", revision: "1" },
-        sha256: "0".repeat(64),
-      },
-    },
+test("backend task references retain the server-selected request and reject old proposals", () => {
+  const selection = {
+    task: "task",
+    attempt: "attempt",
+    revision: "a".repeat(64),
+    request: "backend-request",
   };
   assert.equal(
-    operationRequestId("execution_execute", catalog),
-    "catalog-request",
-  );
-  assert.equal(
-    operationRequestId("execution_execute", script),
-    "script-request",
+    operationRequestId("execution_execute", selection),
+    "backend-request",
   );
   for (const input of [
     null,
     {},
-    { ...catalog, ...script },
-    { script: { operationRequestId: "incomplete" } },
-    { ...script, approved: true },
-  ])
+    { ...selection, approved: true },
+    { ...selection, sourceUtf8: "echo forged" },
+    { catalog: { selection: { operationRequestId: "old" } } },
+    {
+      script: {
+        operationRequestId: "old",
+        sourceUtf8: "echo old",
+        interpreter: {},
+      },
+    },
+  ]) {
     assert.equal(operationRequestId("execution_execute", input), undefined);
+  }
   for (const name of ["execution_status", "execution_cancel"]) {
     assert.equal(
-      operationRequestId(name, { operationRequestId: "request" }),
-      "request",
+      operationRequestId(name, { operationRequestId: "backend-request" }),
+      "backend-request",
     );
     assert.equal(
       operationRequestId(name, {
-        operationRequestId: "request",
-        approved: true,
+        operationRequestId: "backend-request",
+        actor: "forged",
       }),
       undefined,
     );
   }
-  assert.equal(operationRequestId("unrecognized", script), undefined);
 });

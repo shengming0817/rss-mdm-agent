@@ -1,8 +1,6 @@
-use execution_contract::{AttemptId, Digest, ExactArtifactRef, Id, RequestId};
+use execution_contract::{AttemptId, Digest, Id, RequestId};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::value::RawValue;
-use service_catalog::{CatalogRef, SelectedOperation};
 
 /// Static safe errors. An implementation must never attach raw backend diagnostics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema, thiserror::Error)]
@@ -46,81 +44,6 @@ pub enum ServiceError {
     Cancelled,
 }
 
-/// Exact catalog selection. The arguments retain original numeric tokens until C03 validates them.
-#[derive(Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct CatalogInput {
-    /// Stable business identity, independent of the MCP request ID.
-    pub operation_request_id: RequestId,
-    /// Exact catalog identity and digest.
-    pub catalog: CatalogRef,
-    /// Catalog item ID.
-    pub item_id: Id,
-    /// Operation variant ID.
-    pub variant_id: Id,
-    /// Original parameter object; schema/rules are obtained from execution_catalog.
-    #[schemars(with = "serde_json::Map<String, serde_json::Value>")]
-    pub arguments: Box<RawValue>,
-}
-
-/// Untrusted proposal input; there is no approval, actor or permission field.
-#[derive(Deserialize, JsonSchema)]
-#[serde(
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase",
-    deny_unknown_fields
-)]
-pub(crate) enum ExecuteInput {
-    /// A directory operation using the shared parameter grammar.
-    Catalog {
-        /// Exact selection.
-        selection: CatalogInput,
-    },
-    /// New UTF-8 source. The service creates the immutable artifact; the adapter never writes it.
-    Script {
-        /// Stable operation identity.
-        operation_request_id: RequestId,
-        /// Original UTF-8 script, never executed or echoed.
-        source_utf8: String,
-        /// Explicit interpreter identity, subject to service validation.
-        interpreter: ExactArtifactRef,
-    },
-}
-
-/// Validated selection passed to the service. It confers no execution permission.
-pub struct CatalogCandidate {
-    /// Original caller business identity.
-    pub operation_request_id: RequestId,
-    /// C03 validated, normalized, immutable selection.
-    pub selection: SelectedOperation,
-}
-/// A bounded draft; only the adapter can construct one from protocol input.
-pub struct ScriptDraft {
-    pub(crate) operation_request_id: RequestId,
-    pub(crate) source_utf8: String,
-    pub(crate) interpreter: ExactArtifactRef,
-}
-impl ScriptDraft {
-    /// Stable operation identity.
-    pub fn operation_request_id(&self) -> &RequestId {
-        &self.operation_request_id
-    }
-    /// Original UTF-8 bytes; callers must not rewrite them when freezing an artifact.
-    pub fn source_utf8(&self) -> &str {
-        &self.source_utf8
-    }
-    /// Exact requested interpreter, not authorization or availability evidence.
-    pub fn interpreter(&self) -> &ExactArtifactRef {
-        &self.interpreter
-    }
-}
-/// Validated shape for proposal; authorization and artifact ownership remain in the service.
-pub enum ExecuteRequest {
-    /// Normalized catalog parameters.
-    Catalog(Box<CatalogCandidate>),
-    /// Bounded original source.
-    Script(ScriptDraft),
-}
 /// Authorized lookup/cancellation within the host-bound namespace.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -222,7 +145,6 @@ pub struct CancelResult {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ErrorView {
     pub code: ServiceError,
-    pub catalog_reason: Option<crate::catalog_error::CatalogErrorView>,
 }
 /// One output schema for both success and tool-level failure.
 #[derive(Serialize, JsonSchema)]

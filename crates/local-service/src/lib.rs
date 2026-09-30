@@ -12,7 +12,9 @@ mod policy;
 mod policy_acl;
 #[cfg(windows)]
 mod windows;
-pub use policy::{write_verification_candidate, Artifact, Policy};
+pub use policy::{
+    policy_path, protected, read_protected, write_verification_candidate, Artifact, Policy,
+};
 
 /// Query the installed service. There is no unauthenticated or fixture fallback.
 pub fn query() -> Result<Status, Rejected> {

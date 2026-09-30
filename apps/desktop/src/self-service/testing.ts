@@ -1,41 +1,19 @@
-import type { RequestView } from "./types";
-import preview from "./preview";
-export function executionTask(): RequestView {
-  const item = preview.catalog.find((i) => i.itemId === "office")!;
+import fixtures from "../../../../tests/assistant/execution-fixtures.json";
+import type { BackendTask, ExecutionTaskDetails, Snapshot } from "./types";
+export function executionTask(): ExecutionTaskDetails {
+  return structuredClone(fixtures.running) as ExecutionTaskDetails;
+}
+export function offer(): BackendTask {
   return {
-    status: "confirmation",
-    message: "等待本人确认",
-    confirmation: {
-      status: "pending",
-      expiresAtUnixMs: 2000,
-      message: "确认本次动作",
-    },
-    action: {
-      riskLevel: 2,
-      authority: { kind: "test", id: "test" },
-      actor: "actor",
-      initiator: {
-        kind: "human",
-        osSession: {
-          device: "device",
-          account: { platform: "macos", subject: "user" },
-          session: "session",
-        },
-      },
-      requestId: "request-1",
-      revision: 1,
-      digest: "a".repeat(64),
-      itemId: item.itemId,
-      title: item.name,
-      action: "install",
-      resource: item.resource,
-      target: "device",
-      runAs: "user",
-      network: "denied",
-      dataScope: "bounded",
-      permission: "existing",
-      parameters: [],
-      expiresAtUnixMs: 2000,
-    },
+    task: "backend-task",
+    attempt: "backend-attempt",
+    request: "backend-request",
+    revision: "a".repeat(64),
+    title: "固定软件 1.0",
+    expiresAt: 9999999999,
+    userInitiated: true,
   };
+}
+export function snapshot(): Snapshot {
+  return { available: [offer()], requests: [], next: null };
 }

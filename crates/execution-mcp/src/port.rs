@@ -1,5 +1,5 @@
 use crate::*;
-use service_catalog::{CatalogRef, FrozenCatalog};
+use execution_contract::{BackendSelection, BackendTask, TaskSubmission};
 use std::future::Future;
 use tokio_util::sync::CancellationToken;
 
@@ -25,13 +25,11 @@ pub trait ExecutionServicePort: Send + Sync + 'static {
     ) -> Result<std::sync::Arc<Self>, ServiceError>;
     /// Fail startup when no trusted binding exists. This is not a substitute for per-call checks.
     fn check_binding(&self) -> Result<(), ServiceError>;
-    /// Return a bounded authorized directory, optionally matching an exact historical reference.
-    /// Its selection and projection semantics must be identical to the human UI.
-    fn catalog(
+    /// Read current verified backend offers. Their presence never substitutes for Start.
+    fn tasks(
         &self,
-        reference: Option<CatalogRef>,
         wait: CancellationToken,
-    ) -> impl Future<Output = Result<FrozenCatalog, ServiceError>> + Send;
+    ) -> impl Future<Output = Result<Vec<BackendTask>, ServiceError>> + Send;
     /// Capabilities of the bound device/context, with unknown represented explicitly.
     fn capabilities(
         &self,
@@ -40,9 +38,9 @@ pub trait ExecutionServicePort: Send + Sync + 'static {
     /// Accept one immutable action; return its status or required user confirmation.
     fn execute(
         &self,
-        request: ExecuteRequest,
+        request: BackendSelection,
         wait: CancellationToken,
-    ) -> impl Future<Output = Result<OperationStatus, ServiceError>> + Send;
+    ) -> impl Future<Output = Result<TaskSubmission, ServiceError>> + Send;
     /// Authorized recovery after response loss, scoped to the trusted namespace.
     fn status(
         &self,

@@ -212,6 +212,7 @@ pub fn decide(
     decision.execution_gate = match (&facts.verified_origin, facts.risk) {
         (Initiator::Human { .. }, _) => ExecutionGate::Confirmation,
         (Initiator::Policy { .. }, _) => ExecutionGate::Direct,
+        (Initiator::Backend { .. }, _) => ExecutionGate::Direct,
         (Initiator::Ai { .. }, Some(RiskLevel::Zero | RiskLevel::One)) => ExecutionGate::Direct,
         (Initiator::Ai { .. }, Some(RiskLevel::Two)) => ExecutionGate::Confirmation,
         _ => ExecutionGate::Blocked,

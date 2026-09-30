@@ -11,6 +11,7 @@ mod service;
 mod test_runner;
 pub use config::*;
 pub use details::*;
+pub use execution_sqlite::CommittedSoftwareProgress;
 pub use model::*;
 pub use ports::*;
 pub use service::*;

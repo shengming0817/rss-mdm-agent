@@ -7,6 +7,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
+native-process = { path = "../native-process" }
 execution-contract = { path = "../execution-contract" }
 execution-admission = { path = "../execution-admission" }
 execution-approval = { path = "../execution-approval" }
@@ -26,6 +27,3 @@ path = "../../tests/execution-sqlite/acceptance.rs"
 
 [lints.clippy]
 cognitive_complexity = "warn"
-
-[target.'cfg(windows)'.dependencies]
-native-process = { path = "../native-process" }

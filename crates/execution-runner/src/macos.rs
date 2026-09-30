@@ -109,17 +109,19 @@ pub(crate) fn identity(run_as: &RunAs, session: &SessionRequirement) -> Result<(
                 && account.subject.as_str() == uid.to_string() => {}
         _ => return Err(Error::Unbound),
     }
-    if let SessionRequirement::ActiveUser { account } = session {
-        if account.platform != Platform::Macos
+    if let SessionRequirement::ActiveUser { account, session } = session {
+        if session != &crate::host::current_session_binding()?
+            || account.platform != Platform::Macos
             || account.subject.as_str() != uid.to_string()
             || !console_user(uid)
+            || !crate::host::active_login()
         {
             return Err(Error::Unbound);
         }
     }
     Ok(())
 }
-fn console_user(uid: u32) -> bool {
+pub(crate) fn console_account() -> Result<u32, Error> {
     #[link(name = "SystemConfiguration", kind = "framework")]
     extern "C" {
         fn SCDynamicStoreCopyConsoleUser(
@@ -138,11 +140,18 @@ fn console_user(uid: u32) -> bool {
     unsafe {
         let name = SCDynamicStoreCopyConsoleUser(std::ptr::null(), &mut actual, &mut gid);
         if name.is_null() {
-            return false;
+            return Err(Error::Unbound);
         }
         CFRelease(name);
-        actual == uid && uid != 0
+        if actual == 0 || actual == u32::MAX {
+            Err(Error::Unbound)
+        } else {
+            Ok(actual)
+        }
     }
+}
+pub(crate) fn console_user(uid: u32) -> bool {
+    console_account() == Ok(uid)
 }
 pub(crate) fn profile(profile: &VersionedRef) -> Result<(), Error> {
     if profile.revision.as_str() != "1"
@@ -277,6 +286,43 @@ impl PathLease {
 mod path_tests {
     use super::*;
     #[test]
+    fn read_only_acl_is_allowed_but_mutation_acl_is_rejected() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
+            .join(format!("rss-read-acl-{}", std::process::id()));
+        native_process::private_storage::directory(&root).unwrap();
+        let path = root.join("artifact");
+        std::fs::write(&path, b"immutable input").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(std::process::Command::new("/bin/chmod")
+            .args([
+                "+a",
+                "everyone allow read,readattr,readextattr,readsecurity"
+            ])
+            .arg(&path)
+            .status()
+            .unwrap()
+            .success());
+        assert!(PathLease::source(&path, false).is_ok());
+        assert!(std::process::Command::new("/bin/chmod")
+            .args(["+a", "everyone allow write,append,delete"])
+            .arg(&path)
+            .status()
+            .unwrap()
+            .success());
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o022,
+            0
+        );
+        assert!(matches!(
+            PathLease::source(&path, false),
+            Err(Error::Denied)
+        ));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn replacing_an_ancestor_with_a_symlink_does_not_redirect_the_opened_cwd() {
         use std::os::unix::fs::{symlink, PermissionsExt};
         let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -335,10 +381,19 @@ mod boot_tests {
     }
 }
 
-pub(crate) fn file_identity(file: &File) -> Result<Id, Error> {
-    let m = file.metadata().map_err(|_| Error::Unavailable)?;
-    Id::new(format!("macos-{:x}-{:x}", m.dev(), m.ino())).map_err(|_| Error::Unavailable)
-}
-pub(crate) fn open_observed_file(path: &Path) -> Result<File, Error> {
-    open_file(path)
+pub(crate) fn grant_read(path: &Path, subject: &str) -> Result<(), Error> {
+    use std::os::fd::AsRawFd;
+    extern "C" {
+        fn rss_execution_grant_read(fd: i32, uid: u32) -> i32;
+    }
+    let uid: u32 = subject.parse().map_err(|_| Error::InvalidInput)?;
+    if uid == 0 || unsafe { libc::geteuid() } != 0 {
+        return Err(Error::Denied);
+    }
+    let directory = path.is_dir();
+    let file = bound_file(path, directory, true)?;
+    if unsafe { rss_execution_grant_read(file.as_raw_fd(), uid) } != 0 {
+        return Err(Error::Denied);
+    }
+    Ok(())
 }

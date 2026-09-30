@@ -158,6 +158,33 @@ export type Authority =
       kind: "test";
     };
 /**
+ * Provenance for a task already authorized by the backend; never a local enterprise approval.
+ *
+ * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
+ * via the `definition` "BackendTrigger".
+ */
+export type BackendTrigger =
+  | {
+      kind: "automatic";
+    }
+  | {
+      kind: "human";
+      osSession: OsSessionRef;
+    }
+  | {
+      config: VersionedRef1;
+      /**
+       * Conversation reference used for audit correlation.
+       */
+      conversation: string;
+      kind: "ai";
+      osSession: OsSessionRef1;
+      /**
+       * Tool request reference used for audit correlation.
+       */
+      toolCall: string;
+    };
+/**
  * Device reference, not verified registration evidence.
  *
  * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
@@ -193,24 +220,18 @@ export type ExecutionMode = "test" | "real";
  */
 export type ExecutionSummary =
   | {
-      kind: "process";
+      /**
+       * Fixed backend operation.
+       */
+      intent: "install" | "detect" | "uninstall";
+      kind: "softwareProgram";
+      /**
+       * Safe step identities, without launch inputs or paths.
+       */
+      steps: SoftwareStepSummary[];
     }
   | {
-      /**
-       * Selected platform adapter.
-       */
-      adapter:
-        | "msi"
-        | "winget"
-        | "pkg"
-        | "homebrew"
-        | "windowsBundle"
-        | "macosBundle";
-      kind: "software";
-      /**
-       * Selected mutation.
-       */
-      mutation: "install" | "upgrade" | "downgrade" | "uninstall";
+      kind: "process";
     };
 /**
  * Opaque local reference identifier; syntax validity is not authenticity.
@@ -227,17 +248,52 @@ export type Id = string;
  */
 export type Initiator =
   | {
-      kind: "human";
-      osSession: OsSessionRef;
+      /**
+       * Exact server execution attempt.
+       */
+      attempt: string;
+      kind: "backend";
+      /**
+       * Exact server task, independently verified by the host.
+       */
+      task: string;
+      /**
+       * Authenticated local trigger or automatic backend dispatch.
+       */
+      trigger:
+        | {
+            kind: "automatic";
+          }
+        | {
+            kind: "human";
+            osSession: OsSessionRef;
+          }
+        | {
+            config: VersionedRef1;
+            /**
+             * Conversation reference used for audit correlation.
+             */
+            conversation: string;
+            kind: "ai";
+            osSession: OsSessionRef1;
+            /**
+             * Tool request reference used for audit correlation.
+             */
+            toolCall: string;
+          };
     }
   | {
-      config: VersionedRef1;
+      kind: "human";
+      osSession: OsSessionRef2;
+    }
+  | {
+      config: VersionedRef2;
       /**
        * Originating AI conversation reference in the provider namespace.
        */
       conversation: string;
       kind: "ai";
-      osSession: OsSessionRef1;
+      osSession: OsSessionRef3;
       /**
        * Provider namespace, independent of product authentication.
        */
@@ -249,20 +305,13 @@ export type Initiator =
     }
   | {
       kind: "policy";
-      policy: VersionedRef2;
+      policy: VersionedRef3;
     };
 /**
  * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
- * via the `definition` "LocalContractV4".
+ * via the `definition` "LocalContractV5".
  */
-export type LocalContractV4 = 4;
-/**
- * One possible mutation, not a queued workflow step.
- *
- * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
- * via the `definition` "MutationKind".
- */
-export type MutationKind = "install" | "upgrade" | "downgrade" | "uninstall";
+export type LocalContractV5 = 5;
 /**
  * Quality of the captured result, independent from the exit code.
  *
@@ -270,6 +319,14 @@ export type MutationKind = "install" | "upgrade" | "downgrade" | "uninstall";
  * via the `definition` "OutputQuality".
  */
 export type OutputQuality = "complete" | "truncated" | "failed" | "partial";
+/**
+ * Exact ecosystem text: no SemVer, case folding, alias lookup or normalization.
+ * Accepts 1..=1024 UTF-8 bytes without control characters, including '+' and '~'.
+ *
+ * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
+ * via the `definition` "PackageValue".
+ */
+export type PackageValue = string;
 /**
  * Target OS semantics for validation; an enum value is not a platform support claim.
  *
@@ -327,7 +384,7 @@ export type RequestId = string;
  */
 export type RunAs =
   | {
-      account: OsAccountRef1;
+      account: OsAccountRef;
       kind: "user";
     }
   | {
@@ -350,6 +407,10 @@ export type SessionRequirement =
   | {
       account: OsAccountRef2;
       kind: "activeUser";
+      /**
+       * Exact native login session; a new login for the same account is not interchangeable.
+       */
+      session: string;
     };
 /**
  * The supported software adapters. No plugin names or command strings are accepted.
@@ -364,6 +425,13 @@ export type SoftwareKind =
   | "homebrew"
   | "windowsBundle"
   | "macosBundle";
+/**
+ * One backend software intent, independent of individual process exit codes.
+ *
+ * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
+ * via the `definition` "SoftwareOperation".
+ */
+export type SoftwareOperation = "install" | "detect" | "uninstall";
 /**
  * Device-wide or explicit-user scope of the requested operation.
  *
@@ -486,41 +554,70 @@ export interface FrozenExecutionSummary {
    */
   execution:
     | {
-        kind: "process";
+        /**
+         * Fixed backend operation.
+         */
+        intent: "install" | "detect" | "uninstall";
+        kind: "softwareProgram";
+        /**
+         * Safe step identities, without launch inputs or paths.
+         */
+        steps: SoftwareStepSummary[];
       }
     | {
-        /**
-         * Selected platform adapter.
-         */
-        adapter:
-          | "msi"
-          | "winget"
-          | "pkg"
-          | "homebrew"
-          | "windowsBundle"
-          | "macosBundle";
-        kind: "software";
-        /**
-         * Selected mutation.
-         */
-        mutation: "install" | "upgrade" | "downgrade" | "uninstall";
+        kind: "process";
       };
   /**
    * Human or AI origin, without granting execution permission.
    */
   initiator:
     | {
-        kind: "human";
-        osSession: OsSessionRef;
+        /**
+         * Exact server execution attempt.
+         */
+        attempt: string;
+        kind: "backend";
+        /**
+         * Exact server task, independently verified by the host.
+         */
+        task: string;
+        /**
+         * Authenticated local trigger or automatic backend dispatch.
+         */
+        trigger:
+          | {
+              kind: "automatic";
+            }
+          | {
+              kind: "human";
+              osSession: OsSessionRef;
+            }
+          | {
+              config: VersionedRef1;
+              /**
+               * Conversation reference used for audit correlation.
+               */
+              conversation: string;
+              kind: "ai";
+              osSession: OsSessionRef1;
+              /**
+               * Tool request reference used for audit correlation.
+               */
+              toolCall: string;
+            };
       }
     | {
-        config: VersionedRef1;
+        kind: "human";
+        osSession: OsSessionRef2;
+      }
+    | {
+        config: VersionedRef2;
         /**
          * Originating AI conversation reference in the provider namespace.
          */
         conversation: string;
         kind: "ai";
-        osSession: OsSessionRef1;
+        osSession: OsSessionRef3;
         /**
          * Provider namespace, independent of product authentication.
          */
@@ -532,11 +629,11 @@ export interface FrozenExecutionSummary {
       }
     | {
         kind: "policy";
-        policy: VersionedRef2;
+        policy: VersionedRef3;
       };
   interpreter: InterpreterRef;
   operation: Operation;
-  policy: VersionedRef5;
+  policy: VersionedRef6;
   /**
    * Exact frozen plan identity.
    */
@@ -546,7 +643,7 @@ export interface FrozenExecutionSummary {
    */
   runAs:
     | {
-        account: OsAccountRef1;
+        account: OsAccountRef;
         kind: "user";
       }
     | {
@@ -559,7 +656,7 @@ export interface FrozenExecutionSummary {
   /**
    * Version of the frozen execution plan, independent of the AI wire version.
    */
-  schemaVersion: 4;
+  schemaVersion: 5;
   /**
    * Required target user session.
    */
@@ -570,6 +667,10 @@ export interface FrozenExecutionSummary {
     | {
         account: OsAccountRef2;
         kind: "activeUser";
+        /**
+         * Exact native login session; a new login for the same account is not interchangeable.
+         */
+        session: string;
       };
   target: Target;
   validity: ValidityWindow;
@@ -616,21 +717,48 @@ export interface ExecutionBudget {
   totalTimeoutMs: number;
 }
 /**
- * Originating OS account/session reference, separate from requested run-as identity.
+ * Safe software-step projection from the frozen program.
+ *
+ * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
+ * via the `definition` "SoftwareStepSummary".
  */
-export interface OsSessionRef {
-  account: OsAccountRef;
+export interface SoftwareStepSummary {
   /**
-   * Origin device reference; it does not establish registration or target authority.
+   * Selected closed adapter.
    */
-  device: string;
+  adapter:
+    | "msi"
+    | "winget"
+    | "pkg"
+    | "homebrew"
+    | "windowsBundle"
+    | "macosBundle";
   /**
-   * Origin OS login/session reference, including an explicit test reference in fixtures.
+   * Exact backend package.
    */
-  session: string;
+  package: string;
+  /**
+   * Actual execution identity for the step.
+   */
+  runAs:
+    | {
+        account: OsAccountRef;
+        kind: "user";
+      }
+    | {
+        kind: "system";
+        /**
+         * OS namespace of this reference or target; does not assert platform support.
+         */
+        platform: "windows" | "macos" | "linux";
+      };
+  /**
+   * Fixed package version.
+   */
+  version: string;
 }
 /**
- * Login account at the origin; never implicitly equated to the product actor.
+ * Explicit account reference; never implicitly mapped to a product actor by name or email.
  */
 export interface OsAccountRef {
   /**
@@ -643,7 +771,34 @@ export interface OsAccountRef {
   subject: string;
 }
 /**
- * Exact connection configuration used at initiation; no external account identity.
+ * Actual native account and login session, supplied by ingress.
+ */
+export interface OsSessionRef {
+  account: OsAccountRef1;
+  /**
+   * Origin device reference; it does not establish registration or target authority.
+   */
+  device: string;
+  /**
+   * Origin OS login/session reference, including an explicit test reference in fixtures.
+   */
+  session: string;
+}
+/**
+ * Login account at the origin; never implicitly equated to the product actor.
+ */
+export interface OsAccountRef1 {
+  /**
+   * OS namespace of this reference or target; does not assert platform support.
+   */
+  platform: "windows" | "macos" | "linux";
+  /**
+   * Opaque stable OS account reference, such as a SID/UID reference, not an authentication credential.
+   */
+  subject: string;
+}
+/**
+ * Native AI connection configuration, not a provider identity grant.
  */
 export interface VersionedRef1 {
   /**
@@ -656,10 +811,51 @@ export interface VersionedRef1 {
   revision: string;
 }
 /**
- * Originating OS account/session reference, separate from requested run-as identity.
+ * Actual native account and login session, supplied by ingress.
  */
 export interface OsSessionRef1 {
-  account: OsAccountRef;
+  account: OsAccountRef1;
+  /**
+   * Origin device reference; it does not establish registration or target authority.
+   */
+  device: string;
+  /**
+   * Origin OS login/session reference, including an explicit test reference in fixtures.
+   */
+  session: string;
+}
+/**
+ * Originating OS account/session reference, separate from requested run-as identity.
+ */
+export interface OsSessionRef2 {
+  account: OsAccountRef1;
+  /**
+   * Origin device reference; it does not establish registration or target authority.
+   */
+  device: string;
+  /**
+   * Origin OS login/session reference, including an explicit test reference in fixtures.
+   */
+  session: string;
+}
+/**
+ * Exact connection configuration used at initiation; no external account identity.
+ */
+export interface VersionedRef2 {
+  /**
+   * Opaque reference identity; the revision must be supplied separately.
+   */
+  id: string;
+  /**
+   * Exact immutable revision reference; does not resolve or follow a moving alias.
+   */
+  revision: string;
+}
+/**
+ * Originating OS account/session reference, separate from requested run-as identity.
+ */
+export interface OsSessionRef3 {
+  account: OsAccountRef1;
   /**
    * Origin device reference; it does not establish registration or target authority.
    */
@@ -672,7 +868,7 @@ export interface OsSessionRef1 {
 /**
  * Exact policy revision associated with this request or audit decision.
  */
-export interface VersionedRef2 {
+export interface VersionedRef3 {
   /**
    * Opaque reference identity; the revision must be supplied separately.
    */
@@ -687,7 +883,7 @@ export interface VersionedRef2 {
  */
 export interface InterpreterRef {
   artifact: ExactArtifactRef1;
-  profile: VersionedRef3;
+  profile: VersionedRef4;
 }
 /**
  * Binary identity; the adapter must verify bytes, without PATH or version fallback.
@@ -702,7 +898,7 @@ export interface ExactArtifactRef1 {
 /**
  * Calling convention identity/revision; matched together with the binary.
  */
-export interface VersionedRef3 {
+export interface VersionedRef4 {
   /**
    * Opaque reference identity; the revision must be supplied separately.
    */
@@ -720,23 +916,10 @@ export interface Operation {
    * Stable operation identifier owned by the catalog/authorization policy.
    */
   action: string;
-  resource: VersionedRef4;
+  resource: VersionedRef5;
 }
 /**
  * Exact resource ID and revision; no latest-version lookup is performed here.
- */
-export interface VersionedRef4 {
-  /**
-   * Opaque reference identity; the revision must be supplied separately.
-   */
-  id: string;
-  /**
-   * Exact immutable revision reference; does not resolve or follow a moving alias.
-   */
-  revision: string;
-}
-/**
- * Exact policy revision.
  */
 export interface VersionedRef5 {
   /**
@@ -749,17 +932,17 @@ export interface VersionedRef5 {
   revision: string;
 }
 /**
- * Explicit account reference; never implicitly mapped to a product actor by name or email.
+ * Exact policy revision.
  */
-export interface OsAccountRef1 {
+export interface VersionedRef6 {
   /**
-   * OS namespace of this reference or target; does not assert platform support.
+   * Opaque reference identity; the revision must be supplied separately.
    */
-  platform: "windows" | "macos" | "linux";
+  id: string;
   /**
-   * Opaque stable OS account reference, such as a SID/UID reference, not an authentication credential.
+   * Exact immutable revision reference; does not resolve or follow a moving alias.
    */
-  subject: string;
+  revision: string;
 }
 /**
  * Exact account whose session is required, not inferred from the initiator.
@@ -907,7 +1090,7 @@ export interface EvidenceRef {
    * Recorded observation category; a category label does not prove an external fact.
    */
   kind: "testResult" | "processExited" | "stateObserved";
-  reference: VersionedRef6;
+  reference: VersionedRef7;
   /**
    * Runner reference whose evidence is being recorded, including an explicit fixture runner in tests.
    */
@@ -916,7 +1099,7 @@ export interface EvidenceRef {
 /**
  * Exact versioned reference. Authenticity and access are checked by its owner.
  */
-export interface VersionedRef6 {
+export interface VersionedRef7 {
   /**
    * Opaque reference identity; the revision must be supplied separately.
    */
@@ -1177,41 +1360,70 @@ export interface FrozenExecutionSummary1 {
    */
   execution:
     | {
-        kind: "process";
+        /**
+         * Fixed backend operation.
+         */
+        intent: "install" | "detect" | "uninstall";
+        kind: "softwareProgram";
+        /**
+         * Safe step identities, without launch inputs or paths.
+         */
+        steps: SoftwareStepSummary[];
       }
     | {
-        /**
-         * Selected platform adapter.
-         */
-        adapter:
-          | "msi"
-          | "winget"
-          | "pkg"
-          | "homebrew"
-          | "windowsBundle"
-          | "macosBundle";
-        kind: "software";
-        /**
-         * Selected mutation.
-         */
-        mutation: "install" | "upgrade" | "downgrade" | "uninstall";
+        kind: "process";
       };
   /**
    * Human or AI origin, without granting execution permission.
    */
   initiator:
     | {
-        kind: "human";
-        osSession: OsSessionRef;
+        /**
+         * Exact server execution attempt.
+         */
+        attempt: string;
+        kind: "backend";
+        /**
+         * Exact server task, independently verified by the host.
+         */
+        task: string;
+        /**
+         * Authenticated local trigger or automatic backend dispatch.
+         */
+        trigger:
+          | {
+              kind: "automatic";
+            }
+          | {
+              kind: "human";
+              osSession: OsSessionRef;
+            }
+          | {
+              config: VersionedRef1;
+              /**
+               * Conversation reference used for audit correlation.
+               */
+              conversation: string;
+              kind: "ai";
+              osSession: OsSessionRef1;
+              /**
+               * Tool request reference used for audit correlation.
+               */
+              toolCall: string;
+            };
       }
     | {
-        config: VersionedRef1;
+        kind: "human";
+        osSession: OsSessionRef2;
+      }
+    | {
+        config: VersionedRef2;
         /**
          * Originating AI conversation reference in the provider namespace.
          */
         conversation: string;
         kind: "ai";
-        osSession: OsSessionRef1;
+        osSession: OsSessionRef3;
         /**
          * Provider namespace, independent of product authentication.
          */
@@ -1223,11 +1435,11 @@ export interface FrozenExecutionSummary1 {
       }
     | {
         kind: "policy";
-        policy: VersionedRef2;
+        policy: VersionedRef3;
       };
   interpreter: InterpreterRef;
   operation: Operation;
-  policy: VersionedRef5;
+  policy: VersionedRef6;
   /**
    * Exact frozen plan identity.
    */
@@ -1237,7 +1449,7 @@ export interface FrozenExecutionSummary1 {
    */
   runAs:
     | {
-        account: OsAccountRef1;
+        account: OsAccountRef;
         kind: "user";
       }
     | {
@@ -1250,7 +1462,7 @@ export interface FrozenExecutionSummary1 {
   /**
    * Version of the frozen execution plan, independent of the AI wire version.
    */
-  schemaVersion: 4;
+  schemaVersion: 5;
   /**
    * Required target user session.
    */
@@ -1261,6 +1473,10 @@ export interface FrozenExecutionSummary1 {
     | {
         account: OsAccountRef2;
         kind: "activeUser";
+        /**
+         * Exact native login session; a new login for the same account is not interchangeable.
+         */
+        session: string;
       };
   target: Target;
   validity: ValidityWindow;
@@ -1273,7 +1489,7 @@ export interface FrozenExecutionSummary1 {
  */
 export interface InterpreterRef1 {
   artifact: ExactArtifactRef1;
-  profile: VersionedRef3;
+  profile: VersionedRef4;
 }
 /**
  * Action and exact resource identity submitted to the authorization owner.
@@ -1286,7 +1502,7 @@ export interface Operation1 {
    * Stable operation identifier owned by the catalog/authorization policy.
    */
   action: string;
-  resource: VersionedRef4;
+  resource: VersionedRef5;
 }
 /**
  * Opaque account reference in an OS namespace, independent of product or provider identity.
@@ -1310,8 +1526,8 @@ export interface OsAccountRef4 {
  * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
  * via the `definition` "OsSessionRef".
  */
-export interface OsSessionRef2 {
-  account: OsAccountRef;
+export interface OsSessionRef4 {
+  account: OsAccountRef1;
   /**
    * Origin device reference; it does not establish registration or target authority.
    */
@@ -1370,7 +1586,7 @@ export interface ValidityWindow1 {
  * This interface was referenced by `ExecutionTaskDetails`'s JSON-Schema
  * via the `definition` "VersionedRef".
  */
-export interface VersionedRef7 {
+export interface VersionedRef8 {
   /**
    * Opaque reference identity; the revision must be supplied separately.
    */

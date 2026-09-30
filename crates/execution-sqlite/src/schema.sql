@@ -79,10 +79,10 @@ CREATE TABLE process_evidence (
 CREATE TABLE software_claims (
     resource TEXT PRIMARY KEY, attempt_id TEXT NOT NULL REFERENCES attempts(attempt_id)
 );
-CREATE TABLE software_evidence (
+CREATE TABLE software_progress (
     attempt_id TEXT PRIMARY KEY REFERENCES attempts(attempt_id), body BLOB NOT NULL
 );
 CREATE TABLE software_ownership (
     resource TEXT PRIMARY KEY, attempt_id TEXT NOT NULL REFERENCES attempts(attempt_id),
-    authority BLOB NOT NULL, package BLOB NOT NULL
+    body BLOB NOT NULL
 );

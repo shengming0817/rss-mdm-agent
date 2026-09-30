@@ -69,16 +69,16 @@ pub trait AppHost: AuthorityVerifier {
 /// let _: execution_app::AuthorizedDispatch = serde_json::from_str("{}").unwrap();
 /// ```
 pub struct AuthorizedDispatch {
+    pub(crate) ownership: Vec<execution_contract::SoftwareOwnership>,
     pub(crate) action: DispatchAction,
     pub(crate) plan: FrozenExecution,
     pub(crate) allowance: execution_lifecycle::DispatchAllowance,
     pub(crate) issued: std::time::Instant,
-    pub(crate) software_ownership: Option<execution_contract::SoftwareProvenance>,
 }
 impl AuthorizedDispatch {
-    /// Protected provenance read from the same device journal after admission.
-    pub fn software_ownership(&self) -> Option<execution_contract::SoftwareProvenance> {
-        self.software_ownership.clone()
+    /// Previously completed package states from the same protected journal.
+    pub fn software_ownership(&self) -> Vec<execution_contract::SoftwareOwnership> {
+        self.ownership.clone()
     }
     /// Inspect the authorized immutable plan to select the host's runner implementation.
     /// Reading it cannot clone or reconstruct first-dispatch authority.
@@ -116,46 +116,37 @@ pub enum ObservationStage {
     /// Assess the effect after quiescence was durably recorded.
     Assessment,
 }
-/// Bounded observation context loaded by the application from its authorized journal.
-/// This is not an IPC DTO and never grants a new execution attempt.
-#[derive(Clone, Copy)]
-pub struct SoftwareObservation<'a> {
-    /// Independent observation deadline, including cleanup work.
-    pub deadline: std::time::Instant,
-    /// Previously committed software evidence for this exact attempt.
-    pub previous: Option<&'a execution_contract::SoftwareEvidence>,
-    /// The journal already contains independently verified quiescence/termination.
-    pub quiescent: bool,
-    /// Keep historical effect facts immutable; only cleanup may advance.
-    pub finalized: bool,
-}
-impl SoftwareObservation<'_> {
-    /// A fresh bounded probe with no restored history or termination assertion.
-    pub fn new(deadline: std::time::Instant) -> Self {
-        Self {
-            deadline,
-            previous: None,
-            quiescent: false,
-            finalized: false,
-        }
-    }
-}
 /// Trusted bounded runner seam. Only dispatch may start work; observations never replay it.
 pub trait RunnerPort {
-    /// Independent software observations. Process-only runners must reject software plans.
-    fn software_evidence(
-        &self,
-        plan: &FrozenExecution,
-        _attempt: &AttemptId,
-        _observation: SoftwareObservation<'_>,
-    ) -> Result<Option<execution_contract::SoftwareEvidence>, Error> {
-        if plan.spec().execution.software().is_some() {
-            Err(Error::Unsupported)
-        } else {
-            Ok(None)
-        }
+    /// Resume only a known completed step boundary in the existing intent. An unfinished
+    /// Begin cannot be turned into a new invocation by recovery.
+    fn resume_software(&self, _resume: SoftwareResume) -> Result<(), Error> {
+        Ok(())
     }
-
+    /// Query the original physical invocation after losing its owner; this must not dispatch.
+    fn recover_software_progress(
+        &self,
+        _plan: &FrozenExecution,
+        _previous: &execution_contract::SoftwareProgress,
+    ) -> Result<Option<execution_contract::SoftwareProgress>, Error> {
+        Ok(None)
+    }
+    /// Pending phase boundary of the original software attempt. No operation may cross an
+    /// unacknowledged boundary; missing live ownership never means permission to replay it.
+    fn software_progress(
+        &self,
+        _plan: &FrozenExecution,
+        _attempt: &AttemptId,
+    ) -> Result<Option<execution_contract::SoftwareProgress>, Error> {
+        Ok(None)
+    }
+    /// Release the exact boundary only after the execution journal committed it.
+    fn acknowledge_software_progress(
+        &self,
+        _receipt: execution_sqlite::CommittedSoftwareProgress,
+    ) -> Result<(), Error> {
+        Err(Error::Unsupported)
+    }
     /// Exact runner identity, immutable across a task's attempts.
     fn id(&self) -> Id;
     /// Provenance supported by this implementation.
@@ -186,4 +177,26 @@ pub trait RunnerPort {
         stage: ObservationStage,
         now: u64,
     ) -> Result<Option<ObservationFacts>, Error>;
+}
+
+/// Journal-derived continuation of an original software sequence; never a first-start permit.
+pub struct SoftwareResume {
+    pub(crate) ownership: Vec<execution_contract::SoftwareOwnership>,
+    pub(crate) plan: FrozenExecution,
+    pub(crate) progress: execution_contract::SoftwareProgress,
+    pub(crate) allowance: execution_lifecycle::DispatchAllowance,
+}
+impl SoftwareResume {
+    /// Consume the bounded continuation after the application verified the stored boundary.
+    pub fn resume<T>(
+        self,
+        run: impl FnOnce(
+            FrozenExecution,
+            execution_contract::SoftwareProgress,
+            execution_lifecycle::DispatchAllowance,
+            Vec<execution_contract::SoftwareOwnership>,
+        ) -> T,
+    ) -> T {
+        run(self.plan, self.progress, self.allowance, self.ownership)
+    }
 }
