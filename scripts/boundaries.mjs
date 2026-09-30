@@ -47,6 +47,17 @@ const nativeAdapters = new Map([
   ["apps/desktop/src/self-service/native.ts", selfServiceCommands],
   ["apps/desktop/src/assistant/native.ts", assistantCommands],
 ]);
+const uiDependencies = {
+  "@lucide/vue": "1.49.0",
+  "markdown-it": "15.0.2",
+  "reka-ui": "2.10.5",
+};
+const uiImports = {
+  "packages/ui/src/index.ts": ["@lucide/vue", "reka-ui"],
+  "packages/ui/src/components/AppShell.vue": ["@lucide/vue"],
+  "packages/ui/src/components/ModalDrawer.vue": ["@lucide/vue"],
+  "packages/ui/src/internal/markdown.ts": ["markdown-it"],
+};
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 function files(dir) {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -84,6 +95,7 @@ export function checkSource(file, source) {
         "@rss-mdm-agent/ai-contract",
       ]
     : ["vue"];
+  allowed.push(...(uiImports[file] ?? []));
   if (nativeAdapters.has(file)) allowed.push("@tauri-apps/api/core");
   if (assistant)
     allowed.push(
@@ -202,6 +214,14 @@ export function checkSource(file, source) {
       "defineEmits",
       "withDefaults",
     ]);
+    if (file === "packages/ui/src/components/MarkdownContent.ts") {
+      globals.add("String");
+      globals.add("Boolean");
+    }
+    if (file === "packages/ui/src/components/AppShell.vue")
+      globals.add("ResizeObserver");
+    if (file === "apps/desktop/src/assistant/clipboard.ts")
+      globals.add("navigator");
     if (desktop)
       for (const value of ["Object", "String", "Map", "Date"])
         globals.add(value);
@@ -304,6 +324,29 @@ export function checkSource(file, source) {
       if (node.kind === ts.SyntaxKind.ThisKeyword)
         errors.push(`${file}: ambient this is not a presentation value`);
       if (ts.isIdentifier(node)) {
+        if (
+          file === "apps/desktop/src/assistant/clipboard.ts" &&
+          node.text === "navigator"
+        ) {
+          const clipboard = node.parent,
+            write = clipboard.parent,
+            call = write.parent;
+          if (
+            !(
+              ts.isPropertyAccessExpression(clipboard) &&
+              clipboard.expression === node &&
+              clipboard.name.text === "clipboard" &&
+              ts.isPropertyAccessExpression(write) &&
+              write.expression === clipboard &&
+              write.name.text === "writeText" &&
+              ts.isCallExpression(call) &&
+              call.expression === write
+            )
+          )
+            errors.push(
+              `${file}: only direct user-initiated clipboard write allowed`,
+            );
+        }
         const parent = node.parent;
         const memberName =
           (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
@@ -449,11 +492,14 @@ export function checkTree(treeRoot = root) {
   );
   const pkg = JSON.parse(read("packages/ui/package.json"));
   if (
-    Object.keys(pkg.dependencies ?? {}).length ||
+    JSON.stringify(Object.entries(pkg.dependencies ?? {}).sort()) !==
+      JSON.stringify(Object.entries(uiDependencies).sort()) ||
     Object.keys(pkg.optionalDependencies ?? {}).length ||
     Object.keys(pkg.peerDependencies ?? {}).join() !== "vue"
   )
-    errors.push("UI production dependencies must be Vue only");
+    errors.push(
+      "UI production dependencies must be pinned presentation primitives and Markdown parser with Vue peer only",
+    );
   const desktop = JSON.parse(read("apps/desktop/package.json"));
   if (
     Object.keys(desktop.dependencies ?? {})

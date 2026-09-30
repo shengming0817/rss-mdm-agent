@@ -32,23 +32,23 @@ ul {
   padding: 0;
   margin: 0;
   display: grid;
-  gap: 6px;
+  gap: 4px;
 }
 button {
   width: 100%;
   text-align: left;
-  padding: 12px;
+  padding: 8px 12px;
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--rss-radius-md);
   background: transparent;
   overflow-wrap: anywhere;
 }
 button:hover {
-  background: var(--color-surface-hover);
+  background: var(--rss-color-surface-hover);
 }
 button[aria-current] {
-  background: var(--color-accent-bg);
-  color: var(--color-accent);
+  background: var(--rss-color-accent-bg);
+  color: var(--rss-color-accent);
   font-weight: 600;
 }
 </style>

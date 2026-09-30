@@ -10,3 +10,7 @@ license claim. Existing source attributions are preserved where present.
 The file-by-file transformation record is `docs/reference/ui-extraction.md` in
 rss-mdm-agent. Vue is an external MIT-licensed peer dependency, not vendored into
 this package. Its own copyright and license remain applicable.
+
+The UI consumes Reka UI 2.10.5 (MIT), markdown-it 15.0.2 (MIT), and
+Lucide Vue 1.49.0 (ISC) as external dependencies. Their licenses and attribution
+remain applicable; their source is not copied into RSS-owned implementations.

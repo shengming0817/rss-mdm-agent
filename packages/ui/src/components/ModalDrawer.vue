@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { X } from "@lucide/vue";
 import { onMounted, onBeforeUnmount, ref } from "vue";
 defineProps<{ label: string; side: "left" | "right" }>();
 const emit = defineEmits<{ close: [] }>();
@@ -16,6 +17,7 @@ function keys(event: KeyboardEvent) {
     (el) =>
       el.tabIndex >= 0 &&
       !el.matches(":disabled") &&
+      !el.closest('[inert],[aria-hidden="true"]') &&
       el.getClientRects().length,
   );
   event.preventDefault();
@@ -53,18 +55,7 @@ onBeforeUnmount(() => {
         :aria-label="'关闭' + label"
         @click="emit('close')"
       >
-        <svg
-          viewBox="0 0 24 24"
-          width="20"
-          height="20"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.8"
-          stroke-linecap="round"
-          aria-hidden="true"
-        >
-          <path d="m6 6 12 12M18 6 6 18" />
-        </svg>
+        <X :size="20" aria-hidden="true" />
       </button>
     </header>
     <slot />
@@ -75,22 +66,22 @@ onBeforeUnmount(() => {
   position: fixed;
   inset: 0 0 0 auto;
   margin: 0;
-  width: min(var(--drawer-width), 100vw);
+  width: min(var(--rss-drawer-width), 100vw);
   max-width: 100vw;
   height: 100%;
   max-height: 100%;
   box-sizing: border-box;
-  padding: var(--drawer-padding);
+  padding: var(--rss-drawer-padding);
   overflow: auto;
   border: 0;
-  border-left: 1px solid var(--color-border);
-  background: var(--color-bg);
-  color: var(--color-text);
+  border-left: 1px solid var(--rss-color-border);
+  background: var(--rss-color-bg);
+  color: var(--rss-color-text);
 }
 .drawer.left {
   inset: 0 auto 0 0;
   border-left: 0;
-  border-right: 1px solid var(--color-border);
+  border-right: 1px solid var(--rss-color-border);
 }
 .drawer::backdrop {
   background: #0006;

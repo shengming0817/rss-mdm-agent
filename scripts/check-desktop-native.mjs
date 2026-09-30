@@ -172,12 +172,17 @@ const prompt = async (value) => {
   );
   key(36);
 };
-const selectNext = async (element, value) => {
-  await element.click();
-  await wait(() => element.isFocused());
-  key(125);
-  key(125);
-  key(36);
+const selectValue = async (element, value) => {
+  // The embedded driver cannot reliably select a macOS native option popup.
+  // Configure through the actual DOM change event; Enter/Tab/Escape remain native below.
+  await browser.execute(
+    (select, selected) => {
+      select.value = selected;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    },
+    element,
+    value,
+  );
   await wait(async () => (await element.getValue()) === value);
 };
 const permission = async (allow) => {
@@ -422,13 +427,14 @@ try {
   await browser.$('[aria-label="测试用户名"]').setValue("Golden Alice");
   await click("进入");
   await wait(() => browser.$('[aria-label="测试用户名"]').isEnabled());
+  await navigate("设置");
   await text("个人 AI 连接（0）");
   await (await field("名称")).setValue("Golden Codex");
-  await selectNext(await field("认证来源"), "custom_api");
+  await selectValue(await field("认证来源"), "custom_api");
   await (await field("API 地址")).setValue(fixture.url);
   await (await field("模型")).setValue("native-golden-model");
   await browser.$(".connection-form summary").click();
-  await selectNext(await field("工具"), "controlled_tools");
+  await selectValue(await field("工具"), "controlled_tools");
   await browser.$('input[type="password"]').setValue(fixture.secret);
   mark("save connection through native credential owner");
   await click("保存配置");
@@ -470,7 +476,7 @@ try {
   assert.equal(await browser.$(".composer textarea").isDisplayed(), true);
   assert.equal(
     await browser.execute(
-      () => document.querySelectorAll(".assistant-sessions li").length,
+      () => document.querySelectorAll(".conversation-list li").length,
     ),
     0,
     "entering chat does not create an empty session",
@@ -481,7 +487,9 @@ try {
     "secret-cleared",
     "blank-composer",
   );
-  mark("left primary navigation matches the persistent sidebar");
+  mark("left primary navigation shares the persistent sidebar theme");
+  await browser.setWindowSize(480, 400);
+  await wait(() => browser.$('[aria-label="打开主导航"]').isDisplayed());
   await browser.$('[aria-label="打开主导航"]').click();
   const navigation = await browser.execute(() => {
     const el = document.querySelector('dialog[aria-label="主导航"]');
@@ -499,14 +507,8 @@ try {
   });
   assert.equal(navigation.left, 0);
   assert.equal(navigation.footerAtBottom, true);
-  assert.deepEqual(
-    {
-      width: navigation.width,
-      padding: navigation.padding,
-      background: navigation.background,
-    },
-    sidebar,
-  );
+  assert.equal(navigation.width, 280);
+  assert.equal(navigation.background, sidebar.background);
   await browser.saveScreenshot(join(reports, "desktop-native-navigation.png"));
   key(53);
   await wait(async () => !(await browser.$("dialog[open]").isExisting()));
@@ -517,10 +519,22 @@ try {
   );
   result.checks.push("left-navigation-consistent-style");
   mark("first send, real tool approval and Rust confirmation");
+  await browser.setWindowSize(1100, 760);
   await prompt("GOLDEN_INSTALL 安装办公套件");
   await permission(true);
   await text("完成 INSTALL");
-  await text("需要确认具体动作");
+  await browser.$('[aria-label="复制代码"]').click();
+  await wait(
+    async () =>
+      (await visibleText("已复制")) ||
+      (await visibleText("复制不可用，请选中文本手动复制。")),
+  );
+  result.clipboard = (await visibleText("已复制"))
+    ? "writeText"
+    : "explicit-selection-fallback";
+  result.checks.push("native-copy-or-explicit-fallback");
+
+  await text("等待用户确认本次动作");
   assert.equal(
     task().snapshot.attempts,
     0,
@@ -598,7 +612,8 @@ try {
   await click("回到最新消息");
   result.checks.push("manual-scroll-preserved", "jump-to-latest");
   mark("narrow layout, native focus and scrolling");
-  await browser.setWindowSize(600, 680);
+  await browser.setWindowSize(480, 400);
+  await wait(() => browser.$('[aria-label="打开主导航"]').isDisplayed());
   await browser.$('[aria-label="打开主导航"]').click();
   assert.equal(
     await browser.execute(() => {
@@ -614,12 +629,12 @@ try {
   );
   key(53);
   await wait(async () => !(await browser.$("dialog[open]").isExisting()));
-  await browser.$('[aria-label="打开最近对话"]').click();
+  await browser.$('[aria-label="打开主导航"]').click();
   assert.equal(
     await browser.execute(
       () =>
         document
-          .querySelector('dialog[aria-label="最近对话"]')
+          .querySelector('dialog[aria-label="主导航"]')
           .getBoundingClientRect().left,
     ),
     0,
@@ -644,7 +659,7 @@ try {
     await browser.execute(() =>
       document.activeElement?.getAttribute("aria-label"),
     ),
-    "打开最近对话",
+    "打开主导航",
   );
   await browser.$(".composer textarea").setValue("保留键盘验收草稿");
   await browser.$(".composer textarea").click();
@@ -655,7 +670,7 @@ try {
   );
   // ref: wry@0.55.1 src/wkwebview/mod.rs enables tabFocusesLinks.
   // System Events enqueues key input; wait for WKWebView to process it.
-  key(48, true);
+  key(48);
   await wait(() =>
     browser.execute(
       () =>
@@ -663,7 +678,7 @@ try {
         document.querySelector('.composer button[type="submit"]'),
     ),
   );
-  key(48);
+  key(48, true);
   await wait(() =>
     browser.execute(
       () =>
@@ -695,6 +710,9 @@ try {
   );
   await browser.saveScreenshot(join(reports, "desktop-native-narrow.png"));
   await browser.setWindowSize(1100, 760);
+  await wait(() =>
+    browser.$(".navigation-panel .conversation-list").isDisplayed(),
+  );
   result.checks.push(
     "native-tab-shift-tab-escape",
     "focus-restoration",
@@ -703,7 +721,7 @@ try {
   );
   assert.equal(
     await browser.execute(
-      () => document.querySelectorAll(".assistant-sessions li").length,
+      () => document.querySelectorAll(".conversation-list li").length,
     ),
     1,
     "all first-chat operations share one session",
@@ -715,7 +733,7 @@ try {
   await wait(async () => (await browser.getWindowHandles()).length === 1);
   await browser.switchToWindow((await browser.getWindowHandles())[0]);
   mark("restore conversation in reopened window");
-  await text("当前用户：Golden Alice");
+  await wait(() => browser.$(".composer textarea").isDisplayed());
   await wait(async () => !(await visibleText("正在读取或切换账户…")));
   await navigate("AI 助手");
   await text("GOLDEN_INSTALL 安装办公套件");
@@ -741,7 +759,7 @@ try {
   mark("restore history and create a new provider session after restart");
   await navigate("AI 助手");
   await text("GOLDEN_INSTALL 安装办公套件");
-  await browser.$(".assistant-sessions .new-conversation").click();
+  await browser.$(".conversation-list .new-conversation").click();
   await prompt("GOLDEN_HELLO 重启后新对话");
   await text("完成 HELLO");
   result.checks.push(
@@ -754,6 +772,7 @@ try {
   await browser.$('[aria-label="测试用户名"]').setValue("Golden Bob");
   await click("进入");
   await wait(() => browser.$('[aria-label="测试用户名"]').isEnabled());
+  await navigate("设置");
   await text("个人 AI 连接（0）");
   await click("稍后配置，前往 AI");
   assert.equal(await visibleText("GOLDEN_INSTALL 安装办公套件"), false);
@@ -761,6 +780,7 @@ try {
   await browser.$('[aria-label="测试用户名"]').setValue("Golden Alice");
   await click("进入");
   await wait(() => browser.$('[aria-label="测试用户名"]').isEnabled());
+  await navigate("设置");
   await text("个人 AI 连接（1）");
   await click("删除");
   await click("确认删除");

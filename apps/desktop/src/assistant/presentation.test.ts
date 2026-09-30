@@ -1,5 +1,5 @@
 import { activeStage } from "@rss-mdm-agent/ai-contract";
-import { mount, flushPromises } from "@vue/test-utils";
+import { DOMWrapper, mount, flushPromises } from "@vue/test-utils";
 import { expect, it } from "vitest";
 import QuestionCard from "./QuestionCard.vue";
 import ExecutionDetails from "./ExecutionDetails.vue";
@@ -25,7 +25,7 @@ it("renders permission scope from kind even when provider names contradict it", 
       ],
     },
   });
-  const wrapper = mount(Assistant, { props: { controller: c } });
+  const wrapper = mount(Assistant, { props: { controller: c, visible: true } });
   const buttons = wrapper.findAll(".permission-card button");
   expect(buttons.slice(0, 4).map((b) => b.find("strong").text())).toEqual([
     "允许一次",
@@ -176,12 +176,15 @@ it.each(["prompt", "cancel", "respond"] as const)(
       },
     };
     c.state.views.set(session.namespace.sessionId, v);
-    const wrapper = mount(Assistant, { props: { controller: c } });
+    const wrapper = mount(Assistant, {
+      props: { controller: c, visible: true },
+    });
     expect(wrapper.text()).not.toContain("unavailable");
-    await wrapper
-      .findAll("button")
-      .find((b) => b.text() === "会话详情与诊断")!
-      .trigger("click");
+    await wrapper.get(".conversation-menu").trigger("click");
+    await flushPromises();
+    await new DOMWrapper(document.querySelector('[role="menuitem"]')!).trigger(
+      "click",
+    );
     expect(wrapper.text()).toContain("unavailable");
     expect(wrapper.text()).toContain("先恢复历史并核对");
     expect(wrapper.text()).toContain("不证明模型已终止");
@@ -313,9 +316,9 @@ it("starts with an editable composer, readable history and one live conversation
     title: "检查网络连接",
     lastActivityAtMs: 1,
   });
-  const wrapper = mount(Assistant, { props: { controller: c } });
+  const wrapper = mount(Assistant, { props: { controller: c, visible: true } });
   expect(wrapper.get("textarea").attributes("disabled")).toBeUndefined();
-  expect(wrapper.text()).toContain("检查网络连接");
+  expect(wrapper.get("h1").text()).toBe("新对话");
   expect(wrapper.text()).not.toContain(session.namespace.sessionId);
   expect(wrapper.findAll('[role="log"]')).toHaveLength(1);
   expect(wrapper.find(".assistant-execution").exists()).toBe(false);
@@ -336,12 +339,16 @@ it.each([
     c.state.connection = "connected";
     c.state.selected = "session-1";
     c.state.errors.set("session-1", code);
-    const wrapper = mount(Assistant, { props: { controller: c } });
+    const wrapper = mount(Assistant, {
+      props: { controller: c, visible: true },
+    });
     const notice = wrapper.get(".conversation-notice");
     expect(notice.text()).toContain(action);
     await notice.get("button").trigger("click");
     if (code === "context_unavailable")
-      expect(wrapper.get(".connection-menu").attributes("open")).toBeDefined();
+      expect(
+        wrapper.get(".connection-trigger").attributes("aria-expanded"),
+      ).toBe("true");
     else expect(wrapper.emitted("settings")).toHaveLength(1);
     wrapper.unmount();
     c.dispose();
@@ -350,7 +357,7 @@ it.each([
 it("keeps the specific connection failure actionable", () => {
   const c = createAssistant(undefined, () => "id");
   c.state.error = "authentication_required";
-  const wrapper = mount(Assistant, { props: { controller: c } });
+  const wrapper = mount(Assistant, { props: { controller: c, visible: true } });
   expect(wrapper.get(".conversation-notice").text()).toContain("认证不可用");
   expect(wrapper.get(".conversation-notice button").text()).toBe(
     "前往连接设置",
@@ -361,7 +368,7 @@ it("keeps the specific connection failure actionable", () => {
 it("follows newly requested permission only when already following the conversation", async () => {
   const c = createAssistant(undefined, () => "id");
   c.state.selected = "session-1";
-  const wrapper = mount(Assistant, { props: { controller: c } });
+  const wrapper = mount(Assistant, { props: { controller: c, visible: true } });
   const timeline = wrapper.get(".assistant-timeline");
   Object.defineProperty(timeline.element, "scrollHeight", { value: 1000 });
   Object.defineProperty(timeline.element, "clientHeight", { value: 200 });
