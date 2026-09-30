@@ -1,6 +1,7 @@
 //! Protected SQLite execution journal; no runner, model, UI or background worker.
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
+mod backend_requests;
 mod database;
 mod execution;
 mod interaction;

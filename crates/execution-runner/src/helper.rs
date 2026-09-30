@@ -98,6 +98,7 @@ pub(crate) enum Reply {
     Acknowledged,
     StopRequested,
     Rejected,
+    Capacity,
     Unavailable,
 }
 /// A physical process owner for one actual user login; it has no device secrets or database.
@@ -106,7 +107,8 @@ pub struct Helper {
         (AttemptId, u32, SoftwarePhase),
         crate::runner::invocation::PhysicalInvocation,
     >,
-    retired: std::collections::BTreeMap<(AttemptId, u32, SoftwarePhase), Digest>,
+    retired: std::collections::BTreeMap<(AttemptId, u32, SoftwarePhase), (Digest, u64)>,
+    clock_watermark: u64,
     capacity: usize,
     limits: ExecutionLimits,
     policy: host::PeerPolicy,
@@ -142,6 +144,7 @@ impl Helper {
         Ok(Self {
             physical: Default::default(),
             retired: Default::default(),
+            clock_watermark: 0,
             capacity,
             limits,
             policy,
@@ -196,8 +199,24 @@ impl Helper {
                 first_start,
             } => {
                 let (plan, invocation) = self.invocation(*input, step, phase)?;
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|_| Error::Clock)?
+                    .as_millis()
+                    .try_into()
+                    .map_err(|_| Error::Clock)?;
+                if now < self.clock_watermark {
+                    return Err(Error::Clock);
+                }
+                self.clock_watermark = now;
+                if now >= plan.spec().validity.expires_at_unix_ms {
+                    return Err(Error::Clock);
+                }
+                // An expired invocation can never be accepted again, even after its tombstone
+                // is reclaimed. The watermark prevents a clock rollback reopening that window.
+                self.retired.retain(|_, (_, expiry)| *expiry > now);
                 let key = (attempt.clone(), step, phase);
-                if let Some(digest) = self.retired.get(&key) {
+                if let Some((digest, _)) = self.retired.get(&key) {
                     return if digest == plan.digest() {
                         Ok(Reply::Acknowledged)
                     } else {
@@ -211,7 +230,9 @@ impl Helper {
                         Err(Error::Conflict)
                     };
                 }
-                if self.physical.len() >= self.capacity || self.retired.len() >= 4096 {
+                if self.physical.len() >= self.capacity
+                    || self.retired.len().saturating_add(self.physical.len()) >= 4096
+                {
                     return Err(Error::Capacity);
                 }
                 let owner = crate::runner::invocation::PhysicalInvocation::start(
@@ -286,7 +307,13 @@ impl Helper {
                     if self.retired.len() >= 4096 {
                         return Err(Error::Capacity);
                     }
-                    self.retired.insert(key.clone(), owner.digest.clone());
+                    self.retired.insert(
+                        key.clone(),
+                        (
+                            owner.digest.clone(),
+                            plan.spec().validity.expires_at_unix_ms,
+                        ),
+                    );
                     self.physical.remove(&key);
                 }
                 Reply::Acknowledged
@@ -487,7 +514,8 @@ impl Connection {
     pub fn context(&self) -> &UserContext {
         &self.context
     }
-    pub(crate) fn verify_context(
+    /// Recheck the actual authenticated helper login immediately before execution admission.
+    pub fn verify_context(
         &self,
         run_as: &RunAs,
         session: &SessionRequirement,
@@ -540,6 +568,7 @@ impl Connection {
         };
         match serde_json::from_slice(&reply).map_err(|_| Error::InvalidInput)? {
             Reply::Rejected => Err(Error::Denied),
+            Reply::Capacity => Err(Error::Capacity),
             Reply::Unavailable => Err(Error::Unavailable),
             reply => Ok(reply),
         }

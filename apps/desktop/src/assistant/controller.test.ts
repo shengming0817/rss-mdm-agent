@@ -13,7 +13,10 @@ import {
 import { createAssistant, operationMessage } from "./controller";
 import { fixtureSession } from "@rss-mdm-agent/ai-contract/testing";
 import fixtures from "../../../../tests/assistant/execution-fixtures.json";
-import type { ExecutionTaskDetails } from "@rss-mdm-agent/execution-bindings/task-details";
+import type {
+  BackendTaskView,
+  ExecutionTaskDetails,
+} from "@rss-mdm-agent/execution-bindings/task-details";
 function setup(now = () => 100) {
   let next = 0,
     listener: (view: SessionView) => void = () => {},
@@ -349,7 +352,7 @@ describe("assistant application ownership", () => {
   });
   it("retains only the latest authorized execution read and clears it on a failed read", async () => {
     const t = setup();
-    let release: (v: ExecutionTaskDetails) => void = () => {};
+    let release: (v: BackendTaskView) => void = () => {};
     t.taskDetails
       .mockImplementationOnce(
         () =>
@@ -357,11 +360,17 @@ describe("assistant application ownership", () => {
             release = resolve;
           }),
       )
-      .mockResolvedValueOnce(fixtures.outcomeUnknown)
+      .mockResolvedValueOnce({
+        kind: "execution",
+        value: fixtures.outcomeUnknown,
+      })
       .mockRejectedValueOnce(new Error("secret server text"));
     const old = t.c.taskDetails("old");
     await t.c.taskDetails("current");
-    release(fixtures.running as ExecutionTaskDetails);
+    release({
+      kind: "execution",
+      value: fixtures.running as ExecutionTaskDetails,
+    });
     await old;
     expect(t.c.state.task?.status.phase).toBe("outcomeUnknown");
     await t.c.taskDetails("forbidden");
@@ -497,7 +506,7 @@ it("bounds connection and detail waits and closes a late connection", async () =
         finish = resolve;
       }),
   );
-  const details = vi.fn(() => new Promise<ExecutionTaskDetails>(() => {}));
+  const details = vi.fn(() => new Promise<BackendTaskView>(() => {}));
   const c = createAssistant({ connect, taskDetails: details }, () => "id");
   try {
     const connecting = c.connect(),
@@ -1103,24 +1112,15 @@ it("execution cards require a Host delivery and matching Rust conversation and t
     proposal: {
       name: "execution_execute",
       arguments: {
-        catalog: {
-          selection: {
-            operationRequestId: details.status.operationRequestId,
-            catalog: {
-              authority: { kind: "test", id: "fixture" },
-              identity: { id: "catalog", revision: "1" },
-              digest: "0".repeat(64),
-            },
-            itemId: "item",
-            variantId: "variant",
-            arguments: {},
-          },
-        },
+        request: details.status.operationRequestId,
+        task: "backend-task",
+        attempt: "backend-attempt",
+        revision: "a".repeat(64),
       },
     },
   };
   t.emit();
-  t.taskDetails.mockResolvedValue(details);
+  t.taskDetails.mockResolvedValue({ kind: "execution", value: details });
   await expect(t.c.executionDetails("op", signal)).rejects.toThrow();
   details.action.initiator = {
     kind: "ai",
@@ -1132,7 +1132,10 @@ it("execution cards require a Host delivery and matching Rust conversation and t
       ...(details.action.initiator as { osSession: object }).osSession,
     },
   } as Extract<ExecutionTaskDetails["action"]["initiator"], { kind: "ai" }>;
-  await expect(t.c.executionDetails("op", signal)).resolves.toEqual(details);
+  await expect(t.c.executionDetails("op", signal)).resolves.toEqual({
+    kind: "execution",
+    value: details,
+  });
   // An ambiguous union is not an execution request, even if one field has an ID.
   t.view.deliveries.op.proposal.arguments.script = {
     operationRequestId: "other",

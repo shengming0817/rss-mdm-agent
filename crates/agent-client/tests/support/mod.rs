@@ -105,6 +105,8 @@ pub struct Data {
     pub forged_start: bool,
     pub start_permit: Option<SignedTask>,
     pub result_calls: usize,
+    pub acknowledged: std::collections::BTreeSet<String>,
+    pub cancellations: Vec<TaskCancellation>,
     pub result_hook: Option<Arc<dyn Fn() + Send + Sync>>,
     pub claim_failure: bool,
     pub claim_ops: Vec<String>,
@@ -256,6 +258,8 @@ impl Server {
             forged_start: false,
             start_permit: None,
             result_calls: 0,
+            acknowledged: Default::default(),
+            cancellations: Vec::new(),
             result_hook: None,
             claim_failure: false,
             claim_ops: vec![],
@@ -406,7 +410,8 @@ fn claim_response(d: &mut Data, value: Value) -> Response {
     if std::mem::take(&mut d.claim_failure) {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
-    axum::Json(TaskClaimResponse::new(Some(signed), vec![]).unwrap()).into_response()
+    axum::Json(TaskClaimResponse::new(Some(signed), d.cancellations.clone()).unwrap())
+        .into_response()
 }
 fn event_response(d: &mut Data, value: Value) -> Response {
     let request: TaskEventRequest = serde_json::from_value(value.clone()).unwrap();
@@ -428,13 +433,14 @@ fn event_response(d: &mut Data, value: Value) -> Response {
             {
                 return StatusCode::CONFLICT.into_response();
             }
-            d.results.insert(operation, value);
+            d.results.insert(operation.clone(), value);
             if std::mem::take(&mut d.result_failure) {
                 return StatusCode::SERVICE_UNAVAILABLE.into_response();
             }
             if let Some(hook) = d.result_hook.take() {
                 hook();
             }
+            d.acknowledged.insert(operation);
             axum::Json(TaskEventAck::new(None, false)).into_response()
         }
     }

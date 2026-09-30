@@ -3,16 +3,17 @@ import { computed } from "vue";
 import RequestOrigin from "../self-service/RequestOrigin.vue";
 import type {
   ExecutionTaskDetails,
-  TaskPhase,
-  ProcessEnd,
-  ProcessFailureKind,
-  OutputQuality,
   StopOutcome,
   EffectAssessment,
   SoftwareDiagnostic,
   DispatchCause,
   LimitReason,
 } from "@rss-mdm-agent/execution-bindings/task-details";
+type TaskPhase = ExecutionTaskDetails["status"]["phase"];
+type ProcessFacts = NonNullable<ExecutionTaskDetails["status"]["process"]>;
+type ProcessEnd = ProcessFacts["end"];
+type ProcessFailureKind = ProcessFacts["failureKind"];
+type OutputQuality = ProcessFacts["quality"];
 const props = defineProps<{ details: ExecutionTaskDetails; now: number }>();
 const validity = computed(() =>
   props.now < props.details.action.validity.notBeforeUnixMs

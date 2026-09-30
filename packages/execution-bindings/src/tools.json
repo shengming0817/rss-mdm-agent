@@ -12,6 +12,41 @@
     "name": "execution_tasks",
     "outputSchema": {
       "$defs": {
+        "BackendIdentity": {
+          "description": "Display-only account class, never OS identity evidence.",
+          "oneOf": [
+            {
+              "const": "system",
+              "description": "System service execution.",
+              "type": "string"
+            },
+            {
+              "const": "user",
+              "description": "Bound active user helper execution.",
+              "type": "string"
+            }
+          ]
+        },
+        "BackendStepSummary": {
+          "additionalProperties": false,
+          "description": "Exact software coordinate displayed before user confirmation.",
+          "properties": {
+            "identity": {
+              "$ref": "#/$defs/BackendIdentity",
+              "description": "Execution account class."
+            },
+            "package": {
+              "description": "Exact package selected by the backend.",
+              "type": "string"
+            },
+            "version": {
+              "description": "Exact version; no implicit latest.",
+              "type": "string"
+            }
+          },
+          "required": ["package", "version", "identity"],
+          "type": "object"
+        },
         "BackendTask": {
           "additionalProperties": false,
           "description": "Exact displayed backend offer, without executable input or authorization claims.",
@@ -33,6 +68,10 @@
               "$ref": "#/$defs/Digest",
               "description": "Full signed offer revision."
             },
+            "summary": {
+              "$ref": "#/$defs/BackendTaskSummary",
+              "description": "Complete safe action preview, immutable with the offer revision."
+            },
             "task": {
               "$ref": "#/$defs/Id",
               "description": "Backend task identity."
@@ -52,10 +91,47 @@
             "revision",
             "request",
             "title",
+            "summary",
             "expiresAt",
             "userInitiated"
           ],
           "type": "object"
+        },
+        "BackendTaskSummary": {
+          "description": "Safe preview bound to the complete signed offer revision.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Fixed backend script; executable input is not exposed to the UI.",
+              "properties": {
+                "identity": {
+                  "$ref": "#/$defs/BackendIdentity",
+                  "description": "Account class selected by the backend."
+                },
+                "kind": { "const": "script", "type": "string" }
+              },
+              "required": ["kind", "identity"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Complete ordered software action preview.",
+              "properties": {
+                "intent": {
+                  "$ref": "#/$defs/SoftwareOperation",
+                  "description": "Install, uninstall or detection intent."
+                },
+                "kind": { "const": "software", "type": "string" },
+                "steps": {
+                  "description": "Ordered prerequisites and final package.",
+                  "items": { "$ref": "#/$defs/BackendStepSummary" },
+                  "type": "array"
+                }
+              },
+              "required": ["kind", "intent", "steps"],
+              "type": "object"
+            }
+          ]
         },
         "Digest": {
           "description": "Lowercase SHA-256 bytes expressed as hex; a digest alone grants no trust.",
@@ -145,6 +221,26 @@
             {
               "const": "cancelled",
               "description": "Current RPC wait ended. This is not business cancellation.",
+              "type": "string"
+            }
+          ]
+        },
+        "SoftwareOperation": {
+          "description": "One backend software intent, independent of individual process exit codes.",
+          "oneOf": [
+            {
+              "const": "install",
+              "description": "Install each exact version in the supplied order.",
+              "type": "string"
+            },
+            {
+              "const": "detect",
+              "description": "Independently observe each declared package.",
+              "type": "string"
+            },
+            {
+              "const": "uninstall",
+              "description": "Execute each explicit removal in the supplied order.",
               "type": "string"
             }
           ]
@@ -669,7 +765,7 @@
             },
             "contentDigest": {
               "$ref": "#/$defs/Digest",
-              "description": "Canonical digest of the original immutable execution input."
+              "description": "Exact content identity: signed offer revision during preparation, frozen input thereafter."
             },
             "evidence": {
               "description": "Authorized evidence references only.",
@@ -1180,7 +1276,7 @@
             },
             "contentDigest": {
               "$ref": "#/$defs/Digest",
-              "description": "Canonical digest of the original immutable execution input."
+              "description": "Exact content identity: signed offer revision during preparation, frozen input thereafter."
             },
             "evidence": {
               "description": "Authorized evidence references only.",

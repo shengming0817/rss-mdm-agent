@@ -355,6 +355,11 @@ pub enum Reply {
         /// Authorized projection.
         value: execution_app::ExecutionStatus,
     },
+    /// Durable preparation, before an execution plan or attempt exists.
+    Pending {
+        /// Original authenticated local intent.
+        value: execution_contract::BackendRequest,
+    },
     /// Existing safe task details.
     Details {
         /// Authorized details without raw output.
@@ -366,6 +371,8 @@ pub enum Reply {
         value: execution_app::TaskPage,
         /// Current offered task.
         available: Vec<execution_contract::BackendTask>,
+        /// Recent preparation records retained in the same journal.
+        preparations: Vec<execution_contract::BackendRequest>,
     },
     /// User selection accepted; this does not assert dispatch or installation.
     Queued {

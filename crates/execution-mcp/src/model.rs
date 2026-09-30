@@ -112,7 +112,7 @@ pub struct OperationStatus {
     pub cancel_requested: bool,
     /// Original business identity.
     pub operation_request_id: RequestId,
-    /// Canonical digest of the original immutable execution input.
+    /// Exact content identity: signed offer revision during preparation, frozen input thereafter.
     pub content_digest: Digest,
     /// Service-owned current phase.
     pub phase: OperationPhase,

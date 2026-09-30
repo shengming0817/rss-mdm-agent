@@ -42,9 +42,10 @@ async fn main() {
                         data.task = uuid::Uuid::new_v4();
                         data.bytes = command["body"].as_str().unwrap().as_bytes().to_vec();
                         data.script();
-                        if command["user"].as_bool() == Some(true) {
+                        {
                             let wire::TaskPayload::Script(mut payload) = data.offer.as_ref().unwrap().payload.clone() else { unreachable!() };
-                            payload.run_as = wire::ExecutionIdentity::LoggedInUser;
+                            payload.expires_at += 3600;
+                            if command["user"].as_bool() == Some(true) { payload.run_as = wire::ExecutionIdentity::LoggedInUser; }
                             data.offer = Some(data.signed(wire::TaskPayload::Script(payload)));
                         }
                     }
@@ -58,13 +59,14 @@ async fn main() {
                         payload.definition_digest = Sha256::digest(serde_json::to_vec(&payload.steps).unwrap()).into();
                         data.offer = Some(data.signed(wire::TaskPayload::Software(payload)));
                     }
+                    "cancel" => { let cancellation = wire::TaskCancellation::new(data.task, data.attempt).unwrap(); data.cancellations.push(cancellation); },
                     "result_failure" => data.result_failure = true,
                     "revoke" => data.denied = true,
                     "status" => (),
                     "stop" => break,
                     _ => panic!("unknown harness command"),
                 }
-                println!("{}", serde_json::json!({"task": data.task, "attempt":data.attempt,"startRequests":data.start_ops.len(),"resultCalls":data.result_calls,"results":data.results}));
+                println!("{}", serde_json::json!({"task": data.task, "attempt":data.attempt,"startRequests":data.start_ops.len(),"resultCalls":data.result_calls,"acknowledged":data.acknowledged,"results":data.results}));
                 std::io::stdout().flush().unwrap();
             }
             _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => (),

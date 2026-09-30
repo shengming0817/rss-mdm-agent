@@ -1,6 +1,7 @@
 //! Explicit test-only service exercising transport and immutable backend-reference semantics.
 use execution_contract::{
-    AttemptId, BackendSelection, BackendTask, Digest, Id, RequestId, TaskSubmission,
+    AttemptId, BackendIdentity, BackendSelection, BackendTask, BackendTaskSummary, Digest, Id,
+    RequestId, TaskSubmission,
 };
 use execution_mcp::*;
 use sha2::{Digest as _, Sha256};
@@ -131,6 +132,9 @@ impl ExecutionServicePort for TestService {
         ))
         .await;
         Ok(vec![BackendTask {
+            summary: BackendTaskSummary::Script {
+                identity: BackendIdentity::System,
+            },
             task: Id::new("test-task").unwrap(),
             attempt: Id::new("test-attempt").unwrap(),
             revision: Digest::new("a".repeat(64)).unwrap(),

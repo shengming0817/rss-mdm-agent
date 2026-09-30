@@ -25,11 +25,14 @@ pub fn error(code: &'static str, message: impl Into<String>) -> ServiceError {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SnapshotQuery {
     pub after: Option<RequestId>,
+    pub selected: Option<RequestId>,
 }
 #[derive(Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
     pub available: Vec<BackendTask>,
+    pub preparations: Vec<execution_contract::BackendRequest>,
+    pub selected: Option<execution_app::BackendTaskView>,
     pub requests: Vec<execution_app::ExecutionTaskDetails>,
     pub next: Option<RequestId>,
 }

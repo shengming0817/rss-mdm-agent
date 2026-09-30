@@ -1485,6 +1485,219 @@ fn software_application_commits_boundaries_before_ack_and_never_replays_unknown_
 }
 
 #[test]
+fn completed_step_cannot_become_sequence_exit_after_restart() {
+    for started_next in [false, true] {
+        #[derive(Clone)]
+        struct Runner {
+            inner: DeterministicTestRunner,
+            path: std::path::PathBuf,
+            pending: std::sync::Arc<std::sync::Mutex<Option<SoftwareProgress>>>,
+        }
+        impl RunnerPort for Runner {
+            fn id(&self) -> Id {
+                self.inner.id()
+            }
+            fn mode(&self) -> execution_lifecycle::ExecutionMode {
+                execution_lifecycle::ExecutionMode::Test
+            }
+            fn dispatch(&self, permit: AuthorizedDispatch) -> Result<DispatchOutcome, Error> {
+                self.inner.dispatch(permit)
+            }
+            fn evidence(
+                &self,
+                _: &FrozenExecution,
+                _: &AttemptId,
+            ) -> Result<Option<ProcessEvidence>, Error> {
+                Ok(None)
+            }
+            fn acknowledge_capture(
+                &self,
+                _: &FrozenExecution,
+                _: &ProcessEvidence,
+            ) -> Result<(), Error> {
+                Ok(())
+            }
+            fn stop(&self, p: &FrozenExecution, a: &AttemptId) -> Result<(), Error> {
+                self.inner.stop(p, a)
+            }
+            fn observe(
+                &self,
+                p: &FrozenExecution,
+                a: &AttemptId,
+                s: ObservationStage,
+                n: u64,
+            ) -> Result<Option<execution_lifecycle::ObservationFacts>, Error> {
+                self.inner.observe(p, a, s, n)
+            }
+            fn software_progress(
+                &self,
+                _: &FrozenExecution,
+                _: &AttemptId,
+            ) -> Result<Option<SoftwareProgress>, Error> {
+                Ok(self.pending.lock().unwrap().clone())
+            }
+            fn acknowledge_software_progress(
+                &self,
+                receipt: CommittedSoftwareProgress,
+            ) -> Result<(), Error> {
+                let sql = rusqlite::Connection::open(&self.path).unwrap();
+                let body: Vec<u8> = sql
+                    .query_row(
+                        "SELECT body FROM software_progress WHERE attempt_id=?1",
+                        [receipt.facts().attempt_id.as_str()],
+                        |r| r.get(0),
+                    )
+                    .unwrap();
+                assert_eq!(
+                    serde_json::from_slice::<SoftwareProgress>(&body).unwrap(),
+                    *receipt.facts()
+                );
+                self.pending.lock().unwrap().take();
+                Ok(())
+            }
+        }
+        let db = Database::new();
+        let mut host = TestHost::new();
+        let plan = FrozenExecution::freeze(
+            decode_execution(
+                include_bytes!("../../execution-contract/tests/fixtures/software.json"),
+                &test_store_limits().input,
+            )
+            .unwrap(),
+            &test_store_limits().input,
+        )
+        .unwrap();
+        let mut input = plan.spec().clone();
+        let ExecutionSpec::SoftwareProgram { program } = &mut input.execution else {
+            panic!("program")
+        };
+        program.steps.push(program.steps[0].clone());
+        let plan = FrozenExecution::freeze(input, &test_store_limits().input).unwrap();
+        host.template = plan.clone();
+        let pending = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let runner = Runner {
+            inner: DeterministicTestRunner::new(id("test-runner"), TestScenario::Unknown, 8)
+                .unwrap(),
+            path: db.path.clone(),
+            pending: pending.clone(),
+        };
+        let mut app = ExecutionApp::start(
+            &db.path,
+            Startup::CreateTest,
+            host.clone(),
+            runner,
+            AppConfig::test_defaults(1),
+        )
+        .unwrap();
+        let status = app.request_execution(&caller(), &plan).unwrap();
+        let attempt = status.attempt_id.unwrap();
+        let version = plan.spec().execution.software_program().unwrap().steps[0]
+            .version
+            .clone();
+        let mut checkpoints = vec![
+            SoftwareCheckpoint::Begin {
+                step: 0,
+                phase: SoftwarePhase::Before,
+            },
+            SoftwareCheckpoint::End {
+                step: 0,
+                phase: SoftwarePhase::Before,
+                process: None,
+                detected: Some(SoftwareState::Absent {}),
+                quiescent: true,
+            },
+            SoftwareCheckpoint::Begin {
+                step: 0,
+                phase: SoftwarePhase::Mutation,
+            },
+            SoftwareCheckpoint::End {
+                step: 0,
+                phase: SoftwarePhase::Mutation,
+                process: Some(Box::new(ProcessEvidence {
+                    content_digest: plan.digest().clone(),
+                    attempt_id: attempt.clone(),
+                    runner: id("test-runner"),
+                    scope: ProcessScope::ProcessGroup { owner: 1, group: 2 },
+                    finished: true,
+                    exit_code: Some(0),
+                    end: ProcessEnd::Exited,
+                    failure_kind: ProcessFailureKind::None,
+                    quiescent: true,
+                    stdout: vec![],
+                    stderr: vec![],
+                    total_output_bytes: 0,
+                    quality: OutputQuality::Complete,
+                })),
+                detected: None,
+                quiescent: true,
+            },
+            SoftwareCheckpoint::Begin {
+                step: 0,
+                phase: SoftwarePhase::After,
+            },
+            SoftwareCheckpoint::End {
+                step: 0,
+                phase: SoftwarePhase::After,
+                process: None,
+                detected: Some(SoftwareState::Present { version }),
+                quiescent: true,
+            },
+            SoftwareCheckpoint::Complete { step: 0 },
+        ];
+        if started_next {
+            checkpoints.push(SoftwareCheckpoint::Begin {
+                step: 1,
+                phase: SoftwarePhase::Before,
+            });
+        }
+        *pending.lock().unwrap() = Some(SoftwareProgress {
+            attempt_id: attempt,
+            content_digest: plan.digest().clone(),
+            runner: id("test-runner"),
+            checkpoints,
+            elapsed_ms: 1,
+            output_bytes: 0,
+        });
+        app.reconcile(&plan.spec().request.request_id).unwrap();
+        assert!(pending.lock().unwrap().is_none());
+        drop(app);
+        let runner = Runner {
+            inner: DeterministicTestRunner::new(id("test-runner"), TestScenario::Unknown, 8)
+                .unwrap(),
+            path: db.path.clone(),
+            pending,
+        };
+        let mut app = ExecutionApp::start(
+            &db.path,
+            Startup::OpenTest,
+            host,
+            runner,
+            AppConfig::test_defaults(1),
+        )
+        .unwrap();
+        let status = app.reconcile(&plan.spec().request.request_id).unwrap();
+        assert_eq!(status.attempts, 1);
+        assert!(
+            status.process.is_none(),
+            "a completed child cannot represent the unfinished sequence"
+        );
+        let sql = rusqlite::Connection::open(&db.path).unwrap();
+        assert_eq!(
+            sql.query_row("SELECT count(*) FROM software_progress", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            sql.query_row("SELECT count(*) FROM software_claims", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+    }
+}
+
+#[test]
 fn exact_action_confirmation_is_durable_and_does_not_change_origin() {
     for ai in [false, true] {
         let db = Database::new();
@@ -1760,4 +1973,85 @@ fn initial_submission_reconciles_an_identical_begin_committed_during_preflight()
     assert_eq!(status.attempts, 1);
     assert_eq!(runner.dispatch_count(), 1);
     assert_eq!(db.count("attempts"), 1);
+}
+
+#[test]
+fn backend_preparation_is_durable_bound_and_never_dispatches_without_start() {
+    let db = Database::new();
+    let host = TestHost::new();
+    let runner = DeterministicTestRunner::new(id("test-runner"), TestScenario::Unknown, 8).unwrap();
+    let mut app = ExecutionApp::start(
+        &db.path,
+        Startup::CreateTest,
+        host.clone(),
+        runner.clone(),
+        AppConfig::test_defaults(1),
+    )
+    .unwrap();
+    let input = decode_execution(
+        include_bytes!("../../execution-contract/tests/fixtures/plan.json"),
+        &test_store_limits().input,
+    )
+    .unwrap();
+    let Initiator::Human { os_session } = input.request.initiator else {
+        panic!("human fixture")
+    };
+    let original = BackendRequest {
+        offer: BackendTask {
+            request: request("backend-intent"),
+            task: id("task"),
+            attempt: id("attempt"),
+            revision: Digest::new("a".repeat(64)).unwrap(),
+            title: "Exact backend task".into(),
+            summary: BackendTaskSummary::Software {
+                intent: SoftwareOperation::Uninstall,
+                steps: vec![BackendStepSummary {
+                    package: "fixed".into(),
+                    version: "1.0".into(),
+                    identity: BackendIdentity::User,
+                }],
+            },
+            expires_at: 60,
+            user_initiated: true,
+        },
+        trigger: BackendTrigger::Human { os_session },
+        revision: 1,
+        state: BackendRequestState::Proposed,
+        failure: None,
+    };
+    app.record_backend_request(&caller(), None, &original)
+        .unwrap();
+    assert_eq!(runner.dispatch_count(), 0);
+    assert_eq!(db.count("attempts"), 0);
+    drop(app);
+    let mut app = ExecutionApp::start(
+        &db.path,
+        Startup::OpenTest,
+        host,
+        runner.clone(),
+        AppConfig::test_defaults(1),
+    )
+    .unwrap();
+    assert_eq!(
+        app.backend_request(&caller(), &original.offer.request)
+            .unwrap(),
+        Some(original.clone())
+    );
+    let mut replaced = original.clone();
+    replaced.revision = 2;
+    replaced.offer.revision = Digest::new("b".repeat(64)).unwrap();
+    assert!(app
+        .record_backend_request(&caller(), Some(&original), &replaced)
+        .is_err());
+    let mut cancelled = original.clone();
+    cancelled.revision = 2;
+    cancelled.state = BackendRequestState::Cancelled;
+    app.record_backend_request(&caller(), Some(&original), &cancelled)
+        .unwrap();
+    assert!(app
+        .record_backend_request(&caller(), Some(&original), &cancelled)
+        .is_err());
+    assert_eq!(app.backend_requests(&caller()).unwrap(), vec![cancelled]);
+    assert_eq!(runner.dispatch_count(), 0);
+    assert_eq!(db.count("attempts"), 0);
 }

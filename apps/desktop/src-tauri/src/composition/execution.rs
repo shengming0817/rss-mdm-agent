@@ -1,6 +1,6 @@
 //! Production IPC consumer. The desktop owns neither an execution journal nor a runner.
 use crate::self_service as ui;
-use execution_app::{Error, ExecutionStatus, ExecutionTaskDetails, TaskPhase};
+use execution_app::{BackendTaskView, Error, ExecutionStatus, TaskPhase};
 use execution_contract::*;
 use execution_mcp as mcp;
 use execution_runner::host::{ClientOrigin, Reply, Request, ServiceClient};
@@ -108,8 +108,17 @@ impl ExecutionHandle {
             .await
             .map_err(bad)?
         {
-            Reply::Tasks { value, available } => Ok(ui::Snapshot {
+            Reply::Tasks {
+                value,
                 available,
+                preparations,
+            } => Ok(ui::Snapshot {
+                available,
+                preparations,
+                selected: match query.selected {
+                    Some(request) => self.details(request).await.ok(),
+                    None => None,
+                },
                 requests: value.items,
                 next: value.next,
             }),
@@ -141,18 +150,25 @@ impl ExecutionHandle {
     pub async fn execute_ui(&self, input: BackendSelection) -> ui::Result<TaskSubmission> {
         self.select(input).await.map_err(bad)
     }
-    pub async fn cancel_ui(&self, input: ui::ActionRef) -> ui::Result<ExecutionStatus> {
+    pub async fn cancel_ui(&self, input: ui::ActionRef) -> ui::Result<BackendTaskView> {
         self.cancel_task(input.request_id).await.map_err(bad)
     }
-    pub async fn details(&self, request: RequestId) -> Result<ExecutionTaskDetails, Error> {
+    pub async fn details(&self, request: RequestId) -> Result<BackendTaskView, Error> {
         match self.request(Request::Details { request }).await? {
-            Reply::Details { value } => Ok(value),
+            Reply::Details { value } => Ok(BackendTaskView::Execution { value }),
+            Reply::Pending { value } => Ok(BackendTaskView::Pending { value }),
             _ => Err(Error::InvalidInput),
         }
     }
-    pub async fn cancel_task(&self, request: RequestId) -> Result<ExecutionStatus, Error> {
-        match self.request(Request::Cancel { request }).await? {
-            Reply::Status { value } => Ok(value),
+    pub async fn cancel_task(&self, request: RequestId) -> Result<BackendTaskView, Error> {
+        match self
+            .request(Request::Cancel {
+                request: request.clone(),
+            })
+            .await?
+        {
+            Reply::Status { .. } => self.details(request).await,
+            Reply::Pending { value } => Ok(BackendTaskView::Pending { value }),
             _ => Err(Error::OutcomeUnknown),
         }
     }
@@ -263,6 +279,7 @@ impl mcp::ExecutionServicePort for ExecutionHandle {
             .map_err(mcp_error)?
         {
             Reply::Status { value } => Ok(operation(value)),
+            Reply::Pending { value } => Ok(pending_operation(value)),
             _ => Err(mcp::ServiceError::Unavailable),
         }
     }
@@ -273,11 +290,33 @@ impl mcp::ExecutionServicePort for ExecutionHandle {
     ) -> Result<mcp::CancelResult, mcp::ServiceError> {
         Ok(mcp::CancelResult {
             disposition: mcp::CancelDisposition::Requested,
-            operation: operation(
-                self.cancel_task(request.operation_request_id)
-                    .await
-                    .map_err(mcp_error)?,
-            ),
+            operation: match self
+                .cancel_task(request.operation_request_id)
+                .await
+                .map_err(mcp_error)?
+            {
+                BackendTaskView::Execution { value } => operation(value.status),
+                BackendTaskView::Pending { value } => pending_operation(value),
+            },
         })
+    }
+}
+
+fn pending_operation(value: execution_contract::BackendRequest) -> mcp::OperationStatus {
+    use execution_contract::BackendRequestState;
+    mcp::OperationStatus {
+        mode: execution_lifecycle::ExecutionMode::Real,
+        process: None,
+        assessment: None,
+        cancel_requested: value.state == BackendRequestState::Cancelled,
+        operation_request_id: value.offer.request,
+        content_digest: value.offer.revision,
+        phase: match value.state {
+            BackendRequestState::Failed => mcp::OperationPhase::Failed,
+            BackendRequestState::Cancelled => mcp::OperationPhase::Cancelled,
+            _ => mcp::OperationPhase::Waiting,
+        },
+        attempt_id: None,
+        evidence: vec![],
     }
 }

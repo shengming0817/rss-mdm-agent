@@ -3763,7 +3763,6 @@ dependencies = [
  "security-framework",
  "serde",
  "serde_json",
- "service-catalog",
  "sha2",
  "syn 2.0.119",
  "tauri",
@@ -4389,14 +4388,6 @@ dependencies = [
  "wasm-bindgen",
  "web-sys",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "software-plan"
-version = "0.1.0"
-dependencies = [
- "execution-contract",
- "thiserror 2.0.20",
 ]
 
 [[package]]

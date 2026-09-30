@@ -10,10 +10,21 @@ export function offer(): BackendTask {
     request: "backend-request",
     revision: "a".repeat(64),
     title: "固定软件 1.0",
+    summary: {
+      kind: "software",
+      intent: "install",
+      steps: [{ package: "固定软件", version: "1.0", identity: "system" }],
+    },
     expiresAt: 9999999999,
     userInitiated: true,
   };
 }
 export function snapshot(): Snapshot {
-  return { available: [offer()], requests: [], next: null };
+  return {
+    available: [offer()],
+    preparations: [],
+    selected: null,
+    requests: [],
+    next: null,
+  };
 }

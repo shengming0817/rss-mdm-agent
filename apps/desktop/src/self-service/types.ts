@@ -8,77 +8,37 @@
  */
 export type RequestId = string;
 /**
- * Value-only admission result; policy/rule/approver details remain in privileged audit.
+ * Query result spanning preparation and actual execution without inventing a frozen plan.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "AdmissionStatus".
+ * via the `definition` "BackendTaskView".
  */
-export type AdmissionStatus = "admitted" | "denied" | "approvalRequired";
-/**
- * Verified assessment of the whole controlled attempt, not text from tool output.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "EffectAssessment".
- */
-export type EffectAssessment =
-  | "noEffect"
-  | "satisfied"
-  | "notSatisfied"
-  | "unknown";
-/**
- * Execution attempt correlation identity.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "AttemptId".
- */
-export type AttemptId = string;
-/**
- * Lowercase SHA-256 bytes expressed as hex; a digest alone grants no trust.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Digest".
- */
-export type Digest = string;
-/**
- * Closed first-delivery diagnostics. These are not observations of termination or effects.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "DispatchCause".
- */
-export type DispatchCause =
-  | "capabilityUnavailable"
-  | "clockUnavailable"
-  | "cancelled"
+export type BackendTaskView =
   | {
-      limit: LimitReason;
+      kind: "pending";
+      /**
+       * Original offer, caller binding and durable preparation state.
+       */
+      value: BackendRequest;
     }
-  | "staleRevision"
-  | "runnerMismatch"
-  | "configurationUnavailable"
-  | "authorityUnavailable"
-  | "lifecycleChanged"
-  | "runnerRejected"
-  | "deliveryUnknown"
-  | "runnerError";
+  | {
+      kind: "execution";
+      /**
+       * Real frozen input projection and lifecycle facts.
+       */
+      value: ExecutionTaskDetails;
+    };
 /**
- * Explicit reason a validity or cumulative budget bound prevents work.
+ * Closed preparation diagnosis without backend bodies or local paths.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "LimitReason".
+ * via the `definition` "BackendRequestFailure".
  */
-export type LimitReason =
-  | "notYetValid"
+export type BackendRequestFailure =
+  | "preparationFailed"
+  | "interrupted"
   | "expired"
-  | "timeout"
-  | "output"
-  | "attempts";
-/**
- * Recorded observation category. None of these references verifies a real-world effect.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "EvidenceKind".
- */
-export type EvidenceKind = "testResult" | "processExited" | "stateObserved";
+  | "revoked";
 /**
  * Opaque local reference identifier; syntax validity is not authenticity.
  *
@@ -87,95 +47,113 @@ export type EvidenceKind = "testResult" | "processExited" | "stateObserved";
  */
 export type Id = string;
 /**
- * Explicit execution provenance; test effects never become real effects.
+ * Lowercase SHA-256 bytes expressed as hex; a digest alone grants no trust.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "ExecutionMode".
+ * via the `definition` "Digest".
  */
-export type ExecutionMode = "test" | "real";
+export type Digest = string;
 /**
- * Safe presentation of C09 facts, not a second persisted state machine.
+ * Safe preview bound to the complete signed offer revision.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "TaskPhase".
+ * via the `definition` "BackendTaskSummary".
  */
-export type TaskPhase =
-  | "waiting"
-  | "admissionDenied"
-  | "approvalRequired"
-  | "confirmationRequired"
-  | "accepted"
-  | "running"
-  | "outcomeUnknown"
-  | "executionEnded"
-  | "verified"
-  | "failedBeforeDispatch"
+export type BackendTaskSummary =
+  | {
+      /**
+       * Account class selected by the backend.
+       */
+      identity: BackendIdentity;
+      kind: "script";
+    }
+  | {
+      /**
+       * Install, uninstall or detection intent.
+       */
+      intent: SoftwareOperation;
+      kind: "software";
+      /**
+       * Ordered prerequisites and final package.
+       */
+      steps: BackendStepSummary[];
+    };
+/**
+ * Display-only account class, never OS identity evidence.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "BackendIdentity".
+ */
+export type BackendIdentity = "system" | "user";
+/**
+ * One backend software intent, independent of individual process exit codes.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SoftwareOperation".
+ */
+export type SoftwareOperation = "install" | "detect" | "uninstall";
+/**
+ * Preparation state only; none of these values authorizes physical execution.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "BackendRequestState".
+ */
+export type BackendRequestState =
+  | "proposed"
+  | "selected"
+  | "submitting"
+  | "failed"
   | "cancelled";
 /**
- * Why a bounded process owner stopped collecting output.
+ * Provenance for a task already authorized by the backend; never a local enterprise approval.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "ProcessEnd".
+ * via the `definition` "BackendTrigger".
  */
-export type ProcessEnd =
-  | "rejected"
-  | "exited"
-  | "cancelled"
-  | "timedOut"
-  | "outputLimit"
-  | "unknown";
+export type BackendTrigger =
+  | {
+      kind: "automatic";
+    }
+  | {
+      kind: "human";
+      /**
+       * Actual native account and login session, supplied by ingress.
+       */
+      osSession: OsSessionRef;
+    }
+  | {
+      /**
+       * Native AI connection configuration, not a provider identity grant.
+       */
+      config: VersionedRef;
+      /**
+       * Conversation reference used for audit correlation.
+       */
+      conversation: Id;
+      kind: "ai";
+      /**
+       * Actual native account and login session, supplied by ingress.
+       */
+      osSession: OsSessionRef;
+      /**
+       * Tool request reference used for audit correlation.
+       */
+      toolCall: Id;
+    };
 /**
- * Closed, value-free mechanism diagnosis, independent of cancellation, exit and effect.
+ * Target OS semantics for validation; an enum value is not a platform support claim.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "ProcessFailureKind".
+ * via the `definition` "Platform".
  */
-export type ProcessFailureKind =
-  | "none"
-  | "denied"
-  | "unbound"
-  | "capability"
-  | "unsupported"
-  | "invalidInput"
-  | "capacity"
-  | "conflict"
-  | "unavailable"
-  | "runtime"
-  | "spawn"
-  | "inputDelivery"
-  | "capture"
-  | "supervision"
-  | "outputValidation";
+export type Platform = "windows" | "macos" | "linux";
 /**
- * Quality of the captured result, independent from the exit code.
+ * Device reference, not verified registration evidence.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "OutputQuality".
+ * via the `definition` "DeviceId".
  */
-export type OutputQuality = "complete" | "truncated" | "failed" | "partial";
-/**
- * Safe software diagnostic; contains no paths, source coordinates or captured output.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "SoftwareDiagnostic".
- */
-export type SoftwareDiagnostic =
-  | "awaitingDetection"
-  | "restartPending"
-  | "detectionUnavailable"
-  | "unrecognizedVersion"
-  | "detectionBudgetExceeded"
-  | "desiredStateObserved"
-  | "desiredStateMissing"
-  | "cleanupPending"
-  | "cleanupUnverified";
-/**
- * Closed stop request diagnostics. Neither variant is a termination/effect observation.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "StopOutcome".
- */
-export type StopOutcome = "acknowledged" | "failed";
+export type DeviceId = string;
 /**
  * Safe counts only; individual paths and network destinations remain protected.
  *
@@ -274,13 +252,6 @@ export type ExecutionSummary =
       kind: "process";
     };
 /**
- * One backend software intent, independent of individual process exit codes.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "SoftwareOperation".
- */
-export type SoftwareOperation = "install" | "detect" | "uninstall";
-/**
  * The supported software adapters. No plugin names or command strings are accepted.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -322,13 +293,6 @@ export type RunAs =
        */
       platform: Platform;
     };
-/**
- * Target OS semantics for validation; an enum value is not a platform support claim.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Platform".
- */
-export type Platform = "windows" | "macos" | "linux";
 /**
  * Request origin and account provenance; never grants the product actor additional authority.
  *
@@ -389,49 +353,6 @@ export type Initiator =
       policy: VersionedRef;
     };
 /**
- * Provenance for a task already authorized by the backend; never a local enterprise approval.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "BackendTrigger".
- */
-export type BackendTrigger =
-  | {
-      kind: "automatic";
-    }
-  | {
-      kind: "human";
-      /**
-       * Actual native account and login session, supplied by ingress.
-       */
-      osSession: OsSessionRef;
-    }
-  | {
-      /**
-       * Native AI connection configuration, not a provider identity grant.
-       */
-      config: VersionedRef;
-      /**
-       * Conversation reference used for audit correlation.
-       */
-      conversation: Id;
-      kind: "ai";
-      /**
-       * Actual native account and login session, supplied by ingress.
-       */
-      osSession: OsSessionRef;
-      /**
-       * Tool request reference used for audit correlation.
-       */
-      toolCall: Id;
-    };
-/**
- * Device reference, not verified registration evidence.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "DeviceId".
- */
-export type DeviceId = string;
-/**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "LocalContractV5".
  */
@@ -474,6 +395,161 @@ export type TargetScope =
       account: OsAccountRef;
       kind: "user";
     };
+/**
+ * Value-only admission result; policy/rule/approver details remain in privileged audit.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "AdmissionStatus".
+ */
+export type AdmissionStatus = "admitted" | "denied" | "approvalRequired";
+/**
+ * Verified assessment of the whole controlled attempt, not text from tool output.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "EffectAssessment".
+ */
+export type EffectAssessment =
+  | "noEffect"
+  | "satisfied"
+  | "notSatisfied"
+  | "unknown";
+/**
+ * Execution attempt correlation identity.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "AttemptId".
+ */
+export type AttemptId = string;
+/**
+ * Closed first-delivery diagnostics. These are not observations of termination or effects.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "DispatchCause".
+ */
+export type DispatchCause =
+  | "capabilityUnavailable"
+  | "clockUnavailable"
+  | "cancelled"
+  | {
+      limit: LimitReason;
+    }
+  | "staleRevision"
+  | "runnerMismatch"
+  | "configurationUnavailable"
+  | "authorityUnavailable"
+  | "lifecycleChanged"
+  | "runnerRejected"
+  | "deliveryUnknown"
+  | "runnerError";
+/**
+ * Explicit reason a validity or cumulative budget bound prevents work.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "LimitReason".
+ */
+export type LimitReason =
+  | "notYetValid"
+  | "expired"
+  | "timeout"
+  | "output"
+  | "attempts";
+/**
+ * Recorded observation category. None of these references verifies a real-world effect.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "EvidenceKind".
+ */
+export type EvidenceKind = "testResult" | "processExited" | "stateObserved";
+/**
+ * Explicit execution provenance; test effects never become real effects.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "ExecutionMode".
+ */
+export type ExecutionMode = "test" | "real";
+/**
+ * Safe presentation of C09 facts, not a second persisted state machine.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "TaskPhase".
+ */
+export type TaskPhase =
+  | "waiting"
+  | "admissionDenied"
+  | "approvalRequired"
+  | "confirmationRequired"
+  | "accepted"
+  | "running"
+  | "outcomeUnknown"
+  | "executionEnded"
+  | "verified"
+  | "failedBeforeDispatch"
+  | "cancelled";
+/**
+ * Why a bounded process owner stopped collecting output.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "ProcessEnd".
+ */
+export type ProcessEnd =
+  | "rejected"
+  | "exited"
+  | "cancelled"
+  | "timedOut"
+  | "outputLimit"
+  | "unknown";
+/**
+ * Closed, value-free mechanism diagnosis, independent of cancellation, exit and effect.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "ProcessFailureKind".
+ */
+export type ProcessFailureKind =
+  | "none"
+  | "denied"
+  | "unbound"
+  | "capability"
+  | "unsupported"
+  | "invalidInput"
+  | "capacity"
+  | "conflict"
+  | "unavailable"
+  | "runtime"
+  | "spawn"
+  | "inputDelivery"
+  | "capture"
+  | "supervision"
+  | "outputValidation";
+/**
+ * Quality of the captured result, independent from the exit code.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "OutputQuality".
+ */
+export type OutputQuality = "complete" | "truncated" | "failed" | "partial";
+/**
+ * Safe software diagnostic; contains no paths, source coordinates or captured output.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SoftwareDiagnostic".
+ */
+export type SoftwareDiagnostic =
+  | "awaitingDetection"
+  | "restartPending"
+  | "detectionUnavailable"
+  | "unrecognizedVersion"
+  | "detectionBudgetExceeded"
+  | "desiredStateObserved"
+  | "desiredStateMissing"
+  | "cleanupPending"
+  | "cleanupUnverified";
+/**
+ * Closed stop request diagnostics. Neither variant is a termination/effect observation.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "StopOutcome".
+ */
+export type StopOutcome = "acknowledged" | "failed";
 
 export interface SelfServiceCommands {
   self_service_cancel: Command3;
@@ -486,7 +562,7 @@ export interface SelfServiceCommands {
  */
 export interface Command3 {
   input: ActionRef;
-  output: ExecutionStatus;
+  output: BackendTaskView;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -496,212 +572,32 @@ export interface ActionRef {
   requestId: RequestId;
 }
 /**
- * Authorized value-only task projection. Never includes launch, parameters or raw output.
+ * User intent retained in the sole execution journal before a frozen execution exists.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "ExecutionStatus".
+ * via the `definition` "BackendRequest".
  */
-export interface ExecutionStatus {
+export interface BackendRequest {
   /**
-   * Latest durable, value-only admission decision, independent of prior attempt facts.
+   * Diagnosis when preparation failed.
    */
-  admission: AdmissionStatus | null;
+  failure: BackendRequestFailure | null;
   /**
-   * Fixture assessment if recorded; Unknown is not success.
+   * Exact offer and its display summary.
    */
-  assessment: EffectAssessment | null;
+  offer: BackendTask;
   /**
-   * Current admitted attempt, absent before admission.
+   * Monotonic journal revision.
    */
-  attemptId: AttemptId | null;
+  revision: number;
   /**
-   * Total admitted attempts; retries never reset it.
+   * Preparation state, separate from execution lifecycle.
    */
-  attempts: number;
+  state: BackendRequestState;
   /**
-   * Sticky cancellation request, independently of termination.
+   * OS-authenticated original trigger; never accepted from an IPC request body.
    */
-  cancelRequested: boolean;
-  /**
-   * Canonical digest of the complete immutable execution input.
-   */
-  contentDigest: Digest;
-  /**
-   * First-delivery diagnosis; never evidence that execution had no effect.
-   */
-  dispatchCause: DispatchCause | null;
-  /**
-   * Authorized evidence references only.
-   */
-  evidence: EvidenceRef[];
-  /**
-   * Explicit fixture provenance, also present before the first attempt.
-   */
-  mode: ExecutionMode;
-  /**
-   * Original reliable business identity.
-   */
-  operationRequestId: RequestId;
-  /**
-   * Current derived lifecycle phase.
-   */
-  phase: TaskPhase;
-  /**
-   * Redacted process progress, distinct from lifecycle termination and effect proof.
-   */
-  process: ProcessSummary | null;
-  /**
-   * Safe independent software diagnostic; observed state is not final success.
-   */
-  software: SoftwareDiagnostic | null;
-  /**
-   * Last stop request response; independent of termination/effect evidence.
-   */
-  stopOutcome: StopOutcome | null;
-}
-/**
- * Versioned observation reference and runner provenance; the referenced fact remains unverified.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "EvidenceRef".
- */
-export interface EvidenceRef {
-  /**
-   * Recorded observation category; a category label does not prove an external fact.
-   */
-  kind: EvidenceKind;
-  /**
-   * Exact versioned reference. Authenticity and access are checked by its owner.
-   */
-  reference: VersionedRef;
-  /**
-   * Runner reference whose evidence is being recorded, including an explicit fixture runner in tests.
-   */
-  runner: Id;
-}
-/**
- * Exact resource/configuration reference. Resolution and authenticity belong to the owner.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "VersionedRef".
- */
-export interface VersionedRef {
-  /**
-   * Opaque reference identity; the revision must be supplied separately.
-   */
-  id: Id;
-  /**
-   * Exact immutable revision reference; does not resolve or follow a moving alias.
-   */
-  revision: Id;
-}
-/**
- * Ordinary result projection. No raw output, paths, process identifiers or secrets.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "ProcessSummary".
- */
-export interface ProcessSummary {
-  /**
-   * Stop/failure classification.
-   */
-  end: ProcessEnd;
-  /**
-   * Root exit code, independently from effect or scope quiescence.
-   */
-  exitCode: number | null;
-  /**
-   * First mechanism failure. Required even when no failure has occurred.
-   */
-  failureKind: ProcessFailureKind;
-  /**
-   * Root capture completed; not proof of all descendants terminating.
-   */
-  finished: boolean;
-  /**
-   * Capture/decoding quality, not a business success bit.
-   */
-  quality: OutputQuality;
-  /**
-   * Explicit full-scope proof; false means unproven.
-   */
-  quiescent: boolean;
-  /**
-   * Bytes observed including discarded bytes.
-   */
-  totalOutputBytes: number;
-}
-/**
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command2".
- */
-export interface Command2 {
-  input: BackendSelection;
-  output: TaskSubmission;
-}
-/**
- * A selection references exact backend content and carries no script or local catalog model.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "BackendSelection".
- */
-export interface BackendSelection {
-  /**
-   * Original backend attempt.
-   */
-  attempt: Id;
-  /**
-   * Original request shown with the offer, used unchanged for recovery.
-   */
-  request: RequestId;
-  /**
-   * Revision shown to the user/model.
-   */
-  revision: Digest;
-  /**
-   * Backend task identity.
-   */
-  task: Id;
-}
-/**
- * Selection acknowledgement, distinct from persisted execution or effect completion.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "TaskSubmission".
- */
-export interface TaskSubmission {
-  /**
-   * A human still needs to confirm the displayed task in the desktop.
-   */
-  confirmationRequired: boolean;
-  /**
-   * Original request to query after a timeout or disconnect.
-   */
-  request: RequestId;
-}
-/**
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command".
- */
-export interface Command {
-  input: SnapshotQuery;
-  output: Snapshot;
-}
-/**
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "SnapshotQuery".
- */
-export interface SnapshotQuery {
-  after: RequestId | null;
-}
-/**
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Snapshot".
- */
-export interface Snapshot {
-  available: BackendTask[];
-  next: RequestId | null;
-  requests: ExecutionTaskDetails[];
+  trigger: BackendTrigger;
 }
 /**
  * Exact displayed backend offer, without executable input or authorization claims.
@@ -727,6 +623,10 @@ export interface BackendTask {
    */
   revision: Digest;
   /**
+   * Complete safe action preview, immutable with the offer revision.
+   */
+  summary: BackendTaskSummary;
+  /**
    * Backend task identity.
    */
   task: Id;
@@ -738,6 +638,78 @@ export interface BackendTask {
    * Requires an explicit local user action before requesting Start.
    */
   userInitiated: boolean;
+}
+/**
+ * Exact software coordinate displayed before user confirmation.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "BackendStepSummary".
+ */
+export interface BackendStepSummary {
+  /**
+   * Execution account class.
+   */
+  identity: BackendIdentity;
+  /**
+   * Exact package selected by the backend.
+   */
+  package: string;
+  /**
+   * Exact version; no implicit latest.
+   */
+  version: string;
+}
+/**
+ * Claimed OS login provenance at the request origin, separate from target and run-as identity.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "OsSessionRef".
+ */
+export interface OsSessionRef {
+  /**
+   * Login account at the origin; never implicitly equated to the product actor.
+   */
+  account: OsAccountRef;
+  /**
+   * Origin device reference; it does not establish registration or target authority.
+   */
+  device: DeviceId;
+  /**
+   * Origin OS login/session reference, including an explicit test reference in fixtures.
+   */
+  session: Id;
+}
+/**
+ * Opaque account reference in an OS namespace, independent of product or provider identity.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "OsAccountRef".
+ */
+export interface OsAccountRef {
+  /**
+   * OS namespace of this reference or target; does not assert platform support.
+   */
+  platform: Platform;
+  /**
+   * Opaque stable OS account reference, such as a SID/UID reference, not an authentication credential.
+   */
+  subject: Id;
+}
+/**
+ * Exact resource/configuration reference. Resolution and authenticity belong to the owner.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "VersionedRef".
+ */
+export interface VersionedRef {
+  /**
+   * Opaque reference identity; the revision must be supplied separately.
+   */
+  id: Id;
+  /**
+   * Exact immutable revision reference; does not resolve or follow a moving alias.
+   */
+  revision: Id;
 }
 /**
  * One authorized record read provides both lifecycle status and frozen plan facts.
@@ -893,42 +865,6 @@ export interface SoftwareStepSummary {
   version: PackageValue;
 }
 /**
- * Opaque account reference in an OS namespace, independent of product or provider identity.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "OsAccountRef".
- */
-export interface OsAccountRef {
-  /**
-   * OS namespace of this reference or target; does not assert platform support.
-   */
-  platform: Platform;
-  /**
-   * Opaque stable OS account reference, such as a SID/UID reference, not an authentication credential.
-   */
-  subject: Id;
-}
-/**
- * Claimed OS login provenance at the request origin, separate from target and run-as identity.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "OsSessionRef".
- */
-export interface OsSessionRef {
-  /**
-   * Login account at the origin; never implicitly equated to the product actor.
-   */
-  account: OsAccountRef;
-  /**
-   * Origin device reference; it does not establish registration or target authority.
-   */
-  device: DeviceId;
-  /**
-   * Origin OS login/session reference, including an explicit test reference in fixtures.
-   */
-  session: Id;
-}
-/**
  * Exact binary and immutable calling convention. Neither reference proves availability.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -995,6 +931,201 @@ export interface ValidityWindow {
    * Earliest validity instant as UTC Unix milliseconds; no system clock is consulted here.
    */
   notBeforeUnixMs: number;
+}
+/**
+ * Authorized value-only task projection. Never includes launch, parameters or raw output.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "ExecutionStatus".
+ */
+export interface ExecutionStatus {
+  /**
+   * Latest durable, value-only admission decision, independent of prior attempt facts.
+   */
+  admission: AdmissionStatus | null;
+  /**
+   * Fixture assessment if recorded; Unknown is not success.
+   */
+  assessment: EffectAssessment | null;
+  /**
+   * Current admitted attempt, absent before admission.
+   */
+  attemptId: AttemptId | null;
+  /**
+   * Total admitted attempts; retries never reset it.
+   */
+  attempts: number;
+  /**
+   * Sticky cancellation request, independently of termination.
+   */
+  cancelRequested: boolean;
+  /**
+   * Canonical digest of the complete immutable execution input.
+   */
+  contentDigest: Digest;
+  /**
+   * First-delivery diagnosis; never evidence that execution had no effect.
+   */
+  dispatchCause: DispatchCause | null;
+  /**
+   * Authorized evidence references only.
+   */
+  evidence: EvidenceRef[];
+  /**
+   * Explicit fixture provenance, also present before the first attempt.
+   */
+  mode: ExecutionMode;
+  /**
+   * Original reliable business identity.
+   */
+  operationRequestId: RequestId;
+  /**
+   * Current derived lifecycle phase.
+   */
+  phase: TaskPhase;
+  /**
+   * Redacted process progress, distinct from lifecycle termination and effect proof.
+   */
+  process: ProcessSummary | null;
+  /**
+   * Safe independent software diagnostic; observed state is not final success.
+   */
+  software: SoftwareDiagnostic | null;
+  /**
+   * Last stop request response; independent of termination/effect evidence.
+   */
+  stopOutcome: StopOutcome | null;
+}
+/**
+ * Versioned observation reference and runner provenance; the referenced fact remains unverified.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "EvidenceRef".
+ */
+export interface EvidenceRef {
+  /**
+   * Recorded observation category; a category label does not prove an external fact.
+   */
+  kind: EvidenceKind;
+  /**
+   * Exact versioned reference. Authenticity and access are checked by its owner.
+   */
+  reference: VersionedRef;
+  /**
+   * Runner reference whose evidence is being recorded, including an explicit fixture runner in tests.
+   */
+  runner: Id;
+}
+/**
+ * Ordinary result projection. No raw output, paths, process identifiers or secrets.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "ProcessSummary".
+ */
+export interface ProcessSummary {
+  /**
+   * Stop/failure classification.
+   */
+  end: ProcessEnd;
+  /**
+   * Root exit code, independently from effect or scope quiescence.
+   */
+  exitCode: number | null;
+  /**
+   * First mechanism failure. Required even when no failure has occurred.
+   */
+  failureKind: ProcessFailureKind;
+  /**
+   * Root capture completed; not proof of all descendants terminating.
+   */
+  finished: boolean;
+  /**
+   * Capture/decoding quality, not a business success bit.
+   */
+  quality: OutputQuality;
+  /**
+   * Explicit full-scope proof; false means unproven.
+   */
+  quiescent: boolean;
+  /**
+   * Bytes observed including discarded bytes.
+   */
+  totalOutputBytes: number;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Command2".
+ */
+export interface Command2 {
+  input: BackendSelection;
+  output: TaskSubmission;
+}
+/**
+ * A selection references exact backend content and carries no script or local catalog model.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "BackendSelection".
+ */
+export interface BackendSelection {
+  /**
+   * Original backend attempt.
+   */
+  attempt: Id;
+  /**
+   * Original request shown with the offer, used unchanged for recovery.
+   */
+  request: RequestId;
+  /**
+   * Revision shown to the user/model.
+   */
+  revision: Digest;
+  /**
+   * Backend task identity.
+   */
+  task: Id;
+}
+/**
+ * Selection acknowledgement, distinct from persisted execution or effect completion.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "TaskSubmission".
+ */
+export interface TaskSubmission {
+  /**
+   * A human still needs to confirm the displayed task in the desktop.
+   */
+  confirmationRequired: boolean;
+  /**
+   * Original request to query after a timeout or disconnect.
+   */
+  request: RequestId;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Command".
+ */
+export interface Command {
+  input: SnapshotQuery;
+  output: Snapshot;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SnapshotQuery".
+ */
+export interface SnapshotQuery {
+  after: RequestId | null;
+  selected: RequestId | null;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Snapshot".
+ */
+export interface Snapshot {
+  available: BackendTask[];
+  next: RequestId | null;
+  preparations: BackendRequest[];
+  requests: ExecutionTaskDetails[];
+  selected: BackendTaskView | null;
 }
 
 export type SelfServicePort = {

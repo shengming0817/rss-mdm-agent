@@ -12,14 +12,21 @@ function fixture() {
       request: input.request,
       confirmationRequired: false,
     })),
-    cancel: vi.fn<SelfServicePort["cancel"]>(
-      async () => executionTask().status,
-    ),
+    cancel: vi.fn<SelfServicePort["cancel"]>(async () => ({
+      kind: "execution",
+      value: executionTask(),
+    })),
   } satisfies SelfServicePort;
   return {
     value,
     port,
-    c: createController(port, { available: [], requests: [], next: null }),
+    c: createController(port, {
+      available: [],
+      preparations: [],
+      selected: null,
+      requests: [],
+      next: null,
+    }),
   };
 }
 describe("backend task selection", () => {
@@ -82,4 +89,25 @@ describe("backend task selection", () => {
     await pending;
     expect(c.state.snapshot).toBeNull();
   });
+});
+
+it("keeps the selected task query independent of paging and returns to the first page", async () => {
+  const { c, port, value } = fixture();
+  value.next = "page-2";
+  await c.refresh();
+  c.select(value.available[0]!);
+  await c.next();
+  expect(port.snapshot).toHaveBeenLastCalledWith({
+    after: "page-2",
+    selected: "backend-request",
+  });
+  await c.previous();
+  expect(port.snapshot).toHaveBeenLastCalledWith({
+    after: null,
+    selected: "backend-request",
+  });
+  await c.next();
+  await c.first();
+  expect(c.state.previous).toEqual([]);
+  expect(c.state.after).toBeNull();
 });

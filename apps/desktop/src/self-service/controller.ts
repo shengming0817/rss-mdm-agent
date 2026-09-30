@@ -15,6 +15,7 @@ export function createController(
     uncertain: false,
     error: "",
     after: null as string | null,
+    previous: [] as (string | null)[],
   });
   let epoch = 0;
   let active = true;
@@ -23,7 +24,10 @@ export function createController(
     const call = ++epoch;
     state.loading = true;
     try {
-      const value = await port.snapshot({ after: state.after });
+      const value = await port.snapshot({
+        after: state.after,
+        selected: state.taskId || null,
+      });
       if (!active || call !== epoch) return;
       state.snapshot = value;
       if (
@@ -38,7 +42,8 @@ export function createController(
         state.item = null;
       if (
         state.taskId &&
-        value.requests.some((t) => t.action.requestId === state.taskId)
+        (value.selected ||
+          value.requests.some((t) => t.action.requestId === state.taskId))
       )
         state.uncertain = false;
       if (!state.uncertain) state.error = "";
@@ -99,7 +104,20 @@ export function createController(
     state.page = page;
   }
   async function next() {
-    state.after = state.snapshot?.next ?? null;
+    if (!state.snapshot?.next || state.loading) return;
+    state.previous.push(state.after);
+    state.after = state.snapshot.next;
+    await refresh();
+  }
+  async function previous() {
+    if (!state.previous.length || state.loading) return;
+    state.after = state.previous.pop() ?? null;
+    await refresh();
+  }
+  async function first() {
+    if (state.loading) return;
+    state.after = null;
+    state.previous = [];
     await refresh();
   }
   function dispose() {
@@ -115,6 +133,8 @@ export function createController(
     cancel,
     navigate,
     next,
+    previous,
+    first,
     dispose,
   };
 }

@@ -56,14 +56,14 @@ macro_rules! commands {
 commands! {
     self_service_snapshot(SnapshotQuery) -> Snapshot = snapshot,
     self_service_execute(execution_contract::BackendSelection) -> execution_contract::TaskSubmission = execute_ui,
-    self_service_cancel(ActionRef) -> execution_app::ExecutionStatus = cancel_ui,
+    self_service_cancel(ActionRef) -> execution_app::BackendTaskView = cancel_ui,
 }
 #[tauri::command]
 pub async fn execution_task_details(
     state: State<'_, DesktopRuntime>,
     request_id: String,
     generation: String,
-) -> Result<execution_app::ExecutionTaskDetails> {
+) -> Result<execution_app::BackendTaskView> {
     let request = execution_contract::RequestId::new(request_id)
         .map_err(|_| error("input", "无效任务编号"))?;
     let handle = state.execution_for(&generation)?;

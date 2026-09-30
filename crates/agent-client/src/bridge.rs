@@ -20,6 +20,30 @@ pub(crate) struct Binding {
     actor: execution_contract::ActorId,
     local_attempt: Option<execution_contract::AttemptId>,
 }
+/// Frozen result delivery prepared synchronously from the authoritative journal.
+pub struct PendingDelivery {
+    task: Uuid,
+    key: String,
+    request: wire::TaskEventRequest,
+    events: Vec<EventId>,
+    binding: Binding,
+    accepted: bool,
+}
+/// An unsubmitted offer whose absence was checked against the authoritative journal.
+pub struct PendingAbandonment {
+    task: Uuid,
+    key: String,
+    event: wire::TaskEventRequest,
+    request: RequestId,
+    device: execution_contract::DeviceId,
+    accepted: bool,
+}
+impl PendingAbandonment {
+    /// Original request checked against the journal, including before an execution exists.
+    pub fn request_id(&self) -> &RequestId {
+        &self.request
+    }
+}
 /// Host-adapted, preflighted input bound to an exact verified offer. Not dispatch authority.
 pub struct PreparedExecution {
     plan: FrozenExecution,
@@ -279,12 +303,12 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
     }
     /// Settle an offer that never entered this authoritative journal. Cancellation ACK
     /// precedes releasing associations; any existing local execution remains journal-owned.
-    pub async fn abandon<S: SecretProvider, C: Clock, H: AppHost, R: RunnerPort>(
+    pub fn prepare_abandonment<S: SecretProvider, C: Clock, H: AppHost, R: RunnerPort>(
         &self,
         client: &mut Client<S, C>,
         task: Uuid,
         app: &ExecutionApp<H, R>,
-    ) -> Result<(), Error> {
+    ) -> Result<PendingAbandonment, Error> {
         let offer = client.stored_offer(task)?;
         let request = offer.request_id()?;
         let device = execution_contract::DeviceId::new(client.registration()?.device_id)
@@ -313,20 +337,56 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
             [&key],
             |r| r.get(0),
         )?;
-        if !accepted {
-            let ack = client.send_event(task, &event).await?;
+        Ok(PendingAbandonment {
+            task,
+            key,
+            event,
+            request,
+            device,
+            accepted,
+        })
+    }
+    /// Send only transport work, leaving the execution owner free to reconcile and cancel.
+    pub async fn send_abandonment<S: SecretProvider, C: Clock>(
+        &self,
+        client: &mut Client<S, C>,
+        pending: &mut PendingAbandonment,
+    ) -> Result<(), Error> {
+        if !pending.accepted {
+            let ack = client.send_event(pending.task, &pending.event).await?;
             if ack.permit().is_some() {
                 return Err(Error::Protocol);
             }
-            client
-                .store
-                .conn
-                .execute("UPDATE requests SET accepted=1 WHERE key=?1", [key])?;
+            client.store.conn.execute(
+                "UPDATE requests SET accepted=1 WHERE key=?1",
+                [&pending.key],
+            )?;
+            pending.accepted = true;
         }
-        if app.has_service_execution(&request, &device)? {
+        Ok(())
+    }
+    /// Release transport state only after the same journal still proves there is no execution.
+    pub fn finish_abandonment<S: SecretProvider, C: Clock, H: AppHost, R: RunnerPort>(
+        &self,
+        client: &mut Client<S, C>,
+        pending: PendingAbandonment,
+        app: &ExecutionApp<H, R>,
+    ) -> Result<(), Error> {
+        if !pending.accepted || app.has_service_execution(&pending.request, &pending.device)? {
             return Err(Error::Conflict);
         }
-        client.release(task)
+        client.release(pending.task)
+    }
+    /// Convenience for callers that do not own a concurrent execution loop.
+    pub async fn abandon<S: SecretProvider, C: Clock, H: AppHost, R: RunnerPort>(
+        &self,
+        client: &mut Client<S, C>,
+        task: Uuid,
+        app: &ExecutionApp<H, R>,
+    ) -> Result<(), Error> {
+        let mut pending = self.prepare_abandonment(client, task, app)?;
+        self.send_abandonment(client, &mut pending).await?;
+        self.finish_abandonment(client, pending, app)
     }
     /// Reconcile one exact cancellation against its existing journal; absence never proves stop.
     pub fn cancel<S: SecretProvider, C: Clock, H: AppHost, R: RunnerPort>(
@@ -348,13 +408,13 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
     }
     /// Send one frozen result and precisely confirm its source events after durable remote ACK.
     /// Lost confirmations never cause another HTTP result request or runner dispatch.
-    pub async fn flush<S: SecretProvider, C: Clock, H: AppHost, R: RunnerPort>(
+    pub fn prepare_delivery<S: SecretProvider, C: Clock, H: AppHost, R: RunnerPort>(
         &self,
         client: &mut Client<S, C>,
         task: Uuid,
         app: &mut ExecutionApp<H, R>,
         limit: usize,
-    ) -> Result<usize, Error> {
+    ) -> Result<Option<PendingDelivery>, Error> {
         client.active()?;
         client.now()?;
         if !self.recover_binding(client, task, app)? {
@@ -378,7 +438,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         } else {
             let items = app.service_delivery(&binding.request, &self.consumer, limit)?;
             if items.is_empty() {
-                return Ok(0);
+                return Ok(None);
             }
             if items.iter().any(|v| v.input.digest() != &binding.digest) {
                 return Err(Error::Conflict);
@@ -394,10 +454,10 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
                     && (v.terminal.is_some() || v.process.as_ref().is_some_and(|p| p.finished))
             });
             let Some(candidate) = candidate else {
-                return Ok(0);
+                return Ok(None);
             };
             let Some(event) = self.project(&offer.payload, candidate)? else {
-                return Ok(0);
+                return Ok(None);
             };
             let events: Vec<_> = items.iter().map(|v| v.receipt.event_id.clone()).collect();
             // V4 accepts one terminal result per attempt. Later independent local facts
@@ -410,7 +470,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
                 for id in events {
                     app.service_confirm(&binding.request, &self.consumer, &id)?;
                 }
-                return Ok(0);
+                return Ok(None);
             }
             let key = format!("result/{task}/{}", candidate.receipt.event_id.as_str());
             let source = String::from_utf8(encode(&events)?).map_err(|_| Error::Protocol)?;
@@ -421,32 +481,77 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         if request.attempt_id() != binding.attempt {
             return Err(Error::Conflict);
         }
-        if !accepted {
-            // Frozen bytes never bypass current delivery/evidence grants on a new send.
-            app.service_delivery(&binding.request, &self.consumer, 1)?;
-            let ack = client.send_event(task, &request).await?;
+        // Authorization is checked immediately before handing the frozen request to transport.
+        app.service_delivery(&binding.request, &self.consumer, 1)?;
+        Ok(Some(PendingDelivery {
+            task,
+            key,
+            request,
+            events,
+            accepted,
+            binding,
+        }))
+    }
+    /// Perform bounded HTTP delivery without borrowing the execution application.
+    pub async fn send_delivery<S: SecretProvider, C: Clock>(
+        &self,
+        client: &mut Client<S, C>,
+        pending: &mut PendingDelivery,
+    ) -> Result<(), Error> {
+        if !pending.accepted {
+            let ack = client.send_event(pending.task, &pending.request).await?;
             if ack.permit().is_some() {
                 return Err(Error::Protocol);
             }
             let tx = client.store.conn.unchecked_transaction()?;
-            tx.execute("UPDATE requests SET accepted=1 WHERE key=?1", [&key])?;
+            tx.execute(
+                "UPDATE requests SET accepted=1 WHERE key=?1",
+                [&pending.key],
+            )?;
             tx.execute(
                 "INSERT INTO state VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET body=excluded.body",
                 params![
-                    format!("projection/{task}"),
-                    encode(&hash(&encode(request.event())?))?
+                    format!("projection/{}", pending.task),
+                    encode(&hash(&encode(pending.request.event())?))?
                 ],
             )?;
             tx.commit()?;
+            pending.accepted = true;
         }
-        for id in &events {
-            app.service_confirm(&binding.request, &self.consumer, id)?;
+        Ok(())
+    }
+    /// Confirm original journal receipts after the durable HTTP acknowledgement.
+    pub fn finish_delivery<S: SecretProvider, C: Clock, H: AppHost, R: RunnerPort>(
+        &self,
+        client: &mut Client<S, C>,
+        pending: PendingDelivery,
+        app: &mut ExecutionApp<H, R>,
+    ) -> Result<usize, Error> {
+        if !pending.accepted {
+            return Err(Error::Conflict);
+        }
+        for id in &pending.events {
+            app.service_confirm(&pending.binding.request, &self.consumer, id)?;
         }
         client
             .store
             .conn
-            .execute("DELETE FROM requests WHERE key=?1", [key])?;
+            .execute("DELETE FROM requests WHERE key=?1", [pending.key])?;
         Ok(1)
+    }
+    /// Deliver synchronously for consumers without a concurrent execution-owner loop.
+    pub async fn flush<S: SecretProvider, C: Clock, H: AppHost, R: RunnerPort>(
+        &self,
+        client: &mut Client<S, C>,
+        task: Uuid,
+        app: &mut ExecutionApp<H, R>,
+        limit: usize,
+    ) -> Result<usize, Error> {
+        let Some(mut pending) = self.prepare_delivery(client, task, app, limit)? else {
+            return Ok(0);
+        };
+        self.send_delivery(client, &mut pending).await?;
+        self.finish_delivery(client, pending, app)
     }
     fn project(
         &self,

@@ -11,6 +11,8 @@ const selfServiceCommands = [
   "self_service_cancel",
 ];
 const assistantCommands = [
+  "self_service_execute",
+  "self_service_cancel",
   "ai_connect",
   "ai_receive",
   "ai_send",
@@ -35,8 +37,7 @@ const userCommands = [
   "account_save_organization",
 ];
 const compositionCommands = [
-  ...selfServiceCommands,
-  ...assistantCommands,
+  ...new Set([...selfServiceCommands, ...assistantCommands]),
   ...userCommands,
   ...settingsCommands,
 ];
@@ -564,7 +565,7 @@ export function checkTree(treeRoot = root) {
         'execution-app = { path = "../../../crates/execution-app" }',
         'execution-runner = { path = "../../../crates/execution-runner" }',
         'execution-interaction = { path = "../../../crates/execution-interaction" }',
-        'rusqlite.workspace = true',
+        "rusqlite.workspace = true",
         'execution-sqlite = { path = "../../../crates/execution-sqlite" }',
         'execution-mcp = { path = "../../../crates/execution-mcp" }',
         'execution-admission = { path = "../../../crates/execution-admission" }',

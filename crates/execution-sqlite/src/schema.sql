@@ -86,3 +86,5 @@ CREATE TABLE software_ownership (
     resource TEXT PRIMARY KEY, attempt_id TEXT NOT NULL REFERENCES attempts(attempt_id),
     body BLOB NOT NULL
 );
+
+CREATE TABLE backend_requests (scope TEXT PRIMARY KEY, actor TEXT NOT NULL, request_id TEXT NOT NULL, body BLOB NOT NULL);

@@ -31,6 +31,24 @@ def administrator(script):
                'do shell script ' + json.dumps(command) + ' with administrator privileges')
 
 
+def acknowledged_result(status, attempt):
+    matches = [(operation, result) for operation, result in status['results'].items()
+               if result.get('attemptId') == attempt and operation in status['acknowledged']]
+    if not matches:
+        return None
+    if len(matches) != 1:
+        raise AssertionError('more than one logical result for the original attempt')
+    return matches[0][1]['event']
+
+
+def validate_script(event, fixture):
+    assert event['kind'] == 'result'
+    assert event['exitCode'] == 0
+    assert event['output'] == {'fixture': fixture}
+    assert event['quality'] in ('complete', 'partial')
+    assert event['diagnostics']['failure'] is None
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, required=True)
@@ -134,19 +152,26 @@ subprocess.run(['/usr/bin/python3',%r,'install','--scope','system','--binary',st
         run('/usr/bin/python3', str(installer), 'install', '--scope', 'user', '--binary', str(binary), '--config', str(config))
         helper = True
         def query():
-            return json.loads(run(str(binary), '--config', str(config), '--query').stdout)
+            reply = json.loads(run(str(binary), '--config', str(config), '--query').stdout)
+            assert reply['kind'] == 'tasks' and isinstance(reply['value']['items'], list)
+            return reply
         def completed(task, seconds=30):
             deadline = time.monotonic() + seconds
             while time.monotonic() < deadline:
                 status = command('status')
-                if any(item.get('attemptId') == task for item in status['results'].values()):
+                if acknowledged_result(status, task) is not None:
                     return status
                 time.sleep(.2)
             raise RuntimeError('backend result deadline exceeded')
         receipt['scenarios']['authenticated_ipc'] = query()
-        receipt['scenarios']['system_script'] = completed(first['attempt'])
+        system = completed(first['attempt'])
+        validate_script(acknowledged_result(system, first['attempt']), 'system')
+        assert system['resultCalls'] >= 2, 'the injected 503 must be followed by an acknowledged retry'
+        receipt['scenarios']['system_script'] = system
         second = command('script', user=True, body='printf \'{"fixture":"user"}\\n\'\n')
-        receipt['scenarios']['user_script'] = completed(second['attempt'])
+        user = completed(second['attempt'])
+        validate_script(acknowledged_result(user, second['attempt']), 'user')
+        receipt['scenarios']['user_script'] = user
         payload = lab / 'payload'; payload.mkdir()
         (payload / 'fixed.txt').write_text('controlled package payload\n')
         pkg = lab / 'fixed.pkg'
@@ -154,12 +179,66 @@ subprocess.run(['/usr/bin/python3',%r,'install','--scope','system','--binary',st
         run('/usr/bin/pkgbuild', '--root', str(payload), '--identifier', package_receipt,
             '--version', '1.0', '--install-location', str(protected / 'package-payload'), str(pkg))
         third = command('package', path=str(pkg), receipt=package_receipt)
-        receipt['scenarios']['package'] = completed(third['attempt'], 60)
-        receipt['scenarios']['final_ipc'] = query()
+        package = completed(third['attempt'], 60)
+        event = acknowledged_result(package, third['attempt'])
+        assert event['kind'] == 'software_result' and event['installerExitCode'] == 0
+        assert event['diagnostics']['failure'] is None
+        assert (protected / 'package-payload/fixed.txt').read_text() == 'controlled package payload\n'
+        import plistlib
+        installed_receipt = plistlib.loads(run('/usr/sbin/pkgutil', '--pkg-info-plist', package_receipt).stdout.encode())
+        assert installed_receipt['pkg-version'] == '1.0'
+        # macOS process groups cannot establish global quiescence. Keep Unknown while
+        # independently requiring the actual installer exit, receipt and payload facts.
+        assert event['detection'] in ('present', 'unknown')
+        receipt['scenarios']['package_exit_and_independent_effect'] = package
+        final = query()
+        for attempt in [first['attempt'], second['attempt'], third['attempt']]:
+            records = [r for r in final['value']['items'] if r['action']['initiator'].get('attempt') == attempt]
+            assert len(records) == 1 and records[0]['status']['attempts'] == 1
+        receipt['scenarios']['final_ipc'] = final
+        marker = protected / 'cancel-started'
+        fourth = command('script', body=f"umask 022; printf x > {shlex.quote(str(marker))}; printf '{{\"fixture\":\"cancel\"}}\\n'; /bin/sleep 20\n")
+        deadline = time.monotonic() + 15
+        while not marker.exists():
+            assert time.monotonic() < deadline, 'cancellation fixture did not start'
+            time.sleep(.2)
+        command('cancel')
+        deadline = time.monotonic() + 15
+        while True:
+            current = query()
+            records = [r for r in current['value']['items'] if r['action']['initiator'].get('attempt') == fourth['attempt']]
+            if records and records[0]['status']['cancelRequested']:
+                assert records[0]['status']['attempts'] == 1
+                receipt['scenarios']['cancel'] = records[0]
+                break
+            assert time.monotonic() < deadline, 'cancellation was not recorded'
+            time.sleep(.2)
+        receipt['scenarios']['cancel_delivery'] = completed(fourth['attempt'], 30)
+        # Kill the sole service while its original process remains active, then reopen exactly
+        # the same journal. The marker must not be appended a second time after recovery.
+        counter = protected / 'restart-count'
+        fifth = command('script', body=f"umask 022; printf x >> {shlex.quote(str(counter))}; printf '{{\"fixture\":\"restart\"}}\\n'; /bin/sleep 15\n")
+        deadline = time.monotonic() + 15
+        while not counter.exists():
+            assert time.monotonic() < deadline, 'restart fixture did not start'
+            time.sleep(.2)
+        restart = lab / 'restart.py'
+        restart.write_text('import plistlib,subprocess\nfrom pathlib import Path\np=plistlib.loads(Path(\"/Library/LaunchDaemons/com.rss-mdm.agent.execution.plist\").read_bytes())\nassert p[\"ProgramArguments\"]==%r\nsubprocess.run([\"/bin/launchctl\",\"kickstart\",\"-k\",\"system/com.rss-mdm.agent.execution\"],check=True)\n' % [str(binary), '--config', str(config)])
+        administrator(restart)
+        time.sleep(3)
+        reopened = query()
+        records = [r for r in reopened['value']['items'] if r['action']['initiator'].get('attempt') == fifth['attempt']]
+        assert len(records) == 1 and records[0]['status']['attempts'] == 1
+        assert counter.read_text() == 'x'
+        assert records[0]['status']['phase'] == 'outcomeUnknown'
+        receipt['scenarios']['restart_no_redispatch'] = records[0]
+
         receipt['status'] = 'passed'
     except BaseException as error:
         receipt['status'] = 'failed'
         receipt['error'] = str(error)
+        if isinstance(error, subprocess.CalledProcessError):
+            (lab / 'command-error.txt').write_text((error.stdout or '') + (error.stderr or ''))
         raise
     finally:
         (lab / 'receipt.json').write_text(json.dumps(receipt, indent=2))

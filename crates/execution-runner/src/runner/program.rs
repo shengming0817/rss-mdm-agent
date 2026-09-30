@@ -345,7 +345,7 @@ fn invoke(
             .as_millis()
             .min(u128::from(u64::MAX)) as u64;
         // A failed send/ack is ambiguous. Never resend Invoke; ask about this original key.
-        let _ = connection.exchange(Command::Invoke {
+        let submitted = connection.exchange(Command::Invoke {
             input: Box::new(plan.spec().clone()),
             attempt: attempt.clone(),
             step,
@@ -356,6 +356,13 @@ fn invoke(
             output_bytes: cap,
             first_start,
         });
+        if let Err(error @ (Error::Denied | Error::Capacity)) = submitted {
+            let mut facts = rejected(plan, attempt, runner, ProcessEnd::Rejected);
+            facts.finished = true;
+            facts.quiescent = true;
+            facts.failure_kind = classify(error);
+            return Ok(facts);
+        }
         let mut latest = rejected(plan, attempt, runner, ProcessEnd::Unknown);
         latest.scope = ProcessScope::Delegated {
             subject: Id::new(&connection.context().subject).map_err(|_| Error::Unbound)?,

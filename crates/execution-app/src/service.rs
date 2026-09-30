@@ -26,6 +26,58 @@ pub struct ExecutionApp<H, R> {
     pub(crate) config: Configuration,
 }
 impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
+    /// Bounded pre-execution history for the same authenticated actor.
+    pub fn backend_requests(
+        &self,
+        caller: &RequestContext,
+    ) -> Result<Vec<execution_contract::BackendRequest>, Error> {
+        if self.host.service_binding()? != self.binding {
+            return Err(Error::Unbound);
+        }
+        Ok(self.store.backend_requests(
+            &caller.actor,
+            &Host::new(&self.host, &self.binding, &self.config, Some(caller)),
+        )?)
+    }
+    /// Read an authenticated caller's preparation record from the sole journal.
+    pub fn backend_request(
+        &self,
+        caller: &RequestContext,
+        request: &RequestId,
+    ) -> Result<Option<execution_contract::BackendRequest>, Error> {
+        if self.host.service_binding()? != self.binding {
+            return Err(Error::Unbound);
+        }
+        let scope = Scope {
+            authority: self.binding.authority.clone(),
+            actor: caller.actor.clone(),
+            request_id: request.clone(),
+        };
+        Ok(self.store.backend_request(
+            &scope,
+            &Host::new(&self.host, &self.binding, &self.config, Some(caller)),
+        )?)
+    }
+    /// Persist preparation only. This never performs admission or dispatches a runner.
+    pub fn record_backend_request(
+        &mut self,
+        caller: &RequestContext,
+        expected: Option<&execution_contract::BackendRequest>,
+        next: &execution_contract::BackendRequest,
+    ) -> Result<(), Error> {
+        if self.host.service_binding()? != self.binding {
+            return Err(Error::Unbound);
+        }
+        let scope = Scope {
+            authority: self.binding.authority.clone(),
+            actor: caller.actor.clone(),
+            request_id: next.offer.request.clone(),
+        };
+        let host = Host::new(&self.host, &self.binding, &self.config, Some(caller));
+        Ok(self
+            .store
+            .record_backend_request(&scope, expected, next, &host)?)
+    }
     /// Assemble the production journal with an independently authenticated host and real runner.
     /// The host must verify registration, OS identity and protected policy before returning its
     /// binding. Opening storage does not authorize a task; all ordinary per-operation gates remain.
@@ -579,7 +631,8 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             .snapshot()
             .attempt
             .as_ref()
-            .ok_or(Error::Conflict)?;
+            .ok_or(Error::Conflict)?
+            .clone();
         self.collect_software(execution)?;
         let live = self.runner.evidence(execution.input(), &active.id)?;
         let had_live = live.is_some();
@@ -600,6 +653,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                         &self.adapter(None, Some(execution.input())),
                     )?;
                     progress
+                        .filter(|progress| progress.complete(execution.input()))
                         .and_then(|progress| {
                             progress.checkpoints.iter().rev().find_map(|c| match c {
                                 execution_contract::SoftwareCheckpoint::End {
@@ -645,6 +699,39 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             if facts.finished {
                 self.collect_software(execution)?;
                 self.runner.acknowledge_capture(execution.input(), facts)?;
+            }
+        }
+        // Step output remains charged even when there is no whole-sequence capture.
+        if let Some(progress) = self.store.software_progress(
+            &Scope::from_input(execution.input()),
+            &active.id,
+            &self.adapter(None, Some(execution.input())),
+        )? {
+            let charged = execution
+                .snapshot()
+                .attempt
+                .as_ref()
+                .ok_or(Error::Conflict)?
+                .output_bytes;
+            if progress.output_bytes > charged {
+                let result = self.command(
+                    None,
+                    execution,
+                    "output",
+                    &progress.output_bytes.to_string(),
+                    Command::Output {
+                        attempt_id: active.id.clone(),
+                        total_bytes: progress.output_bytes,
+                    },
+                    &[],
+                )?;
+                if !matches!(
+                    result.receipt().outcome,
+                    Outcome::Changed | Outcome::Duplicate
+                ) {
+                    return Err(Error::Conflict);
+                }
+                *execution = self.load(None, request, ExecutionAccess::RunnerFact)?;
             }
         }
         Ok((capture, had_live))

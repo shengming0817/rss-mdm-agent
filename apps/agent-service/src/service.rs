@@ -6,7 +6,9 @@ use agent_client::{
     wire, Client, CredentialRedactor, Error, ExecutionBridge, Materials, Offer, SecretProvider,
 };
 use execution_app::{AppConfig, ExecutionApp, ExecutionStatus, ProductionStartup, RequestContext};
-use execution_contract::RequestId;
+use execution_contract::{
+    BackendRequest, BackendRequestFailure, BackendRequestState, BackendTrigger, RequestId,
+};
 use execution_runner::{MaterialRegistry, NativeRunner};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -134,7 +136,6 @@ impl<S: SecretProvider> DeviceService<S> {
                 helpers,
                 available: None,
                 selected: None,
-                proposal: None,
                 stopping: false,
                 recovery_cursor: None,
             },
@@ -159,11 +160,37 @@ impl<S: SecretProvider> DeviceService<S> {
             self.core.reconcile()?;
             return Ok(());
         }
+        if let Some((offer, _)) = &self.waiting {
+            let request = offer.request_id()?;
+            if self
+                .core
+                .app
+                .backend_request(&self.core.caller(), &request)?
+                .is_some_and(|p| p.state == BackendRequestState::Cancelled)
+            {
+                let task = offer.task_id();
+                self.waiting = None;
+                self.core.available = None;
+                self.core.selected = None;
+                self.abandon(task, commands).await?;
+            }
+        }
         if self.core.selected.is_some() {
             if let Some((offer, materials)) = self.waiting.take() {
+                let request = offer.request_id()?;
                 let selection = self.core.selected.take();
-                self.submit(offer, materials, selection, commands).await?;
+                self.core
+                    .transition(&request, BackendRequestState::Submitting, None)?;
+                let result = self.submit(offer, materials, selection, commands).await;
                 self.core.available = None;
+                if let Err(error) = result {
+                    self.core.transition(
+                        &request,
+                        BackendRequestState::Failed,
+                        Some(BackendRequestFailure::PreparationFailed),
+                    )?;
+                    return Err(error);
+                }
             }
         }
         self.core.reconcile()?;
@@ -179,9 +206,15 @@ impl<S: SecretProvider> DeviceService<S> {
                 .millis()
                 .is_ok_and(|now| now / 1000 >= offer.payload().expires_at() as u64)
         }) {
+            if let Some((offer, _)) = &self.waiting {
+                self.core.transition(
+                    &offer.request_id()?,
+                    BackendRequestState::Failed,
+                    Some(BackendRequestFailure::Expired),
+                )?;
+            }
             self.waiting = None;
             self.core.available = None;
-            self.core.proposal = None;
             self.core.selected = None;
         }
         let pending = self
@@ -199,14 +232,22 @@ impl<S: SecretProvider> DeviceService<S> {
                     .bridge
                     .recover_binding(&mut self.client, task, &self.core.app)?
                 {
-                    self.bridge
-                        .abandon(&mut self.client, task, &self.core.app)
-                        .await?;
+                    self.abandon(task, commands).await?;
                     continue;
                 }
-                self.bridge
-                    .flush(&mut self.client, task, &mut self.core.app, 64)
+                if let Some(mut pending) =
+                    self.bridge
+                        .prepare_delivery(&mut self.client, task, &mut self.core.app, 64)?
+                {
+                    network(
+                        self.bridge.send_delivery(&mut self.client, &mut pending),
+                        &mut self.core,
+                        commands,
+                    )
                     .await?;
+                    self.bridge
+                        .finish_delivery(&mut self.client, pending, &mut self.core.app)?;
+                }
                 let request = self.client.bound_request(task)?.ok_or(Error::Conflict)?;
                 let input = self.core.app.frozen_input(&caller, &request)?;
                 if !self.core.host.materials.registered(&input)? {
@@ -236,15 +277,12 @@ impl<S: SecretProvider> DeviceService<S> {
                 // No local intent means no execution may have started. Retire the original
                 // remote attempt only after checking this same authoritative journal; a prior
                 // local user selection is never reconstructed from transport or request data.
-                self.bridge
-                    .abandon(&mut self.client, task, &self.core.app)
-                    .await?;
+                self.abandon(task, commands).await?;
             }
         }
         self.recovering = false;
-        self.client
-            .flush_reports(16.min(self.client.configuration().limits.pending_reports))
-            .await?;
+        let reports = 16.min(self.client.configuration().limits.pending_reports);
+        network(self.client.flush_reports(reports), &mut self.core, commands).await?;
         let claim = match network(self.client.claim(), &mut self.core, commands).await {
             Ok(v) => v,
             Err(e) => {
@@ -265,10 +303,18 @@ impl<S: SecretProvider> DeviceService<S> {
                 self.waiting = None;
                 self.core.available = None;
                 self.core.selected = None;
-                self.core.proposal = None;
-                self.bridge
-                    .abandon(&mut self.client, cancel.task_id(), &self.core.app)
-                    .await?;
+                // Withdrawal has no execution effect; the original request remains queryable.
+                let pending = self.bridge.prepare_abandonment(
+                    &mut self.client,
+                    cancel.task_id(),
+                    &self.core.app,
+                )?;
+                self.core.transition(
+                    pending.request_id(),
+                    BackendRequestState::Cancelled,
+                    Some(BackendRequestFailure::Revoked),
+                )?;
+                self.abandon(cancel.task_id(), commands).await?;
             }
         }
         if let Some(offer) = claim.offer {
@@ -296,6 +342,28 @@ impl<S: SecretProvider> DeviceService<S> {
         }
         Ok(())
     }
+    async fn abandon(
+        &mut self,
+        task: uuid::Uuid,
+        commands: &mut tokio::sync::mpsc::Receiver<Command>,
+    ) -> Result<(), Error> {
+        let mut pending =
+            self.bridge
+                .prepare_abandonment(&mut self.client, task, &self.core.app)?;
+        self.core.transition(
+            pending.request_id(),
+            BackendRequestState::Failed,
+            Some(BackendRequestFailure::Interrupted),
+        )?;
+        network(
+            self.bridge.send_abandonment(&mut self.client, &mut pending),
+            &mut self.core,
+            commands,
+        )
+        .await?;
+        self.bridge
+            .finish_abandonment(&mut self.client, pending, &self.core.app)
+    }
     async fn submit(
         &mut self,
         offer: Offer,
@@ -322,11 +390,12 @@ impl<S: SecretProvider> DeviceService<S> {
                     || matches!(&step.action.detect, wire::SoftwareTaskDetection::Script { command } if command.run_as == wire::ExecutionIdentity::LoggedInUser)
             }),
         };
-        let delegate = if needs_user {
+        let login = if needs_user || selection.is_some() {
             Some(self.core.helpers.connect(selection.as_ref())?)
         } else {
             None
         };
+        let delegate = if needs_user { login.clone() } else { None };
         let (preview, artifacts) =
             self.compile(&offer, &materials, offer.payload(), delegate.clone())?;
         artifacts.inspect(&preview)?;
@@ -346,6 +415,31 @@ impl<S: SecretProvider> DeviceService<S> {
             .await?
         };
         self.client.validate_start(&start)?;
+        if let Some(login) = &login {
+            let account = execution_contract::OsAccountRef {
+                platform: plan::platform()?,
+                subject: plan::id(&login.context().subject)?,
+            };
+            login.verify_context(
+                &execution_contract::RunAs::User {
+                    account: account.clone(),
+                },
+                &execution_contract::SessionRequirement::ActiveUser {
+                    account,
+                    session: login.context().binding.clone(),
+                },
+            )?;
+        }
+        if let Some(selection) = &selection {
+            let current = self
+                .core
+                .app
+                .backend_request(&self.core.caller(), &selection.request)?
+                .ok_or(Error::Conflict)?;
+            if current.state != BackendRequestState::Submitting {
+                return Err(Error::Denied);
+            }
+        }
         let (mut plan, artifacts) = self.compile(&offer, &materials, start.payload(), delegate)?;
         if let Some(selection) = selection {
             let mut input = plan.spec().clone();
@@ -527,6 +621,7 @@ impl<S: SecretProvider> DeviceService<S> {
 }
 
 struct Selection {
+    request: RequestId,
     task: execution_contract::Id,
     attempt: execution_contract::Id,
     revision: execution_contract::Digest,
@@ -541,7 +636,6 @@ struct Core {
     config: ExecutionConfig,
     helpers: UserResources,
     available: Option<execution_contract::BackendTask>,
-    proposal: Option<Selection>,
     selected: Option<Selection>,
     stopping: bool,
     recovery_cursor: Option<RequestId>,
@@ -567,6 +661,45 @@ impl Core {
         }
         self.recovery_cursor = page.next;
         Ok(())
+    }
+    fn pending(&self, request: &RequestId, subject: &str) -> Result<Option<BackendRequest>, Error> {
+        if self
+            .app
+            .has_service_execution(request, &self.host.binding.device)?
+        {
+            return Ok(None);
+        }
+        let value = self.app.backend_request(&self.caller(), request)?;
+        if value
+            .as_ref()
+            .is_some_and(|p| trigger_subject(&p.trigger) != Some(subject))
+        {
+            return Err(Error::Denied);
+        }
+        Ok(value)
+    }
+    fn transition(
+        &mut self,
+        request: &RequestId,
+        state: BackendRequestState,
+        failure: Option<BackendRequestFailure>,
+    ) -> Result<Option<BackendRequest>, Error> {
+        let Some(previous) = self.app.backend_request(&self.caller(), request)? else {
+            return Ok(None);
+        };
+        if matches!(
+            previous.state,
+            BackendRequestState::Cancelled | BackendRequestState::Failed
+        ) {
+            return Ok(Some(previous));
+        }
+        let mut next = previous.clone();
+        next.revision += 1;
+        next.state = state;
+        next.failure = failure;
+        self.app
+            .record_backend_request(&self.caller(), Some(&previous), &next)?;
+        Ok(Some(next))
     }
     fn caller(&self) -> RequestContext {
         RequestContext {
@@ -612,6 +745,21 @@ impl Core {
                     Ok(Reply::Tasks {
                         value,
                         available: self.available.iter().cloned().collect(),
+                        preparations: self
+                            .app
+                            .backend_requests(&self.caller())?
+                            .into_iter()
+                            .filter(|p| {
+                                trigger_subject(&p.trigger) == Some(command.subject.as_str())
+                                    && !self
+                                        .app
+                                        .has_service_execution(
+                                            &p.offer.request,
+                                            &self.host.binding.device,
+                                        )
+                                        .unwrap_or(true)
+                            })
+                            .collect(),
                     })
                 }
                 LocalRequest::Operation(Request::StartTask {
@@ -642,6 +790,7 @@ impl Core {
                     let confirmation_required =
                         matches!(origin, execution_runner::host::ClientOrigin::Ai { .. });
                     let selection = Selection {
+                        request: request.clone(),
                         task,
                         attempt,
                         revision,
@@ -650,22 +799,56 @@ impl Core {
                         binding: command.binding.ok_or(Error::Denied)?,
                         origin,
                     };
-                    if confirmation_required {
-                        self.proposal = Some(selection);
+                    let offer = offer.clone();
+                    let previous = self.app.backend_request(&self.caller(), &request)?;
+                    if let Some(previous) = &previous {
+                        if previous.offer != offer || !same_login(&previous.trigger, &selection) {
+                            return Err(Error::Conflict);
+                        }
+                        if matches!(
+                            previous.state,
+                            BackendRequestState::Failed | BackendRequestState::Cancelled
+                        ) {
+                            return Ok(Reply::Pending {
+                                value: previous.clone(),
+                            });
+                        }
+                    }
+                    let trigger = previous
+                        .as_ref()
+                        .map(|p| p.trigger.clone())
+                        .unwrap_or(selection.trigger(&self.host.binding.device)?);
+                    let state = if confirmation_required {
+                        BackendRequestState::Proposed
                     } else {
-                        self.selected = Some(match self.proposal.take() {
-                            Some(proposal)
-                                if proposal.task == selection.task
-                                    && proposal.attempt == selection.attempt
-                                    && proposal.revision == selection.revision
-                                    && proposal.subject == selection.subject
-                                    && proposal.session == selection.session
-                                    && proposal.binding == selection.binding =>
-                            {
-                                proposal
-                            }
-                            _ => selection,
-                        });
+                        BackendRequestState::Selected
+                    };
+                    if previous.as_ref().is_none_or(|p| p.state != state) {
+                        if previous
+                            .as_ref()
+                            .is_some_and(|p| p.state != BackendRequestState::Proposed)
+                        {
+                            return Err(Error::Conflict);
+                        }
+                        let next = BackendRequest {
+                            offer: offer.clone(),
+                            trigger,
+                            revision: previous.as_ref().map_or(1, |p| p.revision + 1),
+                            state,
+                            failure: None,
+                        };
+                        self.app.record_backend_request(
+                            &self.caller(),
+                            previous.as_ref(),
+                            &next,
+                        )?;
+                    }
+                    if !confirmation_required {
+                        let saved = self
+                            .app
+                            .backend_request(&self.caller(), &request)?
+                            .ok_or(Error::Conflict)?;
+                        self.selected = Some(Selection::from_record(&saved)?);
                     }
                     Ok(Reply::Queued {
                         task: offer.task.clone(),
@@ -675,6 +858,9 @@ impl Core {
                     })
                 }
                 LocalRequest::Operation(Request::Status { request }) => {
+                    if let Some(value) = self.pending(&request, &command.subject)? {
+                        return Ok(Reply::Pending { value });
+                    }
                     if !self.can_read(&request, &command.subject)? {
                         return Err(Error::Denied);
                     }
@@ -683,6 +869,9 @@ impl Core {
                     })
                 }
                 LocalRequest::Operation(Request::Details { request }) => {
+                    if let Some(value) = self.pending(&request, &command.subject)? {
+                        return Ok(Reply::Pending { value });
+                    }
                     if !self.can_read(&request, &command.subject)? {
                         return Err(Error::Denied);
                     }
@@ -691,6 +880,15 @@ impl Core {
                     })
                 }
                 LocalRequest::Operation(Request::Cancel { request }) => {
+                    if let Some(value) = self.pending(&request, &command.subject)? {
+                        let value = self
+                            .transition(&value.offer.request, BackendRequestState::Cancelled, None)?
+                            .ok_or(Error::Conflict)?;
+                        if self.selected.as_ref().is_some_and(|s| s.request == request) {
+                            self.selected = None;
+                        }
+                        return Ok(Reply::Pending { value });
+                    }
                     if !self.can_read(&request, &command.subject)? {
                         return Err(Error::Denied);
                     }
@@ -871,6 +1069,44 @@ fn offered(offer: &Offer) -> Result<execution_contract::BackendTask, Error> {
     use sha2::{Digest as _, Sha256};
     let bytes = serde_json::to_vec(offer.payload()).map_err(|_| Error::Protocol)?;
     Ok(execution_contract::BackendTask {
+        summary: match offer.payload() {
+            wire::TaskPayload::Script(p) => execution_contract::BackendTaskSummary::Script {
+                identity: display_identity(p.run_as),
+            },
+            wire::TaskPayload::Software(p) => execution_contract::BackendTaskSummary::Software {
+                intent: match p.intent {
+                    wire::SoftwareTaskIntent::Install => {
+                        execution_contract::SoftwareOperation::Install
+                    }
+                    wire::SoftwareTaskIntent::Uninstall => {
+                        execution_contract::SoftwareOperation::Uninstall
+                    }
+                    wire::SoftwareTaskIntent::Detect => {
+                        execution_contract::SoftwareOperation::Detect
+                    }
+                },
+                steps: p
+                    .steps
+                    .iter()
+                    .map(|step| execution_contract::BackendStepSummary {
+                        package: step.action.package.clone(),
+                        version: step.action.version.clone(),
+                        identity: display_identity(
+                            if p.intent == wire::SoftwareTaskIntent::Uninstall {
+                                step.action
+                                    .uninstall
+                                    .as_ref()
+                                    .unwrap_or(&step.action.install)
+                                    .run_as
+                            } else {
+                                step.action.install.run_as
+                            },
+                        ),
+                    })
+                    .collect(),
+            },
+            _ => return Err(Error::Unsupported),
+        },
         request: offer.request_id()?,
         task: plan::id(offer.task_id().to_string())?,
         attempt: plan::id(offer.attempt_id().to_string())?,
@@ -887,4 +1123,94 @@ fn offered(offer: &Offer) -> Result<execution_contract::BackendTask, Error> {
         expires_at: offer.payload().expires_at(),
         user_initiated: matches!(offer.payload(),wire::TaskPayload::Software(p) if p.start_mode==wire::SoftwareStartMode::UserInitiated),
     })
+}
+
+fn display_identity(identity: wire::ExecutionIdentity) -> execution_contract::BackendIdentity {
+    match identity {
+        wire::ExecutionIdentity::System => execution_contract::BackendIdentity::System,
+        wire::ExecutionIdentity::LoggedInUser => execution_contract::BackendIdentity::User,
+    }
+}
+
+fn trigger_subject(trigger: &BackendTrigger) -> Option<&str> {
+    match trigger {
+        BackendTrigger::Human { os_session } | BackendTrigger::Ai { os_session, .. } => {
+            Some(os_session.account.subject.as_str())
+        }
+        _ => None,
+    }
+}
+fn same_login(trigger: &BackendTrigger, selection: &Selection) -> bool {
+    match trigger {
+        BackendTrigger::Human { os_session } | BackendTrigger::Ai { os_session, .. } => {
+            os_session.account.subject.as_str() == selection.subject
+                && os_session.session == selection.binding
+        }
+        _ => false,
+    }
+}
+impl Selection {
+    fn trigger(&self, device: &execution_contract::DeviceId) -> Result<BackendTrigger, Error> {
+        let os_session = execution_contract::OsSessionRef {
+            device: device.clone(),
+            account: execution_contract::OsAccountRef {
+                platform: plan::platform()?,
+                subject: plan::id(&self.subject)?,
+            },
+            session: self.binding.clone(),
+        };
+        Ok(match &self.origin {
+            execution_runner::host::ClientOrigin::Desktop {} => {
+                BackendTrigger::Human { os_session }
+            }
+            execution_runner::host::ClientOrigin::Ai {
+                config,
+                conversation,
+                tool_call,
+            } => BackendTrigger::Ai {
+                os_session,
+                config: config.clone(),
+                conversation: conversation.clone(),
+                tool_call: tool_call.clone(),
+            },
+        })
+    }
+    fn from_record(record: &BackendRequest) -> Result<Self, Error> {
+        let (os_session, origin) = match &record.trigger {
+            BackendTrigger::Human { os_session } => {
+                (os_session, execution_runner::host::ClientOrigin::Desktop {})
+            }
+            BackendTrigger::Ai {
+                os_session,
+                config,
+                conversation,
+                tool_call,
+            } => (
+                os_session,
+                execution_runner::host::ClientOrigin::Ai {
+                    config: config.clone(),
+                    conversation: conversation.clone(),
+                    tool_call: tool_call.clone(),
+                },
+            ),
+            _ => return Err(Error::Denied),
+        };
+        Ok(Self {
+            request: record.offer.request.clone(),
+            task: record.offer.task.clone(),
+            attempt: record.offer.attempt.clone(),
+            revision: record.offer.revision.clone(),
+            subject: os_session.account.subject.as_str().into(),
+            session: os_session
+                .session
+                .as_str()
+                .split('/')
+                .nth(1)
+                .ok_or(Error::Identity)?
+                .parse()
+                .map_err(|_| Error::Identity)?,
+            binding: os_session.session.clone(),
+            origin,
+        })
+    }
 }

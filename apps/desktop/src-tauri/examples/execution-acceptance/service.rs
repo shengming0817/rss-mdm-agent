@@ -90,6 +90,9 @@ impl ExecutionServicePort for FixtureService {
     async fn tasks(&self, _: CancellationToken) -> Result<Vec<BackendTask>, ServiceError> {
         let s = self.selection();
         Ok(vec![BackendTask {
+            summary: BackendTaskSummary::Script {
+                identity: BackendIdentity::System,
+            },
             task: s.task,
             attempt: s.attempt,
             revision: s.revision,

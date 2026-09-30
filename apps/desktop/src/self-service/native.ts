@@ -5,7 +5,7 @@ import type {
   SelfServicePort,
   Snapshot,
   TaskSubmission,
-  ExecutionStatus,
+  BackendTaskView,
 } from "./types";
 export function nativePort(): SelfServicePort | null {
   if (!isTauri()) return null;
@@ -16,6 +16,6 @@ export function nativePort(): SelfServicePort | null {
     execute: (input) =>
       invoke<TaskSubmission>("self_service_execute", { input, generation }),
     cancel: (input) =>
-      invoke<ExecutionStatus>("self_service_cancel", { input, generation }),
+      invoke<BackendTaskView>("self_service_cancel", { input, generation }),
   };
 }
