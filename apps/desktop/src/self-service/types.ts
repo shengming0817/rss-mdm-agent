@@ -552,9 +552,27 @@ export type SoftwareDiagnostic =
 export type StopOutcome = "acknowledged" | "failed";
 
 export interface SelfServiceCommands {
+  appearance_snapshot: Command4;
   self_service_cancel: Command3;
   self_service_execute: Command2;
   self_service_snapshot: Command;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Command4".
+ */
+export interface Command4 {
+  input: null;
+  output: AppearanceSnapshot;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "AppearanceSnapshot".
+ */
+export interface AppearanceSnapshot {
+  highContrast: boolean;
+  materialEnabled: boolean;
+  reducedMotion: boolean;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema

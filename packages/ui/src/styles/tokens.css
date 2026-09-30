@@ -30,6 +30,7 @@
 
   /* neutral / text */
   --rss-color-bg: #fbfbfc;
+  --rss-color-native-navigation: rgba(251, 251, 252, 0.72);
   --rss-color-surface: #ffffff;
   --rss-color-surface-hover: rgba(0, 0, 0, 0.035);
   --rss-color-text: #1c1d21;
@@ -61,6 +62,7 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --rss-color-bg: #1c1d20;
+    --rss-color-native-navigation: rgba(28, 29, 32, 0.72);
     --rss-color-surface: #26272b;
     --rss-color-surface-hover: rgba(255, 255, 255, 0.05);
     --rss-color-text: #e9eaed;

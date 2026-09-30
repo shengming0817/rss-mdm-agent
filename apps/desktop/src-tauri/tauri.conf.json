@@ -19,7 +19,8 @@
         "height": 760,
         "minWidth": 480,
         "minHeight": 400,
-        "create": false
+        "create": false,
+        "transparent": true
       }
     ],
     "security": {
@@ -28,7 +29,8 @@
       ],
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; frame-src 'none'; form-action 'none'",
       "devCsp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost http://127.0.0.1:1420 ws://127.0.0.1:1420; object-src 'none'; base-uri 'none'; frame-src 'none'; form-action 'none'"
-    }
+    },
+    "macOSPrivateApi": true
   },
   "bundle": {
     "active": false,

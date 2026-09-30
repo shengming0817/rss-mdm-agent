@@ -572,3 +572,20 @@ test("modern presentation dependencies are admitted only at their owners", () =>
     ).length,
   );
 });
+
+test("appearance adapter exposes only its literal read-only command", () => {
+  const file = "apps/desktop/src/appearance.ts";
+  assert.deepEqual(
+    checkSource(
+      file,
+      'import { invoke } from "@tauri-apps/api/core"; invoke("appearance_snapshot");',
+    ),
+    [],
+  );
+  assert.ok(
+    checkSource(
+      file,
+      'import { invoke } from "@tauri-apps/api/core"; invoke("self_service_execute", {});',
+    ).length,
+  );
+});

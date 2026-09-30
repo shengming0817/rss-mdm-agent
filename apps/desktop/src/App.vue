@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, nextTick, watch } from "vue";
 import Workspace from "./Workspace.vue";
+import { createAppearance } from "./appearance";
 import type { AssistantServices } from "./assistant/controller";
 import {
   currentUser,
@@ -20,7 +21,11 @@ import TestUsers from "./settings/TestUsers.vue";
 import Account from "./settings/Account.vue";
 import { nativeHost } from "./settings/native";
 import { createHostSettings } from "./settings/controller";
-defineProps<{ assistantServices?: AssistantServices }>();
+import type { SelfServicePort } from "./self-service/types";
+defineProps<{
+  assistantServices?: AssistantServices;
+  selfServicePort?: SelfServicePort;
+}>();
 const users = ref<TestUser[]>([]),
   loading = ref(nativeTestMode),
   message = ref(""),
@@ -28,6 +33,7 @@ const users = ref<TestUser[]>([]),
 const page = ref(nativeTestMode ? "settings" : "assistant");
 const content = ref<HTMLElement>();
 const host = createHostSettings(nativeHost());
+const appearance = createAppearance();
 let polling: ReturnType<typeof setInterval> | undefined;
 async function refresh() {
   try {
@@ -96,26 +102,38 @@ onMounted(() => {
   if (nativeTestMode) void refresh();
   if (host.available) {
     void host.refresh();
-    polling = setInterval(() => {
-      void host.refresh();
-      if (!loading.value && currentUser.value?.identity?.mode === "enterprise")
-        void refreshAccount();
-    }, 2000);
   }
+  void appearance.refresh();
+  polling = setInterval(() => {
+    void appearance.refresh();
+    if (host.available) void host.refresh();
+    if (!loading.value && currentUser.value?.identity?.mode === "enterprise")
+      void refreshAccount();
+  }, 2000);
 });
 onBeforeUnmount(() => {
   if (polling) clearInterval(polling);
   host.dispose();
+  appearance.dispose();
 });
 </script>
 <template>
-  <div ref="content" class="app-root">
+  <div
+    ref="content"
+    class="app-root"
+    :class="{
+      'native-material': appearance.state.materialEnabled,
+      'reduced-motion': appearance.state.reducedMotion,
+      'high-contrast': appearance.state.highContrast,
+    }"
+  >
     <Workspace
       :inert="loading ? true : undefined"
       :key="currentUser?.generation ?? 'anonymous'"
       :ready="!nativeTestMode || !!currentUser"
       :busy="loading"
       :assistant-services="assistantServices"
+      :self-service-port="selfServicePort"
       :page="page"
       :host="host"
       @navigate="navigate"

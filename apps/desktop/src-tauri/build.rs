@@ -61,6 +61,7 @@ fn main() {
             "account_login",
             "select_test_user",
             "local_service_status",
+            "appearance_snapshot",
             "ai_host_status",
             "ai_restart_host",
             "ai_export_diagnostics",

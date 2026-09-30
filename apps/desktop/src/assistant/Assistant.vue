@@ -49,6 +49,7 @@ function scrollEnd() {
 const props = defineProps<{
   controller: AssistantController;
   visible: boolean;
+  portalTarget?: HTMLElement;
 }>();
 const c = props.controller,
   s = c.state,
@@ -304,7 +305,7 @@ async function copy(text: string) {
           <UiPopoverTrigger class="connection-trigger"
             >{{ connectionName }} <ChevronDown :size="14" aria-hidden="true"
           /></UiPopoverTrigger>
-          <UiPopoverPortal
+          <UiPopoverPortal :to="portalTarget"
             ><UiPopoverContent
               class="rss-ui rss-popover connection-menu"
               :side-offset="8"
@@ -328,9 +329,14 @@ async function copy(text: string) {
           <UiMenuTrigger class="icon-button conversation-menu" aria-label="更多"
             ><MoreHorizontal :size="20" aria-hidden="true"
           /></UiMenuTrigger>
-          <UiMenuPortal
+          <UiMenuPortal :to="portalTarget"
             ><UiMenuContent
               class="rss-ui rss-menu"
+              @close-auto-focus="
+                (event) => {
+                  if (diagnosticsOpen) event.preventDefault();
+                }
+              "
               :side-offset="8"
               align="end"
             >
@@ -502,6 +508,26 @@ async function copy(text: string) {
         </section>
       </div>
       <div class="conversation-input">
+        <section
+          v-if="c.context.value"
+          class="resource-context"
+          aria-label="待发送资源上下文"
+        >
+          <div class="resource-context-heading">
+            <strong>{{ c.context.value.path.join(" → ") }}</strong
+            ><button type="button" @click="c.removeContext()">
+              移除上下文
+            </button>
+          </div>
+          <details>
+            <summary>核对将发送的信息</summary>
+            <pre>{{ c.context.value.text }}</pre>
+          </details>
+          <p>仅发送所选目录信息，不包含表单输入或设备历史。</p>
+        </section>
+        <p v-if="c.compositionError.value" role="alert" class="error">
+          {{ c.compositionError.value }}
+        </p>
         <p v-if="copyStatus" class="copy-status" role="status">
           {{ copyStatus }}
         </p>
@@ -556,7 +582,7 @@ async function copy(text: string) {
         </div>
         <button
           v-if="c.canSteer.value"
-          :disabled="!draft.trim()"
+          :disabled="!c.promptPreview.value"
           @click="c.prompt('steer')"
         >
           调整当前任务
@@ -565,7 +591,7 @@ async function copy(text: string) {
           v-model="draft"
           :disabled="view?.sessionStatus === 'retired'"
           :busy="s.sending.has(s.selected) || s.opening"
-          :can-submit="c.canSend.value"
+          :can-submit="c.canSend.value && !!c.promptPreview.value"
           :submit-label="c.busy.value ? '排队发送' : '发送'"
           :can-cancel="c.canCancel.value"
           @submit="c.prompt()"

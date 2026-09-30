@@ -120,7 +120,7 @@ it("first use may defer or validate then enter the empty composer without creati
     await t.button("测试连接").trigger("click");
     await flushPromises();
     expect(t.button("开始对话").attributes("disabled")).toBeUndefined();
-    t.c.state.drafts.set("", "草稿保留");
+    t.c.draft.value = "草稿保留";
     await t.button("开始对话").trigger("click");
     expect(t.client.createSession).not.toHaveBeenCalled();
     expect(t.c.state.selected).toBe("");

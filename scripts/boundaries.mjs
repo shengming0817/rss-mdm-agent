@@ -40,8 +40,10 @@ const compositionCommands = [
   ...new Set([...selfServiceCommands, ...assistantCommands]),
   ...userCommands,
   ...settingsCommands,
+  "appearance_snapshot",
 ];
 const nativeAdapters = new Map([
+  ["apps/desktop/src/appearance.ts", ["appearance_snapshot"]],
   ["apps/desktop/src/settings/native.ts", settingsCommands],
   ["apps/desktop/src/test-users.ts", userCommands],
   ["apps/desktop/src/self-service/native.ts", selfServiceCommands],
@@ -218,6 +220,8 @@ export function checkSource(file, source) {
       globals.add("String");
       globals.add("Boolean");
     }
+    if (file === "packages/ui/src/components/ModalDrawer.vue")
+      globals.add("HTMLElement");
     if (file === "packages/ui/src/components/AppShell.vue")
       globals.add("ResizeObserver");
     if (file === "apps/desktop/src/assistant/clipboard.ts")
@@ -242,6 +246,19 @@ export function checkSource(file, source) {
       globals.add("Error");
     const assistantGlobals = {
       "apps/desktop/src/App.vue": ["setInterval", "clearInterval"],
+      "apps/desktop/src/Workspace.vue": [
+        "window",
+        "document",
+        "HTMLElement",
+        "ResizeObserver",
+      ],
+      "apps/desktop/src/assistant/resource-context.ts": ["JSON"],
+      "apps/desktop/src/appearance.ts": [
+        "Promise",
+        "Error",
+        "setTimeout",
+        "clearTimeout",
+      ],
       "apps/desktop/src/self-service/SelfService.vue": [
         "setInterval",
         "clearInterval",
@@ -304,6 +321,12 @@ export function checkSource(file, source) {
             "apps/desktop/src/assistant/native.ts",
             "apps/desktop/src/self-service/native.ts",
           ].includes(file) && name === "../test-users"
+        ) &&
+        !(
+          [
+            "apps/desktop/src/assistant/controller.ts",
+            "apps/desktop/src/assistant/resource-context.ts",
+          ].includes(file) && name === "../self-service/types"
         ) &&
         !(
           (file === "apps/desktop/src/assistant/ExecutionDetails.vue" &&
@@ -607,8 +630,11 @@ export function checkTree(treeRoot = root) {
         'uuid = { version = "=1.26.0", features = ["v4"] }',
         'libc = "=0.2.189"',
         'security-framework = "=3.5.1"',
+        'window-vibrancy = "=0.6.0"',
+        'windows = { version = "=0.61.3", features = ["UI_ViewManagement", "Win32_Graphics_Dwm", "Win32_UI_Accessibility", "Win32_UI_WindowsAndMessaging"] }',
+        'windows-version = "=0.1.7"',
         'objc2 = "=0.6.4"',
-        'objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSAlert", "NSButton", "NSControl", "NSSecureTextField", "NSTextField", "NSView", "NSResponder", "NSWindow", "NSApplication", "NSSavePanel", "NSPanel"] }',
+        'objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSAlert", "NSButton", "NSControl", "NSSecureTextField", "NSTextField", "NSView", "NSResponder", "NSWindow", "NSApplication", "NSSavePanel", "NSPanel", "NSWorkspace", "NSAccessibility"] }',
         'objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSString", "NSGeometry", "NSURL"] }',
         'execution-app = { path = "../../../crates/execution-app" }',
         'execution-runner = { path = "../../../crates/execution-runner" }',
@@ -625,7 +651,7 @@ export function checkTree(treeRoot = root) {
         "futures-util.workspace = true",
         'tauri-plugin-wdio-webdriver = { path = "../../../vendor/tauri-plugin-wdio-webdriver", version = "=1.4.0", optional = true }',
         "tauri-build.workspace = true",
-        "tauri.workspace = true",
+        'tauri = { workspace = true, features = ["macos-private-api"] }',
         "serde.workspace = true",
         'serde_json = { workspace = true, features = ["raw_value"] }',
         "serde_json.workspace = true",

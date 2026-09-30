@@ -1,6 +1,7 @@
 import { mount, flushPromises } from "@vue/test-utils";
 import SessionConnection from "./SessionConnection.vue";
 import Assistant from "./Assistant.vue";
+import ContextPanel from "./ContextPanel.vue";
 import ConnectionSettings from "../settings/ConnectionSettings.vue";
 import { activeStage } from "@rss-mdm-agent/ai-contract";
 import { describe, expect, it, vi } from "vitest";
@@ -11,6 +12,8 @@ import {
   type SessionView,
 } from "@rss-mdm-agent/ai-client";
 import { createAssistant, operationMessage } from "./controller";
+import { resourceOffer, offer } from "../../../../tests/self-service/support";
+import { resourceContext } from "./resource-context";
 import { fixtureSession } from "@rss-mdm-agent/ai-contract/testing";
 import fixtures from "../../../../tests/assistant/execution-fixtures.json";
 import type {
@@ -114,6 +117,77 @@ function setup(now = () => 100) {
   };
 }
 describe("assistant application ownership", () => {
+  it("loads and retries older resource target sessions without losing the explicit choice or candidate", async () => {
+    const t = setup();
+    vi.mocked(t.client.listSessions).mockResolvedValueOnce({
+      schemaVersion: 7,
+      kind: "sessionPage",
+      items: Array.from({ length: 20 }, (_, i) => ({
+        namespace: { ...t.view.namespace, sessionId: `session-${i + 1}` },
+        status: "active",
+        title: `会话 ${i + 1}`,
+        lastActivityAtMs: i,
+      })),
+      next: "older-page",
+    });
+    await t.c.connect();
+    const candidate = resourceContext(resourceOffer()!, "s1")!;
+    const wrapper = mount(ContextPanel, {
+      props: {
+        wide: false,
+        candidate,
+        controller: t.c,
+        chosen: false,
+        error: "",
+        notice: "",
+      },
+    });
+    await wrapper.get("select").setValue("session-1");
+    let reject!: (error: Error) => void;
+    vi.mocked(t.client.listSessions).mockImplementationOnce(
+      () =>
+        new Promise((_, fail) => {
+          reject = fail;
+        }),
+    );
+    await wrapper.get('[data-action="load-sessions"]').trigger("click");
+    expect(
+      wrapper.get('[data-action="load-sessions"]').attributes("disabled"),
+    ).toBeDefined();
+    expect(wrapper.get('[role="status"]').text()).toContain("正在读取会话");
+    reject(new Error("offline"));
+    await flushPromises();
+    expect(wrapper.get('[role="alert"]').text()).toContain("暂时无法读取会话");
+    vi.mocked(t.client.listSessions).mockResolvedValueOnce({
+      schemaVersion: 7,
+      kind: "sessionPage",
+      items: [
+        {
+          namespace: { ...t.view.namespace, sessionId: "older-session" },
+          status: "active",
+          title: "较早会话",
+          lastActivityAtMs: -1,
+        },
+      ],
+    });
+    await wrapper.get('[data-action="retry-sessions"]').trigger("click");
+    await flushPromises();
+    expect(t.client.listSessions).toHaveBeenLastCalledWith({
+      limit: 20,
+      continuation: "older-page",
+    });
+    expect(wrapper.get("select").element.value).toBe("session-1");
+    expect(wrapper.get(".resource-path").text()).toBe(
+      candidate.path.join(" → "),
+    );
+    expect(wrapper.findAll("option")).toHaveLength(23);
+    await wrapper.get("select").setValue("older-session");
+    await wrapper.get("form").trigger("submit");
+    expect(wrapper.emitted("choose")).toEqual([["older-session"]]);
+    expect(t.submit).not.toHaveBeenCalled();
+    wrapper.unmount();
+    t.c.dispose();
+  });
   it("keeps a failed selection save actionable through restore and retries only that selection", async () => {
     const t = setup();
     const catalog = await t.client.connections();
@@ -996,7 +1070,7 @@ it("first creation finishing after navigation never changes selection or sends i
   await sending;
   expect(t.c.state.selected).toBe("session-1");
   expect(t.submit).not.toHaveBeenCalled();
-  expect(t.c.state.drafts.get("")).toBe("blank draft");
+  expect(t.c.state.drafts.get("")?.text).toBe("blank draft");
   t.c.dispose();
 });
 
@@ -1159,4 +1233,94 @@ it("execution cards require a Host delivery and matching Rust conversation and t
   details.action.initiator.toolCall = "forged";
   await expect(t.c.executionDetails("op", signal)).rejects.toThrow();
   t.c.dispose();
+});
+
+describe("resource composition ownership", () => {
+  it("stages without sending and submits the preview to the existing session", async () => {
+    const t = setup();
+    await t.c.connect();
+    await t.c.select("session-1");
+    t.c.draft.value = "解释版本";
+    const context = resourceContext(resourceOffer(), "s1")!;
+    t.c.stageContext(context);
+    expect(t.submit).not.toHaveBeenCalled();
+    expect(t.client.createSession).not.toHaveBeenCalled();
+    expect(t.c.context.value?.text).toBe(context.text);
+    await t.c.prompt();
+    expect(t.submit.mock.calls[0][0].input.text).toBe(
+      "解释版本\n\n" + context.text,
+    );
+    expect(t.submit.mock.calls[0][0].sessionId).toBe("session-1");
+    expect(t.c.context.value).toBeUndefined();
+    expect(t.c.draft.value).toBe("");
+    t.c.dispose();
+  });
+  it("freezes unknown acceptance and does not clear subsequent edits or replacement", async () => {
+    const t = setup();
+    await t.c.connect();
+    await t.c.select("session-1");
+    t.c.draft.value = "original";
+    t.c.stageContext(resourceContext(resourceOffer(), "s1")!);
+    t.submit.mockRejectedValueOnce(new ClientError("transport_closed"));
+    await t.c.prompt();
+    const original = JSON.parse(JSON.stringify(t.submit.mock.calls[0][0]));
+    t.c.draft.value = "next question";
+    t.c.stageContext(resourceContext(offer(), "s1")!);
+    const next = t.c.context.value;
+    await t.c.retry();
+    expect(t.submit.mock.calls[1][0]).toEqual(original);
+    expect(t.c.draft.value).toBe("next question");
+    expect(t.c.context.value).toEqual(next);
+    t.c.dispose();
+    expect(t.c.state.drafts.size).toBe(0);
+  });
+  it("moves blank composition with first creation and refuses a changed attachment during creation", async () => {
+    const t = setup();
+    await t.c.connect();
+    t.c.create();
+    t.c.draft.value = "question";
+    t.c.stageContext(resourceContext(resourceOffer(), "s1")!);
+    vi.mocked(t.client.restore).mockImplementation(async (id) => ({
+      ...structuredClone(t.view),
+      namespace: { ...t.view.namespace, sessionId: id },
+    }));
+    let finish!: (v: { sessionId: string }) => void;
+    vi.mocked(t.client.createSession).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const first = t.c.prompt();
+    await flushPromises();
+    t.c.removeContext();
+    finish({
+      sessionId: vi.mocked(t.client.createSession).mock.calls[0][0].sessionId,
+    });
+    await first;
+    expect(t.submit).not.toHaveBeenCalled();
+    expect(t.c.draft.value).toBe("question");
+    await t.c.prompt();
+    expect(t.submit.mock.calls[0][0].input.text).toBe("question");
+    expect(t.client.createSession).toHaveBeenCalledTimes(1);
+    t.c.dispose();
+  });
+  it("isolates composition by session, invalidates stale context and permits removal", async () => {
+    const t = setup();
+    await t.c.connect();
+    await t.c.select("session-1");
+    t.c.draft.value = "question";
+    t.c.stageContext(resourceContext(resourceOffer(), "s1")!);
+    t.c.create();
+    expect(t.c.context.value).toBeUndefined();
+    await t.c.select("session-1");
+    t.c.validateContexts([], "s1");
+    expect(t.c.context.value?.stale).toBe(true);
+    await t.c.prompt();
+    expect(t.submit).not.toHaveBeenCalled();
+    t.c.removeContext();
+    await t.c.prompt();
+    expect(t.submit.mock.calls[0][0].input.text).toBe("question");
+    t.c.dispose();
+  });
 });

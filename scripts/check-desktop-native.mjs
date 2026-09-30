@@ -22,7 +22,11 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { remote } from "webdriverio";
 import { startModelFixture } from "../tests/desktop/model-fixture.mjs";
-import { sourceEvidence, sha256 } from "./native-evidence.mjs";
+import {
+  sourceEvidence,
+  sha256,
+  waitForAppearance,
+} from "./native-evidence.mjs";
 import { developmentFingerprint } from "./desktop-dev-runtime.mjs";
 import { verifyRuntimeIntegrity } from "./ai-host-artifacts.mjs";
 
@@ -38,6 +42,8 @@ const result = {
   provider: "codex-0.155.0",
   executor: "S1 deterministic test runner",
   keychain: "isolated noninteractive macOS file keychain",
+  messageInput:
+    "visible product submit button; physical Return delivery unverified on this interactive desktop",
   checks: [],
 };
 for (const name of [
@@ -45,6 +51,8 @@ for (const name of [
   "desktop-native-navigation.png",
   "desktop-native-navigation-narrow.png",
   "desktop-native-failed.png",
+  "desktop-native-context-narrow.png",
+  "desktop-native-context-wide.png",
   "desktop-native.log",
 ])
   rmSync(join(reports, name), { force: true });
@@ -168,9 +176,18 @@ const prompt = async (value) => {
         document.activeElement === document.querySelector(".composer textarea"),
     ),
     true,
-    "composer must own keyboard focus before native Enter",
+    "composer must own DOM focus before submission",
   );
-  key(36);
+  await wait(() => browser.$('.composer button[type="submit"]').isEnabled());
+  // Send through the visible product action. Physical Return delivery depends on the
+  // interactive desktop's input source/foreground; do not resend an ambiguous command.
+  await browser.$('.composer button[type="submit"]').click();
+  await wait(() =>
+    browser.execute(
+      (value) => document.querySelector(".composer textarea").value !== value,
+      value,
+    ),
+  );
 };
 const selectValue = async (element, value) => {
   // The embedded driver cannot reliably select a macOS native option popup.
@@ -256,10 +273,34 @@ try {
   await new Promise((resolve) => reserved.listen(0, "127.0.0.1", resolve));
   const port = reserved.address().port;
   await new Promise((resolve) => reserved.close(resolve));
+  // The native fixture owns an isolated Vite port; another worktree's preview must not be consumed or stopped.
+  const webReserved = createServer();
+  await new Promise((resolve) => webReserved.listen(0, "127.0.0.1", resolve));
+  const webPort = webReserved.address().port;
+  await new Promise((resolve) => webReserved.close(resolve));
+  const baseConfig = JSON.parse(
+    readFileSync(join(root, "apps/desktop/src-tauri/tauri.conf.json"), "utf8"),
+  );
+  const nativeConfig = {
+    build: {
+      devUrl: `http://127.0.0.1:${webPort}`,
+      beforeDevCommand: `pnpm dev:web --port ${webPort}`,
+    },
+    app: {
+      security: {
+        devCsp: baseConfig.app.security.devCsp.replaceAll(
+          ":1420",
+          `:${webPort}`,
+        ),
+      },
+    },
+  };
+  result.devWebPort = webPort;
   const env = {
     ...process.env,
     RSS_NATIVE_E2E_NONCE: nonce,
     RSS_NATIVE_E2E_PORT: String(port),
+    RSS_NATIVE_E2E_WEB_PORT: String(webPort),
   };
   delete env.RSS_AI_HOST_RUNTIME;
   delete env.CODEX_HOME;
@@ -269,6 +310,8 @@ try {
     [
       "dev",
       "--no-watch",
+      "--config",
+      JSON.stringify(nativeConfig),
       "--features",
       "native-e2e",
       "--",
@@ -470,6 +513,8 @@ try {
       width: el.getBoundingClientRect().width,
       padding: style.padding,
       background: style.backgroundColor,
+      solidBackground: getComputedStyle(document.querySelector(".shell main"))
+        .backgroundColor,
     };
   });
   await click("开始对话");
@@ -508,7 +553,7 @@ try {
   assert.equal(navigation.left, 0);
   assert.equal(navigation.footerAtBottom, true);
   assert.equal(navigation.width, 280);
-  assert.equal(navigation.background, sidebar.background);
+  assert.equal(navigation.background, sidebar.solidBackground);
   await browser.saveScreenshot(join(reports, "desktop-native-navigation.png"));
   key(53);
   await wait(async () => !(await browser.$("dialog[open]").isExisting()));
@@ -726,13 +771,221 @@ try {
     1,
     "all first-chat operations share one session",
   );
+  mark("resource context in the same native conversation at three sizes");
+  const proposalsBeforeContext = fixture.facts.proposals.length;
+  for (const [width, height] of [
+    [1100, 760],
+    [480, 400],
+    [1600, 900],
+  ]) {
+    mark(`resource context ${width}×${height}`);
+    await browser.setWindowSize(width, height);
+    await wait(() =>
+      browser.execute((expected) => innerWidth < 900 === expected, width < 900),
+    );
+    await navigate("软件中心");
+    await wait(() => browser.$(".resource-card summary").isDisplayed());
+    if (
+      (await browser.$(".resource-card details").getAttribute("open")) === null
+    )
+      await browser.$(".resource-card summary").click();
+    await click("询问 AI");
+    await wait(() => browser.$(".context-panel select").isDisplayed());
+    assert.equal(
+      await browser.$('[data-action="choose-conversation"]').isEnabled(),
+      false,
+    );
+    const session = await browser.execute(
+      () =>
+        [...document.querySelector(".context-panel select").options].find(
+          (option) => option.value && option.value !== "new",
+        ).value,
+    );
+    await selectValue(await browser.$(".context-panel select"), session);
+    await click("继续到所选会话");
+    await wait(() => browser.$(".resource-context").isDisplayed());
+    if (width < 1440) {
+      await browser.$(".connection-trigger").click();
+      await wait(() =>
+        browser.$('.context-panel [aria-label="AI 连接选择"]').isDisplayed(),
+      );
+      key(53);
+      await wait(
+        async () =>
+          !(await browser.$('[aria-label="AI 连接选择"]').isDisplayed()),
+      );
+      await browser.$('[aria-label="更多"]').click();
+      await wait(() =>
+        browser.$('.context-panel [role="menuitem"]').isDisplayed(),
+      );
+      await browser.$('.context-panel [role="menuitem"]').click();
+      await wait(() =>
+        browser.$('dialog[aria-label="会话详情与诊断"]').isDisplayed(),
+      );
+      await wait(() =>
+        browser.execute(
+          () =>
+            document.activeElement
+              .closest("dialog")
+              ?.getAttribute("aria-label") === "会话详情与诊断",
+        ),
+      );
+      key(48);
+      await wait(() =>
+        browser.execute(
+          () =>
+            document.activeElement
+              .closest("dialog")
+              ?.getAttribute("aria-label") === "会话详情与诊断",
+        ),
+      );
+      key(53);
+      await wait(
+        async () =>
+          !(await browser
+            .$('dialog[aria-label="会话详情与诊断"]')
+            .isExisting()),
+      );
+    }
+    assert.equal(
+      await browser.execute(
+        () => document.querySelectorAll(".assistant").length,
+      ),
+      1,
+    );
+    await browser
+      .$(".composer textarea")
+      .setValue("GOLDEN_CONTEXT 解释这个软件的版本与限制");
+    assert.equal(
+      await browser.execute(() => {
+        const r = document
+          .querySelector(".composer textarea")
+          .getBoundingClientRect();
+        return (
+          r.bottom <= innerHeight &&
+          r.left >= 0 &&
+          r.right <= innerWidth &&
+          document.documentElement.scrollWidth <= innerWidth
+        );
+      }),
+      true,
+    );
+    if (width === 480)
+      await browser.saveScreenshot(
+        join(reports, "desktop-native-context-narrow.png"),
+      );
+    if (width === 1600)
+      await browser.saveScreenshot(
+        join(reports, "desktop-native-context-wide.png"),
+      );
+    await click("关闭资源上下文 AI");
+    await wait(() =>
+      browser.execute(
+        () => document.activeElement?.getAttribute("data-action") === "ask-ai",
+      ),
+    );
+    await navigate("AI 助手");
+    assert.equal(
+      await browser.$(".composer textarea").getValue(),
+      "GOLDEN_CONTEXT 解释这个软件的版本与限制",
+    );
+  }
+  await prompt("GOLDEN_CONTEXT 解释这个软件的版本与限制");
+  await text("完成 CONTEXT");
+  assert.equal(fixture.facts.contexts.length, 1);
+  assert.equal(
+    fixture.facts.proposals.length,
+    proposalsBeforeContext,
+    "context inquiry does not execute tools",
+  );
+  result.checks.push(
+    "resource-context-explicit-selection",
+    "resource-context-same-session",
+    "resource-context-provider-payload",
+    "resource-context-three-sizes",
+  );
+  const readAppearance = () =>
+    browser.execute(() => ({
+      materialEnabled: document
+        .querySelector(".app-root")
+        .classList.contains("native-material"),
+      reducedMotion: document
+        .querySelector(".app-root")
+        .classList.contains("reduced-motion"),
+      highContrast: document
+        .querySelector(".app-root")
+        .classList.contains("high-contrast"),
+      bodyBackground: getComputedStyle(document.querySelector(".shell main"))
+        .backgroundColor,
+    }));
+  const systemAppearance = JSON.parse(
+    execFileSync(
+      "/usr/bin/osascript",
+      [
+        "-l",
+        "JavaScript",
+        "-e",
+        'ObjC.import("AppKit"); var w=$.NSWorkspace.sharedWorkspace; JSON.stringify({reduceTransparency:Boolean(w.accessibilityDisplayShouldReduceTransparency),reducedMotion:Boolean(w.accessibilityDisplayShouldReduceMotion),highContrast:Boolean(w.accessibilityDisplayShouldIncreaseContrast)});',
+      ],
+      { encoding: "utf8", timeout: 10000 },
+    ),
+  );
+  const expectedMaterial =
+    !systemAppearance.reduceTransparency &&
+    !systemAppearance.reducedMotion &&
+    !systemAppearance.highContrast;
+  result.appearance = await waitForAppearance(
+    readAppearance,
+    systemAppearance,
+    wait,
+  );
+  assert.ok(
+    !result.appearance.bodyBackground.includes("rgba"),
+    "body remains opaque",
+  );
+  assert.equal(
+    result.appearance.materialEnabled,
+    expectedMaterial,
+    "material activation matches actual AppKit preferences",
+  );
+  assert.equal(result.appearance.reducedMotion, systemAppearance.reducedMotion);
+  assert.equal(result.appearance.highContrast, systemAppearance.highContrast);
+  result.appearance.systemPreferences = systemAppearance;
+  result.appearance.currentTheme = await browser.execute(() =>
+    matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light",
+  );
+  result.appearance.unverified = [
+    "light/dark theme hot switching",
+    "reduce transparency/motion/high contrast hot switching",
+    "physical titlebar drag",
+  ];
+  result.checks.push(
+    "native-material-current-system-policy",
+    "native-body-opaque",
+    "context-popover-menu-modal-host",
+  );
+  result.windowsAppearance = "unverified; no Windows host in this run";
+  await browser.setWindowSize(1100, 760);
   mark("close/reopen main window and restore history");
-  await browser.closeWindow();
+  native(
+    'perform action "AXPress" of (first button of window 1 whose subrole is "AXCloseButton")',
+  );
   await wait(async () => (await browser.getWindowHandles()).length === 0);
   menu("显示窗口");
   await wait(async () => (await browser.getWindowHandles()).length === 1);
   await browser.switchToWindow((await browser.getWindowHandles())[0]);
   mark("restore conversation in reopened window");
+  await wait(() =>
+    browser.execute(
+      (expected) =>
+        !!document.querySelector(".app-root") &&
+        document
+          .querySelector(".app-root")
+          .classList.contains("native-material") === expected,
+      expectedMaterial,
+    ),
+  );
+  result.checks.push("native-close-control-material-rebind");
   await wait(() => browser.$(".composer textarea").isDisplayed());
   await wait(async () => !(await visibleText("正在读取或切换账户…")));
   await navigate("AI 助手");
@@ -870,6 +1123,23 @@ try {
     .slice(0, 2048);
   result.failure = { stage, code: "native_golden_path_failed", detail };
   result.modelFacts = fixture?.facts;
+  if (browser) {
+    try {
+      result.transportFailure = await browser.execute(() => {
+        const c =
+          document.querySelector(".assistant")?.__vueParentComponent?.props
+            ?.controller;
+        const reason = c?.runtime?.value?.connection?.signal?.reason;
+        return {
+          state: c?.state?.connection ?? "unknown",
+          code: typeof reason?.code === "string" ? reason.code : "unknown",
+          name: typeof reason?.name === "string" ? reason.name : "unknown",
+        };
+      });
+    } catch {
+      result.transportFailure = { state: "unavailable" };
+    }
+  }
   console.error(`Native acceptance failed at ${stage}: ${detail}`);
   if (browser && !cancelled) {
     try {

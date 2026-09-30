@@ -6,7 +6,9 @@ compile_error!("native-e2e must never be included in a release build");
 mod native_e2e;
 mod navigation;
 mod startup;
-use rss_mdm_desktop::composition::{ipc, lifecycle::Lifecycle, runtime::DesktopRuntime};
+use rss_mdm_desktop::composition::{
+    appearance, ipc, lifecycle::Lifecycle, runtime::DesktopRuntime,
+};
 use tauri::Manager;
 
 fn window(app: &tauri::AppHandle) -> tauri::Result<()> {
@@ -14,10 +16,11 @@ fn window(app: &tauri::AppHandle) -> tauri::Result<()> {
         window.show()?;
         window.set_focus()?;
     } else {
-        tauri::WebviewWindowBuilder::from_config(app, &app.config().app.windows[0])?
+        let created = tauri::WebviewWindowBuilder::from_config(app, &app.config().app.windows[0])?
             .on_navigation(navigation::allowed)
             .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
             .build()?;
+        appearance::bind(&created);
     }
     Ok(())
 }

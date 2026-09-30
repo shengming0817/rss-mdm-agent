@@ -145,6 +145,7 @@ onBeforeUnmount(() => observer?.disconnect());
   flex-direction: column;
 }
 main {
+  background: var(--rss-color-bg);
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -168,5 +169,14 @@ main.conversation {
 }
 .compact main.page {
   padding: 16px;
+}
+</style>
+
+<style scoped>
+:global(.native-material) .shell {
+  background: transparent;
+}
+:global(.native-material) .navigation-panel {
+  background: var(--rss-color-native-navigation);
 }
 </style>

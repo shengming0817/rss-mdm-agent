@@ -23,7 +23,10 @@ const navigate = async (name) => {
   const dialog = page.locator("dialog[open]");
   if (await dialog.count()) await page.keyboard.press("Escape");
   const trigger = page.getByRole("button", { name: "打开主导航", exact: true });
-  if (await trigger.count()) await trigger.click();
+  if (page.viewportSize().width < 900) {
+    await trigger.waitFor();
+    await trigger.click();
+  } else await page.locator(".navigation-panel").waitFor();
   await (
     (await page.locator("dialog[open]").count())
       ? page.locator("dialog[open]")
@@ -978,6 +981,149 @@ try {
       fullPage: true,
     });
   }
+  // Resource entry must use the same product workspace/session, at every supported layout.
+  await page.keyboard.press("Escape");
+  for (const [width, height] of [
+    [1100, 760],
+    [480, 400],
+    [1600, 900],
+  ]) {
+    await page.setViewportSize({ width, height });
+    await navigate("软件中心");
+    const resource = page
+      .locator(".resource-card")
+      .filter({ hasText: "办公套件" });
+    if ((await resource.locator("details").getAttribute("open")) === null)
+      await resource.locator("summary").click();
+    const trigger = page.getByRole("button", { name: "询问 AI", exact: true });
+    await trigger.click();
+    const panel =
+      width < 1440
+        ? page.getByRole("dialog", { name: "资源上下文 AI", exact: true })
+        : page.getByRole("complementary", {
+            name: "资源上下文 AI",
+            exact: true,
+          });
+    await panel.waitFor();
+    assert.ok(
+      await panel
+        .locator(".resource-path")
+        .textContent()
+        .then((value) =>
+          value.includes("软件中心 → 未提供分类 → 办公套件 → 软件详情"),
+        ),
+    );
+    assert.equal(
+      await panel
+        .getByRole("button", { name: "继续到所选会话", exact: true })
+        .isDisabled(),
+      true,
+    );
+    await panel
+      .getByLabel("选择目标会话", { exact: true })
+      .selectOption(sessionId);
+    await panel
+      .getByRole("button", { name: "继续到所选会话", exact: true })
+      .click();
+    await panel.locator(".composer textarea").waitFor();
+    if (width < 1440) {
+      await panel.locator(".connection-trigger").click();
+      const connectionMenu = panel.locator(".connection-menu");
+      await connectionMenu.waitFor();
+      assert.equal(
+        await connectionMenu.evaluate((el) => !!el.closest("dialog[open]")),
+        true,
+        "connection portal stays inside modal top layer",
+      );
+      await page.keyboard.press("Escape");
+      await panel.getByRole("button", { name: "更多", exact: true }).click();
+      await panel
+        .getByRole("menuitem", { name: "会话详情与诊断", exact: true })
+        .click();
+      await page
+        .getByRole("dialog", { name: "会话详情与诊断", exact: true })
+        .waitFor();
+      await page.keyboard.press("Tab");
+      assert.equal(
+        await page.evaluate(() =>
+          document.activeElement.closest("dialog").getAttribute("aria-label"),
+        ),
+        "会话详情与诊断",
+      );
+      await page.keyboard.press("Escape");
+      await panel.locator(".composer textarea").waitFor();
+    }
+    assert.equal(await page.locator(".assistant").count(), 1);
+    assert.equal(
+      await panel
+        .getByRole("button", { name: "检查并执行", exact: true })
+        .count(),
+      0,
+    );
+    await panel
+      .getByRole("region", { name: "待发送资源上下文", exact: true })
+      .getByText("核对将发送的信息", { exact: true })
+      .click();
+    const contextText = await panel
+      .locator(".resource-context pre")
+      .textContent();
+    assert.ok(
+      contextText.includes('"entry": "软件中心"') &&
+        contextText.includes('"name": "办公套件"'),
+    );
+    assert.ok(
+      !contextText.includes("osSession") &&
+        !contextText.includes("secretReference"),
+    );
+    await panel.locator(".composer textarea").fill(`资源问题 ${width}`);
+    const box = await panel.locator(".composer textarea").boundingBox();
+    assert.ok(
+      box.y >= 0 && box.y + box.height <= height,
+      "context composer reachable",
+    );
+    assert.equal(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+      true,
+    );
+    await panel
+      .getByRole("button", { name: "关闭资源上下文 AI", exact: true })
+      .click();
+    await trigger.waitFor();
+    assert.equal(
+      await trigger.evaluate((el) => document.activeElement === el),
+      true,
+    );
+    await navigate("AI 助手");
+    assert.equal(await composer.inputValue(), `资源问题 ${width}`);
+    assert.ok(
+      await page
+        .getByRole("region", { name: "待发送资源上下文", exact: true })
+        .isVisible(),
+    );
+  }
+  const previewText = await page.locator(".resource-context pre").textContent();
+  await composer.fill("资源上下文发送验证");
+  await page.locator(".composer button[type=submit]").click();
+  await page.waitForFunction(
+    () => document.querySelector(".composer textarea").value === "",
+  );
+  const resourceCommand = await fixture.command(sessionId);
+  assert.equal(
+    resourceCommand.input.text,
+    `资源上下文发送验证\n\n${previewText}`,
+  );
+  assert.equal(await page.locator(".resource-context").count(), 0);
+  // Complete fixture command explicitly; a receipt itself is never model completion.
+  unwrap(
+    await fixture.host.advance(
+      fixture.caller,
+      sessionId,
+      resourceCommand.commandId,
+      [],
+    ),
+  );
   assert.deepEqual(errors, []);
   console.log(
     "PASS assistant product navigation, caller pagination, busy queue/steer, multi-window questions, permission abort, A2UI lifecycle, trusted execution and reconnect",
@@ -987,6 +1133,19 @@ try {
     console.error(
       await page.evaluate(() => ({
         facts: document.querySelector(".assistant-facts")?.textContent,
+        portal: {
+          trigger: document.querySelector(".connection-trigger")?.outerHTML,
+          menu: document.querySelector(".connection-menu")?.outerHTML,
+          parent:
+            document.querySelector(".connection-menu")?.parentElement
+              ?.className,
+          host: document.querySelector(".assistant-panel-host")
+            ?.childElementCount,
+          dialogs: [...document.querySelectorAll("dialog")].map((d) => ({
+            label: d.getAttribute("aria-label"),
+            open: d.open,
+          })),
+        },
         alerts: [...document.querySelectorAll('[role="alert"]')].map(
           (n) => n.textContent,
         ),

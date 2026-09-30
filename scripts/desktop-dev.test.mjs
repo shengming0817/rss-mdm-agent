@@ -15,10 +15,40 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { test } from "node:test";
+import { waitForAppearance } from "./native-evidence.mjs";
 import {
   developmentFingerprint,
   ensureDevelopmentRuntime,
 } from "./desktop-dev-runtime.mjs";
+
+test("appearance evidence waits for all flags and reports the recovered snapshot", async () => {
+  const preferences = {
+    reduceTransparency: false,
+    reducedMotion: true,
+    highContrast: true,
+  };
+  const stale = {
+    materialEnabled: false,
+    reducedMotion: false,
+    highContrast: false,
+    bodyBackground: "rgb(1, 1, 1)",
+  };
+  const recovered = { ...stale, reducedMotion: true, highContrast: true };
+  const snapshots = [stale, recovered];
+  const actual = await waitForAppearance(
+    async () => snapshots.shift(),
+    preferences,
+    async (check) => {
+      assert.equal(
+        await check(),
+        false,
+        "material alone must not satisfy the wait",
+      );
+      return check();
+    },
+  );
+  assert.equal(actual, recovered);
+});
 
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), "rss-dev-"));

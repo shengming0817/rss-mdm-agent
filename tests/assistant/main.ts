@@ -57,7 +57,20 @@ const services: AssistantServices = {
     return { kind: "execution", value: await response.json() };
   },
 };
-createApp(App, { assistantServices: services }).mount("#app");
+import { resourceOffer, snapshot } from "../self-service/support";
+import type { SelfServicePort } from "../../apps/desktop/src/self-service/types";
+const selfServicePort: SelfServicePort = {
+  async snapshot() {
+    return { ...snapshot(), available: [resourceOffer()] };
+  },
+  async execute() {
+    throw new Error("browser fixture does not execute device operations");
+  },
+  async cancel() {
+    throw new Error("browser fixture does not cancel device operations");
+  },
+};
+createApp(App, { assistantServices: services, selfServicePort }).mount("#app");
 
 // Browser-only component stimuli share the product test page and workspace modules.
 import {

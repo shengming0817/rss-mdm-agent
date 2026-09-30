@@ -1,8 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted } from "vue";
 import type { Controller } from "./controller";
+import type { BackendTask } from "./types";
 import TaskDetail from "./TaskDetail.vue";
 const props = defineProps<{ controller: Controller }>();
+const emit = defineEmits<{
+  askAi: [item: BackendTask, trigger: HTMLElement];
+}>();
 const c = props.controller;
 const s = c.state;
 const task = computed(() =>
@@ -75,9 +79,26 @@ function failureLabel(value: string) {
       <p v-if="!s.snapshot.available.length">当前没有等待操作的后台任务。</p>
       <article
         v-for="offer in s.snapshot.available"
+        class="resource-card"
         :key="offer.task + offer.attempt"
       >
         <h2>{{ offer.title }}</h2>
+        <details>
+          <summary>查看资源信息</summary>
+          <ol v-if="offer.summary.kind === 'software'">
+            <li v-for="(step, index) in offer.summary.steps" :key="index">
+              {{ step.package }} · {{ step.version }}
+            </li>
+          </ol>
+          <p v-else>后台脚本；分类和说明未提供。</p>
+          <button
+            type="button"
+            data-action="ask-ai"
+            @click="emit('askAi', offer, $event.currentTarget as HTMLElement)"
+          >
+            询问 AI
+          </button>
+        </details>
         <p>有效期：{{ new Date(offer.expiresAt * 1000).toLocaleString() }}</p>
         <button
           v-if="offer.userInitiated"

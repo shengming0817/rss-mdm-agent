@@ -2,7 +2,27 @@
 use tauri::Url;
 
 pub fn allowed(url: &Url) -> bool {
+    // Only the debug-only native acceptance feature may use its owned loopback server.
+    // Production still accepts the exact shipped origin / fixed development origin below.
+    #[cfg(feature = "native-e2e")]
+    if std::env::var("RSS_NATIVE_E2E_WEB_PORT")
+        .ok()
+        .and_then(|value| value.parse::<u16>().ok())
+        .is_some_and(|port| native_test_origin(url, port))
+    {
+        return true;
+    }
     allowed_in_mode(url, cfg!(dev), cfg!(target_os = "windows"))
+}
+
+#[cfg(any(feature = "native-e2e", test))]
+fn native_test_origin(url: &Url, port: u16) -> bool {
+    port != 0
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.scheme() == "http"
+        && url.host_str() == Some("127.0.0.1")
+        && url.port() == Some(port)
 }
 
 fn allowed_in_mode(url: &Url, development: bool, windows: bool) -> bool {
@@ -25,6 +45,22 @@ fn allowed_in_mode(url: &Url, development: bool, windows: bool) -> bool {
 mod tests {
     use super::*;
 
+    #[test]
+    fn isolated_native_origin_is_exact_and_cannot_allow_external_navigation() {
+        assert!(native_test_origin(
+            &Url::parse("http://127.0.0.1:54321/").unwrap(),
+            54321
+        ));
+        for url in [
+            "http://127.0.0.1:54322/",
+            "http://localhost:54321/",
+            "https://127.0.0.1:54321/",
+            "http://user@127.0.0.1:54321/",
+            "https://example.com/",
+        ] {
+            assert!(!native_test_origin(&Url::parse(url).unwrap(), 54321));
+        }
+    }
     #[test]
     fn navigation_is_limited_to_exact_app_or_development_origins() {
         for (url, windows) in [

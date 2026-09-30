@@ -1,3 +1,4 @@
+use super::appearance::AppearanceSnapshot;
 use super::runtime::DesktopRuntime;
 use crate::self_service::*;
 use tauri::State;
@@ -48,7 +49,7 @@ macro_rules! commands {
             struct Command<I: schemars::JsonSchema, O: schemars::JsonSchema> { input: I, output: O }
             #[derive(schemars::JsonSchema)]
             #[allow(dead_code)]
-            struct SelfServiceCommands { $($name: Command<$input, $output>),+ }
+            struct SelfServiceCommands { $($name: Command<$input, $output>),+, appearance_snapshot: Command<(), AppearanceSnapshot> }
             schemars::generate::SchemaSettings::draft07().for_serialize().into_generator().into_root_schema_for::<SelfServiceCommands>()
         }
     }
@@ -227,8 +228,15 @@ pub async fn local_service_status() -> local_service::ServiceView {
         .await
         .unwrap_or(local_service::ServiceView::Unavailable)
 }
+#[tauri::command]
+pub async fn appearance_snapshot<R: tauri::Runtime>(
+    window: tauri::WebviewWindow<R>,
+) -> Result<AppearanceSnapshot> {
+    super::appearance::snapshot(window).await
+}
 pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder.invoke_handler(tauri::generate_handler![
+        appearance_snapshot,
         select_guest,
         account_logout,
         account_status,
@@ -349,6 +357,7 @@ mod tests {
             "account_organizations",
             "account_save_organization",
             "local_service_status",
+            "appearance_snapshot",
             "ai_host_status",
             "ai_restart_host",
             "ai_export_diagnostics",

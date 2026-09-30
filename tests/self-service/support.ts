@@ -32,3 +32,15 @@ export function snapshot(): Snapshot {
     next: null,
   };
 }
+/** The same public backend projection consumed by the desktop, with explicit test assembly. */
+export function resourceOffer(): BackendTask {
+  return {
+    ...offer(),
+    title: "办公套件",
+    summary: {
+      kind: "software",
+      intent: "install",
+      steps: [{ package: "办公套件", version: "1.0", identity: "system" }],
+    },
+  };
+}

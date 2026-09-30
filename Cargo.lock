@@ -3773,7 +3773,10 @@ dependencies = [
  "unicode-normalization",
  "url",
  "uuid",
+ "window-vibrancy",
+ "windows",
  "windows-sys 0.61.2",
+ "windows-version",
  "zeroize",
 ]
 

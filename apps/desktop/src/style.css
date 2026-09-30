@@ -7,3 +7,15 @@ body,
 body {
   font-family: system-ui, sans-serif;
 }
+
+.reduced-motion *,
+.reduced-motion *::before,
+.reduced-motion *::after {
+  animation: none !important;
+  transition: none !important;
+  scroll-behavior: auto !important;
+}
+.high-contrast {
+  --rss-color-border: var(--rss-color-text-muted);
+  --rss-color-border-strong: var(--rss-color-text);
+}

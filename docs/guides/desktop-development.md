@@ -129,3 +129,13 @@ AI 文本不能覆盖设备任务事实；执行详情来自 Rust 的授权读�
 
 交互参考复核基于 Codex 与 Claude 官方使用文档，未声称实机体验：
 [Codex/ChatGPT 项目与对话](https://learn.chatgpt.com/docs/projects)、[队列与 steer 设置](https://learn.chatgpt.com/docs/reference/settings)、[批准与沙箱](https://learn.chatgpt.com/docs/agent-approvals-security)、[Claude Desktop 导航](https://academy.claude.com/tutorials/navigating-the-claude-desktop-app)、[Claude 连接器](https://support.claude.com/en/articles/11176164-use-connectors-to-extend-claude-s-capabilities)。借鉴聊天入口、连接设置和动作许可分层；本产品的设备执行权威仍在 Rust。
+
+## 资源上下文与系统外观
+
+后台返回的软件或脚本展示信息中的“询问 AI”先显示入口、分类、名称和详情，再要求选择现有会话或新建。首次发送才创建新会话；预览和移除资源信息后显式发送。每会话保留一个待发送资源附件，仅包含后台公开名称、已提供的软件版本及展示信息修订；分类、说明、目录版本或能力判定缺失时明确标记，不推断。任务编号、执行账号、任务记录、秘密和设备信息不附带。后台列表或修订变化后需移除附件或从最新信息重新选择。关闭面板后可在 AI 页面继续同一会话；身份切换清空旧主体的草稿。
+
+1100×760 和窄窗口使用右侧抽屉，1440px 及以上按需并排。本人确认、执行授权和任务查询仍使用既有后台任务路径；上下文询问不执行任务。浏览器测试样本单独装配，正式界面不以样本替代后台返回。
+
+外观使用同一启用与实色回退策略：macOS 采用 Sidebar 原生材质，Windows 11 build 22621 及以上采用公开 DWM Mica，其余宿主实色。正文、输入和模态抽屉始终实色；减少透明度、减少动态、高对比、系统设置读取失败或材质调用失败均回退实色。窗口创建、获得焦点及系统主题变化立即核对，窗口存活期间每两秒刷新；材质失败不会阻止工作区使用。
+
+macOS 透明 WebView 启用了 Tauri 的 `macos-private-api`，该路径影响 Mac App Store 接受；当前企业桌面候选不承诺商店发布、签名或公证。`pnpm check:desktop-native` 仍限定 macOS arm64，分别记录真实 WebView 与模型/执行 fixture 的证据。Windows 交叉 `cargo check` 仅证明类型与编译接缝；真实材质、辅助设置、DPI、拖拽和最大化必须由 Windows 原生环境验证，未运行时不得标记通过。

@@ -2,6 +2,13 @@ import { operationRequestId } from "@rss-mdm-agent/execution-bindings";
 import type { Connection, HistoryPreview } from "@rss-mdm-agent/ai-contract";
 import { computed, markRaw, reactive, shallowRef } from "vue";
 import {
+  composePrompt,
+  contextCurrent,
+  type ResourceContext,
+  type Composition,
+} from "./resource-context";
+import type { ContextSource } from "./resource-context";
+import {
   ClientError,
   type ClientOptions,
   type RuntimeClient,
@@ -101,7 +108,7 @@ export function operationMessage(code: string): string {
   );
 }
 type SessionItem = SessionPage["items"][number];
-type Pending = { command: Command; draft?: string };
+type Pending = { command: Command; composition?: Composition };
 export function createAssistant(
   services: AssistantServices | undefined,
   identity: () => string,
@@ -134,7 +141,7 @@ export function createAssistant(
     } as import("@rss-mdm-agent/ai-contract").UserPreferences,
     sessions: new Map<string, SessionItem>(),
     views: new Map<string, SessionView>(),
-    drafts: new Map<string, string>(),
+    drafts: new Map<string, Composition>(),
     history: new Map<string, HistoryPreview>(),
     pending: new Map<string, Pending>(),
     sending: new Set<string>(),
@@ -182,11 +189,46 @@ export function createAssistant(
   const callbacks = new Map<string, (response: PermissionResponse) => void>();
   const view = computed(() => state.views.get(state.selected));
   const draft = computed({
-    get: () => state.drafts.get(state.selected) ?? "",
+    get: () => state.drafts.get(state.selected)?.text ?? "",
     set: (value: string) => {
-      state.drafts.set(state.selected, value);
+      state.drafts.set(state.selected, {
+        ...state.drafts.get(state.selected),
+        text: value,
+      });
     },
   });
+  const composition = () => state.drafts.get(state.selected) ?? { text: "" };
+  const context = computed(() => composition().context);
+  const promptPreview = computed(() => composePrompt(composition()));
+  const compositionError = computed(() =>
+    context.value?.stale
+      ? "资源信息已变更，请移除附件或从最新资源详情重新选择。"
+      : draft.value.trim() && !promptPreview.value
+        ? "消息与上下文超过发送预算，请精简后发送。"
+        : "",
+  );
+  function stageContext(value: ResourceContext) {
+    state.drafts.set(state.selected, { ...composition(), context: value });
+  }
+  function removeContext() {
+    state.drafts.set(state.selected, { text: draft.value });
+  }
+  function validateContexts(
+    catalog: readonly BackendTask[],
+    source: ContextSource,
+  ) {
+    for (const [id, value] of state.drafts) {
+      if (
+        value.context &&
+        !value.context.stale &&
+        !contextCurrent(value.context, catalog, source)
+      )
+        state.drafts.set(id, {
+          ...value,
+          context: Object.freeze({ ...value.context, stale: true }),
+        });
+    }
+  }
   const live = (v?: SessionView) =>
     !!v &&
     v.connection === "attached" &&
@@ -608,8 +650,9 @@ export function createAssistant(
     const client = runtime.value,
       current = epoch,
       selectedAtStart = selectionVersion,
-      text = draft.value;
-    if (!client || state.connection !== "connected" || !text.trim())
+      original = composition(),
+      text = composePrompt(original);
+    if (!client || state.connection !== "connected" || !text)
       return Promise.resolve();
     if (!creation && !connectionReady.value) {
       state.createError = "connection_required";
@@ -645,18 +688,18 @@ export function createAssistant(
         if (
           state.selected ||
           selectedAtStart !== selectionVersion ||
-          draft.value !== text
+          composition() !== original
         )
           return;
         state.selected = intent.sessionId;
         selectionVersion++;
-        state.drafts.set(intent.sessionId, text);
+        state.drafts.set(intent.sessionId, original);
         state.drafts.delete("");
         creation = undefined;
         void remember(intent.sessionId);
         await send(
-          { type: "prompt", text: text.trim(), policy: "queue_next" },
-          text,
+          { type: "prompt", text, policy: "queue_next" },
+          original,
           now() + 60_000,
           intent.commandId,
         );
@@ -694,8 +737,16 @@ export function createAssistant(
       if (current !== epoch) return;
       state.pending.delete(id);
       state.history.delete(id);
-      if (pending.draft !== undefined && state.drafts.get(id) === pending.draft)
-        state.drafts.set(id, "");
+      const currentDraft = state.drafts.get(id),
+        sent = pending.composition;
+      if (currentDraft && sent) {
+        state.drafts.set(id, {
+          text: currentDraft.text === sent.text ? "" : currentDraft.text,
+          ...(currentDraft.context && currentDraft.context !== sent.context
+            ? { context: currentDraft.context }
+            : {}),
+        });
+      }
       void list(false);
     } catch (error) {
       if (current !== epoch) return;
@@ -718,7 +769,7 @@ export function createAssistant(
   }
   async function send(
     input: Command["input"],
-    originalDraft?: string,
+    originalComposition?: Composition,
     expiry = now() + 60_000,
     commandId = identity(),
   ) {
@@ -734,21 +785,21 @@ export function createAssistant(
         expiresAtMs: expiry,
         input,
       },
-      ...(originalDraft === undefined ? {} : { draft: originalDraft }),
+      ...(originalComposition === undefined
+        ? {}
+        : { composition: originalComposition }),
     });
     await retry(id);
   }
   async function prompt(policy: "queue_next" | "steer" = "queue_next") {
     if (!state.selected && policy === "queue_next") return firstPrompt();
-    if (
-      !(policy === "steer" ? canSteer.value : canSend.value) ||
-      !draft.value.trim()
-    )
-      return;
+    const original = composition(),
+      text = composePrompt(original);
+    if (!(policy === "steer" ? canSteer.value : canSend.value) || !text) return;
     await send(
       {
         type: "prompt",
-        text: draft.value.trim(),
+        text,
         policy,
         ...(policy === "queue_next" && state.history.has(state.selected)
           ? { history: state.history.get(state.selected)! }
@@ -757,7 +808,7 @@ export function createAssistant(
           ? { targetRunId: active.value!.dispatch!.nativeRunId! }
           : {}),
       },
-      draft.value,
+      original,
     );
   }
   async function cancel() {
@@ -947,6 +998,12 @@ export function createAssistant(
     refreshConnections,
     view,
     draft,
+    context,
+    promptPreview,
+    compositionError,
+    stageContext,
+    removeContext,
+    validateContexts,
     busy,
     active,
     canSend,

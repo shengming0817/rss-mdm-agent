@@ -4,6 +4,20 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 export const sha256 = (value) =>
   createHash("sha256").update(value).digest("hex");
+export function waitForAppearance(readSnapshot, preferences, wait) {
+  const materialEnabled =
+    !preferences.reduceTransparency &&
+    !preferences.reducedMotion &&
+    !preferences.highContrast;
+  return wait(async () => {
+    const snapshot = await readSnapshot();
+    return snapshot.materialEnabled === materialEnabled &&
+      snapshot.reducedMotion === preferences.reducedMotion &&
+      snapshot.highContrast === preferences.highContrast
+      ? snapshot
+      : false;
+  });
+}
 export function sourceEvidence(root) {
   const git = (...args) =>
     execFileSync("/usr/bin/git", args, { cwd: root, encoding: "utf8" }).trim();

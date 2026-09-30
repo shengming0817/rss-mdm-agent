@@ -7,7 +7,15 @@ const dialog = ref<HTMLDialogElement>();
 // ref: WAI-ARIA APG dialog-modal keyboard interaction. WebKit's native Tab
 // sequence depends on macOS keyboard settings; keep this modal sequence explicit.
 function keys(event: KeyboardEvent) {
-  if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey)
+  if (
+    event.defaultPrevented ||
+    (event.target instanceof HTMLElement &&
+      event.target.closest("dialog") !== dialog.value) ||
+    event.key !== "Tab" ||
+    event.altKey ||
+    event.ctrlKey ||
+    event.metaKey
+  )
     return;
   const controls = [
     ...(dialog.value?.querySelectorAll<HTMLElement>(
@@ -32,6 +40,7 @@ function keys(event: KeyboardEvent) {
 }
 onMounted(() => {
   dialog.value?.showModal();
+  dialog.value?.querySelector<HTMLElement>("[autofocus]")?.focus();
 });
 onBeforeUnmount(() => {
   dialog.value?.close();
