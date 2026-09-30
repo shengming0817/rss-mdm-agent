@@ -335,161 +335,174 @@ async fn handler(
     {
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    let value: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    let value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
     if path.ends_with("/registrations") {
-        let operation = Uuid::parse_str(value["operationId"].as_str().unwrap()).unwrap();
-        if d.operation.is_some_and(|old| old != operation) {
-            return StatusCode::CONFLICT.into_response();
-        }
-        d.operation = Some(operation);
-        if std::mem::take(&mut d.registration_failure) {
-            return StatusCode::SERVICE_UNAVAILABLE.into_response();
-        }
-        return (StatusCode::CREATED,axum::Json(json!({"wireVersion":4,"operationId":operation,"deviceId":"device-1","registrationId":d.registration,"generation":1,"source":"agent.builtin","epoch":d.epoch,"capabilities":value["capabilities"]}))).into_response();
-    }
-    if path.ends_with("/reports") {
-        let id = value["reportId"].as_str().unwrap().to_owned();
-        if let Some(old) = d.reports.get(&id) {
-            if old != &value {
-                return StatusCode::CONFLICT.into_response();
-            }
-        }
-        d.reports.insert(id.clone(), value);
-        if std::mem::take(&mut d.report_failure) {
-            return StatusCode::SERVICE_UNAVAILABLE.into_response();
-        }
-        return (StatusCode::ACCEPTED,axum::Json(json!({"wireVersion":4,"reportId":if d.bad_ack{Uuid::new_v4().to_string()}else{id},"receivedAt":1,"intake":"durable"}))).into_response();
-    }
-    if path.ends_with("/claim") {
-        let op = value["operationId"].as_str().unwrap().to_owned();
-        d.claim_ops.push(op.clone());
-        let signed = if let Some(old) = d.claims.get(&op) {
-            if old.payload.expires_at() <= d.time.now().unwrap() {
-                return StatusCode::CONFLICT.into_response();
-            }
-            old.clone()
-        } else {
-            if d.offer
-                .as_ref()
-                .is_none_or(|v| v.payload.expires_at() <= d.time.now().unwrap())
-            {
-                d.script();
-            }
-            let signed = d.offer.clone().unwrap();
-            d.claims.insert(op, signed.clone());
-            signed
-        };
-        if std::mem::take(&mut d.claim_failure) {
-            return StatusCode::SERVICE_UNAVAILABLE.into_response();
-        }
-        return axum::Json(TaskClaimResponse::new(Some(signed), vec![]).unwrap()).into_response();
-    }
-    if path.ends_with("/events") {
-        let request: TaskEventRequest = serde_json::from_value(value.clone()).unwrap();
-        if request.attempt_id() != d.attempt {
-            return StatusCode::CONFLICT.into_response();
-        }
-        let operation = request.operation_id().to_string();
-        match request.event() {
-            TaskEvent::Received => {
-                d.received = true;
-                axum::Json(TaskEventAck::new(None, false)).into_response()
-            }
-            TaskEvent::Start => {
-                d.started = true;
-                d.start_ops.push(operation);
-                if d.start_permit.is_none() {
-                    let mut payload = d.offer.as_ref().unwrap().payload.clone();
-                    let expiry = d.time.now().unwrap() + 15;
-                    match &mut payload {
-                        TaskPayload::Script(v) => {
-                            v.permit = TaskPermit::Start;
-                            v.expires_at = expiry;
-                        }
-                        TaskPayload::Software(v) => {
-                            v.permit = TaskPermit::Start;
-                            v.expires_at = expiry;
-                        }
-                        _ => unreachable!(),
-                    }
-                    d.start_permit = Some(d.signed(payload));
-                }
-                if std::mem::take(&mut d.start_failure) {
-                    return StatusCode::SERVICE_UNAVAILABLE.into_response();
-                }
-                let mut signed = d.start_permit.clone().unwrap();
-                if d.forged_start {
-                    let mut payload = signed.payload.clone();
-                    if let TaskPayload::Script(v) = &mut payload {
-                        v.arguments.push("changed".into());
-                    }
-                    signed = d.signed(payload);
-                }
-                axum::Json(TaskEventAck::new(Some(signed), false)).into_response()
-            }
-            _ => {
-                d.result_calls += 1;
-                if d.results.values().any(|old| old != &value) {
-                    return StatusCode::CONFLICT.into_response();
-                }
-                d.results.insert(operation, value);
-                if std::mem::take(&mut d.result_failure) {
-                    return StatusCode::SERVICE_UNAVAILABLE.into_response();
-                }
-                if let Some(hook) = d.result_hook.take() {
-                    hook();
-                }
-                axum::Json(TaskEventAck::new(None, false)).into_response()
-            }
-        }
+        registration_response(&mut d, value)
+    } else if path.ends_with("/reports") {
+        report_response(&mut d, value)
+    } else if path.ends_with("/claim") {
+        claim_response(&mut d, value)
+    } else if path.ends_with("/events") {
+        event_response(&mut d, value)
     } else if path.ends_with("/content") {
-        let range = headers
-            .get("range")
-            .and_then(|v| v.to_str().ok())
-            .map(str::to_owned);
-        d.content_calls.push(range.clone());
-        if std::mem::take(&mut d.content_failure) {
-            return StatusCode::SERVICE_UNAVAILABLE.into_response();
-        }
-        let start = if d.range_ignored {
-            0
-        } else {
-            range
-                .as_deref()
-                .and_then(|v| v.strip_prefix("bytes="))
-                .and_then(|v| v.strip_suffix('-'))
-                .and_then(|v| v.parse::<usize>().ok())
-                .unwrap_or(0)
-        };
-        if start >= d.bytes.len() {
-            return StatusCode::RANGE_NOT_SATISFIABLE.into_response();
-        }
-        let etag = if d.bad_etag {
-            "\"wrong\"".into()
-        } else {
-            format!("\"{:x}\"", Sha256::digest(&d.bytes))
-        };
-        let mut response = Response::builder()
-            .status(if start > 0 { 206 } else { 200 })
-            .header("content-length", d.bytes.len() - start)
-            .header("etag", etag);
-        if start > 0 {
-            response = response.header(
-                "content-range",
-                format!(
-                    "bytes {}-{}/{}",
-                    if d.bad_range { start + 1 } else { start },
-                    d.bytes.len() - 1,
-                    d.bytes.len()
-                ),
-            );
-        }
-        response
-            .body(Body::from(d.bytes[start..].to_vec()))
-            .unwrap()
+        content_response(&mut d, headers)
     } else {
         StatusCode::NOT_FOUND.into_response()
     }
+}
+fn registration_response(d: &mut Data, value: Value) -> Response {
+    let operation = Uuid::parse_str(value["operationId"].as_str().unwrap()).unwrap();
+    if d.operation.is_some_and(|old| old != operation) {
+        return StatusCode::CONFLICT.into_response();
+    }
+    d.operation = Some(operation);
+    if std::mem::take(&mut d.registration_failure) {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
+    (StatusCode::CREATED,axum::Json(json!({"wireVersion":4,"operationId":operation,"deviceId":"device-1","registrationId":d.registration,"generation":1,"source":"agent.builtin","epoch":d.epoch,"capabilities":value["capabilities"]}))).into_response()
+}
+fn report_response(d: &mut Data, value: Value) -> Response {
+    let id = value["reportId"].as_str().unwrap().to_owned();
+    if let Some(old) = d.reports.get(&id) {
+        if old != &value {
+            return StatusCode::CONFLICT.into_response();
+        }
+    }
+    d.reports.insert(id.clone(), value);
+    if std::mem::take(&mut d.report_failure) {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
+    (StatusCode::ACCEPTED,axum::Json(json!({"wireVersion":4,"reportId":if d.bad_ack{Uuid::new_v4().to_string()}else{id},"receivedAt":1,"intake":"durable"}))).into_response()
+}
+fn claim_response(d: &mut Data, value: Value) -> Response {
+    let op = value["operationId"].as_str().unwrap().to_owned();
+    d.claim_ops.push(op.clone());
+    let signed = if let Some(old) = d.claims.get(&op) {
+        if old.payload.expires_at() <= d.time.now().unwrap() {
+            return StatusCode::CONFLICT.into_response();
+        }
+        old.clone()
+    } else {
+        if d.offer
+            .as_ref()
+            .is_none_or(|v| v.payload.expires_at() <= d.time.now().unwrap())
+        {
+            d.script();
+        }
+        let signed = d.offer.clone().unwrap();
+        d.claims.insert(op, signed.clone());
+        signed
+    };
+    if std::mem::take(&mut d.claim_failure) {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
+    axum::Json(TaskClaimResponse::new(Some(signed), vec![]).unwrap()).into_response()
+}
+fn event_response(d: &mut Data, value: Value) -> Response {
+    let request: TaskEventRequest = serde_json::from_value(value.clone()).unwrap();
+    if request.attempt_id() != d.attempt {
+        return StatusCode::CONFLICT.into_response();
+    }
+    let operation = request.operation_id().to_string();
+    match request.event() {
+        TaskEvent::Received => {
+            d.received = true;
+            axum::Json(TaskEventAck::new(None, false)).into_response()
+        }
+        TaskEvent::Start => start_event(d, operation),
+        _ => {
+            d.result_calls += 1;
+            if d.results.values().any(|old| old != &value) {
+                return StatusCode::CONFLICT.into_response();
+            }
+            d.results.insert(operation, value);
+            if std::mem::take(&mut d.result_failure) {
+                return StatusCode::SERVICE_UNAVAILABLE.into_response();
+            }
+            if let Some(hook) = d.result_hook.take() {
+                hook();
+            }
+            axum::Json(TaskEventAck::new(None, false)).into_response()
+        }
+    }
+}
+fn start_event(d: &mut Data, operation: String) -> Response {
+    d.started = true;
+    d.start_ops.push(operation);
+    if d.start_permit.is_none() {
+        let mut payload = d.offer.as_ref().unwrap().payload.clone();
+        let expiry = d.time.now().unwrap() + 15;
+        match &mut payload {
+            TaskPayload::Script(v) => {
+                v.permit = TaskPermit::Start;
+                v.expires_at = expiry;
+            }
+            TaskPayload::Software(v) => {
+                v.permit = TaskPermit::Start;
+                v.expires_at = expiry;
+            }
+            _ => unreachable!(),
+        }
+        d.start_permit = Some(d.signed(payload));
+    }
+    if std::mem::take(&mut d.start_failure) {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
+    let mut signed = d.start_permit.clone().unwrap();
+    if d.forged_start {
+        let mut payload = signed.payload.clone();
+        if let TaskPayload::Script(v) = &mut payload {
+            v.arguments.push("changed".into());
+        }
+        signed = d.signed(payload);
+    }
+    axum::Json(TaskEventAck::new(Some(signed), false)).into_response()
+}
+fn content_response(d: &mut Data, headers: HeaderMap) -> Response {
+    let range = headers
+        .get("range")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    d.content_calls.push(range.clone());
+    if std::mem::take(&mut d.content_failure) {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
+    let start = if d.range_ignored {
+        0
+    } else {
+        range
+            .as_deref()
+            .and_then(|v| v.strip_prefix("bytes="))
+            .and_then(|v| v.strip_suffix('-'))
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(0)
+    };
+    if start >= d.bytes.len() {
+        return StatusCode::RANGE_NOT_SATISFIABLE.into_response();
+    }
+    let etag = if d.bad_etag {
+        "\"wrong\"".into()
+    } else {
+        format!("\"{:x}\"", Sha256::digest(&d.bytes))
+    };
+    let mut response = Response::builder()
+        .status(if start > 0 { 206 } else { 200 })
+        .header("content-length", d.bytes.len() - start)
+        .header("etag", etag);
+    if start > 0 {
+        response = response.header(
+            "content-range",
+            format!(
+                "bytes {}-{}/{}",
+                if d.bad_range { start + 1 } else { start },
+                d.bytes.len() - 1,
+                d.bytes.len()
+            ),
+        );
+    }
+    response
+        .body(Body::from(d.bytes[start..].to_vec()))
+        .unwrap()
 }
 
 pub mod execution;

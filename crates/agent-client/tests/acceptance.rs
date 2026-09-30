@@ -264,17 +264,8 @@ async fn no_process_terminal(cancel: bool) {
             .await
             .unwrap();
     }
-    let data = server.data.lock().unwrap();
-    let result = data.results.values().next().unwrap();
-    if cancel {
-        assert_eq!(result["event"]["kind"], "cancelled");
-        assert_eq!(runner.dispatch_count(), 0);
-    } else {
-        assert_eq!(result["event"]["kind"], "result");
-        assert_eq!(result["event"]["quality"], "failed");
-        assert_eq!(result["event"]["diagnostics"]["failure"], "launch_failed");
-    }
-    drop(data);
+    assert_no_process_result(&server, cancel, runner.dispatch_count());
+
     bridge
         .finish(&mut client, offer.task_id(), &app, &caller)
         .unwrap();
@@ -549,44 +540,17 @@ async fn exercise_bridge(software: bool) {
         AppConfig::test_defaults(1),
     )
     .unwrap();
-    host.state.lock().unwrap().accesses = Some(vec![execution_sqlite::Access::RunnerFact]);
-    assert_eq!(
-        bridge
-            .flush(&mut client, offer.task_id(), &mut app, 1)
-            .await,
-        Err(Error::Denied)
-    );
-    assert_eq!(server.data.lock().unwrap().result_calls, 1);
-    host.state.lock().unwrap().accesses = Some(vec![execution_sqlite::Access::Deliver]);
-    assert_eq!(
-        bridge
-            .flush(&mut client, offer.task_id(), &mut app, 1)
-            .await,
-        Err(Error::Denied)
-    );
-    assert_eq!(server.data.lock().unwrap().result_calls, 1);
-    host.state.lock().unwrap().accesses = None;
-    assert_eq!(
-        bridge
-            .flush(&mut client, offer.task_id(), &mut app, 1)
-            .await
-            .unwrap(),
-        1
-    );
+    check_frozen_delivery_permissions(
+        &server,
+        &host,
+        &bridge,
+        &mut client,
+        &mut app,
+        offer.task_id(),
+    )
+    .await;
     assert_eq!(runner.inner.dispatch_count(), 1);
-    assert_eq!(
-        bridge
-            .flush(&mut client, offer.task_id(), &mut app, 1)
-            .await
-            .unwrap(),
-        0
-    );
-    for _ in 0..32 {
-        bridge
-            .flush(&mut client, offer.task_id(), &mut app, 1)
-            .await
-            .unwrap();
-    }
+    drain_delivery(&bridge, &mut client, &mut app, offer.task_id()).await;
     assert!(app
         .service_delivery(
             &plan.spec().request.request_id,
@@ -598,25 +562,7 @@ async fn exercise_bridge(software: bool) {
     bridge
         .finish(&mut client, offer.task_id(), &app, &caller)
         .unwrap();
-    let data = server.data.lock().unwrap();
-    assert_eq!(data.results.len(), 1);
-    let result = data.results.values().next().unwrap();
-    assert!(!result.to_string().contains("secret-canary"));
-    if software {
-        assert_eq!(result["event"]["kind"], "software_result");
-        assert_eq!(result["event"]["detection"], "present");
-        assert_eq!(result["event"]["observedVersion"], "1.0");
-        let TaskPayload::Software(spec) = offer.payload() else {
-            panic!()
-        };
-        assert_eq!(
-            result["event"]["definitionDigest"],
-            serde_json::to_value(spec.definition_digest).unwrap()
-        );
-    } else {
-        assert_eq!(result["event"]["kind"], "result");
-        assert_eq!(result["event"]["output"]["ok"], true);
-    }
+    assert_bridge_result(&server, &offer, software);
 }
 #[tokio::test]
 async fn script_bridge_recovers_without_dispatch_and_retries_only_confirmation() {
@@ -958,4 +904,70 @@ fn configuration_rejects_untrusted_network_and_unbounded_budgets() {
     assert!(cfg.validate().is_ok());
     cfg.limits.cache_bytes = 0;
     assert_eq!(cfg.validate(), Err(Error::Configuration));
+}
+
+fn assert_no_process_result(server: &Server, cancel: bool, dispatch_count: usize) {
+    let data = server.data.lock().unwrap();
+    let result = data.results.values().next().unwrap();
+    if cancel {
+        assert_eq!(result["event"]["kind"], "cancelled");
+        assert_eq!(dispatch_count, 0);
+    } else {
+        assert_eq!(result["event"]["kind"], "result");
+        assert_eq!(result["event"]["quality"], "failed");
+        assert_eq!(result["event"]["diagnostics"]["failure"], "launch_failed");
+    }
+    drop(data);
+}
+
+fn assert_bridge_result(server: &Server, offer: &agent_client::Offer, software: bool) {
+    let data = server.data.lock().unwrap();
+    assert_eq!(data.results.len(), 1);
+    let result = data.results.values().next().unwrap();
+    assert!(!result.to_string().contains("secret-canary"));
+    if software {
+        assert_eq!(result["event"]["kind"], "software_result");
+        assert_eq!(result["event"]["detection"], "present");
+        assert_eq!(result["event"]["observedVersion"], "1.0");
+        let TaskPayload::Software(spec) = offer.payload() else {
+            panic!()
+        };
+        assert_eq!(
+            result["event"]["definitionDigest"],
+            serde_json::to_value(spec.definition_digest).unwrap()
+        );
+    } else {
+        assert_eq!(result["event"]["kind"], "result");
+        assert_eq!(result["event"]["output"]["ok"], true);
+    }
+}
+
+async fn check_frozen_delivery_permissions(
+    server: &Server,
+    host: &local::TestHost,
+    bridge: &ExecutionBridge<FixtureOutput>,
+    client: &mut Client<Secrets, Time>,
+    app: &mut execution_app::ExecutionApp<local::TestHost, CapturingRunner>,
+    task: Uuid,
+) {
+    host.state.lock().unwrap().accesses = Some(vec![execution_sqlite::Access::RunnerFact]);
+    assert_eq!(bridge.flush(client, task, app, 1).await, Err(Error::Denied));
+    assert_eq!(server.data.lock().unwrap().result_calls, 1);
+    host.state.lock().unwrap().accesses = Some(vec![execution_sqlite::Access::Deliver]);
+    assert_eq!(bridge.flush(client, task, app, 1).await, Err(Error::Denied));
+    assert_eq!(server.data.lock().unwrap().result_calls, 1);
+    host.state.lock().unwrap().accesses = None;
+    assert_eq!(bridge.flush(client, task, app, 1).await.unwrap(), 1);
+    assert_eq!(bridge.flush(client, task, app, 1).await.unwrap(), 0);
+}
+
+async fn drain_delivery<R: execution_app::RunnerPort>(
+    bridge: &ExecutionBridge<FixtureOutput>,
+    client: &mut Client<Secrets, Time>,
+    app: &mut execution_app::ExecutionApp<local::TestHost, R>,
+    task: Uuid,
+) {
+    for _ in 0..32 {
+        bridge.flush(client, task, app, 1).await.unwrap();
+    }
 }
