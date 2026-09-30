@@ -103,6 +103,11 @@ pub struct Data {
     pub start_ops: Vec<String>,
     pub forged_start: bool,
     pub start_permit: Option<SignedTask>,
+    pub result_calls: usize,
+    pub result_hook: Option<Arc<dyn Fn() + Send + Sync>>,
+    pub claim_failure: bool,
+    pub claim_ops: Vec<String>,
+    pub claims: BTreeMap<String, SignedTask>,
 }
 impl Data {
     pub fn signed(&self, payload: TaskPayload) -> SignedTask {
@@ -248,6 +253,11 @@ impl Server {
             start_ops: vec![],
             forged_start: false,
             start_permit: None,
+            result_calls: 0,
+            result_hook: None,
+            claim_failure: false,
+            claim_ops: vec![],
+            claims: BTreeMap::new(),
         }));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = url::Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
@@ -351,11 +361,28 @@ async fn handler(
         return (StatusCode::ACCEPTED,axum::Json(json!({"wireVersion":4,"reportId":if d.bad_ack{Uuid::new_v4().to_string()}else{id},"receivedAt":1,"intake":"durable"}))).into_response();
     }
     if path.ends_with("/claim") {
-        if d.offer.is_none() {
-            d.script();
+        let op = value["operationId"].as_str().unwrap().to_owned();
+        d.claim_ops.push(op.clone());
+        let signed = if let Some(old) = d.claims.get(&op) {
+            if old.payload.expires_at() <= d.time.now().unwrap() {
+                return StatusCode::CONFLICT.into_response();
+            }
+            old.clone()
+        } else {
+            if d.offer
+                .as_ref()
+                .is_none_or(|v| v.payload.expires_at() <= d.time.now().unwrap())
+            {
+                d.script();
+            }
+            let signed = d.offer.clone().unwrap();
+            d.claims.insert(op, signed.clone());
+            signed
+        };
+        if std::mem::take(&mut d.claim_failure) {
+            return StatusCode::SERVICE_UNAVAILABLE.into_response();
         }
-        return axum::Json(TaskClaimResponse::new(d.offer.clone(), vec![]).unwrap())
-            .into_response();
+        return axum::Json(TaskClaimResponse::new(Some(signed), vec![]).unwrap()).into_response();
     }
     if path.ends_with("/events") {
         let request: TaskEventRequest = serde_json::from_value(value.clone()).unwrap();
@@ -401,12 +428,16 @@ async fn handler(
                 axum::Json(TaskEventAck::new(Some(signed), false)).into_response()
             }
             _ => {
+                d.result_calls += 1;
                 if d.results.values().any(|old| old != &value) {
                     return StatusCode::CONFLICT.into_response();
                 }
                 d.results.insert(operation, value);
                 if std::mem::take(&mut d.result_failure) {
                     return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                }
+                if let Some(hook) = d.result_hook.take() {
+                    hook();
                 }
                 axum::Json(TaskEventAck::new(None, false)).into_response()
             }

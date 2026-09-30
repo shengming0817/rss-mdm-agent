@@ -37,6 +37,15 @@ pub enum OpenOutcome {
     },
 }
 impl Store {
+    /// Device-owner lookup, fenced by the exact current journal format and authority.
+    pub fn contains_request(&self, request: &execution_contract::RequestId) -> Result<bool, Error> {
+        ensure_current(&self.conn, &self.authority, self.limits)?;
+        Ok(self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM executions WHERE request_id=?1)",
+            [request.as_str()],
+            |r| r.get(0),
+        )?)
+    }
     /// Explicit S1 bootstrap into a precreated private directory. Existing files are never
     /// overwritten. Local/enterprise authority bootstrap requires a later product adapter.
     pub fn initialize_test(

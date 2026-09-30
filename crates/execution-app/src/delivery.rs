@@ -4,6 +4,21 @@ use execution_interaction::{Command, Interaction, Kind, Reference, Spec};
 use execution_sqlite::{AuditRecord, ExecutionAccess, OperationRequestId, Receipt, Scope};
 
 impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
+    /// Trusted device-owner presence lookup for an unsubmitted remote task. This is not
+    /// exposed to UI/AI and absence is meaningful only in this bound authoritative journal.
+    pub fn has_service_execution(
+        &self,
+        request: &RequestId,
+        device: &execution_contract::DeviceId,
+    ) -> Result<bool, Error> {
+        if self.host.service_binding()? != self.binding {
+            return Err(Error::Unbound);
+        }
+        if &self.binding.device != device {
+            return Err(Error::Denied);
+        }
+        Ok(self.store.contains_request(request)?)
+    }
     /// Device-owner delivery with independent evidence permission. Not a UI/AI endpoint.
     pub fn service_delivery(
         &self,

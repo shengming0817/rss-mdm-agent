@@ -74,6 +74,21 @@ struct Enrollment {
     capabilities: Vec<wire::Capability>,
     fingerprint: String,
 }
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ClaimState {
+    operation: Uuid,
+    recover_until: i64,
+}
+/// Fully recovered protocol wrappers; the offer is historical and never grants launch.
+pub struct ResumedStart {
+    /// Original immutable offer, used for trusted host adaptation.
+    pub offer: Offer,
+    /// Current verified replay of the original Start permit.
+    pub start: Start,
+    /// Locked, reverified complete cached materials; recovery never downloads new bytes.
+    pub materials: Materials,
+}
 /// Explicitly driven V4 client; SQLite transactions never cross HTTP awaits.
 /// A private-root lease permits one driving owner, with no hidden workers.
 pub struct Client<S, C> {
@@ -376,23 +391,29 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
     /// Receive one offer and cancellation page. Expired offers use a new claim operation.
     pub async fn claim(&mut self) -> Result<Claim, Error> {
         let now = self.now()?;
-        if self
-            .store
-            .get::<i64>("claim-expiry")?
-            .is_some_and(|v| now >= v)
-        {
+        let mut state = self.store.get::<ClaimState>("claim")?;
+        if state.as_ref().is_some_and(|v| now >= v.recover_until) {
             self.store
                 .conn
-                .execute("DELETE FROM state WHERE key IN('claim','claim-expiry')", [])?;
+                .execute("DELETE FROM state WHERE key='claim'", [])?;
+            state = None;
         }
-        let operation = match self.store.get::<Uuid>("claim")? {
-            Some(id) => id,
+        let state = match state {
+            Some(state) => state,
             None => {
-                let id = Uuid::new_v4();
-                self.store.put("claim", &id)?;
-                id
+                let grace = i64::try_from(self.store.cfg.limits.request_timeout.as_secs())
+                    .map_err(|_| Error::Configuration)?
+                    .checked_add(60)
+                    .ok_or(Error::Clock)?;
+                let state = ClaimState {
+                    operation: Uuid::new_v4(),
+                    recover_until: now.checked_add(grace).ok_or(Error::Clock)?,
+                };
+                self.store.put("claim", &state)?;
+                state
             }
         };
+        let operation = state.operation;
         let body = encode(&wire::TaskClaimRequest::new(operation)?)?;
         let result: wire::TaskClaimResponse = self
             .json(Method::POST, "tasks/claim", Some(&body), true)
@@ -424,13 +445,18 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
                 "INSERT INTO tasks VALUES(?1,?2) ON CONFLICT(id) DO UPDATE SET body=excluded.body",
                 params![task, encode(&signed)?],
             )?;
-            self.store
-                .put("claim-expiry", &signed.payload.expires_at())?;
+            self.store.put(
+                "claim",
+                &ClaimState {
+                    operation,
+                    recover_until: signed.payload.expires_at(),
+                },
+            )?;
             Some(Offer { signed })
         } else {
             self.store
                 .conn
-                .execute("DELETE FROM state WHERE key IN('claim','claim-expiry')", [])?;
+                .execute("DELETE FROM state WHERE key='claim'", [])?;
             None
         };
         Ok(Claim {
@@ -438,12 +464,42 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
             cancellations,
         })
     }
-    /// Recover an offer from protected state; signature and current context are rechecked.
-    pub fn offer(&self, task: Uuid) -> Result<Offer, Error> {
+    pub(crate) fn stored_offer(&self, task: Uuid) -> Result<Offer, Error> {
         let body:Vec<u8>=self.store.conn.query_row("SELECT CASE WHEN typeof(body)='blob' AND length(body)<=16777216 THEN body END FROM tasks WHERE id=?1",[task.to_string()],|r|r.get(0))?;
-        let signed = decode(&body)?;
-        self.verify(&signed, wire::TaskPermit::Offer)?;
+        let signed: wire::SignedTask = decode(&body)?;
+        if signed.payload.task_id() != task {
+            return Err(Error::Storage);
+        }
         Ok(Offer { signed })
+    }
+    /// Recover a current offer; expiry is never ignored for a new Start or download.
+    pub fn offer(&self, task: Uuid) -> Result<Offer, Error> {
+        let offer = self.stored_offer(task)?;
+        self.verify(&offer.signed, wire::TaskPermit::Offer)?;
+        Ok(offer)
+    }
+    /// Recover a previously frozen Start after a real process restart. Missing materials
+    /// fail closed; only the original operation is replayed and Start expiry is rechecked.
+    pub async fn recover_start(&mut self, task: Uuid) -> Result<ResumedStart, Error> {
+        self.active()?;
+        self.now()?;
+        let offer = self.stored_offer(task)?;
+        let key = format!("start/{}/{}", task, offer.attempt_id());
+        let pending: bool = self.store.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM requests WHERE key=?1)",
+            [key],
+            |r| r.get(0),
+        )?;
+        if !pending {
+            return Err(Error::Conflict);
+        }
+        let materials = self.recover_materials(&offer)?;
+        let start = self.start_inner(&offer, &materials).await?;
+        Ok(ResumedStart {
+            offer,
+            start,
+            materials,
+        })
     }
     pub(crate) fn event_request(
         &self,
@@ -583,7 +639,25 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
     }
     /// Revalidate a short-lived permit immediately before the bridge submits to local admission.
     pub fn validate_start(&self, start: &Start) -> Result<(), Error> {
-        self.verify(&start.signed, wire::TaskPermit::Start)
+        self.verify(&start.signed, wire::TaskPermit::Start)?;
+        let key = format!(
+            "start/{}/{}",
+            start.payload().task_id(),
+            start.payload().attempt_id()
+        );
+        let accepted: bool = self.store.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM requests WHERE key=?1 AND accepted=1)",
+            [key],
+            |r| r.get(0),
+        )?;
+        if !accepted {
+            return Err(Error::Conflict);
+        }
+        let offer = self.stored_offer(start.payload().task_id())?;
+        if !accepted || !same_input(offer.payload(), start.payload()) {
+            return Err(Error::Conflict);
+        }
+        Ok(())
     }
     /// Release completed transport/cache associations only after the host has settled delivery.
     pub(crate) fn release(&self, task: Uuid) -> Result<(), Error> {
@@ -591,7 +665,7 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
         tx.execute("DELETE FROM requests WHERE task=?1", [task.to_string()])?;
         tx.execute("DELETE FROM cache_refs WHERE task=?1", [task.to_string()])?;
         tx.execute("DELETE FROM tasks WHERE id=?1", [task.to_string()])?;
-        tx.execute("DELETE FROM state WHERE key IN('claim','claim-expiry')", [])?;
+        tx.execute("DELETE FROM state WHERE key='claim'", [])?;
         tx.commit()?;
         Ok(())
     }

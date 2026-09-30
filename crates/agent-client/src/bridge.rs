@@ -187,6 +187,54 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         client.store.put(&key, &binding)?;
         Ok(status)
     }
+    /// Settle an offer that never entered this authoritative journal. Cancellation ACK
+    /// precedes releasing associations; any existing local execution remains journal-owned.
+    pub async fn abandon<S: SecretProvider, C: Clock, H: AppHost, R: RunnerPort>(
+        &self,
+        client: &mut Client<S, C>,
+        task: Uuid,
+        app: &ExecutionApp<H, R>,
+    ) -> Result<(), Error> {
+        let offer = client.stored_offer(task)?;
+        let request = offer.request_id()?;
+        let device = execution_contract::DeviceId::new(client.registration()?.device_id)
+            .map_err(|_| Error::Unsupported)?;
+        if client
+            .store
+            .get::<Binding>(&format!("binding/{task}"))?
+            .is_some()
+            || app.has_service_execution(&request, &device)?
+        {
+            return Err(Error::Conflict);
+        }
+        let key = format!("abandon/{task}/{}", offer.attempt_id());
+        let event = client.event_request(
+            &key,
+            task,
+            offer.attempt_id(),
+            wire::TaskEvent::Cancelled,
+            None,
+        )?;
+        let accepted: bool = client.store.conn.query_row(
+            "SELECT accepted FROM requests WHERE key=?1",
+            [&key],
+            |r| r.get(0),
+        )?;
+        if !accepted {
+            let ack = client.send_event(task, &event).await?;
+            if ack.permit().is_some() {
+                return Err(Error::Protocol);
+            }
+            client
+                .store
+                .conn
+                .execute("UPDATE requests SET accepted=1 WHERE key=?1", [key])?;
+        }
+        if app.has_service_execution(&request, &device)? {
+            return Err(Error::Conflict);
+        }
+        client.release(task)
+    }
     /// Reconcile one exact cancellation against its existing journal; absence never proves stop.
     pub fn cancel<S: SecretProvider, C: Clock, H: AppHost, R: RunnerPort>(
         &self,
@@ -246,10 +294,11 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
                 return Err(Error::Conflict);
             }
             let candidate = items.iter().rev().find(|v| {
-                v.receipt.attempt_id == binding.local_attempt
-                    && v.process
-                        .as_ref()
-                        .is_some_and(|p| p.finished && p.quiescent)
+                v.current_attempt == binding.local_attempt
+                    && (v.terminal.is_some()
+                        || v.process
+                            .as_ref()
+                            .is_some_and(|p| p.finished && p.quiescent))
             });
             let Some(candidate) = candidate else {
                 return Ok(0);
@@ -280,6 +329,8 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
             return Err(Error::Conflict);
         }
         if !accepted {
+            // Frozen bytes never bypass current delivery/evidence grants on a new send.
+            app.service_delivery(&binding.request, &self.consumer, 1)?;
             let ack = client.send_event(task, &request).await?;
             if ack.permit().is_some() {
                 return Err(Error::Protocol);
@@ -309,6 +360,41 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         payload: &wire::TaskPayload,
         evidence: &execution_sqlite::DeliveryEvidence,
     ) -> Result<Option<wire::TaskEvent>, Error> {
+        if let Some(terminal) = evidence.terminal {
+            if terminal == execution_sqlite::DeliveryTerminal::Cancelled {
+                return Ok(Some(wire::TaskEvent::Cancelled));
+            }
+            let diagnostics = wire::TaskDiagnostics::new(
+                String::new(),
+                String::new(),
+                0,
+                i64::try_from(evidence.observed_at_unix_ms / 1000)
+                    .map_err(|_| Error::Clock)?
+                    .max(1),
+                Some(wire::TaskFailure::LaunchFailed),
+            )?;
+            return Ok(Some(match payload {
+                wire::TaskPayload::Script(_) => wire::TaskEvent::Result(wire::TaskResult::new(
+                    None,
+                    wire::OutputQuality::Failed,
+                    serde_json::Value::Null,
+                    diagnostics,
+                )?),
+                wire::TaskPayload::Software(spec) => {
+                    wire::TaskEvent::SoftwareResult(wire::SoftwareTaskResult {
+                        intent: spec.intent,
+                        installer_exit_code: None,
+                        detection: wire::SoftwareDetectionState::Unknown,
+                        definition_digest: spec.definition_digest,
+                        observed_version: None,
+                        evidence_digest: [0; 32],
+                        reboot_required: false,
+                        diagnostics,
+                    })
+                }
+                _ => return Err(Error::Unsupported),
+            }));
+        }
         let Some(process) = evidence.process.as_ref() else {
             return Ok(None);
         };
@@ -336,7 +422,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
             bound(stdout.clone()),
             bound(stderr),
             0,
-            i64::try_from(evidence.receipt.occurred_at_unix_ms / 1000)
+            i64::try_from(evidence.observed_at_unix_ms / 1000)
                 .map_err(|_| Error::Clock)?
                 .max(1),
             failure,
@@ -385,7 +471,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
                     detection,
                     definition_digest: spec.definition_digest,
                     observed_version: version,
-                    evidence_digest: Sha256::digest(encode(software)?).into(),
+                    evidence_digest: Sha256::digest(encode(software.as_ref())?).into(),
                     reboot_required: software.restart_required,
                     diagnostics,
                 };
@@ -411,6 +497,17 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
             return Err(Error::Denied);
         }
         let status = app.status(caller, &binding.request)?;
+        if status.phase == TaskPhase::Verified
+            && !matches!(
+                status.assessment,
+                Some(
+                    execution_lifecycle::EffectAssessment::Satisfied
+                        | execution_lifecycle::EffectAssessment::NoEffect
+                )
+            )
+        {
+            return Err(Error::Conflict);
+        }
         if !matches!(
             status.phase,
             TaskPhase::Verified | TaskPhase::Cancelled | TaskPhase::FailedBeforeDispatch

@@ -5,6 +5,229 @@ use uuid::Uuid;
 mod support;
 
 #[tokio::test]
+async fn expired_lost_claim_recovers_after_restart_with_new_operation() {
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    server.data.lock().unwrap().claim_failure = true;
+    assert!(matches!(client.claim().await, Err(Error::Unavailable)));
+    drop(client);
+    server.time.set(72);
+    let mut client = server.client(&root, OpenMode::Existing);
+    let offer = client.claim().await.unwrap().offer.unwrap();
+    assert_eq!(offer.payload().expires_at(), 132);
+    let ops = server.data.lock().unwrap().claim_ops.clone();
+    assert_eq!(ops.len(), 2);
+    assert_ne!(ops[0], ops[1]);
+}
+#[tokio::test]
+async fn unsupported_and_unsubmitted_started_offers_settle_without_journal_or_cache_leaks() {
+    use agent_client::Error;
+    use execution_app::*;
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    server.data.lock().unwrap().software(3, false);
+    let offer = client.claim().await.unwrap().offer.unwrap();
+    let materials = client.prepare(&offer).await.unwrap();
+    client.received(&offer).await.unwrap();
+    let db = local::Database::new();
+    let host = local::TestHost::new();
+    let runner =
+        DeterministicTestRunner::new(local::id("test-runner"), TestScenario::Wait, 16).unwrap();
+    let app = ExecutionApp::start(
+        &db.path,
+        Startup::CreateTest,
+        host,
+        runner.clone(),
+        AppConfig::test_defaults(1),
+    )
+    .unwrap();
+    let bridge = ExecutionBridge::new(local::id("agent-consumer"), FixtureOutput);
+    let plan = adapted_plan(true, "device-1", &offer);
+    let caller = RequestContext {
+        actor: plan.spec().request.actor.clone(),
+    };
+    assert!(matches!(
+        bridge.prepare(&offer, &materials, &app, &caller, &plan),
+        Err(Error::Unsupported)
+    ));
+    let start = client.request_start(&offer, &materials).await.unwrap();
+    bridge
+        .abandon(&mut client, offer.task_id(), &app)
+        .await
+        .unwrap();
+    assert!(client.validate_start(&start).is_err());
+    assert_eq!(runner.dispatch_count(), 0);
+    assert_eq!(client.cleanup(128).unwrap(), 0);
+    drop(materials);
+    assert_eq!(client.cleanup(128).unwrap(), 1);
+    drop(client);
+    let mut client = server.client(&root, OpenMode::Existing);
+    {
+        let mut d = server.data.lock().unwrap();
+        d.task = Uuid::new_v4();
+        d.results.clear();
+        d.script();
+    }
+    let next = client.claim().await.unwrap().offer.unwrap();
+    assert_ne!(next.task_id(), offer.task_id());
+}
+async fn no_process_terminal(cancel: bool) {
+    use execution_app::*;
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let offer = client.claim().await.unwrap().offer.unwrap();
+    let materials = client.prepare(&offer).await.unwrap();
+    client.received(&offer).await.unwrap();
+    let plan = adapted_plan(false, "device-1", &offer);
+    let db = local::Database::new();
+    let mut host = local::TestHost::new();
+    host.template = plan.clone();
+    let runner = DeterministicTestRunner::new(
+        local::id("test-runner"),
+        if cancel {
+            TestScenario::Complete
+        } else {
+            TestScenario::RejectBeforeDispatch
+        },
+        16,
+    )
+    .unwrap();
+    let mut app = ExecutionApp::start(
+        &db.path,
+        Startup::CreateTest,
+        host.clone(),
+        runner.clone(),
+        AppConfig::test_defaults(1),
+    )
+    .unwrap();
+    let caller = RequestContext {
+        actor: plan.spec().request.actor.clone(),
+    };
+    let bridge = ExecutionBridge::new(local::id("agent-consumer"), FixtureOutput);
+    let prepared = bridge
+        .prepare(&offer, &materials, &app, &caller, &plan)
+        .unwrap();
+    let start = client.request_start(&offer, &materials).await.unwrap();
+    if cancel {
+        host.state.lock().unwrap().capability = false;
+        assert!(bridge
+            .dispatch(&mut client, start, &materials, &mut app, prepared)
+            .is_err());
+        host.state.lock().unwrap().capability = true;
+        app.cancel(&caller, &plan.spec().request.request_id)
+            .unwrap();
+    } else {
+        bridge
+            .dispatch(&mut client, start, &materials, &mut app, prepared)
+            .unwrap();
+        app.reconcile(&plan.spec().request.request_id).unwrap();
+    }
+    assert_eq!(
+        bridge
+            .flush(&mut client, offer.task_id(), &mut app, 1)
+            .await
+            .unwrap(),
+        1
+    );
+    for _ in 0..32 {
+        bridge
+            .flush(&mut client, offer.task_id(), &mut app, 1)
+            .await
+            .unwrap();
+    }
+    let data = server.data.lock().unwrap();
+    let result = data.results.values().next().unwrap();
+    if cancel {
+        assert_eq!(result["event"]["kind"], "cancelled");
+        assert_eq!(runner.dispatch_count(), 0);
+    } else {
+        assert_eq!(result["event"]["kind"], "result");
+        assert_eq!(result["event"]["quality"], "failed");
+        assert_eq!(result["event"]["diagnostics"]["failure"], "launch_failed");
+    }
+    drop(data);
+    bridge
+        .finish(&mut client, offer.task_id(), &app, &caller)
+        .unwrap();
+}
+#[tokio::test]
+async fn durable_cancel_without_attempt_is_delivered_and_released() {
+    no_process_terminal(true).await;
+}
+#[tokio::test]
+async fn proven_never_dispatched_without_capture_is_delivered_and_released() {
+    no_process_terminal(false).await;
+}
+#[tokio::test]
+async fn accepted_remote_result_with_failed_local_confirmation_never_resends() {
+    use agent_client::Error;
+    use execution_app::*;
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let offer = client.claim().await.unwrap().offer.unwrap();
+    let materials = client.prepare(&offer).await.unwrap();
+    client.received(&offer).await.unwrap();
+    let plan = adapted_plan(false, "device-1", &offer);
+    let db = local::Database::new();
+    let mut host = local::TestHost::new();
+    host.template = plan.clone();
+    let runner = CapturingRunner {
+        inner: DeterministicTestRunner::new(local::id("test-runner"), TestScenario::Complete, 16)
+            .unwrap(),
+        ready: Default::default(),
+    };
+    let mut app = ExecutionApp::start(
+        &db.path,
+        Startup::CreateTest,
+        host.clone(),
+        runner.clone(),
+        AppConfig::test_defaults(1),
+    )
+    .unwrap();
+    let caller = RequestContext {
+        actor: plan.spec().request.actor.clone(),
+    };
+    let bridge = ExecutionBridge::new(local::id("agent-consumer"), FixtureOutput);
+    let prepared = bridge
+        .prepare(&offer, &materials, &app, &caller, &plan)
+        .unwrap();
+    let start = client.request_start(&offer, &materials).await.unwrap();
+    bridge
+        .dispatch(&mut client, start, &materials, &mut app, prepared)
+        .unwrap();
+    app.reconcile(&plan.spec().request.request_id).unwrap();
+    let changed = host.clone();
+    server.data.lock().unwrap().result_hook = Some(std::sync::Arc::new(move || {
+        changed.state.lock().unwrap().accesses = Some(vec![execution_sqlite::Access::RunnerFact]);
+    }));
+    assert_eq!(
+        bridge
+            .flush(&mut client, offer.task_id(), &mut app, 1)
+            .await,
+        Err(Error::Denied)
+    );
+    assert_eq!(server.data.lock().unwrap().result_calls, 1);
+    host.state.lock().unwrap().accesses = Some(vec![execution_sqlite::Access::Deliver]);
+    assert_eq!(
+        bridge
+            .flush(&mut client, offer.task_id(), &mut app, 1)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(server.data.lock().unwrap().result_calls, 1);
+    assert_eq!(runner.inner.dispatch_count(), 1);
+}
+
+#[tokio::test]
 async fn lost_start_reply_replays_same_request_after_offer_expiry_without_renewing_permit() {
     let server = Server::new().await;
     let root = Root::new();
@@ -19,10 +242,14 @@ async fn lost_start_reply_replays_same_request_after_offer_expiry_without_renewi
         client.request_start(&offer, &materials).await,
         Err(Error::Unavailable)
     ));
+    let task = offer.task_id();
+    drop(materials);
+    drop(offer);
     drop(client);
     server.time.set(62);
     let mut client = server.client(&root, OpenMode::Existing);
-    let start = client.request_start(&offer, &materials).await.unwrap();
+    let recovered = client.recover_start(task).await.unwrap();
+    let start = recovered.start;
     let ops = server.data.lock().unwrap().start_ops.clone();
     assert_eq!(ops.len(), 2);
     assert_eq!(ops[0], ops[1]);
@@ -184,7 +411,7 @@ async fn exercise_bridge(software: bool) {
     server.data.lock().unwrap().result_failure = true;
     assert_eq!(
         bridge
-            .flush(&mut client, offer.task_id(), &mut app, 64)
+            .flush(&mut client, offer.task_id(), &mut app, 1)
             .await,
         Err(Error::Unavailable)
     );
@@ -202,14 +429,23 @@ async fn exercise_bridge(software: bool) {
     host.state.lock().unwrap().accesses = Some(vec![execution_sqlite::Access::RunnerFact]);
     assert_eq!(
         bridge
-            .flush(&mut client, offer.task_id(), &mut app, 64)
+            .flush(&mut client, offer.task_id(), &mut app, 1)
             .await,
         Err(Error::Denied)
     );
+    assert_eq!(server.data.lock().unwrap().result_calls, 1);
+    host.state.lock().unwrap().accesses = Some(vec![execution_sqlite::Access::Deliver]);
+    assert_eq!(
+        bridge
+            .flush(&mut client, offer.task_id(), &mut app, 1)
+            .await,
+        Err(Error::Denied)
+    );
+    assert_eq!(server.data.lock().unwrap().result_calls, 1);
     host.state.lock().unwrap().accesses = None;
     assert_eq!(
         bridge
-            .flush(&mut client, offer.task_id(), &mut app, 64)
+            .flush(&mut client, offer.task_id(), &mut app, 1)
             .await
             .unwrap(),
         1
@@ -217,11 +453,28 @@ async fn exercise_bridge(software: bool) {
     assert_eq!(runner.inner.dispatch_count(), 1);
     assert_eq!(
         bridge
-            .flush(&mut client, offer.task_id(), &mut app, 64)
+            .flush(&mut client, offer.task_id(), &mut app, 1)
             .await
             .unwrap(),
         0
     );
+    for _ in 0..32 {
+        bridge
+            .flush(&mut client, offer.task_id(), &mut app, 1)
+            .await
+            .unwrap();
+    }
+    assert!(app
+        .service_delivery(
+            &plan.spec().request.request_id,
+            &local::id("agent-consumer"),
+            1
+        )
+        .unwrap()
+        .is_empty());
+    bridge
+        .finish(&mut client, offer.task_id(), &app, &caller)
+        .unwrap();
     let data = server.data.lock().unwrap();
     assert_eq!(data.results.len(), 1);
     let result = data.results.values().next().unwrap();
@@ -403,9 +656,10 @@ async fn signature_namespace_and_expiry_are_checked_before_content() {
         data.offer = Some(data.signed(payload));
     }
     assert!(matches!(client.claim().await, Err(Error::Untrusted)));
+    server.time.set(72);
     server.data.lock().unwrap().script();
     let offer = client.claim().await.unwrap().offer.unwrap();
-    server.time.set(61);
+    server.time.set(132);
     assert!(matches!(client.prepare(&offer).await, Err(Error::Expired)));
     assert!(server.data.lock().unwrap().content_calls.is_empty());
 }
@@ -453,8 +707,27 @@ async fn partial_cache_reopens_and_checks_range_etag_and_reference_cleanup() {
         .iter()
         .any(|v| v.as_deref() == Some("bytes=100-")));
     assert_eq!(client.cleanup(128).unwrap(), 0);
-    let sql = rusqlite::Connection::open(root.path.join("communication.sqlite")).unwrap();
-    sql.execute("DELETE FROM cache_refs", []).unwrap();
+    let db = local::Database::new();
+    let host = local::TestHost::new();
+    let runner = execution_app::DeterministicTestRunner::new(
+        local::id("test-runner"),
+        execution_app::TestScenario::Wait,
+        16,
+    )
+    .unwrap();
+    let app = execution_app::ExecutionApp::start(
+        &db.path,
+        execution_app::Startup::CreateTest,
+        host,
+        runner,
+        execution_app::AppConfig::test_defaults(1),
+    )
+    .unwrap();
+    let bridge = ExecutionBridge::new(local::id("agent-consumer"), FixtureOutput);
+    bridge
+        .abandon(&mut client, offer.task_id(), &app)
+        .await
+        .unwrap();
     assert_eq!(client.cleanup(128).unwrap(), 0);
     drop(materials);
     assert_eq!(client.cleanup(128).unwrap(), 1);

@@ -111,24 +111,54 @@ fn digest(mut file: File) -> Result<[u8; 32], Error> {
     Ok(hash.finalize().into())
 }
 impl<S: SecretProvider, C: Clock> Client<S, C> {
+    pub(crate) fn recover_materials(&self, offer: &Offer) -> Result<Materials, Error> {
+        self.active()?;
+        self.now()?;
+        let artifacts = artifacts(offer.payload())?;
+        let root = self.store.root.join("content");
+        private(&root)?;
+        if root.canonicalize()? != root {
+            return Err(Error::Storage);
+        }
+        let mut total = 0u64;
+        let mut files = Vec::new();
+        for (key, length, sha256) in artifacts {
+            total = total.checked_add(length).ok_or(Error::Capacity)?;
+            if length > self.store.cfg.limits.artifact_bytes
+                || total > self.store.cfg.limits.cache_bytes
+            {
+                return Err(Error::Capacity);
+            }
+            let name = hash(&encode(&(
+                self.store.cfg.origin.as_str(),
+                self.store.cfg.tenant,
+                sha256,
+                length,
+            ))?);
+            let path = root.join(format!("{name}.blob"));
+            let file = open(&path, false)?;
+            FileExt::try_lock_shared(&file).map_err(|_| Error::Storage)?;
+            let content = ContentFile {
+                file,
+                path,
+                length,
+                digest: sha256,
+                key,
+            };
+            content.verify()?;
+            files.push(content);
+        }
+        Ok(Materials {
+            files,
+            task: offer.task_id(),
+            attempt: offer.attempt_id(),
+            input: encode(offer.payload())?,
+        })
+    }
     /// Stream all signed materials, validating the entire set before a Start request.
     pub async fn prepare(&mut self, offer: &Offer) -> Result<Materials, Error> {
         self.verify(&offer.signed, wire::TaskPermit::Offer)?;
-        let artifacts: Vec<(String, u64, [u8; 32])> = match offer.payload() {
-            wire::TaskPayload::Script(v) => {
-                vec![("script".into(), v.content.length, v.content.sha256)]
-            }
-            wire::TaskPayload::Software(v) => v
-                .steps
-                .iter()
-                .flat_map(|v| {
-                    v.artifacts
-                        .iter()
-                        .map(|a| (a.key.clone(), a.length, a.sha256))
-                })
-                .collect(),
-            _ => return Err(Error::Unsupported),
-        };
+        let artifacts = artifacts(offer.payload())?;
         let total = artifacts.iter().try_fold(0u64, |n, (_, length, _)| {
             n.checked_add(*length).ok_or(Error::Capacity)
         })?;
@@ -367,4 +397,22 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
         }
         Ok(removed)
     }
+}
+
+fn artifacts(payload: &wire::TaskPayload) -> Result<Vec<(String, u64, [u8; 32])>, Error> {
+    Ok(match payload {
+        wire::TaskPayload::Script(v) => {
+            vec![("script".into(), v.content.length, v.content.sha256)]
+        }
+        wire::TaskPayload::Software(v) => v
+            .steps
+            .iter()
+            .flat_map(|v| {
+                v.artifacts
+                    .iter()
+                    .map(|a| (a.key.clone(), a.length, a.sha256))
+            })
+            .collect(),
+        _ => return Err(Error::Unsupported),
+    })
 }
