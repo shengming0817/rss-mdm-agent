@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, nextTick, watch } from "vue";
-import { AppShell, NavigationList } from "@rss-mdm-agent/ui";
 import Workspace from "./Workspace.vue";
 import type { AssistantServices } from "./assistant/controller";
 import {
@@ -17,7 +16,6 @@ import {
   refreshAccount,
 } from "./test-users";
 import type { TestUser } from "@rss-mdm-agent/ai-contract";
-import Settings from "./settings/Settings.vue";
 import TestUsers from "./settings/TestUsers.vue";
 import Account from "./settings/Account.vue";
 import { nativeHost } from "./settings/native";
@@ -27,9 +25,7 @@ const users = ref<TestUser[]>([]),
   loading = ref(nativeTestMode),
   message = ref(""),
   accountMessage = ref("");
-const page = ref(nativeTestMode ? "settings" : "home"),
-  attention = ref(0),
-  mode = ref(nativeTestMode ? "本地测试模式" : "浏览器只读预览");
+const page = ref(nativeTestMode ? "settings" : "assistant");
 const content = ref<HTMLElement>();
 const host = createHostSettings(nativeHost());
 let polling: ReturnType<typeof setInterval> | undefined;
@@ -37,6 +33,8 @@ async function refresh() {
   try {
     users.value = (await loadTestUsers()).users;
     await refreshAccount();
+    if (currentUser.value && page.value === "settings" && loading.value)
+      page.value = "assistant";
   } catch {
     message.value = "无法读取测试用户记录";
   } finally {
@@ -51,9 +49,9 @@ async function select(name: string) {
     await selectTestUser(name);
     accountNotice.value = "";
     accountMessage.value = "";
-    attention.value = 0;
     page.value = "settings";
     await refresh();
+    page.value = "assistant";
   } catch (error) {
     message.value = selectionMessage(error);
   } finally {
@@ -68,7 +66,6 @@ async function accountAction(action: () => Promise<unknown>) {
   accountNotice.value = "";
   try {
     await action();
-    attention.value = 0;
     page.value = "settings";
   } catch (error) {
     accountMessage.value = accountErrorMessage(error);
@@ -79,7 +76,11 @@ async function accountAction(action: () => Promise<unknown>) {
 }
 async function focusSettings() {
   await nextTick();
-  content.value?.querySelector<HTMLElement>(".settings h1")?.focus();
+  content.value
+    ?.querySelector<HTMLElement>(
+      page.value === "assistant" ? ".assistant h1" : ".settings h1",
+    )
+    ?.focus();
 }
 async function navigate(id: string) {
   page.value = nativeTestMode && !currentUser.value ? "settings" : id;
@@ -108,107 +109,54 @@ onBeforeUnmount(() => {
 });
 </script>
 <template>
-  <AppShell :navigation-collapsed="page === 'assistant'">
-    <template #header
-      ><div class="brand">
-        <div>
-          <span class="eyebrow">RSS / WORKSPACE</span
-          ><strong>自助服务中心</strong>
-        </div>
-        <span class="mode-label">{{
-          currentUser?.identity?.mode === "enterprise"
-            ? "企业账户 · 本地 AI"
-            : currentUser?.identity?.mode === "guest"
-              ? "不登录 · 本地访客"
-              : mode
-        }}</span>
-      </div></template
-    >
-    <template #navigation
-      ><NavigationList
-        :items="[
-          { id: 'home', label: '首页' },
-          { id: 'software', label: '软件中心' },
-          { id: 'tools', label: '工具中心' },
-          { id: 'tasks', label: '请求与任务' },
-          {
-            id: 'assistant',
-            label: attention ? `AI 助手（待回应 ${attention}）` : 'AI 助手',
-          },
-          { id: 'help', label: '设备与帮助' },
-        ]"
-        :active-id="page"
-        @select="navigate"
-    /></template>
-    <template #navigation-footer
-      ><NavigationList
-        :items="[{ id: 'settings', label: '设置' }]"
-        :active-id="page"
-        @select="navigate"
-    /></template>
-    <div
-      ref="content"
-      :class="{ 'assistant-content': page === 'assistant' }"
+  <div ref="content" class="app-root">
+    <Workspace
       :inert="loading ? true : undefined"
+      :key="currentUser?.generation ?? 'anonymous'"
+      :ready="!nativeTestMode || !!currentUser"
+      :busy="loading"
+      :assistant-services="assistantServices"
+      :page="page"
+      :host="host"
+      @navigate="navigate"
     >
-      <Workspace
-        v-if="!nativeTestMode || currentUser"
-        :key="currentUser?.generation ?? 'browser-preview'"
-        :assistant-services="assistantServices"
-        :page="page"
-        :host="host"
-        @navigate="navigate"
-        @attention="attention = $event"
-        @mode="mode = $event"
-      >
-        <template #user
-          ><TestUsers
-            :users="users"
-            :current="currentUser?.identity ? undefined : currentUser"
-            :native="nativeTestMode"
-            :loading="loading"
-            :message="message"
-            @select="select" /><Account
-            :loading="loading"
-            :message="accountMessage || accountNotice"
-            @guest="accountAction(enterGuest)"
-            @logout="accountAction(logoutAccount)"
-            @login="
-              (org, login) => accountAction(() => loginEnterprise(org, login))
-            "
-        /></template>
-      </Workspace>
-      <Settings v-else :host="host"
-        ><template #user
-          ><TestUsers
-            :users="users"
-            :current="undefined"
-            :native="nativeTestMode"
-            :loading="loading"
-            :message="message"
-            @select="select" /><Account
-            :loading="loading"
-            :message="accountMessage || accountNotice"
-            @guest="accountAction(enterGuest)"
-            @logout="accountAction(logoutAccount)"
-            @login="
-              (org, login) => accountAction(() => loginEnterprise(org, login))
-            " /></template
-      ></Settings>
-    </div>
-    <p v-if="loading" role="status">正在读取或切换账户…</p>
-    <template #status
-      ><div class="footer-note">
-        <span>后台授权任务 · 本机执行服务 · 状态与效果分别核实</span
-        ><span>AI 对话与设备执行分别核对</span>
-      </div></template
-    >
-  </AppShell>
+      <template #user>
+        <TestUsers
+          :users="users"
+          :current="currentUser?.identity ? undefined : currentUser"
+          :native="nativeTestMode"
+          :loading="loading"
+          :message="message"
+          @select="select"
+        />
+        <Account
+          :loading="loading"
+          :message="accountMessage || accountNotice"
+          @guest="accountAction(enterGuest)"
+          @logout="accountAction(logoutAccount)"
+          @login="
+            (org, login) => accountAction(() => loginEnterprise(org, login))
+          "
+        />
+      </template>
+    </Workspace>
+  </div>
+  <p v-if="loading" class="account-progress" role="status">
+    正在读取或切换账户…
+  </p>
 </template>
-
 <style scoped>
-.assistant-content {
+.app-root {
   height: 100%;
   min-height: 0;
+}
+.account-progress {
+  position: fixed;
+  right: 16px;
+  bottom: 4px;
+  margin: 0;
+  font: 12px var(--rss-font-sans);
+  color: var(--rss-color-text-muted);
+  background: var(--rss-color-bg);
 }
 </style>

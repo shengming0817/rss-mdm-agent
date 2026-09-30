@@ -115,23 +115,23 @@ function onKeydown(e: KeyboardEvent) {
   min-height: 0;
   overflow-y: auto;
   /* Small vertical inset so pane content doesn't sit flush against the divider. */
-  padding: var(--space-2) 0;
+  padding: var(--rss-space-2) 0;
 }
 .divider {
   flex: none;
-  height: var(--space-3);
+  height: var(--rss-space-3);
   cursor: row-resize;
-  background: var(--color-border);
+  background: var(--rss-color-border);
   /* Stop touch devices (touchscreen Windows) from turning a drag into a scroll gesture
      that would steal the pointer capture mid-resize. */
   touch-action: none;
 }
 .divider:hover,
 .split.dragging .divider {
-  background: var(--color-border-strong);
+  background: var(--rss-color-border-strong);
 }
 .divider:focus-visible {
-  outline: 2px solid var(--color-accent);
+  outline: 2px solid var(--rss-color-accent);
   outline-offset: -1px;
 }
 /* During a drag, suppress text selection across both panes. */

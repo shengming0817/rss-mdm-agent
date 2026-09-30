@@ -1,30 +1,22 @@
 .assistant {
   height: 100%;
   min-height: 0;
-  display: grid;
-  grid-template-columns: 210px minmax(0, 1fr);
-  color: var(--color-text);
-}
-.assistant-sessions {
-  min-height: 0;
-  overflow: auto;
-  padding: 20px 12px;
-  border-right: 1px solid var(--color-border);
+  color: var(--rss-color-text);
 }
 .assistant-conversation {
+  height: 100%;
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  position: relative;
 }
 .conversation-header {
   display: flex;
   align-items: center;
   gap: 12px;
   flex: none;
-  padding: 16px 24px;
-  border-bottom: 1px solid var(--color-border);
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--rss-color-border);
 }
 .conversation-header h1 {
   flex: 1;
@@ -35,40 +27,15 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.conversation-header details {
-  position: relative;
-  font-size: 13px;
-}
-.conversation-header details[open] {
-  position: absolute;
-  top: 12px;
-  right: 16px;
-  padding: 16px;
-  width: min(420px, calc(100% - 32px));
-  max-height: calc(100% - 24px);
-  overflow: auto;
-  box-sizing: border-box;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  z-index: 2;
-  box-shadow: 0 8px 32px #0002;
-}
-.assistant button {
-  padding: 8px 12px;
-  border: 1px solid var(--color-border-strong);
-  border-radius: 8px;
-  background: var(--color-surface);
-  color: var(--color-text);
-  cursor: pointer;
-}
-.assistant button:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-.assistant :is(button, summary, textarea, input, select):focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
+.connection-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 45%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--rss-font-size-sm) !important;
 }
 .assistant summary {
   cursor: pointer;
@@ -77,24 +44,25 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 12px max(24px, calc((100% - 780px) / 2));
+  padding: 12px max(24px, calc((100% - 760px) / 2));
   overflow-wrap: anywhere;
 }
-.assistant-timeline article {
-  margin: 16px 0;
+.assistant-timeline > article {
+  margin: 24px 0;
+  min-width: 0;
 }
 .empty-state {
   padding: 40px 0;
   text-align: center;
-  color: var(--color-text-muted);
+  color: var(--rss-color-text-muted);
 }
 .empty-state h2 {
-  color: var(--color-text);
+  color: var(--rss-color-text);
   font-size: 24px;
 }
 .conversation-input {
   flex: none;
-  padding: 8px max(24px, calc((100% - 780px) / 2)) 16px;
+  padding: 8px max(24px, calc((100% - 760px) / 2)) 16px;
 }
 .conversation-notice {
   display: flex;
@@ -102,20 +70,20 @@
   gap: 8px;
   flex-wrap: wrap;
   margin-bottom: 8px;
-  font-size: 13px;
+  font-size: var(--rss-font-size-sm);
 }
 .notice {
   padding: 8px 24px;
-  font-size: 13px;
+  font-size: var(--rss-font-size-sm);
 }
 .command-state {
   text-align: right;
-  font-size: 12px;
-  color: var(--color-text-muted);
+  font-size: var(--rss-font-size-xs);
+  color: var(--rss-color-text-muted);
 }
 .assistant small {
   display: block;
-  color: var(--color-text-muted);
+  color: var(--rss-color-text-muted);
   margin-top: 4px;
 }
 .assistant-actions {
@@ -128,11 +96,11 @@
 .permission-card,
 .tool-call,
 .execution-activity {
-  padding: 14px;
-  border: 1px solid var(--color-border-strong);
-  border-radius: 10px;
-  background: var(--color-surface);
-  margin: 12px 0;
+  padding: 16px;
+  border: 1px solid var(--rss-color-border-strong);
+  border-radius: var(--rss-radius-md);
+  background: var(--rss-color-surface);
+  margin: 16px 0;
 }
 .permission-card button :is(strong, span) {
   display: block;
@@ -151,42 +119,76 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   margin: 4px 0 12px;
-  font-size: 12px;
+  font-size: var(--rss-font-size-sm);
 }
 .assistant dt {
-  font-size: 12px;
+  font-size: var(--rss-font-size-sm);
   font-weight: 600;
 }
 .assistant label {
   display: block;
-  font-size: 13px;
+  font-size: var(--rss-font-size-sm);
 }
 .assistant input {
   max-width: 100%;
-  box-sizing: border-box;
 }
-.recent-trigger {
-  display: none;
+.execution-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
 }
-@media (max-width: 760px) {
-  .assistant {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .assistant-sessions {
-    display: none;
-  }
-  .recent-trigger {
-    display: inline-block;
-  }
+.task-status {
+  font-size: var(--rss-font-size-sm);
+  padding: 4px 8px;
+  border-radius: var(--rss-radius-sm);
+  background: var(--rss-color-neutral-bg);
+}
+.task-status.attention {
+  color: var(--rss-color-warn);
+  background: var(--rss-color-warn-bg);
+}
+.execution-facts {
+  margin: 16px 0;
+}
+.copy-status {
+  font-size: var(--rss-font-size-xs);
+  margin: 0 0 6px;
+  color: var(--rss-color-text-muted);
+}
+@media (max-width: 640px) {
   .conversation-header {
-    padding: 12px;
+    padding: 8px 12px;
     gap: 8px;
-    flex-wrap: wrap;
+  }
+  .conversation-header h1 {
+    font-size: 16px;
   }
   .assistant-timeline {
     padding: 8px 16px;
   }
   .conversation-input {
-    padding: 8px 12px 12px;
+    padding: 6px 12px 8px;
+  }
+}
+@media (max-height: 520px) {
+  .conversation-header {
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+  .conversation-notice {
+    font-size: var(--rss-font-size-xs);
+    max-height: 56px;
+    overflow: auto;
+  }
+  .empty-state {
+    padding: 8px 0;
+  }
+  .empty-state h2 {
+    font-size: 20px;
+    margin: 8px 0;
+  }
+  .empty-state p {
+    margin: 6px 0;
   }
 }

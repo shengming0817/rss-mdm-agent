@@ -23,14 +23,14 @@
   font-size: 11px;
   letter-spacing: 1.6px;
   font-weight: 600;
-  color: var(--color-text-muted);
+  color: var(--rss-color-text-muted);
 }
 .mode-label,
 .badge {
   font-size: 12px;
   border-radius: 6px;
-  background: var(--color-warn-bg);
-  color: var(--color-warn);
+  background: var(--rss-color-warn-bg);
+  color: var(--rss-color-warn);
   padding: 6px 10px;
 }
 .self-service h1 {
@@ -46,14 +46,18 @@
   font-size: 15px;
 }
 .self-service p {
-  color: var(--color-text-muted);
+  color: var(--rss-color-text-muted);
   line-height: 1.8;
 }
 .hero {
   padding: 40px 32px;
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--rss-color-border);
   border-radius: 16px;
-  background: linear-gradient(125deg, var(--color-surface), var(--color-bg));
+  background: linear-gradient(
+    125deg,
+    var(--rss-color-surface),
+    var(--rss-color-bg)
+  );
 }
 .hero h1 {
   font-size: clamp(36px, 4vw, 52px);
@@ -71,23 +75,23 @@
   margin: 18px 0;
 }
 .self-service button {
-  border: 1px solid var(--color-accent);
+  border: 1px solid var(--rss-color-accent);
   border-radius: 7px;
   padding: 10px 16px;
-  color: white;
-  background: var(--color-accent);
+  color: var(--rss-color-on-accent);
+  background: var(--rss-color-accent);
   cursor: pointer;
   font: inherit;
   font-size: 13px;
 }
 .self-service button.secondary {
-  background: var(--color-surface);
-  color: var(--color-text);
-  border-color: var(--color-border-strong);
+  background: var(--rss-color-surface);
+  color: var(--rss-color-text);
+  border-color: var(--rss-color-border-strong);
 }
 .self-service button.text-button {
   border: 0;
-  color: var(--color-text-muted);
+  color: var(--rss-color-text-muted);
   background: transparent;
   padding-left: 0;
 }
@@ -98,7 +102,7 @@
 .self-service button:focus-visible,
 .self-service input:focus-visible,
 .self-service select:focus-visible {
-  outline: 2px solid var(--color-accent);
+  outline: 2px solid var(--rss-color-accent);
   outline-offset: 3px;
 }
 .overview-grid,
@@ -111,9 +115,9 @@
 .overview-grid article,
 .catalog-card {
   padding: 22px;
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--rss-color-border);
   border-radius: 12px;
-  background: var(--color-surface);
+  background: var(--rss-color-surface);
 }
 .catalog-card p {
   font-size: 13px;
@@ -129,7 +133,7 @@
 }
 .decisions dt,
 .facts dt {
-  color: var(--color-text-muted);
+  color: var(--rss-color-text-muted);
 }
 .decisions dd,
 .facts dd {
@@ -166,37 +170,37 @@
   font: inherit;
   font-size: 14px;
   padding: 11px 12px;
-  border: 1px solid var(--color-border-strong);
+  border: 1px solid var(--rss-color-border-strong);
   border-radius: 7px;
-  background: var(--color-surface);
-  color: var(--color-text);
+  background: var(--rss-color-surface);
+  color: var(--rss-color-text);
 }
 .required {
-  color: var(--color-warn);
+  color: var(--rss-color-warn);
 }
 .muted {
-  color: var(--color-text-muted);
+  color: var(--rss-color-text-muted);
 }
 .notice,
 .error {
   padding: 14px 18px;
   border-radius: 8px;
-  border-left: 3px solid var(--color-warn);
-  background: var(--color-warn-bg);
+  border-left: 3px solid var(--rss-color-warn);
+  background: var(--rss-color-warn-bg);
   font-size: 13px;
   line-height: 1.7;
 }
 .error {
   margin-bottom: 20px;
-  border-color: var(--color-danger);
-  color: var(--color-danger);
+  border-color: var(--rss-color-danger);
+  color: var(--rss-color-danger);
 }
 .plan-summary {
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--rss-color-border);
   border-radius: 12px;
   padding: 22px;
   margin: 26px 0;
-  background: var(--color-surface);
+  background: var(--rss-color-surface);
 }
 .identifier {
   overflow-wrap: anywhere;
@@ -210,7 +214,7 @@
 }
 .plan-summary summary {
   cursor: pointer;
-  color: var(--color-text-muted);
+  color: var(--rss-color-text-muted);
   font-size: 12px;
 }
 .task-layout {
@@ -232,11 +236,11 @@
   padding: 16px;
 }
 .task-row[aria-pressed="true"] {
-  border-color: var(--color-accent);
+  border-color: var(--rss-color-accent);
 }
 .interaction-card {
   padding: 18px;
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--rss-color-border);
   border-radius: 10px;
   margin: 16px 0;
 }
@@ -249,7 +253,7 @@
 }
 .footer-note {
   font-size: 11px;
-  color: var(--color-text-muted);
+  color: var(--rss-color-text-muted);
   flex-wrap: wrap;
 }
 @media (max-width: 720px) {

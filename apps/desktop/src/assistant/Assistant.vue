@@ -1,6 +1,22 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from "vue";
-import { MessageComposer, MessageStream, ModalDrawer } from "@rss-mdm-agent/ui";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
+import {
+  MessageComposer,
+  MessageStream,
+  ModalDrawer,
+  UiPopover,
+  UiPopoverTrigger,
+  UiPopoverContent,
+  UiPopoverPortal,
+  UiMenu,
+  UiMenuTrigger,
+  UiMenuContent,
+  UiMenuPortal,
+  UiMenuItem,
+  MoreHorizontal,
+  ChevronDown,
+} from "@rss-mdm-agent/ui";
+import { copyText } from "./clipboard";
 import { RuntimeSurface } from "@rss-mdm-agent/ai-ui-bridge";
 import type { CommandView, TimelineItem } from "@rss-mdm-agent/ai-client";
 import {
@@ -13,13 +29,10 @@ defineEmits<{ settings: []; tasks: [] }>();
 import QuestionCard from "./QuestionCard.vue";
 import ExecutionDetails from "./ExecutionDetails.vue";
 import ExecutionActivity from "./ExecutionActivity.vue";
-import ConversationList from "./ConversationList.vue";
-function closeMenu(event: Event) {
-  (event.currentTarget as HTMLElement)
-    .closest("details")
-    ?.removeAttribute("open");
-}
-const panel = ref<"sessions" | "diagnostics" | "execution">();
+const diagnosticsOpen = ref(false),
+  connectionOpen = ref(false),
+  menuOpen = ref(false);
+const copyStatus = ref("");
 const timeline = ref<HTMLElement>();
 const following = ref(true);
 function trackScroll() {
@@ -28,11 +41,15 @@ function trackScroll() {
     following.value = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
 }
 function scrollEnd() {
+  if (!props.visible) return;
   const el = timeline.value;
   if (el) el.scrollTop = el.scrollHeight;
   following.value = true;
 }
-const props = defineProps<{ controller: AssistantController }>();
+const props = defineProps<{
+  controller: AssistantController;
+  visible: boolean;
+}>();
 const c = props.controller,
   s = c.state,
   view = c.view,
@@ -131,11 +148,11 @@ const permissions = computed(() =>
     (item) => item.request.sessionId === s.selected,
   ),
 );
-const connectionMenu = ref<HTMLDetailsElement>();
+const connectionPanel = ref<HTMLElement>();
 async function showContextChoices() {
-  connectionMenu.value?.setAttribute("open", "");
+  connectionOpen.value = true;
   await nextTick();
-  connectionMenu.value?.querySelector("select")?.focus();
+  connectionPanel.value?.querySelector("select")?.focus();
 }
 const notice = computed(() => {
   if (s.connection === "connecting")
@@ -197,65 +214,133 @@ watch(
       .join(""),
   ],
   async (next, previous) => {
-    if (following.value || next[0] !== previous?.[0]) {
+    if (props.visible && following.value && next[0] === previous?.[0]) {
       await nextTick();
-      scrollEnd();
+      if (props.visible && following.value && next[0] === s.selected)
+        scrollEnd();
     }
   },
   { flush: "post" },
 );
+type Reading = {
+  following: boolean;
+  top: number;
+  anchor: string | null;
+  offset: number;
+};
+const reading = new Map<string, Reading>();
+function remember(id = s.selected) {
+  const el = timeline.value;
+  if (!el) return;
+  const top = el.getBoundingClientRect().top;
+  const anchor = [...el.querySelectorAll<HTMLElement>(":scope > article")].find(
+    (row) => row.getBoundingClientRect().bottom > top,
+  );
+  reading.set(id, {
+    following: following.value,
+    top: el.scrollTop,
+    anchor: anchor?.getAttribute("data-message-key") ?? null,
+    offset: (anchor?.getBoundingClientRect().top ?? top) - top,
+  });
+}
+function restoreReading() {
+  const el = timeline.value,
+    saved = reading.get(s.selected);
+  if (!el || !props.visible) return;
+  if (!saved || saved.following) {
+    scrollEnd();
+    return;
+  }
+  following.value = false;
+  const anchor = [...el.querySelectorAll<HTMLElement>(":scope > article")].find(
+    (row) => row.getAttribute("data-message-key") === saved.anchor,
+  );
+  el.scrollTop = anchor
+    ? el.scrollTop +
+      anchor.getBoundingClientRect().top -
+      el.getBoundingClientRect().top -
+      saved.offset
+    : saved.top;
+}
 watch(
   () => s.selected,
-  () => {
-    if (panel.value !== "sessions") panel.value = undefined;
+  async (_, previous) => {
+    if (props.visible) remember(previous);
+    diagnosticsOpen.value = connectionOpen.value = menuOpen.value = false;
+    copyStatus.value = "";
+    await nextTick();
+    restoreReading();
   },
+  { flush: "pre" },
 );
+watch(
+  () => props.visible,
+  async (visible) => {
+    if (!visible) {
+      remember();
+      diagnosticsOpen.value = connectionOpen.value = menuOpen.value = false;
+      copyStatus.value = "";
+    } else {
+      await nextTick();
+      restoreReading();
+    }
+  },
+  { flush: "pre" },
+);
+onBeforeUnmount(() => reading.clear());
+async function copy(text: string) {
+  const selected = s.selected;
+  const copied = await copyText(text);
+  if (selected === s.selected && props.visible)
+    copyStatus.value = copied ? "已复制" : "复制不可用，请选中文本手动复制。";
+}
 </script>
 <template>
   <section class="assistant" aria-label="AI 助手">
-    <aside class="assistant-sessions">
-      <ConversationList :controller="c" />
-    </aside>
     <section class="assistant-conversation" aria-label="当前对话">
       <header class="conversation-header">
-        <button
-          class="recent-trigger"
-          aria-label="打开最近对话"
-          @click="panel = 'sessions'"
-        >
-          最近对话
-        </button>
-        <h1>{{ title }}</h1>
-        <details ref="connectionMenu" class="connection-menu">
-          <summary>{{ connectionName }}</summary>
-          <SessionConnection :controller="c" /><button
-            @click="
-              closeMenu($event);
-              $emit('settings');
-            "
+        <h1 tabindex="-1">{{ title }}</h1>
+        <UiPopover v-model:open="connectionOpen">
+          <UiPopoverTrigger class="connection-trigger"
+            >{{ connectionName }} <ChevronDown :size="14" aria-hidden="true"
+          /></UiPopoverTrigger>
+          <UiPopoverPortal
+            ><UiPopoverContent
+              class="rss-ui rss-popover connection-menu"
+              :side-offset="8"
+              align="end"
+              aria-label="AI 连接选择"
+            >
+              <div ref="connectionPanel">
+                <SessionConnection :controller="c" /><button
+                  @click="
+                    connectionOpen = false;
+                    $emit('settings');
+                  "
+                >
+                  管理 AI 连接
+                </button>
+              </div>
+            </UiPopoverContent></UiPopoverPortal
           >
-            管理 AI 连接
-          </button>
-        </details>
-        <details class="conversation-menu">
-          <summary>更多</summary>
-          <button
-            @click="
-              closeMenu($event);
-              panel = 'diagnostics';
-            "
+        </UiPopover>
+        <UiMenu v-model:open="menuOpen">
+          <UiMenuTrigger class="icon-button conversation-menu" aria-label="更多"
+            ><MoreHorizontal :size="20" aria-hidden="true"
+          /></UiMenuTrigger>
+          <UiMenuPortal
+            ><UiMenuContent
+              class="rss-ui rss-menu"
+              :side-offset="8"
+              align="end"
+            >
+              <UiMenuItem @select="diagnosticsOpen = true"
+                >会话详情与诊断</UiMenuItem
+              >
+              <UiMenuItem @select="$emit('settings')">设置</UiMenuItem>
+            </UiMenuContent></UiMenuPortal
           >
-            会话详情与诊断
-          </button>
-          <button
-            @click="
-              closeMenu($event);
-              $emit('settings');
-            "
-          >
-            设置
-          </button>
-        </details>
+        </UiMenu>
       </header>
       <div v-if="c.background.value.length" class="notice">
         其他对话需要回应：<button
@@ -279,7 +364,11 @@ watch(
           <h2>有什么需要帮助？</h2>
           <p>直接输入问题，开始新的对话。</p>
         </div>
-        <article v-for="row in rows" :key="row.kind + ':' + row.key">
+        <article
+          v-for="row in rows"
+          :key="s.selected + ':' + row.kind + ':' + row.key"
+          :data-message-key="row.kind + ':' + row.key"
+        >
           <template
             v-if="
               row.kind === 'prompt' &&
@@ -303,8 +392,14 @@ watch(
             ><MessageStream
               :announce="false"
               :items="[
-                { id: row.key, kind: 'assistant', text: row.message.text },
+                {
+                  id: row.key,
+                  kind: 'assistant',
+                  text: row.message.text,
+                  stable: row.message.stable,
+                },
               ]"
+              @copy="copy"
             /><small v-if="!row.message.stable"
               >生成中 · 尚未持久化</small
             ></template
@@ -318,14 +413,15 @@ watch(
             <pre>{{ row.tool.result?.text }}</pre>
           </details>
           <ExecutionActivity
-            v-else-if="row.delivery"
+            v-else-if="
+              row.delivery && row.delivery.proposal.name === 'execution_execute'
+            "
             :controller="c"
             :operation-id="row.key"
             :recorded="row.delivery.recorded"
-            @details="
-              s.task = $event;
-              panel = 'execution';
-            "
+            :visible="visible"
+            :now="clock"
+            @tasks="$emit('tasks')"
           />
           <QuestionCard
             v-else-if="row.interaction && !hasSurface(row)"
@@ -406,6 +502,9 @@ watch(
         </section>
       </div>
       <div class="conversation-input">
+        <p v-if="copyStatus" class="copy-status" role="status">
+          {{ copyStatus }}
+        </p>
         <button v-if="!following" @click="scrollEnd">回到最新消息</button>
         <div v-if="notice" class="conversation-notice" role="status">
           <span>{{ notice.text }}</span>
@@ -475,17 +574,10 @@ watch(
       </div>
     </section>
     <ModalDrawer
-      v-if="panel === 'sessions'"
-      label="最近对话"
-      side="left"
-      @close="panel = undefined"
-      ><ConversationList :controller="c" @select="panel = undefined"
-    /></ModalDrawer>
-    <ModalDrawer
-      v-if="panel === 'diagnostics'"
+      v-if="visible && diagnosticsOpen"
       label="会话详情与诊断"
       side="right"
-      @close="panel = undefined"
+      @close="diagnosticsOpen = false"
     >
       <p>会话编号：{{ s.selected || "尚未创建" }}</p>
       <p v-if="s.mode === 's1'">S1 测试装配 · 无真实执行</p>
@@ -547,23 +639,6 @@ watch(
         <p v-if="s.taskError" role="alert">{{ s.taskError }}</p>
         <ExecutionDetails v-if="s.task" :details="s.task" :now="clock" />
       </details>
-    </ModalDrawer>
-    <ModalDrawer
-      v-if="panel === 'execution' && s.task"
-      label="设备操作详情"
-      side="right"
-      @close="panel = undefined"
-    >
-      <ExecutionDetails :details="s.task" :now="clock" />
-      <button @click="c.taskDetails(s.task.status.operationRequestId)">
-        刷新执行状态
-      </button>
-      <button
-        v-if="s.task.status.phase === 'confirmationRequired'"
-        @click="$emit('tasks')"
-      >
-        前往任务确认动作
-      </button>
     </ModalDrawer>
   </section>
 </template>

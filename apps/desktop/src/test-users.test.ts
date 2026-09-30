@@ -48,12 +48,17 @@ it("closes assistant modals when leaving the page and preserves the conversation
   currentUser.value = current;
   vi.mocked(invoke).mockRejectedValue({ code: "ai_unavailable" });
   const wrapper = mount(Workspace, {
-    props: { page: "assistant", host: createHostSettings(undefined) },
+    props: {
+      ready: true,
+      busy: false,
+      page: "assistant",
+      host: createHostSettings(undefined),
+    },
   });
   try {
     await flushPromises();
     await wrapper.get(".composer textarea").setValue("继续核对设备状态");
-    await wrapper.get('[aria-label="打开最近对话"]').trigger("click");
+    await wrapper.get('[aria-label="打开主导航"]').trigger("click");
     expect(wrapper.find("dialog").exists()).toBe(true);
     await wrapper.setProps({ page: "tasks" });
     expect(wrapper.find("dialog").exists()).toBe(false);
@@ -75,11 +80,10 @@ it("keeps settings selected when navigation needs an unselected user", async () 
   const wrapper = mount(App);
   try {
     await flushPromises();
-    await wrapper
-      .findAll("button")
-      .find((b) => b.text() === "AI 助手")!
-      .trigger("click");
-    expect(wrapper.get('[aria-current="page"]').text()).toBe("设置");
+    expect(wrapper.findAll("button").some((b) => b.text() === "AI 助手")).toBe(
+      false,
+    );
+    expect(wrapper.find(".settings").isVisible()).toBe(true);
     expect(wrapper.get("h1").text()).toBe("设置");
   } finally {
     wrapper.unmount();
@@ -160,9 +164,7 @@ it("keeps the current workspace mounted and inert while a switch is pending", as
   await flushPromises();
   expect(wrapper.findComponent({ name: "Workspace" }).element).toBe(workspace);
   expect(
-    wrapper
-      .findComponent({ name: "Workspace" })
-      .element.parentElement?.hasAttribute("inert"),
+    wrapper.findComponent({ name: "Workspace" }).element.hasAttribute("inert"),
   ).toBe(true);
   finish(current);
   await flushPromises();
@@ -255,6 +257,8 @@ it("queries the production execution service without a fixture fallback and repo
   });
   const wrapper = mount(App);
   await flushPromises();
+  const nav = wrapper.find('[aria-label="打开主导航"]');
+  if (nav.exists()) await nav.trigger("click");
   await wrapper
     .findAll("button")
     .find((b) => b.text() === "软件中心")!
@@ -292,7 +296,7 @@ it("keeps visible labels for every account input", async () => {
   }
   wrapper.unmount();
 });
-it("returns keyboard focus to settings after the selected workspace is replaced", async () => {
+it("focuses the default AI page after the selected workspace is replaced", async () => {
   let active: typeof current | undefined;
   vi.mocked(invoke).mockImplementation(async (command) => {
     if (command === "test_users")
@@ -318,7 +322,7 @@ it("returns keyboard focus to settings after the selected workspace is replaced"
     ).focus();
     await wrapper.findAll("form")[0]!.trigger("submit");
     await flushPromises();
-    expect(document.activeElement).toBe(wrapper.get(".settings h1").element);
+    expect(document.activeElement).toBe(wrapper.get(".assistant h1").element);
   } finally {
     wrapper.unmount();
   }

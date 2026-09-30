@@ -1,57 +1,87 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { ModalDrawer } from "@rss-mdm-agent/ui";
+import ExecutionDetails from "./ExecutionDetails.vue";
+import { taskPresentation } from "./execution-presentation";
 import type { AssistantController } from "./controller";
-import type {
-  BackendTaskView,
-  ExecutionTaskDetails,
-} from "@rss-mdm-agent/execution-bindings/task-details";
+import type { BackendTaskView } from "@rss-mdm-agent/execution-bindings/task-details";
 const props = defineProps<{
   controller: AssistantController;
   operationId: string;
   recorded: boolean;
+  visible: boolean;
+  now: number;
 }>();
-const emit = defineEmits<{ details: [value: ExecutionTaskDetails] }>();
-const details = ref<BackendTaskView>();
-const error = ref("");
-const busy = ref(false);
-let poll: () => Promise<void> = async () => {};
+defineEmits<{ tasks: [] }>();
+const details = ref<BackendTaskView>(),
+  error = ref(""),
+  loading = ref(false),
+  detailsOpen = ref(false);
+const presentation = computed(
+  () =>
+    details.value?.kind === "execution" &&
+    taskPresentation(details.value.value),
+);
+let owner: AbortController | undefined;
+async function refresh() {
+  if (!props.visible || loading.value) return;
+  const request = new AbortController();
+  owner = request;
+  loading.value = true;
+  error.value = "";
+  try {
+    const value = await props.controller.executionDetails(
+      props.operationId,
+      request.signal,
+    );
+    if (!request.signal.aborted) details.value = value;
+  } catch {
+    if (!request.signal.aborted)
+      error.value = "无法读取授权执行记录，请核对原请求。";
+  } finally {
+    if (owner === request) {
+      loading.value = false;
+      owner = undefined;
+    }
+  }
+}
 watch(
-  () => [props.operationId, props.recorded, props.controller.state.selected],
-  (_, __, cleanup) => {
-    const owner = new AbortController();
-    details.value = undefined;
-    let loading = false;
-    const refresh = async () => {
-      if (loading || owner.signal.aborted) return;
-      loading = true;
-      try {
-        const value = await props.controller.executionDetails(
-          props.operationId,
-          owner.signal,
-        );
-        if (!owner.signal.aborted) {
-          details.value = value;
-          error.value = "";
-        }
-      } catch {
-        if (!owner.signal.aborted) error.value = "暂时无法读取原请求状态";
-      } finally {
-        loading = false;
-      }
-    };
+  () => [
+    props.operationId,
+    props.recorded,
+    props.controller.state.selected,
+    props.controller.view.value?.generation,
+    props.visible,
+  ],
+  (next, previous, cleanup) => {
+    owner?.abort();
+    owner = undefined;
+    loading.value = false;
+    cleanup(() => owner?.abort());
+    if (
+      !previous ||
+      next[0] !== previous[0] ||
+      next[2] !== previous[2] ||
+      next[3] !== previous[3]
+    ) {
+      details.value = undefined;
+      error.value = "";
+      detailsOpen.value = false;
+    }
+    if (!props.visible) {
+      detailsOpen.value = false;
+      return;
+    }
     void refresh();
-    poll = refresh;
-    cleanup(() => {
-      owner.abort();
-      poll = async () => {};
-    });
   },
   { immediate: true },
 );
+onBeforeUnmount(() => owner?.abort());
+const busy = ref(false);
 watch(
   () => Math.floor(props.controller.clock.value / 2000),
   () => {
-    void poll();
+    void refresh();
   },
 );
 async function act(confirm: boolean) {
@@ -112,50 +142,100 @@ function failureLabel(value: string) {
 }
 </script>
 <template>
-  <section v-if="details" class="execution-activity" aria-label="设备操作">
-    <template v-if="details.kind === 'execution'">
+  <section
+    v-if="details?.kind === 'execution' && presentation"
+    class="execution-activity"
+    aria-label="设备操作"
+  >
+    <div class="execution-heading">
       <strong
         >设备操作 · {{ details.value.action.operation.resource.id }}</strong
+      ><span
+        class="task-status"
+        :class="{ attention: presentation.attention }"
+        >{{ presentation.label }}</span
       >
-      <p v-if="details.value.status.phase === 'verified'">执行服务已核实结果</p>
-      <p v-else>查看执行服务记录的状态与结果</p>
-      <button @click="emit('details', details.value)">查看设备操作</button>
-    </template>
-    <template v-else>
-      <strong>设备操作 · {{ details.value.offer.title }}</strong>
-      <template v-if="details.value.offer.summary.kind === 'software'">
-        <p>操作：{{ operationLabel(details.value.offer.summary.intent) }}</p>
-        <ol>
-          <li
-            v-for="(step, index) in details.value.offer.summary.steps"
-            :key="index"
-          >
-            {{ step.package }} {{ step.version }} ·
-            {{ step.identity === "system" ? "系统账号" : "当前用户" }}
-          </li>
-        </ol>
-      </template>
-      <p>
-        {{ stateLabel(details.value.state) }}
-      </p>
-      <p v-if="details.value.failure">
-        {{ failureLabel(details.value.failure) }}
-      </p>
-      <button
-        v-if="details.value.state === 'proposed'"
-        :disabled="busy"
-        @click="act(true)"
-      >
-        确认上述操作
+    </div>
+    <small>{{
+      details.value.status.mode === "test"
+        ? "S1 测试执行器 · 无真实设备变更"
+        : "执行服务记录"
+    }}</small>
+    <p>{{ presentation.stage }}</p>
+    <p v-if="presentation.cancel" class="muted">{{ presentation.cancel }}</p>
+    <p v-if="error" role="alert">{{ error }} 当前显示上次已读取记录。</p>
+    <div class="assistant-actions">
+      <button @click="detailsOpen = true">查看设备操作</button
+      ><button :disabled="loading" @click="refresh">
+        {{ loading ? "正在读取…" : "刷新状态" }}</button
+      ><button v-if="presentation.attention" @click="$emit('tasks')">
+        前往任务处理
       </button>
+    </div>
+    <ModalDrawer
+      v-if="visible && detailsOpen"
+      label="设备操作详情"
+      side="right"
+      @close="detailsOpen = false"
+    >
+      <ExecutionDetails :details="details.value" :now="now" />
+      <p v-if="error" role="alert">{{ error }} 当前显示上次已读取记录。</p>
+      <button :disabled="loading" @click="refresh">刷新执行状态</button>
       <button
-        v-if="!['failed', 'cancelled'].includes(details.value.state)"
-        :disabled="busy"
-        @click="act(false)"
+        v-if="details.value.status.phase === 'confirmationRequired'"
+        @click="
+          detailsOpen = false;
+          $emit('tasks');
+        "
       >
-        撤销请求
+        前往任务确认动作
       </button>
-    </template>
-    <p v-if="error" role="alert">{{ error }}</p>
+    </ModalDrawer>
   </section>
+  <section
+    v-else-if="details?.kind === 'pending'"
+    class="execution-activity"
+    aria-label="设备操作"
+  >
+    <strong>设备操作 · {{ details.value.offer.title }}</strong>
+    <template v-if="details.value.offer.summary.kind === 'software'">
+      <p>操作：{{ operationLabel(details.value.offer.summary.intent) }}</p>
+      <ol>
+        <li
+          v-for="(step, index) in details.value.offer.summary.steps"
+          :key="index"
+        >
+          {{ step.package }} {{ step.version }} ·
+          {{ step.identity === "system" ? "系统账号" : "当前用户" }}
+        </li>
+      </ol>
+    </template>
+    <p>
+      {{ stateLabel(details.value.state) }}
+    </p>
+    <p v-if="details.value.failure">
+      {{ failureLabel(details.value.failure) }}
+    </p>
+    <button
+      v-if="details.value.state === 'proposed'"
+      :disabled="busy"
+      @click="act(true)"
+    >
+      确认上述操作
+    </button>
+    <button
+      v-if="!['failed', 'cancelled'].includes(details.value.state)"
+      :disabled="busy"
+      @click="act(false)"
+    >
+      撤销请求
+    </button>
+
+    <p v-if="error" role="alert">{{ error }}</p>
+    <button :disabled="loading" @click="refresh">刷新状态</button>
+  </section>
+  <p v-else-if="error" class="execution-read-error" role="status">
+    {{ error }}
+    <button :disabled="loading" @click="refresh">重新读取原请求</button>
+  </p>
 </template>

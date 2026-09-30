@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { ref } from "vue";
+const composing = ref(false);
 const props = withDefaults(
   defineProps<{
     modelValue: string;
@@ -25,13 +27,21 @@ const emit = defineEmits<{
 }>();
 function submit() {
   const text = props.modelValue.trim();
-  if (!text || props.disabled || props.busy || !props.canSubmit) return;
+  if (
+    composing.value ||
+    !text ||
+    props.disabled ||
+    props.busy ||
+    !props.canSubmit
+  )
+    return;
   emit("submit", text);
 }
 function keydown(event: KeyboardEvent) {
   if (
     event.key === "Enter" &&
     !event.shiftKey &&
+    !composing.value &&
     !event.isComposing &&
     event.keyCode !== 229
   ) {
@@ -45,6 +55,18 @@ function input(event: Event) {
 </script>
 <template>
   <form class="rss-ui composer" @submit.prevent="submit">
+    <label
+      >消息<textarea
+        :value="modelValue"
+        :disabled="disabled"
+        :placeholder="placeholder"
+        rows="2"
+        @compositionstart="composing = true"
+        @compositionend="composing = false"
+        @input="input"
+        @keydown="keydown"
+      />
+    </label>
     <div class="toolbar">
       <button
         v-if="canCancel"
@@ -53,7 +75,7 @@ function input(event: Event) {
         :disabled="disabled"
         @click="!disabled && emit('cancel')"
       >
-        停止本轮
+        停止回复
       </button>
       <button
         type="submit"
@@ -62,63 +84,67 @@ function input(event: Event) {
         {{ submitLabel }}
       </button>
     </div>
-    <label
-      >消息<textarea
-        :value="modelValue"
-        :disabled="disabled"
-        :placeholder="placeholder"
-        rows="3"
-        @input="input"
-        @keydown="keydown"
-      />
-    </label>
     <p>Enter 发送 · Shift+Enter 换行</p>
   </form>
 </template>
 <style scoped>
 .composer {
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-md);
+  border: 1px solid var(--rss-color-border-strong);
+  border-radius: var(--rss-radius-lg);
   padding: 12px;
-  background: var(--color-surface);
+  background: var(--rss-color-surface);
+  display: flex;
+  flex-direction: column;
 }
 .toolbar {
   display: flex;
   gap: 8px;
-  margin-bottom: 12px;
+  order: 2;
+  align-items: center;
 }
 .toolbar button:first-child {
+  margin-left: auto;
+}
+.toolbar button[data-action="cancel"] {
+  margin-left: 0;
   margin-right: auto;
 }
-button {
-  padding: 6px 12px;
-  background: var(--color-bg);
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-sm);
-}
 button[type="submit"] {
-  background: var(--color-accent);
-  color: white;
+  background: var(--rss-color-accent);
+  color: var(--rss-color-on-accent);
 }
 label {
   display: block;
+  font-size: 0;
 }
 textarea {
   display: block;
   width: 100%;
   resize: vertical;
-  box-sizing: border-box;
-  min-height: 80px;
-  max-height: 250px;
-  margin-top: 6px;
-  border: 1px solid var(--color-border-strong);
-  background: var(--color-bg);
-  padding: 10px;
-  border-radius: var(--radius-sm);
+  min-height: 64px;
+  max-height: 160px;
+  border: 0;
+  background: transparent;
+  padding: 4px;
+  border-radius: var(--rss-radius-sm);
+  font-size: var(--rss-font-size-lg);
 }
 p {
   margin: 8px 0 0;
-  font-size: 12px;
-  color: var(--color-text-muted);
+  font-size: var(--rss-font-size-xs);
+  color: var(--rss-color-text-muted);
+  order: 3;
+}
+@media (max-height: 520px) {
+  .composer {
+    padding: 8px;
+  }
+  textarea {
+    min-height: 44px;
+    max-height: 72px;
+  }
+  p {
+    display: none;
+  }
 }
 </style>

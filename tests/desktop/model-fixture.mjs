@@ -164,7 +164,7 @@ export async function startModelFixture() {
         response,
         scenario === "probe"
           ? "OK"
-          : `完成 ${scenario}\n${"这是本地模型响应夹具，用于检查真实 WebView 的对话布局与持久历史。\n".repeat(12)}`,
+          : `完成 ${scenario}\n${"这是本地模型响应夹具，用于检查真实 WebView 的对话布局与持久历史。\n".repeat(12)}\n\n\`\`\`text\nnative-copy\n\`\`\``,
       );
     } catch (error) {
       failure = error;

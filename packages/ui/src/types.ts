@@ -1,9 +1,8 @@
 /** Display models only; these are not backend wire contracts. */
-export interface MessageItem {
-  id: string;
-  kind: "assistant" | "user" | "reasoning";
-  text: string;
-}
+export type MessageItem =
+  | { id: string; kind: "user"; text: string }
+  | { id: string; kind: "reasoning"; text: string }
+  | { id: string; kind: "assistant"; text: string; stable: boolean };
 export interface NavigationItem {
   id: string;
   label: string;

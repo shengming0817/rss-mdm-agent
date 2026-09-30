@@ -220,9 +220,9 @@ function keys(event: KeyboardEvent) {
   margin: 0 auto;
 }
 .settings-card {
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--rss-color-border);
   border-radius: 10px;
-  background: var(--color-surface);
+  background: var(--rss-color-surface);
   padding: 20px;
   margin: 16px 0;
   overflow-wrap: anywhere;
@@ -247,8 +247,8 @@ dt {
 .settings-confirm {
   position: fixed;
   inset: 20% max(16px, calc((100vw - 520px) / 2)) auto;
-  background: var(--color-surface);
-  border: 2px solid var(--color-border);
+  background: var(--rss-color-surface);
+  border: 2px solid var(--rss-color-border);
   box-shadow: 0 0 0 100vmax #0006;
   padding: 24px;
   z-index: 10;
