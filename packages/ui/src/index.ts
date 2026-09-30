@@ -25,4 +25,11 @@ export {
   ChevronDown,
   X,
   Sparkles,
+  Package,
+  Terminal,
+  Monitor,
+  MessageSquare,
+  Plus,
+  UserRound,
+  ChevronRight,
 } from "@lucide/vue";

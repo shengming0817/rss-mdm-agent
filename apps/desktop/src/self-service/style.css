@@ -1,274 +1,164 @@
+/* The resource view consumes the same controls and surfaces as the assistant. */
 .self-service {
   max-width: 1080px;
   margin: 0 auto;
-  padding: 12px 0 40px;
+  padding-bottom: 24px;
 }
-.brand,
-.page-heading,
-.section-heading,
-.footer-note {
+.catalog-heading,
+.section-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
 }
-.brand strong {
-  display: block;
-  font-size: 21px;
-  letter-spacing: -0.5px;
-  margin-top: 4px;
-}
-.eyebrow,
-.card-index {
-  font-size: 11px;
-  letter-spacing: 1.6px;
+.catalog-heading h2 {
+  font-size: 28px;
   font-weight: 600;
-  color: var(--rss-color-text-muted);
+  letter-spacing: -0.6px;
+  margin: 8px 0;
 }
-.mode-label,
-.badge {
-  font-size: 12px;
-  border-radius: 6px;
-  background: var(--rss-color-warn-bg);
-  color: var(--rss-color-warn);
-  padding: 6px 10px;
-}
-.self-service h1 {
-  font-size: 30px;
-  letter-spacing: -1px;
-  margin: 12px 0 16px;
-}
-.self-service h2 {
-  font-size: 18px;
-  margin: 14px 0 10px;
-}
-.self-service h3 {
-  font-size: 15px;
-}
+.catalog-heading p,
 .self-service p {
+  font-size: var(--rss-font-size-sm);
   color: var(--rss-color-text-muted);
-  line-height: 1.8;
+  line-height: 1.7;
 }
-.hero {
-  padding: 40px 32px;
-  border: 1px solid var(--rss-color-border);
-  border-radius: 16px;
-  background: linear-gradient(
-    125deg,
-    var(--rss-color-surface),
-    var(--rss-color-bg)
-  );
+.catalog-provenance {
+  background: var(--rss-color-neutral-bg);
+  padding: 10px 12px;
+  border-radius: var(--rss-radius-sm);
 }
-.hero h1 {
-  font-size: clamp(36px, 4vw, 52px);
-  line-height: 1.2;
-  letter-spacing: -2px;
-  margin: 22px 0;
+.section-heading {
+  margin: 24px 0 12px;
 }
-.hero p {
-  font-size: 15px;
+.section-heading h3 {
+  margin: 0;
+  font-size: var(--rss-font-size-lg);
 }
-.actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin: 18px 0;
-}
-.self-service button {
-  border: 1px solid var(--rss-color-accent);
-  border-radius: 7px;
-  padding: 10px 16px;
-  color: var(--rss-color-on-accent);
-  background: var(--rss-color-accent);
-  cursor: pointer;
-  font: inherit;
-  font-size: 13px;
-}
-.self-service button.secondary {
-  background: var(--rss-color-surface);
-  color: var(--rss-color-text);
-  border-color: var(--rss-color-border-strong);
-}
-.self-service button.text-button {
-  border: 0;
+.section-heading > span {
+  font-size: var(--rss-font-size-xs);
   color: var(--rss-color-text-muted);
-  background: transparent;
-  padding-left: 0;
 }
-.self-service button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.self-service button:focus-visible,
-.self-service input:focus-visible,
-.self-service select:focus-visible {
-  outline: 2px solid var(--rss-color-accent);
-  outline-offset: 3px;
-}
-.overview-grid,
 .catalog-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-  gap: 18px;
-  margin: 26px 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr));
+  gap: 16px;
 }
-.overview-grid article,
-.catalog-card {
-  padding: 22px;
+.resource-card {
+  padding: 16px;
+  min-width: 0;
   border: 1px solid var(--rss-color-border);
-  border-radius: 12px;
+  border-radius: var(--rss-radius-md);
   background: var(--rss-color-surface);
 }
-.catalog-card p {
-  font-size: 13px;
-  min-height: 48px;
+.resource-card.selected {
+  border-color: var(--rss-color-accent);
 }
-.decisions,
+.resource-card .resource-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+.resource-title > span:last-child {
+  min-width: 0;
+}
+.resource-title strong {
+  display: block;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.resource-title small {
+  display: block;
+  margin-top: 4px;
+  font-size: var(--rss-font-size-xs);
+  color: var(--rss-color-text-muted);
+}
+.resource-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  color: var(--rss-color-accent);
+  background: var(--rss-color-accent-bg);
+}
+.resource-card .resource-link {
+  display: block;
+  border: 0;
+  padding: 8px 0 0;
+  color: var(--rss-color-accent);
+  background: transparent;
+  font-size: var(--rss-font-size-sm);
+}
+.resource-details,
+.self-service [aria-label="操作确认"],
+.preparation-list article,
+.task-detail {
+  padding: 20px;
+  border: 1px solid var(--rss-color-border);
+  border-radius: var(--rss-radius-md);
+  background: var(--rss-color-surface);
+  margin: 20px 0;
+}
+.resource-details .section-heading {
+  margin-top: 0;
+}
+.resource-details ol {
+  padding-left: 20px;
+  font-size: var(--rss-font-size-sm);
+  line-height: 1.8;
+}
+.resource-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.resource-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.execution-records {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 20px;
+}
+.execution-records h3 {
+  flex-basis: 100%;
+}
 .facts {
   display: grid;
   grid-template-columns: 90px minmax(0, 1fr);
   gap: 10px 14px;
-  font-size: 13px;
+  font-size: var(--rss-font-size-sm);
   line-height: 1.6;
 }
-.decisions dt,
 .facts dt {
   color: var(--rss-color-text-muted);
 }
-.decisions dd,
 .facts dd {
   margin: 0;
 }
-.parameter-fields {
-  display: grid;
-  gap: 22px;
-  max-width: 640px;
-  margin: 28px 0;
-}
-.field label {
-  display: block;
-  font-size: 14px;
-  font-weight: 600;
-}
-.field label span {
-  margin-left: 8px;
-  font-size: 11px;
-  font-weight: 400;
-}
-.field .field-help {
-  font-size: 12px;
-  margin: 6px 0 9px;
-}
-.field .sub-label {
-  font-size: 12px;
-  margin: 10px 0 6px;
-}
-.field input,
-.field select {
-  box-sizing: border-box;
-  width: 100%;
-  font: inherit;
-  font-size: 14px;
-  padding: 11px 12px;
-  border: 1px solid var(--rss-color-border-strong);
-  border-radius: 7px;
-  background: var(--rss-color-surface);
-  color: var(--rss-color-text);
-}
-.required {
-  color: var(--rss-color-warn);
-}
-.muted {
-  color: var(--rss-color-text-muted);
-}
-.notice,
-.error {
-  padding: 14px 18px;
-  border-radius: 8px;
-  border-left: 3px solid var(--rss-color-warn);
-  background: var(--rss-color-warn-bg);
-  font-size: 13px;
-  line-height: 1.7;
-}
-.error {
-  margin-bottom: 20px;
-  border-color: var(--rss-color-danger);
-  color: var(--rss-color-danger);
-}
-.plan-summary {
-  border: 1px solid var(--rss-color-border);
-  border-radius: 12px;
-  padding: 22px;
-  margin: 26px 0;
-  background: var(--rss-color-surface);
-}
 .identifier {
   overflow-wrap: anywhere;
-  font-family: ui-monospace, monospace;
-  font-size: 11px;
+  font: var(--rss-font-size-xs) / 1.6 var(--rss-font-mono);
 }
-.parameter-summary {
-  padding-left: 18px;
-  font-size: 13px;
-  line-height: 1.9;
-}
-.plan-summary summary {
-  cursor: pointer;
-  color: var(--rss-color-text-muted);
-  font-size: 12px;
-}
-.task-layout {
-  display: grid;
-  grid-template-columns: minmax(190px, 1fr) minmax(0, 3fr);
-  gap: 22px;
-}
-.task-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.self-service .task-row {
-  text-align: left;
-  display: flex;
-  flex-direction: column;
-  align-items: start;
-  gap: 9px;
-  padding: 16px;
-}
-.task-row[aria-pressed="true"] {
-  border-color: var(--rss-color-accent);
-}
-.interaction-card {
-  padding: 18px;
-  border: 1px solid var(--rss-color-border);
-  border-radius: 10px;
-  margin: 16px 0;
-}
-.interaction-card p {
-  font-size: 13px;
-}
-.empty-state {
-  padding: 50px 20px;
-  text-align: center;
-}
-.footer-note {
-  font-size: 11px;
-  color: var(--rss-color-text-muted);
-  flex-wrap: wrap;
-}
-@media (max-width: 720px) {
-  .task-layout {
-    grid-template-columns: 1fr;
-  }
-  .hero {
-    padding: 28px 20px;
-  }
-  .brand,
-  .page-heading {
+@media (max-width: 640px) {
+  .catalog-heading {
     align-items: start;
-    flex-wrap: wrap;
   }
-  .facts {
-    grid-template-columns: 70px minmax(0, 1fr);
+  .catalog-heading h2 {
+    font-size: 24px;
+  }
+  .resource-details {
+    padding: 16px;
   }
 }

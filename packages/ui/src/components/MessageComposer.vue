@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
+import { ArrowUp, Square } from "@lucide/vue";
 const composing = ref(false);
 const props = withDefaults(
   defineProps<{
@@ -68,6 +69,7 @@ function input(event: Event) {
       />
     </label>
     <div class="toolbar">
+      <div class="composer-tools"><slot name="tools" /></div>
       <button
         v-if="canCancel"
         type="button"
@@ -75,13 +77,15 @@ function input(event: Event) {
         :disabled="disabled"
         @click="!disabled && emit('cancel')"
       >
-        停止回复
+        <Square :size="14" aria-hidden="true" /><span>停止回复</span>
       </button>
       <button
         type="submit"
         :disabled="disabled || busy || !canSubmit || !modelValue.trim()"
       >
-        {{ submitLabel }}
+        <ArrowUp :size="18" aria-hidden="true" /><span class="sr-only">{{
+          submitLabel
+        }}</span>
       </button>
     </div>
     <p>Enter 发送 · Shift+Enter 换行</p>
@@ -90,8 +94,8 @@ function input(event: Event) {
 <style scoped>
 .composer {
   border: 1px solid var(--rss-color-border-strong);
-  border-radius: var(--rss-radius-lg);
-  padding: 12px;
+  border-radius: 18px;
+  padding: 16px;
   background: var(--rss-color-surface);
   display: flex;
   flex-direction: column;
@@ -100,16 +104,31 @@ function input(event: Event) {
   display: flex;
   gap: 8px;
   order: 2;
+  margin-top: 12px;
   align-items: center;
 }
-.toolbar button:first-child {
-  margin-left: auto;
+.composer-tools {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.toolbar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: none;
 }
 .toolbar button[data-action="cancel"] {
   margin-left: 0;
-  margin-right: auto;
+  margin-right: 0;
 }
 button[type="submit"] {
+  width: 36px;
+  padding: 8px;
   background: var(--rss-color-accent);
   color: var(--rss-color-on-accent);
 }
@@ -124,7 +143,7 @@ textarea {
   min-height: 64px;
   max-height: 160px;
   border: 0;
-  background: transparent;
+  background: var(--rss-color-surface);
   padding: 4px;
   border-radius: var(--rss-radius-sm);
   font-size: var(--rss-font-size-lg);

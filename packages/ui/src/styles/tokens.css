@@ -7,6 +7,10 @@
   --rss-font-size-sm: 13px;
   --rss-font-size-md: 14px;
   --rss-font-size-lg: 16px;
+  --rss-font-size-title: 34px;
+  --rss-reading-width: 760px;
+  --rss-hero-width: 704px;
+  --rss-inspector-width: 440px;
 
   --rss-space-1: 2px;
   --rss-space-2: 4px;
@@ -29,23 +33,24 @@
   --rss-drawer-padding: 24px;
 
   /* neutral / text */
-  --rss-color-bg: #fbfbfc;
-  --rss-color-native-navigation: rgba(251, 251, 252, 0.72);
+  --rss-color-bg: #fcfcfa;
+  --rss-color-native-navigation: rgba(243, 244, 241, 0.82);
+  --rss-color-navigation: #f3f4f1;
   --rss-color-surface: #ffffff;
   --rss-color-surface-hover: rgba(0, 0, 0, 0.035);
-  --rss-color-text: #1c1d21;
-  --rss-color-text-muted: #696e77;
-  --rss-color-border: rgba(0, 0, 0, 0.08);
-  --rss-color-border-strong: rgba(0, 0, 0, 0.12);
+  --rss-color-text: #20251f;
+  --rss-color-text-muted: #626a60;
+  --rss-color-border: #e2e4de;
+  --rss-color-border-strong: #cbd0c5;
 
   /* accent (low-sat indigo) */
-  --rss-color-accent: #5e6ad2;
+  --rss-color-accent: #5750be;
   --rss-color-on-accent: #ffffff;
-  --rss-color-accent-bg: rgba(94, 106, 210, 0.1);
-  --rss-color-accent-badge-bg: rgba(94, 106, 210, 0.13);
+  --rss-color-accent-bg: #eceaf9;
+  --rss-color-accent-badge-bg: #eceaf9;
 
   /* neutral badge */
-  --rss-color-neutral-bg: rgba(0, 0, 0, 0.06);
+  --rss-color-neutral-bg: #f0f1ee;
 
   /* success / warn / danger + tinted bgs */
   --rss-color-success: #3a9d5d;
@@ -61,21 +66,22 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --rss-color-bg: #1c1d20;
-    --rss-color-native-navigation: rgba(28, 29, 32, 0.72);
-    --rss-color-surface: #26272b;
+    --rss-color-bg: #131815;
+    --rss-color-native-navigation: rgba(25, 30, 26, 0.82);
+    --rss-color-navigation: #191e1a;
+    --rss-color-surface: #1d241f;
     --rss-color-surface-hover: rgba(255, 255, 255, 0.05);
-    --rss-color-text: #e9eaed;
-    --rss-color-text-muted: #8a8f98;
-    --rss-color-border: rgba(255, 255, 255, 0.08);
-    --rss-color-border-strong: rgba(255, 255, 255, 0.13);
+    --rss-color-text: #eef2eb;
+    --rss-color-text-muted: #a8b3a7;
+    --rss-color-border: #343d35;
+    --rss-color-border-strong: #465248;
 
-    --rss-color-accent: #8b93e6;
-    --rss-color-on-accent: #1c1d20;
-    --rss-color-accent-bg: rgba(94, 106, 210, 0.22);
-    --rss-color-accent-badge-bg: rgba(94, 106, 210, 0.25);
+    --rss-color-accent: #c3bef5;
+    --rss-color-on-accent: #131815;
+    --rss-color-accent-bg: #353247;
+    --rss-color-accent-badge-bg: #353247;
 
-    --rss-color-neutral-bg: rgba(255, 255, 255, 0.08);
+    --rss-color-neutral-bg: #252d27;
 
     --rss-color-success: #5cc185;
     --rss-color-success-bg: rgba(58, 157, 93, 0.22);

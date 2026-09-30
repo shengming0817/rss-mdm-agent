@@ -84,7 +84,7 @@ it("expires navigation badge, background entry and question card together withou
     }
     await wrapper.vm.$nextTick();
     await wrapper.get('[aria-label="打开主导航"]').trigger("click");
-    expect(wrapper.text()).toContain("AI 助手（待回应 2）");
+    expect(wrapper.find('[aria-label="待回应 2"]').exists()).toBe(true);
     await wrapper.get('dialog[aria-label="主导航"]').trigger("cancel");
     expect(wrapper.find(".assistant .notice").text()).toContain("新对话");
     expect(

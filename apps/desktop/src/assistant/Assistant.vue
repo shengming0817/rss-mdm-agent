@@ -1,5 +1,12 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+} from "vue";
 import {
   MessageComposer,
   MessageStream,
@@ -15,6 +22,9 @@ import {
   UiMenuItem,
   MoreHorizontal,
   ChevronDown,
+  Sparkles,
+  MessageSquare,
+  ChevronRight,
 } from "@rss-mdm-agent/ui";
 import { copyText } from "./clipboard";
 import { RuntimeSurface } from "@rss-mdm-agent/ai-ui-bridge";
@@ -34,6 +44,37 @@ const diagnosticsOpen = ref(false),
   menuOpen = ref(false);
 const copyStatus = ref("");
 const timeline = ref<HTMLElement>();
+const root = ref<HTMLElement>();
+const detailsHost = ref<HTMLElement>();
+const openedOperation = ref("");
+const wideDetails = ref(false);
+let detailTrigger: HTMLElement | undefined;
+let sizing: ResizeObserver | undefined;
+onMounted(() => {
+  if (!root.value) return;
+  sizing = new ResizeObserver((entries) => {
+    wideDetails.value = (entries[0]?.contentRect.width ?? 0) >= 1200;
+  });
+  wideDetails.value = root.value.getBoundingClientRect().width >= 1200;
+  sizing.observe(root.value);
+});
+onBeforeUnmount(() => sizing?.disconnect());
+async function openDetails(id: string) {
+  detailTrigger = [
+    ...(timeline.value?.querySelectorAll<HTMLElement>(
+      '[data-action="execution-details"]',
+    ) ?? []),
+  ].find((el) => el.getAttribute("data-operation-id") === id);
+  openedOperation.value = id;
+  await nextTick();
+  if (wideDetails.value)
+    detailsHost.value?.querySelector<HTMLElement>("button")?.focus();
+}
+async function closeDetails() {
+  openedOperation.value = "";
+  await nextTick();
+  if (detailTrigger?.isConnected) detailTrigger.focus();
+}
 const following = ref(true);
 function trackScroll() {
   const el = timeline.value;
@@ -50,6 +91,8 @@ const props = defineProps<{
   controller: AssistantController;
   visible: boolean;
   portalTarget?: HTMLElement;
+  headerTarget?: HTMLElement;
+  presentation: "main" | "context";
 }>();
 const c = props.controller,
   s = c.state,
@@ -137,6 +180,26 @@ const cancellations = computed(() =>
   ),
 );
 
+const empty = computed(
+  () =>
+    !rows.value.length &&
+    !s.opening &&
+    !s.pending.has(s.selected) &&
+    !permissions.value.length &&
+    (!s.selected ||
+      (!!view.value &&
+        view.value.connection === "attached" &&
+        !s.errors.get(s.selected))),
+);
+const recent = computed(() =>
+  c.sessions.value.find((row) => row.status !== "retired"),
+);
+async function suggest(value: string) {
+  if (draft.value.trim()) return;
+  draft.value = value;
+  await nextTick();
+  root.value?.querySelector<HTMLTextAreaElement>("textarea")?.focus();
+}
 const title = computed(() => s.sessions.get(s.selected)?.title ?? "新对话");
 const connectionName = computed(
   () =>
@@ -267,6 +330,7 @@ watch(
   () => s.selected,
   async (_, previous) => {
     if (props.visible) remember(previous);
+    openedOperation.value = "";
     diagnosticsOpen.value = connectionOpen.value = menuOpen.value = false;
     copyStatus.value = "";
     await nextTick();
@@ -279,6 +343,7 @@ watch(
   async (visible) => {
     if (!visible) {
       remember();
+      openedOperation.value = "";
       diagnosticsOpen.value = connectionOpen.value = menuOpen.value = false;
       copyStatus.value = "";
     } else {
@@ -297,57 +362,79 @@ async function copy(text: string) {
 }
 </script>
 <template>
-  <section class="assistant" aria-label="AI 助手">
-    <section class="assistant-conversation" aria-label="当前对话">
-      <header class="conversation-header">
-        <h1 tabindex="-1">{{ title }}</h1>
-        <UiPopover v-model:open="connectionOpen">
-          <UiPopoverTrigger class="connection-trigger"
-            >{{ connectionName }} <ChevronDown :size="14" aria-hidden="true"
-          /></UiPopoverTrigger>
-          <UiPopoverPortal :to="portalTarget"
-            ><UiPopoverContent
-              class="rss-ui rss-popover connection-menu"
-              :side-offset="8"
-              align="end"
-              aria-label="AI 连接选择"
-            >
-              <div ref="connectionPanel">
-                <SessionConnection :controller="c" /><button
-                  @click="
-                    connectionOpen = false;
-                    $emit('settings');
-                  "
-                >
-                  管理 AI 连接
-                </button>
-              </div>
-            </UiPopoverContent></UiPopoverPortal
-          >
-        </UiPopover>
-        <UiMenu v-model:open="menuOpen">
-          <UiMenuTrigger class="icon-button conversation-menu" aria-label="更多"
-            ><MoreHorizontal :size="20" aria-hidden="true"
-          /></UiMenuTrigger>
-          <UiMenuPortal :to="portalTarget"
-            ><UiMenuContent
-              class="rss-ui rss-menu"
-              @close-auto-focus="
-                (event) => {
-                  if (diagnosticsOpen) event.preventDefault();
-                }
-              "
-              :side-offset="8"
-              align="end"
-            >
-              <UiMenuItem @select="diagnosticsOpen = true"
-                >会话详情与诊断</UiMenuItem
+  <section
+    ref="root"
+    v-show="visible"
+    class="assistant"
+    :class="{
+      'assistant-context': presentation === 'context',
+      'assistant-with-details':
+        openedOperation && wideDetails && presentation === 'main',
+    }"
+    aria-label="AI 助手"
+  >
+    <section
+      class="assistant-conversation"
+      :class="{ 'assistant-start': empty }"
+      aria-label="当前对话"
+    >
+      <Teleport
+        :to="headerTarget ?? 'body'"
+        :disabled="presentation === 'context' || !headerTarget"
+      >
+        <header v-show="visible" class="conversation-header">
+          <h1 v-if="presentation === 'main'" tabindex="-1">{{ title }}</h1>
+          <span v-else class="context-session">{{ title }}</span>
+          <UiPopover v-model:open="connectionOpen">
+            <UiPopoverTrigger class="connection-trigger"
+              >{{ connectionName }} <ChevronDown :size="14" aria-hidden="true"
+            /></UiPopoverTrigger>
+            <UiPopoverPortal :to="portalTarget"
+              ><UiPopoverContent
+                class="rss-ui rss-popover connection-menu"
+                :side-offset="8"
+                align="end"
+                aria-label="AI 连接选择"
               >
-              <UiMenuItem @select="$emit('settings')">设置</UiMenuItem>
-            </UiMenuContent></UiMenuPortal
-          >
-        </UiMenu>
-      </header>
+                <div ref="connectionPanel">
+                  <SessionConnection :controller="c" /><button
+                    @click="
+                      connectionOpen = false;
+                      $emit('settings');
+                    "
+                  >
+                    管理 AI 连接
+                  </button>
+                </div>
+              </UiPopoverContent></UiPopoverPortal
+            >
+          </UiPopover>
+          <UiMenu v-model:open="menuOpen">
+            <UiMenuTrigger
+              class="icon-button conversation-menu"
+              aria-label="更多"
+              ><MoreHorizontal :size="20" aria-hidden="true"
+            /></UiMenuTrigger>
+            <UiMenuPortal :to="portalTarget"
+              ><UiMenuContent
+                class="rss-ui rss-menu"
+                @close-auto-focus="
+                  (event) => {
+                    if (diagnosticsOpen) event.preventDefault();
+                  }
+                "
+                :side-offset="8"
+                align="end"
+              >
+                <UiMenuItem @select="diagnosticsOpen = true"
+                  >会话详情与诊断</UiMenuItem
+                >
+                <UiMenuItem @select="$emit('settings')">设置</UiMenuItem>
+              </UiMenuContent></UiMenuPortal
+            >
+          </UiMenu>
+        </header>
+      </Teleport>
       <div v-if="c.background.value.length" class="notice">
         其他对话需要回应：<button
           v-for="id in c.background.value"
@@ -357,7 +444,25 @@ async function copy(text: string) {
           {{ s.sessions.get(id)?.title ?? "新对话" }}
         </button>
       </div>
+      <div v-if="empty" class="assistant-welcome">
+        <span class="welcome-mark"
+          ><Sparkles :size="28" aria-hidden="true"
+        /></span>
+        <h2>
+          {{
+            presentation === "main" ? "今天，想完成什么？" : "想了解这个资源？"
+          }}
+        </h2>
+        <p>
+          {{
+            presentation === "main"
+              ? "讨论想法、解决问题，也可以了解这台设备上的任务。"
+              : "解释用途、核对版本与要求。资源信息由你确认后发送。"
+          }}
+        </p>
+      </div>
       <div
+        v-show="!empty"
         ref="timeline"
         class="assistant-timeline"
         role="log"
@@ -366,10 +471,6 @@ async function copy(text: string) {
         aria-label="会话时间线"
         @scroll="trackScroll"
       >
-        <div v-if="!rows.length" class="empty-state">
-          <h2>有什么需要帮助？</h2>
-          <p>直接输入问题，开始新的对话。</p>
-        </div>
         <article
           v-for="row in rows"
           :key="s.selected + ':' + row.kind + ':' + row.key"
@@ -427,6 +528,10 @@ async function copy(text: string) {
             :recorded="row.delivery.recorded"
             :visible="visible"
             :now="clock"
+            :details-open="openedOperation === row.key"
+            :details-host="detailsHost"
+            @open="openDetails"
+            @close="openedOperation === row.key && closeDetails()"
             @tasks="$emit('tasks')"
           />
           <QuestionCard
@@ -514,7 +619,7 @@ async function copy(text: string) {
           aria-label="待发送资源上下文"
         >
           <div class="resource-context-heading">
-            <strong>{{ c.context.value.path.join(" → ") }}</strong
+            <strong>待发送资源 · {{ c.context.value.path[2] }}</strong
             ><button type="button" @click="c.removeContext()">
               移除上下文
             </button>
@@ -588,6 +693,13 @@ async function copy(text: string) {
           调整当前任务
         </button>
         <MessageComposer
+          :placeholder="
+            presentation === 'context' && c.context.value
+              ? '输入关于此资源的问题…'
+              : empty
+                ? '向 RSS 提问，或描述你希望完成的事…'
+                : '继续提问…'
+          "
           v-model="draft"
           :disabled="view?.sessionStatus === 'retired'"
           :busy="s.sending.has(s.selected) || s.opening"
@@ -596,9 +708,93 @@ async function copy(text: string) {
           :can-cancel="c.canCancel.value"
           @submit="c.prompt()"
           @cancel="c.cancel"
-        />
+        >
+          <template #tools
+            ><span class="status-badge"
+              >{{ connectionName }} ·
+              {{ c.connectionReady.value ? "连接可用" : "待配置或验证" }}</span
+            ></template
+          >
+        </MessageComposer>
+      </div>
+      <div v-if="empty" class="assistant-start-followup">
+        <div class="start-suggestions" aria-label="提问引导">
+          <button
+            type="button"
+            data-action="suggest-prompt"
+            :disabled="!!draft.trim()"
+            @click="
+              suggest(
+                presentation === 'main'
+                  ? '帮我整理一个想法：'
+                  : '解释这个资源的用途与限制。',
+              )
+            "
+          >
+            <MessageSquare :size="16" aria-hidden="true" />{{
+              presentation === "main" ? "整理一个想法" : "解释资源用途"
+            }}
+          </button>
+          <button
+            type="button"
+            :disabled="!!draft.trim()"
+            @click="
+              suggest(
+                presentation === 'main'
+                  ? '帮我理解软件与工具的使用要求。'
+                  : '核对这个资源的版本与运行身份。',
+              )
+            "
+          >
+            {{ presentation === "main" ? "理解使用要求" : "核对版本与身份" }}
+          </button>
+        </div>
+        <p class="suggestion-note">
+          {{
+            draft.trim()
+              ? "已有草稿，请编辑后显式发送。"
+              : "引导仅填入草稿，由你决定是否发送。"
+          }}
+        </p>
+        <button
+          v-if="presentation === 'main' && recent"
+          class="resume-conversation"
+          @click="c.select(recent.namespace.sessionId)"
+        >
+          <span
+            ><small>继续上次的工作</small
+            ><strong>{{ recent.title }}</strong></span
+          ><ChevronRight :size="18" aria-hidden="true" />
+        </button>
       </div>
     </section>
+    <aside
+      v-if="
+        visible && openedOperation && wideDetails && presentation === 'main'
+      "
+      class="execution-inspector"
+      aria-label="设备操作详情"
+    >
+      <header>
+        <h2>设备操作详情</h2>
+        <button
+          type="button"
+          class="icon-button"
+          aria-label="关闭设备操作详情"
+          @click="closeDetails"
+        >
+          ×
+        </button>
+      </header>
+      <div ref="detailsHost" />
+    </aside>
+    <ModalDrawer
+      v-else-if="visible && openedOperation"
+      label="设备操作详情"
+      side="right"
+      @close="closeDetails"
+      ><div ref="detailsHost"
+    /></ModalDrawer>
     <ModalDrawer
       v-if="visible && diagnosticsOpen"
       label="会话详情与诊断"

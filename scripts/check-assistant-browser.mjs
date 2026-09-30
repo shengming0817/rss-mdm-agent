@@ -91,11 +91,12 @@ try {
   assert.equal(drawerStyle.selectedColor, sidebarStyle.selectedColor);
   assert.equal(drawerStyle.selectedBackground, sidebarStyle.selectedBackground);
   const navigationFooter = await navigation
-    .getByRole("button", { name: "设置", exact: true })
+    .locator(".navigation-footer")
     .boundingBox();
   assert.ok(
-    navigationFooter.y > page.viewportSize().height - 100,
-    "settings stays at the bottom of navigation",
+    navigationFooter.y + navigationFooter.height >
+      page.viewportSize().height - 24,
+    "settings and account stay at the bottom of navigation",
   );
   mkdirSync(new URL("../.local-ci-runs/", import.meta.url), {
     recursive: true,
@@ -130,6 +131,45 @@ try {
   await page.locator(".new-conversation").click();
   const composer = page.locator(".composer textarea");
   await composer.waitFor();
+  const startInput = await composer.elementHandle();
+  for (const colorScheme of ["light", "dark"]) {
+    await page.emulateMedia({ colorScheme });
+    for (const [width, height] of [
+      [1100, 760],
+      [1440, 960],
+      [480, 400],
+    ]) {
+      await page.setViewportSize({ width, height });
+      await page.locator(".assistant-welcome").waitFor();
+      assert.equal(
+        await composer.evaluate((el, original) => el === original, startInput),
+        true,
+        "one composer across layouts",
+      );
+      const box = await composer.boundingBox();
+      assert.ok(
+        box.y >= 0 && box.y + box.height <= height,
+        "empty-state input reachable",
+      );
+      assert.equal(await page.locator(".shell-header h1:visible").count(), 1);
+      assert.equal(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+        true,
+      );
+      await page.screenshot({
+        path: fileURLToPath(
+          new URL(
+            `../.local-ci-runs/assistant-start-${colorScheme}-${width}.png`,
+            import.meta.url,
+          ),
+        ),
+      });
+    }
+  }
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.setViewportSize({ width: 1100, height: 760 });
   await composer.fill("第一轮 <img src=x onerror=alert(1)>");
   await page.getByRole("button", { name: "发送", exact: true }).click();
   await page.getByText("AI 命令已接收 / 排队中", { exact: true }).waitFor();
@@ -203,7 +243,7 @@ try {
   await other.goto(fixture.url);
   await other.getByRole("button", { name: "AI 助手", exact: true }).click();
   await other.getByRole("button", { name: "加载更多会话" }).click();
-  await other.getByRole("button", { name: title }).click();
+  await other.getByRole("button", { name: title, exact: true }).click();
   await other.getByText("选择下一步", { exact: false }).waitFor();
   await page.getByRole("button", { name: /^允许一次/ }).click();
   assert.deepEqual((await permission.result).outcome, {
@@ -446,7 +486,7 @@ try {
   await degraded.goto(fixture.url);
   await degraded.getByRole("button", { name: "AI 助手", exact: true }).click();
   await degraded.getByRole("button", { name: "加载更多会话" }).click();
-  await degraded.getByRole("button", { name: title }).click();
+  await degraded.getByRole("button", { name: title, exact: true }).click();
   await degraded
     .getByRole("button", { name: "Retry card", exact: true })
     .waitFor();
@@ -478,7 +518,7 @@ try {
   await invalid.goto(fixture.url);
   await invalid.getByRole("button", { name: "AI 助手", exact: true }).click();
   await invalid.getByRole("button", { name: "加载更多会话" }).click();
-  await invalid.getByRole("button", { name: title }).click();
+  await invalid.getByRole("button", { name: title, exact: true }).click();
   await invalid
     .locator(".question-readonly")
     .getByText("诊断 · 选择下一步", { exact: true })
@@ -504,7 +544,7 @@ try {
   await noA2ui.locator(".composer textarea").waitFor();
   fixture.host.negotiate = negotiate;
   await noA2ui.getByRole("button", { name: "加载更多会话" }).click();
-  await noA2ui.getByRole("button", { name: title }).click();
+  await noA2ui.getByRole("button", { name: title, exact: true }).click();
   await noA2ui
     .getByText("当前连接不支持交互卡片；普通文本与历史记录仍可读取。", {
       exact: true,
@@ -831,7 +871,7 @@ try {
     .waitFor();
   assert.equal(
     await page
-      .locator(".settings h1")
+      .locator(".shell-header h1:visible")
       .evaluate((el) => el === document.activeElement),
     true,
   );
@@ -910,7 +950,7 @@ try {
   );
   await page.getByRole("button", { name: "重新连接", exact: true }).click();
   await page.getByRole("button", { name: "加载更多会话" }).click();
-  await page.getByRole("button", { name: title }).click();
+  await page.getByRole("button", { name: title, exact: true }).click();
   await page
     .getByText("设备已成功 <script>alert(1)</script>", { exact: true })
     .waitFor();
@@ -986,15 +1026,15 @@ try {
   for (const [width, height] of [
     [1100, 760],
     [480, 400],
-    [1600, 900],
+    [1440, 960],
   ]) {
     await page.setViewportSize({ width, height });
+    await page.clock.runFor(32);
     await navigate("软件中心");
     const resource = page
       .locator(".resource-card")
       .filter({ hasText: "办公套件" });
-    if ((await resource.locator("details").getAttribute("open")) === null)
-      await resource.locator("summary").click();
+    await resource.locator('[data-action="resource-details"]').click();
     const trigger = page.getByRole("button", { name: "询问 AI", exact: true });
     await trigger.click();
     const panel =
@@ -1132,6 +1172,20 @@ try {
   if (page && !page.isClosed())
     console.error(
       await page.evaluate(() => ({
+        layout: [
+          ".shell",
+          ".navigation-panel",
+          "main",
+          ".workspace-content",
+        ].map((q) => {
+          const el = document.querySelector(q);
+          return {
+            q,
+            width: el?.getBoundingClientRect().width,
+            css: el && getComputedStyle(el).padding,
+            cls: el?.className,
+          };
+        }),
         facts: document.querySelector(".assistant-facts")?.textContent,
         portal: {
           trigger: document.querySelector(".connection-trigger")?.outerHTML,

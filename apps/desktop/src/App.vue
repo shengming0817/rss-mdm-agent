@@ -82,11 +82,13 @@ async function accountAction(action: () => Promise<unknown>) {
 }
 async function focusSettings() {
   await nextTick();
-  content.value
-    ?.querySelector<HTMLElement>(
-      page.value === "assistant" ? ".assistant h1" : ".settings h1",
-    )
-    ?.focus();
+  // The page header is moved after its host ref has been bound.
+  await nextTick();
+  const title =
+    page.value === "assistant"
+      ? ".assistant-header-host h1"
+      : ".workspace-page-header > h1";
+  content.value?.querySelector<HTMLElement>(title)?.focus();
 }
 async function navigate(id: string) {
   page.value = nativeTestMode && !currentUser.value ? "settings" : id;
@@ -138,6 +140,18 @@ onBeforeUnmount(() => {
       :host="host"
       @navigate="navigate"
     >
+      <template #account-summary>
+        <strong>{{ currentUser?.user.displayName ?? "账户与连接" }}</strong>
+        <small>{{
+          currentUser?.identity?.mode === "enterprise"
+            ? "企业工作区"
+            : currentUser?.identity?.mode === "guest"
+              ? "不登录使用"
+              : currentUser
+                ? "测试用户 · 非企业认证"
+                : "选择使用身份"
+        }}</small>
+      </template>
       <template #user>
         <TestUsers
           :users="users"
@@ -167,6 +181,12 @@ onBeforeUnmount(() => {
 .app-root {
   height: 100%;
   min-height: 0;
+}
+.app-root :deep(.workspace-account small) {
+  display: block;
+  margin-top: 3px;
+  color: var(--rss-color-text-muted);
+  font-size: var(--rss-font-size-xs);
 }
 .account-progress {
   position: fixed;

@@ -52,6 +52,7 @@ it("refreshes a card and its open drawer from one authorized snapshot and retain
     props: {
       controller: c,
       operationId: "tool",
+      detailsOpen: false,
       recorded: true,
       visible: true,
       now: 1000,
@@ -63,6 +64,7 @@ it("refreshes a card and its open drawer from one authorized snapshot and retain
       .findAll("button")
       .find((b) => b.text() === "查看设备操作")!
       .trigger("click");
+    await wrapper.setProps({ detailsOpen: true });
     read.mockResolvedValueOnce({
       kind: "execution",
       value: task("verified", "satisfied"),
@@ -104,6 +106,7 @@ it("discards a late task read after the view has been hidden", async () => {
     props: {
       controller: c,
       operationId: "tool",
+      detailsOpen: false,
       recorded: true,
       visible: true,
       now: 1000,
@@ -150,6 +153,7 @@ it("keeps preparation actions and revocation visible in the modern task card", a
     props: {
       controller: c,
       operationId: "tool",
+      detailsOpen: false,
       recorded: true,
       visible: true,
       now: 1000,
@@ -184,6 +188,46 @@ it("keeps preparation actions and revocation visible in the modern task card", a
     expect(wrapper.text()).not.toContain("撤销请求");
   } finally {
     wrapper.unmount();
+    c.dispose();
+  }
+});
+
+it("opens execution details only through the parent selection without requerying or owning a second toggle", async () => {
+  const c = createAssistant(undefined, () => "id");
+  c.state.selected = "session";
+  const read = vi
+    .spyOn(c, "executionDetails")
+    .mockResolvedValue({ kind: "execution", value: task("running") });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const w = mount(ExecutionActivity, {
+    attachTo: document.body,
+    props: {
+      controller: c,
+      operationId: "tool",
+      recorded: true,
+      visible: true,
+      now: 1000,
+      detailsOpen: false,
+      detailsHost: host,
+    },
+  });
+  try {
+    await flushPromises();
+    await w
+      .findAll("button")
+      .find((b) => b.text() === "查看设备操作")!
+      .trigger("click");
+    expect(w.emitted("open")).toEqual([["tool"]]);
+    expect(host.querySelector(".execution-details")).toBeNull();
+    await w.setProps({ detailsOpen: true });
+    expect(host.querySelector(".execution-details")).not.toBeNull();
+    expect(read).toHaveBeenCalledTimes(1);
+    await w.setProps({ detailsOpen: false });
+    expect(host.querySelector(".execution-details")).toBeNull();
+  } finally {
+    w.unmount();
+    host.remove();
     c.dispose();
   }
 });

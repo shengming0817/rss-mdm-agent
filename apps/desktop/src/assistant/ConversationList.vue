@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { MessageSquare, Plus } from "@rss-mdm-agent/ui";
 import type { AssistantController } from "./controller";
 const props = defineProps<{ controller: AssistantController }>();
 const emit = defineEmits<{ select: [] }>();
@@ -10,7 +11,9 @@ function select(id?: string) {
 </script>
 <template>
   <nav aria-label="最近对话" class="conversation-list">
-    <button class="new-conversation" @click="select()">新对话</button>
+    <button class="new-conversation" @click="select()">
+      <Plus :size="18" aria-hidden="true" />新对话
+    </button>
     <h2>最近对话</h2>
     <p v-if="controller.state.listError" role="alert">
       暂时无法读取会话。<button
@@ -33,8 +36,10 @@ function select(id?: string) {
           "
           @click="select(session.namespace.sessionId)"
         >
-          {{ session.title
-          }}<small v-if="session.status === 'retired'">已结束</small>
+          <MessageSquare :size="15" aria-hidden="true" /><span
+            class="conversation-title"
+            >{{ session.title }}</span
+          ><small v-if="session.status === 'retired'">已结束</small>
         </button>
       </li>
     </ul>
@@ -56,10 +61,13 @@ ul {
 li {
   margin: 6px 0;
 }
-button {
+.conversation-list button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
   text-align: left;
-  overflow-wrap: anywhere;
+  min-width: 0;
   padding: 7px 12px;
   border: 1px solid transparent;
   border-radius: var(--rss-radius-sm);
@@ -67,16 +75,27 @@ button {
   color: var(--rss-color-text);
   cursor: pointer;
 }
-button[aria-current] {
+.conversation-list button[aria-current] {
   background: var(--rss-color-accent-bg);
-  border-color: var(--rss-color-accent);
+  border-color: transparent;
 }
-.new-conversation {
-  border-color: var(--rss-color-border-strong);
+.conversation-list .new-conversation {
+  border-color: transparent;
+  font-weight: 500;
 }
 h2 {
   font-size: var(--rss-font-size-sm);
   color: var(--rss-color-text-muted);
   margin: 20px 12px 8px;
+}
+.conversation-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+svg {
+  flex: none;
 }
 </style>

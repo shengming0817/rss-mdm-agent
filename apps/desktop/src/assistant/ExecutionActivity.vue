@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
-import { ModalDrawer } from "@rss-mdm-agent/ui";
 import ExecutionDetails from "./ExecutionDetails.vue";
 import { taskPresentation } from "./execution-presentation";
 import type { AssistantController } from "./controller";
@@ -11,12 +10,17 @@ const props = defineProps<{
   recorded: boolean;
   visible: boolean;
   now: number;
+  detailsOpen: boolean;
+  detailsHost?: HTMLElement;
 }>();
-defineEmits<{ tasks: [] }>();
+const emit = defineEmits<{
+  tasks: [];
+  open: [operationId: string];
+  close: [];
+}>();
 const details = ref<BackendTaskView>(),
   error = ref(""),
-  loading = ref(false),
-  detailsOpen = ref(false);
+  loading = ref(false);
 const presentation = computed(
   () =>
     details.value?.kind === "execution" &&
@@ -66,10 +70,10 @@ watch(
     ) {
       details.value = undefined;
       error.value = "";
-      detailsOpen.value = false;
+      if (props.detailsOpen) emit("close");
     }
     if (!props.visible) {
-      detailsOpen.value = false;
+      if (props.detailsOpen) emit("close");
       return;
     }
     void refresh();
@@ -165,32 +169,38 @@ function failureLabel(value: string) {
     <p v-if="presentation.cancel" class="muted">{{ presentation.cancel }}</p>
     <p v-if="error" role="alert">{{ error }} 当前显示上次已读取记录。</p>
     <div class="assistant-actions">
-      <button @click="detailsOpen = true">查看设备操作</button
+      <button
+        type="button"
+        data-action="execution-details"
+        :data-operation-id="operationId"
+        @click="emit('open', operationId)"
+      >
+        查看设备操作</button
       ><button :disabled="loading" @click="refresh">
         {{ loading ? "正在读取…" : "刷新状态" }}</button
       ><button v-if="presentation.attention" @click="$emit('tasks')">
         前往任务处理
       </button>
     </div>
-    <ModalDrawer
-      v-if="visible && detailsOpen"
-      label="设备操作详情"
-      side="right"
-      @close="detailsOpen = false"
-    >
-      <ExecutionDetails :details="details.value" :now="now" />
-      <p v-if="error" role="alert">{{ error }} 当前显示上次已读取记录。</p>
-      <button :disabled="loading" @click="refresh">刷新执行状态</button>
-      <button
-        v-if="details.value.status.phase === 'confirmationRequired'"
-        @click="
-          detailsOpen = false;
-          $emit('tasks');
-        "
+    <Teleport :to="detailsHost ?? 'body'" :disabled="!detailsHost"
+      ><section
+        v-if="visible && detailsOpen"
+        class="execution-inspector-content"
       >
-        前往任务确认动作
-      </button>
-    </ModalDrawer>
+        <ExecutionDetails :details="details.value" :now="now" />
+        <p v-if="error" role="alert">{{ error }} 当前显示上次已读取记录。</p>
+        <button :disabled="loading" @click="refresh">刷新执行状态</button>
+        <button
+          v-if="details.value.status.phase === 'confirmationRequired'"
+          @click="
+            emit('close');
+            $emit('tasks');
+          "
+        >
+          前往任务确认动作
+        </button>
+      </section></Teleport
+    >
   </section>
   <section
     v-else-if="details?.kind === 'pending'"
