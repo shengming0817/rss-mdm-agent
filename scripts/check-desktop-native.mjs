@@ -873,11 +873,10 @@ try {
               window.nativeImeEvents.includes("compositionend"),
             ),
           );
-          const composed = await browser.$(".composer textarea").getValue();
-          assert.match(
-            composed,
-            /[^\x00-\x7f]/,
-            "the native candidate must have been committed",
+          const confirmed = await browser.$(".composer textarea").getValue();
+          assert.ok(
+            confirmed.length > 0,
+            "native Return commits the composing text",
           );
           assert.equal(
             await browser.execute(
@@ -886,6 +885,39 @@ try {
             ),
             before,
             "IME confirmation must not submit",
+          );
+          // Apple Pinyin Return commits raw spelling; Space selects its Chinese candidate.
+          await browser.$(".composer textarea").setValue("");
+          for (const code of [45, 34, 4, 0, 31]) key(code);
+          await wait(() =>
+            browser.execute(
+              () =>
+                window.nativeImeEvents.filter(
+                  (type) => type === "compositionstart",
+                ).length === 2,
+            ),
+          );
+          key(49);
+          await wait(() =>
+            browser.execute(
+              () =>
+                window.nativeImeEvents.filter(
+                  (type) => type === "compositionend",
+                ).length === 2,
+            ),
+          );
+          assert.match(
+            await browser.$(".composer textarea").getValue(),
+            /[^\x00-\x7f]/,
+            "Space selects the native Chinese candidate",
+          );
+          assert.equal(
+            await browser.execute(
+              async () =>
+                (await window.assistantRuntime.listSessions()).items.length,
+            ),
+            before,
+            "Chinese candidate confirmation must not submit",
           );
           key(36);
           await wait(
@@ -901,10 +933,12 @@ try {
             source: "com.apple.inputmethod.SCIM.ITABC",
             events: await browser.execute(() => window.nativeImeEvents),
             confirmationDidNotSend: true,
+            returnConfirmedSpellingWithoutSend: true,
+            spaceConfirmedChineseWithoutSend: true,
             explicitReturnSentOnce: true,
           };
           result.messageInput =
-            "physical native Pinyin candidate Return followed by explicit Return submission";
+            "physical native Pinyin Return and Space confirmation followed by explicit Return submission";
           result.checks.push(
             "native-chinese-IME-confirmation-without-send",
             "native-explicit-Return-send",
