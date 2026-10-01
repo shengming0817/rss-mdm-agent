@@ -29,20 +29,21 @@ async fn lost_chunk_ack_replays_identical_bytes_after_restart_and_requires_every
     drop(client);
     let client = server.client(&root, OpenMode::Existing);
     client.send_output_chunks(task, &request).await.unwrap();
-    let data = server.data.lock().unwrap();
-    assert_eq!(data.chunk_calls.len(), 3);
-    assert_eq!(data.chunk_calls[0], data.chunk_calls[1]);
-    let TaskEvent::ChunkedResult(reference) = request.event() else {
-        panic!("large output was not chunked")
-    };
-    assert_eq!(
-        reference
-            .assemble(data.chunks.values().cloned().collect())
-            .unwrap()
-            .output(),
-        &value
-    );
-    drop(data);
+    {
+        let data = server.data.lock().unwrap();
+        assert_eq!(data.chunk_calls.len(), 3);
+        assert_eq!(data.chunk_calls[0], data.chunk_calls[1]);
+        let TaskEvent::ChunkedResult(reference) = request.event() else {
+            panic!("large output was not chunked")
+        };
+        assert_eq!(
+            reference
+                .assemble(data.chunks.values().cloned().collect())
+                .unwrap()
+                .output(),
+            &value
+        );
+    }
     client
         .store
         .conn
