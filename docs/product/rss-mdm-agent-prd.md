@@ -144,7 +144,7 @@ Agent wire 的唯一 producer 仍为 rss-mdm；`execution-contract` 是本地执
 
 #2564 生产执行边界：后台唯一决定企业任务授权、来源和批准；客户端验证签名、设备/注册世代、attempt、固定材料及真实 OS 上下文。企业批准走 `NotRequired`，不增加客户端企业审批、Grant 表或离线授权系统。用户主动安装的动作确认和 OS 授权独立保留。
 
-系统服务是唯一生产组合根和执行 journal owner；用户 helper 只承担原登录会话的物理执行。V4 有序软件步骤直接进入本地执行输入 V5；IPC V5、SQLite schema 6 同步切换。旧格式原样保留并拒绝，不提供兼容解析、自动迁移、重新注册或换 journal 的回退。远程 Agent V4 不变。
+系统服务是唯一生产组合根和执行 journal owner；用户 helper 只承担原登录会话的物理执行。V5 有序软件步骤直接进入本地执行输入 V5；IPC V5、SQLite schema 6 同步切换。旧格式原样保留并拒绝，不提供兼容解析、自动迁移、重新注册或换 journal 的回退。远程 Agent 协议统一为 V5。
 
 每个后台 attempt 对应一个本地 intent；步骤 checkpoint、累计预算、取消与恢复都在同一 journal。Start 期限限制首次启动，已经启动的步骤继续受原许可内容及预算约束。未知步骤不得重跑或跳过。根进程退出、独立检测、整体静止与结果送达分别记录；退出零不是软件效果成功。
 

@@ -6,8 +6,6 @@ use std::collections::BTreeMap;
 pub enum ScriptProfile {
     /// PowerShell 7 file invocation. Windows PowerShell 5.1 is not this profile.
     PowerShell7,
-    /// Fixed version-only query, with no caller-supplied SQL or parameters.
-    OsqueryInfoV1,
     /// Noninteractive POSIX sh file invocation on macOS/Linux.
     PosixSh,
     /// Noninteractive Bash file invocation on macOS/Linux.
