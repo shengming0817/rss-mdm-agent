@@ -118,6 +118,14 @@ pub async fn switch_to_window<R: Runtime>(
         WebDriverErrorResponse::unknown_error("Browsing context generation overflowed")
     })?;
 
+    let window = state
+        .app
+        .get_webview_window(&session.current_window)
+        .ok_or_else(WebDriverErrorResponse::no_such_window)?;
+    drop(sessions);
+    window
+        .set_focus()
+        .map_err(|error| WebDriverErrorResponse::unknown_error(&error.to_string()))?;
     Ok(WebDriverResponse::null())
 }
 

@@ -139,8 +139,13 @@ const native = (source) =>
     `tell application "System Events"\n tell (first application process whose unix id is ${receipt.pid})\n set frontmost to true\n if (count of windows) > 0 then perform action "AXRaise" of window 1\n repeat 10 times\n if frontmost then exit repeat\n set frontmost to true\n delay 0.1\n end repeat\n delay 0.2\n ${source}\n end tell\nend tell`,
   );
 const key = (code, shift = false) => {
+  const foreground = native("get frontmost");
+  if (foreground !== "true")
+    result.foregroundFailure = script(
+      'tell application "System Events" to get {name, unix id} of first application process whose frontmost is true',
+    );
   assert.equal(
-    native("get frontmost"),
+    foreground,
     "true",
     "native application must own foreground keyboard focus",
   );
@@ -760,8 +765,11 @@ try {
             await wait(() =>
               browser.execute(
                 () =>
+                  !document.querySelector(
+                    'dialog[aria-label="资源上下文 AI"][open], aside[aria-label="资源上下文 AI"]',
+                  ) &&
                   document.activeElement?.getAttribute("data-action") ===
-                  "ask-ai",
+                    "ask-ai",
               ),
             );
             mark(`native context return to main ${theme} ${width}`);
@@ -863,6 +871,8 @@ try {
         });
         try {
           selectInputSource("com.apple.inputmethod.SCIM.ITABC");
+          await browser.switchToWindow("main");
+          await browser.$(".composer textarea").click();
           for (const code of [45, 34, 4, 0, 31]) key(code);
           await wait(() =>
             browser.execute(() =>
