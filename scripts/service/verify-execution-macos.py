@@ -25,6 +25,11 @@ import tempfile
 import sqlite3
 import select
 import inspect
+import socket
+import ctypes
+import struct
+import io
+import contextlib
 
 
 def run(*args, **kwargs):
@@ -61,6 +66,111 @@ def administrator(script):
     except subprocess.TimeoutExpired:
         script.with_name('command-error.txt').write_text('native administrator authorization deadline exceeded')
         raise RuntimeError('native administrator authorization deadline exceeded') from None
+
+
+def peer_identity(connection):
+    # ref: macOS SDK sys/un.h LOCAL_PEERPID; getpeereid(3), actual kernel credentials.
+    uid, gid = ctypes.c_uint(), ctypes.c_uint()
+    library = ctypes.CDLL('/usr/lib/libSystem.B.dylib')
+    if library.getpeereid(connection.fileno(), ctypes.byref(uid), ctypes.byref(gid)) != 0:
+        raise RuntimeError('administrator channel peer unavailable')
+    pid = struct.unpack('i', connection.getsockopt(0, 2, 4))[0]
+    return pid, uid.value
+
+
+def authorized_steps(programs, endpoint, expected_pid, expected_uid):
+    # This test owner has only frozen setup/initialize/restart/cleanup operations.
+    connection = socket.socket(socket.AF_UNIX)
+    cleaned = False
+    started = False
+    def perform(operation):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            exec(compile(programs[operation], '<fixed acceptance operation>', 'exec'), {'__name__':'__main__'})
+        raw = output.getvalue().strip()
+        return json.loads(raw) if raw else None
+    def reply(identity, operation):
+        nonlocal cleaned
+        try:
+            if operation == 'cleanup': cleaned = True
+            value = perform(operation)
+            response = {'id':identity, 'ok':True, 'value':value}
+        except BaseException as error:
+            response = {'id':identity, 'ok':False, 'error':type(error).__name__}
+        connection.sendall((json.dumps(response)+'\n').encode())
+        return response['ok']
+    try:
+        connection.connect(endpoint)
+        if peer_identity(connection) != (expected_pid, expected_uid):
+            raise RuntimeError('administrator channel owner mismatch')
+        connection.settimeout(1200)
+        started = True
+        if not reply(0, 'setup'): return
+        with connection.makefile('rb') as reader:
+            sequence = 0
+            while True:
+                line = reader.readline(4097)
+                if not line: break
+                message = json.loads(line)
+                if len(line)>4096 or set(message)!={'id','operation'} or type(message['id']) is not int or message['id']!=sequence+1 or message['operation'] not in ('initialize','restart','cleanup'):
+                    connection.sendall((json.dumps({'id':message.get('id'),'ok':False,'error':'invalid operation'})+'\n').encode())
+                    break
+                sequence = message['id']
+                reply(sequence, message['operation'])
+                if cleaned: break
+    finally:
+        if started and not cleaned:
+            try: perform('cleanup')
+            except BaseException:
+                raise RuntimeError('fixed administrator cleanup incomplete') from None
+        connection.close()
+
+
+class AdministratorSession:
+    def __init__(self, setup, initialize, restart, cleanup, lab):
+        self.directory = Path(tempfile.mkdtemp(prefix='rss-admin-', dir='/private/tmp'))
+        self.endpoint = self.directory/'control'
+        self.listener = socket.socket(socket.AF_UNIX)
+        self.listener.bind(str(self.endpoint)); self.listener.listen(1); self.listener.settimeout(1)
+        self.connection = self.reader = self.process = None
+        self.sequence = 0
+        programs = {'setup':setup.read_text(),'initialize':initialize.read_text(),'restart':restart.read_text(),'cleanup':cleanup.read_text()}
+        source = 'import socket,ctypes,struct,io,contextlib,json\n' + inspect.getsource(peer_identity) + inspect.getsource(authorized_steps)
+        source += 'authorized_steps('+repr(programs)+','+repr(str(self.endpoint))+','+str(os.getpid())+','+str(os.geteuid())+')\n'
+        command = 'cd /private/tmp && /usr/bin/python3 -I -c ' + shlex.quote(source)
+        self.log = (lab/'administrator-session.log').open('w')
+        self.process = subprocess.Popen(['/usr/bin/osascript','-e','do shell script '+json.dumps(command)+' with administrator privileges'],stdout=self.log,stderr=self.log)
+    def start(self):
+        deadline = time.monotonic()+120
+        while self.connection is None:
+            try: self.connection,_ = self.listener.accept()
+            except socket.timeout:
+                if self.process.poll() is not None: raise RuntimeError('native administrator authorization failed; see administrator-session.log')
+                if time.monotonic() >= deadline:
+                    self.process.terminate()
+                    raise RuntimeError('native administrator authorization deadline exceeded')
+        if peer_identity(self.connection)[1] != 0:
+            self.connection.close();self.connection=None
+            raise RuntimeError('administrator channel is not system-owned')
+        self.connection.settimeout(60);self.reader=self.connection.makefile('rb')
+        return self.receive(0)
+    def receive(self, identity):
+        message=json.loads(self.reader.readline(8*1024*1024+1))
+        if message.get('id')!=identity or message.get('ok') is not True:
+            raise RuntimeError('fixed administrator operation failed: '+str(message.get('error','invalid acknowledgement')))
+        return message['value']
+    def command(self, operation):
+        self.sequence+=1
+        self.connection.sendall((json.dumps({'id':self.sequence,'operation':operation})+'\n').encode())
+        return self.receive(self.sequence)
+    def close(self):
+        if self.reader:self.reader.close()
+        if self.connection:self.connection.close()
+        self.listener.close()
+        try:self.process.wait(timeout=15)
+        except subprocess.TimeoutExpired:raise RuntimeError('administrator cleanup process exit unconfirmed')
+        finally:
+            self.log.close(); self.endpoint.unlink(missing_ok=True); self.directory.rmdir()
 
 
 def acknowledged_result(status, attempt):
@@ -284,13 +394,32 @@ if default.exists():
     assert actual['service']['path']==%r and actual['state_root']==%r, 'refusing to remove another deployment pin'
     default.unlink()
 """ % (str(default_config), str(binary), str(protected / 'state')))
+    initialize = lab/'initialize.py'
+    initialize.write_text("""import plistlib,subprocess
+from pathlib import Path
+p=plistlib.loads(Path('/Library/LaunchDaemons/com.rss-mdm.agent.execution.plist').read_bytes())
+assert p['ProgramArguments']==%r, 'initialization registration owner mismatch'
+subprocess.run(%r,input='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',text=True,check=True)
+subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.execution'],check=True)
+""" % ([str(binary),'--config',str(config)],[str(binary),'--config',str(config),'--initialize']))
+    restart = lab/'restart.py'
+    restart.write_text("""import os,plistlib,subprocess
+from pathlib import Path
+p=plistlib.loads(Path('/Library/LaunchDaemons/com.rss-mdm.agent.execution.plist').read_bytes())
+assert p['ProgramArguments']==%r, 'restart registration owner mismatch'
+pid=int(Path(%r).read_text());os.kill(pid,0)
+subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.execution'],check=True)
+""" % ([str(binary),'--config',str(config)],str(protected/'restart-pid')))
+    cleanup.write_text("from pathlib import Path\nif Path(%r).exists(): Path(%r).write_text('finished')\n" % (str(protected/'restart-pid'),str(protected/'restart-finish')) + cleanup.read_text())
     receipt = dict(platform=os.uname().sysname, architecture=os.uname().machine,
                    journal=str(protected / 'state/execution.sqlite'), scenarios={}, sourceHead=run('/usr/bin/git', 'rev-parse', 'HEAD').stdout.strip())
     installed = helper = False
+    administrator_session = None
     try:
         first = None if args.desktop else command('script', body='printf \'{"fixture":"system"}\\n\'\n')
         if not args.desktop: command('result_failure')
-        administrator(setup)
+        administrator_session = AdministratorSession(setup,initialize,restart,cleanup,lab)
+        administrator_session.start()
         installed = True
         if args.desktop and select.select([sys.stdin], [], [], 0)[0]:
             raise RuntimeError('native acceptance parent ended before readiness; refusing initialization')
@@ -308,15 +437,7 @@ if default.exists():
             assert denied['reply']['kind'] == 'rejected'
             assert not (protected / 'state').exists(), 'diagnostic startup created device state'
             receipt['scenarios']['unregistered_status_without_authority'] = status
-            initialize = lab / 'initialize.py'
-            initialize.write_text("""import plistlib,subprocess
-from pathlib import Path
-p=plistlib.loads(Path('/Library/LaunchDaemons/com.rss-mdm.agent.execution.plist').read_bytes())
-assert p['ProgramArguments']==%r, 'initialization registration owner mismatch'
-subprocess.run(%r,input='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',text=True,check=True)
-subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.execution'],check=True)
-""" % ([str(binary),'--config',str(config)], [str(binary),'--config',str(config),'--initialize']))
-            administrator(initialize)
+            administrator_session.command('initialize')
 
         helper = True
         run('/usr/bin/python3', str(installer), 'install', '--scope', 'user', '--binary', str(binary), '--config', str(config))
@@ -449,15 +570,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
         while not counter.exists():
             assert time.monotonic() < deadline, 'restart fixture did not start'
             time.sleep(.2)
-        restart = lab / 'restart.py'
-        pid = int(process_file.read_text())
-        original_process = run('/bin/ps', '-p', str(pid), '-o', 'lstart=,uid=,comm=').stdout.strip()
-        assert original_process
-        deadline_utc = time.time() + 45
-        restart.write_text('import os,plistlib,subprocess,time\nfrom pathlib import Path\np=plistlib.loads(Path("/Library/LaunchDaemons/com.rss-mdm.agent.execution.plist").read_bytes())\nassert p["ProgramArguments"]==%r\nassert time.time()<%r, "authorization exceeded the active fixture window"\nactual=subprocess.run(["/bin/ps","-p",%r,"-o","lstart=,uid=,comm="],capture_output=True,text=True,check=True).stdout.strip()\nassert actual==%r, "original process is no longer active"\nos.kill(%r,0)\nsubprocess.run(["/bin/launchctl","kickstart","-k","system/com.rss-mdm.agent.execution"],check=True)\n' % ([str(binary), '--config', str(config)], deadline_utc, str(pid), original_process, pid))
-        # Release only this controlled fixture during cleanup; no restored PID is killed.
-        cleanup.write_text('from pathlib import Path\nPath(%r).write_text("finished")\n' % str(finish) + cleanup.read_text())
-        administrator(restart)
+        administrator_session.command('restart')
         time.sleep(3)
         reopened = query()
         records = [r for r in reopened['value']['items'] if r['action']['initiator'].get('attempt') == fifth['attempt']]
@@ -481,14 +594,17 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
                 run('/usr/bin/python3', str(installer), 'remove', '--scope', 'user', '--binary', str(binary), '--config', str(config))
             except BaseException as error:
                 cleanup_errors.append(str(error))
-        if installed:
+        if administrator_session and administrator_session.reader:
             try:
-                proof = administrator(cleanup)
-                if proof.stdout.strip(): receipt['journalProof'] = json.loads(proof.stdout)
+                proof = administrator_session.command('cleanup')
+                if proof: receipt['journalProof'] = proof
                 if args.desktop and receipt['status'] == 'passed':
                     validate_journal_completion(receipt['journalProof'], completion)
             except BaseException as error:
                 cleanup_errors.append(str(error))
+        if administrator_session:
+            try: administrator_session.close()
+            except BaseException as error: cleanup_errors.append(str(error))
         proxy.shutdown()
         backend.stdin.close()
         try:

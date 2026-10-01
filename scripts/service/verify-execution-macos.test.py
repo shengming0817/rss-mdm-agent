@@ -7,6 +7,9 @@ import unittest
 import tempfile
 import json
 import sqlite3
+import socket
+import threading
+import os
 from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('acceptance', Path(__file__).with_name('verify-execution-macos.py'))
@@ -100,6 +103,21 @@ class EvidenceTests(unittest.TestCase):
                     acceptance.administrator(script)
             self.assertNotIn('sensitive',str(caught.exception))
             self.assertIn('User canceled', (script.parent/'command-error.txt').read_text())
+
+    def test_one_frozen_authorized_session_rejects_arbitrary_commands_and_cleans_on_disconnect(self):
+        with tempfile.TemporaryDirectory(dir='/private/tmp') as directory:
+            path=Path(directory)/'control'; marker=Path(directory)/'cleaned'
+            listener=socket.socket(socket.AF_UNIX); listener.bind(str(path));listener.listen(1)
+            programs={'setup':'pass','initialize':'raise RuntimeError("injected initialization failure")','restart':'pass','cleanup':f'from pathlib import Path;Path({str(marker)!r}).write_text("cleaned")'}
+            worker=threading.Thread(target=acceptance.authorized_steps,args=(programs,str(path),os.getpid(),os.geteuid()))
+            worker.start();connection,_=listener.accept();reader=connection.makefile('rb')
+            self.assertTrue(json.loads(reader.readline())['ok'])
+            connection.sendall(b'{"id":1,"operation":"initialize"}\n')
+            self.assertFalse(json.loads(reader.readline())['ok'])
+            connection.sendall(b'{"id":2,"operation":"execute","path":"/bin/sh"}\n')
+            self.assertFalse(json.loads(reader.readline())['ok'])
+            reader.close();connection.close();listener.close();worker.join(5)
+            self.assertFalse(worker.is_alive());self.assertEqual(marker.read_text(),'cleaned')
 
     def test_http_failure_is_not_acknowledgement(self):
         status = {'results': {'op': {'attemptId': 'a', 'event': {'kind': 'result'}}}, 'acknowledged': []}
