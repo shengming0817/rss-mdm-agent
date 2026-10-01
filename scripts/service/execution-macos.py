@@ -42,6 +42,18 @@ def candidate(binary, config):
     return value
 
 
+def publish_config(path, document):
+    publication = path.with_suffix(path.suffix + '.refresh')
+    try:
+        fd = os.open(publication, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+        with os.fdopen(fd, 'w') as stream:
+            os.fchmod(stream.fileno(), 0o644)
+            json.dump(document, stream); stream.flush(); os.fsync(stream.fileno())
+        os.replace(publication, path)
+    finally:
+        publication.unlink(missing_ok=True)
+
+
 def verify_registered(endpoint, program):
     current = subprocess.run(['/bin/launchctl', 'print', endpoint], check=True, capture_output=True, text=True)
     match = re.search(r'^\s*pid = ([0-9]+)\s*$', current.stdout, re.MULTILINE)
@@ -65,6 +77,20 @@ def refresh(plist, label, domain, endpoint, program, config, next_binary, next_c
     immutable = ['origin', 'tenant', 'enrollment', 'registration_operation', 'state_root', 'helper_work_roots']
     if any(old[key] != new[key] for key in immutable) or any(old['execution'][key] != new['execution'][key] for key in ['work_root', 'material_root']):
         raise RuntimeError('refresh cannot replace identity, storage or unresolved task resources')
+    targets = [config]
+    if domain == 'system':
+        for subject in old['helper_work_roots']:
+            if registered(f'gui/{subject}/com.rss-mdm.agent.execution.user'):
+                raise RuntimeError('remove the matching helper in its actual login before system refresh')
+        default = Path('/Library/Application Support/RSS MDM Agent/execution.json')
+        if default != config and default.exists():
+            for path in [default, *default.parents]:
+                metadata = path.lstat()
+                if stat.S_ISLNK(metadata.st_mode) or metadata.st_uid != 0 or metadata.st_mode & 0o022:
+                    raise RuntimeError('unprotected default deployment pin')
+            if candidate(Path(program[0]), default) != old:
+                raise RuntimeError('default deployment belongs to another installation')
+            targets.append(default)
     if not registered(endpoint):
         raise RuntimeError('refresh requires the verified current registration to be loaded')
     verify_registered(endpoint, program)
@@ -73,11 +99,12 @@ def refresh(plist, label, domain, endpoint, program, config, next_binary, next_c
         raise RuntimeError('old registration stop was not confirmed')
     # Use an exclusive sibling and atomic replace; failed restart retains inspectable registration.
     publication = plist.with_suffix('.refresh')
-    next_program = [str(next_binary), '--config', str(next_config)]
+    next_program = [str(next_binary), '--config', str(config)]
     if '--user-helper' in program:
         next_program.append('--user-helper')
     current['ProgramArguments'] = next_program
     try:
+        for target in targets: publish_config(target, new)
         fd = os.open(publication, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         with os.fdopen(fd, 'wb') as stream:
             plistlib.dump(current, stream); stream.flush(); os.fsync(stream.fileno())

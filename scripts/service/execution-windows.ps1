@@ -52,6 +52,16 @@ function Assert-Refresh {
         if (($Old.$Field | ConvertTo-Json -Depth 20 -Compress) -cne ($New.$Field | ConvertTo-Json -Depth 20 -Compress)) { throw 'Refresh cannot replace identity or persistent state' }
     }
     foreach ($Field in @('work_root','material_root')) { if ($Old.execution.$Field -cne $New.execution.$Field) { throw 'Refresh cannot replace unresolved task resources' } }
+    return $New
+}
+function Publish-Config($Path, $Document) {
+    $Temporary=$Path+'.refresh'
+    $Data=[Text.Encoding]::UTF8.GetBytes(($Document | ConvertTo-Json -Depth 30))
+    try {
+        $Stream=[IO.File]::Open($Temporary,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+        try { $Stream.Write($Data,0,$Data.Length); $Stream.Flush($true) } finally { $Stream.Dispose() }
+        [IO.File]::Replace($Temporary,$Path,$null)
+    } finally { if ([IO.File]::Exists($Temporary)) { [IO.File]::Delete($Temporary) } }
 }
 if ($Scope -eq 'System') {
     $Service = Get-CimInstance Win32_Service -Filter "Name='$Name'"
@@ -66,10 +76,16 @@ if ($Scope -eq 'System') {
     }
     if ($Action -eq 'Refresh') {
         if (!$Service -or $Service.PathName -cne ('"' + $Binary + '"' + $ConfigArgs) -or $Service.StartName -ne 'LocalSystem') { throw 'Refusing to refresh an unrelated service' }
-        Assert-Refresh
+        $Next = Assert-Refresh
+        foreach ($Subject in $Next.helper_work_roots.PSObject.Properties.Name) {
+            if (Get-ScheduledTask -TaskName ("RssExecution-$Subject") -ErrorAction SilentlyContinue) { throw 'Remove matching helper from its actual login before system refresh' }
+        }
+        $Default=Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'RSS MDM Agent\execution.json'
+        if ($Default -cne $Config -and [IO.File]::Exists($Default)) { throw 'Refresh requires the default production config; custom controlled deployments use their installation owner' }
         Stop-Service -Name $Name -ErrorAction Stop
         (Get-Service -Name $Name).WaitForStatus('Stopped', [TimeSpan]::FromSeconds(10))
-        & sc.exe config $Name binPath= ('"' + $CandidateBinary + '" --config "' + $CandidateConfig + '"')
+        Publish-Config $Config $Next
+        & sc.exe config $Name binPath= ('"' + $CandidateBinary + '" --config "' + $Config + '"')
         if ($LASTEXITCODE -ne 0) { throw 'SCM refresh failed; registration retained' }
         Start-Service -Name $Name
         Write-Output 'Registered current candidate; authenticated user readiness check required'
@@ -100,14 +116,15 @@ if ($Scope -eq 'System') {
     }
     if ($Action -eq 'Refresh') {
         if (!$Task -or $Task.Actions.Count -ne 1 -or $Task.Actions[0].Execute -cne $Binary -or $Task.Actions[0].Arguments -cne $HelperArgs -or $Task.Principal.UserId -ne $Sid) { throw 'Refusing to refresh an unrelated helper' }
-        Assert-Refresh
+        $Next = Assert-Refresh
         Stop-ScheduledTask -TaskName $TaskName
         $Deadline = [DateTime]::UtcNow.AddSeconds(10)
         while ((Get-ScheduledTask -TaskName $TaskName).State -eq 'Running') {
             if ([DateTime]::UtcNow -ge $Deadline) { throw 'Helper stop unconfirmed; registration retained' }
             Start-Sleep -Milliseconds 100
         }
-        $NextAction = New-ScheduledTaskAction -Execute $CandidateBinary -Argument ('--config "' + $CandidateConfig + '" --user-helper')
+        Publish-Config $Config $Next
+        $NextAction = New-ScheduledTaskAction -Execute $CandidateBinary -Argument ('--config "' + $Config + '" --user-helper')
         Set-ScheduledTask -TaskName $TaskName -Action $NextAction | Out-Null
         Start-ScheduledTask -TaskName $TaskName
         Write-Output 'Registered current helper candidate; authenticated service check required'

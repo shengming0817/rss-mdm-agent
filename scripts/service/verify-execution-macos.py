@@ -33,7 +33,7 @@ def administrator(script):
     # Freeze source in the Apple event before authorization; root never reads Documents.
     command = 'cd /private/tmp && /usr/bin/python3 -I -c ' + shlex.quote(script.read_text())
     return run('/usr/bin/osascript', '-e',
-               'do shell script ' + json.dumps(command) + ' with administrator privileges')
+               'do shell script ' + json.dumps(command) + ' with administrator privileges', timeout=120)
 
 
 def acknowledged_result(status, attempt):

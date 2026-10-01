@@ -122,7 +122,7 @@ class Installation(unittest.TestCase):
                         if failure=='restart': raise module.subprocess.CalledProcessError(5,args)
                         loaded=True
                     return SimpleNamespace(returncode=0)
-                with patch.object(module,'candidate',side_effect=[old,new]), patch.object(module,'verify_registered'):
+                with patch.object(module,'candidate',side_effect=[old,new]), patch.object(module,'verify_registered'), patch.object(module,'publish_config') as published:
                     with patch.object(module.subprocess,'run',side_effect=run):
                         call=lambda: module.refresh(plist,label,f'gui/{os.geteuid()}',f'gui/{os.geteuid()}/{label}',program,Path('/old/config'),Path('/new/service'),Path('/new/config'))
                         if failure:
@@ -131,9 +131,11 @@ class Installation(unittest.TestCase):
                 self.assertEqual(journal.read_bytes(),b'unresolved journal')
                 self.assertEqual(secret.read_bytes(),b'credential marker')
                 self.assertTrue(plist.exists())
-                if failure in ['identity','owner','stop']: self.assertFalse(any(cmd[1]=='bootstrap' for cmd in calls))
+                if failure in ['identity','owner','stop']:
+                    self.assertFalse(any(cmd[1]=='bootstrap' for cmd in calls)); published.assert_not_called()
+                else: published.assert_called_once_with(Path('/old/config'),new)
                 if failure=='restart':
-                    self.assertEqual(plistlib.loads(plist.read_bytes())['ProgramArguments'],['/new/service','--config','/new/config','--user-helper'])
+                    self.assertEqual(plistlib.loads(plist.read_bytes())['ProgramArguments'],['/new/service','--config','/old/config','--user-helper'])
 
     def test_status_does_not_require_binary(self):
         with tempfile.TemporaryDirectory() as directory:
