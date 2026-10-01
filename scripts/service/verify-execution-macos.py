@@ -20,6 +20,8 @@ import threading
 import time
 import uuid
 import sys
+import shutil
+import tempfile
 
 
 def run(*args, **kwargs):
@@ -27,7 +29,8 @@ def run(*args, **kwargs):
 
 
 def administrator(script):
-    command = '/usr/bin/python3 ' + shlex.quote(str(script))
+    # Freeze source in the Apple event before authorization; root never reads Documents.
+    command = '/usr/bin/python3 -c ' + shlex.quote(script.read_text())
     return run('/usr/bin/osascript', '-e',
                'do shell script ' + json.dumps(command) + ' with administrator privileges')
 
@@ -68,6 +71,16 @@ def main():
         raise RuntimeError('default deployment exists; refusing to replace another installation')
     args.output.mkdir(mode=0o700, parents=True, exist_ok=False)
     lab = args.output.resolve()
+    inputs = Path(tempfile.mkdtemp(prefix='rss-native-service-input-')).resolve()
+    receipt_inputs = inputs
+    # Copy only this fixed candidate; no writable worktree image is trusted by the service.
+    for field, leaf in [('binary', 'rss-execution-service'), ('desktop', 'rss-mdm-desktop')]:
+        value = getattr(args, field)
+        if value is not None:
+            destination = inputs / leaf
+            shutil.copyfile(value.resolve(), destination); destination.chmod(0o700)
+            setattr(args, field, destination)
+
     backend = subprocess.Popen([str(args.backend.resolve())], stdin=subprocess.PIPE,
                                stdout=subprocess.PIPE, stderr=(lab / 'backend.log').open('w'), text=True)
     info = json.loads(backend.stdout.readline())
@@ -111,9 +124,12 @@ def main():
     tag = uuid.uuid4().hex
     protected = Path('/Library/Application Support/RSS MDM Agent') / ('verification-' + tag)
     binary, config = protected / 'rss-execution-service', protected / 'execution.json'
-    helper_root = lab / 'helper'
+    helper_root = inputs / 'helper'
     helper_root.mkdir(mode=0o700)
-    installer = Path(__file__).with_name('execution-macos.py').resolve()
+    installer = inputs / 'execution-macos.py'
+    shutil.copyfile(Path(__file__).with_name('execution-macos.py'), installer)
+    installer.chmod(0o600)
+    shutil.copyfile(lab / 'tls.pem', inputs / 'tls.pem')
     deployment = dict(version=2, ipc_version=6, origin=f'https://localhost:{proxy.server_port}/', tenant=info['tenant'],
                       signing_keys={'test': info['key']}, ca_file=str(protected / 'ca.pem'),
                       enrollment=str(uuid.uuid4()), registration_operation=str(uuid.uuid4()),
@@ -127,6 +143,7 @@ from pathlib import Path
 root=Path(%r)
 root.parent.mkdir(mode=0o755,parents=True,exist_ok=True)
 root.mkdir(mode=0o755)
+assert hashlib.sha256(Path(%r).read_bytes()).hexdigest()==%r, 'service source candidate changed'
 binary=root/'rss-execution-service'
 shutil.copyfile(%r,binary); os.chmod(binary,0o755)
 subprocess.run(['/usr/bin/codesign','--force','--sign','-','--options','runtime',str(binary)],check=True)
@@ -142,15 +159,16 @@ shutil.copyfile(%r,root/'ca.pem'); os.chmod(root/'ca.pem',0o644)
 path=root/'execution.json';path.write_text(json.dumps(config));os.chmod(path,0o644)
 subprocess.run([str(binary),'--config',str(path),'--initialize'],input='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',text=True,check=True)
 subprocess.run(['/usr/bin/python3',%r,'install','--scope','system','--binary',str(binary),'--config',str(path)],check=True)
-''' % (str(protected), str(args.binary.resolve()), deployment, str(os.geteuid()), str(lab / 'tls.pem'), str(installer)))
+''' % (str(protected), str(args.binary.resolve()), hashlib.sha256(args.binary.read_bytes()).hexdigest(), str(args.binary.resolve()), deployment, str(os.geteuid()), str(inputs / 'tls.pem'), str(installer)))
     if args.desktop:
         # Extend this same installation owner, retaining its protected binary/config checks.
         contents = setup.read_text()
-        insertion = """desktop=root/'rss-mdm-desktop'
+        insertion = """assert hashlib.sha256(Path(%r).read_bytes()).hexdigest()==%r, 'desktop source candidate changed'
+desktop=root/'rss-mdm-desktop'
 shutil.copyfile(%r,desktop); os.chmod(desktop,0o755)
 subprocess.run(['/usr/bin/codesign','--force','--sign','-','--options','runtime',str(desktop)],check=True)
 config['clients']['images'].append(artifact(desktop))
-""" % str(args.desktop.resolve())
+""" % (str(args.desktop.resolve()), hashlib.sha256(args.desktop.read_bytes()).hexdigest(), str(args.desktop.resolve()))
         contents = contents.replace("path=root/'execution.json'", insertion + "path=root/'execution.json'")
         # Default pin creation is exclusive. The desktop never selects an arbitrary config.
         contents += """default=Path(%r)
@@ -374,7 +392,9 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
         if cleanup_errors:
             receipt['status'] = 'failed'
             receipt['cleanupErrors'] = cleanup_errors
+        receipt['inputStaging'] = str(receipt_inputs)
         (lab / 'receipt.json').write_text(json.dumps(receipt, indent=2))
+        if not cleanup_errors: shutil.rmtree(inputs)
         if cleanup_errors:
             raise RuntimeError('acceptance cleanup incomplete')
 
