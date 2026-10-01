@@ -73,33 +73,43 @@ pub fn failure_snapshot(error: &crate::self_service::ServiceError) -> Option<Acc
         observed_at_ms: Counter(super::execution::now().unwrap_or(0) as i64),
     })
 }
+fn configured_organization(
+    config: crate::organization_config::OrganizationConfiguration,
+) -> std::result::Result<Organization, crate::organization_config::ConfigurationError> {
+    let config = config.normalize()?;
+    Ok(Organization {
+        id: format!(
+            "{:x}",
+            Sha256::digest(format!("{}\n{}", config.origin, config.tenant))
+        ),
+        origin: config.origin,
+        tenant_id: config.tenant,
+        label: config.label,
+    })
+}
 fn normalize_organization(value: &mut Organization) -> Result<()> {
-    let url = url::Url::parse(&value.origin).map_err(|_| invalid())?;
-    if url.scheme() != "https"
-        || url.host_str().is_none()
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-        || url.path() != "/"
-    {
-        return Err(invalid());
-    }
-    value.origin = url.origin().ascii_serialization();
-    value.tenant_id = uuid(&value.tenant_id)?;
-    value.label = value.label.trim().to_owned();
-    if value.label.is_empty()
-        || value.label.chars().count() > 64
-        || value.label.chars().any(char::is_control)
-    {
-        return Err(invalid());
-    }
-    value.id = format!(
-        "{:x}",
-        Sha256::digest(format!("{}\n{}", value.origin, value.tenant_id))
-    );
+    *value = configured_organization(crate::organization_config::OrganizationConfiguration {
+        origin: value.origin.clone(),
+        tenant: value.tenant_id.clone(),
+        label: value.label.clone(),
+    })
+    .map_err(|_| invalid())?;
     Ok(())
 }
+
+pub fn bundled_organization(
+) -> std::result::Result<Option<Organization>, crate::organization_config::ConfigurationError> {
+    let value: Option<crate::organization_config::OrganizationConfiguration> =
+        serde_json::from_str(include_str!(concat!(
+            env!("OUT_DIR"),
+            "/default_organization.json"
+        )))
+        .map_err(|_| {
+            crate::organization_config::ConfigurationError("the compiled backend connection")
+        })?;
+    value.map(configured_organization).transpose()
+}
+
 fn uuid(value: &str) -> Result<String> {
     let id = Uuid::parse_str(value).map_err(|_| invalid())?;
     if id.is_nil() {
@@ -110,9 +120,10 @@ fn uuid(value: &str) -> Result<String> {
 pub struct Organizations {
     path: PathBuf,
     values: Vec<Organization>,
+    default: Option<Organization>,
 }
 impl Organizations {
-    pub fn open(root: &Path) -> Result<Self> {
+    pub fn open(root: &Path, mut default: Option<Organization>) -> Result<Self> {
         let path = root.join("organizations.json");
         let mut values: Vec<Organization> = if path.exists() {
             serde_json::from_slice(
@@ -122,19 +133,39 @@ impl Organizations {
         } else {
             vec![]
         };
-        if values.len() > 32 {
-            return Err(invalid());
-        }
         for v in &mut values {
             normalize_organization(v)?;
         }
-        Ok(Self { path, values })
+        if let Some(value) = &mut default {
+            normalize_organization(value)?;
+        }
+        Ok(Self {
+            path,
+            values,
+            default,
+        })
     }
     pub fn list(&self) -> Vec<Organization> {
-        self.values.clone()
+        self.default
+            .iter()
+            .cloned()
+            .chain(
+                self.values
+                    .iter()
+                    .filter(|value| {
+                        self.default
+                            .as_ref()
+                            .is_none_or(|default| value.id != default.id)
+                    })
+                    .cloned(),
+            )
+            .collect()
+    }
+    pub fn selected(&self) -> Option<String> {
+        self.default.as_ref().map(|value| value.id.clone())
     }
     pub fn get(&self, id: &str) -> Result<Organization> {
-        self.values
+        self.list()
             .iter()
             .find(|v| v.id == id)
             .cloned()
@@ -142,14 +173,25 @@ impl Organizations {
     }
     pub fn save(&mut self, mut value: Organization) -> Result<Organization> {
         normalize_organization(&mut value)?;
+        if let Some(default) = &self.default {
+            if value.id == default.id {
+                if value.label == default.label
+                    && value.origin == default.origin
+                    && value.tenant_id == default.tenant_id
+                {
+                    return Ok(default.clone());
+                }
+                return Err(error(
+                    "default_organization",
+                    "默认组织名称来自内置配置；请选择其它连接",
+                ));
+            }
+        }
         let saved = value.clone();
         let mut next = self.values.clone();
         if let Some(old) = next.iter_mut().find(|v| v.id == value.id) {
             *old = value;
         } else {
-            if next.len() >= 32 {
-                return Err(invalid());
-            }
             next.push(value);
         }
         let bytes = serde_json::to_vec(&next).map_err(|_| unavailable())?;
@@ -398,6 +440,92 @@ impl Session {
 mod tests {
     use super::*;
     #[test]
+    fn default_is_not_persisted_and_all_read_paths_use_the_same_effective_list() {
+        let root =
+            std::env::temp_dir().join(format!("rss-default-organization-{}", Uuid::new_v4()));
+        native_process::private_storage::directory(&root).unwrap();
+        let mut default = organization();
+        normalize_organization(&mut default).unwrap();
+        let mut store = Organizations::open(&root, Some(default.clone())).unwrap();
+        assert_eq!(store.selected(), Some(default.id.clone()));
+        assert_eq!(store.list().len(), 1);
+        assert_eq!(store.get(&default.id).unwrap().origin, default.origin);
+        store.save(default.clone()).unwrap();
+        assert!(!root.join("organizations.json").exists());
+        let mut renamed = default.clone();
+        renamed.label = "Renamed".into();
+        assert_eq!(
+            store.save(renamed).err().unwrap().code,
+            "default_organization"
+        );
+        assert!(!root.join("organizations.json").exists());
+        let mut custom = organization();
+        custom.origin = "https://custom.fixture.test".into();
+        let custom = store.save(custom).unwrap();
+        let bytes = std::fs::read(root.join("organizations.json")).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Vec<Organization>>(&bytes)
+                .unwrap()
+                .len(),
+            1
+        );
+        let mut collision = default.clone();
+        collision.label = "Stored name".into();
+        std::fs::write(
+            root.join("organizations.json"),
+            serde_json::to_vec(&vec![collision, custom.clone()]).unwrap(),
+        )
+        .unwrap();
+        let before = std::fs::read(root.join("organizations.json")).unwrap();
+        let store = Organizations::open(&root, Some(default.clone())).unwrap();
+        assert_eq!(store.list().len(), 2);
+        assert_eq!(store.get(&default.id).unwrap().label, default.label);
+        assert_eq!(
+            std::fs::read(root.join("organizations.json")).unwrap(),
+            before
+        );
+        // A previous compiled default never becomes a user-owned record.
+        std::fs::write(root.join("organizations.json"), bytes).unwrap();
+        let mut next = default.clone();
+        next.origin = "https://next.fixture.test".into();
+        let store = Organizations::open(&root, Some(next)).unwrap();
+        assert!(store.get(&default.id).is_err());
+        assert!(store.get(&custom.id).is_ok());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn organization_count_does_not_limit_reopening_or_changing_defaults() {
+        let root = std::env::temp_dir().join(format!("rss-default-capacity-{}", Uuid::new_v4()));
+        native_process::private_storage::directory(&root).unwrap();
+        let mut store = Organizations::open(&root, None).unwrap();
+        for i in 0..40 {
+            let mut value = organization();
+            value.origin = format!("https://org-{i}.fixture.test");
+            store.save(value).unwrap();
+        }
+        assert_eq!(store.list().len(), 40);
+        let mut store = Organizations::open(&root, Some(organization())).unwrap();
+        assert_eq!(store.list().len(), 41);
+        let mut extra = organization();
+        extra.origin = "https://extra.fixture.test".into();
+        let extra = store.save(extra).unwrap();
+        let mut default = organization();
+        default.origin = "https://next.fixture.test".into();
+        let mut store = Organizations::open(&root, Some(default)).unwrap();
+        assert_eq!(store.list().len(), 42);
+        assert_eq!(store.get(&extra.id).unwrap().origin, extra.origin);
+        let before = std::fs::read(root.join("organizations.json")).unwrap();
+        let mut value = organization();
+        value.origin = "https://MDM.EXAMPLE./".into();
+        assert!(store.save(value).is_err());
+        assert_eq!(
+            std::fs::read(root.join("organizations.json")).unwrap(),
+            before
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn status_classification_keeps_stage_and_distinguishes_retry_from_denial() {
         for (status, reason) in [
             (401, Reason::Denied),
@@ -425,19 +553,21 @@ mod tests {
     fn organizations_reopen_normalized_records_and_refuse_corrupt_or_oversized_storage() {
         let root = std::env::temp_dir().join(format!("rss-organizations-{}", Uuid::new_v4()));
         native_process::private_storage::directory(&root).unwrap();
-        let mut store = Organizations::open(&root).unwrap();
+        let mut store = Organizations::open(&root, None).unwrap();
         let saved = store.save(organization()).unwrap();
-        let reopened = Organizations::open(&root).unwrap().get(&saved.id).unwrap();
+        let reopened = Organizations::open(&root, None)
+            .unwrap()
+            .get(&saved.id)
+            .unwrap();
         assert_eq!(reopened.label, "Example");
         assert_eq!(reopened.origin, "https://example.com");
         assert_eq!(reopened.tenant_id, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
         for bytes in [
             b"{not-json".to_vec(),
-            serde_json::to_vec(&vec![organization(); 33]).unwrap(),
             vec![b' '; 65537],
         ] {
             std::fs::write(root.join("organizations.json"), bytes).unwrap();
-            assert!(Organizations::open(&root).is_err());
+            assert!(Organizations::open(&root, None).is_err());
         }
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -446,7 +576,7 @@ mod tests {
         let root =
             std::env::temp_dir().join(format!("rss-organization-replace-{}", Uuid::new_v4()));
         native_process::private_storage::directory(&root).unwrap();
-        let mut store = Organizations::open(&root).unwrap();
+        let mut store = Organizations::open(&root, None).unwrap();
         let saved = store.save(organization()).unwrap();
         let original = std::fs::read(root.join("organizations.json")).unwrap();
         let blocked = root.join("blocked.json");

@@ -4,7 +4,8 @@ import { onMounted, ref } from "vue";
 import {
   currentUser,
   nativeTestMode,
-  loadOrganizations,
+  loadAccountSettings,
+  accountErrorMessage,
   saveOrganization,
   type Organization,
 } from "../test-users";
@@ -25,7 +26,9 @@ const label = ref(""),
 async function load() {
   if (!nativeTestMode) return;
   try {
-    organizations.value = await loadOrganizations();
+    const settings = await loadAccountSettings();
+    organizations.value = settings.organizations;
+    selected.value = settings.selected ?? "";
   } catch {
     message.value = "组织配置不可用，请重试";
   }
@@ -45,8 +48,8 @@ async function save() {
     ];
     selected.value = saved.id;
     message.value = "组织连接已保存";
-  } catch {
-    message.value = "无法保存组织连接，请检查 HTTPS 地址、租户 UUID 和本地存储";
+  } catch (error) {
+    message.value = accountErrorMessage(error);
   }
 }
 onMounted(load);
@@ -82,6 +85,10 @@ onMounted(load);
           {{ organization.label }} — {{ organization.origin }}
         </option>
       </select>
+      <p v-if="selected" aria-label="当前组织连接">
+        {{ organizations.find((item) => item.id === selected)?.origin }} ·
+        {{ organizations.find((item) => item.id === selected)?.tenantId }}
+      </p>
       <label for="account-login">企业账号</label>
       <input
         id="account-login"
@@ -117,7 +124,7 @@ onMounted(load);
           aria-describedby="organization-help"
           v-model="origin"
           aria-label="组织服务地址"
-          placeholder="https://mdm.example.com"
+          placeholder="https://mdm.example"
         />
         <label for="organization-tenant">租户 UUID</label>
         <input

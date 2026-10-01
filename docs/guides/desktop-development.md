@@ -8,13 +8,20 @@
 
 ```sh
 pnpm install --frozen-lockfile
+cp env.example .env      # 填写实际服务地址、租户 UUID 和组织名称
 pnpm dev                 # 自动准备/复用开发 AI Host 后启动桌面
 pnpm desktop:build       # 自动打包 Node/依赖、stage、构建 .app
 ```
 
+开发与打包都要求仓库根 `.env`，无论命令从哪里运行；缺失或字段为空时立即停止。`RSS_MDM_ORIGIN` 填写真实 HTTPS origin，`RSS_MDM_TENANT_ID` 填写管理员提供的非零 UUID，`RSS_MDM_ORGANIZATION_LABEL` 填写组织名称。模板的 `https://mdm.example` 为占位地址，构建和手动组织保存都会在网络请求前拒绝 `.example` 域名。实际 `.env` 被 Git 忽略；不在其中配置账号密码、token 或设备注册秘密。
+
+这三个字段在构建时校验并编译进桌面原生程序，开发与发布使用同一条路径。修改 `.env` 后重新运行 `pnpm dev` 或 `pnpm desktop:build`；地址变化不重建 AI Host runtime。发布应用从 Finder 或开始菜单启动时不读取外部 env、工作目录配置或运行时环境变量；普通 Cargo 编译和单元测试可以没有部署配置，实际应用启动要求有效内置连接。原始 `.env` 不进入应用资源或前端 bundle。
+
+账户设置预选内置默认组织并显示实际地址与租户，但不自动登录。默认组织不写入本机组织连接文件；用户可以添加、选择其它组织。与默认组织相同的地址和租户只显示一次，默认名称由构建配置决定。更换构建默认连接不会遗留旧内置记录，也不清理用户主动保存的连接或历史。系统设备服务仍使用管理员配置的 `execution.json`，需独立核对后端、租户、签名信任和注册状态；本入口不自动修改服务或重新注册设备。
+
 分步诊断可单独执行 `pnpm bundle:ai-host` 和 `pnpm stage:desktop-runtime`。`pnpm dev` 使用独立的 `.local-ci-runs/ai-host-dev-runtime` 和 development manifest，允许未提交源码；首次启动自动构建，后续按 Host、adapter、contract、相关 workspace 包、Rust execution schema 与绑定检查、lock、固定 Node 和打包脚本的内容摘要判断是否重建。普通 UI 修改不触发重建。每次启动校验运行包完整性、manifest 与本轮源码摘要一致性及真实 CLI 生命周期，准备失败会非零退出，不启动 Tauri。修改 Host 后重新运行 `pnpm dev`。终端断开（SIGHUP）、中断（SIGINT）与停止（SIGTERM）均转发到独立开发进程组并有界清理。
 
-高级诊断可用 `RSS_AI_HOST_RUNTIME=/absolute/verified/ai-host-runtime pnpm dev` 显式选择并验证运行包。缺依赖先运行 `pnpm install --frozen-lockfile`；构建失败查看命令输出；运行包损坏时删除开发 runtime 目录后重试。准备进程异常中止留下锁时，确认没有其他准备进程后删除 `.cache/desktop-dev.lock`。开发包不进入发布 stage；release 忽略该 override，并校验实际运行包完整性。
+高级诊断可用 `RSS_AI_HOST_RUNTIME=/absolute/verified/ai-host-runtime pnpm dev` 显式选择并验证运行包。打包直接复用源 lock 的外部依赖图，并绑定本地 tarball 的完整性摘要；冻结安装优先使用缓存，缺失的包或策略检查 metadata 可联网补齐，不要求不同 pnpm 版本共享缓存格式，也不重新解析依赖。缺依赖先运行 `pnpm install --frozen-lockfile`；构建失败查看命令输出；运行包损坏时删除开发 runtime 目录后重试。准备进程异常中止留下锁时，确认没有其他准备进程后删除 `.cache/desktop-dev.lock`。开发包不进入发布 stage；release 忽略该 override，并校验实际运行包完整性。
 
 普通 Cargo/schema 检查使用基础 Tauri 配置，不依赖运行包；发布构建显式合并 `tauri.bundle.conf.json`。打包脚本先校验固定 Node archive、锁定部署依赖、真实 SDK 生命周期，再将通过的当前候选复制到被忽略的 resources 目录。macOS bundle 通过 `bundle.macOS.files` 整目录复制 runtime，以保留 pnpm 依赖符号链接；普通 resources 文件枚举会漏掉这些链接，不能用于该 runtime。发布应用只从自身资源目录启动 AI Host。缺失或不可用的 AI 不影响 Rust 任务读取，也不会降级为虚构对话。
 
@@ -84,7 +91,7 @@ macOS 的正式 `make ci` / `make ci-full` 对整个 Node 与 Rust 检查过程�
 
 `.local-ci-runs/desktop-native.json` 记录实际模式、源码/锁文件/运行包摘要、进程归属与完成项，截图和脱敏日志在同目录。失败回执不能解释为通过。该路径证明真实 CLI、WebView 与 S1 接缝，不证明真实模型能力或设备 OS 效果。
 
-发布资源验收使用 `pnpm bundle:ai-host && pnpm check:desktop-bundle`。入口构建实际 release `.app`，使用隔离数据目录启动生产 main，禁用 runtime override，不包含原生驱动，核验完整 runtime 树与 Native health 握手；结果写入 `.local-ci-runs/desktop-bundle.json`，绑定源码、锁文件和 runtime manifest。此 smoke 只证明启动与资源定位，使用隔离进程组清理，优雅退出由日常原生验收验证。
+发布资源验收使用 `pnpm bundle:ai-host && pnpm check:desktop-bundle`。入口构建带隔离应用标识和测试内置连接的实际 release `.app`，从无测试参数的生产 main 启动；核对 Host、内置组织不落盘及运行时配置不能覆盖默认连接，不主动登录。禁用 runtime override，不包含原生驱动，核验完整 runtime 树与 Native health 握手；结果写入 `.local-ci-runs/desktop-bundle.json`，绑定源码、锁文件和 runtime manifest。此 smoke 只证明启动与资源定位，使用隔离进程组清理，优雅退出由日常原生验收验证。
 
 真实模型仍单独运行 `pnpm smoke:codex`，按 [AI Host](../../apps/ai-host/README.md) 的显式配置入口选择认证、端点与模型；它保留跨轮上下文证据，不由本地协议夹具替代。真实模型、原生 WebView 和 release 资源启动是三份不同范围的回执。
 

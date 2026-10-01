@@ -165,9 +165,8 @@ export async function refreshAccount(): Promise<void> {
 }
 
 export type Organization = AccountOrganization;
-export async function loadOrganizations(): Promise<Organization[]> {
-  return parsed(await invoke("account_organizations"), "accountSettings")
-    .organizations;
+export async function loadAccountSettings(): Promise<AccountSettings> {
+  return parsed(await invoke("account_organizations"), "accountSettings");
 }
 export async function saveOrganization(
   input: Organization,
@@ -205,6 +204,8 @@ export function accountErrorMessage(error: unknown): string {
   const code = (error as { code?: string })?.code;
   if (code === "logout_unconfirmed")
     return "本机会话已退出，服务端注销未确认；请在企业账户中撤销会话后重试。";
+  if (code === "default_organization")
+    return "默认组织名称来自应用内置配置；请选择其它连接。";
   if (code === "cancelled") return "已取消登录";
   if (typeof code === "string" && code.startsWith("account/")) {
     const [, stage, reason] = code.split("/");

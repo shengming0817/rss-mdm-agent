@@ -48,6 +48,8 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
+  /* Reading restoration and following are owned by Assistant.vue. */
+  overflow-anchor: none;
   padding: 12px max(24px, calc((100% - var(--rss-reading-width)) / 2));
   overflow-wrap: anywhere;
 }

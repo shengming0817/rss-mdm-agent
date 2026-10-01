@@ -87,11 +87,21 @@ function fixture(t) {
     "packages/ai-adapters/deepseek",
   ])
     write(`${path}/src/index.ts`, "original");
+  write(
+    ".env",
+    "RSS_MDM_ORIGIN=https://mdm.fixture.test\nRSS_MDM_TENANT_ID=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\nRSS_MDM_ORGANIZATION_LABEL=Fixture\n",
+  );
+  write(
+    "scripts/desktop-organization.mjs",
+    readFileSync(new URL("desktop-organization.mjs", import.meta.url), "utf8"),
+  );
   return { root, write };
 }
 test("fingerprint includes dirty Host, adapter, contract, lock, Node and added/deleted sources, excludes UI and outputs", (t) => {
   const { root, write } = fixture(t);
   const first = developmentFingerprint(root);
+  write(".env", "changed desktop defaults");
+  assert.equal(developmentFingerprint(root), first);
   write("apps/desktop/src/App.vue", "UI");
   write("apps/ai-host/dist/cli.js", "output");
   assert.equal(developmentFingerprint(root), first);
@@ -206,10 +216,23 @@ test("preparation rejects edits during a build and a corrupt reused runtime", (t
   );
 });
 
-test("invalid override fails before Tauri starts with actionable stage diagnostics", () => {
+test("invalid override fails before Tauri starts with actionable stage diagnostics", (t) => {
+  const { root, write } = fixture(t);
+  write(
+    "scripts/desktop-dev.mjs",
+    readFileSync(new URL("desktop-dev.mjs", import.meta.url), "utf8"),
+  );
+  write(
+    "scripts/desktop-dev-runtime.mjs",
+    "export function ensureDevelopmentRuntime() { throw Error('must not prepare'); } export const verifyDevelopmentRuntime = ensureDevelopmentRuntime;",
+  );
+  write(
+    "scripts/desktop-dev-process.mjs",
+    "export function runDesktop() { throw Error('must not launch'); }",
+  );
   const result = spawnSync(
     process.execPath,
-    [fileURLToPath(new URL("./desktop-dev.mjs", import.meta.url))],
+    [join(root, "scripts/desktop-dev.mjs")],
     {
       encoding: "utf8",
       env: { ...process.env, RSS_AI_HOST_RUNTIME: "" },

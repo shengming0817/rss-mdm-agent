@@ -13,11 +13,14 @@ import {
   renameSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
+import { homedir } from "node:os";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { verifyRuntimeIntegrity } from "./ai-host-artifacts.mjs";
 import { cargoTargetDir } from "./cargo-target.mjs";
 import { sourceEvidence, sha256 } from "./native-evidence.mjs";
+import { organizationBuildInput } from "./desktop-organization.mjs";
 
 // Every spawned command owns a separate process group, including build descendants.
 function owned(command, args, options, signal) {
@@ -70,8 +73,13 @@ function owned(command, args, options, signal) {
     },
   };
 }
-async function command(root, args, signal) {
-  const owner = owned("pnpm", args, { cwd: root, stdio: "inherit" }, signal);
+async function command(root, args, signal, env = process.env) {
+  const owner = owned(
+    "pnpm",
+    args,
+    { cwd: root, env, stdio: "inherit" },
+    signal,
+  );
   try {
     const [code] = await owner.exited;
     owner.check();
@@ -85,6 +93,16 @@ export async function checkDesktopBundle(
   runtimeTreeSha256,
   { signal, stage },
 ) {
+  const identifier = `com.rss.mdmagent.bundle-acceptance.${randomUUID()}`;
+  const defaultOrganization = {
+    origin: "https://mdm.bundle-acceptance.test",
+    tenant: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    label: "Bundle acceptance",
+  };
+  const buildEnv = {
+    ...process.env,
+    [organizationBuildInput]: JSON.stringify(defaultOrganization),
+  };
   stage("stage-runtime");
   await command(root, ["stage:desktop-runtime"], signal);
   stage("release-build");
@@ -99,9 +117,10 @@ export async function checkDesktopBundle(
       "--config",
       "src-tauri/tauri.bundle.conf.json",
       "--config",
-      '{"build":{"beforeBuildCommand":""}}',
+      JSON.stringify({ identifier, build: { beforeBuildCommand: "" } }),
     ],
     signal,
+    buildEnv,
   );
   const bundle = join(
     cargoTargetDir(root),
@@ -112,20 +131,38 @@ export async function checkDesktopBundle(
     join(bundle, "Resources/ai-host-runtime"),
     runtimeTreeSha256,
   );
-  const data = realpathSync(mkdtempSync("/tmp/rss-b-"));
+  const working = realpathSync(mkdtempSync("/tmp/rss-b-"));
+  // ref: Tauri path/desktop.rs@tauri-v2.11.2 (app_data_dir uses bundle identifier).
+  // A distinct compiled identifier isolates production storage without a release test flag.
+  const applicationData = join(
+    homedir(),
+    "Library/Application Support",
+    identifier,
+  );
+  const data = join(applicationData, "desktop");
   const env = { ...process.env };
   delete env.RSS_AI_HOST_RUNTIME;
   delete env.CODEX_HOME;
+  env[organizationBuildInput] = JSON.stringify({
+    ...defaultOrganization,
+    origin: "https://runtime-override.test",
+  });
+  env.RSS_MDM_ORIGIN = "https://runtime-override.test";
+  writeFileSync(
+    join(working, ".env"),
+    "RSS_MDM_ORIGIN=https://file-override.test\n",
+  );
   let owner;
   try {
     stage("host-readiness");
     owner = owned(
       join(bundle, "MacOS/rss-mdm-desktop"),
-      ["--test-data-dir", data],
-      { cwd: data, env, stdio: ["ignore", "ignore", "pipe"] },
+      [],
+      { cwd: working, env, stdio: ["ignore", "ignore", "pipe"] },
       signal,
     );
     let status,
+      organization,
       buffer = "";
     owner.child.stderr.setEncoding("utf8");
     owner.child.stderr.on("data", (chunk) => {
@@ -139,10 +176,15 @@ export async function checkDesktopBundle(
             status = JSON.parse(line.slice("RSS_AI_HOST_STATUS ".length));
           } catch {}
         }
+        if (line.startsWith("RSS_DEFAULT_ORGANIZATION ")) {
+          organization = JSON.parse(
+            line.slice("RSS_DEFAULT_ORGANIZATION ".length),
+          );
+        }
       }
     });
     const deadline = Date.now() + 30000;
-    while (!status && Date.now() < deadline) {
+    while ((!status || !organization) && Date.now() < deadline) {
       owner.check();
       assert.equal(
         owner.child.exitCode,
@@ -155,12 +197,27 @@ export async function checkDesktopBundle(
     owner.check();
     assert.equal(status?.phase, "ready");
     assert.equal(status?.source, "bundled_resource");
+    assert.equal(organization?.origin, defaultOrganization.origin);
+    assert.equal(organization?.tenantId, defaultOrganization.tenant);
+    assert.equal(organization?.label, defaultOrganization.label);
     stage("startup-state");
-    for (const file of ["users.json", "execution.sqlite", "ai.sqlite"])
+    for (const file of ["host.json", "ai.sqlite"])
       assert.ok(
         existsSync(join(data, file)),
         "production owner storage must be ready",
       );
+    assert.equal(
+      existsSync(join(data, "organizations.json")),
+      false,
+      "default must not be persisted",
+    );
+    assert.equal(
+      existsSync(join(data, "execution.sqlite")),
+      false,
+      "execution storage belongs to the system service",
+    );
+    for (const file of [".env", "env.example", "backend.env"])
+      assert.equal(existsSync(join(bundle, "Resources", file)), false);
     await delay(1000, undefined, { signal });
     owner.check();
     assert.equal(owner.child.exitCode, null);
@@ -171,6 +228,9 @@ export async function checkDesktopBundle(
       nativeDriver: false,
       resourceOverride: false,
       bundledHostReady: true,
+      embeddedOrganization: organization,
+      runtimeConfigurationIgnored: true,
+      defaultOrganizationPersisted: false,
       runtimeTreeSha256,
       mainBinarySha256: sha256(
         readFileSync(join(bundle, "MacOS/rss-mdm-desktop")),
@@ -186,7 +246,8 @@ export async function checkDesktopBundle(
       stage("cleanup");
       throw error;
     } finally {
-      rmSync(data, { recursive: true, force: true });
+      rmSync(applicationData, { recursive: true, force: true });
+      rmSync(working, { recursive: true, force: true });
     }
   }
 }

@@ -51,6 +51,8 @@ function fixture() {
     },
     select(extra = {}) {
       return selectImpact(root, {
+        // Each fixture selects its own mode, independent of the outer full CI.
+        full: false,
         baseRef: base,
         graph: () => graph,
         ...extra,

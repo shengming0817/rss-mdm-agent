@@ -627,6 +627,7 @@ export function checkTree(treeRoot = root) {
         'zeroize = "=1.8.2"',
         'unicode-normalization = "=0.1.25"',
         'uuid = { version = "=1.26.0", features = ["v4"] }',
+        'uuid = "=1.26.0"',
         'libc = "=0.2.189"',
         'security-framework = "=3.5.1"',
         'window-vibrancy = "=0.6.0"',
@@ -650,6 +651,9 @@ export function checkTree(treeRoot = root) {
         "futures-util.workspace = true",
         'tauri-plugin-wdio-webdriver = { path = "../../../vendor/tauri-plugin-wdio-webdriver", version = "=1.4.0", optional = true }',
         "tauri-build.workspace = true",
+        // Build-time validation reuses the same serialization and URL parser as native connections.
+        "serde.workspace = true",
+        "url.workspace = true",
         'tauri = { workspace = true, features = ["macos-private-api"] }',
         "serde.workspace = true",
         'serde_json = { workspace = true, features = ["raw_value"] }',

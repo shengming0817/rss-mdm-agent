@@ -2,3 +2,4 @@
 pub mod self_service;
 
 pub mod composition;
+pub mod organization_config;

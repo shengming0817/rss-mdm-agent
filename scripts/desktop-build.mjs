@@ -1,5 +1,9 @@
 import { fileURLToPath } from "node:url";
 import { run } from "./ai-host-artifacts.mjs";
+import { desktopBuildEnvironment } from "./desktop-organization.mjs";
+const buildEnv = desktopBuildEnvironment(
+  fileURLToPath(new URL("../", import.meta.url)),
+);
 if (
   !(
     (process.platform === "darwin" && process.arch === "arm64") ||
@@ -21,6 +25,7 @@ run(
       : "src-tauri/tauri.bundle.conf.json",
   ],
   fileURLToPath(new URL("../apps/desktop", import.meta.url)),
+  buildEnv,
 );
 
 if (process.platform === "win32") await import("./stage-windows-desktop.mjs");

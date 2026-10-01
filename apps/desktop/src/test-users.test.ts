@@ -7,7 +7,7 @@ import {
   accountNotice,
   refreshAccount,
   accountErrorMessage,
-  loadOrganizations,
+  loadAccountSettings,
   type Organization,
 } from "./test-users";
 import Account from "./settings/Account.vue";
@@ -195,6 +195,37 @@ it("keeps enterprise, test and guest entries visible before selecting a user", a
   }
 });
 
+it("preselects the embedded organization without logging in and allows another organization", async () => {
+  const embedded = {
+    id: "embedded",
+    label: "Default",
+    origin: "https://mdm.fixture.test",
+    tenantId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  };
+  const custom = {
+    ...embedded,
+    id: "custom",
+    origin: "https://other.fixture.test",
+  };
+  vi.mocked(invoke).mockResolvedValue(
+    settingsPage([embedded, custom], embedded.id),
+  );
+  const wrapper = mount(Account, { props: { loading: false } });
+  await flushPromises();
+  expect(
+    (wrapper.get('[aria-label="组织连接"]').element as HTMLSelectElement).value,
+  ).toBe("embedded");
+  expect(wrapper.get('[aria-label="当前组织连接"]').text()).toContain(
+    embedded.tenantId,
+  );
+  expect(wrapper.emitted("login")).toBeUndefined();
+  await wrapper.get('[aria-label="组织连接"]').setValue("custom");
+  await wrapper.get('[aria-label="企业账号"]').setValue("Alice");
+  await wrapper.findAll("form")[0]!.trigger("submit");
+  expect(wrapper.emitted("login")).toEqual([["custom", "Alice"]]);
+  wrapper.unmount();
+});
+
 it("selects the normalized saved organization and emits the selected server login", async () => {
   const normalized = {
     id: "org",
@@ -361,5 +392,5 @@ it("projects closed account errors without exposing native details and rejects i
       },
     ],
   });
-  await expect(loadOrganizations()).rejects.toThrow();
+  await expect(loadAccountSettings()).rejects.toThrow();
 });

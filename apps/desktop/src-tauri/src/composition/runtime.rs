@@ -105,7 +105,7 @@ impl DesktopRuntime {
             users,
             switching: Mutex::new(()),
             organizations: std::sync::Mutex::new(
-                super::account::Organizations::open(root)
+                super::account::Organizations::open(root, super::account::bundled_organization()?)
                     .map_err(|_| "organization settings unavailable")?,
             ),
             account: Mutex::new(None),

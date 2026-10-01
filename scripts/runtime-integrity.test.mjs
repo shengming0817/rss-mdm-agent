@@ -4,6 +4,7 @@ import {
   cpSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -12,7 +13,9 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { load } from "js-yaml";
 import {
+  materializeDeploymentLock,
   packHost,
   run,
   runtimeTreeSha256,
@@ -125,6 +128,27 @@ test("AI host build removes orphaned compiler output before packing", (t) => {
 
   run("pnpm", ["build:ai-host"], root);
   const artifacts = packHost(root, destination);
+  const deployed = materializeDeploymentLock(root, destination);
+  const source = load(readFileSync(join(root, "pnpm-lock.yaml"), "utf8"));
+  for (const [key, snapshot] of Object.entries(source.snapshots))
+    assert.deepEqual(
+      deployed.snapshots[key],
+      snapshot,
+      `deployment preserves source-locked peer and optional edges for ${key}`,
+    );
+  for (const [key, pkg] of Object.entries(source.packages))
+    assert.deepEqual(deployed.packages[key], pkg, `locked resolution ${key}`);
+  const sourceFixture = join(destination, "source");
+  mkdirSync(sourceFixture);
+  for (const name of ["apps", "packages"])
+    symlinkSync(join(root, name), join(sourceFixture, name), "dir");
+  delete source.importers["packages/ai-adapters/claude"].dependencies.zod;
+  writeFileSync(join(sourceFixture, "pnpm-lock.yaml"), JSON.stringify(source));
+  assert.throws(
+    () => materializeDeploymentLock(sourceFixture, destination),
+    /unlocked direct edge @rss-mdm-agent\/ai-adapter-claude: zod/,
+    "missing source lock entries fail before installing any packages",
+  );
   const archive = artifacts.find((name) =>
     name.startsWith("rss-mdm-agent-ai-host-app-"),
   );

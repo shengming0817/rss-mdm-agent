@@ -3,6 +3,11 @@ use std::error::Error;
 pub(super) fn diagnostic(error: &(dyn Error + 'static)) -> String {
     let mut current = Some(error);
     while let Some(cause) = current {
+        if let Some(config) =
+            cause.downcast_ref::<rss_mdm_desktop::organization_config::ConfigurationError>()
+        {
+            return format!("RSS MDM Agent 后端配置不可用：{config}。请填写构建配置并重新构建。");
+        }
         if let Some(execution_app::Error::UnsupportedSchema { found, supported }) =
             cause.downcast_ref::<execution_app::Error>()
         {

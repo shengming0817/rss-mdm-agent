@@ -4,13 +4,18 @@ import { join } from "node:path";
 
 // Tauri, Vite and the app share a dedicated group, including when an IDE only
 // signals this wrapper. Reap the leader and bound cleanup of remaining children.
-export function runDesktop(root, directory, args = []) {
+export function runDesktop(
+  root,
+  directory,
+  args = [],
+  environment = process.env,
+) {
   return new Promise((resolve, reject) => {
     const child = spawn("pnpm", ["exec", "tauri", "dev", ...args], {
       cwd: join(root, "apps/desktop"),
       stdio: "inherit",
       detached: true,
-      env: { ...process.env, RSS_AI_HOST_RUNTIME: directory },
+      env: { ...environment, RSS_AI_HOST_RUNTIME: directory },
     });
     let exitCode, timer, deadline;
     const alive = () => {

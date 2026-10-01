@@ -1,5 +1,9 @@
 // ref: Node.js lib/child_process.js@v24.14.1 (spawn and signal lifecycle)
 import { runDesktop } from "./desktop-dev-process.mjs";
+import {
+  desktopBuildEnvironment,
+  organizationBuildInput,
+} from "./desktop-organization.mjs";
 import { mkdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,7 +12,7 @@ import {
   verifyDevelopmentRuntime,
 } from "./desktop-dev-runtime.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url));
-let stage = "AI Host preparation",
+let stage = "backend configuration",
   locked = false;
 const lock = join(root, ".cache/desktop-dev.lock");
 let interrupted = false;
@@ -21,6 +25,10 @@ const releaseSignals = () => {
   for (const signal of preparationSignals) process.off(signal, stopPreparation);
 };
 try {
+  const buildEnv = desktopBuildEnvironment(root);
+  // Host preparation must not inherit a stale desktop-only build input.
+  delete process.env[organizationBuildInput];
+  stage = "AI Host preparation";
   mkdirSync(join(root, ".cache"), { recursive: true });
   try {
     mkdirSync(lock);
@@ -52,7 +60,12 @@ try {
   locked = false;
   releaseSignals();
   stage = "Tauri startup";
-  process.exitCode = await runDesktop(root, directory, process.argv.slice(2));
+  process.exitCode = await runDesktop(
+    root,
+    directory,
+    process.argv.slice(2),
+    buildEnv,
+  );
 } catch (error) {
   console.error(
     `[desktop dev] ${stage} failed: ${error.message}. Check dependencies with pnpm install --frozen-lockfile, then rerun pnpm dev.`,

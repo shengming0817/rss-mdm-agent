@@ -25,6 +25,11 @@ fn window(app: &tauri::AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 fn run(data_root: Option<std::path::PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
+    let default = rss_mdm_desktop::composition::account::bundled_organization()?.ok_or(
+        rss_mdm_desktop::organization_config::ConfigurationError(
+            "the backend connection before startup",
+        ),
+    )?;
     let builder = ipc::register(tauri::Builder::default());
     #[cfg(feature = "native-e2e")]
     let builder = native_e2e::configure(builder, data_root.as_deref())?;
@@ -61,6 +66,10 @@ fn run(data_root: Option<std::path::PathBuf>) -> Result<(), Box<dyn std::error::
             eprintln!(
                 "RSS_AI_HOST_STATUS {}",
                 serde_json::to_string(&runtime.status())?
+            );
+            eprintln!(
+                "RSS_DEFAULT_ORGANIZATION {}",
+                serde_json::to_string(&default)?
             );
             app.manage(runtime);
             let handle = app.handle().clone();

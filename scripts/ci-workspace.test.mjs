@@ -65,7 +65,11 @@ test("dirty native launcher selects real Host packaging", async (t) => {
     join(root, "crates/native-process/src/lib.rs"),
     "// changed launcher",
   );
-  const impact = selectImpact(root, { baseRef, graph: () => graph });
+  const impact = selectImpact(root, {
+    full: false,
+    baseRef,
+    graph: () => graph,
+  });
   assert.equal(impact.full, false);
   const plan = planSteps(steps, impact);
   assert.equal(

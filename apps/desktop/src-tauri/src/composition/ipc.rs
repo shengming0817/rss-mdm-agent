@@ -136,15 +136,15 @@ pub fn account_status(
 pub fn account_organizations(
     state: State<'_, DesktopRuntime>,
 ) -> Result<ai_session_contract::AccountSettings> {
+    let settings = state
+        .organizations
+        .lock()
+        .map_err(|_| error("users_unavailable", "组织配置不可用"))?;
     Ok(ai_session_contract::AccountSettings {
         kind: ai_session_contract::AccountSettingsKind::AccountSettings,
         schema_version: ai_session_contract::AccountSettingsSchemaVersion::VALUE,
-        organizations: state
-            .organizations
-            .lock()
-            .map_err(|_| error("users_unavailable", "组织配置不可用"))?
-            .list(),
-        selected: None,
+        organizations: settings.list(),
+        selected: settings.selected(),
     })
 }
 #[tauri::command]

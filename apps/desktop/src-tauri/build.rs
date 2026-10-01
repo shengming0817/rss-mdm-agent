@@ -1,5 +1,25 @@
 // ref: Tauri crates/tauri-build/src/acl.rs@tauri-build-v2.6.2
+#[path = "src/organization_config.rs"]
+mod organization_config;
+
 fn main() {
+    println!("cargo:rerun-if-env-changed=RSS_BUILD_MDM_ORGANIZATION");
+    println!("cargo:rerun-if-changed=src/organization_config.rs");
+    let organization =
+        std::env::var("RSS_BUILD_MDM_ORGANIZATION")
+            .ok()
+            .map(|input| {
+                serde_json::from_str::<organization_config::OrganizationConfiguration>(&input)
+            .expect("RSS_BUILD_MDM_ORGANIZATION must contain the three allowed connection fields")
+            .normalize()
+            .unwrap_or_else(|error| panic!("{error}"))
+            });
+    std::fs::write(
+        std::path::Path::new(&std::env::var("OUT_DIR").expect("OUT_DIR"))
+            .join("default_organization.json"),
+        serde_json::to_vec(&organization).expect("default organization JSON"),
+    )
+    .expect("compiled default organization");
     let private_link = "../../../crates/native-process/private-link-v1.json";
     println!("cargo:rerun-if-changed={private_link}");
     let contract: serde_json::Value =

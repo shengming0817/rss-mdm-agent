@@ -28,7 +28,7 @@ const sourceDirectory = (name) =>
     : name.startsWith("ai-adapter-")
       ? `packages/ai-adapters/${name.slice("ai-adapter-".length)}`
       : `packages/${name}`;
-export function run(command, args, cwd) {
+export function run(command, args, cwd, environment = process.env) {
   if (process.platform === "win32" && command === "pnpm") {
     const cli = process.env.npm_execpath;
     if (!cli || !/\.[cm]?js$/.test(cli))
@@ -41,7 +41,7 @@ export function run(command, args, cwd) {
   const result = spawnSync(command, args, {
     cwd,
     stdio: "inherit",
-    env: { ...process.env, NODE_PATH: "", PNPM_WORKSPACE_DIR: "" },
+    env: { ...environment, NODE_PATH: "", PNPM_WORKSPACE_DIR: "" },
   });
   if (result.status !== 0)
     throw new Error(
@@ -80,9 +80,9 @@ export function packHost(root, directory) {
       return [`@rss-mdm-agent/${name}`, `file:./${archive}`];
     }),
   );
-  const versions = JSON.parse(
+  const { devDependencies: versions } = JSON.parse(
     readFileSync(join(root, "package.json"), "utf8"),
-  ).devDependencies;
+  );
   writeFileSync(
     join(directory, "package.json"),
     JSON.stringify(
@@ -100,18 +100,30 @@ export function packHost(root, directory) {
       2,
     ),
   );
+  const policy = load(readFileSync(join(root, "pnpm-workspace.yaml"), "utf8"));
+  // pnpm 11's registry-policy verifier also sees file: tarballs. These local
+  // artifacts have no registry publish date/provenance; their bytes are hashed below.
+  const localExcludes = names.map((name) => {
+    const { version } = JSON.parse(
+      readFileSync(join(root, sourceDirectory(name), "package.json"), "utf8"),
+    );
+    return `@rss-mdm-agent/${name}@${version}`;
+  });
   writeFileSync(
     join(directory, "pnpm-workspace.yaml"),
     JSON.stringify(
       {
         packages: [],
         overrides: dependencies,
-        allowBuilds:
-          load(readFileSync(join(root, "pnpm-workspace.yaml"), "utf8"))
-            .allowBuilds ?? {},
-        minimumReleaseAgeExclude:
-          load(readFileSync(join(root, "pnpm-workspace.yaml"), "utf8"))
-            .minimumReleaseAgeExclude ?? [],
+        allowBuilds: policy.allowBuilds ?? {},
+        minimumReleaseAgeExclude: [
+          ...(policy.minimumReleaseAgeExclude ?? []),
+          ...localExcludes,
+        ],
+        trustPolicyExclude: [
+          ...(policy.trustPolicyExclude ?? []),
+          ...localExcludes,
+        ],
       },
       null,
       2,
@@ -120,71 +132,114 @@ export function packHost(root, directory) {
   return archives;
 }
 
-/** Materialize a deployment lock, prove every edge against the source lock, then freeze install. */
-export function installArtifacts(root, directory) {
+// ref: pnpm lockfile/types/src/index.ts@v11.4.0 (shared v9 lockfile format).
+/** Graft only the packed workspace identities onto the source's locked graph. */
+export function materializeDeploymentLock(root, directory) {
   const source = load(readFileSync(join(root, "pnpm-lock.yaml"), "utf8"));
-  // Seed pnpm with the locked external resolutions; only local tarball identities are new.
-  writeFileSync(
-    join(directory, "pnpm-lock.yaml"),
-    JSON.stringify({ ...source, importers: {} }),
+  const manifest = JSON.parse(
+    readFileSync(join(directory, "package.json"), "utf8"),
   );
-  run("pnpm", ["install", "--offline", "--lockfile-only"], directory);
-  const lockPath = join(directory, "pnpm-lock.yaml"),
-    deployed = load(readFileSync(lockPath, "utf8"));
-  for (const [key, entry] of Object.entries(deployed.packages)) {
-    if (key.startsWith("@rss-mdm-agent/")) continue;
-    assert.deepEqual(
-      entry.resolution,
-      source.packages[key]?.resolution,
-      `unlocked package ${key}`,
+  const local = Object.fromEntries(
+    Object.entries(manifest.dependencies).map(([name, specifier]) => [
+      name,
+      specifier.replace(/^file:\.\//, "file:"),
+    ]),
+  );
+  const importer = { dependencies: {}, devDependencies: {} };
+  const deployed = {
+    ...source,
+    overrides: manifest.dependencies,
+    importers: { ".": importer },
+    packages: { ...source.packages },
+    snapshots: { ...source.snapshots },
+  };
+  for (const [name, version] of Object.entries(local)) {
+    assert.ok(
+      name.startsWith("@rss-mdm-agent/") && version.startsWith("file:"),
     );
+    const owner = sourceDirectory(name.slice("@rss-mdm-agent/".length));
+    const pkg = JSON.parse(
+      readFileSync(join(root, owner, "package.json"), "utf8"),
+    );
+    const locked = source.importers[owner];
+    const edges = (dependencies) =>
+      Object.fromEntries(
+        Object.entries(dependencies ?? {}).map(([dependency, specifier]) => {
+          if (local[dependency]) return [dependency, local[dependency]];
+          assert.ok(
+            !dependency.startsWith("@rss-mdm-agent/"),
+            `missing packed dependency ${dependency}`,
+          );
+          const edge =
+            locked.dependencies?.[dependency] ??
+            locked.optionalDependencies?.[dependency] ??
+            locked.devDependencies?.[dependency];
+          assert.ok(edge, `unlocked direct edge ${name}: ${dependency}`);
+          assert.equal(
+            edge.specifier,
+            specifier,
+            `outdated source lock ${name}: ${dependency}`,
+          );
+          return [dependency, edge.version];
+        }),
+      );
+    const key = `${name}@${version}`;
+    const entry = {
+      resolution: {
+        integrity:
+          "sha512-" +
+          createHash("sha512")
+            .update(
+              readFileSync(join(directory, version.slice("file:".length))),
+            )
+            .digest("base64"),
+        tarball: version,
+      },
+      version: pkg.version,
+    };
+    for (const field of [
+      "engines",
+      "peerDependencies",
+      "peerDependenciesMeta",
+      "os",
+      "cpu",
+      "libc",
+    ])
+      if (pkg[field]) entry[field] = pkg[field];
+    if (pkg.bin) entry.hasBin = true;
+    deployed.packages[key] = entry;
+    deployed.snapshots[key] = {
+      dependencies: edges({ ...pkg.dependencies, ...pkg.peerDependencies }),
+      ...(pkg.optionalDependencies
+        ? { optionalDependencies: edges(pkg.optionalDependencies) }
+        : {}),
+    };
+    importer.dependencies[name] = { specifier: version, version };
   }
-  for (const [key, entry] of Object.entries(deployed.snapshots)) {
-    if (!key.startsWith("@rss-mdm-agent/")) {
-      for (const field of ["dependencies", "optionalDependencies"])
-        assert.deepEqual(
-          entry[field] ?? {},
-          source.snapshots[key]?.[field] ?? {},
-          `unlocked dependency graph ${key}`,
-        );
-      continue;
-    }
-    const name = key.slice("@rss-mdm-agent/".length).split("@file:")[0];
-    const manifest = JSON.parse(
-      readFileSync(join(root, sourceDirectory(name), "package.json"), "utf8"),
+  for (const [name, specifier] of Object.entries(
+    manifest.devDependencies ?? {},
+  )) {
+    const edge = source.importers["."].devDependencies?.[name];
+    assert.ok(edge, `unlocked build dependency ${name}`);
+    assert.equal(
+      edge.specifier,
+      specifier,
+      `outdated source lock for build dependency ${name}`,
     );
-    const importer = source.importers[sourceDirectory(name)];
-    const expected = { ...manifest.dependencies, ...manifest.peerDependencies };
-    assert.deepEqual(
-      Object.keys(entry.dependencies ?? {}).sort(),
-      Object.keys(expected).sort(),
-      `unexpected package edge ${name}`,
-    );
-    for (const [dependency, version] of Object.entries(
-      entry.dependencies ?? {},
-    )) {
-      if (dependency.startsWith("@rss-mdm-agent/"))
-        assert.equal(
-          version,
-          deployed.importers["."].dependencies[dependency]?.version,
-          `unlocked local edge ${name}`,
-        );
-      else
-        assert.equal(
-          version,
-          (
-            importer.dependencies?.[dependency] ??
-            importer.devDependencies?.[dependency]
-          )?.version,
-          `unlocked direct edge ${name}`,
-        );
-    }
+    importer.devDependencies[name] = { ...edge };
   }
+  writeFileSync(join(directory, "pnpm-lock.yaml"), JSON.stringify(deployed));
+  return deployed;
+}
+
+/** Freeze the source graph across pnpm versions; hydrate missing cache data online. */
+export function installArtifacts(root, directory) {
+  materializeDeploymentLock(root, directory);
   run(
     "pnpm",
     [
       "install",
-      "--offline",
+      "--prefer-offline",
       "--frozen-lockfile",
       ...(process.platform === "win32" ? ["--node-linker=hoisted"] : []),
       "--prod",
