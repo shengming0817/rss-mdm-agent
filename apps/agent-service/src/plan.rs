@@ -14,11 +14,20 @@ pub struct Interpreter {
     pub profile: wire::ExecutorProfile,
     pub image: local_service::Artifact,
 }
-/// Protected native package-manager binary selected by a closed V4 executor.
+/// Locally implemented native managers, independent of the server's software wire schema.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SoftwareManagerKind {
+    Msi,
+    PackageInstaller,
+    Winget,
+    Brew,
+}
+/// Protected native package-manager binary selected by a closed V5 executor.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SoftwareManager {
-    pub executor: wire::SoftwareTaskExecutor,
+    pub executor: SoftwareManagerKind,
     pub image: local_service::Artifact,
 }
 pub(crate) fn id(value: impl Into<String>) -> Result<Id, Error> {
@@ -68,10 +77,10 @@ pub fn storage_limits() -> execution_sqlite::Limits {
             max_input_bytes: 4 * 1024 * 1024,
             max_depth: 48,
             max_nodes: 131072,
-            max_string_bytes: 8192,
+            max_string_bytes: 65536,
             max_collection_items: 4096,
             max_timeout_ms: 86_400_000,
-            max_output_bytes: 1_048_576,
+            max_output_bytes: 16_777_216,
             max_stdin_bytes: 1_048_576,
             max_attempts: 1,
         },
@@ -149,6 +158,31 @@ pub(crate) fn script(
         resource: reference("backend-content", hex(&payload.content.sha256))?,
         sha256: Digest::new(hex(&payload.content.sha256)).map_err(|_| Error::Protocol)?,
     };
+    let parameters: BTreeMap<_, _> = payload
+        .sql_parameters
+        .clone()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(k, value)| (k, InputValue::Literal { value }))
+        .collect();
+    let query_arguments = if payload.profile == wire::ExecutorProfile::Osquery {
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        content
+            .reader()?
+            .take(65537)
+            .read_to_end(&mut bytes)
+            .map_err(|_| Error::Storage)?;
+        if bytes.len() > 65536 {
+            return Err(Error::Protocol);
+        }
+        Some(
+            execution_runner::osquery::arguments(&bytes, &parameters, payload.max_rows, platform)
+                .map_err(|_| Error::Untrusted)?,
+        )
+    } else {
+        None
+    };
     let (profile, prefix) = match payload.profile {
         wire::ExecutorProfile::PowerShell7 => (
             "native-pwsh7-file",
@@ -156,16 +190,18 @@ pub(crate) fn script(
         ),
         wire::ExecutorProfile::PosixSh => ("native-posix-sh-file", vec![]),
         wire::ExecutorProfile::Bash => ("native-bash-file", vec!["--noprofile", "--norc"]),
-        wire::ExecutorProfile::OsqueryInfoV1 => (
-            "native-osquery-info-v1",
-            vec!["--json", "SELECT version FROM osquery_info;"],
-        ),
+        wire::ExecutorProfile::Osquery => (execution_runner::osquery::PROFILE, vec![]),
     };
     let mut argv = prefix
         .into_iter()
         .map(|s| LaunchArg::Literal { value: s.into() })
         .collect::<Vec<_>>();
-    if payload.profile != wire::ExecutorProfile::OsqueryInfoV1 {
+    if let Some(args) = query_arguments {
+        argv = args
+            .into_iter()
+            .map(|value| LaunchArg::Literal { value })
+            .collect();
+    } else {
         argv.push(LaunchArg::ArtifactPath {});
     }
     argv.extend(
@@ -222,7 +258,7 @@ pub(crate) fn script(
                     action: id("backend-script")?,
                     resource,
                 },
-                parameters: BTreeMap::new(),
+                parameters,
             },
             launch: LaunchSpec {
                 artifact,

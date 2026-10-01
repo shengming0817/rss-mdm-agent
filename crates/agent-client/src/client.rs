@@ -36,7 +36,7 @@ impl Offer {
             ))?,
             _ => return Err(Error::Unsupported),
         };
-        execution_contract::RequestId::new(format!("agent-v4-{}", hash(&bytes)))
+        execution_contract::RequestId::new(format!("agent-v5-{}", hash(&bytes)))
             .map_err(|_| Error::Protocol)
     }
     /// Exact remote task.
@@ -74,12 +74,15 @@ struct Enrollment {
     credential: String,
     capabilities: Vec<wire::Capability>,
     fingerprint: String,
+    execution_context: wire::SoftwareExecutionContext,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ClaimState {
     operation: Uuid,
+    profiles: Vec<wire::ExecutorProfile>,
     recover_until: i64,
+    execution_context: wire::SoftwareExecutionContext,
 }
 /// Fully recovered protocol wrappers; the offer is historical and never grants launch.
 pub struct ResumedStart {
@@ -90,15 +93,40 @@ pub struct ResumedStart {
     /// Locked, reverified complete cached materials; recovery never downloads new bytes.
     pub materials: Materials,
 }
-/// Explicitly driven V4 client; SQLite transactions never cross HTTP awaits.
+/// Explicitly driven V5 client; SQLite transactions never cross HTTP awaits.
 /// A private-root lease permits one driving owner, with no hidden workers.
 pub struct Client<S, C> {
     pub(crate) store: Store,
     pub(crate) http: reqwest::Client,
     pub(crate) secrets: S,
     pub(crate) clock: C,
+    profiles: Vec<wire::ExecutorProfile>,
 }
 impl<S: SecretProvider, C: Clock> Client<S, C> {
+    /// Set current configured executors for future polls; a pending retry retains its exact input.
+    pub fn set_profiles(&mut self, profiles: Vec<wire::ExecutorProfile>) -> Result<(), Error> {
+        wire::TaskClaimRequest::new(Uuid::new_v4(), profiles.clone(), self.execution_context()?)?;
+        self.profiles = profiles;
+        Ok(())
+    }
+    /// Current persisted context, independent of frozen pending operations.
+    pub fn execution_context(&self) -> Result<wire::SoftwareExecutionContext, Error> {
+        self.store.get("execution_context")?.ok_or(Error::Storage)
+    }
+    /// Publish a new observed context generation; exact pending HTTP requests remain immutable.
+    pub fn set_execution_context(
+        &mut self,
+        mut context: wire::SoftwareExecutionContext,
+    ) -> Result<(), Error> {
+        context.validate_for(self.store.cfg.platform)?;
+        let old = self.execution_context()?;
+        context.revision = old.revision;
+        if context != old {
+            context.revision = old.revision.checked_add(1).ok_or(Error::Capacity)?;
+        }
+        context.validate()?;
+        self.store.put("execution_context", &context)
+    }
     /// Independently supplied deployment configuration, excluding credentials.
     pub fn configuration(&self) -> &Config {
         &self.store.cfg
@@ -166,6 +194,7 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
             http,
             secrets,
             clock,
+            profiles: Vec::new(),
         })
     }
     pub(crate) fn now(&self) -> Result<i64, Error> {
@@ -185,7 +214,7 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
         self.store
             .cfg
             .origin
-            .join(&format!("api/agent/v4/{path}"))
+            .join(&format!("api/agent/v5/{path}"))
             .map_err(|_| Error::Configuration)
     }
     pub(crate) async fn checked_response(&self, response: Response) -> Result<Response, Error> {
@@ -261,16 +290,21 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
         credential_reference: &str,
         capabilities: Vec<wire::Capability>,
     ) -> Result<wire::RegistrationReceipt, Error> {
-        // Producer-owned MdmEnrollmentV4 opens the standard OS MDM enrollment UI;
+        // Producer-owned MdmEnrollmentV5 opens the standard OS MDM enrollment UI;
         // it is distinct from this Agent registration and unsupported by this client.
         if password_reference.is_empty()
             || credential_reference.is_empty()
             || password_reference.len() > 256
             || credential_reference.len() > 256
-            || capabilities.contains(&wire::Capability::MdmEnrollmentV4)
+            || capabilities.contains(&wire::Capability::MdmEnrollmentV5)
         {
             return Err(Error::Configuration);
         }
+        let context = self
+            .store
+            .get::<Enrollment>("enrollment")?
+            .map(|v| v.execution_context)
+            .unwrap_or(self.execution_context()?);
         let request = wire::RegistrationRequest::new(
             operation,
             enrollment,
@@ -279,6 +313,7 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
             capabilities.clone(),
             self.store.cfg.platform,
             self.store.cfg.architecture,
+            context.clone(),
         )?;
         let body = encode(&request)?;
         let record = Enrollment {
@@ -288,6 +323,7 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
             credential: credential_reference.into(),
             capabilities: capabilities.clone(),
             fingerprint: hash(&body),
+            execution_context: context,
         };
         if let Some(old) = self.store.get::<Enrollment>("enrollment")? {
             if old != record {
@@ -326,11 +362,18 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
     /// Allocate report identity and sequence in the same transaction as its immutable body.
     pub fn queue_report(
         &mut self,
+        dataset: &str,
         body: wire::ReportBody,
         observed_at: i64,
     ) -> Result<Uuid, Error> {
         self.active()?;
-        self.store.registration()?;
+        let definition = self
+            .store
+            .registration()?
+            .collections
+            .into_iter()
+            .find(|d| d.dataset() == dataset)
+            .ok_or(Error::Protocol)?;
         self.now()?;
         let tx = self.store.conn.transaction()?;
         let count: u64 = tx.query_row("SELECT count(*) FROM reports", [], |r| r.get(0))?;
@@ -339,7 +382,7 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
         }
         let sequence: u64 = tx.query_row("SELECT sequence FROM metadata", [], |r| r.get(0))?;
         let id = Uuid::new_v4();
-        let request = wire::ReportRequest::new(id, sequence, observed_at, body)?;
+        let request = wire::ReportRequest::new(id, sequence, observed_at, definition, body)?;
         let bytes = request.canonical()?;
         tx.execute(
             "INSERT INTO reports VALUES(?1,?2)",
@@ -450,6 +493,8 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
                     .ok_or(Error::Clock)?;
                 let state = ClaimState {
                     operation: Uuid::new_v4(),
+                    profiles: self.profiles.clone(),
+                    execution_context: self.execution_context()?,
                     recover_until: now.checked_add(grace).ok_or(Error::Clock)?,
                 };
                 self.store.put("claim", &state)?;
@@ -457,7 +502,11 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
             }
         };
         let operation = state.operation;
-        let body = encode(&wire::TaskClaimRequest::new(operation)?)?;
+        let body = encode(&wire::TaskClaimRequest::new(
+            operation,
+            state.profiles.clone(),
+            state.execution_context.clone(),
+        )?)?;
         let result: wire::TaskClaimResponse = self
             .json(Method::POST, "tasks/claim", Some(&body), true)
             .await?;
@@ -498,7 +547,7 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
             )?;
             tx.execute(
                 "INSERT INTO state VALUES('claim',?1) ON CONFLICT(key) DO UPDATE SET body=excluded.body",
-                [encode(&ClaimState { operation, recover_until: signed.payload.expires_at() })?],
+                [encode(&ClaimState { operation, profiles: state.profiles, execution_context: state.execution_context, recover_until: signed.payload.expires_at() })?],
             )?;
             tx.commit()?;
             Some(Offer { signed })
@@ -570,15 +619,96 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
             .store
             .conn
             .query_row("SELECT count(*) FROM requests", [], |r| r.get(0))?;
-        if count >= self.store.cfg.limits.pending_tasks as u64 * 4 {
+        if count >= self.store.cfg.limits.pending_tasks as u64 * 70 {
             return Err(Error::Capacity);
         }
-        let request = wire::TaskEventRequest::new(Uuid::new_v4(), attempt, event)?;
+        let request =
+            wire::TaskEventRequest::new(Uuid::new_v4(), attempt, event, self.execution_context()?)?;
         self.store.conn.execute(
             "INSERT INTO requests(key,task,source,body) VALUES(?1,?2,?3,?4)",
             params![key, task.to_string(), source, encode(&request)?],
         )?;
         Ok(request)
+    }
+    pub(crate) fn delivery_request(
+        &self,
+        key: &str,
+        task: Uuid,
+        attempt: Uuid,
+        event: wire::TaskEvent,
+        source: &str,
+    ) -> Result<wire::TaskEventRequest, Error> {
+        let event = match event {
+            wire::TaskEvent::Result(result)
+                if serde_json::to_vec(result.output())
+                    .map_err(|_| Error::Protocol)?
+                    .len()
+                    > wire::OUTPUT_CHUNK_BYTES =>
+            {
+                let (reference, chunks) = wire::ChunkedTaskResult::split(result)?;
+                for chunk in chunks {
+                    let key = format!("chunk/{task}/{attempt}/{:02}", chunk.index());
+                    self.event_request(
+                        &key,
+                        task,
+                        attempt,
+                        wire::TaskEvent::OutputChunk(chunk),
+                        None,
+                    )?;
+                }
+                wire::TaskEvent::ChunkedResult(reference)
+            }
+            event => event,
+        };
+        self.event_request(key, task, attempt, event, Some(source))
+    }
+    pub(crate) async fn send_output_chunks(
+        &self,
+        task: Uuid,
+        request: &wire::TaskEventRequest,
+    ) -> Result<(), Error> {
+        let wire::TaskEvent::ChunkedResult(reference) = request.event() else {
+            return Ok(());
+        };
+        let prefix = format!("chunk/{task}/{}/", request.attempt_id());
+        let rows = {
+            let mut query=self.store.conn.prepare("SELECT key,body,accepted FROM requests WHERE task=?1 AND substr(key,1,length(?2))=?2 ORDER BY key LIMIT 65")?;
+            let rows = query
+                .query_map(params![task.to_string(), prefix], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, Vec<u8>>(1)?,
+                        r.get::<_, bool>(2)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            rows
+        };
+        if rows.len() != reference.manifest().count() {
+            return Err(Error::Storage);
+        }
+        for (index, (key, body, accepted)) in rows.into_iter().enumerate() {
+            let chunk_request: wire::TaskEventRequest = decode(&body)?;
+            let wire::TaskEvent::OutputChunk(chunk) = chunk_request.event() else {
+                return Err(Error::Storage);
+            };
+            if usize::from(chunk.index()) != index
+                || chunk.manifest() != reference.manifest()
+                || chunk_request.attempt_id() != request.attempt_id()
+            {
+                return Err(Error::Storage);
+            }
+            if !accepted {
+                let ack = self.send_event(task, &chunk_request).await?;
+                if ack.permit().is_some() {
+                    return Err(Error::Protocol);
+                }
+                self.store
+                    .conn
+                    .execute("UPDATE requests SET accepted=1 WHERE key=?1", [key])?;
+            }
+        }
+        Ok(())
     }
     pub(crate) async fn send_event(
         &self,

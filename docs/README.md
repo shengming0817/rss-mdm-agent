@@ -1,6 +1,6 @@
 # 文档导航
 
-- [Agent 通信客户端](../crates/agent-client/README.md)：V4 注册、报告、可信内容、宿主桥接与真实服务端联调。
+- [Agent 通信客户端](../crates/agent-client/README.md)：V5 注册、报告、可信内容、宿主桥接与真实服务端联调。
 
 - [客户端 PRD](product/rss-mdm-agent-prd.md)：客户端需求唯一入口，包含执行等级、传统自助与 AI 交互、责任边界和阶段验收。
 - [稳定规则](rules/README.md)：范围、依赖、验证与文档维护。
@@ -24,7 +24,7 @@
 - [批准核心](../crates/execution-approval/README.md)：完整裁决、可信验证与按尝试消费。
 - [生命周期核心](../crates/execution-lifecycle/README.md)：有界快照、证据核实与安全重试。
 - [脚本计划核心](../crates/script-plan/README.md)：静态解释器 profile、参数与受控 IO 编译。
-- [生产执行服务](guides/local-service-lab.md#后台授权执行服务)：V4 有序软件步骤的生产编译、执行及恢复入口。
+- [生产执行服务](guides/local-service-lab.md#后台授权执行服务)：V5 有序软件步骤的生产编译、执行及恢复入口。
 - [受控 MCP 适配器](../crates/execution-mcp/README.md)：同源目录参数、宿主绑定服务 port、幂等提交与有界 stdio。
 - [执行 SQLite](../crates/execution-sqlite/README.md)与[来源改写](reference/execution-sqlite.md)：原子 journal、交互、批准和结果查询/确认。
 - [执行应用服务](../crates/execution-app/README.md)：无 UI 的 S1 组合根、一次性 Test 派发与独立恢复。

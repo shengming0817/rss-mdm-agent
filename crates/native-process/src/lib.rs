@@ -8,6 +8,7 @@ use std::{
     process::{Child, Command, Stdio},
     time::Duration,
 };
+pub mod os_version;
 pub mod private_storage;
 pub mod protected_secret;
 #[cfg(unix)]

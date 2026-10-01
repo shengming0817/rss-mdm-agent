@@ -237,7 +237,12 @@ fn strict_output_cannot_promote_invalid_or_over_row_json() {
         stderr: TextEncoding::Utf8,
         format: OutputFormat::Json { max_rows: 1 },
     };
-    for bad in [b"[]".as_slice(), b"[{},{}]", b"null", b"\xff", b"{broken"] {
+    assert_eq!(output::quality(b"[]", b"", spec), OutputQuality::Complete);
+    assert_eq!(
+        output::quality(b"[{},{}]", b"", spec),
+        OutputQuality::Truncated
+    );
+    for bad in [b"null".as_slice(), b"\xff", b"{broken"] {
         assert_eq!(output::quality(bad, b"", spec), OutputQuality::Failed)
     }
     assert_eq!(

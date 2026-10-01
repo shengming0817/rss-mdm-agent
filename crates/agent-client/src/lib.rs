@@ -1,4 +1,4 @@
-//! Agent V4 communication and bounded content delivery; execution remains journal-owned.
+//! Agent V5 communication and bounded content delivery; execution remains journal-owned.
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 mod bridge;
@@ -84,3 +84,15 @@ impl From<execution_app::Error> for Error {
         }
     }
 }
+
+#[cfg(test)]
+extern crate self as agent_client;
+#[cfg(test)]
+#[path = "../tests/unit/chunk_recovery.rs"]
+mod chunk_recovery;
+#[cfg(test)]
+#[path = "../tests/support/mod.rs"]
+mod test_support;
+
+mod software;
+pub use software::{software_commands, SoftwareCommands};

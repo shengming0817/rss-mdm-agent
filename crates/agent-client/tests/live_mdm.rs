@@ -23,6 +23,7 @@ struct LiveConfig {
     tenant: Uuid,
     ca_file: PathBuf,
     admin_password_file: PathBuf,
+    admin_login: String,
     key_id: String,
     public_key: String,
 }
@@ -97,7 +98,12 @@ impl Admin {
         let result: Value = if bytes.is_empty() {
             Value::Null
         } else {
-            serde_json::from_slice(&bytes).expect("live JSON response")
+            serde_json::from_slice(&bytes).unwrap_or_else(|_| {
+                panic!(
+                    "live {path}: status={status}, response={}",
+                    String::from_utf8_lossy(&bytes)
+                )
+            })
         };
         assert!(
             status.is_success(),
@@ -130,24 +136,24 @@ impl Admin {
         let declaration = if software {
             let source = Uuid::new_v4().to_string();
             let source_path = format!("/api/v3/software/sources/{source}/revisions/1");
-            let created=self.write(&source_path,0,json!({"action":"register","definition":{"id":source,"revision":"1","kind":"private","location":null,"publishers":[]}})).await;
+            let created=self.write(&source_path,0,json!({"action":"register","definition":{"id":source,"revision":"1","protocol":{"kind":"private"}}})).await;
             self.write(
                 &source_path,
                 1,
                 json!({"action":"approve","evidence":["controlled-protocol-test"]}),
             )
             .await;
-            json!({"kind":"software","definition":{"source":created["snapshot"],"package":"Agent.LiveFixture","version":"1.0","format":"pkg","primary":"package",
+            let invocation = json!({"runAs":"system","arguments":[],"environment":{},"timeoutSeconds":60,"outputBytes":4096,"exitCodes":{"success":[0],"reboot":[]}});
+            json!({"kind":"software","definition":{"source":created["snapshot"],"package":"Agent.LiveFixture","version":"1.0",
                 "artifacts":{"package":{"reference":"installer","length":bytes.len(),"sha256":digest}},
-                "install":{"executor":"package_installer","entry":null,"runAs":"system","arguments":[],"environment":{},"timeoutSeconds":60,"outputBytes":4096},
-                "uninstall":null,"detect":{"kind":"pkg_receipt","receipt":"com.rss.livefixture","version":"1.0"},
-                "reboot":"report","downgrade":"deny","ownership":"managed_only","dependencies":[],"bundle":null}})
+                "behavior":{"kind":"pkg","installer":"package","scope":"system","install":invocation,"upgradeInvocation":invocation,"upgrade":"in_place","uninstall":null,"detect":{"kind":"pkg_receipt","receipt":"Agent.LiveFixture","version":"1.0"}},
+                "signatures":[],"reboot":"report","downgrade":"deny","ownership":"managed_only","dependencies":[],"provenance":{"kind":"private"},"export":{"kind":"disabled"}}})
         } else {
             json!({"kind":"script","artifact":{"reference":"fixture-script","length":bytes.len(),"sha256":digest},
                 "definition":{"profile":"posix_sh","runAs":"system","encoding":"utf8",
                 "parameters":{"type":"object","properties":{},"required":[],"additionalProperties":false},"bindings":{},
                 "output":{"type":"object","properties":{"ok":{"type":"boolean"},"message":{"type":"string"}},"required":["ok","message"],"additionalProperties":false},
-                "purpose":{"kind":"action"},"timeoutSeconds":60,"outputBytes":4096,"maxRows":1}})
+                "purpose":{"kind":"collection","mappings":{"custom.corporate_agent.healthy":"/ok","custom.corporate_agent.version":"/message"}},"timeoutSeconds":60,"outputBytes":4096,"maxRows":1}})
         };
         let kind = if software { "software" } else { "script" };
         self.write(&path, 0, json!({"action":"create","kind":kind}))
@@ -186,6 +192,15 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
     .unwrap();
     let ca = std::fs::read(&fixture.ca_file).unwrap();
     let config = Config {
+        execution_context: wire::SoftwareExecutionContext {
+            revision: 1,
+            os_version: [14, 0, 0, 0],
+            system_broker: true,
+            interactive_user: None,
+            source_credentials: vec![],
+            msix_sideload: false,
+            msix_unsigned: false,
+        },
         origin: fixture.origin.clone(),
         tenant: fixture.tenant,
         platform: TaskPlatform::Macos,
@@ -220,7 +235,7 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
         .request(
             reqwest::Method::POST,
             &format!("/api/v2/tenants/{}/login", fixture.tenant),
-            Some(json!({"login":"admin","password":password})),
+            Some(json!({"login":fixture.admin_login,"password":password})),
             None,
         )
         .await;
@@ -268,6 +283,7 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
     let enrollment=admin.request(reqwest::Method::POST,"/api/v3/enrollments",Some(json!({"deviceId":device,"password":secrets.resolve("password").unwrap().expose(),"source":"agent.builtin"})),None).await;
     let root = Root::new();
     let mut client = Client::open(&root.path, config, OpenMode::Create, secrets, Utc).unwrap();
+    client.set_profiles(vec![ExecutorProfile::PosixSh]).unwrap();
     let receipt = client
         .register(
             Uuid::new_v4(),
@@ -275,9 +291,9 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
             "password",
             "credential",
             vec![
-                Capability::InventoryBasicV4,
-                Capability::TaskExecuteV4,
-                Capability::SoftwareExecuteV4,
+                Capability::InventoryCollectionV5,
+                Capability::TaskExecuteV5,
+                Capability::SoftwarePkgSystemV5,
             ],
         )
         .await
@@ -285,6 +301,7 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
     assert_eq!(receipt.device_id, device);
     let report = client
         .queue_report(
+            "inventory",
             ReportBody::Failed {
                 code: FailureCode::CollectionFailed,
             },
@@ -321,7 +338,7 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
     for software in [false, true] {
         let (resource, admission) = admin.resource(software).await;
         let action = if software {
-            json!({"kind":"software","resource":{"kind":"software","id":resource,"version":"v1","variants":{"macos_aarch64":"default"}},"intent":"required_install","admissionOperation":admission.unwrap(),"runLifetimeSeconds":600,"rollout":{"stages":[{"scope":scope,"opensAt":0}]}})
+            json!({"kind":"software","resource":{"kind":"software","id":resource,"version":"v1","variants":{"macos_aarch64":"default"}},"intent":"required_install","delivery":{"kind":"direct"},"admissionOperation":admission.unwrap(),"runLifetimeSeconds":600,"rollout":{"stages":[{"scope":scope,"opensAt":0}]}})
         } else {
             json!({"kind":"execution","resource":{"id":resource,"version":"v1","platform":"macos","architecture":"aarch64","variant":"default"},"parameters":{},"runLifetimeSeconds":300})
         };
@@ -410,6 +427,21 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
             )
             .await;
         assert!(!runs["items"].as_array().unwrap().is_empty());
+        if !software {
+            let run = admin
+                .request(
+                    reqwest::Method::GET,
+                    &format!(
+                        "/api/v2/devices/{device}/collections/{}",
+                        offer.payload().attempt_id()
+                    ),
+                    None,
+                    None,
+                )
+                .await;
+            assert_eq!(run["asset"]["run"]["result"], "snapshot");
+            assert_eq!(run["asset"]["run"]["fields"].as_array().unwrap().len(), 2);
+        }
         if software {
             let rollout = admin
                 .request(

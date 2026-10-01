@@ -1701,7 +1701,7 @@
                 "type": "string"
               },
               "maxRows": {
-                "description": "Positive limit, at most 1000.",
+                "description": "Positive limit, at most 65535.",
                 "format": "uint16",
                 "maximum": 65535,
                 "minimum": 0,

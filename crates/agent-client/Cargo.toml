@@ -7,7 +7,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
-rss-mdm-agent-wire = { git = "https://dev.azure.com/shengming0923/rss/_git/rss-mdm", rev = "025ebc5ae676763fdeb113ff4ec8f1bb374284c9", version = "=4.0.0" }
+rss-mdm-agent-wire = { git = "https://dev.azure.com/shengming0923/rss/_git/rss-mdm", rev = "574d11eec526f31fbc6ccc7a24d5fccddd6df8db", version = "=5.0.0" }
 execution-app = { path = "../execution-app" }
 execution-contract = { path = "../execution-contract" }
 execution-sqlite = { path = "../execution-sqlite" }

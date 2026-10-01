@@ -122,10 +122,11 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
                 let mut timeout = 0u64;
                 let mut output = 0u64;
                 for step in &v.steps {
+                    let commands = crate::software_commands(&step.action)?;
                     let command = match v.intent {
-                        wire::SoftwareTaskIntent::Install => Some(&step.action.install),
+                        wire::SoftwareTaskIntent::Install => Some(commands.install),
                         wire::SoftwareTaskIntent::Uninstall => {
-                            Some(step.action.uninstall.as_ref().ok_or(Error::Unsupported)?)
+                            Some(commands.uninstall.ok_or(Error::Unsupported)?)
                         }
                         wire::SoftwareTaskIntent::Detect => None,
                     };
@@ -133,9 +134,12 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
                         timeout = timeout.saturating_add(u64::from(c.timeout_seconds) * 1000);
                         output = output.saturating_add(u64::from(c.output_bytes));
                     }
-                    if let wire::SoftwareTaskDetection::Script { command } = &step.action.detect {
-                        timeout = timeout.saturating_add(u64::from(command.timeout_seconds) * 1000);
-                        output = output.saturating_add(u64::from(command.output_bytes));
+                    if let wire::SoftwareTaskDetection::Script { command: script } =
+                        commands.detection
+                    {
+                        timeout = timeout
+                            .saturating_add(u64::from(script.invocation.timeout_seconds) * 1000);
+                        output = output.saturating_add(u64::from(script.invocation.output_bytes));
                     }
                 }
                 (
@@ -460,7 +464,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
                 return Ok(None);
             };
             let events: Vec<_> = items.iter().map(|v| v.receipt.event_id.clone()).collect();
-            // V4 accepts one terminal result per attempt. Later independent local facts
+            // V5 accepts one terminal result per attempt. Later independent local facts
             // remain in the execution journal but cannot replace an acknowledged wire result.
             if client
                 .store
@@ -474,8 +478,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
             }
             let key = format!("result/{task}/{}", candidate.receipt.event_id.as_str());
             let source = String::from_utf8(encode(&events)?).map_err(|_| Error::Protocol)?;
-            let request =
-                client.event_request(&key, task, binding.attempt, event, Some(&source))?;
+            let request = client.delivery_request(&key, task, binding.attempt, event, &source)?;
             (key, request, events, false)
         };
         if request.attempt_id() != binding.attempt {
@@ -501,6 +504,9 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         pending: &mut PendingDelivery,
     ) -> Result<(), Error> {
         if !pending.accepted {
+            client
+                .send_output_chunks(pending.task, &pending.request)
+                .await?;
             let ack = client.send_event(pending.task, &pending.request).await?;
             if ack.permit().is_some() {
                 return Err(Error::Protocol);
@@ -535,6 +541,11 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         for id in &pending.events {
             app.service_confirm(&pending.binding.request, &self.consumer, id)?;
         }
+        let prefix = format!("chunk/{}/{}/", pending.task, pending.request.attempt_id());
+        client.store.conn.execute(
+            "DELETE FROM requests WHERE task=?1 AND substr(key,1,length(?2))=?2",
+            params![pending.task.to_string(), prefix],
+        )?;
         client
             .store
             .conn
@@ -581,16 +592,13 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
                     diagnostics,
                 )?),
                 wire::TaskPayload::Software(spec) => {
-                    wire::TaskEvent::SoftwareResult(wire::SoftwareTaskResult {
-                        intent: spec.intent,
-                        installer_exit_code: None,
-                        detection: wire::SoftwareDetectionState::Unknown,
-                        definition_digest: spec.definition_digest,
-                        observed_version: None,
-                        evidence_digest: [0; 32],
-                        reboot_required: false,
-                        diagnostics,
-                    })
+                    wire::TaskEvent::SoftwareResult(software_result(
+                        spec,
+                        None,
+                        |i, p| software_encoding(&evidence.input, i, p, spec.intent),
+                        &self.policy,
+                        evidence.observed_at_unix_ms,
+                    )?)
                 }
                 _ => return Err(Error::Unsupported),
             }));
@@ -604,35 +612,25 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         if process.end == ProcessEnd::Cancelled && process.quiescent {
             return Ok(Some(wire::TaskEvent::Cancelled));
         }
-        let output_spec = evidence.input.spec().launch.output;
-        let stdout = decode_stream(&process.stdout, output_spec.stdout);
-        let stderr = decode_stream(&process.stderr, output_spec.stderr);
-        let malformed = stdout.is_none() || stderr.is_none();
-        let stdout = self
-            .policy
-            .redact(stdout.as_deref().unwrap_or("stdout decoding failed"))?;
-        let stderr = self
-            .policy
-            .redact(stderr.as_deref().unwrap_or("stderr decoding failed"))?;
-        let failure = match process.end {
-            ProcessEnd::Rejected => Some(wire::TaskFailure::LaunchFailed),
-            ProcessEnd::TimedOut => Some(wire::TaskFailure::TimedOut),
-            ProcessEnd::OutputLimit => Some(wire::TaskFailure::OutputLimit),
-            _ if process.exit_code.is_some_and(|v| v != 0) => Some(wire::TaskFailure::NonZeroExit),
-            _ if malformed || process.quality == OutputQuality::Failed => {
-                Some(wire::TaskFailure::CaptureFailed)
-            }
-            _ => None,
-        };
-        let diagnostics = wire::TaskDiagnostics::new(
-            bound(stdout.clone()),
-            bound(stderr),
-            0,
-            i64::try_from(evidence.observed_at_unix_ms / 1000)
-                .map_err(|_| Error::Clock)?
-                .max(1),
-            failure,
+        if let wire::TaskPayload::Software(spec) = payload {
+            let Some(progress) = evidence.software_progress.as_ref() else {
+                return Ok(None);
+            };
+            return Ok(Some(wire::TaskEvent::SoftwareResult(software_result(
+                spec,
+                Some(progress.as_ref()),
+                |i, p| software_encoding(&evidence.input, i, p, spec.intent),
+                &self.policy,
+                evidence.observed_at_unix_ms,
+            )?)));
+        }
+        let (stdout, malformed, diagnostics) = project_diagnostics(
+            &self.policy,
+            process,
+            evidence.input.spec().launch.output,
+            evidence.observed_at_unix_ms,
         )?;
+        let failure = diagnostics.failure();
         Ok(Some(match payload {
             wire::TaskPayload::Script(_) => {
                 let output = serde_json::from_str(&stdout).unwrap_or(serde_json::Value::Null);
@@ -658,58 +656,6 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
                     output,
                     diagnostics,
                 )?)
-            }
-            wire::TaskPayload::Software(spec) => {
-                let Some(progress) = evidence.software_progress.as_ref() else {
-                    return Ok(None);
-                };
-                let observed = progress.checkpoints.iter().rev().find_map(|c| match c {
-                    execution_contract::SoftwareCheckpoint::End {
-                        detected: Some(state),
-                        ..
-                    } => Some(state),
-                    _ => None,
-                });
-                let (detection, version) = if progress.complete(&evidence.input) {
-                    match observed {
-                        Some(execution_contract::SoftwareState::Present { version }) => (
-                            wire::SoftwareDetectionState::Present,
-                            Some(version.as_str().to_owned()),
-                        ),
-                        Some(execution_contract::SoftwareState::Absent {}) => {
-                            (wire::SoftwareDetectionState::Absent, None)
-                        }
-                        _ => (wire::SoftwareDetectionState::Unknown, None),
-                    }
-                } else {
-                    (wire::SoftwareDetectionState::Unknown, None)
-                };
-                let mutation =
-                    progress
-                        .checkpoints
-                        .iter()
-                        .rev()
-                        .find_map(|checkpoint| match checkpoint {
-                            execution_contract::SoftwareCheckpoint::End {
-                                phase: execution_contract::SoftwarePhase::Mutation,
-                                process: Some(facts),
-                                ..
-                            } => Some(facts),
-                            _ => None,
-                        });
-                let result = wire::SoftwareTaskResult {
-                    intent: spec.intent,
-                    installer_exit_code: mutation.and_then(|f| f.exit_code),
-                    detection,
-                    definition_digest: spec.definition_digest,
-                    observed_version: version,
-                    evidence_digest: Sha256::digest(encode(progress.as_ref())?).into(),
-                    reboot_required: mutation
-                        .is_some_and(|f| matches!(f.exit_code, Some(3010 | 1641))),
-                    diagnostics,
-                };
-                result.validate()?;
-                wire::TaskEvent::SoftwareResult(result)
             }
             _ => return Err(Error::Unsupported),
         }))
@@ -783,5 +729,397 @@ fn decode_stream(bytes: &[u8], encoding: execution_contract::TextEncoding) -> Op
             .ok()
         }
         _ => None,
+    }
+}
+
+fn project_diagnostics(
+    policy: &impl OutputPolicy,
+    process: &execution_contract::ProcessEvidence,
+    output_spec: execution_contract::OutputSpec,
+    observed_at_ms: u64,
+) -> Result<(String, bool, wire::TaskDiagnostics), Error> {
+    let stdout = decode_stream(&process.stdout, output_spec.stdout);
+    let stderr = decode_stream(&process.stderr, output_spec.stderr);
+    let malformed = stdout.is_none() || stderr.is_none();
+    let stdout = policy.redact(stdout.as_deref().unwrap_or("stdout decoding failed"))?;
+    let stderr = policy.redact(stderr.as_deref().unwrap_or("stderr decoding failed"))?;
+    let failure = match process.end {
+        ProcessEnd::Rejected => Some(wire::TaskFailure::LaunchFailed),
+        ProcessEnd::TimedOut => Some(wire::TaskFailure::TimedOut),
+        ProcessEnd::OutputLimit => Some(wire::TaskFailure::OutputLimit),
+        _ if process.quality == OutputQuality::Truncated => Some(wire::TaskFailure::OutputLimit),
+        _ if process.exit_code.is_some_and(|v| v != 0) => Some(wire::TaskFailure::NonZeroExit),
+        _ if malformed || process.quality == OutputQuality::Failed => {
+            Some(wire::TaskFailure::CaptureFailed)
+        }
+        _ => None,
+    };
+    let diagnostics = wire::TaskDiagnostics::new(
+        bound(stdout.clone()),
+        bound(stderr),
+        0,
+        i64::try_from(observed_at_ms / 1000)
+            .map_err(|_| Error::Clock)?
+            .max(1),
+        failure,
+    )?;
+    Ok((stdout, malformed, diagnostics))
+}
+fn software_encoding(
+    input: &execution_contract::FrozenExecution,
+    index: usize,
+    phase: execution_contract::SoftwarePhase,
+    intent: wire::SoftwareTaskIntent,
+) -> Result<execution_contract::OutputSpec, Error> {
+    use execution_contract::{SoftwareDetector, SoftwarePhase as P};
+    let step = input
+        .spec()
+        .execution
+        .software_program()
+        .and_then(|p| p.steps.get(index))
+        .ok_or(Error::Protocol)?;
+    let invocation = match phase {
+        P::Mutation if intent == wire::SoftwareTaskIntent::Uninstall => {
+            step.uninstall.as_ref().ok_or(Error::Protocol)?
+        }
+        P::Mutation => &step.install,
+        P::Before | P::After => match &step.detection {
+            SoftwareDetector::Script { invocation } => invocation.as_ref(),
+            _ => &step.install,
+        },
+    };
+    Ok(invocation.launch.output)
+}
+fn software_result(
+    spec: &wire::SoftwareTaskSpec,
+    progress: Option<&execution_contract::SoftwareProgress>,
+    encoding: impl Fn(
+        usize,
+        execution_contract::SoftwarePhase,
+    ) -> Result<execution_contract::OutputSpec, Error>,
+    policy: &impl OutputPolicy,
+    observed_at_ms: u64,
+) -> Result<wire::SoftwareTaskResult, Error> {
+    use execution_contract::{SoftwareCheckpoint as C, SoftwarePhase as P, SoftwareState as S};
+    let time = i64::try_from(observed_at_ms / 1000)
+        .map_err(|_| Error::Clock)?
+        .max(1);
+    let digest = Sha256::digest(encode(&progress)?).into();
+    let mut results = Vec::new();
+    for (index, step) in spec.steps.iter().enumerate() {
+        let checkpoints = progress.map(|p| p.checkpoints.as_slice()).unwrap_or(&[]);
+        let observation = |phase| match checkpoints.iter().rev().find_map(|c| match c {
+            C::End {
+                step,
+                phase: p,
+                detected,
+                ..
+            } if *step as usize == index && *p == phase => detected.as_ref(),
+            _ => None,
+        }) {
+            Some(S::Present { version }) => wire::SoftwareDetectionObservation::Present {
+                version: version.as_str().into(),
+                evidence_sha256: digest,
+                observed_at: time,
+            },
+            Some(S::Absent {}) => wire::SoftwareDetectionObservation::Absent {
+                evidence_sha256: digest,
+                observed_at: time,
+            },
+            _ => wire::SoftwareDetectionObservation::Unknown {
+                diagnostic: "native observation unavailable".into(),
+            },
+        };
+        let process = checkpoints.iter().rev().find_map(|c| match c {
+            C::End {
+                step,
+                phase: P::Mutation,
+                process,
+                ..
+            } if *step as usize == index => process.as_ref(),
+            _ => None,
+        });
+        let begun = checkpoints
+            .iter()
+            .any(|c| matches!(c,C::Begin {step,phase:P::Mutation} if *step as usize==index));
+        // A mutation owns its diagnostics even when its End is absent. Otherwise a
+        // detector-only step may report its own last observed detector process.
+        let selected = if begun {
+            process.map(|p| (P::Mutation, p.as_ref()))
+        } else {
+            checkpoints.iter().rev().find_map(|c| match c {
+                C::End {
+                    step,
+                    phase,
+                    process: Some(p),
+                    ..
+                } if *step as usize == index => Some((*phase, p.as_ref())),
+                _ => None,
+            })
+        };
+        let mut step_diagnostics = match selected {
+            Some((phase, p)) => {
+                project_diagnostics(policy, p, encoding(index, phase)?, observed_at_ms)?.2
+            }
+            None => wire::TaskDiagnostics::new(
+                String::new(),
+                String::new(),
+                0,
+                time,
+                if begun {
+                    Some(wire::TaskFailure::CaptureFailed)
+                } else {
+                    None
+                },
+            )?,
+        };
+        let observed_process = if !begun {
+            wire::SoftwareProcessObservation::NotRun
+        } else if let Some(code) = process
+            .filter(|p| p.end == ProcessEnd::Exited)
+            .and_then(|p| p.exit_code)
+        {
+            wire::SoftwareProcessObservation::Exited { code }
+        } else {
+            let failure = step_diagnostics
+                .failure()
+                .unwrap_or(wire::TaskFailure::CaptureFailed);
+            step_diagnostics = wire::TaskDiagnostics::new(
+                step_diagnostics.stdout().to_owned(),
+                step_diagnostics.stderr().to_owned(),
+                0,
+                time,
+                Some(failure),
+            )?;
+            wire::SoftwareProcessObservation::Failed { failure }
+        };
+        let before = observation(P::Before);
+        let mut after = observation(P::After);
+        if !begun
+            && checkpoints
+                .iter()
+                .any(|c| matches!(c,C::Complete {step} if *step as usize==index))
+        {
+            after = before.clone();
+        }
+        results.push(wire::SoftwareStepResult {
+            index: index.try_into().map_err(|_| Error::Capacity)?,
+            step_digest: step.digest()?,
+            target: step.target.clone(),
+            package: step.action.package.clone(),
+            identity: step.action.observed_identity(),
+            before,
+            after,
+            process: observed_process,
+            reboot_required: process.is_some_and(|p| matches!(p.exit_code, Some(3010 | 1641))),
+            diagnostics: step_diagnostics,
+        });
+    }
+    let result = wire::SoftwareTaskResult {
+        intent: spec.intent,
+        definition_digest: spec.definition_digest,
+        steps: results,
+    };
+    result.validate_for(spec)?;
+    Ok(result)
+}
+
+#[cfg(test)]
+mod result_tests {
+    use super::*;
+    use execution_contract::{
+        AttemptId, Digest, Id, PackageValue, ProcessEvidence, ProcessFailureKind, ProcessScope,
+        SoftwareCheckpoint as C, SoftwarePhase as P, SoftwareProgress, SoftwareState as S,
+    };
+    struct Redact;
+    impl OutputPolicy for Redact {
+        fn redact(&self, text: &str) -> Result<String, Error> {
+            Ok(text.replace("private", "[redacted]"))
+        }
+    }
+    fn encoding(
+        index: usize,
+        _: execution_contract::SoftwarePhase,
+    ) -> Result<execution_contract::OutputSpec, Error> {
+        Ok(execution_contract::OutputSpec {
+            format: execution_contract::OutputFormat::Text {},
+            stdout: if index == 0 {
+                execution_contract::TextEncoding::Utf8
+            } else {
+                execution_contract::TextEncoding::Utf16Le
+            },
+            stderr: if index == 0 {
+                execution_contract::TextEncoding::Utf8
+            } else {
+                execution_contract::TextEncoding::Utf16Le
+            },
+        })
+    }
+    #[tokio::test]
+    async fn review_regression_step_results_never_borrow_another_steps_facts() {
+        let server = crate::test_support::Server::new().await;
+        let spec = {
+            let mut data = server.data.lock().unwrap();
+            data.software(2, false);
+            let wire::TaskPayload::Software(spec) = data.offer.as_ref().unwrap().payload.clone()
+            else {
+                panic!("software")
+            };
+            spec
+        };
+        let digest = Digest::new("a".repeat(64)).unwrap();
+        let attempt = AttemptId::new("attempt").unwrap();
+        let runner = Id::new("fixture").unwrap();
+        let process = ProcessEvidence {
+            content_digest: digest.clone(),
+            attempt_id: attempt.clone(),
+            runner: runner.clone(),
+            scope: ProcessScope::ProcessGroup { owner: 1, group: 1 },
+            finished: true,
+            exit_code: Some(0),
+            end: ProcessEnd::Exited,
+            failure_kind: ProcessFailureKind::None,
+            quiescent: true,
+            stdout: b"step-zero-private".to_vec(),
+            stderr: b"step-zero-error".to_vec(),
+            total_output_bytes: 0,
+            quality: OutputQuality::Complete,
+        };
+        let mut progress = SoftwareProgress {
+            attempt_id: attempt,
+            content_digest: digest,
+            runner,
+            elapsed_ms: 1,
+            output_bytes: 0,
+            checkpoints: vec![
+                C::Begin {
+                    step: 0,
+                    phase: P::Before,
+                },
+                C::End {
+                    step: 0,
+                    phase: P::Before,
+                    process: None,
+                    detected: Some(S::Absent {}),
+                    quiescent: true,
+                },
+                C::Begin {
+                    step: 0,
+                    phase: P::Mutation,
+                },
+                C::End {
+                    step: 0,
+                    phase: P::Mutation,
+                    process: Some(Box::new(process)),
+                    detected: None,
+                    quiescent: true,
+                },
+                C::Begin {
+                    step: 0,
+                    phase: P::After,
+                },
+                C::End {
+                    step: 0,
+                    phase: P::After,
+                    process: None,
+                    detected: Some(S::Present {
+                        version: PackageValue::new("1.0").unwrap(),
+                    }),
+                    quiescent: true,
+                },
+                C::Complete { step: 0 },
+            ],
+        };
+        let result = software_result(&spec, Some(&progress), encoding, &Redact, 1000).unwrap();
+        assert_eq!(result.steps.len(), 2);
+        for (i, step) in result.steps.iter().enumerate() {
+            assert_eq!(step.index as usize, i);
+            assert_eq!(step.step_digest, spec.steps[i].digest().unwrap());
+            assert_eq!(step.package, spec.steps[i].action.package);
+        }
+        assert!(matches!(
+            result.steps[0].before,
+            wire::SoftwareDetectionObservation::Absent { .. }
+        ));
+        assert!(matches!(
+            result.steps[0].after,
+            wire::SoftwareDetectionObservation::Present { .. }
+        ));
+        assert_eq!(
+            result.steps[0].process,
+            wire::SoftwareProcessObservation::Exited { code: 0 }
+        );
+        assert!(!result.steps[0].reboot_required);
+        assert_eq!(result.steps[0].diagnostics.stdout(), "step-zero-[redacted]");
+        assert_eq!(result.steps[1].diagnostics.stdout(), "");
+        assert_eq!(result.steps[1].diagnostics.failure(), None);
+        assert!(result.steps[1].before.is_unknown() && result.steps[1].after.is_unknown());
+        assert_eq!(
+            result.steps[1].process,
+            wire::SoftwareProcessObservation::NotRun
+        );
+        progress.checkpoints.extend([
+            C::Begin {
+                step: 1,
+                phase: P::Before,
+            },
+            C::End {
+                step: 1,
+                phase: P::Before,
+                process: None,
+                detected: Some(S::Absent {}),
+                quiescent: true,
+            },
+            C::Begin {
+                step: 1,
+                phase: P::Mutation,
+            },
+        ]);
+        let result = software_result(&spec, Some(&progress), encoding, &Redact, 1000).unwrap();
+        assert!(matches!(
+            result.steps[1].process,
+            wire::SoftwareProcessObservation::Failed { .. }
+        ));
+        assert!(result.steps[1].after.is_unknown());
+        let C::End {
+            process: Some(first),
+            ..
+        } = &progress.checkpoints[3]
+        else {
+            panic!("mutation")
+        };
+        let mut timed_out = first.clone();
+        timed_out.end = ProcessEnd::TimedOut;
+        timed_out.exit_code = None;
+        timed_out.stdout = "step-one-private"
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect();
+        timed_out.stderr = "step-one-error"
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect();
+        progress.checkpoints.push(C::End {
+            step: 1,
+            phase: P::Mutation,
+            process: Some(timed_out),
+            detected: None,
+            quiescent: true,
+        });
+        let result = software_result(&spec, Some(&progress), encoding, &Redact, 1000).unwrap();
+        assert_eq!(result.steps[0].diagnostics.stdout(), "step-zero-[redacted]");
+        assert_eq!(result.steps[0].diagnostics.failure(), None);
+        assert_eq!(result.steps[1].diagnostics.stdout(), "step-one-[redacted]");
+        assert_eq!(result.steps[1].diagnostics.stderr(), "step-one-error");
+        assert_eq!(
+            result.steps[1].diagnostics.failure(),
+            Some(wire::TaskFailure::TimedOut)
+        );
+        assert_eq!(
+            result.steps[1].process,
+            wire::SoftwareProcessObservation::Failed {
+                failure: wire::TaskFailure::TimedOut
+            }
+        );
     }
 }

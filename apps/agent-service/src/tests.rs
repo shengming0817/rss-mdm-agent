@@ -100,3 +100,156 @@ async fn signed_start_compiles_exactly_and_never_creates_a_local_enterprise_appr
     server.time.set(payload.expires_at);
     assert!(client.validate_start(&start).is_err());
 }
+
+#[tokio::test]
+async fn osquery_compiler_revalidates_the_signed_query_and_uses_only_literal_arguments() {
+    for (query, valid) in [
+        ("SELECT version FROM osquery_info", true),
+        ("SELECT load_extension('x') FROM osquery_info", false),
+        (
+            "SELECT version FROM osquery_info; DELETE FROM programs",
+            false,
+        ),
+    ] {
+        let server = protocol::Server::new().await;
+        {
+            let mut data = server.data.lock().unwrap();
+            data.bytes = query.as_bytes().to_vec();
+            data.script();
+            let wire::TaskPayload::Script(mut spec) = data.offer.as_ref().unwrap().payload.clone()
+            else {
+                panic!("script")
+            };
+            spec.profile = wire::ExecutorProfile::Osquery;
+            spec.sql_parameters = Some(Default::default());
+            data.offer = Some(data.signed(wire::TaskPayload::Script(spec)));
+        }
+        let root = protocol::Root::new();
+        let mut client = server.client(&root, OpenMode::Create);
+        let receipt = server.register(&mut client).await;
+        let offer = client.claim().await.unwrap().offer.unwrap();
+        let materials = client.prepare(&offer).await.unwrap();
+        let (binding, actor) =
+            plan::context(server.url.as_str(), server.config().tenant, &receipt).unwrap();
+        let wire::TaskPayload::Script(spec) = offer.payload() else {
+            panic!("script")
+        };
+        // This test verifies the production compiler, not osquery execution.
+        let executable = std::path::PathBuf::from("/bin/sh");
+        let interpreters = [Interpreter {
+            profile: wire::ExecutorProfile::Osquery,
+            image: local_service::Artifact {
+                sha256: format!("{:x}", Sha256::digest(std::fs::read(&executable).unwrap())),
+                path: executable,
+                cdhash: None,
+            },
+        }];
+        let result = plan::script(
+            &offer,
+            &materials,
+            spec,
+            (&binding, &actor),
+            &interpreters,
+            (&root.path, &root.path.join("query")),
+            None,
+        );
+        assert_eq!(result.is_ok(), valid, "{:?}", result.as_ref().err());
+        if let Ok((frozen, _)) = result {
+            let args = &frozen.spec().launch.argv;
+            assert!(args.iter().any(
+                |a| matches!(a,LaunchArg::Literal{value} if value==&format!("{query} LIMIT 2"))
+            ));
+            assert!(args.iter().any(
+                |a| matches!(a,LaunchArg::Literal{value} if value=="--disable_extensions=true")
+            ));
+            assert!(!args.iter().any(|a| matches!(a, LaunchArg::ArtifactPath {})));
+        }
+    }
+}
+
+#[test]
+fn production_storage_budgets_open_with_large_output_capture_limits() {
+    let root = protocol::Root::new();
+    let authority = Authority::Test {
+        id: Id::new("collection-storage").unwrap(),
+    };
+    let limits = plan::storage_limits();
+    assert_eq!(limits.input.max_output_bytes, 16_777_216);
+    execution_sqlite::Store::initialize_test(&root.path.join("budget.sqlite"), authority, limits)
+        .unwrap();
+}
+
+#[tokio::test]
+#[ignore = "native System/root material staging; run in the platform T3 service environment"]
+async fn current_software_steps_compile_from_exact_prefixed_artifacts() {
+    for supported_codes in [true, false] {
+        let server = protocol::Server::new().await;
+        {
+            let mut data = server.data.lock().unwrap();
+            data.software(2, false);
+            if !supported_codes {
+                let wire::TaskPayload::Software(mut spec) =
+                    data.offer.as_ref().unwrap().payload.clone()
+                else {
+                    panic!("software")
+                };
+                for step in &mut spec.steps {
+                    let wire::SoftwareTaskBehavior::Pkg(n) = &mut step.action.behavior else {
+                        panic!("pkg")
+                    };
+                    n.install.exit_codes.success = [7].into();
+                    n.upgrade_invocation = n.install.clone();
+                }
+                spec.definition_digest =
+                    Sha256::digest(serde_json::to_vec(&spec.steps).unwrap()).into();
+                data.offer = Some(data.signed(wire::TaskPayload::Software(spec)));
+            }
+        }
+        let root = protocol::Root::new();
+        let mut client = server.client(&root, OpenMode::Create);
+        let receipt = server.register(&mut client).await;
+        let offer = client.claim().await.unwrap().offer.unwrap();
+        let materials = client.prepare(&offer).await.unwrap();
+        let (binding, actor) =
+            plan::context(server.url.as_str(), server.config().tenant, &receipt).unwrap();
+        let executable = local_service::Artifact {
+            path: "/bin/sh".into(),
+            sha256: format!("{:x}", Sha256::digest(std::fs::read("/bin/sh").unwrap())),
+            cdhash: None,
+        };
+        let material_root = root.path.join("materials");
+        execution_runner::staging::initialize(&material_root).unwrap();
+        let config = ExecutionConfig {
+            work_root: root.path.clone(),
+            material_root,
+            interpreters: vec![Interpreter {
+                profile: wire::ExecutorProfile::PosixSh,
+                image: executable.clone(),
+            }],
+            managers: vec![SoftwareManager {
+                executor: SoftwareManagerKind::PackageInstaller,
+                image: executable,
+            }],
+            processes: 1,
+        };
+        let wire::TaskPayload::Software(spec) = offer.payload() else {
+            panic!("software")
+        };
+        // Pins and compiles actual material; it does not pretend /bin/sh is a real installer.
+        let compiled = software::compile(&offer, &materials, spec, &binding, &actor, &config, None);
+        if supported_codes {
+            let (plan, _) = compiled.unwrap();
+            assert_eq!(
+                plan.spec()
+                    .execution
+                    .software_program()
+                    .unwrap()
+                    .steps
+                    .len(),
+                2
+            );
+        } else {
+            assert!(matches!(compiled, Err(Error::Unsupported)));
+        }
+    }
+}

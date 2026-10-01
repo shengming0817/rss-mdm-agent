@@ -350,15 +350,32 @@ impl Artifacts {
                     && crate::output::decode(&content[2..], TextEncoding::Utf16Le).is_some() => {}
             _ => return Err(Error::InvalidInput),
         }
-        let query = launch.interpreter.profile.id.as_str() == "native-osquery-info-v1";
-        if query
-            && (content != b"SELECT version FROM osquery_info;\n"
-                || launch.output.format != (OutputFormat::Json { max_rows: 1 })
-                || !matches!(run_as, RunAs::System { .. })
+        let query = launch.interpreter.profile.id.as_str() == "native-osquery-template";
+        if query {
+            let OutputFormat::Json { max_rows } = launch.output.format else {
+                return Err(Error::Denied);
+            };
+            if !matches!(run_as, RunAs::System { .. })
                 || !launch.env.is_empty()
-                || !matches!(launch.stdin, StandardInput::Closed {}))
-        {
-            return Err(Error::Denied);
+                || !matches!(launch.stdin, StandardInput::Closed {})
+            {
+                return Err(Error::Denied);
+            }
+            let expected = crate::osquery::arguments(
+                &content,
+                &p.request.parameters,
+                max_rows,
+                p.request.target.platform,
+            )?;
+            if launch.argv.len() != expected.len()
+                || !launch
+                    .argv
+                    .iter()
+                    .zip(&expected)
+                    .all(|(a, b)| matches!(a,LaunchArg::Literal{value} if value==b))
+            {
+                return Err(Error::Denied);
+            }
         }
         super::platform::protected_path(&self.work_root, true)?;
         leases.push(super::platform::PathLease::source(&self.work_root, false)?);

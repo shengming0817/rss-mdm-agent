@@ -317,31 +317,3 @@ fn duplicate_powershell_names_have_a_static_diagnostic() {
     assert_eq!(error, ScriptPlanError::DuplicateName);
     assert!(!format!("{error:?}{error}").contains("private-value"));
 }
-
-#[test]
-fn osquery_is_a_fixed_system_query_without_user_sql_or_parameters() {
-    let mut input = scenario::input(ScriptProfile::OsqueryInfoV1);
-    input.request.parameters.clear();
-    input.bindings.clear();
-    input.env.clear();
-    input.run_as = execution_contract::RunAs::System {
-        platform: input.request.target.platform,
-    };
-    input.session_requirement = execution_contract::SessionRequirement::NotRequired {};
-    input.stdin = script_plan::StdinBinding::Closed;
-    input.output.format = execution_contract::OutputFormat::Json { max_rows: 1 };
-    let plan = script_plan::compile(input.clone(), &scenario::limits()).unwrap();
-    assert_eq!(
-        plan.spec().launch.argv,
-        vec![
-            execution_contract::LaunchArg::Literal {
-                value: "--json".into()
-            },
-            execution_contract::LaunchArg::Literal {
-                value: "SELECT version FROM osquery_info;".into()
-            }
-        ]
-    );
-    input.output.format = execution_contract::OutputFormat::Json { max_rows: 2 };
-    assert!(script_plan::compile(input, &scenario::limits()).is_err());
-}

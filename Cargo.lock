@@ -883,6 +883,7 @@ checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
  "block-buffer",
  "crypto-common",
+ "subtle",
 ]
 
 [[package]]
@@ -1192,6 +1193,7 @@ dependencies = [
  "local-service",
  "native-process",
  "plist",
+ "rss-mdm-resource",
  "rusqlite",
  "script-plan",
  "serde",
@@ -1899,6 +1901,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
+name = "hmac"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
+dependencies = [
+ "digest",
+]
+
+[[package]]
 name = "html5ever"
 version = "0.38.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2064,9 +2075,9 @@ dependencies = [
 
 [[package]]
 name = "icu_collections"
-version = "2.3.0"
+version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa68d21081c4a05d5a901a1c62add574c77048b6a1c67be3b50ce0b60d4ca513"
+checksum = "2984d1cd16c883d7935b9e07e44071dca8d917fd52ecc02c04d5fa0b5a3f191c"
 dependencies = [
  "displaydoc",
  "potential_utf",
@@ -2091,9 +2102,9 @@ dependencies = [
 
 [[package]]
 name = "icu_normalizer"
-version = "2.3.0"
+version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12f9cf5f235641ed274641dd81c3f28d870e276763d0797aeeab72317b1c646f"
+checksum = "c56e5ee99d6e3d33bd91c5d85458b6005a22140021cc324cea84dd0e72cff3b4"
 dependencies = [
  "icu_collections",
  "icu_normalizer_data",
@@ -2105,17 +2116,16 @@ dependencies = [
 
 [[package]]
 name = "icu_normalizer_data"
-version = "2.3.0"
+version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1563da1ed3e0b3bf3d74c9b85917ac9c56464d2f57242270c09c9e752f8021a0"
+checksum = "da3be0ae77ea334f4da67c12f149704f19f81d1adf7c51cf482943e84a2bad38"
 
 [[package]]
 name = "icu_properties"
-version = "2.3.0"
+version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e7ca276ad3145661a65914e6daf131ca5120cd3dcee8f8f3214b8875184a148"
+checksum = "bee3b67d0ea5c2cca5003417989af8996f8604e34fb9ddf96208a033901e70de"
 dependencies = [
- "displaydoc",
  "icu_collections",
  "icu_locale_core",
  "icu_properties_data",
@@ -2126,9 +2136,9 @@ dependencies = [
 
 [[package]]
 name = "icu_properties_data"
-version = "2.3.0"
+version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e590f038c1464a96894fd6d10127e90a8be4509f56ff7ecef851b15cee0b7caa"
+checksum = "8e2bbb201e0c04f7b4b3e14382af113e17ba4f63e2c9d2ee626b720cbce54a14"
 
 [[package]]
 name = "icu_provider"
@@ -3139,6 +3149,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
+name = "ordered-float"
+version = "2.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "68f19d67e5a2795c94e73e0bb1cc1a7edeb2e28efd39e2e1c9b7a40c1108b11c"
+dependencies = [
+ "num-traits",
+ "serde",
+]
+
+[[package]]
 name = "outref"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3719,14 +3739,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "rss-contract"
+version = "0.1.0"
+source = "git+https://dev.azure.com/shengming0923/rss/_git/rss?rev=7c1ece8ce104f59ba06af5480a3386caabb974ac#7c1ece8ce104f59ba06af5480a3386caabb974ac"
+
+[[package]]
 name = "rss-mdm-agent-wire"
-version = "4.0.0"
-source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=025ebc5ae676763fdeb113ff4ec8f1bb374284c9#025ebc5ae676763fdeb113ff4ec8f1bb374284c9"
+version = "5.0.0"
+source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=574d11eec526f31fbc6ccc7a24d5fccddd6df8db#574d11eec526f31fbc6ccc7a24d5fccddd6df8db"
 dependencies = [
  "base64 0.22.1",
  "ring",
+ "rss-mdm-inventory",
  "serde",
  "serde_json",
+ "sha2",
  "url",
  "uuid",
  "zeroize",
@@ -3778,6 +3805,71 @@ dependencies = [
  "windows-sys 0.61.2",
  "windows-version",
  "zeroize",
+]
+
+[[package]]
+name = "rss-mdm-inventory"
+version = "0.1.0"
+source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=574d11eec526f31fbc6ccc7a24d5fccddd6df8db#574d11eec526f31fbc6ccc7a24d5fccddd6df8db"
+dependencies = [
+ "ordered-float",
+ "rss-contract",
+ "rss-observation",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "rss-mdm-resource"
+version = "0.1.0"
+source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=574d11eec526f31fbc6ccc7a24d5fccddd6df8db#574d11eec526f31fbc6ccc7a24d5fccddd6df8db"
+dependencies = [
+ "jsonschema",
+ "rss-contract",
+ "rss-request-context",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlparser",
+]
+
+[[package]]
+name = "rss-observation"
+version = "0.1.0"
+source = "git+https://dev.azure.com/shengming0923/rss/_git/rss?rev=7c1ece8ce104f59ba06af5480a3386caabb974ac#7c1ece8ce104f59ba06af5480a3386caabb974ac"
+dependencies = [
+ "rss-contract",
+ "rss-redact",
+ "rss-request-context",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "rss-redact"
+version = "0.1.0"
+source = "git+https://dev.azure.com/shengming0923/rss/_git/rss?rev=7c1ece8ce104f59ba06af5480a3386caabb974ac#7c1ece8ce104f59ba06af5480a3386caabb974ac"
+dependencies = [
+ "hmac",
+ "icu_properties",
+ "rss-contract",
+ "sha2",
+ "thiserror 2.0.20",
+ "time",
+ "uuid",
+ "zeroize",
+]
+
+[[package]]
+name = "rss-request-context"
+version = "0.1.0"
+source = "git+https://dev.azure.com/shengming0923/rss/_git/rss?rev=7c1ece8ce104f59ba06af5480a3386caabb974ac#7c1ece8ce104f59ba06af5480a3386caabb974ac"
+dependencies = [
+ "thiserror 2.0.20",
+ "uuid",
 ]
 
 [[package]]
@@ -4417,6 +4509,27 @@ dependencies = [
  "gobject-sys 0.18.0",
  "libc",
  "system-deps 6.2.2",
+]
+
+[[package]]
+name = "sqlparser"
+version = "0.63.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3679862809bd1f92e563cf6fd820e28f39135303668001c10331d5027183e8b4"
+dependencies = [
+ "log",
+ "sqlparser_derive",
+]
+
+[[package]]
+name = "sqlparser_derive"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2905ae8e8148d8f7f5748ea95d1e949fa4fc1d7f5161547b758ad118b2e4b0aa"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.5",
 ]
 
 [[package]]
@@ -6295,6 +6408,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b97154e67e32c85465826e8bcc1c59429aaaf107c1e4a9e53c8d8ccd5eff88d0"
 dependencies = [
  "serde",
+ "zeroize_derive",
+]
+
+[[package]]
+name = "zeroize_derive"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c50655cbb0fe3fc43170059e702f1ce5e19b84cec58dc87b037a09935c2f328"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]

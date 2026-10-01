@@ -76,7 +76,7 @@ pub struct DeviceService<S: SecretProvider = DeviceSecrets> {
 impl<S: SecretProvider> DeviceService<S> {
     /// Open an already registered device. Create/open selection never follows an error fallback.
     pub fn open(
-        client: Client<S, SystemClock>,
+        mut client: Client<S, SystemClock>,
         journal: &Path,
         startup: ProductionStartup,
         config: ExecutionConfig,
@@ -90,6 +90,15 @@ impl<S: SecretProvider> DeviceService<S> {
         {
             return Err(Error::Configuration);
         }
+        let mut profiles = Vec::new();
+        for interpreter in &config.interpreters {
+            interpreter
+                .image
+                .verify(&interpreter.image.path)
+                .map_err(|_| Error::Untrusted)?;
+            profiles.push(interpreter.profile);
+        }
+        client.set_profiles(profiles)?;
         native_process::private_storage::validate(&config.work_root)?;
         let (binding, actor) = plan::context(
             client.configuration().origin.as_str(),
@@ -122,7 +131,7 @@ impl<S: SecretProvider> DeviceService<S> {
                 max_profiles: 1,
                 max_capability_entries: 32,
                 max_timeout_ms: 86_400_000,
-                max_output_bytes: 1_048_576,
+                max_output_bytes: 16_777_216,
             },
             plan::storage_limits(),
         )?;
@@ -284,6 +293,19 @@ impl<S: SecretProvider> DeviceService<S> {
         self.recovering = false;
         let reports = 16.min(self.client.configuration().limits.pending_reports);
         network(self.client.flush_reports(reports), &mut self.core, commands).await?;
+        let mut context = self.client.execution_context()?;
+        context.os_version = native_process::os_version::current()?;
+        context.interactive_user =
+            self.core
+                .helpers
+                .connect(None)
+                .ok()
+                .map(|helper| wire::SoftwareInteractiveUser {
+                    identity: helper.context().subject.clone(),
+                    session_id: login_id(helper.context()),
+                    administrator: false,
+                });
+        self.client.set_execution_context(context)?;
         let claim = match network(self.client.claim(), &mut self.core, commands).await {
             Ok(v) => v,
             Err(e) => {
@@ -385,11 +407,10 @@ impl<S: SecretProvider> DeviceService<S> {
         let needs_user = match offer.payload() {
             wire::TaskPayload::Enrollment(_) => return Err(Error::Unsupported),
             wire::TaskPayload::Script(p) => p.run_as == wire::ExecutionIdentity::LoggedInUser,
-            wire::TaskPayload::Software(p) => p.steps.iter().any(|step| {
-                step.action.install.run_as == wire::ExecutionIdentity::LoggedInUser
-                    || step.action.uninstall.as_ref().is_some_and(|c| c.run_as == wire::ExecutionIdentity::LoggedInUser)
-                    || matches!(&step.action.detect, wire::SoftwareTaskDetection::Script { command } if command.run_as == wire::ExecutionIdentity::LoggedInUser)
-            }),
+            wire::TaskPayload::Software(p) => p
+                .steps
+                .iter()
+                .any(|step| matches!(step.target, wire::SoftwareExecutionTarget::User { .. })),
         };
         let login = if needs_user || selection.is_some() {
             Some(self.core.helpers.connect(selection.as_ref())?)
@@ -1136,24 +1157,14 @@ fn offered(offer: &Offer) -> Result<execution_contract::BackendTask, Error> {
                     .map(|step| execution_contract::BackendStepSummary {
                         package: step.action.package.clone(),
                         version: step.action.version.clone(),
-                        identity: display_identity(
-                            if p.intent == wire::SoftwareTaskIntent::Uninstall {
-                                step.action
-                                    .uninstall
-                                    .as_ref()
-                                    .unwrap_or(&step.action.install)
-                                    .run_as
-                            } else if p.intent == wire::SoftwareTaskIntent::Detect {
-                                match &step.action.detect {
-                                    wire::SoftwareTaskDetection::Script { command } => {
-                                        command.run_as
-                                    }
-                                    _ => step.action.install.run_as,
-                                }
-                            } else {
-                                step.action.install.run_as
-                            },
-                        ),
+                        identity: display_identity(match step.target {
+                            wire::SoftwareExecutionTarget::Device => {
+                                wire::ExecutionIdentity::System
+                            }
+                            wire::SoftwareExecutionTarget::User { .. } => {
+                                wire::ExecutionIdentity::LoggedInUser
+                            }
+                        }),
                     })
                     .collect(),
             },
@@ -1265,4 +1276,14 @@ impl Selection {
             origin,
         })
     }
+}
+
+pub(crate) fn login_id(context: &execution_runner::helper::UserContext) -> uuid::Uuid {
+    use sha2::{Digest as _, Sha256};
+    let digest = Sha256::digest(context.binding.as_str().as_bytes());
+    let mut bytes = [0; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    bytes[6] = (bytes[6] & 0x0f) | 0x50;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    uuid::Uuid::from_bytes(bytes)
 }

@@ -158,7 +158,7 @@ pub(crate) fn profile(profile: &VersionedRef) -> Result<(), Error> {
         || ![
             "native-posix-sh-file",
             "native-bash-file",
-            "native-osquery-info-v1",
+            "native-osquery-template",
         ]
         .contains(&profile.id.as_str())
     {
@@ -171,17 +171,20 @@ pub(crate) fn arguments(
     args: &[String],
     script: &Path,
 ) -> Result<(), Error> {
+    if profile.id.as_str() == crate::osquery::PROFILE {
+        return if crate::osquery::prefix_matches(args) {
+            Ok(())
+        } else {
+            Err(Error::Denied)
+        };
+    }
     let path = script.to_str().ok_or(Error::InvalidInput)?;
     let prefix: &[&str] = match profile.id.as_str() {
         "native-posix-sh-file" => &[path],
         "native-bash-file" => &["--noprofile", "--norc", path],
-        "native-osquery-info-v1" => &["--json", "SELECT version FROM osquery_info;"],
         _ => return Err(Error::Unsupported),
     };
-    if args.len() < prefix.len()
-        || !args.iter().zip(prefix).all(|(a, b)| a == b)
-        || (profile.id.as_str() == "native-osquery-info-v1" && args.len() != prefix.len())
-    {
+    if args.len() < prefix.len() || !args.iter().zip(prefix).all(|(a, b)| a == b) {
         return Err(Error::Denied);
     }
     Ok(())

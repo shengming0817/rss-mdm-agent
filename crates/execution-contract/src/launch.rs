@@ -110,7 +110,7 @@ pub enum OutputFormat {
     Text {},
     /// A JSON object (one row) or array with at most the specified number of rows.
     Json {
-        /// Positive limit, at most 1000.
+        /// Positive limit, at most 65535.
         max_rows: u16,
     },
 }

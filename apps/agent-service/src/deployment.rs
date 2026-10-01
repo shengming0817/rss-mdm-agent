@@ -127,6 +127,15 @@ impl Deployment {
             })
             .collect::<Result<_, Error>>()?;
         Ok(Config {
+            execution_context: wire::SoftwareExecutionContext {
+                revision: 1,
+                os_version: native_process::os_version::current()?,
+                system_broker: true,
+                interactive_user: None,
+                source_credentials: vec![],
+                msix_sideload: false,
+                msix_unsigned: false,
+            },
             origin: url::Url::parse(&self.origin).map_err(|_| Error::Configuration)?,
             tenant: self.tenant,
             platform,
@@ -227,10 +236,7 @@ impl Deployment {
                     self.enrollment,
                     "enrollment",
                     "device",
-                    vec![
-                        wire::Capability::TaskExecuteV4,
-                        wire::Capability::SoftwareExecuteV4,
-                    ],
+                    self.capabilities(),
                 )
                 .await?;
         }
@@ -284,10 +290,119 @@ impl Deployment {
             self.helpers(),
         )
     }
+    fn capabilities(&self) -> Vec<wire::Capability> {
+        use crate::SoftwareManagerKind as M;
+        use wire::Capability as C;
+        let mut values = vec![C::InventoryCollectionV5, C::TaskExecuteV5];
+        let has = |profile| {
+            self.execution
+                .interpreters
+                .iter()
+                .any(|i| i.profile == profile)
+        };
+        for manager in &self.execution.managers {
+            match manager.executor {
+                M::Msi if cfg!(windows) && has(wire::ExecutorProfile::PowerShell7) => {
+                    values.extend([C::SoftwareMsiSystemV5, C::SoftwareMsiUserV5])
+                }
+                M::PackageInstaller
+                    if cfg!(target_os = "macos") && has(wire::ExecutorProfile::PosixSh) =>
+                {
+                    values.push(C::SoftwarePkgSystemV5)
+                }
+
+                _ => (),
+            }
+        }
+        let profile = if cfg!(windows) {
+            wire::ExecutorProfile::PowerShell7
+        } else {
+            wire::ExecutorProfile::PosixSh
+        };
+        if self
+            .execution
+            .interpreters
+            .iter()
+            .any(|i| i.profile == profile)
+        {
+            values.extend(if cfg!(windows) {
+                [
+                    C::SoftwareBundleWindowsSystemV5,
+                    C::SoftwareBundleWindowsUserV5,
+                ]
+            } else {
+                [C::SoftwareBundleMacosSystemV5, C::SoftwareBundleMacosUserV5]
+            });
+        }
+        values.sort();
+        values.dedup();
+        values
+    }
     fn helpers(&self) -> crate::UserResources {
         crate::UserResources {
             image: self.service.clone(),
             work_roots: self.helper_work_roots.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn review_regression_native_capability_requires_its_interpreter() {
+        let image = local_service::Artifact {
+            path: "/unused".into(),
+            sha256: "a".repeat(64),
+            cdhash: None,
+        };
+        let mut deployment = Deployment {
+            version: 1,
+            origin: String::new(),
+            tenant: uuid::Uuid::new_v4(),
+            signing_keys: Default::default(),
+            ca_file: None,
+            enrollment: uuid::Uuid::new_v4(),
+            registration_operation: uuid::Uuid::new_v4(),
+            state_root: PathBuf::new(),
+            service: image.clone(),
+            clients: PeerPolicy {
+                images: vec![],
+                subjects: vec![],
+                interactive: false,
+            },
+            helper_work_roots: Default::default(),
+            execution: ExecutionConfig {
+                work_root: PathBuf::new(),
+                material_root: PathBuf::new(),
+                processes: 1,
+                interpreters: vec![crate::Interpreter {
+                    profile: wire::ExecutorProfile::Osquery,
+                    image: image.clone(),
+                }],
+                managers: vec![crate::SoftwareManager {
+                    executor: if cfg!(windows) {
+                        crate::SoftwareManagerKind::Msi
+                    } else {
+                        crate::SoftwareManagerKind::PackageInstaller
+                    },
+                    image: image.clone(),
+                }],
+            },
+        };
+        assert!(!deployment.capabilities().iter().any(|v| v.is_software()));
+        deployment.execution.interpreters.push(crate::Interpreter {
+            profile: if cfg!(windows) {
+                wire::ExecutorProfile::PowerShell7
+            } else {
+                wire::ExecutorProfile::PosixSh
+            },
+            image,
+        });
+        assert!(deployment.capabilities().contains(&if cfg!(windows) {
+            wire::Capability::SoftwareMsiSystemV5
+        } else {
+            wire::Capability::SoftwarePkgSystemV5
+        }));
     }
 }

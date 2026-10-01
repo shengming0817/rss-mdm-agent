@@ -1,7 +1,7 @@
-//! Deterministic V4 compiler. The backend has already selected sources and ordered dependencies.
+//! Deterministic V5 compiler. The backend has already selected sources and ordered dependencies.
 use crate::{
     plan::{self, hex, id, reference},
-    ExecutionConfig,
+    ExecutionConfig, SoftwareManagerKind,
 };
 use agent_client::{wire, Error, Materials, Offer};
 use execution_contract::*;
@@ -17,6 +17,22 @@ fn artifact(bytes: &[u8; 32]) -> Result<ExactArtifactRef, Error> {
         sha256: Digest::new(hex(bytes)).map_err(|_| Error::Protocol)?,
     })
 }
+#[derive(Clone, Copy)]
+enum CommandKind {
+    Native(SoftwareManagerKind),
+    Script(wire::SoftwareTaskInterpreter),
+}
+impl CommandKind {
+    fn script(
+        script: &wire::SoftwareTaskScript,
+    ) -> (Self, Option<&str>, &wire::SoftwareTaskInvocation) {
+        (
+            Self::Script(script.interpreter),
+            Some(&script.entry),
+            &script.invocation,
+        )
+    }
+}
 type CompiledCommand = (
     SoftwareInvocation,
     Artifacts,
@@ -31,7 +47,7 @@ struct Compiler<'a> {
 impl Compiler<'_> {
     fn command(
         &self,
-        command: &wire::SoftwareTaskCommand,
+        (kind, entry, command): (CommandKind, Option<&str>, &wire::SoftwareTaskInvocation),
         adapter: SoftwareKind,
         payload: &(PathBuf, ExactArtifactRef),
         operation: SoftwareOperation,
@@ -66,22 +82,30 @@ impl Compiler<'_> {
                 )
             }
         };
-        let native = matches!(
-            command.executor,
-            wire::SoftwareTaskExecutor::Msi
-                | wire::SoftwareTaskExecutor::PackageInstaller
-                | wire::SoftwareTaskExecutor::Winget
-                | wire::SoftwareTaskExecutor::Brew
-        );
-        let profile = match command.executor {
-            wire::SoftwareTaskExecutor::PowerShell7
-            | wire::SoftwareTaskExecutor::Msi
-            | wire::SoftwareTaskExecutor::Winget => wire::ExecutorProfile::PowerShell7,
-            wire::SoftwareTaskExecutor::PosixSh
-            | wire::SoftwareTaskExecutor::PackageInstaller
-            | wire::SoftwareTaskExecutor::Brew => wire::ExecutorProfile::PosixSh,
-            wire::SoftwareTaskExecutor::Bash => wire::ExecutorProfile::Bash,
+        let profile = match kind {
+            CommandKind::Native(SoftwareManagerKind::Msi | SoftwareManagerKind::Winget)
+            | CommandKind::Script(wire::SoftwareTaskInterpreter::PowerShell7) => {
+                wire::ExecutorProfile::PowerShell7
+            }
+            CommandKind::Native(
+                SoftwareManagerKind::PackageInstaller | SoftwareManagerKind::Brew,
+            )
+            | CommandKind::Script(wire::SoftwareTaskInterpreter::PosixSh) => {
+                wire::ExecutorProfile::PosixSh
+            }
+            CommandKind::Script(wire::SoftwareTaskInterpreter::Bash) => wire::ExecutorProfile::Bash,
         };
+        let expected_reboot = if adapter == SoftwareKind::Msi {
+            [3010, 1641].into_iter().collect()
+        } else {
+            Default::default()
+        };
+        if command.exit_codes.success != [0].into_iter().collect()
+            || (!command.exit_codes.reboot.is_empty()
+                && command.exit_codes.reboot != expected_reboot)
+        {
+            return Err(Error::Unsupported);
+        }
         let interpreter = self
             .config
             .interpreters
@@ -94,15 +118,15 @@ impl Compiler<'_> {
             .map_err(|_| Error::Untrusted)?;
         let mut files = vec![payload.clone()];
         let mut arguments = Vec::new();
-        let (content, content_ref) = if native {
-            if command.entry.is_some() {
+        let (content, content_ref) = if let CommandKind::Native(executor) = kind {
+            if entry.is_some() {
                 return Err(Error::Protocol);
             }
             let manager = self
                 .config
                 .managers
                 .iter()
-                .find(|m| m.executor == command.executor)
+                .find(|m| m.executor == executor)
                 .ok_or(Error::Unsupported)?;
             manager
                 .image
@@ -137,7 +161,7 @@ impl Compiler<'_> {
             ]);
             (path, reference)
         } else {
-            let key = command.entry.as_ref().ok_or(Error::Protocol)?;
+            let key = entry.ok_or(Error::Protocol)?;
             let (path, reference) = self.files.get(key).cloned().ok_or(Error::Untrusted)?;
             if self.bundle_root.is_some() {
                 (path, reference)
@@ -266,15 +290,63 @@ pub(crate) fn compile(
     let mut output = 0u64;
     for (index, step) in payload.steps.iter().enumerate() {
         let action = &step.action;
-        let adapter = match action.format {
-            wire::SoftwareTaskFormat::Msi => SoftwareKind::Msi,
-            wire::SoftwareTaskFormat::Pkg => SoftwareKind::Pkg,
-            wire::SoftwareTaskFormat::Winget => SoftwareKind::Winget,
-            wire::SoftwareTaskFormat::Brew => SoftwareKind::Homebrew,
-            wire::SoftwareTaskFormat::Bundle if platform == Platform::Macos => {
-                SoftwareKind::MacosBundle
+        if !action.signatures.is_empty() {
+            return Err(Error::Unsupported);
+        }
+        if !matches!(step.export, wire::SoftwareTaskExport::Direct) {
+            return Err(Error::Unsupported);
+        }
+        match (&step.target, helper.as_ref()) {
+            (wire::SoftwareExecutionTarget::Device, _) => (),
+            (
+                wire::SoftwareExecutionTarget::User {
+                    identity,
+                    session_id,
+                },
+                Some(h),
+            ) if identity == &h.context().subject
+                && *session_id == crate::service::login_id(h.context()) => {}
+            _ => return Err(Error::Identity),
+        }
+
+        let commands = agent_client::software_commands(action)?;
+        let (adapter, native) = match &action.behavior {
+            wire::SoftwareTaskBehavior::Msi(n) => {
+                (SoftwareKind::Msi, Some((SoftwareManagerKind::Msi, n)))
             }
-            wire::SoftwareTaskFormat::Bundle => SoftwareKind::WindowsBundle,
+            wire::SoftwareTaskBehavior::Pkg(n) => (
+                SoftwareKind::Pkg,
+                Some((SoftwareManagerKind::PackageInstaller, n)),
+            ),
+            wire::SoftwareTaskBehavior::Winget(n) => {
+                (SoftwareKind::Winget, Some((SoftwareManagerKind::Winget, n)))
+            }
+            wire::SoftwareTaskBehavior::Brew(n) => {
+                (SoftwareKind::Homebrew, Some((SoftwareManagerKind::Brew, n)))
+            }
+            wire::SoftwareTaskBehavior::Bundle(_) => (
+                if platform == Platform::Macos {
+                    SoftwareKind::MacosBundle
+                } else {
+                    SoftwareKind::WindowsBundle
+                },
+                None,
+            ),
+            _ => return Err(Error::Unsupported),
+        };
+        if native.is_some_and(|(_, n)| {
+            n.upgrade != wire::SoftwareTaskUpgrade::InPlace || n.upgrade_invocation != n.install
+        }) {
+            return Err(Error::Unsupported);
+        }
+        let install_command = if let Some(script) = commands.install_script {
+            CommandKind::script(script)
+        } else {
+            (
+                CommandKind::Native(native.ok_or(Error::Unsupported)?.0),
+                None,
+                commands.install,
+            )
         };
         let mut compiler = Compiler {
             config,
@@ -283,7 +355,7 @@ pub(crate) fn compile(
             bundle_root: None,
         };
         for declared in &step.artifacts {
-            let key = format!("{index}/{}", declared.key);
+            let key = &declared.key;
             let file = materials
                 .files()
                 .iter()
@@ -297,13 +369,18 @@ pub(crate) fn compile(
                 &reference.sha256,
                 declared.length,
             )?;
-            compiler
-                .files
-                .insert(declared.key.clone(), (path, reference));
+            compiler.files.insert(
+                declared
+                    .key
+                    .strip_prefix(&format!("{index}/"))
+                    .ok_or(Error::Protocol)?
+                    .to_owned(),
+                (path, reference),
+            );
         }
         let mut primary = compiler
             .files
-            .get(&action.primary)
+            .get(action.behavior.installer())
             .cloned()
             .ok_or(Error::Untrusted)?;
         if matches!(adapter, SoftwareKind::Homebrew | SoftwareKind::Winget) {
@@ -326,7 +403,7 @@ pub(crate) fn compile(
                 helper.as_ref().map(|h| h.context().subject.as_str()),
             )?;
         }
-        let bundle = action.bundle.as_ref().map(|b| BundleManifest {
+        let bundle = action.behavior.bundle().map(|b| BundleManifest {
             schema: V1,
             platform,
             architecture: architecture.clone(),
@@ -352,17 +429,10 @@ pub(crate) fn compile(
                 &primary.1.sha256,
                 manifest,
             )?;
-            compiler.bundle_root = members
-                .get(if platform == Platform::Macos {
-                    "install.sh"
-                } else {
-                    "install.ps1"
-                })
-                .and_then(|p| p.parent())
-                .map(PathBuf::from);
-            if compiler.bundle_root.is_none() {
-                return Err(Error::Untrusted);
-            }
+            compiler.bundle_root = Some(bundle_directory(
+                &members,
+                &commands.install_script.ok_or(Error::Protocol)?.entry,
+            )?);
             for (name, path) in members {
                 let declared = manifest.entries.get(&name).ok_or(Error::Untrusted)?;
                 compiler
@@ -371,27 +441,39 @@ pub(crate) fn compile(
             }
         }
         let (install, install_source, mut files) = compiler.command(
-            &action.install,
+            install_command,
             adapter,
             &primary,
             SoftwareOperation::Install,
             &action.version,
             &action.package,
         )?;
-        let removal = action
-            .uninstall
-            .as_ref()
-            .map(|c| {
-                compiler.command(
-                    c,
-                    adapter,
-                    &primary,
-                    SoftwareOperation::Uninstall,
-                    &action.version,
-                    &action.package,
+        let removal = if let Some(invocation) = commands.uninstall {
+            let command = if let Some(script) = commands.uninstall_script {
+                CommandKind::script(script)
+            } else {
+                (
+                    CommandKind::Native(native.ok_or(Error::Unsupported)?.0),
+                    None,
+                    invocation,
                 )
-            })
-            .transpose()?;
+            };
+            let payload = if let Some(key) = commands.removal_artifact {
+                compiler.files.get(key).ok_or(Error::Untrusted)?
+            } else {
+                &primary
+            };
+            Some(compiler.command(
+                command,
+                adapter,
+                payload,
+                SoftwareOperation::Uninstall,
+                &action.version,
+                &action.package,
+            )?)
+        } else {
+            None
+        };
         let uninstall = removal.as_ref().map(|(command, _, _)| command.clone());
         let (mutation, mutation_budget) = match intent {
             SoftwareOperation::Install => (Some(Box::new(install_source)), Some(&install)),
@@ -408,7 +490,7 @@ pub(crate) fn compile(
             timeout = timeout.saturating_add(command.timeout_ms);
             output = output.saturating_add(command.output_bytes);
         }
-        let (detection, detector_source) = match &action.detect {
+        let (detection, detector_source) = match commands.detection {
             wire::SoftwareTaskDetection::MsiProduct {
                 product_code,
                 version,
@@ -426,9 +508,9 @@ pub(crate) fn compile(
                 },
                 None,
             ),
-            wire::SoftwareTaskDetection::Script { command } => {
+            wire::SoftwareTaskDetection::Script { command: script } => {
                 let (invocation, source, extra) = compiler.command(
-                    command,
+                    CommandKind::script(script),
                     adapter,
                     &primary,
                     SoftwareOperation::Detect,
@@ -445,6 +527,7 @@ pub(crate) fn compile(
                     Some(Box::new(source)),
                 )
             }
+            _ => return Err(Error::Unsupported),
         };
         files.extend(compiler.files.values().cloned());
         steps.push(SoftwareProgramStep {
@@ -453,7 +536,7 @@ pub(crate) fn compile(
             version: package(&action.version)?,
             architecture: architecture.clone(),
             payload: primary.1,
-            export_identity: step.export_identity.as_ref().map(id).transpose()?,
+            export_identity: None,
             install,
             uninstall,
             detection,
@@ -568,4 +651,34 @@ fn wrapper(adapter: SoftwareKind, operation: SoftwareOperation) -> Result<&'stat
         (SoftwareKind::Homebrew, SoftwareOperation::Uninstall) => b"#!/bin/sh\nset -eu\nmanager=$1; payload=$2; shift 4\nexport HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_ANALYTICS=1\nexec \"$manager\" uninstall --formula \"$payload\" \"$@\"\n",
         _ => return Err(Error::Unsupported),
     })
+}
+
+fn bundle_directory(members: &BTreeMap<String, PathBuf>, entry: &str) -> Result<PathBuf, Error> {
+    let path = std::path::Path::new(entry);
+    let depth = path.components().count();
+    if depth == 0
+        || !path
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
+    {
+        return Err(Error::Protocol);
+    }
+    let target = members.get(entry).ok_or(Error::Untrusted)?;
+    let root = target.ancestors().nth(depth).ok_or(Error::Untrusted)?;
+    if root.join(path) != *target {
+        return Err(Error::Untrusted);
+    }
+    Ok(root.to_path_buf())
+}
+#[cfg(test)]
+mod review_tests {
+    use super::*;
+    #[test]
+    fn review_regression_declared_bundle_entry_determines_its_root() {
+        let root = std::env::temp_dir().join("bundle-directory-proof");
+        for entry in ["setup.sh", "scripts/nested/setup.sh"] {
+            let members = [(entry.to_owned(), root.join(entry))].into();
+            assert_eq!(bundle_directory(&members, entry).unwrap(), root);
+        }
+    }
 }

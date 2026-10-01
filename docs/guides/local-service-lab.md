@@ -77,7 +77,7 @@ Windows 使用 PowerShell 7 运行 `scripts/service/execution-windows.ps1 -Actio
 
 卸载将 install/Install 改为 remove/Remove，并提供原始精确二进制和配置路径。已有注册拒绝覆盖；卸载核对归属，只移除注册，不删除凭据、journal、材料或审计。生产桌面读取默认受保护部署 pin；自定义配置用于显式命令行部署和隔离验收，不作为桌面失败后的回退。
 
-本地执行 V5、IPC V5、SQLite schema 6 拒绝旧格式；远程 Agent V4 保持不变。测试执行器仅用于测试专用装配。macOS 实际运行证据与 Windows 编译结果分别记录，未执行的环境不记为通过。
+本地执行 V5、IPC V5、SQLite schema 6 拒绝旧格式；远程 Agent 使用 V5，通信 SQLite 使用 schema 3。远程旧协议和旧通信库明确拒绝，保留原文件，不迁移、自动换库或重新注册。测试执行器仅用于测试专用装配。macOS 实际运行证据与 Windows 编译结果分别记录，未执行的环境不记为通过。
 
 软件脚本检测器在退出码为 0 且完整捕获 stdout 时读取一个严格 JSON 对象：`{"kind":"absent"}` 或 `{"kind":"present","version":"固定版本"}`。其它输出、截断或无法核实的执行活动保持 Unknown；检测事实与安装进程退出分别记入同一 journal。
 
@@ -86,3 +86,14 @@ Windows 使用 PowerShell 7 运行 `scripts/service/execution-windows.ps1 -Actio
 受控 macOS 接线验收先构建 `agent-service` 的 `rss-execution-service` 和 `controlled-backend` example，再运行 `python3 scripts/service/verify-execution-macos.py --binary <构建产物> --backend <example产物> --output <不存在的本地回执目录>`。入口通过原生管理员授权安装隔离配置，使用真实 HTTPS、系统 Keychain、launchd IPC、系统/用户脚本和固定 PKG；只卸载本次注册，保留凭据、journal、材料和包收据供核查。已有执行服务或 helper 注册时拒绝替换。回执的失败或缺失不能算通过。
 
 材料目录当前最多 8 GiB / 32,768 条目，达到配额时拒绝新材料，重启不清理空间。自动安全回收由 #2588 跟踪；管理员不得清空材料目录或 journal 来绕过未决任务。
+
+
+### 已发布 SQL 模板采集
+
+生产配置的 `execution.interpreters` 可以登记 `osquery` profile，映像仍使用受保护的完整路径和固定 SHA-256。Agent 签入声明本次配置中的执行器，服务端只下发可执行的模板。SQL 文本取自固定摘要的资源文件，签名任务仅带模板身份、冻结参数和预算；没有临时 SQL 输入入口。参数通过共享 AST 转换成字面量，Agent 再次检查单表 SELECT、表/列/函数许可及平台。调用固定关闭扩展、事件、分布式查询、数据库和外部 flagfile，并设置一行溢出检测。
+
+脚本和 SQL 结果继续通过任务 journal 与通信 SQLite 补传；大输出拆成 256 KiB 的固定块，总量不超过 16 MiB。只有全部块和整体摘要匹配后才提交终态结果。丢失响应重放原操作，重启不重新执行查询，也不追加客户端批准。
+
+真实 osquery 接缝使用 `OSQUERY_TEST_BINARY=<已独立验证的官方二进制绝对路径> python3 scripts/build-run.py -- cargo test --locked -p execution-runner --test osquery -- --ignored`。macOS 必须保留官方 `.app` 完整结构以验证签名，单独复制 Mach-O 文件会破坏签名。该测试验证固定参数、字面量绑定和成功零行；不替代系统服务身份或完整平台部署验收。可复现候选为官方 5.23.1 的 `osquery-5.23.1_1.macos_arm64.tar.gz`，SHA-256 为 `5484f0b62e05a7b2fa9d6e43f038915ea2b7ce063d59bd671ede0cf8dd0552da`。
+
+执行上下文使用本机数值 OS 版本和认证 helper 的登录世代，待确认注册与 claim 保留原上下文。#2531 合入后的软件合同按格式/作用域声明能力；当前远程生产编译器消费 MSI、PKG 和 Bundle 已实现路径，拒绝尚未实现的 EXE/DMG/MSIX 及新版 WinGet/Brew 原生发布源，不宣称这些 profile 可执行。既有本地 runner 的冻结任务恢复不变。原生返回码与升级调用若超出当前 runner 已实现语义，同样明确拒绝，不回退为脚本或猜测命令。
