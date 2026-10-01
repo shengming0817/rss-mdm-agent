@@ -32,6 +32,11 @@ fn run() -> Result<(), Error> {
         );
         return Ok(());
     }
+    if args.len() == 1 && args[0] == "--validate-persistent" {
+        deployment.validate_persistent()?;
+        println!("persistent identity and storage verified");
+        return Ok(());
+    }
     if args.len() == 1 && args[0] == "--user-helper" {
         return serve(Box::new(deployment.user_helper()?), false);
     }

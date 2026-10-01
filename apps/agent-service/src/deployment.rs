@@ -301,6 +301,29 @@ impl Deployment {
         }
         Ok(())
     }
+    /// Read-only refresh preflight while the current service remains running.
+    /// No identity initialization, journal recovery or secret import is allowed here.
+    pub fn validate_persistent(&self) -> Result<(), Error> {
+        self.require_service()?;
+        let namespace = self.namespace()?;
+        installation_security::protected(&self.state_root).map_err(|_| Error::Storage)?;
+        validate_markers(&self.state_root, &namespace)?;
+        let secrets = DeviceSecrets::open(&self.state_root.join("secrets"), &namespace)?;
+        secrets.verify_storage(&self.state_root)?;
+        let network = self.network()?;
+        let registration =
+            agent_client::inspect_registration(&self.state_root.join("communication"), &network)?;
+        let (binding, _) =
+            crate::plan::context(network.origin.as_str(), network.tenant, &registration)?;
+        execution_sqlite::Store::validate_existing(
+            &self.state_root.join("execution.sqlite"),
+            &binding.authority,
+            crate::plan::storage_limits(),
+        )
+        .map_err(|_| Error::Storage)?;
+        native_process::private_storage::validate(&self.execution.work_root)?;
+        Ok(())
+    }
     pub fn open(&self) -> Result<DeviceService, Error> {
         self.require_service()?;
         let namespace = self.namespace()?;
@@ -385,6 +408,15 @@ impl Deployment {
     }
 }
 
+fn validate_markers(root: &Path, namespace: &str) -> Result<(), Error> {
+    for name in ["identity-binding", "execution-initialized"] {
+        if native_process::private_storage::read(&root.join(name), 128)? != namespace.as_bytes() {
+            return Err(Error::Identity);
+        }
+    }
+    Ok(())
+}
+
 fn never_initialized(root: &Path) -> Result<bool, Error> {
     match std::fs::symlink_metadata(root) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -435,6 +467,34 @@ impl execution_runner::host::Handler for Diagnostic {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn refresh_requires_both_original_markers_without_initializing_missing_state() {
+        let root = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
+            .join(format!("refresh-markers-{}", uuid::Uuid::new_v4()));
+        native_process::private_storage::directory(&root).unwrap();
+        assert!(validate_markers(&root, "original").is_err());
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+        native_process::private_storage::write_new(&root.join("identity-binding"), b"original")
+            .unwrap();
+        assert!(validate_markers(&root, "original").is_err());
+        native_process::private_storage::write_new(
+            &root.join("execution-initialized"),
+            b"original",
+        )
+        .unwrap();
+        validate_markers(&root, "original").unwrap();
+        assert!(matches!(
+            validate_markers(&root, "other"),
+            Err(Error::Identity)
+        ));
+        assert_eq!(
+            native_process::private_storage::read(&root.join("identity-binding"), 128).unwrap(),
+            b"original"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn review_regression_native_capability_requires_its_interpreter() {
         let image = installation_security::Artifact {

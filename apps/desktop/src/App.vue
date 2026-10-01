@@ -1,5 +1,12 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, nextTick, watch } from "vue";
+import {
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  shallowRef,
+  nextTick,
+  watch,
+} from "vue";
 import Workspace from "./Workspace.vue";
 import { createAppearance } from "./appearance";
 import type { AssistantServices } from "./assistant/controller";
@@ -16,36 +23,29 @@ import {
   logoutAccount,
   refreshAccount,
 } from "./test-users";
-import type { TestUser } from "@rss-mdm-agent/ai-contract";
+import type { TestUser, UserContext } from "@rss-mdm-agent/ai-contract";
 import TestUsers from "./settings/TestUsers.vue";
 import Account from "./settings/Account.vue";
-import { nativeHost, type ServicePort } from "./settings/native";
+import { nativeHost } from "./settings/native";
 import { createHostSettings } from "./settings/controller";
+import { assertFixtureAssembly, type FixtureEnvironment } from "./assembly";
 import type { SelfServicePort } from "./self-service/types";
 const props = defineProps<{
   assistantServices?: AssistantServices;
   selfServicePort?: SelfServicePort;
-  environment?: {
-    kind: "fixture";
-    service: ServicePort;
-    host: ReturnType<typeof nativeHost>;
-  };
+  environment?: FixtureEnvironment;
 }>();
+assertFixtureAssembly(props);
+const selectedUser = props.environment
+  ? shallowRef<UserContext>()
+  : currentUser;
+const accountEnabled = !props.environment && nativeTestMode;
 const users = ref<TestUser[]>([]),
-  loading = ref(!props.environment && nativeTestMode),
+  loading = ref(!!props.environment || accountEnabled),
   message = ref(""),
   accountMessage = ref("");
-const page = ref(
-  !props.environment && nativeTestMode ? "settings" : "assistant",
-);
+const page = ref(accountEnabled ? "settings" : "assistant");
 const content = ref<HTMLElement>();
-if (
-  props.environment &&
-  (!props.assistantServices ||
-    !props.selfServicePort ||
-    !props.environment.service)
-)
-  throw new Error("incomplete fixture assembly");
 const host = createHostSettings(
   props.environment ? props.environment.host : nativeHost(),
 );
@@ -55,7 +55,7 @@ async function refresh() {
   try {
     users.value = (await loadTestUsers()).users;
     await refreshAccount();
-    if (currentUser.value && page.value === "settings" && loading.value)
+    if (selectedUser.value && page.value === "settings" && loading.value)
       page.value = "assistant";
   } catch {
     message.value = "无法读取测试用户记录";
@@ -107,17 +107,22 @@ async function focusSettings() {
   content.value?.querySelector<HTMLElement>(title)?.focus();
 }
 async function navigate(id: string) {
-  page.value = nativeTestMode && !currentUser.value ? "settings" : id;
+  page.value = accountEnabled && !selectedUser.value ? "settings" : id;
   if (page.value === "settings") await focusSettings();
 }
-watch(currentUser, (next, previous) => {
-  if (nativeTestMode && previous && !next) {
+watch(selectedUser, (next, previous) => {
+  if (accountEnabled && previous && !next) {
     page.value = "settings";
     void focusSettings();
   }
 });
 onMounted(() => {
-  if (!props.environment && nativeTestMode) void refresh();
+  if (props.environment)
+    void props.environment.identity.read().then((value) => {
+      selectedUser.value = value;
+      loading.value = false;
+    });
+  if (accountEnabled) void refresh();
   if (host.available) {
     void host.refresh();
   }
@@ -128,7 +133,7 @@ onMounted(() => {
     if (
       !props.environment &&
       !loading.value &&
-      currentUser.value?.identity?.mode === "enterprise"
+      selectedUser.value?.identity?.mode === "enterprise"
     )
       void refreshAccount();
   }, 2000);
@@ -151,8 +156,8 @@ onBeforeUnmount(() => {
   >
     <Workspace
       :inert="loading ? true : undefined"
-      :key="currentUser?.generation ?? 'anonymous'"
-      :ready="!nativeTestMode || !!currentUser"
+      :key="selectedUser?.generation ?? 'anonymous'"
+      :ready="environment ? !!selectedUser : !accountEnabled || !!selectedUser"
       :busy="loading"
       :assistant-services="assistantServices"
       :self-service-port="selfServicePort"
@@ -163,13 +168,13 @@ onBeforeUnmount(() => {
       @navigate="navigate"
     >
       <template #account-summary>
-        <strong>{{ currentUser?.user.displayName ?? "账户与连接" }}</strong>
+        <strong>{{ selectedUser?.user.displayName ?? "账户与连接" }}</strong>
         <small>{{
-          currentUser?.identity?.mode === "enterprise"
+          selectedUser?.identity?.mode === "enterprise"
             ? "企业工作区"
-            : currentUser?.identity?.mode === "guest"
+            : selectedUser?.identity?.mode === "guest"
               ? "不登录使用"
-              : currentUser
+              : selectedUser
                 ? "测试用户 · 非企业认证"
                 : "选择使用身份"
         }}</small>
@@ -179,8 +184,8 @@ onBeforeUnmount(() => {
         <template v-else>
           <TestUsers
             :users="users"
-            :current="currentUser?.identity ? undefined : currentUser"
-            :native="nativeTestMode"
+            :current="selectedUser?.identity ? undefined : selectedUser"
+            :native="accountEnabled"
             :loading="loading"
             :message="message"
             @select="select"

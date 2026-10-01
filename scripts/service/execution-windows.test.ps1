@@ -51,7 +51,20 @@ try {
         $Expected = if ($Fail) { 'register,start,stop' } else { 'register,start,stop,wait,remove' }
         if (($global:Calls -join ',') -ne $Expected) { throw "wrong SCM rollback: $($global:Calls -join ',')" }
     }
-    Write-Output 'installer uncertain-start rollback passed'
+    $global:Calls.Clear()
+    try { & $Script -Action Refresh -Scope User; throw 'expected helper refresh refusal' } catch {
+        if ($_.Exception.Message -notlike '*Remove/Install*') { throw }
+    }
+    if ($global:Calls.Count -ne 0) { throw 'helper refresh performed a mutation' }
+    . $Script -Action Status -Scope User
+    $ConfigPath=Join-Path $Root 'execution.json'
+    [IO.File]::WriteAllText($ConfigPath,'original')
+    [IO.File]::WriteAllText(($ConfigPath+'.refresh'),'existing evidence')
+    try { Publish-Config $ConfigPath @{}; throw 'expected exclusive publication failure' } catch {
+        if ($_.Exception.Message -eq 'expected exclusive publication failure') { throw }
+    }
+    if ([IO.File]::ReadAllText($ConfigPath+'.refresh') -ne 'existing evidence' -or [IO.File]::ReadAllText($ConfigPath) -ne 'original') { throw 'publication deleted another owner evidence' }
+    Write-Output 'installer rollback and refresh ownership passed'
 } finally {
     Remove-Item -LiteralPath $Root -Recurse -Force
 }

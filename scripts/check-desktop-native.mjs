@@ -41,13 +41,16 @@ let serviceWorker,
   serviceOutput = "",
   serviceSequence = 0;
 const servicePending = new Map();
-function serviceCall(method) {
+function serviceCall(method, input = {}) {
   return new Promise((resolve, reject) => {
     const id = ++serviceSequence;
-    const timer = setTimeout(() => {
-      servicePending.delete(id);
-      reject(new Error(`service ${method} deadline exceeded`));
-    }, 15000);
+    const timer = setTimeout(
+      () => {
+        servicePending.delete(id);
+        reject(new Error(`service ${method} deadline exceeded`));
+      },
+      method === "completion" ? 90000 : 15000,
+    );
     servicePending.set(id, {
       resolve(value) {
         clearTimeout(timer);
@@ -58,7 +61,7 @@ function serviceCall(method) {
         reject(error);
       },
     });
-    serviceWorker.stdin.write(JSON.stringify({ id, method }) + "\n");
+    serviceWorker.stdin.write(JSON.stringify({ id, method, ...input }) + "\n");
   });
 }
 let visualFixture, awake;
@@ -1824,9 +1827,18 @@ try {
     );
     assert.equal(sessions[0].stages[0].binding.providerVersion, "0.155.0");
     assert.equal((await task()).snapshot.attempts, 1);
-    result.backend = await serviceCall("status");
-    assert.equal(result.backend.startRequests, 1);
-    result.deviceEffect = await serviceCall("effect");
+    result.completion = await serviceCall("completion", {
+      request: fixture.facts.request,
+    });
+    assert.equal(result.completion.request, fixture.facts.request);
+    assert.equal(result.completion.record.status.process.finished, true);
+    result.backend = result.completion.backend;
+    result.deviceEffect = result.completion.effect;
+    result.checks.push(
+      "service-terminal-process",
+      "backend-result-acknowledged",
+      "independent-device-effect",
+    );
     result.facts = {
       sessions: sessions.length,
       attempts: (await task()).snapshot.attempts,
@@ -1974,6 +1986,21 @@ try {
     }
   }
   if (serviceWorker) {
+    if (
+      serviceReady &&
+      serviceWorker.exitCode === null &&
+      serviceWorker.signalCode === null
+    ) {
+      try {
+        await serviceCall("finish", {
+          status: result.status,
+          request: fixture?.facts.request,
+        });
+      } catch {
+        result.status = "failed";
+        process.exitCode = 1;
+      }
+    }
     serviceWorker.stdin.end();
     const deadline = Date.now() + 120000;
     while (
@@ -1998,6 +2025,12 @@ try {
         );
         assert.equal(records.length, 1);
         assert.equal(records[0].snapshot.attempts, 1);
+        assert.equal(records[0].process.finished, true);
+        assert.equal(
+          records[0].process.attemptId,
+          result.completion.record.status.attemptId,
+        );
+        assert.equal(result.serviceReceipt.status, "passed");
       }
     }
   }

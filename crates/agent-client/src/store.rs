@@ -77,22 +77,7 @@ impl Store {
                 tx.commit()?;
             }
             OpenMode::Existing => {
-                private(&path)?;
-                let reader =
-                    Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-                let version: u32 = reader.pragma_query_value(None, "user_version", |r| r.get(0))?;
-                let app: u32 = reader.pragma_query_value(None, "application_id", |r| r.get(0))?;
-                if version != 3 || app != 1380008771 {
-                    return Err(Error::Schema);
-                }
-                let actual: Vec<u8> = reader.query_row(
-                    "SELECT binding FROM metadata WHERE singleton=1",
-                    [],
-                    |r| r.get(0),
-                )?;
-                if actual != binding {
-                    return Err(Error::Identity);
-                }
+                drop(read_existing(root, &cfg)?);
             }
         }
         let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)?;
@@ -140,4 +125,57 @@ impl Store {
     pub fn secret_reference(&self) -> Result<String, Error> {
         self.get("credential")?.ok_or(Error::Identity)
     }
+}
+
+fn read_existing(root: &Path, cfg: &Config) -> Result<Connection, Error> {
+    cfg.validate()?;
+    if !root.is_absolute() || root.canonicalize()? != root {
+        return Err(Error::Storage);
+    }
+    private(root)?;
+    let path = root.join("communication.sqlite");
+    private(&path)?;
+    let reader = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let version: u32 = reader.pragma_query_value(None, "user_version", |r| r.get(0))?;
+    let app: u32 = reader.pragma_query_value(None, "application_id", |r| r.get(0))?;
+    if version != 3 || app != 1380008771 {
+        return Err(Error::Schema);
+    }
+    let binding = encode(&(
+        cfg.origin.as_str(),
+        cfg.tenant,
+        cfg.platform,
+        cfg.architecture,
+        cfg.transport == crate::Transport::TestLoopback,
+    ))?;
+    let actual: Vec<u8> =
+        reader.query_row("SELECT binding FROM metadata WHERE singleton=1", [], |r| {
+            r.get(0)
+        })?;
+    if actual != binding {
+        return Err(Error::Identity);
+    }
+    Ok(reader)
+}
+/// Inspect the existing registration and endpoint binding without locks, writes or startup recovery.
+pub fn inspect_registration(root: &Path, cfg: &Config) -> Result<wire::RegistrationReceipt, Error> {
+    let reader = read_existing(root, cfg)?;
+    let blocked: Option<Vec<u8>> = reader
+        .query_row("SELECT body FROM state WHERE key='blocked'", [], |r| {
+            r.get(0)
+        })
+        .optional()?;
+    if blocked
+        .map(|b| decode::<bool>(&b))
+        .transpose()?
+        .unwrap_or(false)
+    {
+        return Err(Error::Identity);
+    }
+    let body: Vec<u8> = reader.query_row(
+        "SELECT CASE WHEN length(body)<=?1 THEN body END FROM state WHERE key='registration'",
+        [cfg.limits.response_bytes],
+        |r| r.get(0),
+    )?;
+    decode(&body)
 }

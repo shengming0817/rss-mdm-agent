@@ -785,6 +785,46 @@ try {
     await page.locator(".plan-validity").filter({ hasText: note }).waitFor();
   }
   await page.keyboard.press("Escape");
+  const activity = page.locator(".execution-activity");
+  fixture.selectScenario("proposed");
+  await activity.getByRole("button", { name: "刷新状态", exact: true }).click();
+  await activity
+    .getByRole("button", { name: "确认上述操作", exact: true })
+    .waitFor();
+  const pending = fixture.details(fixture.execution.offer.request);
+  assert.equal(pending.value.trigger.conversation, sessionId);
+  assert.equal(pending.value.trigger.toolCall, "browser-execution");
+  await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/__fixture/execute") && response.ok(),
+    ),
+    activity.getByRole("button", { name: "确认上述操作", exact: true }).click(),
+  ]);
+  assert.equal(
+    fixture.details(fixture.execution.offer.request).kind,
+    "execution",
+  );
+  fixture.selectScenario("proposed");
+  await activity.getByRole("button", { name: "刷新状态", exact: true }).click();
+  await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/__fixture/cancel") && response.ok(),
+    ),
+    activity.getByRole("button", { name: "撤销请求", exact: true }).click(),
+  ]);
+  assert.equal(
+    fixture.details(fixture.execution.offer.request).value.status
+      .cancelRequested,
+    true,
+  );
+  assert.equal(
+    fixture.details(fixture.execution.offer.request).value.status.phase,
+    "running",
+  );
+  await activity.getByRole("button", { name: "刷新状态", exact: true }).click();
+  fixture.setExecution("approvalRequired");
   const formatted = page
     .locator(".markdown-message")
     .filter({ hasText: "格式检查" });

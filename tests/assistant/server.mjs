@@ -76,6 +76,20 @@ export async function createFixture() {
   const serviceViews = JSON.parse(
     readFileSync(new URL("./service-fixtures.json", import.meta.url), "utf8"),
   );
+  const identity = structuredClone(
+    fixtures.valid.find((value) => value.kind === "userContext"),
+  );
+  identity.user.displayName = "开发 fixture";
+  identity.generation = "isolated-fixture-identity";
+  let hostStatus = {
+    schemaVersion: 7,
+    kind: "hostStatus",
+    generation: 1,
+    phase: "ready",
+    source: "development_override",
+    version: "开发 fixture，无真实设备执行",
+    recent: [],
+  };
   let executionState = "running",
     scenario = "running";
   const scenarios = [
@@ -185,6 +199,10 @@ export async function createFixture() {
         res.end(id);
       } else if (
         [
+          "/__fixture/identity",
+          "/__fixture/host",
+          "/__fixture/host-restart",
+          "/__fixture/host-export",
           "/__fixture/state",
           "/__fixture/scenario",
           "/__fixture/snapshot",
@@ -203,6 +221,24 @@ export async function createFixture() {
         }
         let value;
         switch (url.pathname) {
+          case "/__fixture/identity":
+            value = structuredClone(identity);
+            break;
+          case "/__fixture/host":
+            value = structuredClone(hostStatus);
+            break;
+          case "/__fixture/host-restart":
+            if (input.generation !== hostStatus.generation)
+              throw new Error("fixture Host generation mismatch");
+            hostStatus = {
+              ...hostStatus,
+              generation: hostStatus.generation + 1,
+            };
+            value = structuredClone(hostStatus);
+            break;
+          case "/__fixture/host-export":
+            value = false;
+            break;
           case "/__fixture/state":
             value = { scenario, scenarios, service: serviceView() };
             break;
@@ -370,19 +406,22 @@ export async function createFixture() {
         deliveries: [row],
       };
       unwrap(await host.store.commit(commit));
-      for (const value of Object.values(execution).filter((row) => row.action))
-        value.action.initiator = {
-          kind: "ai",
-          provider: "test-fixture",
-          config: { id: "fixture", revision: "1" },
-          conversation: sessionId,
-          toolCall: operationId,
-          osSession: {
-            device: "fixture-device",
-            session: "fixture-os-session",
-            account: { platform: "linux", subject: "fixture-account" },
-          },
-        };
+      const initiator = {
+        kind: "ai",
+        provider: "test-fixture",
+        config: { id: "fixture", revision: "1" },
+        conversation: sessionId,
+        toolCall: operationId,
+        osSession: {
+          device: "fixture-device",
+          session: "fixture-os-session",
+          account: { platform: "linux", subject: "fixture-account" },
+        },
+      };
+      for (const value of Object.values(execution)) {
+        if (value.action) value.action.initiator = structuredClone(initiator);
+        if (value.trigger) value.trigger = structuredClone(initiator);
+      }
       // Wake the existing subscription after the host-owned commit.
       unwrap(
         await host.advance(fixtureCaller, sessionId, commandId, [

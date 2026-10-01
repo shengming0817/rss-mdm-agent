@@ -22,11 +22,24 @@ import uuid
 import sys
 import shutil
 import tempfile
+import sqlite3
 import select
+import inspect
 
 
 def run(*args, **kwargs):
     return subprocess.run(args, check=True, capture_output=True, text=True, **kwargs)
+
+
+def copy_candidate(source, destination, expected):
+    data = Path(source).read_bytes()
+    assert hashlib.sha256(data).hexdigest() == expected, 'source candidate changed'
+    Path(destination).write_bytes(data)
+    os.chmod(destination, 0o755)
+
+
+def frozen_installer(source, arguments):
+    return ['/usr/bin/python3', '-I', '-c', source, *arguments]
 
 
 def administrator(script):
@@ -52,6 +65,65 @@ def validate_script(event, fixture):
     assert event['output'] == {'fixture': fixture}
     assert event['quality'] in ('complete', 'partial')
     assert event['diagnostics']['failure'] is None
+
+
+def validate_desktop_completion(records, backend, effect, request):
+    matches = [row for row in records if row['status']['operationRequestId'] == request]
+    assert len(matches) == 1, 'original request missing or duplicated'
+    record = matches[0]
+    assert record['status']['attempts'] == 1 and backend['startRequests'] == 1, 'original attempt redispatched'
+    process = record['status']['process']
+    assert process and process['finished'] is True, 'native process has not finished'
+    initiator = record['action']['initiator']
+    assert initiator['kind'] == 'backend', 'unexpected execution owner'
+    event = acknowledged_result(backend, initiator['attempt'])
+    assert event is not None, 'original result not acknowledged'
+    if event['kind'] == 'cancelled':
+        assert process['end'] == 'cancelled', 'cancellation lacks process termination'
+        cancelled = True
+    else:
+        assert event['kind'] == 'software_result' and len(event['steps']) == 1
+        step = event['steps'][0]
+        cancelled = step['process'] == {'kind':'failed','failure':'cancelled'}
+        if cancelled:
+            assert process['end'] == 'cancelled' and step['diagnostics']['failure'] == 'cancelled'
+        else:
+            assert step['process'] == {'kind':'exited','code':0}, 'installer failed or did not run'
+            assert process['end'] == 'exited' and process['exitCode'] == 0
+            assert step['diagnostics']['failure'] is None
+            assert step['after']['kind'] in ('present','unknown')
+    present = all(effect[key] is True for key in ('receiptPresent','payloadPresent','payloadMatches'))
+    absent = all(effect[key] is False for key in ('receiptPresent','payloadPresent','payloadMatches'))
+    assert present or (cancelled and absent), 'independent device effect conflicts with terminal result'
+    return {'request':request, 'record':record, 'backend':backend, 'effect':effect}
+
+
+def journal_proof(path):
+    db=sqlite3.connect('file:'+str(path)+'?mode=ro',uri=True)
+    try:
+        captures = {row[0]:json.loads(row[1]) for row in db.execute('SELECT attempt_id,body FROM process_evidence')}
+        rows=[]
+        for request, encoded in db.execute('SELECT request_id,snapshot FROM executions'):
+            snapshot=json.loads(encoded)
+            capture=captures.get((snapshot.get('attempt') or {}).get('id'))
+            process=None if capture is None else {key:capture[key] for key in ('attemptId','finished','end','exitCode','contentDigest')}
+            rows.append({'request':request,'snapshot':snapshot,'process':process})
+        return {'journal':str(path),'records':rows}
+    finally: db.close()
+
+
+def validate_journal_completion(proof, completion):
+    rows=[row for row in proof['records'] if row['request']==completion['request']]
+    assert len(rows)==1 and rows[0]['snapshot']['attempts']==1
+    process=rows[0]['process']
+    assert process and process['finished'], 'final journal lacks terminal process proof'
+    assert process['attemptId']==completion['record']['status']['attemptId'], 'journal attempt changed'
+    assert process['end']==completion['record']['status']['process']['end'], 'journal process result changed'
+
+
+def validate_desktop_finish(finish, evidence):
+    assert finish and finish.get('status') == 'passed', 'parent did not explicitly pass'
+    assert evidence and finish.get('request') == evidence['request'], 'completion evidence missing or mismatched'
 
 
 def main():
@@ -128,7 +200,8 @@ def main():
     helper_root = inputs / 'helper'
     helper_root.mkdir(mode=0o700)
     installer = inputs / 'execution-macos.py'
-    shutil.copyfile(Path(__file__).with_name('execution-macos.py'), installer)
+    installer_source = Path(__file__).with_name('execution-macos.py').read_text()
+    installer.write_text(installer_source)
     installer.chmod(0o600)
     shutil.copyfile(lab / 'tls.pem', inputs / 'tls.pem')
     deployment = dict(version=2, ipc_version=6, origin=f'https://localhost:{proxy.server_port}/', tenant=info['tenant'],
@@ -139,14 +212,13 @@ def main():
                       execution=dict(work_root=str(protected / 'work'), material_root=str(protected / 'materials'),
                                      interpreters=[], managers=[], processes=8))
     setup = lab / 'install.py'
-    setup.write_text('''import hashlib,json,os,re,shutil,subprocess
+    setup.write_text(inspect.getsource(copy_candidate) + '''import hashlib,json,os,re,shutil,subprocess
 from pathlib import Path
 root=Path(%r)
 root.parent.mkdir(mode=0o755,parents=True,exist_ok=True)
 root.mkdir(mode=0o755)
-assert hashlib.sha256(Path(%r).read_bytes()).hexdigest()==%r, 'service source candidate changed'
 binary=root/'rss-execution-service'
-shutil.copyfile(%r,binary); os.chmod(binary,0o755)
+copy_candidate(%r,binary,%r)
 subprocess.run(['/usr/bin/codesign','--force','--sign','-','--options','runtime',str(binary)],check=True)
 def artifact(path):
     identity=subprocess.run(['/usr/bin/codesign','-d','--verbose=4',str(path)],capture_output=True,text=True,check=True).stderr
@@ -156,20 +228,19 @@ config['service']=artifact(binary)
 config['clients']=dict(images=[config['service']],subjects=[%r],interactive=True)
 config['execution']['interpreters']=[dict(profile='posix_sh',image=artifact('/bin/sh'))]
 config['execution']['managers']=[dict(executor='package_installer',image=artifact('/usr/sbin/installer'))]
-shutil.copyfile(%r,root/'ca.pem'); os.chmod(root/'ca.pem',0o644)
+(root/'ca.pem').write_bytes(%r); os.chmod(root/'ca.pem',0o644)
 path=root/'execution.json';path.write_text(json.dumps(config));os.chmod(path,0o644)
 subprocess.run([str(binary),'--config',str(path),'--initialize'],input='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',text=True,check=True)
-subprocess.run(['/usr/bin/python3',%r,'install','--scope','system','--binary',str(binary),'--config',str(path)],check=True)
-''' % (str(protected), str(args.binary.resolve()), hashlib.sha256(args.binary.read_bytes()).hexdigest(), str(args.binary.resolve()), deployment, str(os.geteuid()), str(inputs / 'tls.pem'), str(installer)))
+subprocess.run(%r,check=True)
+''' % (str(protected), str(args.binary.resolve()), hashlib.sha256(args.binary.read_bytes()).hexdigest(), deployment, str(os.geteuid()), (lab / 'tls.pem').read_bytes(), frozen_installer(installer_source, ['install','--scope','system','--binary',str(binary),'--config',str(config)])))
     if args.desktop:
         # Extend this same installation owner, retaining its protected binary/config checks.
         contents = setup.read_text()
-        insertion = """assert hashlib.sha256(Path(%r).read_bytes()).hexdigest()==%r, 'desktop source candidate changed'
-desktop=root/'rss-mdm-desktop'
-shutil.copyfile(%r,desktop); os.chmod(desktop,0o755)
+        insertion = """desktop=root/'rss-mdm-desktop'
+copy_candidate(%r,desktop,%r)
 subprocess.run(['/usr/bin/codesign','--force','--sign','-','--options','runtime',str(desktop)],check=True)
 config['clients']['images'].append(artifact(desktop))
-""" % (str(args.desktop.resolve()), hashlib.sha256(args.desktop.read_bytes()).hexdigest(), str(args.desktop.resolve()))
+""" % (str(args.desktop.resolve()), hashlib.sha256(args.desktop.read_bytes()).hexdigest())
         contents = contents.replace("path=root/'execution.json'", insertion + "path=root/'execution.json'")
         # Default pin creation is exclusive. The desktop never selects an arbitrary config.
         contents += """default=Path(%r)
@@ -180,21 +251,14 @@ with os.fdopen(fd,'w') as stream: json.dump(config,stream); stream.flush(); os.f
         contents = contents.replace(initializer, '')
         setup.write_text(contents)
     cleanup = lab / 'remove.py'
-    cleanup.write_text('import subprocess\nsubprocess.run(%r,check=True)\n' %
-                       ['/usr/bin/python3', str(installer), 'remove', '--scope', 'system', '--binary', str(binary), '--config', str(config)])
-    cleanup.write_text("""import json,sqlite3,subprocess
+    cleanup.write_text(inspect.getsource(journal_proof) + """import json,sqlite3,subprocess
 from pathlib import Path
-config=Path(%r)
 expected=%r
 plist=Path('/Library/LaunchDaemons/com.rss-mdm.agent.execution.plist')
 if plist.exists(): subprocess.run(expected,check=True)
 journal=Path(%r)
-if journal.exists():
-    db=sqlite3.connect('file:'+str(journal)+'?mode=ro',uri=True)
-    rows=[{'request':row[0],'snapshot':json.loads(row[1])} for row in db.execute('SELECT request_id,snapshot FROM executions')]
-    db.close()
-    print(json.dumps({'journal':str(journal),'records':rows}))
-""" % (str(config), ['/usr/bin/python3', str(installer), 'remove', '--scope', 'system', '--binary', str(binary), '--config', str(config)], str(protected / 'state/execution.sqlite')))
+if journal.exists(): print(json.dumps(journal_proof(journal)))
+""" % (frozen_installer(installer_source, ['remove', '--scope', 'system', '--binary', str(binary), '--config', str(config)]), str(protected / 'state/execution.sqlite')))
     if args.desktop:
         cleanup.write_text(cleanup.read_text() + """default=Path(%r)
 if default.exists():
@@ -262,19 +326,37 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
             offered = command('package', path=str(pkg), receipt=package_receipt, user=True)
             print(json.dumps({'kind': 'desktopService', 'desktop': str(protected / 'rss-mdm-desktop'),
                 'service': receipt['artifact'], 'config': str(default_config), 'task': offered, 'journalOwner': 'agent-service'}), flush=True)
+            def effect():
+                detected = subprocess.run(['/usr/sbin/pkgutil', '--pkg-info-plist', package_receipt], capture_output=True, text=True)
+                target_file = protected / 'package-payload/fixed.txt'
+                return {'receiptPresent': detected.returncode == 0, 'payloadPresent': target_file.exists(),
+                    'payloadMatches': target_file.exists() and target_file.read_text() == 'controlled package payload\n'}
+            finish = completion = None
             for line in sys.stdin:
                 request = json.loads(line)
                 method = request['method']
                 if method == 'query': value = query()
                 elif method == 'status': value = command('status')
-                elif method == 'effect':
-                    detected = subprocess.run(['/usr/sbin/pkgutil', '--pkg-info-plist', package_receipt], capture_output=True, text=True)
-                    target_file = protected / 'package-payload/fixed.txt'
-                    value = {'receiptPresent': detected.returncode == 0, 'payloadPresent': target_file.exists(),
-                        'payloadMatches': target_file.exists() and target_file.read_text() == 'controlled package payload\n'}
-                elif method == 'shutdown': break
+                elif method == 'effect': value = effect()
+                elif method == 'completion':
+                    deadline = time.monotonic() + 60
+                    while True:
+                        current, remote = query(), command('status')
+                        rows = [row for row in current['value']['items'] if row['status']['operationRequestId'] == request['request']]
+                        if rows and rows[0]['status']['process'] and rows[0]['status']['process']['finished'] and acknowledged_result(remote, rows[0]['action']['initiator']['attempt']) is not None:
+                            break
+                        assert time.monotonic() < deadline, 'terminal process/result deadline exceeded'
+                        time.sleep(.2)
+                    completion = validate_desktop_completion(current['value']['items'], remote, effect(), request['request'])
+                    value = completion
+                elif method == 'finish':
+                    finish = request
+                    value = {}
                 else: raise RuntimeError('unknown native harness control')
                 print(json.dumps({'id': request['id'], 'value': value}), flush=True)
+                if method == 'finish': break
+            validate_desktop_finish(finish, completion)
+            receipt['scenarios']['completion'] = completion
             receipt['scenarios']['native_final'] = query()
             receipt['scenarios']['backend_final'] = command('status')
             receipt['status'] = 'passed'
@@ -297,15 +379,17 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
         third = command('package', path=str(pkg), receipt=package_receipt)
         package = completed(third['attempt'], 60)
         event = acknowledged_result(package, third['attempt'])
-        assert event['kind'] == 'software_result' and event['installerExitCode'] == 0
-        assert event['diagnostics']['failure'] is None
+        assert event['kind'] == 'software_result' and len(event['steps']) == 1
+        step = event['steps'][0]
+        assert step['process'] == {'kind':'exited','code':0}
+        assert step['diagnostics']['failure'] is None
         assert (protected / 'package-payload/fixed.txt').read_text() == 'controlled package payload\n'
         import plistlib
         installed_receipt = plistlib.loads(run('/usr/sbin/pkgutil', '--pkg-info-plist', package_receipt).stdout.encode())
         assert installed_receipt['pkg-version'] == '1.0'
         # macOS process groups cannot establish global quiescence. Keep Unknown while
         # independently requiring the actual installer exit, receipt and payload facts.
-        assert event['detection'] in ('present', 'unknown')
+        assert step['after']['kind'] in ('present', 'unknown')
         receipt['scenarios']['package_exit_and_independent_effect'] = package
         final = query()
         for attempt in [first['attempt'], second['attempt'], third['attempt']]:
@@ -384,6 +468,8 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
             try:
                 proof = administrator(cleanup)
                 if proof.stdout.strip(): receipt['journalProof'] = json.loads(proof.stdout)
+                if args.desktop and receipt['status'] == 'passed':
+                    validate_journal_completion(receipt['journalProof'], completion)
             except BaseException as error:
                 cleanup_errors.append(str(error))
         proxy.shutdown()

@@ -52,16 +52,20 @@ function Assert-Refresh {
         if (($Old.$Field | ConvertTo-Json -Depth 20 -Compress) -cne ($New.$Field | ConvertTo-Json -Depth 20 -Compress)) { throw 'Refresh cannot replace identity or persistent state' }
     }
     foreach ($Field in @('work_root','material_root')) { if ($Old.execution.$Field -cne $New.execution.$Field) { throw 'Refresh cannot replace unresolved task resources' } }
+    $null = & $Binary --config $Config --validate-persistent
+    if ($LASTEXITCODE -ne 0) { throw 'Current persistent identity/storage binding failed; service retained' }
     return $New
 }
 function Publish-Config($Path, $Document) {
     $Temporary=$Path+'.refresh'
     $Data=[Text.Encoding]::UTF8.GetBytes(($Document | ConvertTo-Json -Depth 30))
+    $Created=$false
     try {
         $Stream=[IO.File]::Open($Temporary,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+        $Created=$true
         try { $Stream.Write($Data,0,$Data.Length); $Stream.Flush($true) } finally { $Stream.Dispose() }
         [IO.File]::Replace($Temporary,$Path,$null)
-    } finally { if ([IO.File]::Exists($Temporary)) { [IO.File]::Delete($Temporary) } }
+    } finally { if ($Created -and [IO.File]::Exists($Temporary)) { [IO.File]::Delete($Temporary) } }
 }
 if ($Scope -eq 'System') {
     $Service = Get-CimInstance Win32_Service -Filter "Name='$Name'"
@@ -114,22 +118,7 @@ if ($Scope -eq 'System') {
         Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
         return
     }
-    if ($Action -eq 'Refresh') {
-        if (!$Task -or $Task.Actions.Count -ne 1 -or $Task.Actions[0].Execute -cne $Binary -or $Task.Actions[0].Arguments -cne $HelperArgs -or $Task.Principal.UserId -ne $Sid) { throw 'Refusing to refresh an unrelated helper' }
-        $Next = Assert-Refresh
-        Stop-ScheduledTask -TaskName $TaskName
-        $Deadline = [DateTime]::UtcNow.AddSeconds(10)
-        while ((Get-ScheduledTask -TaskName $TaskName).State -eq 'Running') {
-            if ([DateTime]::UtcNow -ge $Deadline) { throw 'Helper stop unconfirmed; registration retained' }
-            Start-Sleep -Milliseconds 100
-        }
-        Publish-Config $Config $Next
-        $NextAction = New-ScheduledTaskAction -Execute $CandidateBinary -Argument ('--config "' + $Config + '" --user-helper')
-        Set-ScheduledTask -TaskName $TaskName -Action $NextAction | Out-Null
-        Start-ScheduledTask -TaskName $TaskName
-        Write-Output 'Registered current helper candidate; authenticated service check required'
-        return
-    }
+    if ($Action -eq 'Refresh') { throw 'Helper refresh uses Remove/Install in the actual login after administrator publication' }
     if ($Task) { throw 'User helper already exists; no overwrite or upgrade path' }
     $Path = Assert-Binary
     $Principal = New-ScheduledTaskPrincipal -UserId $Sid -LogonType Interactive -RunLevel Limited

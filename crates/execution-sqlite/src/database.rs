@@ -101,6 +101,17 @@ impl Store {
             OpenOutcome::UnsupportedSchema { .. } => Err(Error::Schema),
         }
     }
+    /// Inspect the current protected journal without opening a writer or running recovery.
+    pub fn validate_existing(
+        path: &Path,
+        authority: &Authority,
+        limits: Limits,
+    ) -> Result<(), Error> {
+        limits.validate()?;
+        protected_path(path, true)?;
+        let reader = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        ensure_current(&reader, authority, limits)
+    }
     /// Open ONLY an existing database after read-only identity/version inspection.
     /// Failure retains the original file; no fallback path or implicit authority creation.
     pub fn open(path: &Path, authority: &Authority, limits: Limits) -> Result<OpenOutcome, Error> {
@@ -386,6 +397,25 @@ mod tests {
             lengths,
             vec![None, None, None, None, Some(0), Some(16), None, None]
         );
+    }
+    #[test]
+    fn refresh_inspection_is_read_only_and_fenced_by_current_authority() {
+        let root = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
+            .join(format!("refresh-inspect-{}", std::process::id()));
+        native_process::private_storage::directory(&root).unwrap();
+        let path = root.join("journal.sqlite");
+        let store = Store::initialize_test(&path, authority(), test_limits()).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        Store::validate_existing(&path, &authority(), test_limits()).unwrap();
+        let wrong = Authority::Test {
+            id: execution_contract::Id::new("other").unwrap(),
+        };
+        assert!(Store::validate_existing(&path, &wrong, test_limits()).is_err());
+        assert_eq!(before, std::fs::read(&path).unwrap());
+        drop(store);
+        std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn non_durable_sqlite_configuration_is_configuration_error() {

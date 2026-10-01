@@ -62,3 +62,30 @@ test("browser factory and native Vite plugin share the same scenario and RPC own
   assert.equal(state.service.status.readiness.phase, "registrationRequired");
   assert.equal((await fetch(origin + "/__fixture/snapshot")).status, 500);
 });
+
+test("fixture supplies isolated current identity and Host operations with generation fencing", async (t) => {
+  const f = await startFixture();
+  t.after(() => f.close());
+  const origin = new URL(f.url).origin;
+  const read = async (method, input) => {
+    const r = await fetch(
+      origin + "/__fixture/" + method,
+      input === undefined
+        ? undefined
+        : { method: "POST", body: JSON.stringify(input) },
+    );
+    return { status: r.status, value: await r.json() };
+  };
+  const identity = (await read("identity")).value;
+  assert.match(identity.user.displayName, /fixture/);
+  const host = (await read("host")).value;
+  assert.equal(host.phase, "ready");
+  assert.match(host.version, /fixture/);
+  const restarted = await read("host-restart", { generation: host.generation });
+  assert.equal(restarted.value.generation, host.generation + 1);
+  assert.equal(
+    (await read("host-restart", { generation: host.generation })).status,
+    500,
+  );
+  assert.equal((await read("host-export")).value, false);
+});

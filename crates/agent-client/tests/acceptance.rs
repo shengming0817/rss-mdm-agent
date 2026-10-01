@@ -5,6 +5,34 @@ use uuid::Uuid;
 mod support;
 
 #[tokio::test]
+async fn refresh_inspection_reads_live_binding_without_locking_or_creating_state() {
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let cfg = client.configuration().clone();
+    let before = std::fs::read(root.path.join("communication.sqlite")).unwrap();
+    let registration = agent_client::inspect_registration(&root.path, &cfg).unwrap();
+    assert_eq!(
+        registration.registration_id,
+        client.registration().unwrap().registration_id
+    );
+    let mut wrong = cfg.clone();
+    wrong.tenant = Uuid::new_v4();
+    assert!(matches!(
+        agent_client::inspect_registration(&root.path, &wrong),
+        Err(Error::Identity)
+    ));
+    assert_eq!(
+        before,
+        std::fs::read(root.path.join("communication.sqlite")).unwrap()
+    );
+    let empty = Root::new();
+    assert!(agent_client::inspect_registration(&empty.path, &cfg).is_err());
+    assert_eq!(std::fs::read_dir(&empty.path).unwrap().count(), 0);
+}
+
+#[tokio::test]
 async fn expired_lost_claim_recovers_after_restart_with_new_operation() {
     let server = Server::new().await;
     let root = Root::new();

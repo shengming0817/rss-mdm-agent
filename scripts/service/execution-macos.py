@@ -44,14 +44,16 @@ def candidate(binary, config):
 
 def publish_config(path, document):
     publication = path.with_suffix(path.suffix + '.refresh')
+    created = False
     try:
         fd = os.open(publication, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+        created = True
         with os.fdopen(fd, 'w') as stream:
             os.fchmod(stream.fileno(), 0o644)
             json.dump(document, stream); stream.flush(); os.fsync(stream.fileno())
         os.replace(publication, path)
     finally:
-        publication.unlink(missing_ok=True)
+        if created: publication.unlink(missing_ok=True)
 
 
 def verify_registered(endpoint, program):
@@ -65,6 +67,8 @@ def verify_registered(endpoint, program):
         if actual != expected: raise RuntimeError('registered process does not match this installation')
 
 def refresh(plist, label, domain, endpoint, program, config, next_binary, next_config):
+    if domain != 'system':
+        raise RuntimeError('helper refresh uses remove/install in the actual login after administrator publication')
     metadata = plist.lstat()
     if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.geteuid() or metadata.st_mode & 0o077:
         raise RuntimeError('unprotected launchd registration')
@@ -77,6 +81,8 @@ def refresh(plist, label, domain, endpoint, program, config, next_binary, next_c
     immutable = ['origin', 'tenant', 'enrollment', 'registration_operation', 'state_root', 'helper_work_roots']
     if any(old[key] != new[key] for key in immutable) or any(old['execution'][key] != new['execution'][key] for key in ['work_root', 'material_root']):
         raise RuntimeError('refresh cannot replace identity, storage or unresolved task resources')
+    # Read-only proof by the current identity owner before any stop or publication.
+    subprocess.run([program[0], '--config', str(config), '--validate-persistent'], check=True, capture_output=True, text=True)
     targets = [config]
     if domain == 'system':
         for subject in old['helper_work_roots']:
@@ -103,9 +109,11 @@ def refresh(plist, label, domain, endpoint, program, config, next_binary, next_c
     if '--user-helper' in program:
         next_program.append('--user-helper')
     current['ProgramArguments'] = next_program
+    created = False
     try:
         for target in targets: publish_config(target, new)
         fd = os.open(publication, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        created = True
         with os.fdopen(fd, 'wb') as stream:
             plistlib.dump(current, stream); stream.flush(); os.fsync(stream.fileno())
         os.replace(publication, plist)
@@ -114,7 +122,7 @@ def refresh(plist, label, domain, endpoint, program, config, next_binary, next_c
             raise RuntimeError('refreshed registration is not loaded')
         print(json.dumps({'phase': 'registered', 'readiness': 'requires-authenticated-user-check', 'scope': 'user' if '--user-helper' in next_program else 'system'}))
     finally:
-        publication.unlink(missing_ok=True)
+        if created: publication.unlink(missing_ok=True)
 
 
 def main():

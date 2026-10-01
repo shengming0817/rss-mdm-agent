@@ -96,11 +96,11 @@ class Installation(unittest.TestCase):
             self.assertTrue(plist.exists())
 
     def test_refresh_preserves_state_and_rejects_unknown_or_changed_identity(self):
-        for failure in [None, 'identity', 'stop', 'restart', 'owner']:
+        for failure in [None, 'identity', 'stop', 'restart', 'owner', 'binding']:
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
                 home=Path(directory); folder=home/'Library/LaunchAgents'; folder.mkdir(parents=True)
                 label='com.rss-mdm.agent.execution.user'; plist=folder/(label+'.plist')
-                program=['/old/service','--config','/old/config','--user-helper']
+                program=['/old/service','--config','/old/config']
                 with plist.open('wb') as stream: plistlib.dump({'Label':label, 'ProgramArguments':program, 'MachServices':{label:True}},stream)
                 plist.chmod(0o600)
                 journal=home/'execution.sqlite'; journal.write_bytes(b'unresolved journal')
@@ -114,6 +114,7 @@ class Installation(unittest.TestCase):
                 def run(args, **kwargs):
                     nonlocal loaded
                     calls.append(args)
+                    if args[1]=='--config' and failure=='binding': raise module.subprocess.CalledProcessError(5,args)
                     if args[1]=='print': return SimpleNamespace(returncode=0 if loaded else 113)
                     if args[1]=='bootout':
                         if failure=='stop': raise module.subprocess.CalledProcessError(5,args)
@@ -124,18 +125,32 @@ class Installation(unittest.TestCase):
                     return SimpleNamespace(returncode=0)
                 with patch.object(module,'candidate',side_effect=[old,new]), patch.object(module,'verify_registered'), patch.object(module,'publish_config') as published:
                     with patch.object(module.subprocess,'run',side_effect=run):
-                        call=lambda: module.refresh(plist,label,f'gui/{os.geteuid()}',f'gui/{os.geteuid()}/{label}',program,Path('/old/config'),Path('/new/service'),Path('/new/config'))
+                        call=lambda: module.refresh(plist,label,'system',f'system/{label}',program,Path('/old/config'),Path('/new/service'),Path('/new/config'))
                         if failure:
                             with self.assertRaises((RuntimeError,module.subprocess.CalledProcessError)): call()
                         else: call()
                 self.assertEqual(journal.read_bytes(),b'unresolved journal')
                 self.assertEqual(secret.read_bytes(),b'credential marker')
                 self.assertTrue(plist.exists())
-                if failure in ['identity','owner','stop']:
+                if failure in ['identity','owner','stop','binding']:
                     self.assertFalse(any(cmd[1]=='bootstrap' for cmd in calls)); published.assert_not_called()
                 else: published.assert_called_once_with(Path('/old/config'),new)
                 if failure=='restart':
-                    self.assertEqual(plistlib.loads(plist.read_bytes())['ProgramArguments'],['/new/service','--config','/old/config','--user-helper'])
+                    self.assertEqual(plistlib.loads(plist.read_bytes())['ProgramArguments'],['/new/service','--config','/old/config'])
+
+    def test_failed_exclusive_publication_preserves_existing_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config=Path(directory)/'execution.json'; config.write_text('original')
+            pending=Path(str(config)+'.refresh'); pending.write_text('existing evidence')
+            with self.assertRaises(FileExistsError): module.publish_config(config, {})
+            self.assertEqual(pending.read_text(), 'existing evidence')
+            self.assertEqual(config.read_text(), 'original')
+
+    def test_helper_refresh_refuses_before_stopping_or_publishing(self):
+        with patch.object(module.subprocess,'run') as run, patch.object(module,'candidate') as candidate:
+            with self.assertRaisesRegex(RuntimeError, 'remove/install'):
+                module.refresh(Path('/not-read'), 'user', 'gui/501', 'gui/501/user', [], None, None, None)
+            run.assert_not_called(); candidate.assert_not_called()
 
     def test_status_does_not_require_binary(self):
         with tempfile.TemporaryDirectory() as directory:
