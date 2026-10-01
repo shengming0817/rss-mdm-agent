@@ -24,6 +24,8 @@ Windows 使用 PowerShell 7 运行 `scripts/service/execution-windows.ps1 -Actio
 
 受控 macOS 接线验收先以 release profile 构建 `agent-service` 的 `rss-execution-service` 和 `controlled-backend` example，再运行 `python3 scripts/service/verify-execution-macos.py --binary <构建产物> --backend <example产物> --output <不存在的本地回执目录>`。入口通过原生管理员授权安装隔离配置，使用真实 HTTPS、系统 Keychain、launchd IPC、系统/用户脚本和固定 PKG；只卸载本次注册，保留凭据、journal、材料和包收据供核查。已有执行服务或 helper 注册时拒绝替换。回执的失败或缺失不能算通过。
 
+每次受控旅程只请求一次管理员授权，限于预先固定的安装、初始化、重启和清理操作；不保存密码。授权等待超过 120 秒即终止，迟到授权不能创建安装；取消和超时分别保留回执，重新开始旅程才会再次请求授权。
+
 材料目录当前最多 8 GiB / 32,768 条目，达到配额时拒绝新材料，重启不清理空间。自动安全回收由 #2588 跟踪；管理员不得清空材料目录或 journal 来绕过未决任务。
 
 

@@ -51,23 +51,6 @@ class AuthorizationCancelled(RuntimeError):
     pass
 
 
-def administrator(script):
-    # Freeze source in the Apple event before authorization; root never reads Documents.
-    command = 'cd /private/tmp && /usr/bin/python3 -I -c ' + shlex.quote(script.read_text())
-    try:
-        return run('/usr/bin/osascript', '-e',
-                   'do shell script ' + json.dumps(command) + ' with administrator privileges', timeout=120)
-    except subprocess.CalledProcessError as error:
-        detail = (error.stderr or '')
-        script.with_name('command-error.txt').write_text(detail[:2048])
-        if '(-128)' in detail:
-            raise AuthorizationCancelled('native administrator authorization cancelled') from None
-        raise RuntimeError('native administrator operation failed; see private command-error.txt') from None
-    except subprocess.TimeoutExpired:
-        script.with_name('command-error.txt').write_text('native administrator authorization deadline exceeded')
-        raise RuntimeError('native administrator authorization deadline exceeded') from None
-
-
 def peer_identity(connection):
     # ref: macOS SDK sys/un.h LOCAL_PEERPID; getpeereid(3), actual kernel credentials.
     uid, gid = ctypes.c_uint(), ctypes.c_uint()
@@ -78,7 +61,7 @@ def peer_identity(connection):
     return pid, uid.value
 
 
-def authorized_steps(programs, endpoint, expected_pid, expected_uid):
+def authorized_steps(programs, endpoint, expected_pid, expected_uid, deadline):
     # This test owner has only frozen setup/initialize/restart/cleanup operations.
     connection = socket.socket(socket.AF_UNIX)
     cleaned = False
@@ -107,10 +90,14 @@ def authorized_steps(programs, endpoint, expected_pid, expected_uid):
         connection.connect(endpoint)
         if peer_identity(connection) != (expected_pid, expected_uid):
             raise RuntimeError('administrator channel owner mismatch')
-        connection.settimeout(1200)
-        started = True
-        if not reply(0, 'setup'): return
+        connection.settimeout(60)
         with connection.makefile('rb') as reader:
+            begin = reader.readline(4097)
+            if time.monotonic() >= deadline or len(begin)>4096 or not begin or json.loads(begin) != {'id':0,'operation':'setup'}:
+                return
+            started = True
+            connection.settimeout(1200)
+            if not reply(0, 'setup'): return
             sequence = 0
             while True:
                 line = reader.readline(4097)
@@ -139,25 +126,33 @@ class AdministratorSession:
         self.connection = self.reader = self.process = None
         self.sequence = 0
         self.lab = lab
+        self.deadline = time.monotonic()+120
         programs = {'setup':setup.read_text(),'initialize':initialize.read_text(),'restart':restart.read_text(),'cleanup':cleanup.read_text()}
-        source = 'import socket,ctypes,struct,io,contextlib,json\n' + inspect.getsource(peer_identity) + inspect.getsource(authorized_steps)
-        source += 'authorized_steps('+repr(programs)+','+repr(str(self.endpoint))+','+str(os.getpid())+','+str(os.geteuid())+')\n'
+        source = 'import socket,ctypes,struct,io,contextlib,json,time\n' + inspect.getsource(peer_identity) + inspect.getsource(authorized_steps)
+        source += 'authorized_steps('+repr(programs)+','+repr(str(self.endpoint))+','+str(os.getpid())+','+str(os.geteuid())+','+repr(self.deadline)+')\n'
         command = 'cd /private/tmp && /usr/bin/python3 -I -c ' + shlex.quote(source)
         self.log = (lab/'administrator-session.log').open('w')
         self.process = subprocess.Popen(['/usr/bin/osascript','-e','do shell script '+json.dumps(command)+' with administrator privileges'],stdout=self.log,stderr=self.log)
     def start(self):
-        deadline = time.monotonic()+120
         while self.connection is None:
             try: self.connection,_ = self.listener.accept()
             except socket.timeout:
-                if self.process.poll() is not None: raise RuntimeError('native administrator authorization failed; see administrator-session.log')
-                if time.monotonic() >= deadline:
+                if self.process.poll() is not None:
+                    self.log.flush()
+                    if '(-128)' in (self.lab/'administrator-session.log').read_text():
+                        raise AuthorizationCancelled('native administrator authorization cancelled')
+                    raise RuntimeError('native administrator authorization failed; see administrator-session.log')
+                if time.monotonic() >= self.deadline:
                     self.process.terminate()
                     raise RuntimeError('native administrator authorization deadline exceeded')
+        if time.monotonic() >= self.deadline:
+            self.connection.close();self.connection=None
+            raise RuntimeError('native administrator authorization deadline exceeded')
         if peer_identity(self.connection)[1] != 0:
             self.connection.close();self.connection=None
             raise RuntimeError('administrator channel is not system-owned')
         self.connection.settimeout(60);self.reader=self.connection.makefile('rb')
+        self.connection.sendall(b'{"id":0,"operation":"setup"}\n')
         return self.receive(0)
     def receive(self, identity):
         message=json.loads(self.reader.readline(8*1024*1024+1))

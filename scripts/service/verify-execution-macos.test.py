@@ -10,7 +10,8 @@ import sqlite3
 import socket
 import threading
 import os
-from unittest.mock import patch
+import time
+from unittest.mock import patch, MagicMock
 
 spec = importlib.util.spec_from_file_location('acceptance', Path(__file__).with_name('verify-execution-macos.py'))
 acceptance = importlib.util.module_from_spec(spec)
@@ -97,20 +98,35 @@ class EvidenceTests(unittest.TestCase):
     def test_native_authorization_cancel_has_closed_diagnostic_without_frozen_command(self):
         with tempfile.TemporaryDirectory() as directory:
             script=Path(directory)/'install.py'; script.write_text('sensitive implementation payload')
-            error=acceptance.subprocess.CalledProcessError(1, ['sensitive command'],stderr='execution error: User canceled. (-128)')
-            with patch.object(acceptance,'run',side_effect=error):
+            process=MagicMock();process.poll.return_value=1
+            with patch.object(acceptance.subprocess,'Popen',return_value=process):
+                session=acceptance.AdministratorSession(script,script,script,script,Path(directory))
+            session.log.write('execution error: User canceled. (-128)');session.log.flush()
+            try:
                 with self.assertRaisesRegex(acceptance.AuthorizationCancelled,'native administrator authorization cancelled') as caught:
-                    acceptance.administrator(script)
+                    session.start()
+            finally: session.close()
             self.assertNotIn('sensitive',str(caught.exception))
-            self.assertIn('User canceled', (script.parent/'command-error.txt').read_text())
+            self.assertIn('User canceled', (script.parent/'administrator-session.log').read_text())
+
+    def test_successful_connection_after_the_authorization_deadline_is_not_admitted(self):
+        session=object.__new__(acceptance.AdministratorSession)
+        connection=MagicMock();session.listener=MagicMock()
+        session.listener.accept.return_value=(connection,None)
+        session.connection=None;session.deadline=120;session.process=MagicMock()
+        session.receive=lambda identity: None
+        with patch.object(acceptance.time,'monotonic',return_value=121), patch.object(acceptance,'peer_identity',return_value=(1,0)):
+            with self.assertRaisesRegex(RuntimeError,'authorization deadline exceeded'): session.start()
+        connection.sendall.assert_not_called()
 
     def test_one_frozen_authorized_session_rejects_arbitrary_commands_and_cleans_on_disconnect(self):
         with tempfile.TemporaryDirectory(dir='/private/tmp') as directory:
             path=Path(directory)/'control'; marker=Path(directory)/'cleaned'
             listener=socket.socket(socket.AF_UNIX); listener.bind(str(path));listener.listen(1)
             programs={'setup':'pass','initialize':'raise RuntimeError("injected initialization failure")','restart':'pass','cleanup':f'from pathlib import Path;Path({str(marker)!r}).write_text("cleaned")'}
-            worker=threading.Thread(target=acceptance.authorized_steps,args=(programs,str(path),os.getpid(),os.geteuid()))
+            worker=threading.Thread(target=acceptance.authorized_steps,args=(programs,str(path),os.getpid(),os.geteuid(),time.monotonic()+60))
             worker.start();connection,_=listener.accept();reader=connection.makefile('rb')
+            connection.sendall(b'{"id":0,"operation":"setup"}\n')
             self.assertTrue(json.loads(reader.readline())['ok'])
             connection.sendall(b'{"id":1,"operation":"initialize"}\n')
             self.assertFalse(json.loads(reader.readline())['ok'])
@@ -118,6 +134,18 @@ class EvidenceTests(unittest.TestCase):
             self.assertFalse(json.loads(reader.readline())['ok'])
             reader.close();connection.close();listener.close();worker.join(5)
             self.assertFalse(worker.is_alive());self.assertEqual(marker.read_text(),'cleaned')
+
+    def test_late_authorization_cannot_execute_setup_or_cleanup(self):
+        with tempfile.TemporaryDirectory(dir='/private/tmp') as directory:
+            path=Path(directory)/'control';marker=Path(directory)/'changed'
+            listener=socket.socket(socket.AF_UNIX);listener.bind(str(path));listener.listen(1)
+            change=f'from pathlib import Path;Path({str(marker)!r}).write_text("changed")'
+            worker=threading.Thread(target=acceptance.authorized_steps,args=({'setup':change,'cleanup':change},str(path),os.getpid(),os.geteuid(),time.monotonic()-1))
+            worker.start();connection,_=listener.accept();reader=connection.makefile('rb')
+            connection.sendall(b'{"id":0,"operation":"setup"}\n')
+            self.assertEqual(reader.readline(),b'')
+            reader.close();connection.close();listener.close();worker.join(5)
+            self.assertFalse(worker.is_alive());self.assertFalse(marker.exists())
 
     def test_http_failure_is_not_acknowledgement(self):
         status = {'results': {'op': {'attemptId': 'a', 'event': {'kind': 'result'}}}, 'acknowledged': []}
