@@ -1,7 +1,7 @@
 use crate::Error;
-use execution_contract::ActorId;
+use execution_contract::{ActorId, ExecutionLimits};
 
-/// Explicit S1 application limits. Defaults are fixture bounds, not a platform capacity SLO.
+/// Explicit application limits fenced by the selected immutable storage envelope.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AppConfig {
     /// Monotonically increasing trusted configuration revision.
@@ -12,9 +12,9 @@ pub struct AppConfig {
     pub max_profiles: usize,
     /// Maximum total environment inventory entries (hard ceiling 4096).
     pub max_capability_entries: usize,
-    /// Current maximum total plan timeout, at most the S1 storage bound.
+    /// Current maximum total plan timeout, at most the selected storage bound.
     pub max_timeout_ms: u64,
-    /// Current maximum total plan output, at most the S1 storage bound.
+    /// Current maximum total plan output, at most the selected storage bound.
     pub max_output_bytes: u64,
 }
 impl AppConfig {
@@ -29,7 +29,7 @@ impl AppConfig {
             max_output_bytes: 65_536,
         }
     }
-    fn validate(self) -> Result<(), Error> {
+    fn validate(self, bounds: ExecutionLimits) -> Result<(), Error> {
         if self.revision == 0
             || self.max_rules == 0
             || self.max_rules > 1024
@@ -38,9 +38,9 @@ impl AppConfig {
             || self.max_capability_entries == 0
             || self.max_capability_entries > 4096
             || self.max_timeout_ms == 0
-            || self.max_timeout_ms > 3_600_000
+            || self.max_timeout_ms > bounds.max_timeout_ms
             || self.max_output_bytes == 0
-            || self.max_output_bytes > 1_048_576
+            || self.max_output_bytes > bounds.max_output_bytes
         {
             return Err(Error::Configuration);
         }
@@ -76,15 +76,17 @@ pub struct ConfigChange {
 /// The trusted host owns loading/persistence and its audit sink; S1 supplies no production file store.
 pub struct Configuration {
     config: AppConfig,
+    bounds: ExecutionLimits,
     state: ConfigState,
     minimum_revision: u64,
 }
 impl Configuration {
     /// Validate the initial trusted snapshot without fallback or implicit defaults.
-    pub fn new(config: AppConfig) -> Result<Self, Error> {
-        config.validate()?;
+    pub fn new(config: AppConfig, bounds: ExecutionLimits) -> Result<Self, Error> {
+        config.validate(bounds)?;
         Ok(Self {
             config,
+            bounds,
             state: ConfigState::Active,
             minimum_revision: config.revision,
         })
@@ -113,7 +115,7 @@ impl Configuration {
         actor: &ActorId,
         audit: impl FnOnce(&ConfigChange) -> Result<(), Error>,
     ) -> Result<(), Error> {
-        next.validate()?;
+        next.validate(self.bounds)?;
         if next.revision <= self.config.revision || next.revision < self.minimum_revision {
             return Err(Error::Conflict);
         }
@@ -132,12 +134,13 @@ impl Configuration {
     /// it cannot be supplied by UI/model input. Compiled hard bounds are always revalidated.
     pub fn load_failed(&mut self, mandatory_revision: u64) {
         self.minimum_revision = self.minimum_revision.max(mandatory_revision);
-        self.state =
-            if self.config.validate().is_ok() && self.config.revision >= self.minimum_revision {
-                ConfigState::LastKnownGood
-            } else {
-                ConfigState::Degraded
-            };
+        self.state = if self.config.validate(self.bounds).is_ok()
+            && self.config.revision >= self.minimum_revision
+        {
+            ConfigState::LastKnownGood
+        } else {
+            ConfigState::Degraded
+        };
     }
 }
 

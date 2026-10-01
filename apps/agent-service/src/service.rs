@@ -125,14 +125,7 @@ impl<S: SecretProvider> DeviceService<S> {
             startup,
             host.clone(),
             runner,
-            AppConfig {
-                revision: 1,
-                max_rules: 1,
-                max_profiles: 1,
-                max_capability_entries: 32,
-                max_timeout_ms: 86_400_000,
-                max_output_bytes: 16_777_216,
-            },
+            app_config(),
             plan::storage_limits(),
         )?;
         let output = client.output_policy()?;
@@ -1296,4 +1289,16 @@ pub(crate) fn login_id(context: &execution_runner::helper::UserContext) -> uuid:
     bytes[6] = (bytes[6] & 0x0f) | 0x50;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
     uuid::Uuid::from_bytes(bytes)
+}
+
+pub(crate) fn app_config() -> AppConfig {
+    let bounds = plan::storage_limits().input;
+    AppConfig {
+        revision: 1,
+        max_rules: 1,
+        max_profiles: 1,
+        max_capability_entries: 32,
+        max_timeout_ms: bounds.max_timeout_ms,
+        max_output_bytes: bounds.max_output_bytes,
+    }
 }

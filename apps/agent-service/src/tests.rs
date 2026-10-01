@@ -167,16 +167,64 @@ async fn osquery_compiler_revalidates_the_signed_query_and_uses_only_literal_arg
     }
 }
 
-#[test]
-fn production_storage_budgets_open_with_large_output_capture_limits() {
+#[cfg(unix)]
+#[tokio::test]
+async fn production_service_creates_and_reopens_journal_with_its_actual_budgets() {
+    let server = protocol::Server::new().await;
     let root = protocol::Root::new();
-    let authority = Authority::Test {
-        id: Id::new("collection-storage").unwrap(),
-    };
+    let clock = SystemClock::new().unwrap();
+    server.time.set(clock.now().unwrap());
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    drop(client);
     let limits = plan::storage_limits();
     assert_eq!(limits.input.max_output_bytes, 16_777_216);
-    execution_sqlite::Store::initialize_test(&root.path.join("budget.sqlite"), authority, limits)
+    let image = installation_security::Artifact {
+        path: "/bin/sh".into(),
+        sha256: format!("{:x}", Sha256::digest(std::fs::read("/bin/sh").unwrap())),
+        cdhash: None,
+    };
+    let config = ExecutionConfig {
+        work_root: root.path.clone(),
+        material_root: root.path.join("materials"),
+        interpreters: vec![Interpreter {
+            profile: wire::ExecutorProfile::PosixSh,
+            image: image.clone(),
+        }],
+        managers: vec![],
+        processes: 1,
+    };
+    let journal = root.path.join("execution.sqlite");
+    // Exercise the production owner, NativeRunner and Enterprise authority. The loopback
+    // backend supplies registration only; this test neither dispatches nor proves root IPC.
+    for startup in [
+        execution_app::ProductionStartup::Create,
+        execution_app::ProductionStartup::Open,
+    ] {
+        let client = agent_client::Client::open(
+            &root.path,
+            server.config(),
+            OpenMode::Existing,
+            server.secrets.clone(),
+            clock.clone(),
+        )
         .unwrap();
+        drop(
+            DeviceService::open(
+                client,
+                &journal,
+                startup,
+                config.clone(),
+                clock.clone(),
+                UserResources {
+                    image: image.clone(),
+                    work_roots: Default::default(),
+                },
+            )
+            .unwrap(),
+        );
+    }
+    assert!(journal.is_file());
 }
 
 #[tokio::test]

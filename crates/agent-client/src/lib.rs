@@ -81,6 +81,7 @@ impl From<execution_app::Error> for Error {
             E::Clock => Self::Clock,
             E::Conflict => Self::Conflict,
             E::Capacity => Self::Capacity,
+            E::Configuration => Self::Configuration,
             _ => Self::Storage,
         }
     }
