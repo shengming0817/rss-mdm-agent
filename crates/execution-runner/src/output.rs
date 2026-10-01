@@ -24,11 +24,16 @@ pub(crate) fn quality(stdout: &[u8], stderr: &[u8], spec: OutputSpec) -> OutputQ
         OutputFormat::Json { max_rows } => match serde_json::from_str::<serde_json::Value>(&text) {
             Ok(serde_json::Value::Object(_)) if max_rows > 0 => OutputQuality::Complete,
             Ok(serde_json::Value::Array(rows))
-                if !rows.is_empty()
-                    && rows.len() <= usize::from(max_rows)
+                if rows.len() <= usize::from(max_rows)
                     && rows.iter().all(serde_json::Value::is_object) =>
             {
                 OutputQuality::Complete
+            }
+            Ok(serde_json::Value::Array(rows))
+                if rows.len() > usize::from(max_rows)
+                    && rows.iter().all(serde_json::Value::is_object) =>
+            {
+                OutputQuality::Truncated
             }
             _ => OutputQuality::Failed,
         },
@@ -47,5 +52,20 @@ pub(crate) fn valid_encoding(bytes: &[u8], encoding: TextEncoding) -> bool {
                 )
                 .all(|c| c.is_ok())
         }
+    }
+}
+
+#[cfg(test)]
+mod collection_tests {
+    use super::*;
+    #[test]
+    fn empty_json_list_is_complete_and_overflow_rows_are_explicitly_truncated() {
+        let spec = OutputSpec {
+            format: OutputFormat::Json { max_rows: 1 },
+            stdout: TextEncoding::Utf8,
+            stderr: TextEncoding::Utf8,
+        };
+        assert_eq!(quality(b"[]", b"", spec), OutputQuality::Complete);
+        assert_eq!(quality(b"[{},{}]", b"", spec), OutputQuality::Truncated);
     }
 }

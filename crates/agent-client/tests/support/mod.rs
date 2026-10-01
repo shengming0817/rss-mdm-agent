@@ -105,11 +105,15 @@ pub struct Data {
     pub forged_start: bool,
     pub start_permit: Option<SignedTask>,
     pub result_calls: usize,
+    pub chunks: BTreeMap<u16, OutputChunk>,
+    pub chunk_calls: Vec<Value>,
+    pub chunk_failure: bool,
     pub acknowledged: std::collections::BTreeSet<String>,
     pub cancellations: Vec<TaskCancellation>,
     pub result_hook: Option<Arc<dyn Fn() + Send + Sync>>,
     pub claim_failure: bool,
     pub claim_ops: Vec<String>,
+    pub claim_inputs: Vec<Value>,
     pub claims: BTreeMap<String, SignedTask>,
 }
 impl Data {
@@ -130,7 +134,7 @@ impl Data {
         self.received = false;
         self.start_permit = None;
         let spec = TaskSpec {
-            wire_version: 4,
+            wire_version: 5,
             tenant_id: self.tenant,
             device_id: "device-1".into(),
             platform: TaskPlatform::Macos,
@@ -147,6 +151,7 @@ impl Data {
                 sha256: Sha256::digest(&self.bytes).into(),
             },
             profile: ExecutorProfile::PosixSh,
+            sql_parameters: None,
             run_as: ExecutionIdentity::System,
             arguments: vec![],
             environment: BTreeMap::new(),
@@ -193,7 +198,7 @@ impl Data {
             })
             .collect();
         let spec = SoftwareTaskSpec {
-            wire_version: 4,
+            wire_version: 5,
             tenant_id: self.tenant,
             device_id: "device-1".into(),
             platform: TaskPlatform::Macos,
@@ -258,11 +263,15 @@ impl Server {
             forged_start: false,
             start_permit: None,
             result_calls: 0,
+            chunks: BTreeMap::new(),
+            chunk_calls: vec![],
+            chunk_failure: false,
             acknowledged: Default::default(),
             cancellations: Vec::new(),
             result_hook: None,
             claim_failure: false,
             claim_ops: vec![],
+            claim_inputs: vec![],
             claims: BTreeMap::new(),
         }));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -295,14 +304,16 @@ impl Server {
         }
     }
     pub fn client(&self, root: &Root, mode: OpenMode) -> Client<Secrets, Time> {
-        Client::open(
+        let mut client = Client::open(
             &root.path,
             self.config(),
             mode,
             self.secrets.clone(),
             self.time.clone(),
         )
-        .unwrap()
+        .unwrap();
+        client.set_profiles(vec![ExecutorProfile::PosixSh]).unwrap();
+        client
     }
     pub async fn register(&self, client: &mut Client<Secrets, Time>) -> RegistrationReceipt {
         client
@@ -312,9 +323,9 @@ impl Server {
                 "password",
                 "credential",
                 vec![
-                    Capability::InventoryBasicV4,
-                    Capability::TaskExecuteV4,
-                    Capability::SoftwareExecuteV4,
+                    Capability::InventoryCollectionV5,
+                    Capability::TaskExecuteV5,
+                    Capability::SoftwareExecuteV5,
                 ],
             )
             .await
@@ -334,7 +345,7 @@ async fn handler(
 ) -> Response {
     let mut d = data.lock().unwrap();
     let path = uri.path();
-    if path != "/api/agent/v4/registrations"
+    if path != "/api/agent/v5/registrations"
         && (d.denied
             || headers.get("authorization").and_then(|v| v.to_str().ok())
                 != d.credential
@@ -373,7 +384,7 @@ fn registration_response(d: &mut Data, value: Value) -> Response {
     if std::mem::take(&mut d.registration_failure) {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
-    (StatusCode::CREATED,axum::Json(json!({"wireVersion":4,"operationId":operation,"deviceId":"device-1","registrationId":d.registration,"generation":1,"source":"agent.builtin","epoch":d.epoch,"capabilities":value["capabilities"]}))).into_response()
+    (StatusCode::CREATED,axum::Json(json!({"wireVersion":5,"operationId":operation,"deviceId":"device-1","registrationId":d.registration,"generation":1,"source":"agent.builtin","epoch":d.epoch,"capabilities":value["capabilities"],"collections":collections()}))).into_response()
 }
 fn report_response(d: &mut Data, value: Value) -> Response {
     let id = value["reportId"].as_str().unwrap().to_owned();
@@ -386,9 +397,11 @@ fn report_response(d: &mut Data, value: Value) -> Response {
     if std::mem::take(&mut d.report_failure) {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
-    (StatusCode::ACCEPTED,axum::Json(json!({"wireVersion":4,"reportId":if d.bad_ack{Uuid::new_v4().to_string()}else{id},"receivedAt":1,"intake":"durable"}))).into_response()
+    (StatusCode::ACCEPTED,axum::Json(json!({"wireVersion":5,"reportId":if d.bad_ack{Uuid::new_v4().to_string()}else{id},"receivedAt":1,"intake":"durable"}))).into_response()
 }
 fn claim_response(d: &mut Data, value: Value) -> Response {
+    let _: TaskClaimRequest = serde_json::from_value(value.clone()).unwrap();
+    d.claim_inputs.push(value.clone());
     let op = value["operationId"].as_str().unwrap().to_owned();
     d.claim_ops.push(op.clone());
     let signed = if let Some(old) = d.claims.get(&op) {
@@ -425,6 +438,17 @@ fn event_response(d: &mut Data, value: Value) -> Response {
             axum::Json(TaskEventAck::new(None, false)).into_response()
         }
         TaskEvent::Start => start_event(d, operation),
+        TaskEvent::OutputChunk(chunk) => {
+            d.chunk_calls.push(value);
+            if d.chunks.get(&chunk.index()).is_some_and(|v| v != chunk) {
+                return StatusCode::CONFLICT.into_response();
+            }
+            d.chunks.insert(chunk.index(), chunk.clone());
+            if std::mem::take(&mut d.chunk_failure) {
+                return StatusCode::SERVICE_UNAVAILABLE.into_response();
+            }
+            axum::Json(TaskEventAck::new(None, false)).into_response()
+        }
         _ => {
             d.result_calls += 1;
             if d.results
@@ -525,3 +549,15 @@ fn content_response(d: &mut Data, headers: HeaderMap) -> Response {
 }
 
 pub mod execution;
+
+pub fn collections() -> Vec<agent_client::wire::CollectionDefinition> {
+    let fields:Vec<_>=["device.model","device.os.version"].into_iter().map(|key|json!({
+        "key":key,"version":1,"valueType":{"kind":"string","maxLength":256,"allowEmpty":false},
+        "nullable":false,"manual":false,"sources":{"agent.builtin":0},"platforms":["windows","macos"],
+        "sensitivity":"standard","unit":null,"searchable":true,"itemKey":null
+    })).collect();
+    vec![serde_json::from_value(
+        json!({"dataset":"inventory","version":"1","source":"agent.builtin","fields":fields}),
+    )
+    .unwrap()]
+}

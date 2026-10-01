@@ -1163,21 +1163,16 @@ async fn run(
     } else {
         output::quality(&facts.stdout, &facts.stderr, recipe.launch.output)
     };
-    if recipe.launch.interpreter.profile.id.as_str() == "native-osquery-info-v1"
+    if recipe.launch.interpreter.profile.id.as_str() == crate::osquery::PROFILE
         && facts.quality == OutputQuality::Complete
     {
-        let valid = serde_json::from_slice::<serde_json::Value>(&facts.stdout)
-            .ok()
-            .is_some_and(|v| {
-                v.as_array().is_some_and(|rows| {
-                    rows.len() == 1
-                        && rows[0].as_object().is_some_and(|row| {
-                            row.len() == 1
-                                && row.get("version").is_some_and(serde_json::Value::is_string)
-                        })
-                })
-            });
-        if !facts.stderr.is_empty() || !valid {
+        let rows = serde_json::from_slice::<serde_json::Value>(&facts.stdout).ok();
+        if !facts.stderr.is_empty()
+            || !rows.as_ref().is_some_and(|v| {
+                v.as_array()
+                    .is_some_and(|r| r.iter().all(serde_json::Value::is_object))
+            })
+        {
             facts.quality = OutputQuality::Failed;
         }
     }

@@ -76,7 +76,7 @@ pub struct DeviceService<S: SecretProvider = DeviceSecrets> {
 impl<S: SecretProvider> DeviceService<S> {
     /// Open an already registered device. Create/open selection never follows an error fallback.
     pub fn open(
-        client: Client<S, SystemClock>,
+        mut client: Client<S, SystemClock>,
         journal: &Path,
         startup: ProductionStartup,
         config: ExecutionConfig,
@@ -90,6 +90,15 @@ impl<S: SecretProvider> DeviceService<S> {
         {
             return Err(Error::Configuration);
         }
+        let mut profiles = Vec::new();
+        for interpreter in &config.interpreters {
+            interpreter
+                .image
+                .verify(&interpreter.image.path)
+                .map_err(|_| Error::Untrusted)?;
+            profiles.push(interpreter.profile);
+        }
+        client.set_profiles(profiles)?;
         native_process::private_storage::validate(&config.work_root)?;
         let (binding, actor) = plan::context(
             client.configuration().origin.as_str(),
@@ -122,7 +131,7 @@ impl<S: SecretProvider> DeviceService<S> {
                 max_profiles: 1,
                 max_capability_entries: 32,
                 max_timeout_ms: 86_400_000,
-                max_output_bytes: 1_048_576,
+                max_output_bytes: 16_777_216,
             },
             plan::storage_limits(),
         )?;

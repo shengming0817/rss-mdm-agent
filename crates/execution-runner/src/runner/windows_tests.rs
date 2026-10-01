@@ -331,7 +331,7 @@ fn windows_profiles_identity_and_content_fail_closed() {
         15000,
     );
     replan(&mut f, |s| {
-        s.launch.interpreter.profile.id = Id::new("native-osquery-info-v1").unwrap();
+        s.launch.interpreter.profile.id = Id::new("native-osquery-template").unwrap();
         s.launch.argv = vec![
             LaunchArg::Literal {
                 value: "--json".into(),

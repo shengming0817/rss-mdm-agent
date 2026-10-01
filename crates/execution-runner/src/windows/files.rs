@@ -180,7 +180,7 @@ pub(crate) fn payload(
     attempt: &AttemptId,
     profile: &VersionedRef,
 ) -> Result<crate::materialize::Payload, Error> {
-    if profile.id.as_str() == "native-osquery-info-v1" {
+    if profile.id.as_str() == "native-osquery-template" {
         return Ok(crate::materialize::Payload {
             path: PathBuf::new(),
             file: Some(source),

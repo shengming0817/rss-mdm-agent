@@ -275,9 +275,9 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
             "password",
             "credential",
             vec![
-                Capability::InventoryBasicV4,
-                Capability::TaskExecuteV4,
-                Capability::SoftwareExecuteV4,
+                Capability::InventoryCollectionV5,
+                Capability::TaskExecuteV5,
+                Capability::SoftwareExecuteV5,
             ],
         )
         .await
@@ -285,6 +285,7 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
     assert_eq!(receipt.device_id, device);
     let report = client
         .queue_report(
+            "inventory",
             ReportBody::Failed {
                 code: FailureCode::CollectionFailed,
             },

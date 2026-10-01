@@ -8,6 +8,8 @@ pub mod host;
 #[cfg(target_os = "macos")]
 mod macos;
 mod materialize;
+/// Controlled osquery invocation from an immutable template artifact and literal parameters.
+pub mod osquery;
 mod output;
 mod runner;
 /// Software materialization and independent ecosystem facts.

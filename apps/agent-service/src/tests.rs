@@ -100,3 +100,69 @@ async fn signed_start_compiles_exactly_and_never_creates_a_local_enterprise_appr
     server.time.set(payload.expires_at);
     assert!(client.validate_start(&start).is_err());
 }
+
+#[tokio::test]
+async fn osquery_compiler_revalidates_the_signed_query_and_uses_only_literal_arguments() {
+    for (query, valid) in [
+        ("SELECT version FROM osquery_info", true),
+        ("SELECT load_extension('x') FROM osquery_info", false),
+        (
+            "SELECT version FROM osquery_info; DELETE FROM programs",
+            false,
+        ),
+    ] {
+        let server = protocol::Server::new().await;
+        {
+            let mut data = server.data.lock().unwrap();
+            data.bytes = query.as_bytes().to_vec();
+            data.script();
+            let wire::TaskPayload::Script(mut spec) = data.offer.as_ref().unwrap().payload.clone()
+            else {
+                panic!("script")
+            };
+            spec.profile = wire::ExecutorProfile::Osquery;
+            spec.sql_parameters = Some(Default::default());
+            data.offer = Some(data.signed(wire::TaskPayload::Script(spec)));
+        }
+        let root = protocol::Root::new();
+        let mut client = server.client(&root, OpenMode::Create);
+        let receipt = server.register(&mut client).await;
+        let offer = client.claim().await.unwrap().offer.unwrap();
+        let materials = client.prepare(&offer).await.unwrap();
+        let (binding, actor) =
+            plan::context(server.url.as_str(), server.config().tenant, &receipt).unwrap();
+        let wire::TaskPayload::Script(spec) = offer.payload() else {
+            panic!("script")
+        };
+        // This test verifies the production compiler, not osquery execution.
+        let executable = std::path::PathBuf::from("/bin/sh");
+        let interpreters = [Interpreter {
+            profile: wire::ExecutorProfile::Osquery,
+            image: local_service::Artifact {
+                sha256: format!("{:x}", Sha256::digest(std::fs::read(&executable).unwrap())),
+                path: executable,
+                cdhash: None,
+            },
+        }];
+        let result = plan::script(
+            &offer,
+            &materials,
+            spec,
+            (&binding, &actor),
+            &interpreters,
+            (&root.path, &root.path.join("query")),
+            None,
+        );
+        assert_eq!(result.is_ok(), valid, "{:?}", result.as_ref().err());
+        if let Ok((frozen, _)) = result {
+            let args = &frozen.spec().launch.argv;
+            assert!(args.iter().any(
+                |a| matches!(a,LaunchArg::Literal{value} if value==&format!("{query} LIMIT 2"))
+            ));
+            assert!(args.iter().any(
+                |a| matches!(a,LaunchArg::Literal{value} if value=="--disable_extensions=true")
+            ));
+            assert!(!args.iter().any(|a| matches!(a, LaunchArg::ArtifactPath {})));
+        }
+    }
+}

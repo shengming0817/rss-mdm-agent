@@ -68,7 +68,7 @@ impl Store {
                     CREATE TABLE tasks(id TEXT PRIMARY KEY,body BLOB NOT NULL);
                     CREATE TABLE requests(key TEXT PRIMARY KEY,task TEXT NOT NULL,source TEXT,body BLOB NOT NULL,accepted INTEGER NOT NULL DEFAULT 0 CHECK(accepted IN(0,1)));
                     CREATE TABLE cache_refs(task TEXT NOT NULL,name TEXT NOT NULL,PRIMARY KEY(task,name));
-                    PRAGMA application_id=1380008771; PRAGMA user_version=1;")?;
+                    PRAGMA application_id=1380008771; PRAGMA user_version=2;")?;
                 tx.execute("INSERT INTO metadata VALUES(1,?1,0,0)", [binding])?;
                 tx.commit()?;
             }
@@ -78,7 +78,7 @@ impl Store {
                     Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
                 let version: u32 = reader.pragma_query_value(None, "user_version", |r| r.get(0))?;
                 let app: u32 = reader.pragma_query_value(None, "application_id", |r| r.get(0))?;
-                if version != 1 || app != 1380008771 {
+                if version != 2 || app != 1380008771 {
                     return Err(Error::Schema);
                 }
                 let actual: Vec<u8> = reader.query_row(

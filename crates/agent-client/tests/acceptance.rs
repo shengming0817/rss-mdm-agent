@@ -391,6 +391,7 @@ async fn material_reader_starts_at_zero_and_revocation_invalidates_held_start() 
     let start = client.request_start(&offer, &materials).await.unwrap();
     client
         .queue_report(
+            "inventory",
             ReportBody::Failed {
                 code: FailureCode::CollectionFailed,
             },
@@ -419,6 +420,7 @@ async fn queue_capacity_clock_rollback_and_namespace_change_fail_closed() {
     server.time.set(2);
     client
         .queue_report(
+            "inventory",
             ReportBody::Failed {
                 code: FailureCode::CollectionFailed,
             },
@@ -427,6 +429,7 @@ async fn queue_capacity_clock_rollback_and_namespace_change_fail_closed() {
         .unwrap();
     assert_eq!(
         client.queue_report(
+            "inventory",
             ReportBody::Failed {
                 code: FailureCode::CollectionFailed
             },
@@ -598,7 +601,7 @@ async fn register_report_recovery_and_exact_ack() {
     server.data.lock().unwrap().registration_failure = true;
     let operation = Uuid::new_v4();
     let enrollment = Uuid::new_v4();
-    let capabilities = vec![Capability::InventoryBasicV4, Capability::TaskExecuteV4];
+    let capabilities = vec![Capability::InventoryCollectionV5, Capability::TaskExecuteV5];
     assert_eq!(
         client
             .register(
@@ -639,6 +642,7 @@ async fn register_report_recovery_and_exact_ack() {
     );
     let report = client
         .queue_report(
+            "inventory",
             ReportBody::Failed {
                 code: FailureCode::CollectionFailed,
             },
@@ -670,6 +674,7 @@ async fn revoked_identity_blocks_retries_and_clock_rollback_preserves_queue() {
     server.register(&mut client).await;
     client
         .queue_report(
+            "inventory",
             ReportBody::Failed {
                 code: FailureCode::CollectionFailed,
             },
@@ -694,6 +699,7 @@ async fn revoked_identity_blocks_retries_and_clock_rollback_preserves_queue() {
     .unwrap();
     assert_eq!(
         client.queue_report(
+            "inventory",
             ReportBody::Failed {
                 code: FailureCode::CollectionFailed
             },
@@ -885,7 +891,7 @@ fn unsupported_database_and_changed_namespace_are_preserved() {
     drop(server.client(&root, OpenMode::Create));
     let path = root.path.join("communication.sqlite");
     let db = rusqlite::Connection::open(&path).unwrap();
-    db.pragma_update(None, "user_version", 9).unwrap();
+    db.pragma_update(None, "user_version", 1).unwrap();
     drop(db);
     let before = std::fs::read(&path).unwrap();
     assert!(matches!(
@@ -1333,7 +1339,7 @@ async fn root_exit_is_delivered_while_overall_quiescence_stays_unknown() {
 }
 
 #[tokio::test]
-async fn acknowledged_v4_result_is_not_replaced_by_later_local_facts() {
+async fn acknowledged_v5_result_is_not_replaced_by_later_local_facts() {
     use execution_app::*;
     let server = Server::new().await;
     let root = Root::new();
@@ -1417,4 +1423,28 @@ async fn acknowledged_v4_result_is_not_replaced_by_later_local_facts() {
         .status(&caller, &plan.spec().request.request_id)
         .unwrap();
     assert!(status.process.unwrap().quiescent);
+}
+
+#[tokio::test]
+async fn claim_retry_freezes_executor_profiles_across_restart() {
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    client
+        .set_profiles(vec![ExecutorProfile::PosixSh, ExecutorProfile::Osquery])
+        .unwrap();
+    server.data.lock().unwrap().claim_failure = true;
+    assert!(matches!(client.claim().await, Err(Error::Unavailable)));
+    drop(client);
+    let mut client = server.client(&root, OpenMode::Existing);
+    client.set_profiles(vec![]).unwrap();
+    client.claim().await.unwrap();
+    let inputs = server.data.lock().unwrap().claim_inputs.clone();
+    assert_eq!(inputs.len(), 2);
+    assert_eq!(inputs[0], inputs[1]);
+    assert_eq!(
+        inputs[0]["profiles"],
+        serde_json::json!(["posix_sh", "osquery"])
+    );
 }

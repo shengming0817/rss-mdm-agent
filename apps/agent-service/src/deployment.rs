@@ -228,8 +228,9 @@ impl Deployment {
                     "enrollment",
                     "device",
                     vec![
-                        wire::Capability::TaskExecuteV4,
-                        wire::Capability::SoftwareExecuteV4,
+                        wire::Capability::InventoryCollectionV5,
+                        wire::Capability::TaskExecuteV5,
+                        wire::Capability::SoftwareExecuteV5,
                     ],
                 )
                 .await?;

@@ -1,12 +1,12 @@
 # Agent 通信与内容客户端
 
-本 crate 消费 rss-mdm 服务端产品唯一持有的 Agent V4，提供注册、报告补传、签名任务、可信内容缓存及执行结果交付。只支持当前协议和通信数据库格式；不兼容旧协议、不转换旧执行库，不用测试身份补救生产身份失败。
+本 crate 消费 rss-mdm 服务端产品唯一持有的 Agent V5，提供注册、报告补传、签名任务、可信内容缓存及执行结果交付。只支持当前协议和通信数据库格式；不兼容旧协议、不转换旧执行库，不用测试身份补救生产身份失败。
 
 ## 宿主接入
 
 设备 owner 提供可靠 UTC、实际平台/架构、固定 HTTPS origin/tenant、可信公钥、受保护秘密 provider 和显式预算。秘密 provider 在首次注册前生成并保护随机 credential，同一引用在重试期间不可换值。注册回执不包含 tenant，不能用收到的任务自证身份。
 
-这里的注册是 Agent 与 rss-mdm 服务端之间的设备身份注册。wire 的 `MdmEnrollmentV4` 指操作系统标准 MDM enrollment（由 OS/用户批准的管理注册入口），由 producer 定义；当前客户端明确拒绝该能力，不能以 Agent 注册或任务领取代替。
+这里的注册是 Agent 与 rss-mdm 服务端之间的设备身份注册。wire 的 `MdmEnrollmentV5` 指操作系统标准 MDM enrollment（由 OS/用户批准的管理注册入口），由 producer 定义；当前客户端明确拒绝该能力，不能以 Agent 注册或任务领取代替。
 
 首次初始化和重开数据库是不同操作，根目录必须已存在且私有。同一通信根只有一个驱动 owner；API 不启动常驻 worker。正常路径为：
 

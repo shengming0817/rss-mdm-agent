@@ -338,7 +338,7 @@ pub(crate) fn validate_plan(p: &ExecutionInput, l: &ExecutionLimits) -> Result<(
         .iter()
         .filter(|a| matches!(a, crate::LaunchArg::ArtifactPath {}))
         .count()
-        != usize::from(p.launch.interpreter.profile.id.as_str() != "native-osquery-info-v1")
+        != usize::from(p.launch.interpreter.profile.id.as_str() != "native-osquery-template")
     {
         return Err(ContractError::new(
             ErrorKind::InvalidValue,
@@ -363,7 +363,7 @@ pub(crate) fn validate_plan(p: &ExecutionInput, l: &ExecutionLimits) -> Result<(
         }
     }
     if let crate::OutputFormat::Json { max_rows } = p.launch.output.format {
-        if !(1..=1000).contains(&max_rows) {
+        if max_rows == 0 {
             return Err(ContractError::new(
                 ErrorKind::InvalidBudget,
                 Field::OutputBytes,

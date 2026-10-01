@@ -460,7 +460,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
                 return Ok(None);
             };
             let events: Vec<_> = items.iter().map(|v| v.receipt.event_id.clone()).collect();
-            // V4 accepts one terminal result per attempt. Later independent local facts
+            // V5 accepts one terminal result per attempt. Later independent local facts
             // remain in the execution journal but cannot replace an acknowledged wire result.
             if client
                 .store
@@ -474,8 +474,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
             }
             let key = format!("result/{task}/{}", candidate.receipt.event_id.as_str());
             let source = String::from_utf8(encode(&events)?).map_err(|_| Error::Protocol)?;
-            let request =
-                client.event_request(&key, task, binding.attempt, event, Some(&source))?;
+            let request = client.delivery_request(&key, task, binding.attempt, event, &source)?;
             (key, request, events, false)
         };
         if request.attempt_id() != binding.attempt {
@@ -501,6 +500,9 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         pending: &mut PendingDelivery,
     ) -> Result<(), Error> {
         if !pending.accepted {
+            client
+                .send_output_chunks(pending.task, &pending.request)
+                .await?;
             let ack = client.send_event(pending.task, &pending.request).await?;
             if ack.permit().is_some() {
                 return Err(Error::Protocol);
@@ -535,6 +537,11 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         for id in &pending.events {
             app.service_confirm(&pending.binding.request, &self.consumer, id)?;
         }
+        let prefix = format!("chunk/{}/{}/", pending.task, pending.request.attempt_id());
+        client.store.conn.execute(
+            "DELETE FROM requests WHERE task=?1 AND substr(key,1,length(?2))=?2",
+            params![pending.task.to_string(), prefix],
+        )?;
         client
             .store
             .conn

@@ -1,4 +1,4 @@
-//! Deterministic V4 compiler. The backend has already selected sources and ordered dependencies.
+//! Deterministic V5 compiler. The backend has already selected sources and ordered dependencies.
 use crate::{
     plan::{self, hex, id, reference},
     ExecutionConfig,
