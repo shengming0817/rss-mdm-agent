@@ -26,7 +26,7 @@ OutputPolicy 必须由可信宿主提供，在结果进入网络前保护输出�
 
 本 crate 的 acceptance 使用实际 loopback socket、SQLite 和文件系统，以及明确的 Test host/runner。`live_mdm` 是隔离测试环境中的真实服务端联调入口：连接正式 `rss-mdm serve` 实现与真实 PostgreSQL，验证注册、报告、任务、下载和结果确认。名称中的 live 表示连接实际服务端实现，不表示生产环境；执行器仍是明确的 Test runner。
 
-准备隔离服务环境、正式 HTTPS 网关、内容目录及任务签名配置后，在私有配置文件中提供 origin、tenant、ca_file、admin_password_file、key_id 和 public_key。配置不入库；管理员须拥有授权管理权，测试经公开 API 配置业务授权、资源、Scope 和 Policy。真实联调操作只允许针对可丢弃测试环境。
+准备隔离服务环境、正式 HTTPS 网关、内容目录及任务签名配置后，在私有配置文件中提供 origin、tenant、ca_file、admin_login、admin_password_file、key_id 和 public_key。配置不入库；管理员须拥有授权管理权，测试经公开 API 配置业务授权、资源、Scope 和 Policy。真实联调操作只允许针对可丢弃测试环境。
 
 ```sh
 python3 scripts/build-run.py -- cargo test --locked -p agent-client --test acceptance

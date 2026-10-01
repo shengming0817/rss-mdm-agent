@@ -23,6 +23,7 @@ struct LiveConfig {
     tenant: Uuid,
     ca_file: PathBuf,
     admin_password_file: PathBuf,
+    admin_login: String,
     key_id: String,
     public_key: String,
 }
@@ -147,7 +148,7 @@ impl Admin {
                 "definition":{"profile":"posix_sh","runAs":"system","encoding":"utf8",
                 "parameters":{"type":"object","properties":{},"required":[],"additionalProperties":false},"bindings":{},
                 "output":{"type":"object","properties":{"ok":{"type":"boolean"},"message":{"type":"string"}},"required":["ok","message"],"additionalProperties":false},
-                "purpose":{"kind":"action"},"timeoutSeconds":60,"outputBytes":4096,"maxRows":1}})
+                "purpose":{"kind":"collection","mappings":{"custom.corporate_agent.healthy":"/ok","custom.corporate_agent.version":"/message"}},"timeoutSeconds":60,"outputBytes":4096,"maxRows":1}})
         };
         let kind = if software { "software" } else { "script" };
         self.write(&path, 0, json!({"action":"create","kind":kind}))
@@ -220,7 +221,7 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
         .request(
             reqwest::Method::POST,
             &format!("/api/v2/tenants/{}/login", fixture.tenant),
-            Some(json!({"login":"admin","password":password})),
+            Some(json!({"login":fixture.admin_login,"password":password})),
             None,
         )
         .await;
@@ -268,6 +269,7 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
     let enrollment=admin.request(reqwest::Method::POST,"/api/v3/enrollments",Some(json!({"deviceId":device,"password":secrets.resolve("password").unwrap().expose(),"source":"agent.builtin"})),None).await;
     let root = Root::new();
     let mut client = Client::open(&root.path, config, OpenMode::Create, secrets, Utc).unwrap();
+    client.set_profiles(vec![ExecutorProfile::PosixSh]).unwrap();
     let receipt = client
         .register(
             Uuid::new_v4(),
@@ -411,6 +413,21 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
             )
             .await;
         assert!(!runs["items"].as_array().unwrap().is_empty());
+        if !software {
+            let run = admin
+                .request(
+                    reqwest::Method::GET,
+                    &format!(
+                        "/api/v2/devices/{device}/collections/{}",
+                        offer.payload().attempt_id()
+                    ),
+                    None,
+                    None,
+                )
+                .await;
+            assert_eq!(run["asset"]["run"]["result"], "snapshot");
+            assert_eq!(run["asset"]["run"]["fields"].as_array().unwrap().len(), 2);
+        }
         if software {
             let rollout = admin
                 .request(
